@@ -1,0 +1,83 @@
+.findBarWrapper {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.findBar {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  margin-top: 4px;
+}
+
+.findInput {
+  width: 200px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.findInput:focus {
+  border-color: var(--color-primary);
+}
+
+.findInput::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.matchInfo {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  min-width: 70px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.noMatches {
+  color: var(--color-danger);
+}
+
+.navBtn {
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  transition: background 0.15s, color 0.15s;
+}
+
+.navBtn:hover:not(:disabled) {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.navBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.closeBtn {
+  padding: 2px 6px;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+}
+
+.closeBtn:hover {
+  color: var(--color-text);
+}

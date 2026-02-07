@@ -1,0 +1,108 @@
+.badge {
+  position: relative;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 6px;
+  background: var(--color-card-bg);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.dismissBtn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.badge:hover .dismissBtn {
+  opacity: 1;
+}
+
+.dismissBtn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.badge:hover {
+  background: var(--color-card-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.active {
+  border-color: var(--color-primary);
+  background: rgba(218, 119, 86, 0.04);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.time {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.until {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.title {
+  font-weight: 500;
+  font-size: 13px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.platform {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+  margin-bottom: 4px;
+}
+
+.attendees {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 6px;
+}
+
+.recordBtn {
+  width: 100%;
+  padding: 4px 0;
+  background: var(--color-primary);
+  color: white;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.recordBtn:hover {
+  background: var(--color-primary-hover);
+}

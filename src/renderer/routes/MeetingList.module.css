@@ -1,0 +1,40 @@
+.container {
+  max-width: 800px;
+}
+
+.section {
+  margin-bottom: 24px;
+}
+
+.sectionHeader {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 10px;
+}
+
+.upcomingList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.resultCount {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 16px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.noResults {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 40px 0;
+}
