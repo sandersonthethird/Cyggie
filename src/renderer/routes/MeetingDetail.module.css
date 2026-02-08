@@ -101,6 +101,62 @@
   color: white;
 }
 
+.shareWrapper {
+  position: relative;
+}
+
+.shareBtn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.shareBtn:hover {
+  background: var(--color-primary);
+  color: white;
+}
+
+.shareMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+  overflow: hidden;
+}
+
+.shareMenuItem {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--color-text);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.shareMenuItem:hover {
+  background: var(--color-bg);
+}
+
+.shareMenuItem + .shareMenuItem {
+  border-top: 1px solid var(--color-border);
+}
+
 .meta {
   display: flex;
   gap: 16px;

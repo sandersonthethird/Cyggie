@@ -8,6 +8,7 @@ import FindBar from '../components/common/FindBar'
 import ChatInterface from '../components/chat/ChatInterface'
 import type { Meeting } from '../../shared/types/meeting'
 import type { MeetingTemplate } from '../../shared/types/template'
+import type { DriveShareResponse } from '../../shared/types/drive'
 import styles from './MeetingDetail.module.css'
 
 function formatTime(seconds: number): string {
@@ -65,6 +66,20 @@ export default function MeetingDetail() {
   const prevRecordingRef = useRef(false)
   const transcriptEndRef = useRef<HTMLDivElement>(null)
   const [findOpen, setFindOpen] = useState(false)
+  const [shareMenuOpen, setShareMenuOpen] = useState(false)
+  const shareRef = useRef<HTMLDivElement>(null)
+
+  // Close share menu on click outside
+  useEffect(() => {
+    if (!shareMenuOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (shareRef.current && !shareRef.current.contains(e.target as Node)) {
+        setShareMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [shareMenuOpen])
 
   const loadMeeting = useCallback(async () => {
     if (!id) return
@@ -342,6 +357,42 @@ export default function MeetingDetail() {
     }
   }, [handleSpeakerSave])
 
+  const handleCopyDriveLink = useCallback(async () => {
+    if (!id) return
+    setShareMenuOpen(false)
+    try {
+      const result = await window.api.invoke<DriveShareResponse>(
+        IPC_CHANNELS.DRIVE_GET_SHARE_LINK,
+        id
+      )
+      if (result.success) {
+        await navigator.clipboard.writeText(result.url)
+        alert('Drive link copied to clipboard.')
+      } else {
+        alert(result.message)
+      }
+    } catch (err) {
+      console.error('Failed to get Drive link:', err)
+      alert('Failed to get shareable link.')
+    }
+  }, [id])
+
+  const handleCopyText = useCallback(async () => {
+    setShareMenuOpen(false)
+    const text = activeTab === 'transcript' ? data?.transcript : summaryDraft
+    if (!text) {
+      alert('No content to copy.')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text)
+      alert('Copied to clipboard.')
+    } catch (err) {
+      console.error('Failed to copy text:', err)
+      alert('Failed to copy to clipboard.')
+    }
+  }, [activeTab, data, summaryDraft])
+
   // Only show recording UI if THIS meeting is the one being recorded
   const isThisMeetingRecording = isRecording && recordingMeetingId === id
 
@@ -424,6 +475,24 @@ export default function MeetingDetail() {
                 Continue Recording
               </button>
             )}
+            <div ref={shareRef} className={styles.shareWrapper}>
+              <button
+                className={styles.shareBtn}
+                onClick={() => setShareMenuOpen(!shareMenuOpen)}
+              >
+                Share
+              </button>
+              {shareMenuOpen && (
+                <div className={styles.shareMenu}>
+                  <button className={styles.shareMenuItem} onClick={handleCopyDriveLink}>
+                    Copy Drive link
+                  </button>
+                  <button className={styles.shareMenuItem} onClick={handleCopyText}>
+                    Copy text
+                  </button>
+                </div>
+              )}
+            </div>
             <button className={styles.deleteBtn} onClick={handleDelete}>
               Delete
             </button>
@@ -498,7 +567,7 @@ export default function MeetingDetail() {
         <div className={styles.recordingError}>{recordingError}</div>
       )}
 
-      {isThisMeetingRecording && !audioCapture.hasSystemAudio && (
+      {isThisMeetingRecording && audioCapture.hasSystemAudio === false && (
         <div className={styles.recordingWarning}>
           Mic only — system audio capture is not available. Grant Screen Recording
           permission in System Settings &gt; Privacy &amp; Security to capture meeting audio.

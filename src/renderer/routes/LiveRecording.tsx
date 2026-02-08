@@ -120,7 +120,7 @@ export default function LiveRecording() {
 
       {error && <div className={styles.error}>{error}</div>}
 
-      {isRecording && !hasSystemAudio && (
+      {isRecording && hasSystemAudio === false && (
         <div className={styles.warning}>
           Mic only — system audio capture is not available. Grant Screen Recording
           permission in System Settings &gt; Privacy &amp; Security to capture meeting audio.

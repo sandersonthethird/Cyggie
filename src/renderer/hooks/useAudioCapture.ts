@@ -15,10 +15,10 @@ export function useAudioCapture() {
   const contextRef = useRef<AudioContext | null>(null)
   const processorRef = useRef<ScriptProcessorNode | null>(null)
   const pausedRef = useRef(false)
-  const [hasSystemAudio, setHasSystemAudio] = useState(false)
+  const [hasSystemAudio, setHasSystemAudio] = useState<boolean | null>(null)
 
   const start = useCallback(async () => {
-    setHasSystemAudio(false)
+    setHasSystemAudio(null)
 
     // Always capture mic
     const micStream = await navigator.mediaDevices.getUserMedia({
@@ -91,6 +91,7 @@ export function useAudioCapture() {
             'Check macOS System Settings > Privacy & Security > Screen & System Audio Recording.',
             'Try toggling the Electron permission off and on, then restart the app.'
           )
+          setHasSystemAudio(false)
         } else {
           systemStreamRef.current = displayStream
           systemSource = context.createMediaStreamSource(displayStream)
@@ -106,9 +107,11 @@ export function useAudioCapture() {
         }
       } else {
         console.warn('[AudioCapture] getDisplayMedia returned no audio tracks')
+        setHasSystemAudio(false)
       }
     } catch (err) {
       console.warn('[AudioCapture] System audio unavailable, using mic only:', err)
+      setHasSystemAudio(false)
       // Make sure we disable the handler even on error
       try {
         await window.api.invoke('disable-loopback-audio')
@@ -167,7 +170,7 @@ export function useAudioCapture() {
 
   const stop = useCallback(() => {
     pausedRef.current = false
-    setHasSystemAudio(false)
+    setHasSystemAudio(null)
     if (processorRef.current) {
       processorRef.current.disconnect()
       processorRef.current = null
