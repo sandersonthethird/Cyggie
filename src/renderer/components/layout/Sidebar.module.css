@@ -9,6 +9,15 @@
   overflow-y: auto;
 }
 
+.logo {
+  padding: 8px 12px 4px;
+}
+
+.logoImg {
+  width: 120px;
+  height: auto;
+}
+
 .nav {
   display: flex;
   flex-direction: column;

@@ -1,6 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
-import Header from './Header'
 import SearchBar from '../common/SearchBar'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { Meeting } from '../../../shared/types/meeting'
@@ -37,7 +36,6 @@ export default function Layout() {
       <div className={styles.body}>
         <Sidebar />
         <div className={styles.main}>
-          <Header />
           <div className={styles.content}>
             <Outlet />
           </div>

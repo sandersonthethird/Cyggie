@@ -6,6 +6,7 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import MiniCalendar from './MiniCalendar'
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import type { Meeting } from '../../../shared/types/meeting'
+import logo from '../../assets/logo.png'
 
 export default function Sidebar() {
   const navigate = useNavigate()
@@ -51,6 +52,9 @@ export default function Sidebar() {
 
   return (
     <nav className={styles.sidebar}>
+      <div className={styles.logo}>
+        <img src={logo} alt="GORP" className={styles.logoImg} />
+      </div>
       <div className={styles.nav}>
         <NavLink
           to="/"
