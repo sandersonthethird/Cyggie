@@ -24,7 +24,7 @@ export default function SummaryPanel({
   const speakerEntries = Object.entries(speakerMap)
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">
         {title}
       </h1>
