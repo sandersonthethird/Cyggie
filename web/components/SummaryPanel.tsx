@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import ReactMarkdown from 'react-markdown'
 
 interface SummaryPanelProps {
@@ -25,6 +26,14 @@ export default function SummaryPanel({
 
   return (
     <div className="max-w-2xl mx-auto">
+      <Image
+        src="/logo.png"
+        alt="GORP Meeting Intelligence"
+        width={180}
+        height={98}
+        className="mb-6"
+        priority
+      />
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">
         {title}
       </h1>

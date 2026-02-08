@@ -9,7 +9,7 @@
   height: var(--titlebar-height);
   -webkit-app-region: drag;
   flex-shrink: 0;
-  background: var(--color-header-bg);
+  background: var(--color-sidebar-bg);
   display: flex;
   align-items: center;
   padding-left: var(--sidebar-width);
