@@ -37,7 +37,7 @@ export default function SharePage({
           notes={notes}
         />
       </div>
-      <div className="w-[440px] flex-shrink-0 flex flex-col">
+      <div className="w-[560px] flex-shrink-0 flex flex-col">
         <ChatPanel token={token} meetingTitle={title} />
       </div>
     </div>
