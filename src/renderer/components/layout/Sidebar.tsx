@@ -52,9 +52,6 @@ export default function Sidebar() {
 
   return (
     <nav className={styles.sidebar}>
-      <div className={styles.logo}>
-        <img src={logo} alt="GORP" className={styles.logoImg} />
-      </div>
       <div className={styles.nav}>
         <NavLink
           to="/"
@@ -94,6 +91,9 @@ export default function Sidebar() {
       )}
 
       <div className={styles.bottom}>
+        <div className={styles.logo}>
+          <img src={logo} alt="GORP" className={styles.logoImg} />
+        </div>
         <NavLink
           to="/settings"
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}

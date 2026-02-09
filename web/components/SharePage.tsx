@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import SummaryPanel from './SummaryPanel'
 import ChatPanel from './ChatPanel'
 
@@ -26,6 +27,15 @@ export default function SharePage({
 }: SharePageProps) {
   return (
     <div className="flex h-screen bg-white dark:bg-gray-950">
+      <div className="w-[200px] flex-shrink-0 p-6">
+        <Image
+          src="/logo.png"
+          alt="GORP Meeting Intelligence"
+          width={160}
+          height={87}
+          priority
+        />
+      </div>
       <div className="flex-1 overflow-y-auto border-r border-gray-200 dark:border-gray-800 p-8">
         <SummaryPanel
           title={title}
