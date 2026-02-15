@@ -168,6 +168,18 @@ export class TranscriptAssembler {
     return this.knownSpeakers.size
   }
 
+  /**
+   * Returns the set of speaker IDs that actually appear in the finalized segments.
+   * Use this after post-processing to build an accurate speaker map.
+   */
+  getFinalizedSpeakerIds(): Set<number> {
+    const ids = new Set<number>()
+    for (const seg of this.finalizedSegments) {
+      ids.add(seg.speaker)
+    }
+    return ids
+  }
+
   getFullText(): string {
     return this.finalizedSegments.map((s) => s.text).join(' ')
   }

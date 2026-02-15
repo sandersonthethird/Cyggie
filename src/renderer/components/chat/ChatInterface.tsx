@@ -5,6 +5,7 @@ import styles from './ChatInterface.module.css'
 
 interface ChatInterfaceProps {
   meetingId?: string // If provided, queries single meeting. Otherwise queries all meetings.
+  meetingIds?: string[] // If provided, queries these specific meetings (search results).
   placeholder?: string
   fillHeight?: boolean // If true, container expands to fill available space
 }
@@ -12,9 +13,9 @@ interface ChatInterfaceProps {
 // Stable empty array to avoid infinite re-renders
 const EMPTY_MESSAGES: { role: 'user' | 'assistant'; content: string }[] = []
 
-export default function ChatInterface({ meetingId, placeholder, fillHeight = false }: ChatInterfaceProps) {
-  // Use 'global' as the context key for cross-meeting queries
-  const contextId = meetingId ?? 'global'
+export default function ChatInterface({ meetingId, meetingIds, placeholder, fillHeight = false }: ChatInterfaceProps) {
+  // Use different context keys for different chat modes
+  const contextId = meetingIds ? 'search-results' : (meetingId ?? 'global')
 
   const storedMessages = useChatStore((s) => s.conversations[contextId]?.messages)
   const messages = useMemo(() => storedMessages ?? EMPTY_MESSAGES, [storedMessages])
@@ -70,7 +71,13 @@ export default function ChatInterface({ meetingId, placeholder, fillHeight = fal
 
     try {
       let response: string
-      if (meetingId) {
+      if (meetingIds) {
+        response = await window.api.invoke<string>(
+          IPC_CHANNELS.CHAT_QUERY_SEARCH_RESULTS,
+          meetingIds,
+          question
+        )
+      } else if (meetingId) {
         response = await window.api.invoke<string>(
           IPC_CHANNELS.CHAT_QUERY_MEETING,
           meetingId,
@@ -82,13 +89,21 @@ export default function ChatInterface({ meetingId, placeholder, fillHeight = fal
 
       // Add assistant message to store
       addMessage(contextId, { role: 'assistant', content: response })
+
+      // Persist chat history for meeting-specific chats only
+      if (meetingId) {
+        const allMessages = useChatStore.getState().conversations[contextId]?.messages
+        if (allMessages) {
+          window.api.invoke(IPC_CHANNELS.MEETING_SAVE_CHAT, meetingId, allMessages)
+        }
+      }
     } catch (err) {
       setError(String(err))
     } finally {
       setIsLoading(false)
       setStreamedContent('')
     }
-  }, [input, isLoading, meetingId, contextId, addMessage])
+  }, [input, isLoading, meetingId, meetingIds, contextId, addMessage])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -100,9 +115,11 @@ export default function ChatInterface({ meetingId, placeholder, fillHeight = fal
     [handleSubmit]
   )
 
-  const defaultPlaceholder = meetingId
-    ? 'Ask about this meeting...'
-    : 'Ask about your meetings...'
+  const defaultPlaceholder = meetingIds
+    ? 'Ask about these search results...'
+    : meetingId
+      ? 'Ask about this meeting...'
+      : 'Ask about your meetings...'
 
   const containerClass = fillHeight
     ? `${styles.container} ${styles.fillHeight}`
@@ -142,9 +159,11 @@ export default function ChatInterface({ meetingId, placeholder, fillHeight = fal
 
       {messages.length === 0 && !isLoading && (
         <div className={styles.emptyState}>
-          {meetingId
-            ? 'Ask questions about this meeting\'s transcript and notes.'
-            : 'Ask questions across all your meeting transcripts.'}
+          {meetingIds
+            ? 'Ask questions across the meetings in your search results.'
+            : meetingId
+              ? 'Ask questions about this meeting\'s transcript and notes.'
+              : 'Ask questions across all your meeting transcripts.'}
         </div>
       )}
 

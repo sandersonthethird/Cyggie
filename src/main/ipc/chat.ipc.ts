@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { queryMeeting, queryGlobal } from '../llm/chat'
+import { queryMeeting, queryGlobal, querySearchResults } from '../llm/chat'
 
 export function registerChatHandlers(): void {
   ipcMain.handle(
@@ -19,4 +19,14 @@ export function registerChatHandlers(): void {
     }
     return queryGlobal(question.trim())
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_QUERY_SEARCH_RESULTS,
+    async (_event, meetingIds: string[], question: string) => {
+      if (!meetingIds || meetingIds.length === 0 || !question) {
+        throw new Error('Meeting IDs and question are required')
+      }
+      return querySearchResults(meetingIds, question.trim())
+    }
+  )
 }

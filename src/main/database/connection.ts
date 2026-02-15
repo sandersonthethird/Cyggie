@@ -6,6 +6,9 @@ import { runNotesMigration } from './migrations/003-notes-column'
 import { runTranscriptSegmentsMigration } from './migrations/004-transcript-segments'
 import { runDriveColumnsMigration } from './migrations/005-drive-columns'
 import { runAttendeesMigration } from './migrations/006-attendees-column'
+import { runChatMessagesMigration } from './migrations/007-chat-messages'
+import { runCompaniesMigration } from './migrations/008-companies'
+import { runCompaniesCacheMigration } from './migrations/009-companies-cache'
 
 let db: Database.Database | null = null
 
@@ -20,6 +23,9 @@ export function getDatabase(): Database.Database {
     runTranscriptSegmentsMigration(db)
     runDriveColumnsMigration(db)
     runAttendeesMigration(db)
+    runChatMessagesMigration(db)
+    runCompaniesMigration(db)
+    runCompaniesCacheMigration(db)
   }
   return db
 }

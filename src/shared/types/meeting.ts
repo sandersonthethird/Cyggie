@@ -3,6 +3,11 @@ import type { TranscriptSegment } from './recording'
 
 export type MeetingStatus = 'scheduled' | 'recording' | 'transcribed' | 'summarized' | 'error'
 
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface Meeting {
   id: string
   title: string
@@ -21,6 +26,9 @@ export interface Meeting {
   speakerCount: number
   speakerMap: Record<number, string>
   attendees: string[] | null  // Calendar attendees (names/emails)
+  attendeeEmails: string[] | null
+  companies: string[] | null
+  chatMessages: ChatMessage[] | null
   status: MeetingStatus
   createdAt: string
   updatedAt: string
@@ -48,9 +56,22 @@ export interface SearchResult {
 export interface AdvancedSearchParams {
   query?: string
   speakers?: string[]
+  person?: string
+  company?: string
   dateFrom?: string
   dateTo?: string
   limit?: number
+}
+
+export interface CompanySuggestion {
+  name: string
+  domain: string
+}
+
+export interface CategorizedSuggestions {
+  people: string[]
+  companies: CompanySuggestion[]
+  meetings: { id: string; title: string }[]
 }
 
 export interface AdvancedSearchResult {
@@ -62,4 +83,5 @@ export interface AdvancedSearchResult {
   speakerMap: Record<number, string>
   durationSeconds: number | null
   status: MeetingStatus
+  companies: CompanySuggestion[]
 }

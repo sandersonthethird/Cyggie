@@ -48,6 +48,13 @@ Always cite which meeting the information comes from using the format: "In [Meet
 If the information isn't in any of the provided excerpts, say so.
 Be concise but thorough. Use bullet points when listing multiple items.`
 
+const SEARCH_RESULTS_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about the user's meeting search results.
+You have access to summaries, notes, and transcript excerpts from the meetings the user found via search.
+Answer questions accurately based on the content provided.
+Always cite which meeting the information comes from using the format: "In [Meeting Title] (Date):".
+If the information isn't in any of the provided meetings, say so.
+Be concise but thorough. Use bullet points when listing multiple items.`
+
 export async function queryMeeting(meetingId: string, question: string): Promise<string> {
   const meeting = meetingRepo.getMeeting(meetingId)
   if (!meeting) throw new Error('Meeting not found')
@@ -206,5 +213,87 @@ Please answer based on the meeting excerpts above. Cite the meeting title and da
 
   const provider = getProvider()
   const response = await provider.generateSummary(GLOBAL_SYSTEM_PROMPT, userPrompt, sendProgress)
+  return response
+}
+
+export async function querySearchResults(meetingIds: string[], question: string): Promise<string> {
+  if (meetingIds.length === 0) {
+    return 'No meetings in the search results to query.'
+  }
+
+  const contextParts: string[] = []
+
+  // Process up to 10 meetings (already ordered by search relevance)
+  for (const id of meetingIds.slice(0, 10)) {
+    const meeting = meetingRepo.getMeeting(id)
+    if (!meeting) continue
+
+    const parts: string[] = []
+    parts.push(`### "${meeting.title}" (${new Date(meeting.date).toLocaleDateString()})`)
+
+    if (meeting.speakerMap && Object.keys(meeting.speakerMap).length > 0) {
+      parts.push(`Participants: ${Object.values(meeting.speakerMap).join(', ')}`)
+    }
+    parts.push('')
+
+    // Prefer summary (concise, high-signal) over full transcript
+    if (meeting.summaryPath) {
+      const summary = readSummary(meeting.summaryPath)
+      if (summary) {
+        parts.push('**Summary:**')
+        parts.push(summary)
+        parts.push('')
+      }
+    }
+
+    // Include notes if present
+    if (meeting.notes) {
+      parts.push('**Notes:**')
+      parts.push(meeting.notes)
+      parts.push('')
+    }
+
+    // Include transcript excerpt if no summary, or a shorter one if summary exists
+    if (meeting.transcriptPath) {
+      const transcript = readTranscript(meeting.transcriptPath)
+      if (transcript) {
+        const excerptLength = meeting.summaryPath ? 1500 : 3000
+        let excerpt = transcript
+
+        if (transcript.length > excerptLength) {
+          excerpt = transcript.substring(0, excerptLength) + '...'
+        }
+
+        parts.push('**Transcript excerpt:**')
+        parts.push(excerpt)
+        parts.push('')
+      }
+    }
+
+    if (parts.length > 2) {
+      contextParts.push(parts.join('\n'))
+      contextParts.push('---')
+      contextParts.push('')
+    }
+  }
+
+  if (contextParts.length === 0) {
+    return 'I couldn\'t load any data from the search result meetings. Please check that transcripts exist.'
+  }
+
+  const context = contextParts.join('\n')
+
+  const userPrompt = `Here are the meetings from the user's search results:
+
+${context}
+
+---
+
+User question: ${question}
+
+Please answer based on the meeting content above. Cite the meeting title and date when referencing specific information.`
+
+  const provider = getProvider()
+  const response = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress)
   return response
 }

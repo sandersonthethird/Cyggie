@@ -6,7 +6,9 @@ import { readTranscript, readSummary, updateTranscriptContent, updateSummaryCont
 import { removeFromIndex } from '../database/repositories/search.repo'
 import { getStoragePath, setStoragePath } from '../storage/paths'
 import { renameFile as renameDriveFile } from '../drive/google-drive'
-import type { MeetingListFilter } from '../../shared/types/meeting'
+import { extractCompaniesFromEmails, extractCompaniesFromAttendees } from '../utils/company-extractor'
+import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
+import type { ChatMessage, MeetingListFilter } from '../../shared/types/meeting'
 
 export function registerMeetingHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.MEETING_LIST, (_event, filter?: MeetingListFilter) => {
@@ -167,6 +169,13 @@ export function registerMeetingHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.MEETING_SAVE_CHAT,
+    (_event, id: string, messages: ChatMessage[]) => {
+      meetingRepo.updateMeeting(id, { chatMessages: messages })
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.MEETING_CREATE, () => {
     return meetingRepo.createMeeting({
       title: `Note ${new Date().toLocaleDateString()}`,
@@ -177,21 +186,63 @@ export function registerMeetingHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.MEETING_PREPARE,
-    (_event, calendarEventId: string, title: string, date: string, platform?: string, meetingUrl?: string, attendees?: string[]) => {
+    (_event, calendarEventId: string, title: string, date: string, platform?: string, meetingUrl?: string, attendees?: string[], attendeeEmails?: string[]) => {
       // Check if a meeting already exists for this calendar event
       const existing = meetingRepo.findMeetingByCalendarEventId(calendarEventId)
       if (existing) return existing
 
+      // Use heuristic names for immediate response
+      const companies = attendeeEmails && attendeeEmails.length > 0
+        ? extractCompaniesFromEmails(attendeeEmails)
+        : extractCompaniesFromAttendees(attendees || [])
+
       // Create a new meeting with 'scheduled' status
-      return meetingRepo.createMeeting({
+      const meeting = meetingRepo.createMeeting({
         title,
         date,
         calendarEventId,
         meetingPlatform: (platform as import('../../shared/constants/meeting-apps').MeetingPlatform) || null,
         meetingUrl: meetingUrl || null,
         attendees: attendees || null,
+        attendeeEmails: attendeeEmails || null,
+        companies: companies.length > 0 ? companies : null,
         status: 'scheduled'
       })
+
+      // Fire off async enrichment to resolve true company names
+      const emails = attendeeEmails || (attendees || []).filter((a) => a.includes('@'))
+      if (emails.length > 0) {
+        enrichCompaniesForMeeting(meeting.id, emails).catch((err) =>
+          console.error('[Company Enrichment] Failed:', err)
+        )
+      }
+
+      return meeting
+    }
+  )
+
+  // Company enrichment: trigger enrichment for a specific meeting
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_ENRICH_MEETING,
+    async (_event, meetingId: string) => {
+      const meeting = meetingRepo.getMeeting(meetingId)
+      if (!meeting) return { success: false, error: 'not_found', message: 'Meeting not found' }
+
+      const emails = meeting.attendeeEmails || (meeting.attendees || []).filter((a) => a.includes('@'))
+      if (emails.length === 0) return { success: true }
+
+      await enrichCompaniesForMeeting(meetingId, emails)
+      return { success: true }
+    }
+  )
+
+  // Company suggestions: get CompanySuggestion[] for a meeting
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_GET_SUGGESTIONS,
+    (_event, meetingId: string) => {
+      const meeting = meetingRepo.getMeeting(meetingId)
+      if (!meeting) return []
+      return getCompanySuggestionsForMeeting(meeting.attendeeEmails, meeting.companies)
     }
   )
 

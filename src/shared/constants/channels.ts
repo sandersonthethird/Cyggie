@@ -30,6 +30,11 @@ export const IPC_CHANNELS = {
   SEARCH_ADVANCED: 'search:advanced',
   SEARCH_ALL_SPEAKERS: 'search:all-speakers',
   SEARCH_SUGGEST: 'search:suggest',
+  SEARCH_CATEGORIZED: 'search:categorized',
+
+  // Company enrichment
+  COMPANY_ENRICH_MEETING: 'company:enrich-meeting',
+  COMPANY_GET_SUGGESTIONS: 'company:get-suggestions',
 
   // Speaker rename
   MEETING_RENAME_SPEAKERS: 'meeting:rename-speakers',
@@ -56,8 +61,10 @@ export const IPC_CHANNELS = {
   SUMMARY_PROGRESS: 'summary:progress',
 
   // AI Chat
+  MEETING_SAVE_CHAT: 'meeting:save-chat',
   CHAT_QUERY_MEETING: 'chat:query-meeting',
   CHAT_QUERY_GLOBAL: 'chat:query-global',
+  CHAT_QUERY_SEARCH_RESULTS: 'chat:query-search-results',
   CHAT_PROGRESS: 'chat:progress',
 
   // Settings

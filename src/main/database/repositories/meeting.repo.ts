@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../connection'
 import type { MeetingRow } from '../schema'
-import type { Meeting, MeetingListFilter, MeetingStatus } from '../../../shared/types/meeting'
+import type { ChatMessage, Meeting, MeetingListFilter, MeetingStatus } from '../../../shared/types/meeting'
 import type { MeetingPlatform } from '../../../shared/constants/meeting-apps'
 import type { TranscriptSegment } from '../../../shared/types/recording'
 
@@ -24,6 +24,9 @@ function rowToMeeting(row: MeetingRow): Meeting {
     speakerCount: row.speaker_count,
     speakerMap: JSON.parse(row.speaker_map || '{}'),
     attendees: row.attendees ? JSON.parse(row.attendees) : null,
+    attendeeEmails: row.attendee_emails ? JSON.parse(row.attendee_emails) : null,
+    companies: row.companies ? JSON.parse(row.companies) : null,
+    chatMessages: row.chat_messages ? JSON.parse(row.chat_messages) : null,
     status: row.status as MeetingStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -37,14 +40,16 @@ export function createMeeting(data: {
   meetingUrl?: string | null
   calendarEventId?: string | null
   attendees?: string[] | null
+  attendeeEmails?: string[] | null
+  companies?: string[] | null
   status?: MeetingStatus
 }): Meeting {
   const db = getDatabase()
   const id = uuidv4()
 
   db.prepare(
-    `INSERT INTO meetings (id, title, date, meeting_platform, meeting_url, calendar_event_id, attendees, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO meetings (id, title, date, meeting_platform, meeting_url, calendar_event_id, attendees, attendee_emails, companies, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     data.title,
@@ -53,6 +58,8 @@ export function createMeeting(data: {
     data.meetingUrl ?? null,
     data.calendarEventId ?? null,
     data.attendees ? JSON.stringify(data.attendees) : null,
+    data.attendeeEmails ? JSON.stringify(data.attendeeEmails) : null,
+    data.companies ? JSON.stringify(data.companies) : null,
     data.status ?? 'recording'
   )
 
@@ -119,6 +126,9 @@ export function updateMeeting(
     speakerCount: number
     speakerMap: Record<number, string>
     attendees: string[] | null
+    attendeeEmails: string[] | null
+    companies: string[] | null
+    chatMessages: ChatMessage[] | null
     status: MeetingStatus
   }>
 ): Meeting | null {
@@ -173,6 +183,18 @@ export function updateMeeting(
   if (data.attendees !== undefined) {
     sets.push('attendees = ?')
     params.push(data.attendees ? JSON.stringify(data.attendees) : null)
+  }
+  if (data.attendeeEmails !== undefined) {
+    sets.push('attendee_emails = ?')
+    params.push(data.attendeeEmails ? JSON.stringify(data.attendeeEmails) : null)
+  }
+  if (data.companies !== undefined) {
+    sets.push('companies = ?')
+    params.push(data.companies ? JSON.stringify(data.companies) : null)
+  }
+  if (data.chatMessages !== undefined) {
+    sets.push('chat_messages = ?')
+    params.push(data.chatMessages ? JSON.stringify(data.chatMessages) : null)
   }
   if (data.status !== undefined) {
     sets.push('status = ?')

@@ -12,6 +12,7 @@ import {
   getCurrentMeetingEvent
 } from '../calendar/google-calendar'
 import { startMeetingNotifier, stopMeetingNotifier } from '../calendar/meeting-notifier'
+import { enrichDomainsFromCalendarEvents } from '../services/company-enrichment'
 
 let pollingInterval: ReturnType<typeof setInterval> | null = null
 
@@ -36,7 +37,11 @@ export function registerCalendarHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.CALENDAR_EVENTS, async () => {
-    return getUpcomingEvents(720)
+    const events = await getUpcomingEvents(720)
+    enrichDomainsFromCalendarEvents(events).catch((err) =>
+      console.error('[Company Enrichment] Calendar events enrichment failed:', err)
+    )
+    return events
   })
 
   ipcMain.handle(
@@ -47,7 +52,11 @@ export function registerCalendarHandlers(): void {
   )
 
   ipcMain.handle(IPC_CHANNELS.CALENDAR_SYNC, async () => {
-    return getUpcomingEvents(720)
+    const events = await getUpcomingEvents(720)
+    enrichDomainsFromCalendarEvents(events).catch((err) =>
+      console.error('[Company Enrichment] Calendar sync enrichment failed:', err)
+    )
+    return events
   })
 
   ipcMain.handle(IPC_CHANNELS.CALENDAR_REAUTHORIZE, async () => {

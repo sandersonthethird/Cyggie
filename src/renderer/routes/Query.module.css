@@ -1,38 +1,6 @@
 .container {
 }
 
-.modeToggle {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 20px;
-  padding: 4px;
-  background: var(--color-bg-secondary);
-  border-radius: var(--radius-md);
-  width: fit-content;
-}
-
-.modeBtn {
-  padding: 8px 20px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.modeBtn:hover:not(.modeBtnActive) {
-  color: var(--color-text);
-}
-
-.modeBtnActive {
-  background: var(--color-card-bg);
-  color: var(--color-text);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
 .searchBox {
   position: relative;
   margin-bottom: 16px;
@@ -74,11 +42,28 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  list-style: none;
   padding: 4px 0;
   z-index: 10;
-  max-height: 240px;
+  max-height: 360px;
   overflow-y: auto;
+}
+
+.suggestionSection {
+  padding: 0;
+}
+
+.suggestionSection + .suggestionSection {
+  border-top: 1px solid var(--color-border);
+}
+
+.sectionHeader {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary);
+  padding: 8px 14px 4px;
+  pointer-events: none;
 }
 
 .suggestionItem {
@@ -283,4 +268,48 @@
 .clearBtn:hover {
   color: var(--color-text);
   border-color: var(--color-text-secondary);
+}
+
+.companySuggestion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.companyLogo {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.resultCompanies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.companyTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+  border-radius: 10px;
+}
+
+.companyTagLogo {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+.chatSection {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
 }

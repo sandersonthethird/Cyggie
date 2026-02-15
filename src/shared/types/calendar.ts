@@ -7,6 +7,7 @@ export interface CalendarEvent {
   endTime: string
   selfName: string | null
   attendees: string[]
+  attendeeEmails: string[]
   meetingUrl: string | null
   platform: MeetingPlatform | null
   description: string | null

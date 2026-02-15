@@ -18,6 +18,9 @@ export interface MeetingRow {
   speaker_count: number
   speaker_map: string
   attendees: string | null
+  attendee_emails: string | null
+  companies: string | null
+  chat_messages: string | null
   status: string
   created_at: string
   updated_at: string

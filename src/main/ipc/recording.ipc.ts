@@ -15,6 +15,7 @@ import { uploadTranscript } from '../drive/google-drive'
 import { getTranscriptsDir } from '../storage/paths'
 import { join } from 'path'
 import { RecordingAutoStop } from '../recording/auto-stop'
+import { extractCompaniesFromEmails } from '../utils/company-extractor'
 import type { TranscriptResult } from '../deepgram/types'
 import type { TranscriptSegment } from '../../shared/types/recording'
 
@@ -27,6 +28,7 @@ let recordingStartTime: number | null = null
 let isPaused = false
 let calendarSelfName: string | null = null
 let calendarAttendees: string[] = []
+let calendarAttendeeEmails: string[] = []
 let calendarEndTime: string | null = null
 
 function getMainWindow(): BrowserWindow | null {
@@ -97,6 +99,7 @@ export function registerRecordingHandlers(): void {
             meetingUrl = calEvent.meetingUrl
             calendarSelfName = calEvent.selfName
             calendarAttendees = calEvent.attendees
+            calendarAttendeeEmails = calEvent.attendeeEmails
             calendarEndTime = calEvent.endTime
           }
         } catch {
@@ -138,6 +141,10 @@ export function registerRecordingHandlers(): void {
         if (calendarAttendees.length > 0) {
           updates.attendees = calendarAttendees
         }
+        if (calendarAttendeeEmails.length > 0) {
+          updates.attendeeEmails = calendarAttendeeEmails
+          updates.companies = extractCompaniesFromEmails(calendarAttendeeEmails)
+        }
         meetingRepo.updateMeeting(meeting.id, updates)
       } else {
         meeting = meetingRepo.createMeeting({
@@ -146,7 +153,9 @@ export function registerRecordingHandlers(): void {
           calendarEventId,
           meetingPlatform: meetingPlatform as import('../../shared/constants/meeting-apps').MeetingPlatform | null,
           meetingUrl,
-          attendees: calendarAttendees.length > 0 ? calendarAttendees : null
+          attendees: calendarAttendees.length > 0 ? calendarAttendees : null,
+          attendeeEmails: calendarAttendeeEmails.length > 0 ? calendarAttendeeEmails : null,
+          companies: calendarAttendeeEmails.length > 0 ? extractCompaniesFromEmails(calendarAttendeeEmails) : null
         })
       }
 
@@ -318,11 +327,11 @@ export function registerRecordingHandlers(): void {
         transcriptAssembler.consolidateSpeakers(expectedSpeakers)
       }
 
-      const speakerCount = transcriptAssembler.getSpeakerCount()
+      // Build speaker labels only for speakers that actually appear in the
+      // finalized transcript (post-processing may have eliminated some).
+      const actualSpeakerIds = transcriptAssembler.getFinalizedSpeakerIds()
+      const speakerCount = actualSpeakerIds.size
 
-      // Build speaker labels from calendar attendees when available.
-      // Speaker 0 is typically the local user (mic input), remaining
-      // speakers are mapped to calendar attendees in order.
       const allNames: string[] = []
       if (calendarSelfName || calendarAttendees.length > 0) {
         allNames.push(calendarSelfName || 'You')
@@ -330,8 +339,8 @@ export function registerRecordingHandlers(): void {
       }
 
       const speakerMap: Record<number, string> = {}
-      for (let i = 0; i < speakerCount; i++) {
-        speakerMap[i] = allNames[i] || `Speaker ${i + 1}`
+      for (const id of actualSpeakerIds) {
+        speakerMap[id] = allNames[id] || `Speaker ${id + 1}`
       }
 
       const transcriptMd = transcriptAssembler.toMarkdown(speakerMap)
@@ -378,6 +387,7 @@ export function registerRecordingHandlers(): void {
     isPaused = false
     calendarSelfName = null
     calendarAttendees = []
+    calendarAttendeeEmails = []
     calendarEndTime = null
 
     // Update tray

@@ -1,5 +1,7 @@
 import { getDatabase } from '../connection'
-import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult } from '../../../shared/types/meeting'
+import { extractCompanyFromEmail, extractDomainFromEmail } from '../../utils/company-extractor'
+import * as companyRepo from './company.repo'
+import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult, CategorizedSuggestions, CompanySuggestion } from '../../../shared/types/meeting'
 
 export function indexMeeting(
   meetingId: string,
@@ -162,13 +164,113 @@ interface MeetingRow {
   title: string
   date: string
   speaker_map: string
+  attendees: string | null
+  attendee_emails: string | null
+  companies: string | null
   duration_seconds: number | null
   status: string
+}
+
+function companySuggestionsFromRow(row: MeetingRow): CompanySuggestion[] {
+  const results: CompanySuggestion[] = []
+  const seenDomains = new Set<string>()
+
+  // Derive from attendee_emails (preferred — gives us domains)
+  if (row.attendee_emails) {
+    try {
+      const emails: string[] = JSON.parse(row.attendee_emails)
+      for (const email of emails) {
+        const domain = extractDomainFromEmail(email)
+        if (domain && !seenDomains.has(domain)) {
+          seenDomains.add(domain)
+          const cached = companyRepo.getByDomain(domain)
+          const name = cached?.displayName || extractCompanyFromEmail(email) || domain
+          results.push({ name, domain })
+        }
+      }
+    } catch { /* skip */ }
+  }
+
+  // Fallback: companies column names without domains
+  if (results.length === 0 && row.companies) {
+    try {
+      const names: string[] = JSON.parse(row.companies)
+      for (const name of names) {
+        results.push({ name, domain: '' })
+      }
+    } catch { /* skip */ }
+  }
+
+  return results
 }
 
 export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResult[] {
   const db = getDatabase()
   const limit = params.limit || 50
+
+  // Person filter: find meetings where this person is a speaker or attendee
+  if (params.person) {
+    const personLower = params.person.toLowerCase()
+    const rows = db
+      .prepare(
+        `SELECT id, title, date, speaker_map, attendees, attendee_emails, companies, duration_seconds, status
+         FROM meetings
+         WHERE speaker_map LIKE ? OR attendees LIKE ?
+         ORDER BY date DESC LIMIT ?`
+      )
+      .all(`%${params.person}%`, `%${params.person}%`, limit) as MeetingRow[]
+
+    return rows
+      .filter((m) => {
+        const map: Record<string, string> = JSON.parse(m.speaker_map || '{}')
+        const attendees: string[] = m.attendees ? JSON.parse(m.attendees) : []
+        return (
+          Object.values(map).some((n) => n.toLowerCase() === personLower) ||
+          attendees.some((a) => a.toLowerCase() === personLower)
+        )
+      })
+      .map((m) => ({
+        meetingId: m.id,
+        title: m.title,
+        date: m.date,
+        snippet: '',
+        rank: 0,
+        speakerMap: JSON.parse(m.speaker_map || '{}'),
+        durationSeconds: m.duration_seconds,
+        status: m.status as AdvancedSearchResult['status'],
+        companies: companySuggestionsFromRow(m)
+      }))
+  }
+
+  // Company filter: find meetings tagged with this company
+  if (params.company) {
+    const companyLower = params.company.toLowerCase()
+    const rows = db
+      .prepare(
+        `SELECT id, title, date, speaker_map, attendees, attendee_emails, companies, duration_seconds, status
+         FROM meetings
+         WHERE companies LIKE ?
+         ORDER BY date DESC LIMIT ?`
+      )
+      .all(`%${params.company}%`, limit) as MeetingRow[]
+
+    return rows
+      .filter((m) => {
+        const companies: string[] = m.companies ? JSON.parse(m.companies) : []
+        return companies.some((c) => c.toLowerCase() === companyLower)
+      })
+      .map((m) => ({
+        meetingId: m.id,
+        title: m.title,
+        date: m.date,
+        snippet: '',
+        rank: 0,
+        speakerMap: JSON.parse(m.speaker_map || '{}'),
+        durationSeconds: m.duration_seconds,
+        status: m.status as AdvancedSearchResult['status'],
+        companies: companySuggestionsFromRow(m)
+      }))
+  }
 
   // If text query provided, search FTS index + title matches
   if (params.query && params.query.trim()) {
@@ -194,7 +296,7 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
         const placeholders = ftsRows.map(() => '?').join(',')
         const ids = ftsRows.map((r) => r.meeting_id)
 
-        const sqlParts = [`SELECT id, title, date, speaker_map, duration_seconds, status FROM meetings WHERE id IN (${placeholders})`]
+        const sqlParts = [`SELECT id, title, date, speaker_map, attendee_emails, companies, duration_seconds, status FROM meetings WHERE id IN (${placeholders})`]
         const sqlParams: unknown[] = [...ids]
 
         if (params.dateFrom) {
@@ -224,7 +326,8 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
             rank: fts.rank,
             speakerMap: JSON.parse(m.speaker_map || '{}'),
             durationSeconds: m.duration_seconds,
-            status: m.status as AdvancedSearchResult['status']
+            status: m.status as AdvancedSearchResult['status'],
+            companies: companySuggestionsFromRow(m)
           })
         }
       }
@@ -233,7 +336,7 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
     }
 
     // 2. Title search (catches meetings not in FTS index)
-    const titleSqlParts = ['SELECT id, title, date, speaker_map, duration_seconds, status FROM meetings WHERE title LIKE ?']
+    const titleSqlParts = ['SELECT id, title, date, speaker_map, attendee_emails, companies, duration_seconds, status FROM meetings WHERE title LIKE ?']
     const titleSqlParams: unknown[] = [`%${params.query}%`]
 
     if (params.dateFrom) {
@@ -262,12 +365,13 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
         rank: 0,
         speakerMap: JSON.parse(m.speaker_map || '{}'),
         durationSeconds: m.duration_seconds,
-        status: m.status as AdvancedSearchResult['status']
+        status: m.status as AdvancedSearchResult['status'],
+        companies: companySuggestionsFromRow(m)
       })
     }
 
     // 3. Speaker name search (speaker_map is JSON, search in app code)
-    const speakerSqlParts = ['SELECT id, title, date, speaker_map, duration_seconds, status FROM meetings WHERE speaker_map LIKE ?']
+    const speakerSqlParts = ['SELECT id, title, date, speaker_map, attendee_emails, companies, duration_seconds, status FROM meetings WHERE speaker_map LIKE ?']
     const speakerSqlParams: unknown[] = [`%${params.query}%`]
 
     if (params.dateFrom) {
@@ -302,7 +406,8 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
         rank: 0,
         speakerMap: map as Record<number, string>,
         durationSeconds: m.duration_seconds,
-        status: m.status as AdvancedSearchResult['status']
+        status: m.status as AdvancedSearchResult['status'],
+        companies: companySuggestionsFromRow(m)
       })
     }
 
@@ -319,7 +424,7 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
   }
 
   // No text query — filter meetings table directly
-  const sqlParts = ['SELECT id, title, date, speaker_map, duration_seconds, status FROM meetings WHERE 1=1']
+  const sqlParts = ['SELECT id, title, date, speaker_map, attendee_emails, companies, duration_seconds, status FROM meetings WHERE 1=1']
   const sqlParams: unknown[] = []
 
   if (params.dateFrom) {
@@ -348,7 +453,8 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
       rank: 0,
       speakerMap,
       durationSeconds: m.duration_seconds,
-      status: m.status as AdvancedSearchResult['status']
+      status: m.status as AdvancedSearchResult['status'],
+      companies: companySuggestionsFromRow(m)
     }
   })
 
@@ -361,4 +467,152 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
   }
 
   return results
+}
+
+export function getCategorizedSuggestions(prefix: string, limit = 5): CategorizedSuggestions {
+  const db = getDatabase()
+  const lower = prefix.toLowerCase()
+
+  // 1. People: from speaker_map values + attendees (non-email entries)
+  //    Also cross-reference matched people with their companies
+  const peopleRows = db
+    .prepare("SELECT speaker_map, attendees, attendee_emails, companies FROM meetings WHERE speaker_map != '{}' OR attendees IS NOT NULL")
+    .all() as { speaker_map: string; attendees: string | null; attendee_emails: string | null; companies: string | null }[]
+
+  const people = new Set<string>()
+  // Track companies as domain → displayName map
+  const companyMap = new Map<string, string>()
+
+  for (const row of peopleRows) {
+    const matchedNames: string[] = []
+
+    if (row.speaker_map && row.speaker_map !== '{}') {
+      try {
+        const map: Record<string, string> = JSON.parse(row.speaker_map)
+        for (const name of Object.values(map)) {
+          if (name && !/^Speaker \d+$/.test(name) && name.toLowerCase().includes(lower)) {
+            people.add(name)
+            matchedNames.push(name)
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    if (row.attendees) {
+      try {
+        const attendees: string[] = JSON.parse(row.attendees)
+        for (const name of attendees) {
+          if (name && !name.includes('@') && name.toLowerCase().includes(lower)) {
+            people.add(name)
+            matchedNames.push(name)
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    // Cross-reference: surface companies associated with matched people
+    if (matchedNames.length > 0) {
+      let foundViaEmail = false
+
+      // Try attendee_emails first (precise: match name parts to email local part)
+      if (row.attendee_emails) {
+        try {
+          const emails: string[] = JSON.parse(row.attendee_emails)
+          for (const name of matchedNames) {
+            const nameParts = name.toLowerCase().split(/\s+/)
+            for (const email of emails) {
+              const localPart = email.split('@')[0]?.toLowerCase() || ''
+              if (nameParts.some((part) => part.length >= 2 && localPart.includes(part))) {
+                const domain = extractDomainFromEmail(email)
+                if (domain && !companyMap.has(domain)) {
+                  const cached = companyRepo.getByDomain(domain)
+                  const displayName = cached?.displayName || extractCompanyFromEmail(email) || domain
+                  companyMap.set(domain, displayName)
+                  foundViaEmail = true
+                }
+              }
+            }
+          }
+        } catch { /* skip */ }
+      }
+
+      // Also check attendees entries that ARE emails (old meetings stored email as name)
+      if (!foundViaEmail && row.attendees) {
+        try {
+          const attendees: string[] = JSON.parse(row.attendees)
+          for (const name of matchedNames) {
+            const nameParts = name.toLowerCase().split(/\s+/)
+            for (const entry of attendees) {
+              if (entry.includes('@')) {
+                const localPart = entry.split('@')[0]?.toLowerCase() || ''
+                if (nameParts.some((part) => part.length >= 2 && localPart.includes(part))) {
+                  const domain = extractDomainFromEmail(entry)
+                  if (domain && !companyMap.has(domain)) {
+                    const cached = companyRepo.getByDomain(domain)
+                    const displayName = cached?.displayName || extractCompanyFromEmail(entry) || domain
+                    companyMap.set(domain, displayName)
+                    foundViaEmail = true
+                  }
+                }
+              }
+            }
+          }
+        } catch { /* skip */ }
+      }
+
+      // Fallback: include companies from the meeting's companies column (without domain)
+      if (!foundViaEmail && row.companies) {
+        try {
+          const comps: string[] = JSON.parse(row.companies)
+          for (const c of comps) {
+            if (!companyMap.has(c)) companyMap.set(c, c)
+          }
+        } catch { /* skip */ }
+      }
+    }
+  }
+
+  // 2. Companies: direct prefix matches from the companies cache table
+  const cachedCompanyRows = db
+    .prepare('SELECT domain, display_name FROM companies WHERE display_name LIKE ? LIMIT ?')
+    .all(`%${prefix}%`, limit) as { domain: string; display_name: string }[]
+
+  for (const row of cachedCompanyRows) {
+    if (!companyMap.has(row.domain)) {
+      companyMap.set(row.domain, row.display_name)
+    }
+  }
+
+  // Also check companies column in meetings for names not yet in cache
+  const meetingCompanyRows = db
+    .prepare('SELECT companies FROM meetings WHERE companies IS NOT NULL')
+    .all() as { companies: string }[]
+
+  for (const row of meetingCompanyRows) {
+    try {
+      const comps: string[] = JSON.parse(row.companies)
+      for (const c of comps) {
+        if (c.toLowerCase().includes(lower) && !companyMap.has(c)) {
+          companyMap.set(c, c)
+        }
+      }
+    } catch { /* skip */ }
+  }
+
+  // 3. Meetings: title match
+  const meetingRows = db
+    .prepare('SELECT id, title FROM meetings WHERE title LIKE ? ORDER BY date DESC LIMIT ?')
+    .all(`%${prefix}%`, limit) as { id: string; title: string }[]
+
+  // Convert companyMap to CompanySuggestion[]
+  const companySuggestions: CompanySuggestion[] = [...companyMap.entries()]
+    .map(([domain, name]) => ({ name, domain }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, limit)
+
+  return {
+    people: [...people].sort().slice(0, limit),
+    companies: companySuggestions,
+    meetings: meetingRows
+  }
 }

@@ -118,7 +118,8 @@ export default function MeetingList() {
         event.startTime,
         event.platform || undefined,
         event.meetingUrl || undefined,
-        event.attendees
+        event.attendees,
+        event.attendeeEmails
       )
       navigate(`/meeting/${meeting.id}`)
     } catch (err) {

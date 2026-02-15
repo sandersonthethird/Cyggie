@@ -1,24 +1,10 @@
 import { readFileSync, writeFileSync, unlinkSync, renameSync, existsSync } from 'fs'
 import { join } from 'path'
 import { getTranscriptsDir, getSummariesDir } from './paths'
+import { extractCompanyFromEmail } from '../utils/company-extractor'
 
 // Domain to exclude from filenames (user's own domain)
 const EXCLUDED_DOMAIN = 'redswanventures.com'
-
-/**
- * Extract company name from email domain
- */
-function extractCompanyFromEmail(email: string): string | null {
-  const match = email.match(/@([^.]+)\./i)
-  if (!match) return null
-  const domain = match[1].toLowerCase()
-  // Skip common email providers
-  if (['gmail', 'yahoo', 'hotmail', 'outlook', 'icloud', 'aol', 'protonmail', 'me'].includes(domain)) {
-    return null
-  }
-  // Capitalize first letter
-  return domain.charAt(0).toUpperCase() + domain.slice(1)
-}
 
 /**
  * Extract person's first name from display name or email

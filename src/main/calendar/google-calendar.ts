@@ -17,9 +17,12 @@ function mapGoogleEvents(items: any[]): CalendarEvent[] {
     const selfAttendee = (item.attendees || []).find((a: { self?: boolean }) => a.self)
     const selfName = selfAttendee?.displayName || selfAttendee?.email || null
 
-    const attendees = (item.attendees || [])
-      .filter((a: { self?: boolean }) => !a.self)
+    const nonSelfAttendees = (item.attendees || []).filter((a: { self?: boolean }) => !a.self)
+    const attendees = nonSelfAttendees
       .map((a: { displayName?: string; email?: string }) => a.displayName || a.email || 'Unknown')
+    const attendeeEmails = nonSelfAttendees
+      .map((a: { email?: string }) => a.email || '')
+      .filter(Boolean)
 
     return {
       id: item.id || '',
@@ -28,6 +31,7 @@ function mapGoogleEvents(items: any[]): CalendarEvent[] {
       endTime: item.end?.dateTime || item.end?.date || '',
       selfName,
       attendees,
+      attendeeEmails,
       meetingUrl: detected?.url || null,
       platform: detected?.platform || null,
       description: item.description || null

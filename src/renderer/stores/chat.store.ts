@@ -1,9 +1,5 @@
 import { create } from 'zustand'
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-}
+import type { ChatMessage } from '../../shared/types/meeting'
 
 interface ChatConversation {
   messages: ChatMessage[]

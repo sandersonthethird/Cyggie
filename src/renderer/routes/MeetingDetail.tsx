@@ -6,7 +6,8 @@ import { useSharedAudioCapture } from '../contexts/AudioCaptureContext'
 import { useFindInPage } from '../hooks/useFindInPage'
 import FindBar from '../components/common/FindBar'
 import ChatInterface from '../components/chat/ChatInterface'
-import type { Meeting } from '../../shared/types/meeting'
+import { useChatStore } from '../stores/chat.store'
+import type { Meeting, CompanySuggestion } from '../../shared/types/meeting'
 import type { MeetingTemplate } from '../../shared/types/template'
 import type { DriveShareResponse } from '../../shared/types/drive'
 import type { WebShareResponse } from '../../shared/types/web-share'
@@ -75,6 +76,7 @@ export default function MeetingDetail() {
   const [shareMenuOpen, setShareMenuOpen] = useState(false)
   const shareRef = useRef<HTMLDivElement>(null)
   const [showNotes, setShowNotes] = useState(true)
+  const [companySuggestions, setCompanySuggestions] = useState<CompanySuggestion[]>([])
 
   // Close share menu on click outside
   useEffect(() => {
@@ -102,6 +104,19 @@ export default function MeetingDetail() {
     setSummaryDraft(result.summary || '')
     summaryDraftRef.current = result.summary || ''
     if (result.summary) setShowNotes(false)
+
+    // Fetch company suggestions (with logos)
+    window.api.invoke<CompanySuggestion[]>(IPC_CHANNELS.COMPANY_GET_SUGGESTIONS, id).then(setCompanySuggestions).catch(() => {})
+
+    // Hydrate chat store from persisted messages (only if store is empty for this meeting)
+    if (result.meeting.chatMessages && result.meeting.chatMessages.length > 0) {
+      const existing = useChatStore.getState().conversations[id]
+      if (!existing || existing.messages.length === 0) {
+        for (const msg of result.meeting.chatMessages) {
+          useChatStore.getState().addMessage(id, msg)
+        }
+      }
+    }
   }, [id, navigate])
 
   useEffect(() => {
@@ -580,6 +595,23 @@ export default function MeetingDetail() {
                   </button>
                 )
               })}
+            </div>
+          )}
+          {companySuggestions.length > 0 && (
+            <div className={styles.companies}>
+              {companySuggestions.map((c) => (
+                <span key={c.domain || c.name} className={styles.companyChip}>
+                  {c.domain && (
+                    <img
+                      src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.domain)}&sz=32`}
+                      alt=""
+                      className={styles.companyChipLogo}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                    />
+                  )}
+                  {c.name}
+                </span>
+              ))}
             </div>
           )}
         </div>
