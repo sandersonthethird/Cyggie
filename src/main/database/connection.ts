@@ -9,6 +9,8 @@ import { runAttendeesMigration } from './migrations/006-attendees-column'
 import { runChatMessagesMigration } from './migrations/007-chat-messages'
 import { runCompaniesMigration } from './migrations/008-companies'
 import { runCompaniesCacheMigration } from './migrations/009-companies-cache'
+import { runClearCompanyCacheMigration } from './migrations/010-clear-company-cache'
+import { runRecordingPathMigration } from './migrations/011-recording-path'
 
 let db: Database.Database | null = null
 
@@ -26,6 +28,8 @@ export function getDatabase(): Database.Database {
     runChatMessagesMigration(db)
     runCompaniesMigration(db)
     runCompaniesCacheMigration(db)
+    runClearCompanyCacheMigration(db)
+    runRecordingPathMigration(db)
   }
   return db
 }

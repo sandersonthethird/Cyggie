@@ -4,6 +4,7 @@ export interface LLMProvider {
   generateSummary(
     systemPrompt: string,
     userPrompt: string,
-    onProgress?: (chunk: string) => void
+    onProgress?: (chunk: string) => void,
+    signal?: AbortSignal
   ): Promise<string>
 }

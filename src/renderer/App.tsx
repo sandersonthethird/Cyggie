@@ -5,7 +5,6 @@ import MeetingList from './routes/MeetingList'
 import MeetingDetail from './routes/MeetingDetail'
 import Templates from './routes/Templates'
 import Settings from './routes/Settings'
-import Query from './routes/Query'
 import { useCalendar } from './hooks/useCalendar'
 import { useRecordingStore } from './stores/recording.store'
 import { AudioCaptureProvider } from './contexts/AudioCaptureContext'
@@ -54,7 +53,6 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<MeetingList />} />
             <Route path="/meeting/:id" element={<MeetingDetail />} />
-            <Route path="/query" element={<Query />} />
             <Route path="/templates" element={<Templates />} />
             <Route path="/settings" element={<Settings />} />
           </Route>

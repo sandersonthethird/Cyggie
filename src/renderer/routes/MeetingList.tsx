@@ -70,7 +70,7 @@ function groupCalendarEventsByDate(events: CalendarEvent[]): [string, CalendarEv
 export default function MeetingList() {
   const navigate = useNavigate()
   const { meetings, deleteMeeting } = useMeetings()
-  const { searchQuery, searchResults, isSearching } = useSearch()
+  const { searchQuery, searchResults, isSearching, hasFilters } = useSearch()
   const calendarEvents = useAppStore((s) => s.calendarEvents)
   const calendarConnected = useAppStore((s) => s.calendarConnected)
   const setCalendarEvents = useAppStore((s) => s.setCalendarEvents)
@@ -81,6 +81,8 @@ export default function MeetingList() {
   const [showAllUpcoming, setShowAllUpcoming] = useState(false)
 
   const UPCOMING_LIMIT = 2
+
+  const hasSearch = searchQuery.trim().length > 0 || hasFilters
 
   // Filter out dismissed events
   const visibleCalendarEvents = calendarEvents.filter((e) => !dismissedEventIds.has(e.id))
@@ -134,9 +136,9 @@ export default function MeetingList() {
     dismissEvent(event.id)
   }
 
-  const hasSearch = searchQuery.trim().length > 0
   // Only show meetings that have been transcribed or summarized (not scheduled, recording, or error)
   const pastMeetings = meetings.filter((m) => m.status === 'transcribed' || m.status === 'summarized')
+
   const displayItems = hasSearch
     ? searchResults.map((r) => ({
         id: r.meetingId,
@@ -153,7 +155,7 @@ export default function MeetingList() {
     clearConversation('search-results')
   }, [searchResultIds, clearConversation])
 
-  if (!searchQuery && pastMeetings.length === 0 && !showUpcoming) {
+  if (!searchQuery && !hasFilters && pastMeetings.length === 0 && !showUpcoming) {
     return (
       <EmptyState
         title="No meetings yet"
@@ -168,6 +170,7 @@ export default function MeetingList() {
 
   return (
     <div className={styles.container}>
+      <div className={styles.scrollArea}>
       {showUpcoming && (
         <div className={`${styles.section} ${styles.upcoming}`}>
           <h3 className={styles.sectionHeader}>Upcoming</h3>
@@ -202,7 +205,7 @@ export default function MeetingList() {
         </div>
       )}
 
-      {searchQuery && (
+      {hasSearch && (
         <p className={styles.resultCount}>
           {isSearching
             ? 'Searching...'
@@ -255,15 +258,18 @@ export default function MeetingList() {
         </div>
       )}
 
-      {searchQuery && !isSearching && searchResults.length === 0 && (
+      {hasSearch && !isSearching && searchResults.length === 0 && (
         <p className={styles.noResults}>No meetings match your search.</p>
       )}
+      </div>
 
-      {hasSearch && !isSearching && searchResults.length > 0 && (
-        <div className={styles.chatSection}>
+      <div className={styles.chatSection}>
+        {hasSearch && !isSearching && searchResults.length > 0 ? (
           <ChatInterface meetingIds={searchResultIds} />
-        </div>
-      )}
+        ) : (
+          <ChatInterface compact />
+        )}
+      </div>
     </div>
   )
 }

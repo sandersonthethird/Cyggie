@@ -25,15 +25,21 @@ export class ClaudeProvider implements LLMProvider {
   async generateSummary(
     systemPrompt: string,
     userPrompt: string,
-    onProgress?: (chunk: string) => void
+    onProgress?: (chunk: string) => void,
+    signal?: AbortSignal
   ): Promise<string> {
     if (onProgress) {
       const stream = this.client.messages.stream({
         model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 2048,
+        max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }]
       })
+
+      if (signal) {
+        const onAbort = () => stream.abort()
+        signal.addEventListener('abort', onAbort, { once: true })
+      }
 
       stream.on('text', (text) => onProgress(text))
 
@@ -44,7 +50,7 @@ export class ClaudeProvider implements LLMProvider {
 
     const message = await this.client.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 2048,
+      max_tokens: 8192,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }]
     })

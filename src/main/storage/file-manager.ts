@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, unlinkSync, renameSync, existsSync } from 'fs'
 import { join } from 'path'
-import { getTranscriptsDir, getSummariesDir } from './paths'
+import { getTranscriptsDir, getSummariesDir, getRecordingsDir } from './paths'
 import { extractCompanyFromEmail } from '../utils/company-extractor'
 
 // Domain to exclude from filenames (user's own domain)
@@ -176,4 +176,38 @@ export function deleteTranscript(filename: string): void {
 export function deleteSummary(filename: string): void {
   const filepath = join(getSummariesDir(), filename)
   if (existsSync(filepath)) unlinkSync(filepath)
+}
+
+export function deleteRecording(filename: string): void {
+  const filepath = join(getRecordingsDir(), filename)
+  if (existsSync(filepath)) unlinkSync(filepath)
+}
+
+export function renameRecording(
+  oldFilename: string,
+  meetingId: string,
+  newTitle: string,
+  date: string,
+  attendees?: string[] | null
+): string {
+  const shortId = meetingId.split('-')[0]
+  const newFilename = `${sanitizeFilename(newTitle, date, attendees)} (${shortId}).webm`
+  const oldPath = join(getRecordingsDir(), oldFilename)
+  const newPath = join(getRecordingsDir(), newFilename)
+  if (existsSync(oldPath) && oldPath !== newPath) {
+    renameSync(oldPath, newPath)
+  }
+  return newFilename
+}
+
+export function buildRecordingFilename(
+  meetingId: string,
+  title: string,
+  date: string,
+  attendees?: string[] | null
+): string {
+  const shortId = meetingId.split('-')[0]
+  return title && date
+    ? `${sanitizeFilename(title, date, attendees)} (${shortId}).webm`
+    : `${meetingId}.webm`
 }

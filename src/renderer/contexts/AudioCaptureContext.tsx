@@ -1,15 +1,20 @@
 import { createContext, useContext, useRef, useEffect } from 'react'
 import { useAudioCapture } from '../hooks/useAudioCapture'
+import { useVideoCapture } from '../hooks/useVideoCapture'
 import { useRecordingStore } from '../stores/recording.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { TranscriptSegment, RecordingStatus } from '../../shared/types/recording'
 
-type AudioCaptureValue = ReturnType<typeof useAudioCapture>
+interface CaptureContextValue {
+  audioCapture: ReturnType<typeof useAudioCapture>
+  videoCapture: ReturnType<typeof useVideoCapture>
+}
 
-const AudioCaptureContext = createContext<AudioCaptureValue | null>(null)
+const AudioCaptureContext = createContext<CaptureContextValue | null>(null)
 
 export function AudioCaptureProvider({ children }: { children: React.ReactNode }) {
   const audioCapture = useAudioCapture()
+  const videoCapture = useVideoCapture()
   const isRecording = useRecordingStore((s) => s.isRecording)
   const isPaused = useRecordingStore((s) => s.isPaused)
   const setError = useRecordingStore((s) => s.setError)
@@ -62,6 +67,9 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       if (!useRecordingStore.getState().isRecording) return
       console.log('[AutoStop] Received auto-stop signal, stopping recording')
       try {
+        if (videoCapture.isVideoRecording) {
+          await videoCapture.stop()
+        }
         audioCapture.stop()
         await window.api.invoke(IPC_CHANNELS.RECORDING_STOP)
         useRecordingStore.getState().stopRecording()
@@ -76,7 +84,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       unsubError()
       unsubAutoStop()
     }
-  }, [addTranscriptSegment, setInterimSegment, setDuration, setSpeakerCount, setError, audioCapture])
+  }, [addTranscriptSegment, setInterimSegment, setDuration, setSpeakerCount, setError, audioCapture, videoCapture])
 
   // Duration timer — local tick for responsive updates between IPC status messages
   useEffect(() => {
@@ -88,7 +96,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
   }, [isRecording, isPaused, setDuration])
 
   return (
-    <AudioCaptureContext.Provider value={audioCapture}>
+    <AudioCaptureContext.Provider value={{ audioCapture, videoCapture }}>
       {children}
     </AudioCaptureContext.Provider>
   )
@@ -97,5 +105,11 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
 export function useSharedAudioCapture() {
   const ctx = useContext(AudioCaptureContext)
   if (!ctx) throw new Error('useSharedAudioCapture must be used within AudioCaptureProvider')
-  return ctx
+  return ctx.audioCapture
+}
+
+export function useSharedVideoCapture() {
+  const ctx = useContext(AudioCaptureContext)
+  if (!ctx) throw new Error('useSharedVideoCapture must be used within AudioCaptureProvider')
+  return ctx.videoCapture
 }

@@ -1,8 +1,12 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { queryMeeting, queryGlobal, querySearchResults } from '../llm/chat'
+import { queryMeeting, queryGlobal, querySearchResults, abortChat } from '../llm/chat'
 
 export function registerChatHandlers(): void {
+  ipcMain.handle(IPC_CHANNELS.CHAT_ABORT, () => {
+    abortChat()
+  })
+
   ipcMain.handle(
     IPC_CHANNELS.CHAT_QUERY_MEETING,
     async (_event, meetingId: string, question: string) => {

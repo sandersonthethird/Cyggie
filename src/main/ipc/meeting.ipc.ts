@@ -2,7 +2,7 @@ import { ipcMain, shell, dialog } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import * as settingsRepo from '../database/repositories/settings.repo'
-import { readTranscript, readSummary, updateTranscriptContent, updateSummaryContent, deleteTranscript, deleteSummary, renameTranscript, renameSummary } from '../storage/file-manager'
+import { readTranscript, readSummary, updateTranscriptContent, updateSummaryContent, deleteTranscript, deleteSummary, deleteRecording, renameTranscript, renameSummary, renameRecording } from '../storage/file-manager'
 import { removeFromIndex } from '../database/repositories/search.repo'
 import { getStoragePath, setStoragePath } from '../storage/paths'
 import { renameFile as renameDriveFile } from '../drive/google-drive'
@@ -34,6 +34,7 @@ export function registerMeetingHandlers(): void {
     if (meeting) {
       if (meeting.transcriptPath) deleteTranscript(meeting.transcriptPath)
       if (meeting.summaryPath) deleteSummary(meeting.summaryPath)
+      if (meeting.recordingPath) deleteRecording(meeting.recordingPath)
       removeFromIndex(id)
     }
     return meetingRepo.deleteMeeting(id)
@@ -128,6 +129,9 @@ export function registerMeetingHandlers(): void {
       }
       if (meeting.summaryPath) {
         updates.summaryPath = renameSummary(meeting.summaryPath, id, trimmed, meeting.date, meeting.attendees)
+      }
+      if (meeting.recordingPath) {
+        updates.recordingPath = renameRecording(meeting.recordingPath, id, trimmed, meeting.date, meeting.attendees)
       }
 
       meetingRepo.updateMeeting(id, updates)

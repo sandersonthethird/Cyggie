@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAppStore } from '../../stores/app.store'
+import { useAppStore, selectHasActiveFilters } from '../../stores/app.store'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CategorizedSuggestions } from '../../../shared/types/meeting'
 import styles from './SearchBar.module.css'
@@ -16,6 +16,20 @@ export default function SearchBar() {
   const suggestRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
+  // Filter state from store
+  const searchDateFrom = useAppStore((s) => s.searchDateFrom)
+  const searchDateTo = useAppStore((s) => s.searchDateTo)
+  const searchSpeakers = useAppStore((s) => s.searchSpeakers)
+  const allSpeakers = useAppStore((s) => s.allSpeakers)
+  const showFilterPanel = useAppStore((s) => s.showFilterPanel)
+  const setSearchDateFrom = useAppStore((s) => s.setSearchDateFrom)
+  const setSearchDateTo = useAppStore((s) => s.setSearchDateTo)
+  const setSearchSpeakers = useAppStore((s) => s.setSearchSpeakers)
+  const setAllSpeakers = useAppStore((s) => s.setAllSpeakers)
+  const setShowFilterPanel = useAppStore((s) => s.setShowFilterPanel)
+  const clearAdvancedFilters = useAppStore((s) => s.clearAdvancedFilters)
+  const hasActiveFilters = useAppStore(selectHasActiveFilters)
+
   const flatItems = useMemo(() => {
     const items: { type: 'person' | 'company' | 'meeting'; label: string; id?: string; domain?: string }[] = []
     for (const name of categorized.people) items.push({ type: 'person', label: name })
@@ -23,6 +37,11 @@ export default function SearchBar() {
     for (const m of categorized.meetings) items.push({ type: 'meeting', label: m.title, id: m.id })
     return items
   }, [categorized])
+
+  // Load all speakers on mount
+  useEffect(() => {
+    window.api.invoke<string[]>(IPC_CHANNELS.SEARCH_ALL_SPEAKERS).then(setAllSpeakers)
+  }, [setAllSpeakers])
 
   // Fetch categorized suggestions as user types
   useEffect(() => {
@@ -38,6 +57,7 @@ export default function SearchBar() {
         setCategorized(results)
         const hasResults = results.people.length > 0 || results.companies.length > 0 || results.meetings.length > 0
         setShowSuggestions(hasResults)
+        if (hasResults) setShowFilterPanel(false)
         setActiveSuggestion(-1)
       } catch (err) {
         console.error('Failed to fetch categorized suggestions:', err)
@@ -46,18 +66,19 @@ export default function SearchBar() {
     return () => {
       if (suggestRef.current) clearTimeout(suggestRef.current)
     }
-  }, [value])
+  }, [value, setShowFilterPanel])
 
-  // Close suggestions on outside click
+  // Close suggestions and filter panel on outside click
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
         setShowSuggestions(false)
+        setShowFilterPanel(false)
       }
     }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
+  }, [setShowFilterPanel])
 
   const handleSuggestionSelect = useCallback((item: typeof flatItems[number]) => {
     setShowSuggestions(false)
@@ -85,9 +106,11 @@ export default function SearchBar() {
     setValue('')
     setSearchQuery('')
     setSearchFilter(null)
+    clearAdvancedFilters()
     setCategorized({ people: [], companies: [], meetings: [] })
     setShowSuggestions(false)
-  }, [setSearchQuery, setSearchFilter])
+    setShowFilterPanel(false)
+  }, [setSearchQuery, setSearchFilter, clearAdvancedFilters, setShowFilterPanel])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!showSuggestions || flatItems.length === 0) return
@@ -105,6 +128,19 @@ export default function SearchBar() {
     }
   }, [showSuggestions, flatItems, activeSuggestion, handleSuggestionSelect])
 
+  const handleFilterToggle = useCallback(() => {
+    setShowFilterPanel(!showFilterPanel)
+    setShowSuggestions(false)
+  }, [showFilterPanel, setShowFilterPanel])
+
+  const toggleSpeaker = useCallback((name: string) => {
+    setSearchSpeakers(
+      searchSpeakers.includes(name)
+        ? searchSpeakers.filter((s) => s !== name)
+        : [...searchSpeakers, name]
+    )
+  }, [searchSpeakers, setSearchSpeakers])
+
   return (
     <div className={styles.wrapper} ref={wrapperRef}>
       <span className={styles.searchIcon}>&#128269;</span>
@@ -115,9 +151,22 @@ export default function SearchBar() {
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        onFocus={() => { if (flatItems.length > 0) setShowSuggestions(true) }}
+        onFocus={() => {
+          if (flatItems.length > 0) setShowSuggestions(true)
+          setShowFilterPanel(false)
+        }}
       />
-      {value && (
+      <button
+        className={`${styles.filterToggle} ${hasActiveFilters ? styles.filterToggleActive : ''}`}
+        onClick={handleFilterToggle}
+        title="Search filters"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1.5 1.5h13l-5 6v5l-3 2v-7z" />
+        </svg>
+        {hasActiveFilters && <span className={styles.filterBadge} />}
+      </button>
+      {(value || hasActiveFilters) && (
         <button className={styles.clear} onClick={handleClear}>
           &#10005;
         </button>
@@ -191,6 +240,55 @@ export default function SearchBar() {
           </div>
         )
       })()}
+      {showFilterPanel && (
+        <div className={styles.filterPanel}>
+          <div className={styles.filterRow}>
+            <div className={styles.filterField}>
+              <span className={styles.filterLabel}>From</span>
+              <input
+                type="date"
+                className={styles.dateInput}
+                value={searchDateFrom}
+                onChange={(e) => setSearchDateFrom(e.target.value)}
+              />
+            </div>
+            <div className={styles.filterField}>
+              <span className={styles.filterLabel}>To</span>
+              <input
+                type="date"
+                className={styles.dateInput}
+                value={searchDateTo}
+                onChange={(e) => setSearchDateTo(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {allSpeakers.length > 0 && (
+            <div className={styles.filterRow}>
+              <span className={styles.filterLabel}>Participants</span>
+              <div className={styles.speakerChips}>
+                {allSpeakers.map((name) => (
+                  <button
+                    key={name}
+                    className={`${styles.speakerChip} ${searchSpeakers.includes(name) ? styles.speakerChipActive : ''}`}
+                    onClick={() => toggleSpeaker(name)}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {hasActiveFilters && (
+            <div className={styles.filterActions}>
+              <button className={styles.clearFiltersBtn} onClick={clearAdvancedFilters}>
+                Clear filters
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

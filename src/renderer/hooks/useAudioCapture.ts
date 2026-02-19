@@ -15,6 +15,7 @@ export function useAudioCapture() {
   const contextRef = useRef<AudioContext | null>(null)
   const processorRef = useRef<ScriptProcessorNode | null>(null)
   const pausedRef = useRef(false)
+  const mixedStreamRef = useRef<MediaStream | null>(null)
   const [hasSystemAudio, setHasSystemAudio] = useState<boolean | null>(null)
 
   const start = useCallback(async () => {
@@ -126,6 +127,11 @@ export function useAudioCapture() {
 
     // If no system audio, mic alone through the merger still works (channel 1 stays silent)
 
+    // Tap merged audio at native sample rate for video recording (mic + system mixed)
+    const destination = context.createMediaStreamDestination()
+    merger.connect(destination)
+    mixedStreamRef.current = destination.stream
+
     // Compute resampling ratio: context.sampleRate → 16 kHz for Deepgram
     const targetRate = 16000
     const ratio = context.sampleRate / targetRate
@@ -177,6 +183,7 @@ export function useAudioCapture() {
   const stop = useCallback(() => {
     pausedRef.current = false
     setHasSystemAudio(null)
+    mixedStreamRef.current = null
     if (processorRef.current) {
       processorRef.current.disconnect()
       processorRef.current = null
@@ -203,5 +210,13 @@ export function useAudioCapture() {
     pausedRef.current = false
   }, [])
 
-  return { start, stop, pause, resume, hasSystemAudio }
+  const getDisplayStream = useCallback(() => {
+    return systemStreamRef.current
+  }, [])
+
+  const getMixedAudioStream = useCallback(() => {
+    return mixedStreamRef.current
+  }, [])
+
+  return { start, stop, pause, resume, hasSystemAudio, getDisplayStream, getMixedAudioStream }
 }

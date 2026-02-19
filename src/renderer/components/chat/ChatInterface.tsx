@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatStore } from '../../stores/chat.store'
 import styles from './ChatInterface.module.css'
@@ -8,12 +9,13 @@ interface ChatInterfaceProps {
   meetingIds?: string[] // If provided, queries these specific meetings (search results).
   placeholder?: string
   fillHeight?: boolean // If true, container expands to fill available space
+  compact?: boolean // If true, hides empty state text — just shows the input bar
 }
 
 // Stable empty array to avoid infinite re-renders
 const EMPTY_MESSAGES: { role: 'user' | 'assistant'; content: string }[] = []
 
-export default function ChatInterface({ meetingId, meetingIds, placeholder, fillHeight = false }: ChatInterfaceProps) {
+export default function ChatInterface({ meetingId, meetingIds, placeholder, fillHeight = false, compact = false }: ChatInterfaceProps) {
   // Use different context keys for different chat modes
   const contextId = meetingIds ? 'search-results' : (meetingId ?? 'global')
 
@@ -38,6 +40,10 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
     if (!isLoading) return
 
     const unsub = window.api.on(IPC_CHANNELS.CHAT_PROGRESS, (chunk: unknown) => {
+      if (chunk === null) {
+        setStreamedContent('')
+        return
+      }
       setStreamedContent((prev) => prev + String(chunk))
     })
 
@@ -52,6 +58,17 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
     el.style.height = Math.min(el.scrollHeight, 120) + 'px'
   }, [])
 
+  const streamedContentRef = useRef('')
+
+  // Keep ref in sync with state for abort handler
+  useEffect(() => {
+    streamedContentRef.current = streamedContent
+  }, [streamedContent])
+
+  const handleStop = useCallback(() => {
+    window.api.invoke(IPC_CHANNELS.CHAT_ABORT)
+  }, [])
+
   const handleSubmit = useCallback(async () => {
     if (!input.trim() || isLoading) return
 
@@ -59,6 +76,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
     setInput('')
     setError(null)
     setStreamedContent('')
+    streamedContentRef.current = ''
 
     // Reset textarea height
     if (textareaRef.current) {
@@ -98,7 +116,16 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
         }
       }
     } catch (err) {
-      setError(String(err))
+      const errStr = String(err)
+      if (errStr.includes('abort') || errStr.includes('Abort')) {
+        // Save partial streamed content as assistant message
+        const partial = streamedContentRef.current
+        if (partial) {
+          addMessage(contextId, { role: 'assistant', content: partial })
+        }
+      } else {
+        setError(errStr)
+      }
     } finally {
       setIsLoading(false)
       setStreamedContent('')
@@ -134,14 +161,18 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
               <span className={`${styles.messageRole} ${styles[msg.role]}`}>
                 {msg.role === 'user' ? 'You' : 'AI'}
               </span>
-              <div className={styles.messageContent}>{msg.content}</div>
+              <div className={styles.messageContent}>
+                {msg.role === 'assistant'
+                  ? <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  : msg.content}
+              </div>
             </div>
           ))}
           {isLoading && streamedContent && (
             <div className={styles.message}>
               <span className={`${styles.messageRole} ${styles.assistant}`}>AI</span>
               <div className={`${styles.messageContent} ${styles.streaming}`}>
-                {streamedContent}
+                <ReactMarkdown>{streamedContent}</ReactMarkdown>
               </div>
             </div>
           )}
@@ -157,7 +188,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
         </div>
       )}
 
-      {messages.length === 0 && !isLoading && (
+      {!compact && messages.length === 0 && !isLoading && (
         <div className={styles.emptyState}>
           {meetingIds
             ? 'Ask questions across the meetings in your search results.'
@@ -181,11 +212,11 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
           rows={1}
         />
         <button
-          className={styles.sendBtn}
-          onClick={handleSubmit}
-          disabled={!input.trim() || isLoading}
+          className={`${styles.sendBtn} ${isLoading ? styles.stopBtn : ''}`}
+          onClick={isLoading ? handleStop : handleSubmit}
+          disabled={!isLoading && !input.trim()}
         >
-          {isLoading ? 'Asking...' : 'Ask'}
+          {isLoading ? '\u25A0' : 'Ask'}
         </button>
       </div>
     </div>

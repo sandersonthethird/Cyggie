@@ -18,6 +18,7 @@ export interface Meeting {
   meetingUrl: string | null
   transcriptPath: string | null
   summaryPath: string | null
+  recordingPath: string | null
   transcriptDriveId: string | null
   summaryDriveId: string | null
   notes: string | null

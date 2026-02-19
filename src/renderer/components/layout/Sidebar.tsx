@@ -62,13 +62,6 @@ export default function Sidebar() {
           Meetings
         </NavLink>
         <NavLink
-          to="/query"
-          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-        >
-          <span className={styles.icon}>&#128269;</span>
-          Query
-        </NavLink>
-        <NavLink
           to="/templates"
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
         >

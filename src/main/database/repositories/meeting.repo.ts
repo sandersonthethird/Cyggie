@@ -27,6 +27,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     attendeeEmails: row.attendee_emails ? JSON.parse(row.attendee_emails) : null,
     companies: row.companies ? JSON.parse(row.companies) : null,
     chatMessages: row.chat_messages ? JSON.parse(row.chat_messages) : null,
+    recordingPath: row.recording_path ?? null,
     status: row.status as MeetingStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -129,6 +130,7 @@ export function updateMeeting(
     attendeeEmails: string[] | null
     companies: string[] | null
     chatMessages: ChatMessage[] | null
+    recordingPath: string | null
     status: MeetingStatus
   }>
 ): Meeting | null {
@@ -195,6 +197,10 @@ export function updateMeeting(
   if (data.chatMessages !== undefined) {
     sets.push('chat_messages = ?')
     params.push(data.chatMessages ? JSON.stringify(data.chatMessages) : null)
+  }
+  if (data.recordingPath !== undefined) {
+    sets.push('recording_path = ?')
+    params.push(data.recordingPath)
   }
   if (data.status !== undefined) {
     sets.push('status = ?')

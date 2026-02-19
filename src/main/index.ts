@@ -7,6 +7,7 @@ import { registerAllHandlers } from './ipc'
 import { initializeStorage, setStoragePath } from './storage/paths'
 import * as settingsRepo from './database/repositories/settings.repo'
 import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from './database/repositories/meeting.repo'
+import { cleanupOrphanedTempFiles } from './video/video-writer'
 
 // Enable system audio loopback capture (must be called before app.whenReady)
 // CoreAudioTap is required on macOS 15+ — ScreenCaptureKit produces ended
@@ -66,6 +67,9 @@ app.whenReady().then(() => {
   // Remove scheduled meetings whose time has passed (prepared but never recorded)
   const expired = cleanupExpiredScheduledMeetings()
   if (expired > 0) console.log(`[Startup] Removed ${expired} expired scheduled meeting(s)`)
+
+  // Clean up orphaned video temp files from previous crashes
+  cleanupOrphanedTempFiles()
 
   // Load user-configured storage path (DB must be ready first)
   const savedStoragePath = settingsRepo.getSetting('storagePath')

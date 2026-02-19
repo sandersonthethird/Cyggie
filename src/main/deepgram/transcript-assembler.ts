@@ -1,20 +1,45 @@
 import type { TranscriptResult, DeepgramWord } from './types'
 import type { TranscriptSegment, TranscriptWord } from '../../shared/types/recording'
 
+type ChannelMode = 'detecting' | 'multichannel' | 'diarization'
+
 export class TranscriptAssembler {
   private finalizedSegments: TranscriptSegment[] = []
   private currentInterim: TranscriptSegment | null = null
   private knownSpeakers = new Set<number>()
   private timeOffset = 0
-  private isMultichannel: boolean
   private activeChannels = new Set<number>()
 
-  constructor(multichannel: boolean = false) {
-    this.isMultichannel = multichannel
+  /**
+   * Auto-detection state machine for channel mode:
+   * - 'detecting': Waiting to determine if system audio has speech.
+   *   Uses Deepgram's raw diarization IDs (no remapping).
+   * - 'multichannel': System audio confirmed active. Channel 0 = speaker 0
+   *   (local user), channel 1 speakers offset by +1.
+   * - 'diarization': No system audio speech. Uses Deepgram's diarization
+   *   to separate speakers on the mic channel.
+   */
+  private channelMode: ChannelMode = 'detecting'
+  private channel0FinalCount = 0
+  private static readonly DETECTION_THRESHOLD = 5
+
+  constructor() {
+    // no-op — detection is automatic
   }
 
-  setMultichannel(enabled: boolean): void {
-    this.isMultichannel = enabled
+  /**
+   * Called when the renderer confirms system audio capture failed entirely.
+   * Immediately commits to diarization mode without waiting for the detection threshold.
+   */
+  setSystemAudioUnavailable(): void {
+    if (this.channelMode === 'detecting') {
+      this.channelMode = 'diarization'
+      console.log('[TranscriptAssembler] System audio unavailable, using diarization mode')
+    }
+  }
+
+  getChannelMode(): ChannelMode {
+    return this.channelMode
   }
 
   addResult(result: TranscriptResult): void {
@@ -25,14 +50,31 @@ export class TranscriptAssembler {
       const confValues = result.words.map((w) => w.speaker_confidence?.toFixed(2) ?? 'N/A')
       const speakers = result.words.map((w) => w.speaker)
       console.log(
-        `[TranscriptAssembler] ch=${result.channelIndex} speakers=[${[...new Set(speakers)]}] ` +
+        `[TranscriptAssembler] ch=${result.channelIndex} mode=${this.channelMode} speakers=[${[...new Set(speakers)]}] ` +
           `confidence=[${confValues.join(',')}] text="${result.text.substring(0, 60)}..."`
       )
     }
 
     this.activeChannels.add(result.channelIndex)
 
-    const useMultichannel = this.isMultichannel
+    // --- Auto-detect channel mode ---
+    if (this.channelMode === 'detecting' && result.isFinal) {
+      if (result.channelIndex === 1) {
+        // System audio has speech → switch to multichannel
+        this.switchToMultichannel()
+      } else if (result.channelIndex === 0) {
+        this.channel0FinalCount++
+        if (this.channel0FinalCount >= TranscriptAssembler.DETECTION_THRESHOLD) {
+          this.channelMode = 'diarization'
+          console.log(
+            `[TranscriptAssembler] Auto-detected diarization mode ` +
+              `(${this.channel0FinalCount} ch0 results, no ch1 speech)`
+          )
+        }
+      }
+    }
+
+    const useMultichannel = this.channelMode === 'multichannel'
     const words = useMultichannel
       ? this.remapSpeakers(result.words, result.channelIndex)
       : result.words
@@ -55,6 +97,45 @@ export class TranscriptAssembler {
       for (const seg of segments) {
         this.knownSpeakers.add(seg.speaker)
       }
+    }
+  }
+
+  /**
+   * Switch from detecting → multichannel mode.
+   * All existing finalized segments came from channel 0 (since channel 1
+   * hadn't produced speech yet), so reassign them all to speaker 0.
+   */
+  private switchToMultichannel(): void {
+    this.channelMode = 'multichannel'
+    console.log('[TranscriptAssembler] Auto-detected multichannel mode (system audio speech detected)')
+
+    // Reprocess existing segments: all from ch0 → speaker 0
+    for (const seg of this.finalizedSegments) {
+      seg.speaker = 0
+      for (const w of seg.words) {
+        w.speaker = 0
+        w.speakerConfidence = 1.0
+      }
+    }
+
+    // Collapse adjacent same-speaker segments (now all speaker 0)
+    const collapsed: TranscriptSegment[] = []
+    for (const seg of this.finalizedSegments) {
+      const prev = collapsed[collapsed.length - 1]
+      if (prev && prev.speaker === seg.speaker) {
+        prev.text += ' ' + seg.text
+        prev.endTime = seg.endTime
+        prev.words.push(...seg.words)
+      } else {
+        collapsed.push(seg)
+      }
+    }
+    this.finalizedSegments = collapsed
+
+    // Rebuild knownSpeakers
+    this.knownSpeakers.clear()
+    for (const seg of this.finalizedSegments) {
+      this.knownSpeakers.add(seg.speaker)
     }
   }
 
@@ -374,5 +455,7 @@ export class TranscriptAssembler {
     this.knownSpeakers.clear()
     this.activeChannels.clear()
     this.timeOffset = 0
+    this.channelMode = 'detecting'
+    this.channel0FinalCount = 0
   }
 }

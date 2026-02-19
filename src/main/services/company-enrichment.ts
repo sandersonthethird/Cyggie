@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { getCredential } from '../security/credentials'
 import * as companyRepo from '../database/repositories/company.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
-import { extractDomainFromEmail, extractDomainsFromEmails } from '../utils/company-extractor'
+import { extractDomainFromEmail, extractDomainsFromEmails, humanizeDomainName } from '../utils/company-extractor'
 import type { CompanySuggestion } from '../../shared/types/meeting'
 import type { CalendarEvent } from '../../shared/types/calendar'
 
@@ -237,8 +237,5 @@ async function resolveViaLLM(domain: string): Promise<string | null> {
 }
 
 function domainToTitleCase(domain: string): string {
-  return domain
-    .split('.')[0]
-    .replace(/[-_]/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+  return humanizeDomainName(domain.split('.')[0])
 }

@@ -24,7 +24,8 @@ export class OllamaProvider implements LLMProvider {
   async generateSummary(
     systemPrompt: string,
     userPrompt: string,
-    onProgress?: (chunk: string) => void
+    onProgress?: (chunk: string) => void,
+    signal?: AbortSignal
   ): Promise<string> {
     if (onProgress) {
       const response = await this.client.chat({
@@ -34,11 +35,14 @@ export class OllamaProvider implements LLMProvider {
           { role: 'user', content: userPrompt }
         ],
         stream: true,
-        options: { num_predict: 2048 }
+        options: { num_predict: 8192 }
       })
 
       let full = ''
       for await (const part of response) {
+        if (signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError')
+        }
         onProgress(part.message.content)
         full += part.message.content
       }
@@ -51,7 +55,7 @@ export class OllamaProvider implements LLMProvider {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      options: { num_predict: 2048 }
+      options: { num_predict: 8192 }
     })
 
     return response.message.content

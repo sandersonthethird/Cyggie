@@ -17,6 +17,11 @@ interface AppState {
   searchFilter: SearchFilter | null
   searchResults: SearchResult[]
   isSearching: boolean
+  searchDateFrom: string
+  searchDateTo: string
+  searchSpeakers: string[]
+  allSpeakers: string[]
+  showFilterPanel: boolean
 
   setMeetings: (meetings: Meeting[]) => void
   selectMeeting: (id: string | null) => void
@@ -27,6 +32,12 @@ interface AppState {
   setSearchFilter: (filter: SearchFilter | null) => void
   setSearchResults: (results: SearchResult[]) => void
   setIsSearching: (searching: boolean) => void
+  setSearchDateFrom: (dateFrom: string) => void
+  setSearchDateTo: (dateTo: string) => void
+  setSearchSpeakers: (speakers: string[]) => void
+  setAllSpeakers: (speakers: string[]) => void
+  setShowFilterPanel: (show: boolean) => void
+  clearAdvancedFilters: () => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -39,6 +50,11 @@ export const useAppStore = create<AppState>((set) => ({
   searchFilter: null,
   searchResults: [],
   isSearching: false,
+  searchDateFrom: '',
+  searchDateTo: '',
+  searchSpeakers: [],
+  allSpeakers: [],
+  showFilterPanel: false,
 
   setMeetings: (meetings) => set({ meetings }),
   selectMeeting: (id) => set({ selectedMeetingId: id }),
@@ -51,5 +67,14 @@ export const useAppStore = create<AppState>((set) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
   setSearchFilter: (filter) => set({ searchFilter: filter }),
   setSearchResults: (results) => set({ searchResults: results }),
-  setIsSearching: (searching) => set({ isSearching: searching })
+  setIsSearching: (searching) => set({ isSearching: searching }),
+  setSearchDateFrom: (dateFrom) => set({ searchDateFrom: dateFrom }),
+  setSearchDateTo: (dateTo) => set({ searchDateTo: dateTo }),
+  setSearchSpeakers: (speakers) => set({ searchSpeakers: speakers }),
+  setAllSpeakers: (speakers) => set({ allSpeakers: speakers }),
+  setShowFilterPanel: (show) => set({ showFilterPanel: show }),
+  clearAdvancedFilters: () => set({ searchDateFrom: '', searchDateTo: '', searchSpeakers: [] })
 }))
+
+export const selectHasActiveFilters = (s: AppState): boolean =>
+  s.searchDateFrom !== '' || s.searchDateTo !== '' || s.searchSpeakers.length > 0

@@ -55,7 +55,7 @@ export function registerRecordingHandlers(): void {
     }
 
     // Initialize components (Deepgram client created below after speaker count is known)
-    transcriptAssembler = new TranscriptAssembler(true)
+    transcriptAssembler = new TranscriptAssembler()
     audioCapture = new AudioCapture()
     let maxSpeakers: number | undefined
 
@@ -252,7 +252,7 @@ export function registerRecordingHandlers(): void {
   ipcMain.on('recording:system-audio-status', (_event, hasSystemAudio: boolean) => {
     console.log('[Recording] System audio status from renderer:', hasSystemAudio)
     if (transcriptAssembler && !hasSystemAudio) {
-      transcriptAssembler.setMultichannel(false)
+      transcriptAssembler.setSystemAudioUnavailable()
     }
   })
 
@@ -339,8 +339,20 @@ export function registerRecordingHandlers(): void {
       }
 
       const speakerMap: Record<number, string> = {}
-      for (const id of actualSpeakerIds) {
-        speakerMap[id] = allNames[id] || `Speaker ${id + 1}`
+      const detectedMode = transcriptAssembler.getChannelMode()
+      if (detectedMode === 'multichannel') {
+        // Multichannel: speaker 0 = self (mic channel), speaker 1+ = remote participants
+        for (const id of actualSpeakerIds) {
+          speakerMap[id] = allNames[id] || `Speaker ${id + 1}`
+        }
+      } else {
+        // Diarization (or still detecting): Deepgram assigns speaker IDs
+        // arbitrarily. Speaker 0 is NOT necessarily "self". Assign names
+        // in sorted order; the user can rename speakers after the fact.
+        const sortedIds = [...actualSpeakerIds].sort((a, b) => a - b)
+        for (let i = 0; i < sortedIds.length; i++) {
+          speakerMap[sortedIds[i]] = allNames[i] || `Speaker ${sortedIds[i] + 1}`
+        }
       }
 
       const transcriptMd = transcriptAssembler.toMarkdown(speakerMap)

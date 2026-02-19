@@ -8,6 +8,7 @@ import { registerCalendarHandlers } from './calendar.ipc'
 import { registerDriveHandlers } from './drive.ipc'
 import { registerChatHandlers } from './chat.ipc'
 import { registerWebShareHandlers } from './web-share.ipc'
+import { registerVideoHandlers } from './video.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -20,4 +21,5 @@ export function registerAllHandlers(): void {
   registerDriveHandlers()
   registerChatHandlers()
   registerWebShareHandlers()
+  registerVideoHandlers()
 }

@@ -14,7 +14,15 @@ import { hasDriveScope } from '../calendar/google-auth'
 import { uploadSummary as uploadSummaryToDrive } from '../drive/google-drive'
 import { getSummariesDir } from '../storage/paths'
 import { join } from 'path'
+import { critiqueText } from './critique'
 import type { LlmProvider } from '../../shared/types/settings'
+
+let summaryAbortController: AbortController | null = null
+
+export function abortSummary(): void {
+  summaryAbortController?.abort()
+  summaryAbortController = null
+}
 
 function getProvider(): LLMProvider {
   const providerType = (getSetting('llmProvider') || 'claude') as LlmProvider
@@ -37,6 +45,24 @@ function sendProgress(text: string): void {
   for (const win of windows) {
     if (!win.isDestroyed()) {
       win.webContents.send(IPC_CHANNELS.SUMMARY_PROGRESS, text)
+    }
+  }
+}
+
+function sendClear(): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(IPC_CHANNELS.SUMMARY_PROGRESS, null)
+    }
+  }
+}
+
+function sendPhase(phase: string): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(IPC_CHANNELS.SUMMARY_PHASE, phase)
     }
   }
 }
@@ -75,9 +101,15 @@ export async function generateSummary(
     notes: meeting.notes || undefined
   })
 
-  const summary = await provider.generateSummary(systemPrompt, userPrompt, (chunk) => {
+  summaryAbortController = new AbortController()
+  sendPhase('generating')
+  const draft = await provider.generateSummary(systemPrompt, userPrompt, (chunk) => {
     sendProgress(chunk)
-  })
+  }, summaryAbortController.signal)
+  sendClear()
+  sendPhase('refining')
+  const summary = await critiqueText(provider, draft, sendProgress, summaryAbortController.signal)
+  summaryAbortController = null
 
   // Save summary
   const summaryPath = writeSummary(meetingId, summary, meeting.title, meeting.date, meeting.attendees)

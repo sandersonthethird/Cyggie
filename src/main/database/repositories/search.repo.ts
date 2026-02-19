@@ -3,6 +3,77 @@ import { extractCompanyFromEmail, extractDomainFromEmail } from '../../utils/com
 import * as companyRepo from './company.repo'
 import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult, CategorizedSuggestions, CompanySuggestion } from '../../../shared/types/meeting'
 
+/** Sanitize a user query for FTS5 MATCH — quote each word to avoid syntax errors from ?, *, etc. */
+function sanitizeFts5Query(query: string): string {
+  const words = query
+    .replace(/["""]/g, '') // strip any existing quotes
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '')) // strip leading/trailing punctuation
+    .filter((w) => w.length > 0)
+  if (words.length === 0) return '""'
+  return words.map((w) => `"${w}"`).join(' ')
+}
+
+const STOP_WORDS = new Set([
+  'what', 'when', 'where', 'which', 'who', 'whom', 'whose', 'how',
+  'have', 'has', 'had', 'been', 'about', 'does', 'did', 'doing',
+  'this', 'that', 'these', 'those', 'with', 'from', 'into', 'the',
+  'and', 'but', 'for', 'not', 'are', 'was', 'were', 'will', 'would',
+  'could', 'should', 'can', 'may', 'might', 'shall', 'there', 'then',
+  'than', 'also', 'just', 'very', 'really', 'some', 'any', 'all',
+  'each', 'every', 'both', 'few', 'more', 'most', 'other', 'such',
+  'only', 'same', 'tell', 'know', 'think', 'said'
+])
+
+/** Extract meaningful keywords from a natural language question */
+export function extractKeywords(question: string): string[] {
+  return question
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, ''))
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w))
+}
+
+/** Build an OR-based FTS5 query from keywords */
+export function buildOrQuery(keywords: string[]): string {
+  if (keywords.length === 0) return '""'
+  return keywords.map((w) => `"${w}"`).join(' OR ')
+}
+
+/** Search meetings by title using LIKE */
+export function searchByTitle(keywords: string[], limit = 10): { id: string; title: string; date: string }[] {
+  const db = getDatabase()
+  if (keywords.length === 0) return []
+
+  const conditions = keywords.map(() => 'title LIKE ?')
+  const params = keywords.map((k) => `%${k}%`)
+
+  return db
+    .prepare(
+      `SELECT id, title, date FROM meetings
+       WHERE ${conditions.join(' OR ')}
+       ORDER BY date DESC LIMIT ?`
+    )
+    .all(...params, limit) as { id: string; title: string; date: string }[]
+}
+
+/** Search meetings by speaker/attendee names using LIKE */
+export function searchBySpeaker(keywords: string[], limit = 10): { id: string; title: string; date: string }[] {
+  const db = getDatabase()
+  if (keywords.length === 0) return []
+
+  const conditions = keywords.map(() => '(speaker_map LIKE ? OR attendees LIKE ?)')
+  const params = keywords.flatMap((k) => [`%${k}%`, `%${k}%`])
+
+  return db
+    .prepare(
+      `SELECT id, title, date FROM meetings
+       WHERE ${conditions.join(' OR ')}
+       ORDER BY date DESC LIMIT ?`
+    )
+    .all(...params, limit) as { id: string; title: string; date: string }[]
+}
+
 export function indexMeeting(
   meetingId: string,
   title: string,
@@ -35,8 +106,9 @@ export function updateSummaryIndex(meetingId: string, summaryText: string): void
   }
 }
 
-export function searchMeetings(query: string, limit = 20): SearchResult[] {
+export function searchMeetings(query: string, limit = 20, rawFts = false): SearchResult[] {
   const db = getDatabase()
+  const ftsQuery = rawFts ? query : sanitizeFts5Query(query)
 
   const rows = db
     .prepare(
@@ -49,7 +121,7 @@ export function searchMeetings(query: string, limit = 20): SearchResult[] {
       ORDER BY rank
       LIMIT ?`
     )
-    .all(query, limit) as { meeting_id: string; snippet: string; rank: number }[]
+    .all(ftsQuery, limit) as { meeting_id: string; snippet: string; rank: number }[]
 
   // Join with meetings table for title and date
   if (rows.length === 0) return []
@@ -279,6 +351,7 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
 
     // 1. FTS full-text search (transcripts + summaries)
     try {
+      const ftsQuery = sanitizeFts5Query(params.query!)
       const ftsRows = db
         .prepare(
           `SELECT
@@ -290,7 +363,7 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
           ORDER BY rank
           LIMIT ?`
         )
-        .all(params.query, limit) as { meeting_id: string; snippet: string; rank: number }[]
+        .all(ftsQuery, limit) as { meeting_id: string; snippet: string; rank: number }[]
 
       if (ftsRows.length > 0) {
         const placeholders = ftsRows.map(() => '?').join(',')

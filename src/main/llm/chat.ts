@@ -6,9 +6,17 @@ import { OllamaProvider } from './ollama-provider'
 import { getCredential } from '../security/credentials'
 import { getSetting } from '../database/repositories/settings.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
-import { searchMeetings } from '../database/repositories/search.repo'
+import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker } from '../database/repositories/search.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
+import { critiqueText } from './critique'
 import type { LlmProvider } from '../../shared/types/settings'
+
+let chatAbortController: AbortController | null = null
+
+export function abortChat(): void {
+  chatAbortController?.abort()
+  chatAbortController = null
+}
 
 function getProvider(): LLMProvider {
   const providerType = (getSetting('llmProvider') || 'claude') as LlmProvider
@@ -31,6 +39,15 @@ function sendProgress(text: string): void {
   for (const win of windows) {
     if (!win.isDestroyed()) {
       win.webContents.send(IPC_CHANNELS.CHAT_PROGRESS, text)
+    }
+  }
+}
+
+function sendClear(): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(IPC_CHANNELS.CHAT_PROGRESS, null)
     }
   }
 }
@@ -114,37 +131,54 @@ ${context}
 User question: ${question}`
 
   const provider = getProvider()
-  const response = await provider.generateSummary(MEETING_SYSTEM_PROMPT, userPrompt, sendProgress)
-  return response
+  chatAbortController = new AbortController()
+  const draft = await provider.generateSummary(MEETING_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
+  sendClear()
+  const refined = await critiqueText(provider, draft, sendProgress, chatAbortController.signal)
+  chatAbortController = null
+  return refined
 }
 
 export async function queryGlobal(question: string): Promise<string> {
-  // Use FTS5 to find relevant meetings
-  const searchResults = searchMeetings(question, 10)
+  const keywords = extractKeywords(question)
+  const seenIds = new Set<string>()
+  const searchResults: { meetingId: string; title: string; date: string; snippet: string; rank: number }[] = []
 
-  if (searchResults.length === 0) {
-    // Try a broader search by splitting the question into keywords
-    const keywords = question
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((w) => w.length > 3 && !['what', 'when', 'where', 'which', 'have', 'been', 'about', 'does', 'this', 'that', 'with'].includes(w))
-
-    if (keywords.length > 0) {
-      // Search for each keyword and combine results
-      const allResults = new Map<string, typeof searchResults[0]>()
-      for (const keyword of keywords.slice(0, 3)) {
-        try {
-          const results = searchMeetings(keyword, 5)
-          for (const r of results) {
-            if (!allResults.has(r.meetingId)) {
-              allResults.set(r.meetingId, r)
-            }
-          }
-        } catch {
-          // Ignore FTS errors
+  // Strategy 1: OR-based FTS search — find meetings containing ANY keyword
+  if (keywords.length > 0) {
+    try {
+      const orQuery = buildOrQuery(keywords)
+      const ftsResults = searchMeetings(orQuery, 10, true)
+      for (const r of ftsResults) {
+        if (!seenIds.has(r.meetingId)) {
+          seenIds.add(r.meetingId)
+          searchResults.push(r)
         }
       }
-      searchResults.push(...allResults.values())
+    } catch {
+      // FTS query error — continue to other strategies
+    }
+  }
+
+  // Strategy 2: Title search — catches meetings whose title matches but may not be FTS-indexed
+  if (keywords.length > 0) {
+    const titleMatches = searchByTitle(keywords, 10)
+    for (const m of titleMatches) {
+      if (!seenIds.has(m.id)) {
+        seenIds.add(m.id)
+        searchResults.push({ meetingId: m.id, title: m.title, date: m.date, snippet: '', rank: 0 })
+      }
+    }
+  }
+
+  // Strategy 3: Speaker/attendee name search
+  if (keywords.length > 0) {
+    const speakerMatches = searchBySpeaker(keywords, 10)
+    for (const m of speakerMatches) {
+      if (!seenIds.has(m.id)) {
+        seenIds.add(m.id)
+        searchResults.push({ meetingId: m.id, title: m.title, date: m.date, snippet: '', rank: 0 })
+      }
     }
   }
 
@@ -157,46 +191,73 @@ export async function queryGlobal(question: string): Promise<string> {
 
   for (const result of searchResults.slice(0, 8)) {
     const meeting = meetingRepo.getMeeting(result.meetingId)
-    if (!meeting || !meeting.transcriptPath) continue
+    if (!meeting) continue
 
-    const transcript = readTranscript(meeting.transcriptPath)
-    if (!transcript) continue
+    const parts: string[] = []
+    parts.push(`### "${meeting.title}" (${new Date(meeting.date).toLocaleDateString()})`)
+    if (meeting.speakerMap && Object.keys(meeting.speakerMap).length > 0) {
+      parts.push(`Participants: ${Object.values(meeting.speakerMap).join(', ')}`)
+    }
+    parts.push('')
 
-    // For global queries, include a reasonable excerpt rather than full transcript
-    // to avoid token limits. Include more context around the matching snippet.
-    const excerptLength = 3000
-    let excerpt = transcript
-
-    if (transcript.length > excerptLength) {
-      // Try to find the matching content and include context around it
-      const snippetText = result.snippet.replace(/<mark>|<\/mark>/g, '').replace(/\.\.\./g, '')
-      const matchIndex = transcript.toLowerCase().indexOf(snippetText.toLowerCase().substring(0, 50))
-
-      if (matchIndex >= 0) {
-        const start = Math.max(0, matchIndex - 500)
-        const end = Math.min(transcript.length, matchIndex + excerptLength - 500)
-        excerpt = transcript.substring(start, end)
-        if (start > 0) excerpt = '...' + excerpt
-        if (end < transcript.length) excerpt = excerpt + '...'
-      } else {
-        // Just take the beginning if we can't find the match
-        excerpt = transcript.substring(0, excerptLength) + '...'
+    // Include summary if available (concise, high-signal)
+    if (meeting.summaryPath) {
+      const summary = readSummary(meeting.summaryPath)
+      if (summary) {
+        parts.push('**Summary:**')
+        parts.push(summary)
+        parts.push('')
       }
     }
 
-    contextParts.push(`### "${meeting.title}" (${new Date(meeting.date).toLocaleDateString()})`)
-    if (meeting.speakerMap && Object.keys(meeting.speakerMap).length > 0) {
-      contextParts.push(`Participants: ${Object.values(meeting.speakerMap).join(', ')}`)
+    // Include notes if present
+    if (meeting.notes) {
+      parts.push('**Notes:**')
+      parts.push(meeting.notes)
+      parts.push('')
     }
-    contextParts.push('')
-    contextParts.push(excerpt)
-    contextParts.push('')
-    contextParts.push('---')
-    contextParts.push('')
+
+    // Include transcript excerpt
+    if (meeting.transcriptPath) {
+      const transcript = readTranscript(meeting.transcriptPath)
+      if (transcript) {
+        const excerptLength = meeting.summaryPath ? 1500 : 3000
+        let excerpt = transcript
+
+        if (transcript.length > excerptLength) {
+          // Try to find the matching content and include context around it
+          if (result.snippet) {
+            const snippetText = result.snippet.replace(/<mark>|<\/mark>/g, '').replace(/\.\.\./g, '')
+            const matchIndex = transcript.toLowerCase().indexOf(snippetText.toLowerCase().substring(0, 50))
+            if (matchIndex >= 0) {
+              const start = Math.max(0, matchIndex - 500)
+              const end = Math.min(transcript.length, matchIndex + excerptLength - 500)
+              excerpt = transcript.substring(start, end)
+              if (start > 0) excerpt = '...' + excerpt
+              if (end < transcript.length) excerpt = excerpt + '...'
+            } else {
+              excerpt = transcript.substring(0, excerptLength) + '...'
+            }
+          } else {
+            excerpt = transcript.substring(0, excerptLength) + '...'
+          }
+        }
+
+        parts.push('**Transcript excerpt:**')
+        parts.push(excerpt)
+        parts.push('')
+      }
+    }
+
+    if (parts.length > 2) {
+      contextParts.push(parts.join('\n'))
+      contextParts.push('---')
+      contextParts.push('')
+    }
   }
 
   if (contextParts.length === 0) {
-    return 'I found some matching meetings but couldn\'t read their transcripts. Please check that the transcript files exist.'
+    return 'I found some matching meetings but couldn\'t read their content. Please check that the transcript files exist.'
   }
 
   const context = contextParts.join('\n')
@@ -212,8 +273,12 @@ User question: ${question}
 Please answer based on the meeting excerpts above. Cite the meeting title and date when referencing specific information.`
 
   const provider = getProvider()
-  const response = await provider.generateSummary(GLOBAL_SYSTEM_PROMPT, userPrompt, sendProgress)
-  return response
+  chatAbortController = new AbortController()
+  const draft = await provider.generateSummary(GLOBAL_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
+  sendClear()
+  const refined = await critiqueText(provider, draft, sendProgress, chatAbortController.signal)
+  chatAbortController = null
+  return refined
 }
 
 export async function querySearchResults(meetingIds: string[], question: string): Promise<string> {
@@ -294,6 +359,10 @@ User question: ${question}
 Please answer based on the meeting content above. Cite the meeting title and date when referencing specific information.`
 
   const provider = getProvider()
-  const response = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress)
-  return response
+  chatAbortController = new AbortController()
+  const draft = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
+  sendClear()
+  const refined = await critiqueText(provider, draft, sendProgress, chatAbortController.signal)
+  chatAbortController = null
+  return refined
 }

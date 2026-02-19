@@ -4,6 +4,15 @@
   min-height: 100%;
 }
 
+.stickyHeader {
+  position: sticky;
+  top: -24px;
+  z-index: 4;
+  background: var(--color-bg);
+  margin: -24px -24px 0;
+  padding: 24px 24px 0;
+}
+
 .loading {
   padding: 40px;
   text-align: center;
@@ -498,6 +507,22 @@
   cursor: default;
 }
 
+.stopEnhanceBtn {
+  background: var(--color-danger, #ff3b30);
+}
+
+.stopEnhanceBtn:hover {
+  background: var(--color-danger, #ff3b30);
+  opacity: 0.85;
+}
+
+.summaryPhase {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  padding: 0 2px;
+}
+
 .summaryDivider {
   display: flex;
   align-items: center;
@@ -643,7 +668,8 @@
   background: var(--color-bg-secondary);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
-  max-height: 400px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -668,4 +694,47 @@
   padding: 40px;
   text-align: center;
   color: var(--color-text-secondary);
+}
+
+.videoToggle {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.videoToggle:hover {
+  background: var(--color-bg);
+  border-color: var(--color-text-secondary);
+}
+
+.videoActive {
+  background: rgba(255, 59, 48, 0.1);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.videoActive:hover {
+  background: rgba(255, 59, 48, 0.15);
+}
+
+.videoTab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.videoPlayer {
+  width: 100%;
+  max-height: 70vh;
+  border-radius: var(--radius-lg);
+  background: black;
+  outline: none;
 }

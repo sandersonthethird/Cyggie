@@ -24,7 +24,7 @@ export function initializeStorage(): void {
 }
 
 function ensureStorageDirs(basePath: string): void {
-  const dirs = [basePath, join(basePath, 'transcripts'), join(basePath, 'summaries')]
+  const dirs = [basePath, join(basePath, 'transcripts'), join(basePath, 'summaries'), join(basePath, 'recordings')]
 
   for (const dir of dirs) {
     if (!existsSync(dir)) {
@@ -39,6 +39,10 @@ export function getTranscriptsDir(): string {
 
 export function getSummariesDir(): string {
   return join(getStoragePath(), 'summaries')
+}
+
+export function getRecordingsDir(): string {
+  return join(getStoragePath(), 'recordings')
 }
 
 export function getDatabasePath(): string {

@@ -59,6 +59,8 @@ export const IPC_CHANNELS = {
   SUMMARY_GENERATE: 'summary:generate',
   SUMMARY_REGENERATE: 'summary:regenerate',
   SUMMARY_PROGRESS: 'summary:progress',
+  SUMMARY_PHASE: 'summary:phase',
+  SUMMARY_ABORT: 'summary:abort',
 
   // AI Chat
   MEETING_SAVE_CHAT: 'meeting:save-chat',
@@ -66,6 +68,7 @@ export const IPC_CHANNELS = {
   CHAT_QUERY_GLOBAL: 'chat:query-global',
   CHAT_QUERY_SEARCH_RESULTS: 'chat:query-search-results',
   CHAT_PROGRESS: 'chat:progress',
+  CHAT_ABORT: 'chat:abort',
 
   // Settings
   SETTINGS_GET: 'settings:get',
@@ -78,6 +81,12 @@ export const IPC_CHANNELS = {
 
   // Web Share
   WEB_SHARE_CREATE: 'web-share:create',
+
+  // Video recording
+  VIDEO_START: 'video:start',
+  VIDEO_STOP: 'video:stop',
+  VIDEO_CHUNK: 'video:chunk',
+  VIDEO_GET_PATH: 'video:get-path',
 
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',

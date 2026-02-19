@@ -21,6 +21,7 @@ export interface MeetingRow {
   attendee_emails: string | null
   companies: string | null
   chat_messages: string | null
+  recording_path: string | null
   status: string
   created_at: string
   updated_at: string

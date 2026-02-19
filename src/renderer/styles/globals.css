@@ -1,20 +1,21 @@
 :root {
-  --color-bg: #FAF9F6;
-  --color-bg-secondary: #F0EBE3;
-  --color-bg-tertiary: #E5DFD5;
-  --color-text: #2D2B28;
-  --color-text-secondary: #6B665F;
-  --color-text-tertiary: #A8A29A;
-  --color-border: #D5CFC6;
-  --color-primary: #DA7756;
-  --color-primary-hover: #C4694B;
-  --color-danger: #ff3b30;
-  --color-success: #34c759;
-  --color-warning: #ff9500;
-  --color-recording: #ff3b30;
-  --color-sidebar-bg: #F0EBE3;
-  --color-card-bg: #ffffff;
-  --color-card-hover: #F0EBE3;
+  --color-bg: #F7F8FA;
+  --color-bg-secondary: #EEF0F4;
+  --color-bg-tertiary: #E0E4EA;
+  --color-text: #1A1E24;
+  --color-text-secondary: #556170;
+  --color-text-tertiary: #94A0B0;
+  --color-border: #D0D6DE;
+  --color-primary: #3D7A4A;
+  --color-primary-hover: #2E6338;
+  --color-accent: #7B8FB8;
+  --color-danger: #D94545;
+  --color-success: #3D7A4A;
+  --color-warning: #C9943A;
+  --color-recording: #D94545;
+  --color-sidebar-bg: #EEF0F4;
+  --color-card-bg: #FFFFFF;
+  --color-card-hover: #EEF0F4;
 
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -32,19 +33,26 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #1C1B1A;
-    --color-bg-secondary: #2A2826;
-    --color-bg-tertiary: #3A3735;
-    --color-text: #F5F0EB;
-    --color-text-secondary: #9A9590;
-    --color-text-tertiary: #6A665F;
-    --color-border: #3A3735;
-    --color-sidebar-bg: #2A2826;
-    --color-card-bg: #2A2826;
-    --color-card-hover: #3A3735;
+    --color-bg: #171B20;
+    --color-bg-secondary: #1E2329;
+    --color-bg-tertiary: #2A3038;
+    --color-text: #E8ECF0;
+    --color-text-secondary: #8B95A3;
+    --color-text-tertiary: #5A6575;
+    --color-border: #2A3038;
+    --color-primary: #4E9A5E;
+    --color-primary-hover: #3D7A4A;
+    --color-accent: #8FA3CC;
+    --color-danger: #E05555;
+    --color-success: #4E9A5E;
+    --color-warning: #D4A44A;
+    --color-recording: #E05555;
+    --color-sidebar-bg: #1E2329;
+    --color-card-bg: #1E2329;
+    --color-card-hover: #2A3038;
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
   }
 }
 
@@ -88,14 +96,14 @@ a {
 }
 
 mark {
-  background: rgba(218, 119, 86, 0.15);
+  background: rgba(61, 122, 74, 0.15);
   color: var(--color-primary);
   border-radius: 2px;
   padding: 0 2px;
 }
 
 mark.markActive {
-  background: rgba(218, 119, 86, 0.45);
+  background: rgba(61, 122, 74, 0.40);
   outline: 2px solid var(--color-primary);
   outline-offset: -1px;
 }

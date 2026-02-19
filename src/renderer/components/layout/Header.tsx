@@ -3,7 +3,6 @@ import styles from './Header.module.css'
 
 const TITLES: Record<string, string> = {
   '/': 'Meetings',
-  '/query': 'Query',
   '/recording': 'Recording',
   '/templates': 'Templates',
   '/settings': 'Settings'

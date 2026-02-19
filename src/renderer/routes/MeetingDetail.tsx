@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useRecordingStore } from '../stores/recording.store'
-import { useSharedAudioCapture } from '../contexts/AudioCaptureContext'
+import { useSharedAudioCapture, useSharedVideoCapture } from '../contexts/AudioCaptureContext'
 import { useFindInPage } from '../hooks/useFindInPage'
 import FindBar from '../components/common/FindBar'
 import ChatInterface from '../components/chat/ChatInterface'
@@ -35,11 +35,12 @@ export default function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [data, setData] = useState<MeetingData | null>(null)
-  const [activeTab, setActiveTab] = useState<'notes' | 'transcript'>('notes')
+  const [activeTab, setActiveTab] = useState<'notes' | 'transcript' | 'recording'>('notes')
   const [templates, setTemplates] = useState<MeetingTemplate[]>([])
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [streamedSummary, setStreamedSummary] = useState('')
+  const [summaryPhase, setSummaryPhase] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [isSavingTitle, setIsSavingTitle] = useState(false)
@@ -70,7 +71,9 @@ export default function MeetingDetail() {
   const liveTranscript = useRecordingStore((s) => s.liveTranscript)
   const interimSegment = useRecordingStore((s) => s.interimSegment)
   const audioCapture = useSharedAudioCapture()
+  const videoCapture = useSharedVideoCapture()
   const prevRecordingRef = useRef(false)
+  const [videoPath, setVideoPath] = useState<string | null>(null)
   const transcriptEndRef = useRef<HTMLDivElement>(null)
   const [findOpen, setFindOpen] = useState(false)
   const [shareMenuOpen, setShareMenuOpen] = useState(false)
@@ -105,6 +108,13 @@ export default function MeetingDetail() {
     summaryDraftRef.current = result.summary || ''
     if (result.summary) setShowNotes(false)
 
+    // Load video path if recording exists
+    if (result.meeting.recordingPath) {
+      window.api.invoke<string | null>(IPC_CHANNELS.VIDEO_GET_PATH, id).then(setVideoPath).catch(() => {})
+    } else {
+      setVideoPath(null)
+    }
+
     // Fetch company suggestions (with logos)
     window.api.invoke<CompanySuggestion[]>(IPC_CHANNELS.COMPANY_GET_SUGGESTIONS, id).then(setCompanySuggestions).catch(() => {})
 
@@ -134,7 +144,20 @@ export default function MeetingDetail() {
   useEffect(() => {
     if (!isGenerating) return
     const unsub = window.api.on(IPC_CHANNELS.SUMMARY_PROGRESS, (chunk: unknown) => {
+      if (chunk === null) {
+        setStreamedSummary('')
+        return
+      }
       setStreamedSummary((prev) => prev + String(chunk))
+    })
+    return unsub
+  }, [isGenerating])
+
+  // Listen for summary phase changes
+  useEffect(() => {
+    if (!isGenerating) return
+    const unsub = window.api.on(IPC_CHANNELS.SUMMARY_PHASE, (phase: unknown) => {
+      setSummaryPhase(String(phase))
     })
     return unsub
   }, [isGenerating])
@@ -255,33 +278,38 @@ export default function MeetingDetail() {
 
   const handleStop = useCallback(async () => {
     try {
+      if (videoCapture.isVideoRecording) {
+        await videoCapture.stop()
+      }
       audioCapture.stop()
       await window.api.invoke(IPC_CHANNELS.RECORDING_STOP)
       stopRecording()
     } catch (err) {
       setRecordingError(String(err))
     }
-  }, [stopRecording, setRecordingError, audioCapture])
+  }, [stopRecording, setRecordingError, audioCapture, videoCapture])
 
   const handlePause = useCallback(async () => {
     try {
       audioCapture.pause()
+      videoCapture.pause()
       await window.api.invoke(IPC_CHANNELS.RECORDING_PAUSE)
       pauseRecording()
     } catch (err) {
       setRecordingError(String(err))
     }
-  }, [pauseRecording, setRecordingError, audioCapture])
+  }, [pauseRecording, setRecordingError, audioCapture, videoCapture])
 
   const handleResume = useCallback(async () => {
     try {
       audioCapture.resume()
+      videoCapture.resume()
       await window.api.invoke(IPC_CHANNELS.RECORDING_RESUME)
       resumeRecording()
     } catch (err) {
       setRecordingError(String(err))
     }
-  }, [resumeRecording, setRecordingError, audioCapture])
+  }, [resumeRecording, setRecordingError, audioCapture, videoCapture])
 
   const handleDelete = useCallback(async () => {
     if (!id) return
@@ -292,6 +320,26 @@ export default function MeetingDetail() {
     await window.api.invoke(IPC_CHANNELS.MEETING_DELETE, id)
     navigate('/')
   }, [id, data, navigate])
+
+  const handleToggleVideo = useCallback(async () => {
+    try {
+      if (videoCapture.isVideoRecording) {
+        await videoCapture.stop()
+        // Reload meeting to pick up the new recordingPath
+        loadMeeting()
+      } else if (recordingMeetingId) {
+        const displayStream = audioCapture.getDisplayStream()
+        const mixedAudio = audioCapture.getMixedAudioStream()
+        await videoCapture.start(recordingMeetingId, displayStream, mixedAudio)
+      }
+    } catch (err) {
+      console.error('[MeetingDetail] Video toggle failed:', err)
+    }
+  }, [videoCapture, audioCapture, recordingMeetingId, loadMeeting])
+
+  const handleStopEnhance = useCallback(() => {
+    window.api.invoke(IPC_CHANNELS.SUMMARY_ABORT)
+  }, [])
 
   const handleGenerateSummary = useCallback(async () => {
     if (!id || !selectedTemplateId || isGenerating) return
@@ -317,9 +365,14 @@ export default function MeetingDetail() {
       setStreamedSummary('')
       setShowNotes(false)
     } catch (err) {
-      console.error('Summary generation failed:', err)
+      const errStr = String(err)
+      if (!errStr.includes('abort') && !errStr.includes('Abort')) {
+        console.error('Summary generation failed:', err)
+      }
     } finally {
       setIsGenerating(false)
+      setStreamedSummary('')
+      setSummaryPhase('')
     }
   }, [id, selectedTemplateId, isGenerating, notesDraft, saveNotes])
 
@@ -499,174 +552,194 @@ export default function MeetingDetail() {
         />
       )}
 
-      <button className={styles.back} onClick={() => navigate('/')}>
-        &larr; Back to Meetings
-      </button>
+      <div className={styles.stickyHeader}>
+        <button className={styles.back} onClick={() => navigate('/')}>
+          &larr; Back to Meetings
+        </button>
 
-      <div className={styles.header}>
-        <div className={styles.titleRow}>
-          {editingTitle ? (
-            <input
-              ref={titleInputRef}
-              className={styles.titleInput}
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={handleTitleSave}
-              onKeyDown={handleTitleKeyDown}
-              disabled={isSavingTitle}
-            />
-          ) : (
-            <h2
-              className={styles.title}
-              onClick={handleTitleClick}
-              title="Click to rename"
-            >
-              {meeting.title}
-            </h2>
-          )}
-          <div className={styles.titleActions}>
-            {!isRecording && meeting.status === 'scheduled' && (
-              <button className={styles.recordBtn} onClick={handleStartRecording}>
-                Record
-              </button>
-            )}
-            {!isRecording && (meeting.status === 'transcribed' || meeting.status === 'summarized') && (
-              <button className={styles.recordBtn} onClick={handleContinueRecording}>
-                Continue Recording
-              </button>
-            )}
-            <div ref={shareRef} className={styles.shareWrapper}>
-              <button
-                className={styles.shareBtn}
-                onClick={() => setShareMenuOpen(!shareMenuOpen)}
-              >
-                Share
-              </button>
-              {shareMenuOpen && (
-                <div className={styles.shareMenu}>
-                  <button className={styles.shareMenuItem} onClick={handleCopyDriveLink}>
-                    Copy Drive link
-                  </button>
-                  <button className={styles.shareMenuItem} onClick={handleCopyText}>
-                    Copy text
-                  </button>
-                  <button className={styles.shareMenuItem} onClick={handleWebShare}>
-                    Share to web
-                  </button>
-                </div>
-              )}
-            </div>
-            <button className={styles.deleteBtn} onClick={handleDelete}>
-              Delete
-            </button>
-          </div>
-        </div>
-        <div className={styles.meta}>
-          <span>{new Date(meeting.date).toLocaleString()}</span>
-          {meeting.durationSeconds && (
-            <span>{Math.round(meeting.durationSeconds / 60)} min</span>
-          )}
-          {speakerEntries.length > 0 && (
-            <div className={styles.speakers}>
-              {speakerEntries.map(([idx, name]) => {
-                const index = Number(idx)
-                if (editingSpeaker === index) {
-                  return (
-                    <input
-                      key={idx}
-                      ref={speakerInputRef}
-                      className={styles.speakerInput}
-                      value={speakerDraft}
-                      onChange={(e) => setSpeakerDraft(e.target.value)}
-                      onBlur={handleSpeakerSave}
-                      onKeyDown={handleSpeakerKeyDown}
-                      disabled={isSavingSpeakers}
-                    />
-                  )
-                }
-                return (
-                  <button
-                    key={idx}
-                    className={styles.speakerChip}
-                    onClick={() => handleSpeakerClick(index)}
-                    title="Click to rename"
-                  >
-                    {name}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-          {companySuggestions.length > 0 && (
-            <div className={styles.companies}>
-              {companySuggestions.map((c) => (
-                <span key={c.domain || c.name} className={styles.companyChip}>
-                  {c.domain && (
-                    <img
-                      src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.domain)}&sz=32`}
-                      alt=""
-                      className={styles.companyChipLogo}
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                    />
-                  )}
-                  {c.name}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {isThisMeetingRecording && (
-        <div className={styles.recordingBar}>
-          <div className={styles.recordingStatus}>
-            <span className={`${styles.recordingDot} ${isPaused ? styles.paused : ''}`} />
-            <span className={styles.recordingTimer}>
-              {formatTime(duration)}
-              {isPaused && <span className={styles.pausedLabel}> (Paused)</span>}
-            </span>
-          </div>
-          <div className={styles.recordingControls}>
-            {isPaused ? (
-              <button className={styles.resumeBtn} onClick={handleResume}>
-                Resume
-              </button>
+        <div className={styles.header}>
+          <div className={styles.titleRow}>
+            {editingTitle ? (
+              <input
+                ref={titleInputRef}
+                className={styles.titleInput}
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={handleTitleSave}
+                onKeyDown={handleTitleKeyDown}
+                disabled={isSavingTitle}
+              />
             ) : (
-              <button className={styles.pauseBtn} onClick={handlePause}>
-                Pause
-              </button>
+              <h2
+                className={styles.title}
+                onClick={handleTitleClick}
+                title="Click to rename"
+              >
+                {meeting.title}
+              </h2>
             )}
-            <button className={styles.stopBtn} onClick={handleStop}>
-              Stop
-            </button>
+            <div className={styles.titleActions}>
+              {!isRecording && meeting.status === 'scheduled' && (
+                <button className={styles.recordBtn} onClick={handleStartRecording}>
+                  Record
+                </button>
+              )}
+              {!isRecording && (meeting.status === 'transcribed' || meeting.status === 'summarized') && (
+                <button className={styles.recordBtn} onClick={handleContinueRecording}>
+                  Continue Recording
+                </button>
+              )}
+              <div ref={shareRef} className={styles.shareWrapper}>
+                <button
+                  className={styles.shareBtn}
+                  onClick={() => setShareMenuOpen(!shareMenuOpen)}
+                >
+                  Share
+                </button>
+                {shareMenuOpen && (
+                  <div className={styles.shareMenu}>
+                    <button className={styles.shareMenuItem} onClick={handleCopyDriveLink}>
+                      Copy Drive link
+                    </button>
+                    <button className={styles.shareMenuItem} onClick={handleCopyText}>
+                      Copy text
+                    </button>
+                    <button className={styles.shareMenuItem} onClick={handleWebShare}>
+                      Share to web
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button className={styles.deleteBtn} onClick={handleDelete}>
+                Delete
+              </button>
+            </div>
+          </div>
+          <div className={styles.meta}>
+            <span>{new Date(meeting.date).toLocaleString()}</span>
+            {meeting.durationSeconds && (
+              <span>{Math.round(meeting.durationSeconds / 60)} min</span>
+            )}
+            {speakerEntries.length > 0 && (
+              <div className={styles.speakers}>
+                {speakerEntries.map(([idx, name]) => {
+                  const index = Number(idx)
+                  if (editingSpeaker === index) {
+                    return (
+                      <input
+                        key={idx}
+                        ref={speakerInputRef}
+                        className={styles.speakerInput}
+                        value={speakerDraft}
+                        onChange={(e) => setSpeakerDraft(e.target.value)}
+                        onBlur={handleSpeakerSave}
+                        onKeyDown={handleSpeakerKeyDown}
+                        disabled={isSavingSpeakers}
+                      />
+                    )
+                  }
+                  return (
+                    <button
+                      key={idx}
+                      className={styles.speakerChip}
+                      onClick={() => handleSpeakerClick(index)}
+                      title="Click to rename"
+                    >
+                      {name}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {companySuggestions.length > 0 && (
+              <div className={styles.companies}>
+                {companySuggestions.map((c) => (
+                  <span key={c.domain || c.name} className={styles.companyChip}>
+                    {c.domain && (
+                      <img
+                        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.domain)}&sz=32`}
+                        alt=""
+                        className={styles.companyChipLogo}
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                      />
+                    )}
+                    {c.name}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      )}
 
-      {isThisMeetingRecording && recordingError && (
-        <div className={styles.recordingError}>{recordingError}</div>
-      )}
+        {isThisMeetingRecording && (
+          <div className={styles.recordingBar}>
+            <div className={styles.recordingStatus}>
+              <span className={`${styles.recordingDot} ${isPaused ? styles.paused : ''}`} />
+              <span className={styles.recordingTimer}>
+                {formatTime(duration)}
+                {isPaused && <span className={styles.pausedLabel}> (Paused)</span>}
+              </span>
+            </div>
+            <div className={styles.recordingControls}>
+              <button
+                className={`${styles.videoToggle} ${videoCapture.isVideoRecording ? styles.videoActive : ''}`}
+                onClick={handleToggleVideo}
+                title={videoCapture.isVideoRecording ? 'Stop screen recording' : 'Record screen'}
+              >
+                {videoCapture.isVideoRecording ? '\u25A0' : 'Record Screen'}
+              </button>
+              {isPaused ? (
+                <button className={styles.resumeBtn} onClick={handleResume}>
+                  Resume
+                </button>
+              ) : (
+                <button className={styles.pauseBtn} onClick={handlePause}>
+                  Pause
+                </button>
+              )}
+              <button className={styles.stopBtn} onClick={handleStop}>
+                Stop
+              </button>
+            </div>
+          </div>
+        )}
 
-      {isThisMeetingRecording && audioCapture.hasSystemAudio === false && (
-        <div className={styles.recordingWarning}>
-          Mic only — system audio capture is not available. Grant Screen Recording
-          permission in System Settings &gt; Privacy &amp; Security to capture meeting audio.
+        {isThisMeetingRecording && recordingError && (
+          <div className={styles.recordingError}>{recordingError}</div>
+        )}
+
+        {isThisMeetingRecording && videoCapture.videoError && (
+          <div className={styles.recordingError}>{videoCapture.videoError}</div>
+        )}
+
+        {isThisMeetingRecording && audioCapture.hasSystemAudio === false && (
+          <div className={styles.recordingWarning}>
+            Mic only — system audio capture is not available. Grant Screen Recording
+            permission in System Settings &gt; Privacy &amp; Security to capture meeting audio.
+          </div>
+        )}
+
+        <div className={styles.tabs}>
+          <button
+            className={`${styles.tab} ${activeTab === 'notes' ? styles.activeTab : ''}`}
+            onClick={() => setActiveTab('notes')}
+          >
+            Notes
+          </button>
+          <button
+            className={`${styles.tab} ${activeTab === 'transcript' ? styles.activeTab : ''}`}
+            onClick={() => setActiveTab('transcript')}
+          >
+            Transcript
+          </button>
+          <button
+            className={`${styles.tab} ${activeTab === 'recording' ? styles.activeTab : ''}`}
+            onClick={() => setActiveTab('recording')}
+            disabled={!meeting.recordingPath && !videoCapture.isVideoRecording}
+          >
+            Recording
+          </button>
         </div>
-      )}
-
-      <div className={styles.tabs}>
-        <button
-          className={`${styles.tab} ${activeTab === 'notes' ? styles.activeTab : ''}`}
-          onClick={() => setActiveTab('notes')}
-        >
-          Notes
-        </button>
-        <button
-          className={`${styles.tab} ${activeTab === 'transcript' ? styles.activeTab : ''}`}
-          onClick={() => setActiveTab('transcript')}
-        >
-          Transcript
-        </button>
       </div>
 
       <div className={styles.content}>
@@ -705,11 +778,10 @@ export default function MeetingDetail() {
                   ))}
                 </select>
                 <button
-                  className={styles.enhanceBtn}
-                  onClick={handleGenerateSummary}
-                  disabled={isGenerating}
+                  className={`${styles.enhanceBtn} ${isGenerating ? styles.stopEnhanceBtn : ''}`}
+                  onClick={isGenerating ? handleStopEnhance : handleGenerateSummary}
                 >
-                  {isGenerating ? 'Enhancing...' : summary ? 'Re-enhance' : 'Enhance'}
+                  {isGenerating ? '\u25A0 Stop' : summary ? 'Re-enhance' : 'Enhance'}
                 </button>
               </div>
             )}
@@ -720,9 +792,16 @@ export default function MeetingDetail() {
                   <span>Summary</span>
                 </div>
                 {isGenerating ? (
-                  <div className={styles.markdown}>
-                    <ReactMarkdown>{streamedSummary}</ReactMarkdown>
-                  </div>
+                  <>
+                    {summaryPhase && (
+                      <div className={styles.summaryPhase}>
+                        {summaryPhase === 'generating' ? 'Generating draft...' : 'Refining...'}
+                      </div>
+                    )}
+                    <div className={styles.markdown}>
+                      <ReactMarkdown>{streamedSummary}</ReactMarkdown>
+                    </div>
+                  </>
                 ) : findOpen && findQuery ? (
                   <div className={styles.markdown}>
                     {highlightedContent}
@@ -796,6 +875,22 @@ export default function MeetingDetail() {
             )}
             {!isThisMeetingRecording && !transcript && (
               <div className={styles.noContent}>No transcript available yet.</div>
+            )}
+          </div>
+        )}
+        {activeTab === 'recording' && (
+          <div className={styles.videoTab}>
+            {videoPath ? (
+              <video
+                className={styles.videoPlayer}
+                src={videoPath}
+                controls
+                preload="metadata"
+              />
+            ) : videoCapture.isVideoRecording ? (
+              <div className={styles.noContent}>Screen recording in progress...</div>
+            ) : (
+              <div className={styles.noContent}>No screen recording available.</div>
             )}
           </div>
         )}
