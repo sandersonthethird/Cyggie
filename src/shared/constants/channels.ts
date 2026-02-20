@@ -87,6 +87,9 @@ export const IPC_CHANNELS = {
   VIDEO_STOP: 'video:stop',
   VIDEO_CHUNK: 'video:chunk',
   VIDEO_GET_PATH: 'video:get-path',
+  VIDEO_FIND_WINDOW: 'video:find-window',
+  VIDEO_SET_WINDOW_SOURCE: 'video:set-window-source',
+  VIDEO_CLEAR_WINDOW_SOURCE: 'video:clear-window-source',
 
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',

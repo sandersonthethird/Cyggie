@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Meeting Intelligence System - Real-time transcription and summarization",
   "main": "./out/main/index.js",
-  "author": "GORP",
+  "author": "Cyggie",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",

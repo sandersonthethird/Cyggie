@@ -103,6 +103,14 @@ export function useAudioCapture() {
           systemGain.connect(merger, 0, 1)
           setHasSystemAudio(true)
           window.api.send('recording:system-audio-status', true)
+
+          // Detect if the audio track is killed mid-recording (e.g. by video capture stopping shared streams)
+          track.onended = () => {
+            console.error('[AudioCapture] System audio track ended unexpectedly during recording')
+            setHasSystemAudio(false)
+            window.api.send('recording:system-audio-status', false)
+          }
+
           console.log(
             '[AudioCapture] System audio loopback active',
             `(context ${context.sampleRate} Hz, track ${track.getSettings().sampleRate ?? 'unknown'} Hz)`

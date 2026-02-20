@@ -5,6 +5,7 @@ interface RecordingState {
   isRecording: boolean
   isPaused: boolean
   meetingId: string | null
+  meetingPlatform: string | null
   startTime: number | null
   duration: number
   liveTranscript: TranscriptSegment[]
@@ -12,7 +13,7 @@ interface RecordingState {
   speakerCount: number
   error: string | null
 
-  startRecording: (meetingId: string) => void
+  startRecording: (meetingId: string, meetingPlatform?: string | null) => void
   stopRecording: () => void
   pauseRecording: () => void
   resumeRecording: () => void
@@ -28,6 +29,7 @@ export const useRecordingStore = create<RecordingState>((set) => ({
   isRecording: false,
   isPaused: false,
   meetingId: null,
+  meetingPlatform: null,
   startTime: null,
   duration: 0,
   liveTranscript: [],
@@ -35,11 +37,12 @@ export const useRecordingStore = create<RecordingState>((set) => ({
   speakerCount: 0,
   error: null,
 
-  startRecording: (meetingId) =>
+  startRecording: (meetingId, meetingPlatform) =>
     set({
       isRecording: true,
       isPaused: false,
       meetingId,
+      meetingPlatform: meetingPlatform || null,
       startTime: Date.now(),
       duration: 0,
       liveTranscript: [],
@@ -53,6 +56,7 @@ export const useRecordingStore = create<RecordingState>((set) => ({
       isRecording: false,
       isPaused: false,
       meetingId: null,
+      meetingPlatform: null,
       startTime: null,
       interimSegment: null
     }),

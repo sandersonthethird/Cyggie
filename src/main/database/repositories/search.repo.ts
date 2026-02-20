@@ -672,6 +672,79 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     } catch { /* skip */ }
   }
 
+  // 2b. Affiliated people: surface people from matched company domains
+  const matchedDomains = [...companyMap.keys()].filter((k) => k.includes('.'))
+  if (matchedDomains.length > 0) {
+    const domainConditions = matchedDomains.map(() => 'attendee_emails LIKE ?')
+    const domainParams = matchedDomains.map((d) => `%@${d}%`)
+
+    const affiliatedRows = db
+      .prepare(
+        `SELECT speaker_map, attendees, attendee_emails FROM meetings WHERE ${domainConditions.join(' OR ')}`
+      )
+      .all(...domainParams) as { speaker_map: string; attendees: string | null; attendee_emails: string | null }[]
+
+    for (const row of affiliatedRows) {
+      if (!row.attendee_emails) continue
+
+      let emails: string[]
+      try {
+        emails = JSON.parse(row.attendee_emails)
+      } catch { continue }
+
+      // Parse speaker names for name resolution
+      const speakerNames: string[] = []
+      try {
+        const map: Record<string, string> = JSON.parse(row.speaker_map || '{}')
+        for (const name of Object.values(map)) {
+          if (name && !/^Speaker \d+$/.test(name)) speakerNames.push(name)
+        }
+      } catch { /* skip */ }
+
+      // Parse non-email attendee entries for name resolution
+      const attendeeNames: string[] = []
+      if (row.attendees) {
+        try {
+          const attendees: string[] = JSON.parse(row.attendees)
+          for (const a of attendees) {
+            if (!a.includes('@')) attendeeNames.push(a)
+          }
+        } catch { /* skip */ }
+      }
+
+      const allNames = [...speakerNames, ...attendeeNames]
+
+      for (const email of emails) {
+        const domain = extractDomainFromEmail(email)
+        if (!domain || !matchedDomains.includes(domain)) continue
+
+        // Try to resolve email to a display name
+        const localPart = email.split('@')[0]?.toLowerCase() || ''
+        let resolved: string | null = null
+
+        for (const name of allNames) {
+          const nameParts = name.toLowerCase().split(/\s+/)
+          if (nameParts.some((part) => part.length >= 2 && localPart.includes(part))) {
+            resolved = name
+            break
+          }
+        }
+
+        if (resolved) {
+          people.add(resolved)
+        } else {
+          // Before adding email fallback, check if person already exists by name
+          const alreadyHasByName = [...people].some((existing) => {
+            if (existing.includes('@')) return false
+            const parts = existing.toLowerCase().split(/\s+/)
+            return parts.some((p) => p.length >= 2 && localPart.includes(p))
+          })
+          if (!alreadyHasByName) people.add(email)
+        }
+      }
+    }
+  }
+
   // 3. Meetings: title match
   const meetingRows = db
     .prepare('SELECT id, title FROM meetings WHERE title LIKE ? ORDER BY date DESC LIMIT ?')

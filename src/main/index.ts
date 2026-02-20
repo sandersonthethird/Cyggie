@@ -1,13 +1,20 @@
-import { app, BrowserWindow } from 'electron'
-import { join } from 'path'
+import { app, BrowserWindow, net, protocol } from 'electron'
+import { join, normalize } from 'path'
+import { pathToFileURL } from 'url'
 import { initMain as initAudioLoopback } from 'electron-audio-loopback'
 import { createTray } from './tray'
 import { getDatabase } from './database/connection'
 import { registerAllHandlers } from './ipc'
-import { initializeStorage, setStoragePath } from './storage/paths'
+import { initializeStorage, setStoragePath, getRecordingsDir } from './storage/paths'
 import * as settingsRepo from './database/repositories/settings.repo'
 import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from './database/repositories/meeting.repo'
 import { cleanupOrphanedTempFiles } from './video/video-writer'
+
+// Register media:// as a privileged scheme so the renderer can load local
+// video files through it (file:// is blocked by cross-origin restrictions).
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'media', privileges: { stream: true, bypassCSP: true } }
+])
 
 // Enable system audio loopback capture (must be called before app.whenReady)
 // CoreAudioTap is required on macOS 15+ — ScreenCaptureKit produces ended
@@ -81,6 +88,20 @@ app.whenReady().then(() => {
   // handlers (enable-loopback-audio / disable-loopback-audio) registered
   // by initAudioLoopback() above. The renderer enables the handler
   // just before calling getDisplayMedia and disables it after.
+
+  // Handle media:// protocol — serves files from the recordings directory
+  protocol.handle('media', (request) => {
+    const url = new URL(request.url)
+    const filename = decodeURIComponent(url.pathname).replace(/^\/+/, '')
+    const filePath = normalize(join(getRecordingsDir(), filename))
+    // Ensure the resolved path stays inside the recordings directory
+    if (!filePath.startsWith(getRecordingsDir())) {
+      return new Response('Forbidden', { status: 403 })
+    }
+    return net.fetch(pathToFileURL(filePath).href, {
+      headers: request.headers
+    })
+  })
 
   // Register IPC handlers
   registerAllHandlers()

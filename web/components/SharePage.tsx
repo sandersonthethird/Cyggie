@@ -30,7 +30,7 @@ export default function SharePage({
       <div className="w-[200px] flex-shrink-0 p-6">
         <Image
           src="/logo.png"
-          alt="GORP Meeting Intelligence"
+          alt="Cyggie Meeting Intelligence"
           width={160}
           height={87}
           priority

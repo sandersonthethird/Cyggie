@@ -18,11 +18,11 @@ export default function Sidebar() {
 
   const handleRecordFromCalendar = async (event: CalendarEvent) => {
     try {
-      const result = await window.api.invoke<{ meetingId: string }>(
+      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         event.title
       )
-      startRecording(result.meetingId)
+      startRecording(result.meetingId, result.meetingPlatform)
       navigate(`/meeting/${result.meetingId}`)
     } catch (err) {
       console.error('Failed to start recording:', err)
@@ -86,7 +86,7 @@ export default function Sidebar() {
 
       <div className={styles.bottom}>
         <div className={styles.logo}>
-          <img src={logo} alt="GORP" className={styles.logoImg} />
+          <img src={logo} alt="Cyggie" className={styles.logoImg} />
         </div>
         <NavLink
           to="/settings"

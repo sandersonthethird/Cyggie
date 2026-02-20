@@ -167,7 +167,7 @@ export async function authorize(): Promise<void> {
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end(
-          '<html><body><h2>Calendar connected!</h2><p>You can close this window and return to GORP.</p></body></html>'
+          '<html><body><h2>Calendar connected!</h2><p>You can close this window and return to Cyggie.</p></body></html>'
         )
 
         clearTimeout(timeout)

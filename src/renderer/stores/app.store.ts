@@ -38,6 +38,7 @@ interface AppState {
   setAllSpeakers: (speakers: string[]) => void
   setShowFilterPanel: (show: boolean) => void
   clearAdvancedFilters: () => void
+  clearSearch: () => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -73,7 +74,18 @@ export const useAppStore = create<AppState>((set) => ({
   setSearchSpeakers: (speakers) => set({ searchSpeakers: speakers }),
   setAllSpeakers: (speakers) => set({ allSpeakers: speakers }),
   setShowFilterPanel: (show) => set({ showFilterPanel: show }),
-  clearAdvancedFilters: () => set({ searchDateFrom: '', searchDateTo: '', searchSpeakers: [] })
+  clearAdvancedFilters: () => set({ searchDateFrom: '', searchDateTo: '', searchSpeakers: [] }),
+  clearSearch: () =>
+    set({
+      searchQuery: '',
+      searchFilter: null,
+      searchResults: [],
+      isSearching: false,
+      searchDateFrom: '',
+      searchDateTo: '',
+      searchSpeakers: [],
+      showFilterPanel: false
+    })
 }))
 
 export const selectHasActiveFilters = (s: AppState): boolean =>

@@ -42,8 +42,8 @@ export default function LiveRecording() {
 
   const handleStart = useCallback(async () => {
     try {
-      const result = await window.api.invoke<{ meetingId: string }>(IPC_CHANNELS.RECORDING_START)
-      startRecording(result.meetingId)
+      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(IPC_CHANNELS.RECORDING_START)
+      startRecording(result.meetingId, result.meetingPlatform)
     } catch (err) {
       setError(String(err))
     }

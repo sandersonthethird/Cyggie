@@ -146,7 +146,7 @@ async function fetchHomepage(domain: string): Promise<string | null> {
       const response = await net.fetch(prefix, {
         signal: AbortSignal.timeout(5000),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; GORP/1.0)',
+          'User-Agent': 'Mozilla/5.0 (compatible; Cyggie/1.0)',
           Accept: 'text/html'
         }
       })

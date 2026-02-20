@@ -1,10 +1,14 @@
-appId: com.gorp.app
-productName: GORP
+appId: com.cyggie.app
+productName: Cyggie
 copyright: Copyright 2026
 
 directories:
   buildResources: build
   output: dist
+
+extraResources:
+  - from: src/main/logo.png
+    to: logo.png
 
 files:
   - '!**/.vscode/*'

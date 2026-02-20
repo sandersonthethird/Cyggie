@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GORP - Shared Meeting",
+  title: "Cyggie - Shared Meeting",
   description: "View shared meeting notes and ask questions about the meeting.",
 };
 

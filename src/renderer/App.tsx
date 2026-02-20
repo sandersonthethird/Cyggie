@@ -26,11 +26,11 @@ function NotificationListener() {
       if (isRecording) return
 
       try {
-        const result = await window.api.invoke<{ meetingId: string }>(
+        const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
           IPC_CHANNELS.RECORDING_START,
           title as string
         )
-        startRecording(result.meetingId)
+        startRecording(result.meetingId, result.meetingPlatform)
         navigate(`/meeting/${result.meetingId}`)
       } catch (err) {
         setError(String(err))

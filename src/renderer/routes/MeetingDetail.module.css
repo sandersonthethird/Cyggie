@@ -731,10 +731,226 @@
   min-height: 0;
 }
 
+.videoWrapper {
+  position: relative;
+  background: black;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.videoWrapper:fullscreen {
+  border-radius: 0;
+}
+
 .videoPlayer {
   width: 100%;
   max-height: 70vh;
-  border-radius: var(--radius-lg);
   background: black;
   outline: none;
+  display: block;
+  cursor: pointer;
+}
+
+.videoWrapper:fullscreen .videoPlayer {
+  max-height: 100vh;
+}
+
+/* Custom controls bar */
+.controlsBar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  transition: opacity 0.3s ease;
+}
+
+.controlsBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.controlsBtn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.timeDisplay {
+  font-size: 12px;
+  color: #ddd;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Seek bar */
+.seekBar {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.seekBar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.seekBar::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+}
+
+/* Volume popup */
+.volumeAnchor {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.volumePopup {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 20, 0.95);
+  backdrop-filter: blur(12px);
+  border-radius: 8px;
+  padding: 12px 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.volumeSlider {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 4px;
+  height: 80px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.volumeSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.volumeSlider::-webkit-slider-runnable-track {
+  width: 4px;
+  border-radius: 2px;
+}
+
+/* Overflow menu anchor (inside controls bar) */
+.menuAnchor {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.videoMenuDropdown {
+  position: absolute;
+  bottom: 38px;
+  right: 0;
+  background: rgba(20, 20, 20, 0.95);
+  border-radius: 8px;
+  padding: 8px 0;
+  min-width: 180px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.videoMenuSection {
+  padding: 4px 12px 8px;
+}
+
+.videoMenuLabel {
+  display: block;
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.speedGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.speedChip {
+  padding: 4px 0;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: #ccc;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.speedChip:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.speedChipActive {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.4);
+  font-weight: 600;
+}
+
+.videoMenuDivider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 0;
+}
+
+.videoMenuItem {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: #ccc;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.videoMenuItem:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }

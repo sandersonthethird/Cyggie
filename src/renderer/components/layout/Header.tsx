@@ -10,7 +10,7 @@ const TITLES: Record<string, string> = {
 
 export default function Header() {
   const location = useLocation()
-  const title = TITLES[location.pathname] || 'GORP'
+  const title = TITLES[location.pathname] || 'Cyggie'
 
   return (
     <header className={styles.header}>

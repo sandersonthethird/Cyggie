@@ -96,7 +96,7 @@ async function ensureAppFolders(drive: DriveClient): Promise<{
     return { transcripts: transcriptsFolderId, summaries: summariesFolderId }
   }
 
-  appFolderId = await findOrCreateFolder(drive, 'GORP')
+  appFolderId = await findOrCreateFolder(drive, 'Cyggie')
   transcriptsFolderId = await findOrCreateFolder(drive, 'transcripts', appFolderId)
   summariesFolderId = await findOrCreateFolder(drive, 'summaries', appFolderId)
 

@@ -58,11 +58,14 @@ export function registerRecordingHandlers(): void {
     transcriptAssembler = new TranscriptAssembler()
     audioCapture = new AudioCapture()
     let maxSpeakers: number | undefined
+    let meetingPlatform: string | null = null
 
     // Append to existing meeting
     if (appendToMeetingId) {
       const existing = meetingRepo.getMeeting(appendToMeetingId)
       if (!existing) throw new Error('Meeting not found')
+
+      meetingPlatform = existing.meetingPlatform || null
 
       // Restore previous segments so new audio continues from where we left off
       if (existing.transcriptSegments && existing.transcriptSegments.length > 0) {
@@ -86,7 +89,6 @@ export function registerRecordingHandlers(): void {
       // Auto-suggest title from calendar if available
       let meetingTitle = title
       let calendarEventId: string | null = calEventId || null
-      let meetingPlatform: string | null = null
       let meetingUrl: string | null = null
 
       if (isCalendarConnected()) {
@@ -245,7 +247,7 @@ export function registerRecordingHandlers(): void {
     const win = getMainWindow()
     if (win) updateTrayMenu(win, true)
 
-    return { meetingId: currentMeetingId }
+    return { meetingId: currentMeetingId, meetingPlatform }
   })
 
   // Receive system audio capture status from renderer
@@ -253,6 +255,16 @@ export function registerRecordingHandlers(): void {
     console.log('[Recording] System audio status from renderer:', hasSystemAudio)
     if (transcriptAssembler && !hasSystemAudio) {
       transcriptAssembler.setSystemAudioUnavailable()
+    }
+    // Warn the user if audio was lost mid-recording
+    if (!hasSystemAudio && currentMeetingId) {
+      const win = BrowserWindow.getAllWindows()[0]
+      if (win) {
+        win.webContents.send(
+          IPC_CHANNELS.RECORDING_ERROR,
+          'System audio capture was lost — transcription may be incomplete. Try stopping and restarting the recording.'
+        )
+      }
     }
   })
 

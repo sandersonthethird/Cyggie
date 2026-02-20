@@ -28,6 +28,7 @@ export default function SearchBar() {
   const setAllSpeakers = useAppStore((s) => s.setAllSpeakers)
   const setShowFilterPanel = useAppStore((s) => s.setShowFilterPanel)
   const clearAdvancedFilters = useAppStore((s) => s.clearAdvancedFilters)
+  const clearSearch = useAppStore((s) => s.clearSearch)
   const hasActiveFilters = useAppStore(selectHasActiveFilters)
 
   const flatItems = useMemo(() => {
@@ -37,6 +38,11 @@ export default function SearchBar() {
     for (const m of categorized.meetings) items.push({ type: 'meeting', label: m.title, id: m.id })
     return items
   }, [categorized])
+
+  // Clear search state when SearchBar unmounts (user navigated away from meetings)
+  useEffect(() => {
+    return () => clearSearch()
+  }, [clearSearch])
 
   // Load all speakers on mount
   useEffect(() => {

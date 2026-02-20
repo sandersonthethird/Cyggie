@@ -120,7 +120,7 @@ export default function Settings() {
     <div className={styles.container}>
       {(needsDeepgram || needsClaude) && (
         <div className={styles.setupBanner}>
-          <h3>Welcome to GORP</h3>
+          <h3>Welcome to Cyggie</h3>
           <p>To get started, you'll need to provide your own API keys. They are stored locally on your machine and encrypted.</p>
           <ol>
             {needsDeepgram && (

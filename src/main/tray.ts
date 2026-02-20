@@ -1,14 +1,20 @@
 import { Tray, Menu, nativeImage, BrowserWindow, app } from 'electron'
 import { join } from 'path'
 
+function getTrayIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'logo.png')
+    : join(__dirname, '../../src/main/logo.png')
+}
+
 let tray: Tray | null = null
 
 export function createTray(mainWindow: BrowserWindow): Tray {
-  // Use a simple 16x16 template image for macOS menu bar
-  const icon = nativeImage.createEmpty()
+  const icon = nativeImage.createFromPath(getTrayIconPath()).resize({ width: 16, height: 16 })
+  icon.setTemplateImage(true)
   tray = new Tray(icon)
 
-  tray.setToolTip('GORP')
+  tray.setToolTip('Cyggie')
   updateTrayMenu(mainWindow, false)
 
   tray.on('click', () => {
@@ -27,7 +33,7 @@ export function updateTrayMenu(mainWindow: BrowserWindow, isRecording: boolean):
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: isRecording ? '● Recording...' : 'GORP',
+      label: isRecording ? '● Recording...' : 'Cyggie',
       enabled: false
     },
     { type: 'separator' },

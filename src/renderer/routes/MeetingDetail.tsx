@@ -25,6 +25,15 @@ function formatTime(seconds: number): string {
   return parts.join(':')
 }
 
+function formatVideoTime(secs: number): string {
+  if (!isFinite(secs)) return '0:00'
+  const h = Math.floor(secs / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  const s = Math.floor(secs % 60)
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
 interface MeetingData {
   meeting: Meeting
   transcript: string | null
@@ -74,6 +83,21 @@ export default function MeetingDetail() {
   const videoCapture = useSharedVideoCapture()
   const prevRecordingRef = useRef(false)
   const [videoPath, setVideoPath] = useState<string | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoWrapperRef = useRef<HTMLDivElement>(null)
+  const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const [speedMenuOpen, setSpeedMenuOpen] = useState(false)
+  const speedMenuRef = useRef<HTMLDivElement>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [videoDuration, setVideoDuration] = useState(0)
+  const [volume, setVolume] = useState(1)
+  const [isMuted, setIsMuted] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [controlsVisible, setControlsVisible] = useState(true)
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [volumeOpen, setVolumeOpen] = useState(false)
+  const volumeRef = useRef<HTMLDivElement>(null)
   const transcriptEndRef = useRef<HTMLDivElement>(null)
   const [findOpen, setFindOpen] = useState(false)
   const [shareMenuOpen, setShareMenuOpen] = useState(false)
@@ -92,6 +116,99 @@ export default function MeetingDetail() {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [shareMenuOpen])
+
+  // Close speed menu on click outside
+  useEffect(() => {
+    if (!speedMenuOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (speedMenuRef.current && !speedMenuRef.current.contains(e.target as Node)) {
+        setSpeedMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [speedMenuOpen])
+
+  // Close volume popup on click outside
+  useEffect(() => {
+    if (!volumeOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (volumeRef.current && !volumeRef.current.contains(e.target as Node)) {
+        setVolumeOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [volumeOpen])
+
+  // Video control handlers
+  const handlePlayPause = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    if (video.paused) video.play()
+    else video.pause()
+  }, [])
+
+  const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const video = videoRef.current
+    if (!video) return
+    video.currentTime = Number(e.target.value)
+  }, [])
+
+  const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const video = videoRef.current
+    if (!video) return
+    const v = Number(e.target.value)
+    video.volume = v
+    video.muted = v === 0
+    setVolume(v)
+    setIsMuted(v === 0)
+  }, [])
+
+  const handleMuteToggle = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    video.muted = !video.muted
+    setIsMuted(video.muted)
+  }, [])
+
+  const handleFullscreenToggle = useCallback(() => {
+    if (!videoWrapperRef.current) return
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+    } else {
+      videoWrapperRef.current.requestFullscreen()
+    }
+  }, [])
+
+  // Sync fullscreen state
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  // Auto-hide controls after 3s of inactivity
+  const showControls = useCallback(() => {
+    setControlsVisible(true)
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current)
+    controlsTimerRef.current = setTimeout(() => {
+      if (videoRef.current && !videoRef.current.paused) {
+        setControlsVisible(false)
+      }
+    }, 3000)
+  }, [])
+
+  const handleVideoMouseMove = useCallback(() => {
+    showControls()
+  }, [showControls])
+
+  const handleVideoMouseLeave = useCallback(() => {
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current)
+    if (videoRef.current && !videoRef.current.paused) {
+      controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 1000)
+    }
+  }, [])
 
   const loadMeeting = useCallback(async () => {
     if (!id) return
@@ -226,12 +343,12 @@ export default function MeetingDetail() {
       await saveNotes(notesDraft)
     }
     try {
-      const result = await window.api.invoke<{ meetingId: string }>(
+      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         data.meeting.title,
         data.meeting.calendarEventId || undefined
       )
-      startRecording(result.meetingId)
+      startRecording(result.meetingId, result.meetingPlatform)
       // Navigate to the recording meeting if it's different from the current one
       if (result.meetingId !== id) {
         navigate(`/meeting/${result.meetingId}`)
@@ -249,13 +366,13 @@ export default function MeetingDetail() {
       await saveNotes(notesDraft)
     }
     try {
-      const result = await window.api.invoke<{ meetingId: string }>(
+      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         undefined,
         undefined,
         data.meeting.id
       )
-      startRecording(result.meetingId)
+      startRecording(result.meetingId, result.meetingPlatform)
     } catch (err) {
       console.error('Failed to continue recording:', err)
     }
@@ -330,7 +447,8 @@ export default function MeetingDetail() {
       } else if (recordingMeetingId) {
         const displayStream = audioCapture.getDisplayStream()
         const mixedAudio = audioCapture.getMixedAudioStream()
-        await videoCapture.start(recordingMeetingId, displayStream, mixedAudio)
+        const platform = useRecordingStore.getState().meetingPlatform
+        await videoCapture.start(recordingMeetingId, displayStream, mixedAudio, platform)
       }
     } catch (err) {
       console.error('[MeetingDetail] Video toggle failed:', err)
@@ -881,12 +999,119 @@ export default function MeetingDetail() {
         {activeTab === 'recording' && (
           <div className={styles.videoTab}>
             {videoPath ? (
-              <video
-                className={styles.videoPlayer}
-                src={videoPath}
-                controls
-                preload="metadata"
-              />
+              <div
+                ref={videoWrapperRef}
+                className={styles.videoWrapper}
+                onMouseMove={handleVideoMouseMove}
+                onMouseLeave={handleVideoMouseLeave}
+              >
+                <video
+                  ref={videoRef}
+                  className={styles.videoPlayer}
+                  src={videoPath}
+                  preload="metadata"
+                  onClick={handlePlayPause}
+                  onLoadedMetadata={() => {
+                    if (videoRef.current) {
+                      videoRef.current.playbackRate = playbackSpeed
+                      setVideoDuration(videoRef.current.duration)
+                    }
+                  }}
+                  onTimeUpdate={() => {
+                    if (videoRef.current) setCurrentTime(videoRef.current.currentTime)
+                  }}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => { setIsPlaying(false); setControlsVisible(true) }}
+                  onEnded={() => { setIsPlaying(false); setControlsVisible(true) }}
+                />
+                <div
+                  className={styles.controlsBar}
+                  style={{ opacity: controlsVisible ? 1 : 0, pointerEvents: controlsVisible ? 'auto' : 'none' }}
+                >
+                  <button className={styles.controlsBtn} onClick={handlePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
+                    {isPlaying ? '\u23F8' : '\u25B6'}
+                  </button>
+                  <span className={styles.timeDisplay}>
+                    {formatVideoTime(currentTime)} / {formatVideoTime(videoDuration)}
+                  </span>
+                  <input
+                    type="range"
+                    className={styles.seekBar}
+                    min={0}
+                    max={videoDuration || 0}
+                    value={currentTime}
+                    step={0.1}
+                    onChange={handleSeek}
+                  />
+                  <div ref={volumeRef} className={styles.volumeAnchor}>
+                    <button
+                      className={styles.controlsBtn}
+                      onClick={() => setVolumeOpen((o) => !o)}
+                      onContextMenu={(e) => { e.preventDefault(); handleMuteToggle() }}
+                      title={isMuted ? 'Unmute' : 'Mute'}
+                    >
+                      {isMuted || volume === 0 ? '\uD83D\uDD07' : volume < 0.5 ? '\uD83D\uDD09' : '\uD83D\uDD0A'}
+                    </button>
+                    {volumeOpen && (
+                      <div className={styles.volumePopup}>
+                        <input
+                          type="range"
+                          className={styles.volumeSlider}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={isMuted ? 0 : volume}
+                          onChange={handleVolumeChange}
+                          orient="vertical"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <div ref={speedMenuRef} className={styles.menuAnchor}>
+                    <button
+                      className={styles.controlsBtn}
+                      onClick={() => setSpeedMenuOpen((o) => !o)}
+                      title="More options"
+                    >
+                      &#8942;
+                    </button>
+                    {speedMenuOpen && (
+                      <div className={styles.videoMenuDropdown}>
+                        <div className={styles.videoMenuSection}>
+                          <span className={styles.videoMenuLabel}>Speed</span>
+                          <div className={styles.speedGrid}>
+                            {[0.5, 1, 1.5, 2, 2.5, 3].map((speed) => (
+                              <button
+                                key={speed}
+                                className={`${styles.speedChip} ${playbackSpeed === speed ? styles.speedChipActive : ''}`}
+                                onClick={() => {
+                                  setPlaybackSpeed(speed)
+                                  if (videoRef.current) videoRef.current.playbackRate = speed
+                                }}
+                              >
+                                {speed}x
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className={styles.videoMenuDivider} />
+                        <button
+                          className={styles.videoMenuItem}
+                          onClick={() => {
+                            videoRef.current?.requestPictureInPicture?.()
+                            setSpeedMenuOpen(false)
+                          }}
+                        >
+                          Picture in Picture
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <button className={styles.controlsBtn} onClick={handleFullscreenToggle} title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+                    {isFullscreen ? '\u2715' : '\u26F6'}
+                  </button>
+                </div>
+              </div>
             ) : videoCapture.isVideoRecording ? (
               <div className={styles.noContent}>Screen recording in progress...</div>
             ) : (

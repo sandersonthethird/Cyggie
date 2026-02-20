@@ -102,12 +102,12 @@ export default function MeetingList() {
 
   const handleRecordFromCalendar = async (event: CalendarEvent) => {
     try {
-      const result = await window.api.invoke<{ meetingId: string }>(
+      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         event.title,
         event.id
       )
-      startRecording(result.meetingId)
+      startRecording(result.meetingId, result.meetingPlatform)
       navigate('/recording')
     } catch (err) {
       console.error('Failed to start recording:', err)

@@ -11,10 +11,11 @@
 
 .logo {
   padding: 4px 12px 4px;
+  text-align: center;
 }
 
 .logoImg {
-  width: 120px;
+  width: 48px;
   height: auto;
 }
 
