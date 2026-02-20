@@ -1012,8 +1012,25 @@ export default function MeetingDetail() {
                   preload="metadata"
                   onClick={handlePlayPause}
                   onLoadedMetadata={() => {
-                    if (videoRef.current) {
-                      videoRef.current.playbackRate = playbackSpeed
+                    const v = videoRef.current
+                    if (!v) return
+                    v.playbackRate = playbackSpeed
+                    if (isFinite(v.duration)) {
+                      setVideoDuration(v.duration)
+                    } else {
+                      // WebM files from MediaRecorder lack duration metadata.
+                      // Seek to a huge value to force the browser to resolve it.
+                      const onSeek = () => {
+                        v.removeEventListener('seeked', onSeek)
+                        setVideoDuration(v.duration)
+                        v.currentTime = 0
+                      }
+                      v.addEventListener('seeked', onSeek)
+                      v.currentTime = 1e10
+                    }
+                  }}
+                  onDurationChange={() => {
+                    if (videoRef.current && isFinite(videoRef.current.duration)) {
                       setVideoDuration(videoRef.current.duration)
                     }
                   }}
