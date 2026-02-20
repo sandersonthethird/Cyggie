@@ -70,7 +70,7 @@ A desktop meeting intelligence system — capture, transcribe, summarize, and se
 ```bash
 # Clone the repository
 git clone https://github.com/sandersonthethird/Cyggie
-cd gorp
+cd Cyggie
 
 # Install dependencies
 npm install
