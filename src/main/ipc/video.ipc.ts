@@ -3,7 +3,9 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import {
   startVideoFile,
   appendVideoChunk,
-  finalizeVideoFile
+  finalizeVideoFile,
+  getPlayableRecordingFilename,
+  resolveMeetingRecordingFilename
 } from '../video/video-writer'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { buildRecordingFilename } from '../storage/file-manager'
@@ -52,11 +54,11 @@ export function registerVideoHandlers(): void {
     startVideoFile(meetingId)
   })
 
-  ipcMain.on(IPC_CHANNELS.VIDEO_CHUNK, (_event, meetingId: string, data: ArrayBuffer) => {
+  ipcMain.handle(IPC_CHANNELS.VIDEO_CHUNK, async (_event, meetingId: string, data: ArrayBuffer) => {
     appendVideoChunk(meetingId, Buffer.from(data))
   })
 
-  ipcMain.handle(IPC_CHANNELS.VIDEO_STOP, (_event, meetingId: string) => {
+  ipcMain.handle(IPC_CHANNELS.VIDEO_STOP, async (_event, meetingId: string) => {
     const meeting = meetingRepo.getMeeting(meetingId)
     if (!meeting) throw new Error('Meeting not found')
 
@@ -67,7 +69,7 @@ export function registerVideoHandlers(): void {
       meeting.attendees
     )
 
-    finalizeVideoFile(meetingId, filename)
+    await finalizeVideoFile(meetingId, filename)
 
     meetingRepo.updateMeeting(meetingId, {
       recordingPath: filename
@@ -76,10 +78,19 @@ export function registerVideoHandlers(): void {
     return { success: true, filename }
   })
 
-  ipcMain.handle(IPC_CHANNELS.VIDEO_GET_PATH, (_event, meetingId: string) => {
+  ipcMain.handle(IPC_CHANNELS.VIDEO_GET_PATH, async (_event, meetingId: string) => {
     const meeting = meetingRepo.getMeeting(meetingId)
-    if (!meeting?.recordingPath) return null
-    return `media://recordings/${encodeURIComponent(meeting.recordingPath)}`
+    if (!meeting) return null
+
+    const resolvedFilename = resolveMeetingRecordingFilename(meetingId, meeting.recordingPath)
+    if (!resolvedFilename) return null
+
+    if (meeting.recordingPath !== resolvedFilename) {
+      meetingRepo.updateMeeting(meetingId, { recordingPath: resolvedFilename })
+    }
+
+    const playableFilename = await getPlayableRecordingFilename(resolvedFilename)
+    return `media://recordings/${encodeURIComponent(playableFilename)}`
   })
 
   ipcMain.handle(IPC_CHANNELS.VIDEO_FIND_WINDOW, async (_event, platform: string) => {

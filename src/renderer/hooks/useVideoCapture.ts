@@ -1,7 +1,6 @@
 import { useRef, useCallback, useState } from 'react'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 
-const FLUSH_INTERVAL_MS = 30_000
 const PREFERRED_MIME_TYPES = [
   'video/webm;codecs=vp9',
   'video/webm;codecs=vp8',
@@ -17,8 +16,7 @@ function getSupportedMimeType(): string {
 
 export function useVideoCapture() {
   const recorderRef = useRef<MediaRecorder | null>(null)
-  const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const chunksRef = useRef<Blob[]>([])
+  const chunkQueueRef = useRef<Promise<void>>(Promise.resolve())
   const [isVideoRecording, setIsVideoRecording] = useState(false)
   const [videoError, setVideoError] = useState<string | null>(null)
   const meetingIdRef = useRef<string | null>(null)
@@ -53,13 +51,17 @@ export function useVideoCapture() {
     }
   }
 
-  const flushChunks = useCallback(() => {
-    if (chunksRef.current.length === 0 || !meetingIdRef.current) return
-    const blob = new Blob(chunksRef.current, { type: chunksRef.current[0].type })
-    chunksRef.current = []
-    blob.arrayBuffer().then((buffer) => {
-      window.api.send(IPC_CHANNELS.VIDEO_CHUNK, meetingIdRef.current, buffer)
-    })
+  const queueChunk = useCallback((meetingId: string, chunk: Blob): Promise<void> => {
+    chunkQueueRef.current = chunkQueueRef.current
+      .catch(() => {
+        // Keep queue alive after a failed chunk write.
+      })
+      .then(async () => {
+        const buffer = await chunk.arrayBuffer()
+        await window.api.invoke(IPC_CHANNELS.VIDEO_CHUNK, meetingId, buffer)
+      })
+
+    return chunkQueueRef.current
   }, [])
 
   const start = useCallback(async (
@@ -122,9 +124,13 @@ export function useVideoCapture() {
       })
 
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data)
-        }
+        const activeMeetingId = meetingIdRef.current
+        if (!activeMeetingId || event.data.size === 0) return
+
+        queueChunk(activeMeetingId, event.data).catch((err) => {
+          console.error('[VideoCapture] Failed to send video chunk:', err)
+          setVideoError(String(err))
+        })
       }
 
       recorder.onerror = () => {
@@ -141,42 +147,34 @@ export function useVideoCapture() {
         }
       }
 
-      // Request data every 5 seconds for fine-grained flushing
-      recorder.start(5000)
+      // Emit chunks frequently for smoother streaming into FFmpeg.
+      recorder.start(1000)
       recorderRef.current = recorder
       setIsVideoRecording(true)
-
-      // Periodic flush to main process
-      flushTimerRef.current = setInterval(flushChunks, FLUSH_INTERVAL_MS)
     } catch (err) {
       console.error('[VideoCapture] Failed to start:', err)
       setVideoError(String(err))
     }
-  }, [flushChunks])
+  }, [queueChunk])
 
   const stop = useCallback(async () => {
-    if (flushTimerRef.current) {
-      clearInterval(flushTimerRef.current)
-      flushTimerRef.current = null
-    }
-
     const recorder = recorderRef.current
+    const meetingId = meetingIdRef.current
     if (recorder && recorder.state !== 'inactive') {
       await new Promise<void>((resolve) => {
-        recorder.ondataavailable = async (event) => {
-          if (event.data.size > 0) {
-            chunksRef.current.push(event.data)
-          }
-          flushChunks()
-          try {
-            await window.api.invoke(IPC_CHANNELS.VIDEO_STOP, meetingIdRef.current)
-          } catch (err) {
-            console.error('[VideoCapture] Failed to finalize:', err)
-          }
-          resolve()
-        }
+        recorder.addEventListener('stop', () => resolve(), { once: true })
         recorder.stop()
       })
+    }
+
+    try {
+      await chunkQueueRef.current
+      if (meetingId) {
+        await window.api.invoke(IPC_CHANNELS.VIDEO_STOP, meetingId)
+      }
+    } catch (err) {
+      console.error('[VideoCapture] Failed to finalize:', err)
+      setVideoError(String(err))
     }
 
     // Clean up our own stream if we created one (don't stop the shared audio stream)
@@ -193,9 +191,9 @@ export function useVideoCapture() {
 
     recorderRef.current = null
     meetingIdRef.current = null
-    chunksRef.current = []
+    chunkQueueRef.current = Promise.resolve()
     setIsVideoRecording(false)
-  }, [flushChunks])
+  }, [])
 
   const pause = useCallback(() => {
     if (recorderRef.current?.state === 'recording') {

@@ -1,6 +1,7 @@
-import { app, BrowserWindow, net, protocol } from 'electron'
-import { join, normalize } from 'path'
-import { pathToFileURL } from 'url'
+import { app, BrowserWindow, protocol } from 'electron'
+import { join, normalize, extname } from 'path'
+import { existsSync, statSync, createReadStream } from 'fs'
+import { Readable } from 'stream'
 import { initMain as initAudioLoopback } from 'electron-audio-loopback'
 import { createTray } from './tray'
 import { getDatabase } from './database/connection'
@@ -24,6 +25,71 @@ initAudioLoopback({ forceCoreAudioTap: true })
 
 let mainWindow: BrowserWindow | null = null
 let isQuitting = false
+
+function getMediaContentType(filePath: string): string {
+  const extension = extname(filePath).toLowerCase()
+  return extension === '.mp4'
+    ? 'video/mp4'
+    : extension === '.webm'
+      ? 'video/webm'
+      : 'application/octet-stream'
+}
+
+function parseUnsignedInt(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return null
+  return parsed
+}
+
+function parseRangeHeader(rangeHeader: string, fileSize: number): { start: number; end: number } | null {
+  // Accept single-range and multi-range headers (use the first range only):
+  // bytes=0-499,1000-1499
+  const unitMatch = rangeHeader.match(/^bytes\s*=\s*(.+)$/i)
+  if (!unitMatch?.[1]) return null
+
+  const firstRange = unitMatch[1].split(',')[0]?.trim()
+  if (!firstRange) return null
+
+  const dashIndex = firstRange.indexOf('-')
+  if (dashIndex < 0) return null
+
+  const startRaw = firstRange.slice(0, dashIndex).trim()
+  const endRaw = firstRange.slice(dashIndex + 1).trim()
+
+  let start: number
+  let end: number
+
+  if (startRaw === '' && endRaw === '') {
+    return null
+  }
+
+  // Suffix range: "bytes=-500" (last 500 bytes)
+  if (startRaw === '') {
+    const suffixLength = parseUnsignedInt(endRaw)
+    if (!suffixLength || suffixLength <= 0) return null
+    start = Math.max(fileSize - suffixLength, 0)
+    end = fileSize - 1
+  } else {
+    const parsedStart = parseUnsignedInt(startRaw)
+    if (parsedStart === null) return null
+    start = parsedStart
+    if (endRaw === '') {
+      end = fileSize - 1
+    } else {
+      const parsedEnd = parseUnsignedInt(endRaw)
+      if (parsedEnd === null) return null
+      end = parsedEnd
+    }
+  }
+
+  if (fileSize <= 0) return null
+  if (start >= fileSize) return null
+  if (end < start) return null
+
+  end = Math.min(end, fileSize - 1)
+  return { start, end }
+}
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -89,17 +155,77 @@ app.whenReady().then(() => {
   // by initAudioLoopback() above. The renderer enables the handler
   // just before calling getDisplayMedia and disables it after.
 
-  // Handle media:// protocol — serves files from the recordings directory
-  protocol.handle('media', (request) => {
+  // Handle media:// protocol — serve files from the recordings directory with explicit range support
+  // so the video element can seek reliably.
+  protocol.handle('media', async (request) => {
     const url = new URL(request.url)
     const filename = decodeURIComponent(url.pathname).replace(/^\/+/, '')
-    const filePath = normalize(join(getRecordingsDir(), filename))
+    const recordingsDir = normalize(join(getRecordingsDir(), '/'))
+    const filePath = normalize(join(recordingsDir, filename))
     // Ensure the resolved path stays inside the recordings directory
-    if (!filePath.startsWith(getRecordingsDir())) {
+    if (!filePath.startsWith(recordingsDir)) {
       return new Response('Forbidden', { status: 403 })
     }
-    return net.fetch(pathToFileURL(filePath).href, {
-      headers: request.headers
+    if (!existsSync(filePath)) {
+      return new Response('Not Found', { status: 404 })
+    }
+
+    const contentType = getMediaContentType(filePath)
+    const fileSize = statSync(filePath).size
+    const rangeHeader = request.headers.get('range')
+
+    if (rangeHeader) {
+      const range = parseRangeHeader(rangeHeader, fileSize)
+      if (!range) {
+        return new Response(null, {
+          status: 416,
+          headers: {
+            'Content-Range': `bytes */${fileSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Type': contentType
+          }
+        })
+      }
+
+      const chunkSize = range.end - range.start + 1
+      const responseHeaders = {
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(chunkSize),
+        'Content-Range': `bytes ${range.start}-${range.end}/${fileSize}`
+      }
+      if (request.method === 'HEAD') {
+        return new Response(null, { status: 206, headers: responseHeaders })
+      }
+
+      const stream = createReadStream(filePath, { start: range.start, end: range.end })
+      const body = Readable.toWeb(stream) as unknown as BodyInit
+      return new Response(body, {
+        status: 206,
+        headers: responseHeaders
+      })
+    }
+
+    if (request.method === 'HEAD') {
+      return new Response(null, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(fileSize)
+        }
+      })
+    }
+
+    const fullStream = createReadStream(filePath)
+    const body = Readable.toWeb(fullStream) as unknown as BodyInit
+    return new Response(body, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(fileSize)
+      }
     })
   })
 

@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, unlinkSync, renameSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, extname } from 'path'
 import { getTranscriptsDir, getSummariesDir, getRecordingsDir } from './paths'
 import { extractCompanyFromEmail } from '../utils/company-extractor'
 
@@ -191,7 +191,8 @@ export function renameRecording(
   attendees?: string[] | null
 ): string {
   const shortId = meetingId.split('-')[0]
-  const newFilename = `${sanitizeFilename(newTitle, date, attendees)} (${shortId}).webm`
+  const existingExt = extname(oldFilename) || '.mp4'
+  const newFilename = `${sanitizeFilename(newTitle, date, attendees)} (${shortId})${existingExt}`
   const oldPath = join(getRecordingsDir(), oldFilename)
   const newPath = join(getRecordingsDir(), newFilename)
   if (existsSync(oldPath) && oldPath !== newPath) {
@@ -204,10 +205,11 @@ export function buildRecordingFilename(
   meetingId: string,
   title: string,
   date: string,
-  attendees?: string[] | null
+  attendees?: string[] | null,
+  extension: '.mp4' | '.webm' = '.mp4'
 ): string {
   const shortId = meetingId.split('-')[0]
   return title && date
-    ? `${sanitizeFilename(title, date, attendees)} (${shortId}).webm`
-    : `${meetingId}.webm`
+    ? `${sanitizeFilename(title, date, attendees)} (${shortId})${extension}`
+    : `${meetingId}${extension}`
 }

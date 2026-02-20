@@ -60,6 +60,7 @@ A desktop meeting intelligence system — capture, transcribe, summarize, and se
 
 - **Node.js** (v18 or later recommended)
 - **npm**
+- **FFmpeg** *(required for video recording)* — install and ensure `ffmpeg` is on your `PATH`, or set `CYGGIE_FFMPEG_PATH`
 - **Deepgram API key** — for real-time transcription ([get one here](https://console.deepgram.com/))
 - **Anthropic API key** — for AI summaries and chat ([get one here](https://console.anthropic.com/))
 - **Google OAuth credentials** — for Calendar and Drive integration

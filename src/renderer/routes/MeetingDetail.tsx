@@ -83,7 +83,10 @@ export default function MeetingDetail() {
   const videoCapture = useSharedVideoCapture()
   const prevRecordingRef = useRef(false)
   const [videoPath, setVideoPath] = useState<string | null>(null)
+  const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null)
+  const [isVideoLoading, setIsVideoLoading] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const playRequestRef = useRef<Promise<void> | null>(null)
   const videoWrapperRef = useRef<HTMLDivElement>(null)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false)
@@ -145,14 +148,62 @@ export default function MeetingDetail() {
   const handlePlayPause = useCallback(() => {
     const video = videoRef.current
     if (!video) return
-    if (video.paused) video.play()
-    else video.pause()
+    if (video.paused) {
+      // If playback is already at the end, restart from the beginning.
+      if (isFinite(video.duration) && video.currentTime >= video.duration) {
+        video.currentTime = 0
+      }
+      const playPromise = video.play()
+      playRequestRef.current = playPromise
+      playPromise.catch((err) => {
+        console.error('[MeetingDetail] Video play failed:', err)
+      }).finally(() => {
+        playRequestRef.current = null
+      })
+    } else {
+      video.pause()
+    }
+  }, [])
+
+  const syncVideoDuration = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    let nextDuration = 0
+    if (isFinite(video.duration) && video.duration > 0) {
+      nextDuration = video.duration
+    } else if (video.seekable && video.seekable.length > 0) {
+      try {
+        const seekableEnd = video.seekable.end(video.seekable.length - 1)
+        if (isFinite(seekableEnd) && seekableEnd > 0) {
+          nextDuration = seekableEnd
+        }
+      } catch {
+        // Ignore transient seekable access failures.
+      }
+    }
+
+    if (nextDuration > 0) {
+      setVideoDuration(nextDuration)
+    }
   }, [])
 
   const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const video = videoRef.current
     if (!video) return
-    video.currentTime = Number(e.target.value)
+
+    const target = Number(e.target.value)
+    if (!Number.isFinite(target)) return
+
+    // Avoid seeking exactly to the media EOF, which can leave the player in a paused-ended state.
+    const duration = video.duration
+    let nextTime = Math.max(0, target)
+    if (isFinite(duration) && duration > 0) {
+      nextTime = Math.min(nextTime, Math.max(0, duration - 0.05))
+    }
+
+    video.currentTime = nextTime
+    setCurrentTime(nextTime)
   }, [])
 
   const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -210,6 +261,60 @@ export default function MeetingDetail() {
     }
   }, [])
 
+  // Resolve media:// to blob URL once so playback/seek doesn't depend on live range streaming.
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | null = null
+
+    setVideoBlobUrl(null)
+    setIsVideoLoading(false)
+
+    if (!videoPath) return
+
+    const controller = new AbortController()
+    setIsVideoLoading(true)
+    fetch(videoPath, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to load video (${res.status})`)
+        }
+        const blob = await res.blob()
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(blob)
+        setVideoBlobUrl(objectUrl)
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return
+        console.error('[MeetingDetail] Failed to fetch video blob:', err)
+      })
+      .finally(() => {
+        if (!cancelled) setIsVideoLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [videoPath])
+
+  // Reset playback state when a new video source is loaded.
+  useEffect(() => {
+    setIsPlaying(false)
+    setCurrentTime(0)
+    setVideoDuration(0)
+    playRequestRef.current = null
+    const v = videoRef.current
+    if (v) {
+      v.pause()
+      try {
+        v.currentTime = 0
+      } catch {
+        // Ignore seek failures while source metadata is not ready.
+      }
+    }
+  }, [videoPath, videoBlobUrl])
+
   const loadMeeting = useCallback(async () => {
     if (!id) return
     const result = await window.api.invoke<MeetingData | null>(IPC_CHANNELS.MEETING_GET, id)
@@ -225,12 +330,13 @@ export default function MeetingDetail() {
     summaryDraftRef.current = result.summary || ''
     if (result.summary) setShowNotes(false)
 
-    // Load video path if recording exists
-    if (result.meeting.recordingPath) {
-      window.api.invoke<string | null>(IPC_CHANNELS.VIDEO_GET_PATH, id).then(setVideoPath).catch(() => {})
-    } else {
-      setVideoPath(null)
-    }
+    // Ask main process for a playable recording path (includes legacy/fallback resolution).
+    window.api.invoke<string | null>(IPC_CHANNELS.VIDEO_GET_PATH, id)
+      .then(setVideoPath)
+      .catch((err) => {
+        console.error('[MeetingDetail] Failed to resolve recording path:', err)
+        setVideoPath(null)
+      })
 
     // Fetch company suggestions (with logos)
     window.api.invoke<CompanySuggestion[]>(IPC_CHANNELS.COMPANY_GET_SUGGESTIONS, id).then(setCompanySuggestions).catch(() => {})
@@ -653,6 +759,9 @@ export default function MeetingDetail() {
   }
 
   const { meeting, transcript, summary } = data
+  const playbackSrc = videoBlobUrl || null
+  const displayVideoDuration = videoDuration > 0 ? videoDuration : 0
+  const seekMax = Math.max(displayVideoDuration, currentTime, 1)
   const speakerEntries = Object.entries(localSpeakerMap)
   const hasTranscript = !!transcript
 
@@ -853,7 +962,7 @@ export default function MeetingDetail() {
           <button
             className={`${styles.tab} ${activeTab === 'recording' ? styles.activeTab : ''}`}
             onClick={() => setActiveTab('recording')}
-            disabled={!meeting.recordingPath && !videoCapture.isVideoRecording}
+            disabled={!videoPath && !videoCapture.isVideoRecording}
           >
             Recording
           </button>
@@ -998,7 +1107,7 @@ export default function MeetingDetail() {
         )}
         {activeTab === 'recording' && (
           <div className={styles.videoTab}>
-            {videoPath ? (
+            {videoPath && playbackSrc ? (
               <div
                 ref={videoWrapperRef}
                 className={styles.videoWrapper}
@@ -1008,38 +1117,42 @@ export default function MeetingDetail() {
                 <video
                   ref={videoRef}
                   className={styles.videoPlayer}
-                  src={videoPath}
+                  src={playbackSrc}
                   preload="metadata"
-                  onClick={handlePlayPause}
+                  onClick={showControls}
                   onLoadedMetadata={() => {
                     const v = videoRef.current
                     if (!v) return
                     v.playbackRate = playbackSpeed
-                    if (isFinite(v.duration)) {
-                      setVideoDuration(v.duration)
-                    } else {
-                      // WebM files from MediaRecorder lack duration metadata.
-                      // Seek to a huge value to force the browser to resolve it.
-                      const onSeek = () => {
-                        v.removeEventListener('seeked', onSeek)
-                        setVideoDuration(v.duration)
-                        v.currentTime = 0
-                      }
-                      v.addEventListener('seeked', onSeek)
-                      v.currentTime = 1e10
-                    }
+                    syncVideoDuration()
                   }}
                   onDurationChange={() => {
-                    if (videoRef.current && isFinite(videoRef.current.duration)) {
-                      setVideoDuration(videoRef.current.duration)
+                    syncVideoDuration()
+                  }}
+                  onProgress={syncVideoDuration}
+                  onTimeUpdate={() => {
+                    if (videoRef.current) {
+                      setCurrentTime(videoRef.current.currentTime)
+                      if (videoDuration === 0) syncVideoDuration()
                     }
                   }}
-                  onTimeUpdate={() => {
-                    if (videoRef.current) setCurrentTime(videoRef.current.currentTime)
+                  onPlay={() => { setIsPlaying(true); playRequestRef.current = null }}
+                  onPause={() => { setIsPlaying(false); setControlsVisible(true); playRequestRef.current = null }}
+                  onEnded={() => { setIsPlaying(false); setControlsVisible(true); playRequestRef.current = null }}
+                  onError={() => {
+                    const v = videoRef.current
+                    if (!v) return
+                    const err = v.error
+                    console.error('[MeetingDetail] Video element error:', {
+                      src: v.currentSrc,
+                      code: err?.code ?? null,
+                      message: err?.message ?? null,
+                      readyState: v.readyState,
+                      networkState: v.networkState,
+                      currentTime: v.currentTime,
+                      duration: v.duration
+                    })
                   }}
-                  onPlay={() => setIsPlaying(true)}
-                  onPause={() => { setIsPlaying(false); setControlsVisible(true) }}
-                  onEnded={() => { setIsPlaying(false); setControlsVisible(true) }}
                 />
                 <div
                   className={styles.controlsBar}
@@ -1049,13 +1162,13 @@ export default function MeetingDetail() {
                     {isPlaying ? '\u23F8' : '\u25B6'}
                   </button>
                   <span className={styles.timeDisplay}>
-                    {formatVideoTime(currentTime)} / {formatVideoTime(videoDuration)}
+                    {formatVideoTime(currentTime)} / {formatVideoTime(displayVideoDuration)}
                   </span>
                   <input
                     type="range"
                     className={styles.seekBar}
                     min={0}
-                    max={videoDuration || 0}
+                    max={seekMax}
                     value={currentTime}
                     step={0.1}
                     onChange={handleSeek}
@@ -1129,6 +1242,8 @@ export default function MeetingDetail() {
                   </button>
                 </div>
               </div>
+            ) : videoPath && isVideoLoading ? (
+              <div className={styles.noContent}>Loading recording...</div>
             ) : videoCapture.isVideoRecording ? (
               <div className={styles.noContent}>Screen recording in progress...</div>
             ) : (

@@ -63,7 +63,7 @@ export async function POST(request: Request) {
     totalQueries: 0,
   })
 
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://gorp-share.vercel.app'
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://cyggie.vercel.app'
   const url = `${baseUrl}/s/${token}`
 
   return NextResponse.json({ success: true, token, url })

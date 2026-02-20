@@ -79,7 +79,7 @@ async function showMeetingNotification(event: CalendarEvent): Promise<void> {
       })
     }
 
-    // Focus GORP window and start recording
+    // Focus Cyggie window and start recording
     focusAndRecord(event)
   })
 
