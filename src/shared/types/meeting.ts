@@ -1,5 +1,6 @@
 import type { MeetingPlatform } from '../constants/meeting-apps'
 import type { TranscriptSegment } from './recording'
+import type { CompanyEntityType } from './company'
 
 export type MeetingStatus = 'scheduled' | 'recording' | 'transcribed' | 'summarized' | 'error'
 
@@ -67,6 +68,7 @@ export interface AdvancedSearchParams {
 export interface CompanySuggestion {
   name: string
   domain: string
+  entityType?: CompanyEntityType | null
 }
 
 export interface CategorizedSuggestions {

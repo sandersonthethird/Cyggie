@@ -5,13 +5,21 @@ import { randomBytes, createHash } from 'crypto'
 import { google } from 'googleapis'
 import { getCredential, storeCredential } from '../security/credentials'
 
-const SCOPES = [
+const CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/drive.file'
 ]
+const GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+const CALENDAR_READONLY_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
-const GRANTED_SCOPES_KEY = 'google_granted_scopes'
-const TOKEN_KEY = 'google_calendar_tokens'
+const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
+
+const LEGACY_GRANTED_SCOPES_KEY = 'google_granted_scopes'
+const CALENDAR_GRANTED_SCOPES_KEY = 'google_calendar_granted_scopes'
+const GMAIL_GRANTED_SCOPES_KEY = 'google_gmail_granted_scopes'
+const CALENDAR_TOKEN_KEY = 'google_calendar_tokens'
+const GMAIL_TOKEN_KEY = 'google_gmail_tokens'
 const CLIENT_ID_KEY = 'google_client_id'
 const CLIENT_SECRET_KEY = 'google_client_secret'
 
@@ -21,6 +29,15 @@ interface TokenData {
   expiry_date: number
   token_type: string
 }
+
+interface OAuthFlowConfig {
+  scopes: string[]
+  tokenKey: string
+  grantedScopesKey: string
+  successTitle: string
+}
+
+let legacyScopesMigrated = false
 
 function generateCodeVerifier(): string {
   return randomBytes(32).toString('base64url')
@@ -46,7 +63,59 @@ function findAvailablePort(): Promise<number> {
   })
 }
 
-export function getOAuth2Client(): InstanceType<typeof google.auth.OAuth2> | null {
+function parseScopeString(scopes: string | null): string[] {
+  if (!scopes) return []
+  return scopes
+    .split(/\s+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean)
+}
+
+function parseTokenData(tokenJson: string | null): TokenData | null {
+  if (!tokenJson) return null
+  try {
+    return JSON.parse(tokenJson) as TokenData
+  } catch {
+    return null
+  }
+}
+
+function hasStoredToken(tokenKey: string): boolean {
+  const tokens = parseTokenData(getCredential(tokenKey))
+  if (!tokens) return false
+  return Boolean(tokens.access_token || tokens.refresh_token)
+}
+
+function ensureLegacyScopeMigration(): void {
+  if (legacyScopesMigrated) return
+  legacyScopesMigrated = true
+
+  const legacyScopeRaw = getCredential(LEGACY_GRANTED_SCOPES_KEY)
+  if (!legacyScopeRaw) return
+
+  const legacyScopes = parseScopeString(legacyScopeRaw)
+  if (legacyScopes.length === 0) {
+    storeCredential(LEGACY_GRANTED_SCOPES_KEY, '')
+    return
+  }
+
+  if (!getCredential(CALENDAR_GRANTED_SCOPES_KEY)) {
+    const calendarScopes = legacyScopes.filter(
+      (scope) => scope === CALENDAR_READONLY_SCOPE || scope === DRIVE_SCOPE
+    )
+    if (calendarScopes.length > 0) {
+      storeCredential(CALENDAR_GRANTED_SCOPES_KEY, calendarScopes.join(' '))
+    }
+  }
+
+  if (!getCredential(GMAIL_GRANTED_SCOPES_KEY) && legacyScopes.includes(GMAIL_READONLY_SCOPE)) {
+    storeCredential(GMAIL_GRANTED_SCOPES_KEY, GMAIL_READONLY_SCOPE)
+  }
+
+  storeCredential(LEGACY_GRANTED_SCOPES_KEY, '')
+}
+
+function createOAuth2Client(tokenKey: string): InstanceType<typeof google.auth.OAuth2> | null {
   const clientId = getCredential(CLIENT_ID_KEY)
   const clientSecret = getCredential(CLIENT_SECRET_KEY)
 
@@ -54,51 +123,37 @@ export function getOAuth2Client(): InstanceType<typeof google.auth.OAuth2> | nul
 
   const client = new google.auth.OAuth2(clientId, clientSecret || undefined)
 
-  const tokenJson = getCredential(TOKEN_KEY)
-  if (tokenJson) {
-    try {
-      const tokens = JSON.parse(tokenJson) as TokenData
-      client.setCredentials(tokens)
-    } catch {
-      // Invalid token data
-    }
+  const tokens = parseTokenData(getCredential(tokenKey))
+  if (tokens) {
+    client.setCredentials(tokens)
   }
 
   return client
 }
 
-export function isCalendarConnected(): boolean {
-  const tokenJson = getCredential(TOKEN_KEY)
-  if (!tokenJson) return false
-  try {
-    const tokens = JSON.parse(tokenJson) as TokenData
-    return !!tokens.access_token
-  } catch {
-    return false
-  }
+function getTokenBackedOAuth2Client(tokenKey: string): InstanceType<typeof google.auth.OAuth2> | null {
+  if (!hasStoredToken(tokenKey)) return null
+  return createOAuth2Client(tokenKey)
 }
 
-export function hasDriveScope(): boolean {
-  const grantedScopes = getCredential(GRANTED_SCOPES_KEY)
-  return !!grantedScopes && grantedScopes.includes(DRIVE_SCOPE)
+function getScopesForKey(scopeKey: string): string[] {
+  ensureLegacyScopeMigration()
+  return parseScopeString(getCredential(scopeKey))
 }
 
-/**
- * Run the OAuth2 authorization flow:
- * 1. Start a loopback HTTP server on a random port
- * 2. Open the browser to Google's auth URL with PKCE
- * 3. Wait for the redirect with the auth code
- * 4. Exchange the code for tokens
- * 5. Store tokens securely
- */
-export async function authorize(): Promise<void> {
+function getClientIdOrThrow(): { clientId: string; clientSecret: string } {
   const clientId = getCredential(CLIENT_ID_KEY)
   if (!clientId) {
-    throw new Error(
-      'Google Client ID not configured. Add it in Settings under Calendar Integration.'
-    )
+    throw new Error('Google Client ID not configured. Add it in Settings under Google integrations.')
   }
-  const clientSecret = getCredential(CLIENT_SECRET_KEY)
+  const clientSecret = getCredential(CLIENT_SECRET_KEY) || ''
+  return { clientId, clientSecret }
+}
+
+async function runAuthorizationFlow(config: OAuthFlowConfig): Promise<void> {
+  const { scopes, tokenKey, grantedScopesKey, successTitle } = config
+
+  const { clientId, clientSecret } = getClientIdOrThrow()
 
   const port = await findAvailablePort()
   const redirectUri = `http://127.0.0.1:${port}`
@@ -110,10 +165,11 @@ export async function authorize(): Promise<void> {
 
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
-    scope: SCOPES,
+    scope: scopes,
+    include_granted_scopes: false,
     code_challenge_method: 'S256',
     code_challenge: codeChallenge,
-    prompt: 'consent'
+    prompt: 'consent select_account'
   })
 
   return new Promise<void>((resolve, reject) => {
@@ -146,28 +202,28 @@ export async function authorize(): Promise<void> {
           return
         }
 
-        // Exchange code for tokens
         const { tokens } = await oauth2Client.getToken({
           code,
           codeVerifier
         })
 
-        // Store tokens securely
         const tokenData: TokenData = {
           access_token: tokens.access_token || '',
           refresh_token: tokens.refresh_token || '',
           expiry_date: tokens.expiry_date || 0,
           token_type: tokens.token_type || 'Bearer'
         }
-        storeCredential(TOKEN_KEY, JSON.stringify(tokenData))
+        storeCredential(tokenKey, JSON.stringify(tokenData))
 
         if (tokens.scope) {
-          storeCredential(GRANTED_SCOPES_KEY, tokens.scope)
+          storeCredential(grantedScopesKey, tokens.scope)
+        } else {
+          storeCredential(grantedScopesKey, scopes.join(' '))
         }
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end(
-          '<html><body><h2>Calendar connected!</h2><p>You can close this window and return to Cyggie.</p></body></html>'
+          `<html><body><h2>${successTitle}</h2><p>You can close this window and return to Cyggie.</p></body></html>`
         )
 
         clearTimeout(timeout)
@@ -193,8 +249,80 @@ export async function authorize(): Promise<void> {
   })
 }
 
+export function getOAuth2Client(): InstanceType<typeof google.auth.OAuth2> | null {
+  return getTokenBackedOAuth2Client(CALENDAR_TOKEN_KEY)
+}
+
+export function getGmailOAuth2Client(): InstanceType<typeof google.auth.OAuth2> | null {
+  const gmailClient = getTokenBackedOAuth2Client(GMAIL_TOKEN_KEY)
+  if (gmailClient) return gmailClient
+
+  // Backward compatibility: older installs stored Gmail grants on the calendar token.
+  if (hasStoredToken(CALENDAR_TOKEN_KEY) && hasGmailScope()) {
+    return getTokenBackedOAuth2Client(CALENDAR_TOKEN_KEY)
+  }
+
+  return null
+}
+
+export function isCalendarConnected(): boolean {
+  return hasStoredToken(CALENDAR_TOKEN_KEY)
+}
+
+export function isGmailConnected(): boolean {
+  if (hasStoredToken(GMAIL_TOKEN_KEY)) return true
+  return hasStoredToken(CALENDAR_TOKEN_KEY) && hasGmailScope()
+}
+
+export function hasDriveScope(): boolean {
+  return getCalendarGrantedScopes().includes(DRIVE_SCOPE)
+}
+
+export function hasGmailScope(): boolean {
+  return getGmailGrantedScopes().includes(GMAIL_READONLY_SCOPE)
+}
+
+export function getCalendarGrantedScopes(): string[] {
+  return getScopesForKey(CALENDAR_GRANTED_SCOPES_KEY)
+}
+
+export function getGmailGrantedScopes(): string[] {
+  return getScopesForKey(GMAIL_GRANTED_SCOPES_KEY)
+}
+
+// Backward-compatible alias for existing callers that still expect calendar scopes.
+export function getGrantedScopes(): string[] {
+  return getCalendarGrantedScopes()
+}
+
+export async function authorize(): Promise<void> {
+  await runAuthorizationFlow({
+    scopes: CALENDAR_SCOPES,
+    tokenKey: CALENDAR_TOKEN_KEY,
+    grantedScopesKey: CALENDAR_GRANTED_SCOPES_KEY,
+    successTitle: 'Calendar connected!'
+  })
+}
+
+export async function authorizeGmail(): Promise<void> {
+  await runAuthorizationFlow({
+    scopes: GMAIL_SCOPES,
+    tokenKey: GMAIL_TOKEN_KEY,
+    grantedScopesKey: GMAIL_GRANTED_SCOPES_KEY,
+    successTitle: 'Gmail connected!'
+  })
+}
+
 export function disconnect(): void {
-  storeCredential(TOKEN_KEY, '')
+  ensureLegacyScopeMigration()
+  storeCredential(CALENDAR_TOKEN_KEY, '')
+  storeCredential(CALENDAR_GRANTED_SCOPES_KEY, '')
+}
+
+export function disconnectGmail(): void {
+  ensureLegacyScopeMigration()
+  storeCredential(GMAIL_TOKEN_KEY, '')
+  storeCredential(GMAIL_GRANTED_SCOPES_KEY, '')
 }
 
 export function storeGoogleClientCredentials(clientId: string, clientSecret: string): void {

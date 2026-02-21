@@ -134,6 +134,31 @@
   margin-bottom: 8px;
 }
 
+.scopeStatusRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.scopePill {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.scopeGranted {
+  background: rgba(52, 199, 89, 0.12);
+  color: var(--color-success);
+}
+
+.scopeMissing {
+  background: rgba(255, 159, 10, 0.12);
+  color: var(--color-warning);
+}
+
 .connectedBadge {
   display: inline-block;
   padding: 4px 12px;

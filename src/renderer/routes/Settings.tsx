@@ -35,30 +35,53 @@ export default function Settings() {
   const [calendarConnecting, setCalendarConnecting] = useState(false)
   const [calendarError, setCalendarError] = useState('')
   const [hasDriveScope, setHasDriveScope] = useState(false)
+  const [gmailConnected, setGmailConnected] = useState(false)
+  const [gmailConnecting, setGmailConnecting] = useState(false)
+  const [gmailError, setGmailError] = useState('')
   const [driveGranting, setDriveGranting] = useState(false)
   const [driveError, setDriveError] = useState('')
 
+  const refreshGoogleScopes = useCallback(async () => {
+    const [driveScopeResult, gmailConnectedResult] = await Promise.allSettled([
+      window.api.invoke<boolean>(IPC_CHANNELS.DRIVE_HAS_SCOPE),
+      window.api.invoke<boolean>(IPC_CHANNELS.GMAIL_IS_CONNECTED)
+    ])
+    setHasDriveScope(driveScopeResult.status === 'fulfilled' ? driveScopeResult.value : false)
+    setGmailConnected(
+      gmailConnectedResult.status === 'fulfilled' ? gmailConnectedResult.value : false
+    )
+  }, [])
+
   useEffect(() => {
     async function load() {
-      const [all, currentPath, driveScope] = await Promise.all([
-        window.api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL),
-        window.api.invoke<string>(IPC_CHANNELS.APP_GET_STORAGE_PATH),
-        window.api.invoke<boolean>(IPC_CHANNELS.DRIVE_HAS_SCOPE)
-      ])
-      setHasDriveScope(driveScope)
-      setSettings({
-        deepgramApiKey: all.deepgramApiKey || '',
-        llmProvider: (all.llmProvider as LlmProvider) || 'claude',
-        claudeApiKey: all.claudeApiKey || '',
-        ollamaHost: all.ollamaHost || 'http://127.0.0.1:11434',
-        ollamaModel: all.ollamaModel || 'llama3.1',
-        showLiveTranscript: all.showLiveTranscript !== 'false',
-        defaultMaxSpeakers: all.defaultMaxSpeakers || ''
-      })
-      setStoragePath(currentPath)
+      try {
+        const [allResult, currentPathResult] = await Promise.allSettled([
+          window.api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL),
+          window.api.invoke<string>(IPC_CHANNELS.APP_GET_STORAGE_PATH)
+        ])
+
+        if (allResult.status === 'fulfilled') {
+          const all = allResult.value
+          setSettings({
+            deepgramApiKey: all.deepgramApiKey || '',
+            llmProvider: (all.llmProvider as LlmProvider) || 'claude',
+            claudeApiKey: all.claudeApiKey || '',
+            ollamaHost: all.ollamaHost || 'http://127.0.0.1:11434',
+            ollamaModel: all.ollamaModel || 'llama3.1',
+            showLiveTranscript: all.showLiveTranscript !== 'false',
+            defaultMaxSpeakers: all.defaultMaxSpeakers || ''
+          })
+        }
+
+        if (currentPathResult.status === 'fulfilled') {
+          setStoragePath(currentPathResult.value)
+        }
+      } finally {
+        await refreshGoogleScopes()
+      }
     }
     load()
-  }, [])
+  }, [refreshGoogleScopes])
 
   const handleSave = useCallback(async () => {
     const entries = Object.entries(settings) as [string, string | boolean][]
@@ -89,29 +112,53 @@ export default function Settings() {
     setCalendarError('')
     try {
       await connect(googleClientId.trim(), googleClientSecret.trim())
+      await refreshGoogleScopes()
     } catch (err) {
       setCalendarError(String(err))
     } finally {
       setCalendarConnecting(false)
     }
-  }, [googleClientId, googleClientSecret, connect])
+  }, [googleClientId, googleClientSecret, connect, refreshGoogleScopes])
 
   const handleDisconnectCalendar = useCallback(async () => {
     await disconnect()
-  }, [disconnect])
+    await refreshGoogleScopes()
+  }, [disconnect, refreshGoogleScopes])
 
-  const handleGrantDriveAccess = useCallback(async () => {
+  const handleReauthorizeGoogleScopes = useCallback(async () => {
     setDriveGranting(true)
     setDriveError('')
     try {
       await window.api.invoke(IPC_CHANNELS.CALENDAR_REAUTHORIZE)
-      setHasDriveScope(true)
+      await refreshGoogleScopes()
     } catch (err) {
       setDriveError(String(err))
     } finally {
       setDriveGranting(false)
     }
-  }, [])
+  }, [refreshGoogleScopes])
+
+  const handleConnectGmail = useCallback(async () => {
+    setGmailConnecting(true)
+    setGmailError('')
+    try {
+      await window.api.invoke(
+        IPC_CHANNELS.GMAIL_CONNECT,
+        googleClientId.trim(),
+        googleClientSecret.trim()
+      )
+      await refreshGoogleScopes()
+    } catch (err) {
+      setGmailError(String(err))
+    } finally {
+      setGmailConnecting(false)
+    }
+  }, [googleClientId, googleClientSecret, refreshGoogleScopes])
+
+  const handleDisconnectGmail = useCallback(async () => {
+    await window.api.invoke(IPC_CHANNELS.GMAIL_DISCONNECT)
+    await refreshGoogleScopes()
+  }, [refreshGoogleScopes])
 
   const needsDeepgram = !settings.deepgramApiKey
   const needsClaude = settings.llmProvider === 'claude' && !settings.claudeApiKey
@@ -261,8 +308,15 @@ export default function Settings() {
               </button>
             </div>
             <p className={styles.hint}>
-              Upcoming meetings with video links will appear in the sidebar.
+              Calendar events power meeting prep and attendee context.
             </p>
+            <div className={styles.scopeStatusRow}>
+              <span
+                className={`${styles.scopePill} ${hasDriveScope ? styles.scopeGranted : styles.scopeMissing}`}
+              >
+                Drive: {hasDriveScope ? 'Granted' : 'Missing'}
+              </span>
+            </div>
           </div>
         ) : (
           <>
@@ -275,8 +329,13 @@ export default function Settings() {
               >
                 Google Cloud Console
               </a>
-              . Enable the <strong>Calendar API</strong> and <strong>Drive API</strong>, then create a
-              Desktop OAuth client.
+              . Enable the <strong>Calendar API</strong> and <strong>Drive API</strong>,
+              then create a Desktop OAuth client.
+            </p>
+            <p className={styles.hint} style={{ marginBottom: 12 }}>
+              The Google permissions dialog branding comes from your Google Cloud OAuth consent screen. If it shows
+              <strong> EchoVault</strong>, update the OAuth app name to <strong>Cyggie</strong> in Google Cloud or use a
+              Client ID from the correct project.
             </p>
             <div className={styles.field}>
               <label className={styles.label}>Client ID</label>
@@ -310,6 +369,42 @@ export default function Settings() {
       </section>
 
       <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Gmail</h3>
+        {gmailConnected ? (
+          <div className={styles.field}>
+            <div className={styles.connectedRow}>
+              <span className={styles.connectedBadge}>Connected</span>
+              <button className={styles.disconnectBtn} onClick={handleDisconnectGmail}>
+                Disconnect
+              </button>
+            </div>
+            <p className={styles.hint}>
+              Used for company email ingest. This connection requests only
+              {' '}<strong>View your email messages and settings</strong>.
+            </p>
+          </div>
+        ) : (
+          <>
+            <p className={styles.hint} style={{ marginBottom: 12 }}>
+              Grant Gmail access for company-specific email ingest. This request only asks for
+              {' '}<strong>View your email messages and settings</strong>.
+            </p>
+            <p className={styles.hint} style={{ marginBottom: 12 }}>
+              Gmail uses the same Google OAuth credentials configured above.
+            </p>
+            {gmailError && <p className={styles.error}>{gmailError}</p>}
+            <button
+              className={styles.connectBtn}
+              onClick={handleConnectGmail}
+              disabled={gmailConnecting}
+            >
+              {gmailConnecting ? 'Connecting...' : 'Grant Gmail Access'}
+            </button>
+          </>
+        )}
+      </section>
+
+      <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Storage</h3>
         <div className={styles.field}>
           <label className={styles.label}>Storage Directory</label>
@@ -334,7 +429,7 @@ export default function Settings() {
             {driveError && <p className={styles.error}>{driveError}</p>}
             <button
               className={styles.connectBtn}
-              onClick={handleGrantDriveAccess}
+              onClick={handleReauthorizeGoogleScopes}
               disabled={driveGranting}
               style={{ marginTop: 8 }}
             >

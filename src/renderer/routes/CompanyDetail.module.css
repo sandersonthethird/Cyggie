@@ -37,11 +37,71 @@
   font-size: 13px;
 }
 
-.description {
-  margin-top: 10px;
-  margin-bottom: 0;
+.typeControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.typeSelect {
+  border: 1px solid #cfd8e8;
+  border-radius: 999px;
+  background: #fff;
+  color: #1f2937;
+  font-size: 12px;
+  padding: 2px 8px;
+  line-height: 1.4;
+}
+
+.typeSelect:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.businessBlock {
+  margin-top: 12px;
+  border: 1px solid #e1e8f4;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 10px 12px;
+}
+
+.businessLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #475569;
+  font-weight: 600;
+}
+
+.businessText {
+  margin: 6px 0 10px;
   color: #334155;
   font-size: 14px;
+  line-height: 1.45;
+}
+
+.websiteRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.websiteLink {
+  color: #1668dc;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.websiteLink:hover {
+  text-decoration: underline;
+}
+
+.noWebsite {
+  color: #64748b;
+  font-size: 13px;
 }
 
 .tagsRow {
@@ -76,6 +136,9 @@
 }
 
 .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
@@ -98,36 +161,34 @@
   border-bottom-color: var(--color-primary);
 }
 
+.tabLabel {
+  line-height: 1;
+}
+
+.tabCount {
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  padding: 0 6px;
+  background: #e5edf9;
+  color: #1e3a5f;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.activeTab .tabCount {
+  background: #1668dc;
+  color: #fff;
+}
+
 .section {
   border: 1px solid #dbe2ee;
   border-radius: 12px;
   padding: 14px;
   background: #fff;
-}
-
-.statsGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
-}
-
-.statCard {
-  border: 1px solid #e0e7f3;
-  border-radius: 10px;
-  padding: 10px;
-  background: #fafcff;
-}
-
-.statLabel {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.statValue {
-  margin-top: 4px;
-  font-size: 20px;
-  color: #1e293b;
-  font-weight: 600;
 }
 
 .editor {
@@ -187,6 +248,117 @@
   gap: 10px;
 }
 
+.emailListView {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.emailDateGroup {
+  margin: 0;
+}
+
+.emailDateHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.emailRows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.emailRow {
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+
+.emailRow:hover {
+  background: #f1f5fb;
+}
+
+.emailRowExpanded {
+  background: #f8fbff;
+}
+
+.emailRowTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.emailRowSubject {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emailRowTime {
+  font-size: 11px;
+  color: #64748b;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.emailRowMeta {
+  margin-top: 1px;
+  font-size: 11px;
+  color: #64748b;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emailRowSnippet {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #475569;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emailRowBody {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e5ebf5;
+  color: #1f2937;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.emailActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.emailIngestMeta {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .noteCard,
 .timelineItem {
   border: 1px solid #e1e8f4;
@@ -205,6 +377,10 @@
 .noteActions {
   display: flex;
   gap: 8px;
+}
+
+.fileActions {
+  margin-top: 10px;
 }
 
 .actionBtn {
@@ -260,6 +436,20 @@
   font-size: 13px;
 }
 
+.emailSnippet {
+  margin-top: 6px;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.fileUri {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+  word-break: break-all;
+}
+
 .memoToolbar {
   display: flex;
   justify-content: space-between;
@@ -278,6 +468,11 @@
   border: 1px solid #d7deec;
   background: #fff;
   padding: 10px;
+}
+
+.selectedCard {
+  border-color: #1668dc;
+  box-shadow: 0 0 0 1px rgba(22, 104, 220, 0.2);
 }
 
 .meta {
@@ -300,4 +495,11 @@
   border-radius: 8px;
   padding: 10px 12px;
   font-size: 13px;
+}
+
+@media (max-width: 980px) {
+  .emailRow {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
 }

@@ -5,6 +5,7 @@ import { registerTemplateHandlers } from './template.ipc'
 import { registerSearchHandlers } from './search.ipc'
 import { registerSummaryHandlers } from './summary.ipc'
 import { registerCalendarHandlers } from './calendar.ipc'
+import { registerGmailHandlers } from './gmail.ipc'
 import { registerDriveHandlers } from './drive.ipc'
 import { registerChatHandlers } from './chat.ipc'
 import { registerWebShareHandlers } from './web-share.ipc'
@@ -13,6 +14,7 @@ import { registerCompanyHandlers } from './company.ipc'
 import { registerCompanyNotesHandlers } from './company-notes.ipc'
 import { registerCompanyChatHandlers } from './company-chat.ipc'
 import { registerInvestmentMemoHandlers } from './investment-memo.ipc'
+import { registerContactHandlers } from './contacts.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -22,6 +24,7 @@ export function registerAllHandlers(): void {
   registerSearchHandlers()
   registerSummaryHandlers()
   registerCalendarHandlers()
+  registerGmailHandlers()
   registerDriveHandlers()
   registerChatHandlers()
   registerWebShareHandlers()
@@ -30,4 +33,5 @@ export function registerAllHandlers(): void {
   registerCompanyNotesHandlers()
   registerCompanyChatHandlers()
   registerInvestmentMemoHandlers()
+  registerContactHandlers()
 }

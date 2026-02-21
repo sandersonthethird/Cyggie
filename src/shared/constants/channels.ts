@@ -25,6 +25,11 @@ export const IPC_CHANNELS = {
   CALENDAR_IS_CONNECTED: 'calendar:is-connected',
   CALENDAR_REAUTHORIZE: 'calendar:reauthorize',
 
+  // Gmail
+  GMAIL_CONNECT: 'gmail:connect',
+  GMAIL_DISCONNECT: 'gmail:disconnect',
+  GMAIL_IS_CONNECTED: 'gmail:is-connected',
+
   // Search
   SEARCH_QUERY: 'search:query',
   SEARCH_ADVANCED: 'search:advanced',
@@ -39,9 +44,17 @@ export const IPC_CHANNELS = {
   COMPANY_GET: 'company:get',
   COMPANY_CREATE: 'company:create',
   COMPANY_UPDATE: 'company:update',
+  COMPANY_TAG_FROM_MEETING: 'company:tag-from-meeting',
   COMPANY_MEETINGS: 'company:meetings',
   COMPANY_EMAILS: 'company:emails',
+  COMPANY_EMAIL_INGEST: 'company:email-ingest',
+  COMPANY_FILES: 'company:files',
   COMPANY_TIMELINE: 'company:timeline',
+
+  // Contacts
+  CONTACT_LIST: 'contact:list',
+  CONTACT_CREATE: 'contact:create',
+  CONTACT_SYNC_FROM_MEETINGS: 'contact:sync-from-meetings',
 
   // Company notes
   COMPANY_NOTES_LIST: 'company-notes:list',

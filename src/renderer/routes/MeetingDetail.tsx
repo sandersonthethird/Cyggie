@@ -8,6 +8,7 @@ import FindBar from '../components/common/FindBar'
 import ChatInterface from '../components/chat/ChatInterface'
 import { useChatStore } from '../stores/chat.store'
 import type { Meeting, CompanySuggestion } from '../../shared/types/meeting'
+import type { CompanyEntityType } from '../../shared/types/company'
 import type { MeetingTemplate } from '../../shared/types/template'
 import type { DriveShareResponse } from '../../shared/types/drive'
 import type { WebShareResponse } from '../../shared/types/web-share'
@@ -65,6 +66,22 @@ interface MeetingData {
   meeting: Meeting
   transcript: string | null
   summary: string | null
+}
+
+const TAGGABLE_COMPANY_TYPES: CompanyEntityType[] = ['prospect', 'vc_fund', 'customer']
+
+const TAG_LABELS: Record<CompanyEntityType, string> = {
+  prospect: 'Prospect',
+  vc_fund: 'VC Fund',
+  customer: 'Customer',
+  partner: 'Partner',
+  vendor: 'Vendor',
+  other: 'Other',
+  unknown: 'Unknown'
+}
+
+function companySuggestionKey(company: CompanySuggestion): string {
+  return `${company.name.toLowerCase()}::${(company.domain || '').toLowerCase()}`
 }
 
 export default function MeetingDetail() {
@@ -135,6 +152,8 @@ export default function MeetingDetail() {
   const shareRef = useRef<HTMLDivElement>(null)
   const [showNotes, setShowNotes] = useState(true)
   const [companySuggestions, setCompanySuggestions] = useState<CompanySuggestion[]>([])
+  const [companyTagSelections, setCompanyTagSelections] = useState<Record<string, CompanyEntityType>>({})
+  const [savingCompanyTagKey, setSavingCompanyTagKey] = useState<string | null>(null)
 
   // Close share menu on click outside
   useEffect(() => {
@@ -397,7 +416,21 @@ export default function MeetingDetail() {
       })
 
     // Fetch company suggestions (with logos)
-    window.api.invoke<CompanySuggestion[]>(IPC_CHANNELS.COMPANY_GET_SUGGESTIONS, id).then(setCompanySuggestions).catch(() => {})
+    window.api.invoke<CompanySuggestion[]>(IPC_CHANNELS.COMPANY_GET_SUGGESTIONS, id)
+      .then((suggestions) => {
+        setCompanySuggestions(suggestions)
+        const persistedSelections = suggestions.reduce<Record<string, CompanyEntityType>>(
+          (acc, suggestion) => {
+            if (suggestion.entityType) {
+              acc[companySuggestionKey(suggestion)] = suggestion.entityType
+            }
+            return acc
+          },
+          {}
+        )
+        setCompanyTagSelections(persistedSelections)
+      })
+      .catch(() => {})
 
     // Hydrate chat store from persisted messages (only if store is empty for this meeting)
     if (result.meeting.chatMessages && result.meeting.chatMessages.length > 0) {
@@ -450,6 +483,31 @@ export default function MeetingDetail() {
       await window.api.invoke(IPC_CHANNELS.MEETING_SAVE_NOTES, id, text)
     } catch (err) {
       console.error('Failed to save notes:', err)
+    }
+  }, [id])
+
+  const handleTagCompany = useCallback(async (company: CompanySuggestion, entityType: CompanyEntityType) => {
+    if (!id) return
+    const suggestionKey = companySuggestionKey(company)
+    setSavingCompanyTagKey(suggestionKey)
+    try {
+      await window.api.invoke(
+        IPC_CHANNELS.COMPANY_TAG_FROM_MEETING,
+        id,
+        {
+          canonicalName: company.name,
+          primaryDomain: company.domain || null,
+          entityType
+        }
+      )
+      setCompanyTagSelections((prev) => ({
+        ...prev,
+        [suggestionKey]: entityType
+      }))
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to tag company:', err)
+    } finally {
+      setSavingCompanyTagKey(null)
     }
   }, [id])
 
@@ -939,19 +997,40 @@ export default function MeetingDetail() {
             )}
             {companySuggestions.length > 0 && (
               <div className={styles.companies}>
-                {companySuggestions.map((c) => (
-                  <span key={c.domain || c.name} className={styles.companyChip}>
-                    {c.domain && (
-                      <img
-                        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.domain)}&sz=32`}
-                        alt=""
-                        className={styles.companyChipLogo}
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                      />
-                    )}
-                    {c.name}
-                  </span>
-                ))}
+                {companySuggestions.map((c) => {
+                  const suggestionKey = companySuggestionKey(c)
+                  const selectedType = companyTagSelections[suggestionKey]
+                  return (
+                    <div key={c.domain || c.name} className={styles.companyChip}>
+                      <span className={styles.companyChipMain}>
+                        {c.domain && (
+                          <img
+                            src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.domain)}&sz=32`}
+                            alt=""
+                            className={styles.companyChipLogo}
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                          />
+                        )}
+                        {c.name}
+                      </span>
+                      {!selectedType && (
+                        <span className={styles.companyChipActions}>
+                          {TAGGABLE_COMPANY_TYPES.map((entityType) => (
+                            <button
+                              key={entityType}
+                              type="button"
+                              disabled={savingCompanyTagKey === suggestionKey}
+                              className={styles.companyTagBtn}
+                              onClick={() => handleTagCompany(c, entityType)}
+                            >
+                              {TAG_LABELS[entityType]}
+                            </button>
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>

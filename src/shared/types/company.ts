@@ -1,3 +1,20 @@
+export type CompanyEntityType =
+  | 'prospect'
+  | 'vc_fund'
+  | 'customer'
+  | 'partner'
+  | 'vendor'
+  | 'other'
+  | 'unknown'
+
+export interface CompanyListFilter {
+  query?: string
+  limit?: number
+  offset?: number
+  view?: 'companies' | 'all'
+  entityTypes?: CompanyEntityType[]
+}
+
 export interface CompanySummary {
   id: string
   canonicalName: string
@@ -9,6 +26,10 @@ export interface CompanySummary {
   status: string
   crmProvider: string | null
   crmCompanyId: string | null
+  entityType: CompanyEntityType
+  includeInCompaniesView: boolean
+  classificationSource: 'manual' | 'auto'
+  classificationConfidence: number | null
   meetingCount: number
   emailCount: number
   noteCount: number
@@ -38,8 +59,37 @@ export interface CompanyEmailRef {
   receivedAt: string | null
   sentAt: string | null
   snippet: string | null
+  bodyText: string | null
   isUnread: boolean
   threadId: string | null
+}
+
+export interface CompanyFileRef {
+  id: string
+  meetingId: string
+  title: string
+  date: string
+  status: string
+  hasTranscript: boolean
+  hasNotes: boolean
+  hasSummary: boolean
+  hasRecording: boolean
+  artifactCount: number
+}
+
+export interface CompanyEmailIngestResult {
+  companyId: string
+  accountEmail: string
+  cues: {
+    contactEmails: string[]
+    domains: string[]
+  }
+  queryCount: number
+  fetchedMessageCount: number
+  insertedMessageCount: number
+  updatedMessageCount: number
+  linkedMessageCount: number
+  linkedContactCount: number
 }
 
 export type CompanyTimelineItemType = 'meeting' | 'email'

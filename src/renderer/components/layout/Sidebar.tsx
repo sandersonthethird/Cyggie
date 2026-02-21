@@ -72,6 +72,15 @@ export default function Sidebar() {
             Companies
           </NavLink>
         )}
+        {companiesEnabled && (
+          <NavLink
+            to="/contacts"
+            className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
+          >
+            <span className={styles.icon}>&#128101;</span>
+            Contacts
+          </NavLink>
+        )}
         <NavLink
           to="/templates"
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}

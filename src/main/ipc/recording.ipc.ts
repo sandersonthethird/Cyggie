@@ -16,6 +16,7 @@ import { getTranscriptsDir } from '../storage/paths'
 import { join } from 'path'
 import { RecordingAutoStop } from '../recording/auto-stop'
 import { extractCompaniesFromEmails } from '../utils/company-extractor'
+import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
 import type { TranscriptResult } from '../deepgram/types'
 import type { TranscriptSegment } from '../../shared/types/recording'
 import { DEFAULT_DEEPGRAM_KEYWORDS } from '../../shared/constants/deepgram-keywords'
@@ -121,6 +122,11 @@ export function registerRecordingHandlers(): void {
       }
 
       meetingRepo.updateMeeting(appendToMeetingId, { status: 'recording' })
+      try {
+        syncContactsFromAttendees(existing.attendees, existing.attendeeEmails)
+      } catch (err) {
+        console.error('[Contacts] Failed to sync from appended meeting:', err)
+      }
       currentMeetingId = appendToMeetingId
       recordingStartTime = Date.now()
     } else {
@@ -186,7 +192,7 @@ export function registerRecordingHandlers(): void {
           updates.attendeeEmails = calendarAttendeeEmails
           updates.companies = extractCompaniesFromEmails(calendarAttendeeEmails)
         }
-        meetingRepo.updateMeeting(meeting.id, updates)
+        meeting = meetingRepo.updateMeeting(meeting.id, updates) || meeting
       } else {
         meeting = meetingRepo.createMeeting({
           title: meetingTitle,
@@ -198,6 +204,12 @@ export function registerRecordingHandlers(): void {
           attendeeEmails: calendarAttendeeEmails.length > 0 ? calendarAttendeeEmails : null,
           companies: calendarAttendeeEmails.length > 0 ? extractCompaniesFromEmails(calendarAttendeeEmails) : null
         })
+      }
+
+      try {
+        syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails)
+      } catch (err) {
+        console.error('[Contacts] Failed to sync from recording start:', err)
       }
 
       currentMeetingId = meeting.id

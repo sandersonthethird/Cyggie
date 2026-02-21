@@ -19,6 +19,8 @@ import { runCompanyOsNotesMigration } from './migrations/016-company-os-notes'
 import { runCompanyOsMemoMigration } from './migrations/017-company-os-memo'
 import { runCompanyOsThesisMigration } from './migrations/018-company-os-thesis'
 import { runCompanyOsBackfillMigration } from './migrations/019-company-os-backfill'
+import { runCompanyClassificationMigration } from './migrations/020-company-classification'
+import { runCompanyDomainNormalizationMigration } from './migrations/021-company-domain-normalization'
 
 let db: Database.Database | null = null
 
@@ -46,6 +48,8 @@ export function getDatabase(): Database.Database {
     runCompanyOsMemoMigration(db)
     runCompanyOsThesisMigration(db)
     runCompanyOsBackfillMigration(db)
+    runCompanyClassificationMigration(db)
+    runCompanyDomainNormalizationMigration(db)
   }
   return db
 }

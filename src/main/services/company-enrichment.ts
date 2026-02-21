@@ -1,11 +1,19 @@
 import { net } from 'electron'
 import Anthropic from '@anthropic-ai/sdk'
 import { getCredential } from '../security/credentials'
-import * as companyRepo from '../database/repositories/company.repo'
+import * as companyCacheRepo from '../database/repositories/company.repo'
+import * as orgCompanyRepo from '../database/repositories/org-company.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { extractDomainFromEmail, extractDomainsFromEmails, humanizeDomainName } from '../utils/company-extractor'
 import type { CompanySuggestion } from '../../shared/types/meeting'
 import type { CalendarEvent } from '../../shared/types/calendar'
+
+function getPersistedEntityType(
+  companyName: string,
+  domain: string | null
+): CompanySuggestion['entityType'] {
+  return orgCompanyRepo.getEntityTypeByNameOrDomain(companyName, domain) || null
+}
 
 /**
  * Enrich a single domain: resolve its true company name via website fetch + LLM fallback.
@@ -13,7 +21,7 @@ import type { CalendarEvent } from '../../shared/types/calendar'
  */
 export async function enrichCompany(domain: string): Promise<string> {
   // 1. Check cache
-  const cached = companyRepo.getByDomain(domain)
+  const cached = companyCacheRepo.getByDomain(domain)
   if (cached) return cached.displayName
 
   // 2. Tier 1: Fetch homepage HTML and parse
@@ -31,7 +39,7 @@ export async function enrichCompany(domain: string): Promise<string> {
   }
 
   // 5. Cache result
-  companyRepo.upsert(domain, displayName)
+  companyCacheRepo.upsert(domain, displayName)
   return displayName
 }
 
@@ -72,12 +80,16 @@ export function getCompanySuggestionsFromEmails(emails: string[]): CompanySugges
   const domains = extractDomainsFromEmails(emails)
   if (domains.length === 0) return []
 
-  const cached = companyRepo.getByDomains(domains)
+  const cached = companyCacheRepo.getByDomains(domains)
   const suggestions: CompanySuggestion[] = []
 
   for (const domain of domains) {
     const name = cached.get(domain) || domainToTitleCase(domain)
-    suggestions.push({ name, domain })
+    suggestions.push({
+      name,
+      domain,
+      entityType: getPersistedEntityType(name, domain)
+    })
   }
 
   return suggestions
@@ -96,7 +108,11 @@ export function getCompanySuggestionsForMeeting(
 
   // Fallback: if we have company names but no emails, return names without domains
   if (companiesRaw && companiesRaw.length > 0) {
-    return companiesRaw.map((name) => ({ name, domain: '' }))
+    return companiesRaw.map((name) => ({
+      name,
+      domain: '',
+      entityType: getPersistedEntityType(name, null)
+    }))
   }
 
   return []
@@ -121,7 +137,7 @@ export async function enrichDomainsFromCalendarEvents(events: CalendarEvent[]): 
   if (allDomains.size === 0) return
 
   // Filter out already-cached domains
-  const cached = companyRepo.getByDomains([...allDomains])
+  const cached = companyCacheRepo.getByDomains([...allDomains])
   const uncached = [...allDomains].filter((d) => !cached.has(d))
 
   if (uncached.length === 0) return

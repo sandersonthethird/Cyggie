@@ -8,6 +8,7 @@ import { getStoragePath, setStoragePath } from '../storage/paths'
 import { renameFile as renameDriveFile } from '../drive/google-drive'
 import { extractCompaniesFromEmails, extractCompaniesFromAttendees } from '../utils/company-extractor'
 import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
+import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
 import type { ChatMessage, MeetingListFilter } from '../../shared/types/meeting'
 
 export function registerMeetingHandlers(): void {
@@ -26,7 +27,15 @@ export function registerMeetingHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.MEETING_UPDATE, (_event, id: string, data: Parameters<typeof meetingRepo.updateMeeting>[1]) => {
-    return meetingRepo.updateMeeting(id, data)
+    const updated = meetingRepo.updateMeeting(id, data)
+    if (updated && (data.attendees !== undefined || data.attendeeEmails !== undefined)) {
+      try {
+        syncContactsFromAttendees(updated.attendees, updated.attendeeEmails)
+      } catch (err) {
+        console.error('[Contacts] Failed to sync from meeting update:', err)
+      }
+    }
+    return updated
   })
 
   ipcMain.handle(IPC_CHANNELS.MEETING_DELETE, (_event, id: string) => {
@@ -193,7 +202,14 @@ export function registerMeetingHandlers(): void {
     (_event, calendarEventId: string, title: string, date: string, platform?: string, meetingUrl?: string, attendees?: string[], attendeeEmails?: string[]) => {
       // Check if a meeting already exists for this calendar event
       const existing = meetingRepo.findMeetingByCalendarEventId(calendarEventId)
-      if (existing) return existing
+      if (existing) {
+        try {
+          syncContactsFromAttendees(existing.attendees, existing.attendeeEmails)
+        } catch (err) {
+          console.error('[Contacts] Failed to sync from existing prepared meeting:', err)
+        }
+        return existing
+      }
 
       // Use heuristic names for immediate response
       const companies = attendeeEmails && attendeeEmails.length > 0
@@ -212,6 +228,12 @@ export function registerMeetingHandlers(): void {
         companies: companies.length > 0 ? companies : null,
         status: 'scheduled'
       })
+
+      try {
+        syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails)
+      } catch (err) {
+        console.error('[Contacts] Failed to sync from prepared meeting:', err)
+      }
 
       // Fire off async enrichment to resolve true company names
       const emails = attendeeEmails || (attendees || []).filter((a) => a.includes('@'))
