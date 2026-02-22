@@ -37,6 +37,11 @@
 }
 
 .card {
+  display: block;
+  width: 100%;
+  border: none;
+  text-align: left;
+  cursor: pointer;
   padding: 5px 12px;
   background: transparent;
   border-radius: var(--radius-md);

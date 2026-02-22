@@ -36,7 +36,7 @@ function buildFilter(query: string, scope: CompanyScope): CompanyListFilter {
   }
 
   if (scope === 'prospects') {
-    filter.view = 'companies'
+    filter.view = 'all'
     filter.entityTypes = ['prospect']
     return filter
   }

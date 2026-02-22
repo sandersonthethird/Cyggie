@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol } from 'electron'
+import { app, BrowserWindow, protocol, shell } from 'electron'
 import { join, normalize, extname } from 'path'
 import { existsSync, statSync, createReadStream } from 'fs'
 import { Readable } from 'stream'
@@ -137,6 +137,21 @@ function createWindow(): BrowserWindow {
     if (!isQuitting) {
       e.preventDefault()
       window.hide()
+    }
+  })
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
+
+  window.webContents.on('will-navigate', (event, url) => {
+    const currentUrl = window.webContents.getURL()
+    if (url !== currentUrl && /^https?:\/\//i.test(url)) {
+      event.preventDefault()
+      void shell.openExternal(url)
     }
   })
 

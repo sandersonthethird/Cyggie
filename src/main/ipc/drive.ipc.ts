@@ -1,8 +1,18 @@
 import { ipcMain } from 'electron'
 import { join } from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { getShareableLinkById, uploadSummary, uploadTranscript } from '../drive/google-drive'
-import { hasDriveScope, isCalendarConnected } from '../calendar/google-auth'
+import {
+  getShareableLinkById,
+  listDriveFolders,
+  uploadSummary,
+  uploadTranscript
+} from '../drive/google-drive'
+import {
+  authorizeDriveFiles,
+  hasDriveFilesScope,
+  hasDriveScope,
+  isCalendarConnected
+} from '../calendar/google-auth'
 import { getSummariesDir, getTranscriptsDir } from '../storage/paths'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 
@@ -74,5 +84,19 @@ export function registerDriveHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.DRIVE_HAS_SCOPE, () => {
     return hasDriveScope()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.DRIVE_HAS_FILES_SCOPE, () => {
+    return hasDriveFilesScope()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.DRIVE_LIST_FOLDERS, async (_event, parentId?: string) => {
+    if (!hasDriveFilesScope()) return []
+    return listDriveFolders((parentId || 'root').trim() || 'root')
+  })
+
+  ipcMain.handle(IPC_CHANNELS.DRIVE_AUTHORIZE_FILES, async () => {
+    await authorizeDriveFiles()
+    return { connected: true }
   })
 }

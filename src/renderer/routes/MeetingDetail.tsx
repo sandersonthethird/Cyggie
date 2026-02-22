@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useRecordingStore } from '../stores/recording.store'
 import { useSharedAudioCapture, useSharedVideoCapture } from '../contexts/AudioCaptureContext'
 import { useFindInPage } from '../hooks/useFindInPage'
 import FindBar from '../components/common/FindBar'
 import ChatInterface from '../components/chat/ChatInterface'
+import ConfirmDialog from '../components/common/ConfirmDialog'
 import { useChatStore } from '../stores/chat.store'
 import type { Meeting, CompanySuggestion } from '../../shared/types/meeting'
 import type { CompanyEntityType } from '../../shared/types/company'
@@ -72,6 +73,7 @@ const TAGGABLE_COMPANY_TYPES: CompanyEntityType[] = ['prospect', 'vc_fund', 'cus
 
 const TAG_LABELS: Record<CompanyEntityType, string> = {
   prospect: 'Prospect',
+  portfolio: 'Portfolio',
   vc_fund: 'VC Fund',
   customer: 'Customer',
   partner: 'Partner',
@@ -87,6 +89,14 @@ function companySuggestionKey(company: CompanySuggestion): string {
 export default function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const locationState = location.state as { fromCompanyId?: unknown } | null
+  const fromCompanyId = typeof locationState?.fromCompanyId === 'string'
+    && locationState.fromCompanyId.trim()
+    ? locationState.fromCompanyId
+    : null
+  const backHref = fromCompanyId ? `/company/${fromCompanyId}` : '/'
+  const backLabel = fromCompanyId ? 'Back to Company' : 'Back to Meetings'
   const [data, setData] = useState<MeetingData | null>(null)
   const [activeTab, setActiveTab] = useState<'notes' | 'transcript' | 'recording'>('notes')
   const [templates, setTemplates] = useState<MeetingTemplate[]>([])
@@ -130,6 +140,7 @@ export default function MeetingDetail() {
   const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null)
   const [isVideoLoading, setIsVideoLoading] = useState(false)
   const [videoBlobFailed, setVideoBlobFailed] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const playRequestRef = useRef<Promise<void> | null>(null)
   const videoWrapperRef = useRef<HTMLDivElement>(null)
@@ -573,12 +584,12 @@ export default function MeetingDetail() {
       startRecording(result.meetingId, result.meetingPlatform)
       // Navigate to the recording meeting if it's different from the current one
       if (result.meetingId !== id) {
-        navigate(`/meeting/${result.meetingId}`)
+        navigate(`/meeting/${result.meetingId}`, { state: location.state })
       }
     } catch (err) {
       console.error('Failed to start recording:', err)
     }
-  }, [data, isRecording, notesDraft, saveNotes, startRecording, id, navigate])
+  }, [data, isRecording, notesDraft, saveNotes, startRecording, id, navigate, location.state])
 
   const handleContinueRecording = useCallback(async () => {
     if (!data || isRecording) return
@@ -650,15 +661,17 @@ export default function MeetingDetail() {
     }
   }, [resumeRecording, setRecordingError, audioCapture, videoCapture])
 
-  const handleDelete = useCallback(async () => {
+  const handleDelete = useCallback(() => {
     if (!id) return
-    const confirmed = window.confirm(
-      `Delete "${data?.meeting.title}"? This will permanently remove the transcript and summary.`
-    )
-    if (!confirmed) return
+    setDeleteDialogOpen(true)
+  }, [id])
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!id) return
+    setDeleteDialogOpen(false)
     await window.api.invoke(IPC_CHANNELS.MEETING_DELETE, id)
     navigate('/')
-  }, [id, data, navigate])
+  }, [id, navigate])
 
   const handleToggleVideo = useCallback(async () => {
     try {
@@ -897,8 +910,8 @@ export default function MeetingDetail() {
       )}
 
       <div className={styles.stickyHeader}>
-        <button className={styles.back} onClick={() => navigate('/')}>
-          &larr; Back to Meetings
+        <button className={styles.back} onClick={() => navigate(backHref)}>
+          &larr; {backLabel}
         </button>
 
         <div className={styles.header}>
@@ -1390,6 +1403,16 @@ export default function MeetingDetail() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        title="Delete meeting"
+        message={`Delete "${data?.meeting.title}"? This will permanently remove the transcript and summary.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => void handleConfirmDelete()}
+        onCancel={() => setDeleteDialogOpen(false)}
+      />
     </div>
   )
 }

@@ -2,8 +2,11 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
+import * as settingsRepo from '../database/repositories/settings.repo'
 import type { CompanyEntityType, CompanyListFilter } from '../../shared/types/company'
 import { ingestCompanyEmails } from '../services/company-email-ingest.service'
+import { hasDriveFilesScope } from '../calendar/google-auth'
+import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 
 export function registerCompanyHandlers(): void {
   ipcMain.handle(
@@ -99,6 +102,11 @@ export function registerCompanyHandlers(): void {
     return companyRepo.listCompanyMeetings(companyId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.COMPANY_CONTACTS, (_event, companyId: string) => {
+    if (!companyId) throw new Error('companyId is required')
+    return companyRepo.listCompanyContacts(companyId)
+  })
+
   ipcMain.handle(IPC_CHANNELS.COMPANY_EMAILS, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
     return companyRepo.listCompanyEmails(companyId)
@@ -109,9 +117,26 @@ export function registerCompanyHandlers(): void {
     return ingestCompanyEmails(companyId)
   })
 
-  ipcMain.handle(IPC_CHANNELS.COMPANY_FILES, (_event, companyId: string) => {
+  ipcMain.handle(IPC_CHANNELS.COMPANY_FILES, async (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
-    return companyRepo.listCompanyFiles(companyId)
+    if (!hasDriveFilesScope()) return []
+
+    const company = companyRepo.getCompany(companyId)
+    if (!company) return []
+
+    const rootFolderRef = (settingsRepo.getSetting('companyDriveRootFolder') || '').trim()
+    if (!rootFolderRef) return []
+
+    try {
+      return await listCompanyFilesByDriveFolder(
+        rootFolderRef,
+        company.canonicalName,
+        company.primaryDomain
+      )
+    } catch (err) {
+      console.error('[Company Files] Failed to list company Drive files:', err)
+      return []
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_TIMELINE, (_event, companyId: string) => {

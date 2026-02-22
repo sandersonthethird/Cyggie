@@ -1,6 +1,8 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as contactRepo from '../database/repositories/contact.repo'
+import * as companyRepo from '../database/repositories/org-company.repo'
+import { ingestContactEmails } from '../services/company-email-ingest.service'
 
 export function registerContactHandlers(): void {
   ipcMain.handle(
@@ -10,12 +12,56 @@ export function registerContactHandlers(): void {
     }
   )
 
+  ipcMain.handle(IPC_CHANNELS.CONTACT_GET, (_event, contactId: string) => {
+    if (!contactId) throw new Error('contactId is required')
+    return contactRepo.getContact(contactId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_EMAILS, (_event, contactId: string) => {
+    if (!contactId) throw new Error('contactId is required')
+    return contactRepo.listContactEmails(contactId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_EMAIL_INGEST, (_event, contactId: string) => {
+    if (!contactId) throw new Error('contactId is required')
+    return ingestContactEmails(contactId)
+  })
+
   ipcMain.handle(
     IPC_CHANNELS.CONTACT_CREATE,
-    (_event, data: { fullName: string; email: string; title?: string | null }) => {
+    (
+      _event,
+      data: {
+        fullName: string
+        firstName?: string | null
+        lastName?: string | null
+        email: string
+        title?: string | null
+      }
+    ) => {
       if (!data?.fullName?.trim()) throw new Error('fullName is required')
       if (!data?.email?.trim()) throw new Error('email is required')
       return contactRepo.createContact(data)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_SET_COMPANY,
+    (_event, contactId: string, companyName: string) => {
+      if (!contactId?.trim()) throw new Error('contactId is required')
+      if (!companyName?.trim()) throw new Error('Company name is required')
+
+      const company = companyRepo.getOrCreateCompanyByName(companyName)
+      return contactRepo.setContactPrimaryCompany(contactId, company.id)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_ADD_EMAIL,
+    (_event, contactId: string, email: string) => {
+      if (!contactId?.trim()) throw new Error('contactId is required')
+      if (!email?.trim()) throw new Error('email is required')
+      return contactRepo.addContactEmail(contactId, email)
     }
   )
 

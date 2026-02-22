@@ -32,6 +32,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .editableTitle {
@@ -67,7 +68,42 @@
   color: #64748b;
 }
 
-.headerMeta {
+.nameEditor {
+  width: min(100%, 720px);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 170px;
+  border: 1px solid #cfd8e8;
+  border-radius: 8px;
+  background: #fff;
+  color: #111827;
+  font-size: 14px;
+  padding: 6px 10px;
+}
+
+.nameSaveButton,
+.nameCancelButton {
+  border: 1px solid #c9d4e4;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.nameSaveButton:disabled,
+.nameCancelButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.metaRow {
   margin-top: 6px;
   display: flex;
   flex-wrap: wrap;
@@ -76,36 +112,33 @@
   font-size: 13px;
 }
 
-.typeControl {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.emailLink {
+  border: none;
+  background: transparent;
+  color: #1668dc;
+  padding: 0;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
 }
 
-.typeSelect {
-  border: 1px solid #cfd8e8;
-  border-radius: 999px;
-  background: #fff;
-  color: #1f2937;
-  font-size: 12px;
-  padding: 2px 8px;
-  line-height: 1.4;
+.emailLink:hover {
+  text-decoration: underline;
 }
 
-.typeSelect:disabled {
-  opacity: 0.7;
-  cursor: wait;
-}
-
-.businessBlock {
+.companyBlock {
   margin-top: 12px;
   border: 1px solid #e1e8f4;
   border-radius: 10px;
   background: #f8fbff;
   padding: 10px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
 }
 
-.businessLabel {
+.label {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -113,49 +146,61 @@
   font-weight: 600;
 }
 
-.businessText {
-  margin: 6px 0 10px;
-  color: #334155;
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.websiteLink {
+.companyLink {
+  border: none;
+  background: transparent;
   color: #1668dc;
-  text-decoration: none;
   font-size: 13px;
   font-weight: 600;
+  padding: 0;
+  cursor: pointer;
 }
 
-.websiteLink:hover {
+.companyLink:hover {
   text-decoration: underline;
 }
 
-.noWebsite {
-  color: #64748b;
+.companyWebsiteLink {
+  color: #1668dc;
+  text-decoration: none;
+}
+
+.companyWebsiteLink:hover {
+  text-decoration: underline;
+}
+
+.companyEditor {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.companyInput {
+  flex: 1;
+  min-width: 200px;
+  border: 1px solid #c9d4e4;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  padding: 6px 10px;
   font-size: 13px;
 }
 
-.tagsRow {
-  margin-top: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
+.companySaveButton {
+  border: 1px solid #c9d4e4;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
-.tagGroup {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.tag {
-  border-radius: 999px;
-  padding: 2px 8px;
-  background: #e9f1ff;
-  color: #24508b;
-  font-size: 12px;
+.companySaveButton:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .tabRow {
@@ -223,61 +268,11 @@
   background: #fff;
 }
 
-.editor {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.input,
-.textarea,
-.memoEditor,
-.select {
-  border: 1px solid #d0d7e2;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 14px;
-}
-
-.textarea {
-  min-height: 110px;
-  resize: vertical;
-}
-
-.memoEditor {
-  min-height: 260px;
-  resize: vertical;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.primaryButton,
-.secondaryButton,
-.actionBtn,
-.versionCard {
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.primaryButton {
-  border: 0;
-  background: #1668dc;
-  color: #fff;
-  font-weight: 600;
-  padding: 9px 12px;
-}
-
-.secondaryButton {
-  border: 1px solid #c9d4e4;
-  background: #fff;
+.sectionTitle {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
   color: #334155;
-  padding: 8px 12px;
-}
-
-.stack {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 
 .meetingListView {
@@ -351,134 +346,31 @@
   color: #64748b;
 }
 
-.contactListView {
-  margin-top: 6px;
-}
-
-.contactRows {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.contactRow {
-  border: none;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  padding: 8px;
-  border-radius: 8px;
-  transition: background 0.15s;
-}
-
-.contactRow:hover {
-  background: #f1f5fb;
-}
-
-.contactRowTop {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.contactRowName {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1f2937;
-}
-
-.contactRowTime {
-  font-size: 11px;
-  color: #64748b;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.contactRowMeta {
-  margin-top: 2px;
-  font-size: 11px;
-  color: #64748b;
-}
-
-.fileListView {
-  margin-top: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.fileDateGroup {
-  margin: 0;
-}
-
-.fileDateHeader {
+.emailActions {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #64748b;
-  margin-bottom: 4px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
-.fileRows {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.fileRow {
-  border: none;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  padding: 6px 8px;
+.secondaryButton {
+  border: 1px solid #c9d4e4;
   border-radius: 8px;
-  transition: background 0.15s;
-}
-
-.fileRow:hover {
-  background: #f1f5fb;
-}
-
-.fileRow:disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-
-.fileRow:disabled:hover {
-  background: transparent;
-}
-
-.fileRowTop {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.fileRowTitle {
+  background: #fff;
+  color: #334155;
+  padding: 8px 12px;
   font-size: 13px;
-  font-weight: 600;
-  color: #1f2937;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  cursor: pointer;
 }
 
-.fileRowTime {
-  font-size: 11px;
-  color: #64748b;
-  white-space: nowrap;
-  flex-shrink: 0;
+.secondaryButton:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
-.fileRowMeta {
-  margin-top: 1px;
-  font-size: 11px;
+.emailIngestMeta {
   color: #64748b;
+  font-size: 12px;
 }
 
 .emailListView {
@@ -636,132 +528,9 @@
   white-space: pre-wrap;
 }
 
-.emailActions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.emailIngestMeta {
-  color: #64748b;
+.error {
+  color: #c62828;
   font-size: 12px;
-}
-
-.noteCard,
-.timelineItem {
-  border: 1px solid #e1e8f4;
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: #fcfdff;
-}
-
-.noteHeader {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.noteActions {
-  display: flex;
-  gap: 8px;
-}
-
-.fileActions {
-  margin-top: 10px;
-}
-
-.actionBtn {
-  border: 1px solid #cfd8e8;
-  background: #fff;
-  color: #475569;
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.noteBody {
-  margin-top: 8px;
-  color: #334155;
-  white-space: pre-wrap;
-}
-
-.noteMeta {
-  margin-top: 8px;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.timelineTop {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.timelineType {
-  text-transform: uppercase;
-  font-size: 11px;
-  color: #1d4d95;
-  background: #e7f0ff;
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-
-.timelineWhen {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.timelineTitle {
-  margin-top: 6px;
-  color: #1f2937;
-  font-weight: 600;
-}
-
-.timelineSubtitle {
-  margin-top: 4px;
-  color: #475569;
-  font-size: 13px;
-}
-
-.emailSnippet {
-  margin-top: 6px;
-  color: #334155;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.fileUri {
-  margin-top: 6px;
-  color: #64748b;
-  font-size: 12px;
-  word-break: break-all;
-}
-
-.memoToolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.memoActions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.versionCard {
-  text-align: left;
-  border: 1px solid #d7deec;
-  background: #fff;
-  padding: 10px;
-}
-
-.selectedCard {
-  border-color: #1668dc;
-  box-shadow: 0 0 0 1px rgba(22, 104, 220, 0.2);
 }
 
 .meta {
@@ -770,25 +539,6 @@
 }
 
 .empty {
-  border: 1px dashed #d3dae6;
-  border-radius: 10px;
-  padding: 16px;
   color: #64748b;
-  background: #f8fafc;
-}
-
-.error {
-  color: #b91c1c;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 8px;
-  padding: 10px 12px;
   font-size: 13px;
-}
-
-@media (max-width: 980px) {
-  .emailRow {
-    padding-left: 6px;
-    padding-right: 6px;
-  }
 }

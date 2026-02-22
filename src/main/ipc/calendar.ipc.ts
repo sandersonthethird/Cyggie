@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import {
   authorize,
+  authorizeDriveFiles,
   disconnect,
   isCalendarConnected,
   storeGoogleClientCredentials
@@ -59,7 +60,12 @@ export function registerCalendarHandlers(): void {
     return events
   })
 
-  ipcMain.handle(IPC_CHANNELS.CALENDAR_REAUTHORIZE, async () => {
+  ipcMain.handle(IPC_CHANNELS.CALENDAR_REAUTHORIZE, async (_event, target?: 'calendar' | 'drive-files') => {
+    if (target === 'drive-files') {
+      await authorizeDriveFiles()
+      return { connected: true }
+    }
+
     await authorize()
     return { connected: true }
   })

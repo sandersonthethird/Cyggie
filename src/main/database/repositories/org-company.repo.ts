@@ -6,6 +6,7 @@ import type {
   CompanySummary,
   CompanyDetail,
   CompanyMeetingRef,
+  CompanyContactRef,
   CompanyEmailRef,
   CompanyFileRef,
   CompanyTimelineItem
@@ -50,6 +51,7 @@ function normalizeEntityType(value: string | null | undefined): CompanyEntityTyp
   const normalized = (value || '').trim().toLowerCase()
   const allowed: CompanyEntityType[] = [
     'prospect',
+    'portfolio',
     'vc_fund',
     'customer',
     'partner',
@@ -60,6 +62,37 @@ function normalizeEntityType(value: string | null | undefined): CompanyEntityTyp
   return allowed.includes(normalized as CompanyEntityType)
     ? (normalized as CompanyEntityType)
     : 'unknown'
+}
+
+function parseEmailParticipants(value: string | null): CompanyEmailRef['participants'] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed)) return []
+
+    const allowedRoles = new Set(['from', 'to', 'cc', 'bcc', 'reply_to'])
+    return parsed
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null
+        const candidate = item as Record<string, unknown>
+        const role = typeof candidate.role === 'string' ? candidate.role.trim().toLowerCase() : ''
+        const email = typeof candidate.email === 'string' ? candidate.email.trim().toLowerCase() : ''
+        if (!allowedRoles.has(role) || !email) return null
+        return {
+          role: role as CompanyEmailRef['participants'][number]['role'],
+          email,
+          displayName: typeof candidate.displayName === 'string'
+            ? candidate.displayName.trim() || null
+            : null,
+          contactId: typeof candidate.contactId === 'string'
+            ? candidate.contactId.trim() || null
+            : null
+        }
+      })
+      .filter((item): item is CompanyEmailRef['participants'][number] => Boolean(item))
+  } catch {
+    return []
+  }
 }
 
 function rowToCompanySummary(row: CompanyRow): CompanySummary {
@@ -335,8 +368,16 @@ export function updateCompany(
     params.push(data.status)
   }
   if (data.entityType !== undefined) {
+    const normalizedEntityType = normalizeEntityType(data.entityType)
     sets.push('entity_type = ?')
-    params.push(normalizeEntityType(data.entityType))
+    params.push(normalizedEntityType)
+
+    // Keep include_in_companies_view aligned with classification when callers
+    // only update entityType (common from the Company Detail type control).
+    if (data.includeInCompaniesView === undefined) {
+      sets.push('include_in_companies_view = ?')
+      params.push(normalizedEntityType === 'prospect' ? 1 : 0)
+    }
   }
   if (data.includeInCompaniesView !== undefined) {
     sets.push('include_in_companies_view = ?')
@@ -391,6 +432,30 @@ function findCompanyIdByNameOrDomain(
     `)
     .get(normalizedDomain, normalizedDomain, normalizedDomain) as { id: string } | undefined
   return byDomain?.id || null
+}
+
+export function getOrCreateCompanyByName(canonicalName: string): CompanyDetail {
+  const companyName = canonicalName.trim()
+  if (!companyName) {
+    throw new Error('Company name is required')
+  }
+
+  const existingId = findCompanyIdByNameOrDomain(companyName, null)
+  if (existingId) {
+    const existing = getCompany(existingId)
+    if (!existing) {
+      throw new Error('Company not found')
+    }
+    return existing
+  }
+
+  return createCompany({
+    canonicalName: companyName,
+    entityType: 'prospect',
+    includeInCompaniesView: true,
+    classificationSource: 'manual',
+    classificationConfidence: 1
+  })
 }
 
 export function getEntityTypeByNameOrDomain(
@@ -509,25 +574,162 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
   }))
 }
 
-export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
+export function listCompanyContacts(companyId: string): CompanyContactRef[] {
   const db = getDatabase()
   const rows = db
     .prepare(`
       SELECT
-        em.id,
-        em.subject,
-        em.from_email,
-        em.from_name,
-        em.received_at,
-        em.sent_at,
-        em.snippet,
-        em.body_text,
-        em.is_unread,
-        em.thread_id
-      FROM email_company_links l
-      JOIN email_messages em ON em.id = l.message_id
-      WHERE l.company_id = ?
-      ORDER BY datetime(COALESCE(em.received_at, em.sent_at, em.created_at)) DESC
+        c.id,
+        c.full_name,
+        c.email,
+        c.title,
+        c.updated_at,
+        COALESCE(ms.meeting_count, 0) AS meeting_count,
+        ms.last_meeting_at
+      FROM contacts c
+      LEFT JOIN (
+        SELECT
+          lower(e.value) AS attendee_email,
+          COUNT(DISTINCT m.id) AS meeting_count,
+          MAX(m.date) AS last_meeting_at
+        FROM meetings m
+        JOIN json_each(COALESCE(m.attendee_emails, '[]')) e
+        GROUP BY lower(e.value)
+      ) ms ON ms.attendee_email = lower(c.email)
+      WHERE
+        c.primary_company_id = ?
+        OR EXISTS (
+          SELECT 1
+          FROM org_company_contacts occ
+          WHERE occ.company_id = ? AND occ.contact_id = c.id
+        )
+      ORDER BY datetime(COALESCE(ms.last_meeting_at, c.updated_at)) DESC, c.full_name ASC
+      LIMIT 300
+    `)
+    .all(companyId, companyId) as Array<{
+    id: string
+    full_name: string
+    email: string | null
+    title: string | null
+    updated_at: string
+    meeting_count: number
+    last_meeting_at: string | null
+  }>
+
+  return rows.map((row) => ({
+    id: row.id,
+    fullName: row.full_name,
+    email: row.email,
+    title: row.title,
+    meetingCount: row.meeting_count || 0,
+    lastInteractedAt: row.last_meeting_at ?? row.updated_at,
+    updatedAt: row.updated_at
+  }))
+}
+
+export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      WITH linked AS (
+        SELECT
+          em.id,
+          em.subject,
+          em.from_email,
+          em.from_name,
+          em.received_at,
+          em.sent_at,
+          em.snippet,
+          em.body_text,
+          em.is_unread,
+          em.thread_id,
+          em.updated_at,
+          COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
+          COALESCE(em.thread_id, em.id) AS thread_group
+        FROM email_company_links l
+        JOIN email_messages em ON em.id = l.message_id
+        WHERE l.company_id = ?
+      ),
+      ranked AS (
+        SELECT
+          id,
+          subject,
+          from_email,
+          from_name,
+          received_at,
+          sent_at,
+          snippet,
+          body_text,
+          is_unread,
+          thread_id,
+          sort_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY thread_group
+            ORDER BY datetime(sort_at) DESC, datetime(updated_at) DESC, id DESC
+          ) AS row_num,
+          COUNT(*) OVER (PARTITION BY thread_group) AS thread_message_count
+        FROM linked
+      ),
+      participant_rows AS (
+        SELECT
+          p.message_id,
+          p.role,
+          LOWER(p.email) AS email,
+          COALESCE(NULLIF(TRIM(p.display_name), ''), NULLIF(TRIM(c.full_name), '')) AS display_name,
+          p.contact_id
+        FROM email_message_participants p
+        LEFT JOIN contacts c ON c.id = p.contact_id
+      ),
+      participants AS (
+        SELECT
+          source.message_id,
+          json_group_array(
+            json_object(
+              'role', source.role,
+              'email', source.email,
+              'displayName', source.display_name,
+              'contactId', source.contact_id
+            )
+          ) AS participants_json
+        FROM (
+          SELECT
+            message_id,
+            role,
+            email,
+            display_name,
+            contact_id
+          FROM participant_rows
+          ORDER BY
+            message_id,
+            CASE role
+              WHEN 'from' THEN 0
+              WHEN 'to' THEN 1
+              WHEN 'cc' THEN 2
+              WHEN 'bcc' THEN 3
+              WHEN 'reply_to' THEN 4
+              ELSE 5
+            END,
+            email
+        ) source
+        GROUP BY source.message_id
+      )
+      SELECT
+        ranked.id,
+        ranked.subject,
+        ranked.from_email,
+        ranked.from_name,
+        ranked.received_at,
+        ranked.sent_at,
+        ranked.snippet,
+        ranked.body_text,
+        ranked.is_unread,
+        ranked.thread_id,
+        ranked.thread_message_count,
+        COALESCE(participants.participants_json, '[]') AS participants_json
+      FROM ranked
+      LEFT JOIN participants ON participants.message_id = ranked.id
+      WHERE ranked.row_num = 1
+      ORDER BY datetime(ranked.sort_at) DESC, ranked.id DESC
       LIMIT 200
     `)
     .all(companyId) as Array<{
@@ -541,6 +743,8 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
     body_text: string | null
     is_unread: number
     thread_id: string | null
+    thread_message_count: number
+    participants_json: string
   }>
 
   return rows.map((row) => ({
@@ -553,7 +757,9 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
     snippet: row.snippet,
     bodyText: row.body_text,
     isUnread: row.is_unread === 1,
-    threadId: row.thread_id
+    threadId: row.thread_id,
+    threadMessageCount: row.thread_message_count || 1,
+    participants: parseEmailParticipants(row.participants_json)
   }))
 }
 

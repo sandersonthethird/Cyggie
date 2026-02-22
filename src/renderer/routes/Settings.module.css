@@ -109,6 +109,11 @@
   font-weight: 500;
 }
 
+.linkBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .actions {
   margin-top: 24px;
 }
@@ -216,4 +221,69 @@
   color: var(--color-text-secondary);
   font-family: var(--font-mono, monospace);
   word-break: break-all;
+}
+
+.folderPickerActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.folderPickerPanel {
+  margin-top: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  background: rgba(var(--color-primary-rgb, 59, 130, 246), 0.03);
+}
+
+.folderPickerToolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.folderPickerPath {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folderList {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+.folderListItem {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.folderListItem:last-child {
+  border-bottom: none;
+}
+
+.folderListItem:hover {
+  background: var(--color-card-hover);
+}
+
+.folderPickerFooter {
+  margin-top: 10px;
+}
+
+.scopeGrantRow + .scopeGrantRow {
+  margin-top: 16px;
 }

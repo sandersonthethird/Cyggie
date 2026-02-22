@@ -3,6 +3,11 @@ export interface DriveShareResult {
   url: string
 }
 
+export interface DriveFolderRef {
+  id: string
+  name: string
+}
+
 export interface DriveShareError {
   success: false
   error: 'not_connected' | 'no_drive_scope' | 'not_synced' | 'share_failed'

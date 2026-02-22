@@ -10,16 +10,20 @@ const CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/drive.file'
 ]
 const GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+const DRIVE_FILES_SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly']
 
 const CALENDAR_READONLY_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
+const DRIVE_METADATA_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly'
 const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
 
 const LEGACY_GRANTED_SCOPES_KEY = 'google_granted_scopes'
 const CALENDAR_GRANTED_SCOPES_KEY = 'google_calendar_granted_scopes'
 const GMAIL_GRANTED_SCOPES_KEY = 'google_gmail_granted_scopes'
+const DRIVE_FILES_GRANTED_SCOPES_KEY = 'google_drive_files_granted_scopes'
 const CALENDAR_TOKEN_KEY = 'google_calendar_tokens'
 const GMAIL_TOKEN_KEY = 'google_gmail_tokens'
+const DRIVE_FILES_TOKEN_KEY = 'google_drive_files_tokens'
 const CLIENT_ID_KEY = 'google_client_id'
 const CLIENT_SECRET_KEY = 'google_client_secret'
 
@@ -101,7 +105,10 @@ function ensureLegacyScopeMigration(): void {
 
   if (!getCredential(CALENDAR_GRANTED_SCOPES_KEY)) {
     const calendarScopes = legacyScopes.filter(
-      (scope) => scope === CALENDAR_READONLY_SCOPE || scope === DRIVE_SCOPE
+      (scope) =>
+        scope === CALENDAR_READONLY_SCOPE
+        || scope === DRIVE_SCOPE
+        || scope === DRIVE_METADATA_SCOPE
     )
     if (calendarScopes.length > 0) {
       storeCredential(CALENDAR_GRANTED_SCOPES_KEY, calendarScopes.join(' '))
@@ -253,6 +260,18 @@ export function getOAuth2Client(): InstanceType<typeof google.auth.OAuth2> | nul
   return getTokenBackedOAuth2Client(CALENDAR_TOKEN_KEY)
 }
 
+export function getDriveFilesOAuth2Client(): InstanceType<typeof google.auth.OAuth2> | null {
+  const filesClient = getTokenBackedOAuth2Client(DRIVE_FILES_TOKEN_KEY)
+  if (filesClient) return filesClient
+
+  // Backward compatibility: older installs stored Drive Files scope on the calendar token.
+  if (hasStoredToken(CALENDAR_TOKEN_KEY) && getCalendarGrantedScopes().includes(DRIVE_METADATA_SCOPE)) {
+    return getTokenBackedOAuth2Client(CALENDAR_TOKEN_KEY)
+  }
+
+  return null
+}
+
 export function getGmailOAuth2Client(): InstanceType<typeof google.auth.OAuth2> | null {
   const gmailClient = getTokenBackedOAuth2Client(GMAIL_TOKEN_KEY)
   if (gmailClient) return gmailClient
@@ -278,6 +297,11 @@ export function hasDriveScope(): boolean {
   return getCalendarGrantedScopes().includes(DRIVE_SCOPE)
 }
 
+export function hasDriveFilesScope(): boolean {
+  return getCalendarGrantedScopes().includes(DRIVE_METADATA_SCOPE)
+    || getDriveFilesGrantedScopes().includes(DRIVE_METADATA_SCOPE)
+}
+
 export function hasGmailScope(): boolean {
   return getGmailGrantedScopes().includes(GMAIL_READONLY_SCOPE)
 }
@@ -288,6 +312,10 @@ export function getCalendarGrantedScopes(): string[] {
 
 export function getGmailGrantedScopes(): string[] {
   return getScopesForKey(GMAIL_GRANTED_SCOPES_KEY)
+}
+
+export function getDriveFilesGrantedScopes(): string[] {
+  return getScopesForKey(DRIVE_FILES_GRANTED_SCOPES_KEY)
 }
 
 // Backward-compatible alias for existing callers that still expect calendar scopes.
@@ -313,10 +341,21 @@ export async function authorizeGmail(): Promise<void> {
   })
 }
 
+export async function authorizeDriveFiles(): Promise<void> {
+  await runAuthorizationFlow({
+    scopes: DRIVE_FILES_SCOPES,
+    tokenKey: DRIVE_FILES_TOKEN_KEY,
+    grantedScopesKey: DRIVE_FILES_GRANTED_SCOPES_KEY,
+    successTitle: 'Drive files access granted!'
+  })
+}
+
 export function disconnect(): void {
   ensureLegacyScopeMigration()
   storeCredential(CALENDAR_TOKEN_KEY, '')
   storeCredential(CALENDAR_GRANTED_SCOPES_KEY, '')
+  storeCredential(DRIVE_FILES_TOKEN_KEY, '')
+  storeCredential(DRIVE_FILES_GRANTED_SCOPES_KEY, '')
 }
 
 export function disconnectGmail(): void {

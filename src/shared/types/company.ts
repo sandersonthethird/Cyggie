@@ -1,5 +1,6 @@
 export type CompanyEntityType =
   | 'prospect'
+  | 'portfolio'
   | 'vc_fund'
   | 'customer'
   | 'partner'
@@ -51,6 +52,16 @@ export interface CompanyMeetingRef {
   durationSeconds: number | null
 }
 
+export interface CompanyContactRef {
+  id: string
+  fullName: string
+  email: string | null
+  title: string | null
+  meetingCount: number
+  lastInteractedAt: string | null
+  updatedAt: string
+}
+
 export interface CompanyEmailRef {
   id: string
   subject: string | null
@@ -62,6 +73,17 @@ export interface CompanyEmailRef {
   bodyText: string | null
   isUnread: boolean
   threadId: string | null
+  threadMessageCount: number
+  participants: CompanyEmailParticipantRef[]
+}
+
+export type EmailParticipantRole = 'from' | 'to' | 'cc' | 'bcc' | 'reply_to'
+
+export interface CompanyEmailParticipantRef {
+  role: EmailParticipantRole
+  email: string
+  displayName: string | null
+  contactId: string | null
 }
 
 export interface CompanyFileRef {
@@ -75,6 +97,16 @@ export interface CompanyFileRef {
   hasSummary: boolean
   hasRecording: boolean
   artifactCount: number
+}
+
+export interface CompanyDriveFileRef {
+  id: string
+  name: string
+  mimeType: string
+  modifiedAt: string | null
+  webViewLink: string | null
+  sizeBytes: number | null
+  parentFolderName: string | null
 }
 
 export interface CompanyEmailIngestResult {

@@ -276,6 +276,21 @@ export function registerMeetingHandlers(): void {
     shell.openPath(getStoragePath())
   })
 
+  ipcMain.handle(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, async (_event, rawUrl: string) => {
+    if (typeof rawUrl !== 'string') {
+      throw new Error('URL must be a string')
+    }
+    const trimmed = rawUrl.trim()
+    if (!trimmed) {
+      throw new Error('URL is required')
+    }
+    const parsed = new URL(trimmed)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Only http(s) URLs are allowed')
+    }
+    return shell.openExternal(parsed.toString())
+  })
+
   ipcMain.handle(IPC_CHANNELS.APP_GET_STORAGE_PATH, () => {
     return getStoragePath()
   })

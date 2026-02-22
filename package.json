@@ -15,7 +15,8 @@
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "import:granola": "node scripts/import-granola.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

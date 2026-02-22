@@ -46,6 +46,7 @@ export const IPC_CHANNELS = {
   COMPANY_UPDATE: 'company:update',
   COMPANY_TAG_FROM_MEETING: 'company:tag-from-meeting',
   COMPANY_MEETINGS: 'company:meetings',
+  COMPANY_CONTACTS: 'company:contacts',
   COMPANY_EMAILS: 'company:emails',
   COMPANY_EMAIL_INGEST: 'company:email-ingest',
   COMPANY_FILES: 'company:files',
@@ -53,7 +54,12 @@ export const IPC_CHANNELS = {
 
   // Contacts
   CONTACT_LIST: 'contact:list',
+  CONTACT_GET: 'contact:get',
+  CONTACT_EMAILS: 'contact:emails',
+  CONTACT_EMAIL_INGEST: 'contact:email-ingest',
   CONTACT_CREATE: 'contact:create',
+  CONTACT_ADD_EMAIL: 'contact:add-email',
+  CONTACT_SET_COMPANY: 'contact:set-company',
   CONTACT_SYNC_FROM_MEETINGS: 'contact:sync-from-meetings',
 
   // Company notes
@@ -117,6 +123,9 @@ export const IPC_CHANNELS = {
   // Drive
   DRIVE_GET_SHARE_LINK: 'drive:get-share-link',
   DRIVE_HAS_SCOPE: 'drive:has-scope',
+  DRIVE_HAS_FILES_SCOPE: 'drive:has-files-scope',
+  DRIVE_LIST_FOLDERS: 'drive:list-folders',
+  DRIVE_AUTHORIZE_FILES: 'drive:authorize-files',
 
   // Web Share
   WEB_SHARE_CREATE: 'web-share:create',
@@ -133,6 +142,7 @@ export const IPC_CHANNELS = {
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',
   APP_OPEN_STORAGE_DIR: 'app:open-storage-dir',
+  APP_OPEN_EXTERNAL_URL: 'app:open-external-url',
   APP_GET_STORAGE_PATH: 'app:get-storage-path',
   APP_CHANGE_STORAGE_DIR: 'app:change-storage-dir'
 } as const

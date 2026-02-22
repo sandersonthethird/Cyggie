@@ -21,6 +21,8 @@ import { runCompanyOsThesisMigration } from './migrations/018-company-os-thesis'
 import { runCompanyOsBackfillMigration } from './migrations/019-company-os-backfill'
 import { runCompanyClassificationMigration } from './migrations/020-company-classification'
 import { runCompanyDomainNormalizationMigration } from './migrations/021-company-domain-normalization'
+import { runContactMultiEmailMigration } from './migrations/022-contact-multi-email'
+import { runContactNamePartsMigration } from './migrations/023-contact-name-parts'
 
 let db: Database.Database | null = null
 
@@ -50,6 +52,8 @@ export function getDatabase(): Database.Database {
     runCompanyOsBackfillMigration(db)
     runCompanyClassificationMigration(db)
     runCompanyDomainNormalizationMigration(db)
+    runContactMultiEmailMigration(db)
+    runContactNamePartsMigration(db)
   }
   return db
 }

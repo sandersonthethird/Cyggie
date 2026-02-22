@@ -10,6 +10,7 @@ export interface AppSettings {
   calendarConnected: boolean
   autoRecord: boolean
   showLiveTranscript: boolean
+  companyDriveRootFolder: string
   theme: 'system' | 'light' | 'dark'
 }
 
@@ -23,5 +24,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   calendarConnected: false,
   autoRecord: false,
   showLiveTranscript: true,
+  companyDriveRootFolder: '',
   theme: 'system'
 }

@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 
 import { useCalendar } from '../hooks/useCalendar'
 import type { LlmProvider } from '../../shared/types/settings'
+import type { DriveFolderRef } from '../../shared/types/drive'
 import styles from './Settings.module.css'
 
 interface SettingsState {
@@ -13,6 +14,7 @@ interface SettingsState {
   ollamaModel: string
   showLiveTranscript: boolean
   defaultMaxSpeakers: string
+  companyDriveRootFolder: string
 }
 
 export default function Settings() {
@@ -23,7 +25,8 @@ export default function Settings() {
     ollamaHost: 'http://127.0.0.1:11434',
     ollamaModel: 'llama3.1',
     showLiveTranscript: true,
-    defaultMaxSpeakers: ''
+    defaultMaxSpeakers: '',
+    companyDriveRootFolder: ''
   })
   const [saved, setSaved] = useState(false)
   const [storagePath, setStoragePath] = useState('')
@@ -35,18 +38,29 @@ export default function Settings() {
   const [calendarConnecting, setCalendarConnecting] = useState(false)
   const [calendarError, setCalendarError] = useState('')
   const [hasDriveScope, setHasDriveScope] = useState(false)
+  const [hasDriveFilesScope, setHasDriveFilesScope] = useState(false)
   const [gmailConnected, setGmailConnected] = useState(false)
   const [gmailConnecting, setGmailConnecting] = useState(false)
   const [gmailError, setGmailError] = useState('')
   const [driveGranting, setDriveGranting] = useState(false)
+  const [driveFilesGranting, setDriveFilesGranting] = useState(false)
   const [driveError, setDriveError] = useState('')
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
+  const [folderPickerLoading, setFolderPickerLoading] = useState(false)
+  const [folderPickerError, setFolderPickerError] = useState('')
+  const [folderPickerFolders, setFolderPickerFolders] = useState<DriveFolderRef[]>([])
+  const [folderPickerPath, setFolderPickerPath] = useState<DriveFolderRef[]>([])
 
   const refreshGoogleScopes = useCallback(async () => {
-    const [driveScopeResult, gmailConnectedResult] = await Promise.allSettled([
+    const [driveScopeResult, driveFilesScopeResult, gmailConnectedResult] = await Promise.allSettled([
       window.api.invoke<boolean>(IPC_CHANNELS.DRIVE_HAS_SCOPE),
+      window.api.invoke<boolean>(IPC_CHANNELS.DRIVE_HAS_FILES_SCOPE),
       window.api.invoke<boolean>(IPC_CHANNELS.GMAIL_IS_CONNECTED)
     ])
     setHasDriveScope(driveScopeResult.status === 'fulfilled' ? driveScopeResult.value : false)
+    setHasDriveFilesScope(
+      driveFilesScopeResult.status === 'fulfilled' ? driveFilesScopeResult.value : false
+    )
     setGmailConnected(
       gmailConnectedResult.status === 'fulfilled' ? gmailConnectedResult.value : false
     )
@@ -69,7 +83,8 @@ export default function Settings() {
             ollamaHost: all.ollamaHost || 'http://127.0.0.1:11434',
             ollamaModel: all.ollamaModel || 'llama3.1',
             showLiveTranscript: all.showLiveTranscript !== 'false',
-            defaultMaxSpeakers: all.defaultMaxSpeakers || ''
+            defaultMaxSpeakers: all.defaultMaxSpeakers || '',
+            companyDriveRootFolder: all.companyDriveRootFolder || ''
           })
         }
 
@@ -138,6 +153,19 @@ export default function Settings() {
     }
   }, [refreshGoogleScopes])
 
+  const handleGrantDriveFilesAccess = useCallback(async () => {
+    setDriveFilesGranting(true)
+    setDriveError('')
+    try {
+      await window.api.invoke(IPC_CHANNELS.CALENDAR_REAUTHORIZE, 'drive-files')
+      await refreshGoogleScopes()
+    } catch (err) {
+      setDriveError(String(err))
+    } finally {
+      setDriveFilesGranting(false)
+    }
+  }, [refreshGoogleScopes])
+
   const handleConnectGmail = useCallback(async () => {
     setGmailConnecting(true)
     setGmailError('')
@@ -159,6 +187,59 @@ export default function Settings() {
     await window.api.invoke(IPC_CHANNELS.GMAIL_DISCONNECT)
     await refreshGoogleScopes()
   }, [refreshGoogleScopes])
+
+  const loadDriveFolders = useCallback(async (parentId: string) => {
+    setFolderPickerLoading(true)
+    setFolderPickerError('')
+    try {
+      const folders = await window.api.invoke<DriveFolderRef[]>(
+        IPC_CHANNELS.DRIVE_LIST_FOLDERS,
+        parentId
+      )
+      setFolderPickerFolders(folders)
+    } catch (err) {
+      setFolderPickerFolders([])
+      setFolderPickerError(String(err))
+    } finally {
+      setFolderPickerLoading(false)
+    }
+  }, [])
+
+  const handleOpenFolderPicker = useCallback(async () => {
+    if (!hasDriveFilesScope) {
+      setDriveError('Drive Files access is missing. Click "Grant Drive Files Access" below, then try again.')
+      setFolderPickerOpen(false)
+      return
+    }
+
+    setDriveError('')
+    setFolderPickerOpen(true)
+    setFolderPickerPath([])
+    await loadDriveFolders('root')
+  }, [hasDriveFilesScope, loadDriveFolders])
+
+  const handleFolderOpen = useCallback(async (folder: DriveFolderRef) => {
+    setFolderPickerPath((prev) => [...prev, folder])
+    await loadDriveFolders(folder.id)
+  }, [loadDriveFolders])
+
+  const handleFolderBack = useCallback(async () => {
+    if (folderPickerPath.length === 0) return
+    const nextPath = folderPickerPath.slice(0, -1)
+    setFolderPickerPath(nextPath)
+    const nextParentId = nextPath.length > 0 ? nextPath[nextPath.length - 1].id : 'root'
+    await loadDriveFolders(nextParentId)
+  }, [folderPickerPath, loadDriveFolders])
+
+  const handleUseCurrentFolder = useCallback(() => {
+    const currentFolder = folderPickerPath[folderPickerPath.length - 1]
+    if (!currentFolder) return
+    setSettings((prev) => ({
+      ...prev,
+      companyDriveRootFolder: `https://drive.google.com/drive/folders/${currentFolder.id}`
+    }))
+    setFolderPickerOpen(false)
+  }, [folderPickerPath])
 
   const needsDeepgram = !settings.deepgramApiKey
   const needsClaude = settings.llmProvider === 'claude' && !settings.claudeApiKey
@@ -314,7 +395,12 @@ export default function Settings() {
               <span
                 className={`${styles.scopePill} ${hasDriveScope ? styles.scopeGranted : styles.scopeMissing}`}
               >
-                Drive: {hasDriveScope ? 'Granted' : 'Missing'}
+                Drive Uploads: {hasDriveScope ? 'Granted' : 'Missing'}
+              </span>
+              <span
+                className={`${styles.scopePill} ${hasDriveFilesScope ? styles.scopeGranted : styles.scopeMissing}`}
+              >
+                Drive Files: {hasDriveFilesScope ? 'Granted' : 'Missing'}
               </span>
             </div>
           </div>
@@ -421,20 +507,114 @@ export default function Settings() {
             Open in Finder
           </button>
         </div>
-        {calendarConnected && !hasDriveScope && (
-          <div className={styles.field}>
-            <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
-              To share meeting files via Google Drive link, grant Drive access.
-            </p>
-            {driveError && <p className={styles.error}>{driveError}</p>}
+        <div className={styles.field}>
+          <label className={styles.label}>Company Files Root Folder (Drive)</label>
+          <input
+            className={styles.input}
+            value={settings.companyDriveRootFolder}
+            onChange={(e) =>
+              setSettings({ ...settings, companyDriveRootFolder: e.target.value })
+            }
+            placeholder="Google Drive folder URL or folder ID"
+          />
+          <p className={styles.hint}>
+            Used by Company Detail &gt; Files. Set this to the Drive folder that contains your per-company folders.
+          </p>
+          <div className={styles.folderPickerActions}>
             <button
-              className={styles.connectBtn}
-              onClick={handleReauthorizeGoogleScopes}
-              disabled={driveGranting}
-              style={{ marginTop: 8 }}
+              className={styles.linkBtn}
+              onClick={handleOpenFolderPicker}
             >
-              {driveGranting ? 'Connecting...' : 'Grant Drive Access'}
+              Browse Drive Folders
             </button>
+            {folderPickerOpen && (
+              <button
+                className={styles.linkBtn}
+                onClick={() => setFolderPickerOpen(false)}
+              >
+                Close Browser
+              </button>
+            )}
+          </div>
+          {folderPickerOpen && (
+            <div className={styles.folderPickerPanel}>
+              <div className={styles.folderPickerToolbar}>
+                <button
+                  className={styles.linkBtn}
+                  onClick={() => void handleFolderBack()}
+                  disabled={folderPickerLoading || folderPickerPath.length === 0}
+                >
+                  Back
+                </button>
+                <span className={styles.folderPickerPath}>
+                  {folderPickerPath.length > 0
+                    ? `My Drive / ${folderPickerPath.map((f) => f.name).join(' / ')}`
+                    : 'My Drive'}
+                </span>
+              </div>
+              {folderPickerError && <p className={styles.error}>{folderPickerError}</p>}
+              {folderPickerLoading ? (
+                <p className={styles.hint}>Loading folders...</p>
+              ) : folderPickerFolders.length === 0 ? (
+                <p className={styles.hint}>No subfolders found.</p>
+              ) : (
+                <div className={styles.folderList}>
+                  {folderPickerFolders.map((folder) => (
+                    <button
+                      key={folder.id}
+                      className={styles.folderListItem}
+                      onClick={() => void handleFolderOpen(folder)}
+                    >
+                      {folder.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className={styles.folderPickerFooter}>
+                <button
+                  className={styles.connectBtn}
+                  onClick={handleUseCurrentFolder}
+                  disabled={folderPickerPath.length === 0}
+                >
+                  Use Current Folder
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        {(!hasDriveScope || !hasDriveFilesScope) && (
+          <div className={styles.field}>
+            {driveError && <p className={styles.error}>{driveError}</p>}
+            {!hasDriveScope && (
+              <div className={styles.scopeGrantRow}>
+                <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
+                  Grant Drive Uploads access to save and manage app-generated meeting files.
+                </p>
+                <button
+                  className={styles.connectBtn}
+                  onClick={handleReauthorizeGoogleScopes}
+                  disabled={driveGranting}
+                  style={{ marginTop: 8 }}
+                >
+                  {driveGranting ? 'Connecting...' : 'Grant Drive Upload Access'}
+                </button>
+              </div>
+            )}
+            {!hasDriveFilesScope && (
+              <div className={styles.scopeGrantRow}>
+                <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
+                  Grant Drive Files access to browse the Company Files root folder (read-only metadata scope).
+                </p>
+                <button
+                  className={styles.connectBtn}
+                  onClick={handleGrantDriveFilesAccess}
+                  disabled={driveFilesGranting}
+                  style={{ marginTop: 8 }}
+                >
+                  {driveFilesGranting ? 'Connecting...' : 'Grant Drive Files Access'}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </section>

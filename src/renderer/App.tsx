@@ -6,6 +6,7 @@ import MeetingDetail from './routes/MeetingDetail'
 import Companies from './routes/Companies'
 import CompanyDetail from './routes/CompanyDetail'
 import Contacts from './routes/Contacts'
+import ContactDetail from './routes/ContactDetail'
 import Templates from './routes/Templates'
 import Settings from './routes/Settings'
 import { useCalendar } from './hooks/useCalendar'
@@ -59,6 +60,7 @@ export default function App() {
             <Route path="/companies" element={<Companies />} />
             <Route path="/company/:companyId" element={<CompanyDetail />} />
             <Route path="/contacts" element={<Contacts />} />
+            <Route path="/contact/:contactId" element={<ContactDetail />} />
             <Route path="/templates" element={<Templates />} />
             <Route path="/settings" element={<Settings />} />
           </Route>

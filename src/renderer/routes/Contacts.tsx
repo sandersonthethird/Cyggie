@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
@@ -20,6 +20,7 @@ function formatDate(value: string): string {
 }
 
 export default function Contacts() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { enabled: contactsEnabled, loading: flagsLoading } = useFeatureFlag('ff_companies_ui_v1')
   const [contacts, setContacts] = useState<ContactSummary[]>([])
@@ -203,7 +204,11 @@ export default function Contacts() {
             </h3>
             <div className={styles.list}>
               {contacts.map((contact) => (
-                <div key={contact.id} className={styles.card}>
+                <button
+                  key={contact.id}
+                  className={styles.card}
+                  onClick={() => navigate(`/contact/${contact.id}`)}
+                >
                   <div className={styles.cardRow}>
                     <span className={styles.cardName}>{contact.fullName}</span>
                     <span className={styles.cardEmail}>{contact.email || ''}</span>
@@ -216,7 +221,7 @@ export default function Contacts() {
                       {formatDate(contact.updatedAt)}
                     </span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
