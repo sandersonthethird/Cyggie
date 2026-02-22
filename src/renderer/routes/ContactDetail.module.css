@@ -373,6 +373,27 @@
   font-size: 12px;
 }
 
+.ingestStatus {
+  margin: 0 0 10px;
+  border: 1px solid #dbe2ee;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.loadingDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #1668dc;
+  animation: pulse 1s ease-in-out infinite;
+}
+
 .emailListView {
   margin-top: 6px;
   display: flex;
@@ -541,4 +562,15 @@
 .empty {
   color: #64748b;
   font-size: 13px;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }

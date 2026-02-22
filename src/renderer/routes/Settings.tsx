@@ -4,6 +4,8 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useCalendar } from '../hooks/useCalendar'
 import type { LlmProvider } from '../../shared/types/settings'
 import type { DriveFolderRef } from '../../shared/types/drive'
+import type { PipelineStage } from '../../shared/types/pipeline'
+import type { UserProfile } from '../../shared/types/user'
 import styles from './Settings.module.css'
 
 interface SettingsState {
@@ -30,6 +32,17 @@ export default function Settings() {
   })
   const [saved, setSaved] = useState(false)
   const [storagePath, setStoragePath] = useState('')
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
+  const [userDisplayName, setUserDisplayName] = useState('')
+  const [userEmail, setUserEmail] = useState('')
+  const [profileError, setProfileError] = useState('')
+  const [pipelineConfigId, setPipelineConfigId] = useState('')
+  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([])
+  const [newStageLabel, setNewStageLabel] = useState('')
+  const [newStageColor, setNewStageColor] = useState('#5A7DA3')
+  const [stageBusyId, setStageBusyId] = useState<string | null>(null)
+  const [staleRelationshipDays, setStaleRelationshipDays] = useState('21')
+  const [stuckDealDays, setStuckDealDays] = useState('21')
 
   // Calendar state
   const { calendarConnected, connect, disconnect } = useCalendar()
@@ -66,12 +79,24 @@ export default function Settings() {
     )
   }, [])
 
+  const refreshPipelineConfig = useCallback(async () => {
+    const result = await window.api.invoke<{ config: { id: string }; stages: PipelineStage[] }>(
+      IPC_CHANNELS.PIPELINE_GET_CONFIG
+    )
+    setPipelineConfigId(result.config.id)
+    setPipelineStages(result.stages)
+  }, [])
+
   useEffect(() => {
     async function load() {
       try {
-        const [allResult, currentPathResult] = await Promise.allSettled([
+        const [allResult, currentPathResult, userResult, pipelineResult] = await Promise.allSettled([
           window.api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL),
-          window.api.invoke<string>(IPC_CHANNELS.APP_GET_STORAGE_PATH)
+          window.api.invoke<string>(IPC_CHANNELS.APP_GET_STORAGE_PATH),
+          window.api.invoke<UserProfile>(IPC_CHANNELS.USER_GET_CURRENT),
+          window.api.invoke<{ config: { id: string }; stages: PipelineStage[] }>(
+            IPC_CHANNELS.PIPELINE_GET_CONFIG
+          )
         ])
 
         if (allResult.status === 'fulfilled') {
@@ -86,10 +111,23 @@ export default function Settings() {
             defaultMaxSpeakers: all.defaultMaxSpeakers || '',
             companyDriveRootFolder: all.companyDriveRootFolder || ''
           })
+          setStaleRelationshipDays(all.dashboardStaleRelationshipDays || '21')
+          setStuckDealDays(all.dashboardStuckDealDays || '21')
         }
 
         if (currentPathResult.status === 'fulfilled') {
           setStoragePath(currentPathResult.value)
+        }
+
+        if (userResult.status === 'fulfilled') {
+          setUserProfile(userResult.value)
+          setUserDisplayName(userResult.value.displayName || '')
+          setUserEmail(userResult.value.email || '')
+        }
+
+        if (pipelineResult.status === 'fulfilled') {
+          setPipelineConfigId(pipelineResult.value.config.id)
+          setPipelineStages(pipelineResult.value.stages)
         }
       } finally {
         await refreshGoogleScopes()
@@ -99,13 +137,119 @@ export default function Settings() {
   }, [refreshGoogleScopes])
 
   const handleSave = useCallback(async () => {
+    setProfileError('')
+    if (!userDisplayName.trim()) {
+      setProfileError('Display name is required.')
+      return
+    }
+
+    const updatedProfile = await window.api.invoke<UserProfile>(
+      IPC_CHANNELS.USER_UPDATE_CURRENT,
+      {
+        displayName: userDisplayName.trim(),
+        email: userEmail.trim() || null
+      }
+    )
+    setUserProfile(updatedProfile)
+    setUserDisplayName(updatedProfile.displayName)
+    setUserEmail(updatedProfile.email || '')
+
     const entries = Object.entries(settings) as [string, string | boolean][]
     for (const [key, value] of entries) {
       await window.api.invoke(IPC_CHANNELS.SETTINGS_SET, key, String(value))
     }
+    await window.api.invoke(
+      IPC_CHANNELS.SETTINGS_SET,
+      'dashboardStaleRelationshipDays',
+      staleRelationshipDays.trim() || '21'
+    )
+    await window.api.invoke(
+      IPC_CHANNELS.SETTINGS_SET,
+      'dashboardStuckDealDays',
+      stuckDealDays.trim() || '21'
+    )
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }, [settings])
+  }, [settings, userDisplayName, userEmail, staleRelationshipDays, stuckDealDays])
+
+  const handleStageSave = useCallback(async (stage: PipelineStage) => {
+    setStageBusyId(stage.id)
+    try {
+      const saved = await window.api.invoke<PipelineStage>(
+        IPC_CHANNELS.PIPELINE_UPSERT_STAGE,
+        {
+          id: stage.id,
+          pipelineConfigId: stage.pipelineConfigId,
+          label: stage.label,
+          slug: stage.slug,
+          sortOrder: stage.sortOrder,
+          color: stage.color,
+          isTerminal: stage.isTerminal
+        }
+      )
+      setPipelineStages((prev) => prev.map((item) => (item.id === saved.id ? saved : item)))
+    } catch (err) {
+      setProfileError(String(err))
+    } finally {
+      setStageBusyId(null)
+    }
+  }, [])
+
+  const moveStage = useCallback(async (stageId: string, direction: -1 | 1) => {
+    if (!pipelineConfigId) return
+    const idx = pipelineStages.findIndex((stage) => stage.id === stageId)
+    if (idx < 0) return
+    const target = idx + direction
+    if (target < 0 || target >= pipelineStages.length) return
+
+    const next = [...pipelineStages]
+    const [moved] = next.splice(idx, 1)
+    next.splice(target, 0, moved)
+    const orderedIds = next.map((stage) => stage.id)
+    try {
+      const reordered = await window.api.invoke<PipelineStage[]>(
+        IPC_CHANNELS.PIPELINE_REORDER_STAGES,
+        pipelineConfigId,
+        orderedIds
+      )
+      setPipelineStages(reordered)
+    } catch (err) {
+      setProfileError(String(err))
+    }
+  }, [pipelineConfigId, pipelineStages])
+
+  const handleStageDelete = useCallback(async (stageId: string) => {
+    if (!pipelineConfigId) return
+    try {
+      const remaining = await window.api.invoke<PipelineStage[]>(
+        IPC_CHANNELS.PIPELINE_DELETE_STAGE,
+        stageId,
+        null
+      )
+      setPipelineStages(remaining)
+    } catch (err) {
+      setProfileError(String(err))
+    }
+  }, [pipelineConfigId])
+
+  const handleAddStage = useCallback(async () => {
+    if (!newStageLabel.trim()) return
+    try {
+      await window.api.invoke<PipelineStage>(
+        IPC_CHANNELS.PIPELINE_UPSERT_STAGE,
+        {
+          pipelineConfigId,
+          label: newStageLabel.trim(),
+          color: newStageColor,
+          isTerminal: false
+        }
+      )
+      setNewStageLabel('')
+      await refreshPipelineConfig()
+    } catch (err) {
+      setProfileError(String(err))
+    }
+  }, [newStageColor, newStageLabel, pipelineConfigId, refreshPipelineConfig])
 
   const handleOpenStorage = useCallback(async () => {
     await window.api.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_DIR)
@@ -246,6 +390,139 @@ export default function Settings() {
 
   return (
     <div className={styles.container}>
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>User Profile</h3>
+        <div className={styles.field}>
+          <label className={styles.label}>Display Name</label>
+          <input
+            className={styles.input}
+            value={userDisplayName}
+            onChange={(e) => setUserDisplayName(e.target.value)}
+            placeholder="Your name"
+          />
+        </div>
+        <div className={styles.field}>
+          <label className={styles.label}>Email</label>
+          <input
+            className={styles.input}
+            value={userEmail}
+            onChange={(e) => setUserEmail(e.target.value)}
+            placeholder="you@firm.com"
+          />
+          <p className={styles.hint}>
+            Used for authorship and audit metadata.
+            {userProfile?.role ? ` Role: ${userProfile.role}` : ''}
+          </p>
+        </div>
+        {profileError && <p className={styles.error}>{profileError}</p>}
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Pipeline</h3>
+        <div className={styles.field}>
+          <label className={styles.label}>Stages</label>
+          <div className={styles.stageList}>
+            {pipelineStages.map((stage) => (
+              <div key={stage.id} className={styles.stageRow}>
+                <input
+                  className={styles.input}
+                  value={stage.label}
+                  onChange={(event) =>
+                    setPipelineStages((prev) =>
+                      prev.map((item) =>
+                        item.id === stage.id ? { ...item, label: event.target.value } : item
+                      )
+                    )
+                  }
+                />
+                <input
+                  type="color"
+                  className={styles.colorInput}
+                  value={stage.color || '#5A7DA3'}
+                  onChange={(event) =>
+                    setPipelineStages((prev) =>
+                      prev.map((item) =>
+                        item.id === stage.id ? { ...item, color: event.target.value } : item
+                      )
+                    )
+                  }
+                />
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={stage.isTerminal}
+                    onChange={(event) =>
+                      setPipelineStages((prev) =>
+                        prev.map((item) =>
+                          item.id === stage.id ? { ...item, isTerminal: event.target.checked } : item
+                        )
+                      )
+                    }
+                  />
+                  Terminal
+                </label>
+                <div className={styles.stageActions}>
+                  <button className={styles.linkBtn} onClick={() => void moveStage(stage.id, -1)}>Up</button>
+                  <button className={styles.linkBtn} onClick={() => void moveStage(stage.id, 1)}>Down</button>
+                  <button className={styles.linkBtn} onClick={() => void handleStageSave(stage)}>
+                    {stageBusyId === stage.id ? 'Saving...' : 'Save'}
+                  </button>
+                  {pipelineStages.length > 1 && (
+                    <button className={styles.linkBtn} onClick={() => void handleStageDelete(stage.id)}>
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className={styles.field}>
+          <label className={styles.label}>Add Stage</label>
+          <div className={styles.addStageRow}>
+            <input
+              className={styles.input}
+              value={newStageLabel}
+              onChange={(event) => setNewStageLabel(event.target.value)}
+              placeholder="Stage label"
+            />
+            <input
+              type="color"
+              className={styles.colorInput}
+              value={newStageColor}
+              onChange={(event) => setNewStageColor(event.target.value)}
+            />
+            <button className={styles.connectBtn} onClick={() => void handleAddStage()}>
+              Add
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Relationship Thresholds</h3>
+        <div className={styles.field}>
+          <label className={styles.label}>Stale relationship after (days)</label>
+          <input
+            type="number"
+            className={styles.input}
+            value={staleRelationshipDays}
+            onChange={(event) => setStaleRelationshipDays(event.target.value)}
+            min="1"
+          />
+        </div>
+        <div className={styles.field}>
+          <label className={styles.label}>Stuck deal after (days)</label>
+          <input
+            type="number"
+            className={styles.input}
+            value={stuckDealDays}
+            onChange={(event) => setStuckDealDays(event.target.value)}
+            min="1"
+          />
+        </div>
+      </section>
+
       {(needsDeepgram || needsClaude) && (
         <div className={styles.setupBanner}>
           <h3>Welcome to Cyggie</h3>

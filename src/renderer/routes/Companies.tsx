@@ -29,6 +29,13 @@ function formatLastTouch(value: string | null): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+function daysSince(value: string | null): number | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24))
+}
+
 function buildFilter(query: string, scope: CompanyScope): CompanyListFilter {
   const filter: CompanyListFilter = {
     query: query.trim(),
@@ -173,29 +180,44 @@ export default function Companies() {
                 {SCOPE_LABELS[scope]} ({companies.length})
               </h3>
               <div className={styles.list}>
-                {companies.map((company) => (
-                  <div
-                    key={company.id}
-                    className={styles.card}
-                    onClick={() => navigate(`/company/${company.id}`)}
-                  >
-                    <div className={styles.cardRow}>
-                      <span className={styles.cardName}>{company.canonicalName}</span>
-                      <span className={styles.cardDomain}>{company.primaryDomain || ''}</span>
+                {companies.map((company) => {
+                  const touchDays = daysSince(company.lastTouchpoint)
+                  const warmthClass = touchDays == null
+                    ? styles.warmthUnknown
+                    : touchDays < 14
+                        ? styles.warmthGreen
+                        : touchDays <= 30
+                            ? styles.warmthYellow
+                            : styles.warmthRed
+                  return (
+                    <div
+                      key={company.id}
+                      className={styles.card}
+                      onClick={() => navigate(`/company/${company.id}`)}
+                    >
+                      <div className={styles.cardRow}>
+                        <span className={styles.cardName}>{company.canonicalName}</span>
+                        <span className={styles.cardDomain}>{company.primaryDomain || ''}</span>
+                      </div>
+                      <div className={styles.cardRow}>
+                        <span className={styles.cardMeta}>
+                          {[
+                            company.meetingCount > 0 && `${company.meetingCount} meeting${company.meetingCount !== 1 ? 's' : ''}`,
+                            company.emailCount > 0 && `${company.emailCount} email${company.emailCount !== 1 ? 's' : ''}`
+                          ].filter(Boolean).join(', ') || 'No activity'}
+                        </span>
+                        <div className={styles.touchMeta}>
+                          <span className={styles.cardStage}>
+                            {formatLastTouch(company.lastTouchpoint)}
+                          </span>
+                          <span className={`${styles.warmthBadge} ${warmthClass}`}>
+                            {touchDays == null ? '--' : `${touchDays}d`}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className={styles.cardRow}>
-                      <span className={styles.cardMeta}>
-                        {[
-                          company.meetingCount > 0 && `${company.meetingCount} meeting${company.meetingCount !== 1 ? 's' : ''}`,
-                          company.emailCount > 0 && `${company.emailCount} email${company.emailCount !== 1 ? 's' : ''}`
-                        ].filter(Boolean).join(', ') || 'No activity'}
-                      </span>
-                      <span className={styles.cardStage}>
-                        {formatLastTouch(company.lastTouchpoint)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
 

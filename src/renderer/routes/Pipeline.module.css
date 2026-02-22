@@ -1,0 +1,155 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.createRow {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.select {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  padding: 7px 10px;
+  min-width: 0;
+}
+
+.primaryButton,
+.linkButton {
+  border-radius: var(--radius-md);
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.primaryButton {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.primaryButton:hover {
+  background: var(--color-primary-hover);
+}
+
+.linkButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-card-bg);
+  color: var(--color-text);
+}
+
+.linkButton:hover {
+  background: var(--color-card-hover);
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.column {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-card-bg);
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.columnHeader {
+  padding: 10px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.columnTitle {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.countBadge {
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--color-bg-secondary);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.columnBody {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 220px;
+}
+
+.dealCard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: grab;
+}
+
+.dealCard:active {
+  cursor: grabbing;
+}
+
+.dealNameButton {
+  text-align: left;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.dealNameButton:hover {
+  text-decoration: underline;
+}
+
+.dealMeta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 840px) {
+  .createRow {
+    grid-template-columns: 1fr;
+  }
+}

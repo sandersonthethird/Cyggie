@@ -1,12 +1,15 @@
 import { useEffect } from 'react'
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import Layout from './components/layout/Layout'
+import Dashboard from './routes/Dashboard'
 import MeetingList from './routes/MeetingList'
 import MeetingDetail from './routes/MeetingDetail'
 import Companies from './routes/Companies'
 import CompanyDetail from './routes/CompanyDetail'
 import Contacts from './routes/Contacts'
 import ContactDetail from './routes/ContactDetail'
+import Pipeline from './routes/Pipeline'
+import LiveRecording from './routes/LiveRecording'
 import Templates from './routes/Templates'
 import Settings from './routes/Settings'
 import { useCalendar } from './hooks/useCalendar'
@@ -55,7 +58,10 @@ export default function App() {
         <NotificationListener />
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<MeetingList />} />
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/meetings" element={<MeetingList />} />
+            <Route path="/recording" element={<LiveRecording />} />
+            <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/meeting/:id" element={<MeetingDetail />} />
             <Route path="/companies" element={<Companies />} />
             <Route path="/company/:companyId" element={<CompanyDetail />} />

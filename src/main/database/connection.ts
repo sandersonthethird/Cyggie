@@ -23,6 +23,9 @@ import { runCompanyClassificationMigration } from './migrations/020-company-clas
 import { runCompanyDomainNormalizationMigration } from './migrations/021-company-domain-normalization'
 import { runContactMultiEmailMigration } from './migrations/022-contact-multi-email'
 import { runContactNamePartsMigration } from './migrations/023-contact-name-parts'
+import { runDataIntegrityMigration } from './migrations/024-data-integrity'
+import { runAuthFoundationMigration } from './migrations/025-auth-foundation'
+import { runPipelineStagesMigration } from './migrations/026-pipeline-stages'
 
 let db: Database.Database | null = null
 
@@ -54,6 +57,9 @@ export function getDatabase(): Database.Database {
     runCompanyDomainNormalizationMigration(db)
     runContactMultiEmailMigration(db)
     runContactNamePartsMigration(db)
+    runDataIntegrityMigration(db)
+    runAuthFoundationMigration(db)
+    runPipelineStagesMigration(db)
   }
   return db
 }

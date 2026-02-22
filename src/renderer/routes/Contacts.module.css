@@ -96,6 +96,44 @@
   flex-shrink: 0;
 }
 
+.touchMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.warmthBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.warmthGreen {
+  background: rgba(52, 199, 89, 0.16);
+  color: #187a3a;
+}
+
+.warmthYellow {
+  background: rgba(255, 159, 10, 0.16);
+  color: #a66308;
+}
+
+.warmthRed {
+  background: rgba(217, 69, 69, 0.16);
+  color: #a52828;
+}
+
+.warmthUnknown {
+  background: var(--color-card-hover);
+  color: var(--color-text-tertiary);
+}
+
 .syncBtn {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);

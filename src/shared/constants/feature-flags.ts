@@ -6,9 +6,9 @@ export const FEATURE_FLAG_DEFAULTS = {
   ff_company_chat_v1: true,
   ff_email_ui_v1: true,
   ff_themes_ui_v1: false,
-  ff_pipeline_ui_v1: false,
+  ff_pipeline_ui_v1: true,
   ff_artifacts_ui_v1: false,
-  ff_ask_unified_v1: false,
+  ff_ask_unified_v1: true,
   ff_email_ingest_v1: false,
   ff_crm_sync_read_v1: false
 } as const

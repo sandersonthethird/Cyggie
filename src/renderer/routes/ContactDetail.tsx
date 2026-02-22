@@ -417,6 +417,7 @@ export default function ContactDetail() {
     if (!contactId) return
     setIngestingEmails(true)
     setError(null)
+    setEmailIngestSummary(null)
     try {
       const result = await window.api.invoke<ContactEmailIngestResult>(
         IPC_CHANNELS.CONTACT_EMAIL_INGEST,
@@ -841,6 +842,12 @@ export default function ContactDetail() {
               <span className={styles.emailIngestMeta}>{emailIngestSummary}</span>
             )}
           </div>
+          {ingestingEmails && (
+            <div className={styles.ingestStatus} role="status" aria-live="polite">
+              <span className={styles.loadingDot} aria-hidden="true" />
+              <span>Syncing Gmail for this contact. You can keep using the app while this runs.</span>
+            </div>
+          )}
 
           {!emailsLoaded && <div className={styles.meta}>Loading emails...</div>}
 

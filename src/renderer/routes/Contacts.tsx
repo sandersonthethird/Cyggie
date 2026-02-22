@@ -19,6 +19,13 @@ function formatDate(value: string): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+function daysSince(value: string | null): number | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24))
+}
+
 export default function Contacts() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -203,26 +210,45 @@ export default function Contacts() {
               Contacts ({contacts.length})
             </h3>
             <div className={styles.list}>
-              {contacts.map((contact) => (
-                <button
-                  key={contact.id}
-                  className={styles.card}
-                  onClick={() => navigate(`/contact/${contact.id}`)}
-                >
-                  <div className={styles.cardRow}>
-                    <span className={styles.cardName}>{contact.fullName}</span>
-                    <span className={styles.cardEmail}>{contact.email || ''}</span>
-                  </div>
-                  <div className={styles.cardRow}>
-                    <span className={styles.cardMeta}>
-                      {contact.title || ''}
-                    </span>
-                    <span className={styles.cardDate}>
-                      {formatDate(contact.updatedAt)}
-                    </span>
-                  </div>
-                </button>
-              ))}
+              {contacts.map((contact) => {
+                const touchDays = daysSince(contact.lastTouchpoint)
+                const warmthClass = touchDays == null
+                  ? styles.warmthUnknown
+                  : touchDays < 14
+                      ? styles.warmthGreen
+                      : touchDays <= 30
+                          ? styles.warmthYellow
+                          : styles.warmthRed
+                return (
+                  <button
+                    key={contact.id}
+                    className={styles.card}
+                    onClick={() => navigate(`/contact/${contact.id}`)}
+                  >
+                    <div className={styles.cardRow}>
+                      <span className={styles.cardName}>{contact.fullName}</span>
+                      <span className={styles.cardEmail}>{contact.email || ''}</span>
+                    </div>
+                    <div className={styles.cardRow}>
+                      <span className={styles.cardMeta}>
+                        {[
+                          contact.title || null,
+                          contact.meetingCount > 0 ? `${contact.meetingCount} meeting${contact.meetingCount === 1 ? '' : 's'}` : null,
+                          contact.emailCount > 0 ? `${contact.emailCount} email${contact.emailCount === 1 ? '' : 's'}` : null
+                        ].filter(Boolean).join(' · ') || 'No activity'}
+                      </span>
+                      <div className={styles.touchMeta}>
+                        <span className={styles.cardDate}>
+                          {formatDate(contact.lastTouchpoint || contact.updatedAt)}
+                        </span>
+                        <span className={`${styles.warmthBadge} ${warmthClass}`}>
+                          {touchDays == null ? '--' : `${touchDays}d`}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}

@@ -2,6 +2,11 @@ import { getDatabase } from '../connection'
 import { extractCompanyFromEmail, extractDomainFromEmail } from '../../utils/company-extractor'
 import * as companyRepo from './company.repo'
 import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult, CategorizedSuggestions, CompanySuggestion } from '../../../shared/types/meeting'
+import type {
+  UnifiedSearchResponse,
+  UnifiedSearchResult,
+  UnifiedSearchResultsGrouped
+} from '../../../shared/types/unified-search'
 
 /** Sanitize a user query for FTS5 MATCH — quote each word to avoid syntax errors from ?, *, etc. */
 function sanitizeFts5Query(query: string): string {
@@ -760,5 +765,271 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     people: [...people].sort().slice(0, limit),
     companies: companySuggestions,
     meetings: meetingRows
+  }
+}
+
+function emptyUnifiedGroups(): UnifiedSearchResultsGrouped {
+  return {
+    meeting: [],
+    email: [],
+    note: [],
+    memo: []
+  }
+}
+
+function formatCitationDate(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Unknown date'
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+function recencyBoost(value: string | null): number {
+  if (!value) return 0
+  const timestamp = new Date(value).getTime()
+  if (Number.isNaN(timestamp)) return 0
+  const days = Math.max(0, (Date.now() - timestamp) / (1000 * 60 * 60 * 24))
+  return Math.max(0, 45 - days)
+}
+
+function dedupeUnifiedResults(results: UnifiedSearchResult[]): UnifiedSearchResult[] {
+  const seen = new Set<string>()
+  const deduped: UnifiedSearchResult[] = []
+  for (const result of results) {
+    const key = `${result.entityType}:${result.entityId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(result)
+  }
+  return deduped
+}
+
+export function searchUnified(query: string, limit = 40): UnifiedSearchResponse {
+  const trimmed = query.trim()
+  if (!trimmed) {
+    return {
+      query: '',
+      totalCount: 0,
+      grouped: emptyUnifiedGroups(),
+      flat: []
+    }
+  }
+
+  const db = getDatabase()
+  const lowerLike = `%${trimmed.toLowerCase()}%`
+  const results: UnifiedSearchResult[] = []
+
+  const meetingLimit = Math.max(8, Math.ceil(limit * 0.4))
+  const ftsQuery = sanitizeFts5Query(trimmed)
+  try {
+    const meetingRows = db
+      .prepare(`
+        SELECT
+          m.id,
+          m.title,
+          m.date,
+          snippet(meetings_fts, 2, '<mark>', '</mark>', '...', 24) AS snippet,
+          bm25(meetings_fts) AS bm_rank,
+          c.id AS company_id,
+          c.canonical_name AS company_name
+        FROM meetings_fts
+        JOIN meetings m ON m.id = meetings_fts.meeting_id
+        LEFT JOIN org_companies c ON c.id = (
+          SELECT l.company_id
+          FROM meeting_company_links l
+          WHERE l.meeting_id = m.id
+          ORDER BY l.confidence DESC, datetime(l.created_at) ASC
+          LIMIT 1
+        )
+        WHERE meetings_fts MATCH ?
+        ORDER BY bm_rank
+        LIMIT ?
+      `)
+      .all(ftsQuery, meetingLimit) as Array<{
+      id: string
+      title: string
+      date: string
+      snippet: string
+      bm_rank: number
+      company_id: string | null
+      company_name: string | null
+    }>
+
+    meetingRows.forEach((row) => {
+      const rank = 1200 + (-row.bm_rank || 0) + recencyBoost(row.date)
+      results.push({
+        id: `meeting:${row.id}`,
+        entityType: 'meeting',
+        entityId: row.id,
+        title: row.title,
+        snippet: row.snippet || '',
+        occurredAt: row.date,
+        rank,
+        companyId: row.company_id,
+        companyName: row.company_name,
+        route: `/meeting/${row.id}`,
+        citationLabel: `Meeting: ${row.title} (${formatCitationDate(row.date)})`
+      })
+    })
+  } catch {
+    // If FTS parsing fails, continue with non-FTS entities.
+  }
+
+  const emailRows = db
+    .prepare(`
+      SELECT
+        em.id,
+        COALESCE(NULLIF(TRIM(em.subject), ''), '(no subject)') AS subject,
+        COALESCE(em.received_at, em.sent_at, em.created_at) AS occurred_at,
+        COALESCE(em.snippet, '') AS snippet,
+        c.id AS company_id,
+        c.canonical_name AS company_name
+      FROM email_messages em
+      LEFT JOIN org_companies c ON c.id = (
+        SELECT l.company_id
+        FROM email_company_links l
+        WHERE l.message_id = em.id
+        ORDER BY l.confidence DESC, datetime(l.created_at) ASC
+        LIMIT 1
+      )
+      WHERE
+        lower(COALESCE(em.subject, '')) LIKE ?
+        OR lower(COALESCE(em.snippet, '')) LIKE ?
+        OR lower(COALESCE(em.body_text, '')) LIKE ?
+      ORDER BY datetime(occurred_at) DESC
+      LIMIT ?
+    `)
+    .all(lowerLike, lowerLike, lowerLike, Math.max(8, Math.ceil(limit * 0.3))) as Array<{
+    id: string
+    subject: string
+    occurred_at: string
+    snippet: string
+    company_id: string | null
+    company_name: string | null
+  }>
+  emailRows.forEach((row) => {
+    const rank = 900 + recencyBoost(row.occurred_at)
+    results.push({
+      id: `email:${row.id}`,
+      entityType: 'email',
+      entityId: row.id,
+      title: row.subject,
+      snippet: row.snippet || '',
+      occurredAt: row.occurred_at,
+      rank,
+      companyId: row.company_id,
+      companyName: row.company_name,
+      route: row.company_id
+        ? `/company/${row.company_id}?tab=timeline&filter=emails&focus=${row.id}`
+        : '/companies',
+      citationLabel: `Email: ${row.subject} (${formatCitationDate(row.occurred_at)})`
+    })
+  })
+
+  const noteRows = db
+    .prepare(`
+      SELECT
+        n.id,
+        n.company_id,
+        c.canonical_name AS company_name,
+        COALESCE(NULLIF(TRIM(n.title), ''), 'Note') AS title,
+        substr(replace(replace(trim(n.content), char(10), ' '), char(13), ' '), 1, 320) AS snippet,
+        n.updated_at AS occurred_at
+      FROM company_notes n
+      LEFT JOIN org_companies c ON c.id = n.company_id
+      WHERE
+        lower(COALESCE(n.title, '')) LIKE ?
+        OR lower(COALESCE(n.content, '')) LIKE ?
+      ORDER BY datetime(n.updated_at) DESC
+      LIMIT ?
+    `)
+    .all(lowerLike, lowerLike, Math.max(8, Math.ceil(limit * 0.2))) as Array<{
+    id: string
+    company_id: string | null
+    company_name: string | null
+    title: string
+    snippet: string
+    occurred_at: string
+  }>
+  noteRows.forEach((row) => {
+    const rank = 780 + recencyBoost(row.occurred_at)
+    results.push({
+      id: `note:${row.id}`,
+      entityType: 'note',
+      entityId: row.id,
+      title: row.title,
+      snippet: row.snippet,
+      occurredAt: row.occurred_at,
+      rank,
+      companyId: row.company_id,
+      companyName: row.company_name,
+      route: row.company_id
+        ? `/company/${row.company_id}?tab=timeline&filter=notes&focus=${row.id}`
+        : '/companies',
+      citationLabel: `Note: ${row.title} (${formatCitationDate(row.occurred_at)})`
+    })
+  })
+
+  const memoRows = db
+    .prepare(`
+      SELECT
+        imv.id AS version_id,
+        im.id AS memo_id,
+        im.company_id,
+        c.canonical_name AS company_name,
+        im.title,
+        substr(replace(replace(trim(imv.content_markdown), char(10), ' '), char(13), ' '), 1, 320) AS snippet,
+        imv.created_at AS occurred_at
+      FROM investment_memo_versions imv
+      JOIN investment_memos im ON im.id = imv.memo_id
+      LEFT JOIN org_companies c ON c.id = im.company_id
+      WHERE lower(COALESCE(im.title, '')) LIKE ?
+         OR lower(COALESCE(imv.content_markdown, '')) LIKE ?
+      ORDER BY datetime(imv.created_at) DESC
+      LIMIT ?
+    `)
+    .all(lowerLike, lowerLike, Math.max(6, Math.ceil(limit * 0.15))) as Array<{
+    version_id: string
+    memo_id: string
+    company_id: string | null
+    company_name: string | null
+    title: string
+    snippet: string
+    occurred_at: string
+  }>
+  memoRows.forEach((row) => {
+    const rank = 700 + recencyBoost(row.occurred_at)
+    results.push({
+      id: `memo:${row.version_id}`,
+      entityType: 'memo',
+      entityId: row.memo_id,
+      title: row.title,
+      snippet: row.snippet,
+      occurredAt: row.occurred_at,
+      rank,
+      companyId: row.company_id,
+      companyName: row.company_name,
+      route: row.company_id ? `/company/${row.company_id}?tab=memo` : '/companies',
+      citationLabel: `Memo: ${row.title} (${formatCitationDate(row.occurred_at)})`
+    })
+  })
+
+  const flat = dedupeUnifiedResults(results)
+    .sort((a, b) => b.rank - a.rank)
+    .slice(0, limit)
+  const grouped = emptyUnifiedGroups()
+  flat.forEach((result) => {
+    grouped[result.entityType].push(result)
+  })
+
+  return {
+    query: trimmed,
+    totalCount: flat.length,
+    grouped,
+    flat
   }
 }

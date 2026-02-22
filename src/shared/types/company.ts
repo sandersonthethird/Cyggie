@@ -124,7 +124,8 @@ export interface CompanyEmailIngestResult {
   linkedContactCount: number
 }
 
-export type CompanyTimelineItemType = 'meeting' | 'email'
+export type CompanyTimelineItemType = 'meeting' | 'email' | 'note' | 'deal_event'
+export type CompanyTimelineReferenceType = 'meeting' | 'email' | 'company_note' | 'deal_stage_event'
 
 export interface CompanyTimelineItem {
   id: string
@@ -133,6 +134,7 @@ export interface CompanyTimelineItem {
   occurredAt: string
   subtitle: string | null
   referenceId: string
+  referenceType: CompanyTimelineReferenceType
 }
 
 export interface CompanyNote {

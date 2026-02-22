@@ -64,21 +64,24 @@ export function createMemo(data: {
   themeId?: string | null
   dealId?: string | null
   createdBy?: string | null
-}): InvestmentMemo {
+}, userId: string | null = null): InvestmentMemo {
   const db = getDatabase()
   const id = randomUUID()
   db.prepare(`
     INSERT INTO investment_memos (
-      id, company_id, theme_id, deal_id, title, status, latest_version_number, created_by, created_at, updated_at
+      id, company_id, theme_id, deal_id, title, status, latest_version_number,
+      created_by, created_by_user_id, updated_by_user_id, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, 'draft', 0, ?, datetime('now'), datetime('now'))
+    VALUES (?, ?, ?, ?, ?, 'draft', 0, ?, ?, ?, datetime('now'), datetime('now'))
   `).run(
     id,
     data.companyId,
     data.themeId ?? null,
     data.dealId ?? null,
     data.title,
-    data.createdBy ?? null
+    data.createdBy ?? userId ?? null,
+    userId,
+    userId
   )
 
   return getMemo(id)!
@@ -116,14 +119,18 @@ export function getLatestMemoForCompany(companyId: string): InvestmentMemoWithLa
   return { ...memo, latestVersion }
 }
 
-export function getOrCreateMemoForCompany(companyId: string, companyName: string): InvestmentMemoWithLatest {
+export function getOrCreateMemoForCompany(
+  companyId: string,
+  companyName: string,
+  userId: string | null = null
+): InvestmentMemoWithLatest {
   const existing = getLatestMemoForCompany(companyId)
   if (existing) return existing
 
   const memo = createMemo({
     companyId,
     title: `${companyName} Investment Memo`
-  })
+  }, userId)
 
   const initialContent = [
     `# ${companyName} Investment Memo`,
@@ -144,7 +151,7 @@ export function getOrCreateMemoForCompany(companyId: string, companyName: string
   const version = saveMemoVersion(memo.id, {
     contentMarkdown: initialContent,
     changeNote: 'Initial draft'
-  })
+  }, userId)
 
   return { ...memo, latestVersion: version, latestVersionNumber: version.versionNumber }
 }
@@ -199,7 +206,8 @@ export function saveMemoVersion(
     structuredJson?: string | null
     changeNote?: string | null
     createdBy?: string | null
-  }
+  },
+  userId: string | null = null
 ): InvestmentMemoVersion {
   const db = getDatabase()
   const memo = getMemo(memoId)
@@ -211,9 +219,10 @@ export function saveMemoVersion(
   const versionId = randomUUID()
   db.prepare(`
     INSERT INTO investment_memo_versions (
-      id, memo_id, version_number, content_markdown, structured_json, change_note, created_by, created_at
+      id, memo_id, version_number, content_markdown, structured_json, change_note,
+      created_by, created_by_user_id, updated_by_user_id, created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
     versionId,
     memoId,
@@ -221,14 +230,24 @@ export function saveMemoVersion(
     data.contentMarkdown,
     data.structuredJson ?? null,
     data.changeNote ?? null,
-    data.createdBy ?? null
+    data.createdBy ?? userId ?? null,
+    userId,
+    userId
   )
 
-  db.prepare(`
-    UPDATE investment_memos
-    SET latest_version_number = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `).run(versionNumber, memoId)
+  if (userId) {
+    db.prepare(`
+      UPDATE investment_memos
+      SET latest_version_number = ?, updated_by_user_id = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(versionNumber, userId, memoId)
+  } else {
+    db.prepare(`
+      UPDATE investment_memos
+      SET latest_version_number = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(versionNumber, memoId)
+  }
 
   const saved = db
     .prepare(`
@@ -247,14 +266,23 @@ export function saveMemoVersion(
 
 export function updateMemoStatus(
   memoId: string,
-  status: InvestmentMemo['status']
+  status: InvestmentMemo['status'],
+  userId: string | null = null
 ): InvestmentMemo | null {
   const db = getDatabase()
-  db.prepare(`
-    UPDATE investment_memos
-    SET status = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `).run(status, memoId)
+  if (userId) {
+    db.prepare(`
+      UPDATE investment_memos
+      SET status = ?, updated_by_user_id = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(status, userId, memoId)
+  } else {
+    db.prepare(`
+      UPDATE investment_memos
+      SET status = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(status, memoId)
+  }
   return getMemo(memoId)
 }
 

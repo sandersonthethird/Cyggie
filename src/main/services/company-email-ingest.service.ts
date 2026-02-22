@@ -8,6 +8,7 @@ import {
   hasGmailScope,
   isGmailConnected
 } from '../calendar/google-auth'
+import { findCompanyIdByDomain } from '../database/repositories/org-company.repo'
 import type { CompanyEmailIngestResult } from '../../shared/types/company'
 import type { ContactEmailIngestResult } from '../../shared/types/contact'
 
@@ -229,6 +230,42 @@ function extractDomainFromWebsiteUrl(websiteUrl: string | null): string | null {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)]
+}
+
+function resolveCompanyForDomain(domain: string | null | undefined): string | null {
+  const normalized = normalizeDomain(domain || '')
+  if (!normalized) return null
+  return findCompanyIdByDomain(normalized)
+}
+
+function assignPrimaryCompanyIfUnset(
+  db: Database.Database,
+  contactId: string,
+  companyId: string | null
+): string | null {
+  if (!companyId) return null
+
+  const result = db.prepare(`
+    UPDATE contacts
+    SET primary_company_id = ?, updated_at = datetime('now')
+    WHERE id = ? AND (primary_company_id IS NULL OR TRIM(primary_company_id) = '')
+  `).run(companyId, contactId)
+
+  if (result.changes > 0) {
+    db.prepare(`
+      INSERT INTO org_company_contacts (
+        company_id, contact_id, is_primary, created_at
+      )
+      VALUES (?, ?, 1, datetime('now'))
+      ON CONFLICT(company_id, contact_id) DO UPDATE SET
+        is_primary = 1
+    `).run(companyId, contactId)
+  }
+
+  const row = db
+    .prepare('SELECT primary_company_id FROM contacts WHERE id = ?')
+    .get(contactId) as { primary_company_id: string | null } | undefined
+  return row?.primary_company_id ?? null
 }
 
 function splitHeaderList(value: string): string[] {
@@ -573,9 +610,23 @@ function loadCompanyIngestCues(db: Database.Database, companyId: string): Compan
       .filter((email): email is string => Boolean(email))
   ]).slice(0, MAX_CONTACT_CUES)
 
+  const aliasDomainRows = db
+    .prepare(`
+      SELECT alias_value
+      FROM org_company_aliases
+      WHERE company_id = ?
+        AND alias_type = 'domain'
+      ORDER BY datetime(created_at) ASC
+      LIMIT 50
+    `)
+    .all(companyId) as Array<{ alias_value: string }>
+
   const domains = uniqueStrings([
     normalizeDomain(company.primary_domain || '') || '',
-    extractDomainFromWebsiteUrl(company.website_url) || ''
+    extractDomainFromWebsiteUrl(company.website_url) || '',
+    ...aliasDomainRows
+      .map((row) => normalizeDomain(row.alias_value))
+      .filter((value): value is string => Boolean(value))
   ].filter(Boolean))
 
   return {
@@ -909,9 +960,9 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
     `)
     const insertContact = db.prepare(`
       INSERT INTO contacts (
-        id, full_name, first_name, last_name, normalized_name, email, created_at, updated_at
+        id, full_name, first_name, last_name, normalized_name, email, primary_company_id, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     `)
     const upsertContactEmail = db.prepare(`
       INSERT INTO contact_emails (contact_id, email, is_primary, created_at)
@@ -992,6 +1043,8 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
       const candidateName = resolveContactName(displayName, email)
       const candidateNormalizedName = normalizePersonName(candidateName)
       const candidateSplitName = splitFullNameParts(candidateName)
+      const emailDomain = normalizeDomain(email.split('@')[1] || '')
+      const inferredCompanyId = resolveCompanyForDomain(emailDomain)
 
       if (!existing) {
         const contactId = randomUUID()
@@ -1001,10 +1054,12 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
           candidateSplitName.firstName,
           candidateSplitName.lastName,
           candidateNormalizedName,
-          email
+          email,
+          inferredCompanyId
         )
         upsertContactEmail.run(contactId, email, 1)
-        return { id: contactId, primaryCompanyId: null }
+        const primaryCompanyId = assignPrimaryCompanyIfUnset(db, contactId, inferredCompanyId)
+        return { id: contactId, primaryCompanyId: primaryCompanyId ?? inferredCompanyId ?? null }
       }
 
       if (!normalizeEmail(existing.email || '')) {
@@ -1026,9 +1081,13 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
         )
       }
 
+      const primaryCompanyId = existing.primary_company_id
+        ? existing.primary_company_id
+        : assignPrimaryCompanyIfUnset(db, existing.id, inferredCompanyId)
+
       return {
         id: existing.id,
-        primaryCompanyId: existing.primary_company_id ?? null
+        primaryCompanyId: primaryCompanyId ?? null
       }
     }
 
@@ -1353,9 +1412,9 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
     `)
     const insertContact = db.prepare(`
       INSERT INTO contacts (
-        id, full_name, first_name, last_name, normalized_name, email, created_at, updated_at
+        id, full_name, first_name, last_name, normalized_name, email, primary_company_id, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     `)
     const upsertContactEmail = db.prepare(`
       INSERT INTO contact_emails (contact_id, email, is_primary, created_at)
@@ -1380,12 +1439,6 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
         normalized_name = ?,
         updated_at = datetime('now')
       WHERE id = ?
-    `)
-    const selectCompanyByDomain = db.prepare(`
-      SELECT id
-      FROM org_companies
-      WHERE lower(primary_domain) = ?
-      LIMIT 1
     `)
     const upsertParticipant = db.prepare(`
       INSERT INTO email_message_participants (
@@ -1442,6 +1495,8 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
       const candidateName = resolveContactName(displayName, email)
       const candidateNormalizedName = normalizePersonName(candidateName)
       const candidateSplitName = splitFullNameParts(candidateName)
+      const emailDomain = normalizeDomain(email.split('@')[1] || '')
+      const inferredCompanyId = resolveCompanyForDomain(emailDomain)
 
       if (!existing) {
         const contactId = randomUUID()
@@ -1451,10 +1506,12 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
           candidateSplitName.firstName,
           candidateSplitName.lastName,
           candidateNormalizedName,
-          email
+          email,
+          inferredCompanyId
         )
         upsertContactEmail.run(contactId, email, 1)
-        return { id: contactId, primaryCompanyId: null }
+        const primaryCompanyId = assignPrimaryCompanyIfUnset(db, contactId, inferredCompanyId)
+        return { id: contactId, primaryCompanyId: primaryCompanyId ?? inferredCompanyId ?? null }
       }
 
       if (!normalizeEmail(existing.email || '')) {
@@ -1476,9 +1533,13 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
         )
       }
 
+      const primaryCompanyId = existing.primary_company_id
+        ? existing.primary_company_id
+        : assignPrimaryCompanyIfUnset(db, existing.id, inferredCompanyId)
+
       return {
         id: existing.id,
-        primaryCompanyId: existing.primary_company_id ?? null
+        primaryCompanyId: primaryCompanyId ?? null
       }
     }
 
@@ -1637,9 +1698,9 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
           linkedCompanyIds.add(contact.primaryCompanyId)
         }
         if (participantDomain) {
-          const companyByDomain = selectCompanyByDomain.get(participantDomain) as { id: string } | undefined
-          if (companyByDomain?.id) {
-            linkedCompanyIds.add(companyByDomain.id)
+          const companyByDomain = resolveCompanyForDomain(participantDomain)
+          if (companyByDomain) {
+            linkedCompanyIds.add(companyByDomain)
           }
         }
       }

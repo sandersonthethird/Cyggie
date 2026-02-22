@@ -4,13 +4,15 @@ import * as companyRepo from '../database/repositories/org-company.repo'
 import * as memoRepo from '../database/repositories/investment-memo.repo'
 import * as artifactRepo from '../database/repositories/artifact.repo'
 import { exportMemoMarkdownToPdf } from '../services/memo-export.service'
+import { getCurrentUserId } from '../security/current-user'
+import { logAudit } from '../database/repositories/audit.repo'
 
 export function registerInvestmentMemoHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_GET_OR_CREATE, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
     const company = companyRepo.getCompany(companyId)
     if (!company) throw new Error('Company not found')
-    return memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName)
+    return memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName, getCurrentUserId())
   })
 
   ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_LIST_VERSIONS, (_event, memoId: string) => {
@@ -32,7 +34,14 @@ export function registerInvestmentMemoHandlers(): void {
     ) => {
       if (!memoId) throw new Error('memoId is required')
       if (!data?.contentMarkdown?.trim()) throw new Error('contentMarkdown is required')
-      return memoRepo.saveMemoVersion(memoId, data)
+      const userId = getCurrentUserId()
+      const version = memoRepo.saveMemoVersion(memoId, data, userId)
+      logAudit(userId, 'investment_memo_version', version.id, 'create', {
+        memoId,
+        versionNumber: version.versionNumber,
+        changeNote: data.changeNote ?? null
+      })
+      return version
     }
   )
 
@@ -40,7 +49,12 @@ export function registerInvestmentMemoHandlers(): void {
     IPC_CHANNELS.INVESTMENT_MEMO_SET_STATUS,
     (_event, memoId: string, status: 'draft' | 'review' | 'final' | 'archived') => {
       if (!memoId) throw new Error('memoId is required')
-      return memoRepo.updateMemoStatus(memoId, status)
+      const userId = getCurrentUserId()
+      const updated = memoRepo.updateMemoStatus(memoId, status, userId)
+      if (updated) {
+        logAudit(userId, 'investment_memo', memoId, 'update', { status })
+      }
+      return updated
     }
   )
 

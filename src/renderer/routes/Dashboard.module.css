@@ -1,0 +1,209 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.quickActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-card-bg);
+  padding: 14px;
+}
+
+.sectionTitle {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.subTitle {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.empty {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
+.eventList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eventCard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.eventMain {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eventTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eventTime {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.eventTitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.eventMeta {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.eventActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.weekSummary {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summaryList,
+.activityList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.summaryRow,
+.activityRow,
+.attentionRow {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+}
+
+.summaryRow:hover,
+.activityRow:hover,
+.attentionRow:hover {
+  background: var(--color-card-hover);
+}
+
+.activityTitle {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.activityMeta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.attentionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.primaryButton,
+.secondaryButton {
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  padding: 6px 10px;
+  font-weight: 600;
+}
+
+.primaryButton {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.primaryButton:hover {
+  background: var(--color-primary-hover);
+}
+
+.secondaryButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-card-bg);
+  color: var(--color-text);
+}
+
+.secondaryButton:hover {
+  background: var(--color-card-hover);
+}
+
+@media (max-width: 980px) {
+  .grid,
+  .attentionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .eventCard {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .eventActions {
+    justify-content: flex-end;
+  }
+}

@@ -10,6 +10,8 @@ import { extractCompaniesFromEmails, extractCompaniesFromAttendees } from '../ut
 import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
 import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
 import type { ChatMessage, MeetingListFilter } from '../../shared/types/meeting'
+import { getCurrentUserId } from '../security/current-user'
+import { logAudit } from '../database/repositories/audit.repo'
 
 export function registerMeetingHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.MEETING_LIST, (_event, filter?: MeetingListFilter) => {
@@ -27,18 +29,23 @@ export function registerMeetingHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.MEETING_UPDATE, (_event, id: string, data: Parameters<typeof meetingRepo.updateMeeting>[1]) => {
-    const updated = meetingRepo.updateMeeting(id, data)
+    const userId = getCurrentUserId()
+    const updated = meetingRepo.updateMeeting(id, data, userId)
     if (updated && (data.attendees !== undefined || data.attendeeEmails !== undefined)) {
       try {
-        syncContactsFromAttendees(updated.attendees, updated.attendeeEmails)
+        syncContactsFromAttendees(updated.attendees, updated.attendeeEmails, userId)
       } catch (err) {
         console.error('[Contacts] Failed to sync from meeting update:', err)
       }
+    }
+    if (updated) {
+      logAudit(userId, 'meeting', id, 'update', data)
     }
     return updated
   })
 
   ipcMain.handle(IPC_CHANNELS.MEETING_DELETE, (_event, id: string) => {
+    const userId = getCurrentUserId()
     const meeting = meetingRepo.getMeeting(id)
     if (meeting) {
       if (meeting.transcriptPath) deleteTranscript(meeting.transcriptPath)
@@ -46,19 +53,24 @@ export function registerMeetingHandlers(): void {
       if (meeting.recordingPath) deleteRecording(meeting.recordingPath)
       removeFromIndex(id)
     }
-    return meetingRepo.deleteMeeting(id)
+    const deleted = meetingRepo.deleteMeeting(id)
+    if (deleted) {
+      logAudit(userId, 'meeting', id, 'delete', null)
+    }
+    return deleted
   })
 
   ipcMain.handle(
     IPC_CHANNELS.MEETING_RENAME_SPEAKERS,
     (_event, id: string, newSpeakerMap: Record<number, string>) => {
+      const userId = getCurrentUserId()
       const meeting = meetingRepo.getMeeting(id)
       if (!meeting) throw new Error('Meeting not found')
 
       const oldSpeakerMap = meeting.speakerMap
 
       // Update speaker map in DB
-      meetingRepo.updateMeeting(id, { speakerMap: newSpeakerMap })
+      meetingRepo.updateMeeting(id, { speakerMap: newSpeakerMap }, userId)
 
       // Rewrite transcript file with updated speaker names.
       // The file content may be out of sync with the DB speakerMap (e.g. from
@@ -118,6 +130,7 @@ export function registerMeetingHandlers(): void {
         }
       }
 
+      logAudit(userId, 'meeting', id, 'update', { speakerMap: newSpeakerMap })
       return meetingRepo.getMeeting(id)
     }
   )
@@ -125,6 +138,7 @@ export function registerMeetingHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.MEETING_RENAME_TITLE,
     (_event, id: string, newTitle: string) => {
+      const userId = getCurrentUserId()
       const meeting = meetingRepo.getMeeting(id)
       if (!meeting) throw new Error('Meeting not found')
 
@@ -143,7 +157,7 @@ export function registerMeetingHandlers(): void {
         updates.recordingPath = renameRecording(meeting.recordingPath, id, trimmed, meeting.date, meeting.attendees)
       }
 
-      meetingRepo.updateMeeting(id, updates)
+      meetingRepo.updateMeeting(id, updates, userId)
 
       // Rename Drive files if they exist (fire-and-forget)
       if (meeting.transcriptDriveId && updates.transcriptPath) {
@@ -157,6 +171,7 @@ export function registerMeetingHandlers(): void {
         )
       }
 
+      logAudit(userId, 'meeting', id, 'update', { title: trimmed })
       return meetingRepo.getMeeting(id)
     }
   )
@@ -164,9 +179,11 @@ export function registerMeetingHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.MEETING_SAVE_NOTES,
     (_event, id: string, notes: string) => {
+      const userId = getCurrentUserId()
       const meeting = meetingRepo.getMeeting(id)
       if (!meeting) throw new Error('Meeting not found')
-      meetingRepo.updateMeeting(id, { notes: notes || null })
+      meetingRepo.updateMeeting(id, { notes: notes || null }, userId)
+      logAudit(userId, 'meeting', id, 'update', { notes: Boolean(notes) })
       return meetingRepo.getMeeting(id)
     }
   )
@@ -174,10 +191,13 @@ export function registerMeetingHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.MEETING_SAVE_SUMMARY,
     (_event, id: string, summaryContent: string) => {
+      const userId = getCurrentUserId()
       const meeting = meetingRepo.getMeeting(id)
       if (!meeting) throw new Error('Meeting not found')
       if (!meeting.summaryPath) throw new Error('Meeting has no summary file')
       updateSummaryContent(meeting.summaryPath, summaryContent)
+      meetingRepo.updateMeeting(id, { summaryPath: meeting.summaryPath }, userId)
+      logAudit(userId, 'meeting', id, 'update', { summaryEdited: true })
       return meetingRepo.getMeeting(id)
     }
   )
@@ -185,16 +205,21 @@ export function registerMeetingHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.MEETING_SAVE_CHAT,
     (_event, id: string, messages: ChatMessage[]) => {
-      meetingRepo.updateMeeting(id, { chatMessages: messages })
+      const userId = getCurrentUserId()
+      meetingRepo.updateMeeting(id, { chatMessages: messages }, userId)
+      logAudit(userId, 'meeting', id, 'update', { chatMessageCount: messages.length })
     }
   )
 
   ipcMain.handle(IPC_CHANNELS.MEETING_CREATE, () => {
-    return meetingRepo.createMeeting({
+    const userId = getCurrentUserId()
+    const meeting = meetingRepo.createMeeting({
       title: `Note ${new Date().toLocaleDateString()}`,
       date: new Date().toISOString(),
       status: 'scheduled'
-    })
+    }, userId)
+    logAudit(userId, 'meeting', meeting.id, 'create', { source: 'manual-note' })
+    return meeting
   })
 
   ipcMain.handle(
@@ -203,8 +228,9 @@ export function registerMeetingHandlers(): void {
       // Check if a meeting already exists for this calendar event
       const existing = meetingRepo.findMeetingByCalendarEventId(calendarEventId)
       if (existing) {
+        const userId = getCurrentUserId()
         try {
-          syncContactsFromAttendees(existing.attendees, existing.attendeeEmails)
+          syncContactsFromAttendees(existing.attendees, existing.attendeeEmails, userId)
         } catch (err) {
           console.error('[Contacts] Failed to sync from existing prepared meeting:', err)
         }
@@ -217,6 +243,7 @@ export function registerMeetingHandlers(): void {
         : extractCompaniesFromAttendees(attendees || [])
 
       // Create a new meeting with 'scheduled' status
+      const userId = getCurrentUserId()
       const meeting = meetingRepo.createMeeting({
         title,
         date,
@@ -227,10 +254,14 @@ export function registerMeetingHandlers(): void {
         attendeeEmails: attendeeEmails || null,
         companies: companies.length > 0 ? companies : null,
         status: 'scheduled'
+      }, userId)
+      logAudit(userId, 'meeting', meeting.id, 'create', {
+        source: 'calendar-prepare',
+        calendarEventId
       })
 
       try {
-        syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails)
+        syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails, userId)
       } catch (err) {
         console.error('[Contacts] Failed to sync from prepared meeting:', err)
       }

@@ -13,6 +13,7 @@
   display: flex;
   align-items: center;
   padding-left: var(--sidebar-width);
+  padding-right: 10px;
 }
 
 .titlebarControls {
@@ -23,6 +24,10 @@
   position: relative;
   padding: 0 16px;
   -webkit-app-region: no-drag;
+}
+
+.titlebarSpacer {
+  flex: 1;
 }
 
 .titlebarSearch {
@@ -109,6 +114,23 @@
 .titlebarNewNote:hover {
   background: var(--color-primary);
   color: white;
+}
+
+.askButton {
+  -webkit-app-region: no-drag;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.askButton:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text);
 }
 
 .body {

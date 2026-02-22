@@ -3,6 +3,8 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import { ingestContactEmails } from '../services/company-email-ingest.service'
+import { getCurrentUserId } from '../security/current-user'
+import { logAudit } from '../database/repositories/audit.repo'
 
 export function registerContactHandlers(): void {
   ipcMain.handle(
@@ -41,7 +43,10 @@ export function registerContactHandlers(): void {
     ) => {
       if (!data?.fullName?.trim()) throw new Error('fullName is required')
       if (!data?.email?.trim()) throw new Error('email is required')
-      return contactRepo.createContact(data)
+      const userId = getCurrentUserId()
+      const created = contactRepo.createContact(data, userId)
+      logAudit(userId, 'contact', created.id, 'create', data)
+      return created
     }
   )
 
@@ -50,9 +55,14 @@ export function registerContactHandlers(): void {
     (_event, contactId: string, companyName: string) => {
       if (!contactId?.trim()) throw new Error('contactId is required')
       if (!companyName?.trim()) throw new Error('Company name is required')
+      const userId = getCurrentUserId()
 
-      const company = companyRepo.getOrCreateCompanyByName(companyName)
-      return contactRepo.setContactPrimaryCompany(contactId, company.id)
+      const company = companyRepo.getOrCreateCompanyByName(companyName, userId)
+      const updated = contactRepo.setContactPrimaryCompany(contactId, company.id, userId)
+      logAudit(userId, 'contact', contactId, 'update', {
+        primaryCompanyId: company.id
+      })
+      return updated
     }
   )
 
@@ -61,16 +71,24 @@ export function registerContactHandlers(): void {
     (_event, contactId: string, email: string) => {
       if (!contactId?.trim()) throw new Error('contactId is required')
       if (!email?.trim()) throw new Error('email is required')
-      return contactRepo.addContactEmail(contactId, email)
+      const userId = getCurrentUserId()
+      const updated = contactRepo.addContactEmail(contactId, email, userId)
+      logAudit(userId, 'contact', contactId, 'update', {
+        addedEmail: email
+      })
+      return updated
     }
   )
 
   ipcMain.handle(IPC_CHANNELS.CONTACT_SYNC_FROM_MEETINGS, () => {
-    return contactRepo.syncContactsFromMeetings()
+    const userId = getCurrentUserId()
+    const result = contactRepo.syncContactsFromMeetings(userId)
+    logAudit(userId, 'contact', 'sync-from-meetings', 'update', result)
+    return result
   })
 
   try {
-    contactRepo.syncContactsFromMeetings()
+    contactRepo.syncContactsFromMeetings(getCurrentUserId())
   } catch (err) {
     console.error('[Contacts] Startup sync failed:', err)
   }

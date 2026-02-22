@@ -44,15 +44,16 @@ export function createCompanyNote(data: {
   themeId?: string | null
   title?: string | null
   content: string
-}): CompanyNote {
+}, userId: string | null = null): CompanyNote {
   const db = getDatabase()
   const id = randomUUID()
   db.prepare(`
     INSERT INTO company_notes (
-      id, company_id, theme_id, title, content, is_pinned, created_at, updated_at
+      id, company_id, theme_id, title, content, is_pinned,
+      created_by_user_id, updated_by_user_id, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, 0, datetime('now'), datetime('now'))
-  `).run(id, data.companyId, data.themeId ?? null, data.title ?? null, data.content)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?, datetime('now'), datetime('now'))
+  `).run(id, data.companyId, data.themeId ?? null, data.title ?? null, data.content, userId, userId)
   return getCompanyNote(id)!
 }
 
@@ -74,7 +75,8 @@ export function updateCompanyNote(
     content: string
     isPinned: boolean
     themeId: string | null
-  }>
+  }>,
+  userId: string | null = null
 ): CompanyNote | null {
   const db = getDatabase()
   const sets: string[] = []
@@ -99,6 +101,10 @@ export function updateCompanyNote(
 
   if (sets.length === 0) return getCompanyNote(noteId)
 
+  if (userId) {
+    sets.push('updated_by_user_id = ?')
+    params.push(userId)
+  }
   sets.push("updated_at = datetime('now')")
   params.push(noteId)
   db.prepare(`UPDATE company_notes SET ${sets.join(', ')} WHERE id = ?`).run(...params)

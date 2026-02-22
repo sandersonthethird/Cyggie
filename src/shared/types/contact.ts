@@ -10,6 +10,9 @@ export interface ContactSummary {
   linkedinUrl: string | null
   crmContactId: string | null
   crmProvider: string | null
+  meetingCount: number
+  emailCount: number
+  lastTouchpoint: string | null
   createdAt: string
   updatedAt: string
 }

@@ -5,6 +5,8 @@ import type { ChatMessage, Meeting, MeetingListFilter, MeetingStatus } from '../
 import type { MeetingPlatform } from '../../../shared/constants/meeting-apps'
 import type { TranscriptSegment } from '../../../shared/types/recording'
 
+const COMMON_SECOND_LEVEL_TLDS = new Set(['co', 'com', 'org', 'net', 'gov', 'edu'])
+
 function rowToMeeting(row: MeetingRow): Meeting {
   return {
     id: row.id,
@@ -34,6 +36,223 @@ function rowToMeeting(row: MeetingRow): Meeting {
   }
 }
 
+function parseJsonArray(value: string | null): string[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
+function normalizeCompanyName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+}
+
+function normalizeDomain(value: string | null | undefined): string | null {
+  if (!value) return null
+  const cleaned = value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+  if (!cleaned) return null
+  return cleaned.replace(/^www\./, '')
+}
+
+function getRegistrableDomain(domain: string): string {
+  const labels = domain.split('.').filter(Boolean)
+  if (labels.length <= 2) return labels.join('.')
+
+  const tld = labels[labels.length - 1]
+  const secondLevel = labels[labels.length - 2]
+  if (tld.length === 2 && COMMON_SECOND_LEVEL_TLDS.has(secondLevel) && labels.length >= 3) {
+    return labels.slice(-3).join('.')
+  }
+  return labels.slice(-2).join('.')
+}
+
+function getDomainLookupCandidates(domain: string): string[] {
+  const normalized = normalizeDomain(domain)
+  if (!normalized) return []
+  const registrable = getRegistrableDomain(normalized)
+  return [...new Set([normalized, registrable, `www.${registrable}`])]
+}
+
+function extractEmailDomain(email: string): string | null {
+  const normalized = email.trim().toLowerCase()
+  const match = normalized.match(/^[^@\s]+@([^@\s]+)$/)
+  if (!match?.[1]) return null
+  return normalizeDomain(match[1])
+}
+
+function findExistingCompanyId(
+  db: ReturnType<typeof getDatabase>,
+  companyName: string,
+  attendeeEmails: string[] | null | undefined
+): string | null {
+  const normalizedName = normalizeCompanyName(companyName)
+  if (!normalizedName) return null
+
+  const byName = db
+    .prepare('SELECT id FROM org_companies WHERE normalized_name = ? LIMIT 1')
+    .get(normalizedName) as { id: string } | undefined
+  if (byName?.id) return byName.id
+
+  const byNameAlias = db
+    .prepare(`
+      SELECT company_id
+      FROM org_company_aliases
+      WHERE alias_type = 'name'
+        AND lower(trim(alias_value)) = lower(trim(?))
+      LIMIT 1
+    `)
+    .get(companyName.trim()) as { company_id: string } | undefined
+  if (byNameAlias?.company_id) return byNameAlias.company_id
+
+  const emailDomains = new Set<string>()
+  for (const email of attendeeEmails || []) {
+    const domain = extractEmailDomain(email)
+    if (!domain) continue
+    emailDomains.add(domain)
+    emailDomains.add(getRegistrableDomain(domain))
+  }
+
+  if (emailDomains.size === 0) return null
+
+  const findByPrimaryDomain = db.prepare(`
+    SELECT id
+    FROM org_companies
+    WHERE lower(trim(primary_domain)) = ?
+       OR (
+         CASE
+           WHEN lower(trim(primary_domain)) LIKE 'www.%' THEN substr(lower(trim(primary_domain)), 5)
+           ELSE lower(trim(primary_domain))
+         END
+       ) = ?
+    LIMIT 1
+  `)
+  const findByDomainAlias = db.prepare(`
+    SELECT company_id
+    FROM org_company_aliases
+    WHERE alias_type = 'domain'
+      AND lower(trim(alias_value)) = lower(trim(?))
+    LIMIT 1
+  `)
+
+  for (const domain of emailDomains) {
+    for (const candidate of getDomainLookupCandidates(domain)) {
+      const byDomain = findByPrimaryDomain.get(candidate, candidate) as { id: string } | undefined
+      if (byDomain?.id) return byDomain.id
+      const byDomainAlias = findByDomainAlias.get(candidate) as { company_id: string } | undefined
+      if (byDomainAlias?.company_id) return byDomainAlias.company_id
+    }
+  }
+
+  return null
+}
+
+function createCompanyForMeeting(
+  db: ReturnType<typeof getDatabase>,
+  companyName: string,
+  attendeeEmails: string[] | null | undefined
+): string | null {
+  const trimmed = companyName.trim()
+  const normalized = normalizeCompanyName(trimmed)
+  if (!normalized) return null
+
+  let primaryDomain: string | null = null
+  const emailDomains = (attendeeEmails || [])
+    .map((email) => extractEmailDomain(email))
+    .filter((domain): domain is string => Boolean(domain))
+  if (emailDomains.length > 0) {
+    primaryDomain = getRegistrableDomain(emailDomains[0])
+  }
+
+  const companyId = uuidv4()
+  db.prepare(`
+    INSERT INTO org_companies (
+      id, canonical_name, normalized_name, primary_domain, status, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
+    ON CONFLICT(normalized_name) DO NOTHING
+  `).run(companyId, trimmed, normalized, primaryDomain)
+
+  const row = db
+    .prepare('SELECT id FROM org_companies WHERE normalized_name = ? LIMIT 1')
+    .get(normalized) as { id: string } | undefined
+  if (!row?.id) return null
+
+  db.prepare(`
+    INSERT OR IGNORE INTO org_company_aliases (
+      id, company_id, alias_value, alias_type, created_at
+    )
+    VALUES (?, ?, ?, 'name', datetime('now'))
+  `).run(uuidv4(), row.id, trimmed)
+
+  if (primaryDomain) {
+    for (const candidate of getDomainLookupCandidates(primaryDomain)) {
+      db.prepare(`
+        INSERT OR IGNORE INTO org_company_aliases (
+          id, company_id, alias_value, alias_type, created_at
+        )
+        VALUES (?, ?, ?, 'domain', datetime('now'))
+      `).run(uuidv4(), row.id, candidate)
+    }
+  }
+
+  return row.id
+}
+
+function syncMeetingCompanyLinks(
+  meetingId: string,
+  companies: string[] | null | undefined,
+  attendeeEmails: string[] | null | undefined,
+  confidence = 0.7,
+  linkedBy = 'auto',
+  userId: string | null = null
+): void {
+  const db = getDatabase()
+  const names = [...new Set((companies || []).map((name) => name.trim()).filter(Boolean))]
+  const companyIds = new Set<string>()
+
+  for (const companyName of names) {
+    const existingId = findExistingCompanyId(db, companyName, attendeeEmails)
+    const companyId = existingId || createCompanyForMeeting(db, companyName, attendeeEmails)
+    if (!companyId) continue
+    companyIds.add(companyId)
+
+    db.prepare(`
+      INSERT INTO meeting_company_links (
+        meeting_id, company_id, confidence, linked_by, created_by_user_id, updated_by_user_id, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(meeting_id, company_id) DO UPDATE SET
+        confidence = CASE
+          WHEN excluded.confidence > meeting_company_links.confidence THEN excluded.confidence
+          ELSE meeting_company_links.confidence
+        END,
+        linked_by = excluded.linked_by,
+        updated_by_user_id = excluded.updated_by_user_id
+    `).run(meetingId, companyId, confidence, linkedBy, userId, userId)
+  }
+
+  if (companyIds.size === 0) {
+    db.prepare('DELETE FROM meeting_company_links WHERE meeting_id = ?').run(meetingId)
+    return
+  }
+
+  const placeholders = [...companyIds].map(() => '?').join(', ')
+  db.prepare(`
+    DELETE FROM meeting_company_links
+    WHERE meeting_id = ?
+      AND company_id NOT IN (${placeholders})
+  `).run(meetingId, ...companyIds)
+}
+
 export function createMeeting(data: {
   title: string
   date: string
@@ -44,13 +263,16 @@ export function createMeeting(data: {
   attendeeEmails?: string[] | null
   companies?: string[] | null
   status?: MeetingStatus
-}): Meeting {
+}, userId: string | null = null): Meeting {
   const db = getDatabase()
   const id = uuidv4()
 
   db.prepare(
-    `INSERT INTO meetings (id, title, date, meeting_platform, meeting_url, calendar_event_id, attendees, attendee_emails, companies, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO meetings (
+      id, title, date, meeting_platform, meeting_url, calendar_event_id,
+      attendees, attendee_emails, companies, status, created_by_user_id, updated_by_user_id
+    )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     data.title,
@@ -61,8 +283,22 @@ export function createMeeting(data: {
     data.attendees ? JSON.stringify(data.attendees) : null,
     data.attendeeEmails ? JSON.stringify(data.attendeeEmails) : null,
     data.companies ? JSON.stringify(data.companies) : null,
-    data.status ?? 'recording'
+    data.status ?? 'recording',
+    userId,
+    userId
   )
+
+  const created = getMeeting(id)
+  if (created && created.companies && created.companies.length > 0) {
+    syncMeetingCompanyLinks(
+      created.id,
+      created.companies,
+      created.attendeeEmails,
+      0.7,
+      'auto',
+      userId
+    )
+  }
 
   return getMeeting(id)!
 }
@@ -133,6 +369,8 @@ export function updateMeeting(
     recordingPath: string | null
     status: MeetingStatus
   }>
+,
+  userId: string | null = null
 ): Meeting | null {
   const db = getDatabase()
   const sets: string[] = []
@@ -209,11 +447,27 @@ export function updateMeeting(
 
   if (sets.length === 0) return getMeeting(id)
 
+  if (userId) {
+    sets.push('updated_by_user_id = ?')
+    params.push(userId)
+  }
   sets.push("updated_at = datetime('now')")
   params.push(id)
 
   db.prepare(`UPDATE meetings SET ${sets.join(', ')} WHERE id = ?`).run(...params)
-  return getMeeting(id)
+  const updated = getMeeting(id)
+  if (updated && data.companies !== undefined) {
+    syncMeetingCompanyLinks(
+      updated.id,
+      updated.companies,
+      updated.attendeeEmails,
+      0.7,
+      'auto',
+      userId
+    )
+  }
+
+  return updated
 }
 
 export function cleanupStaleRecordings(): number {

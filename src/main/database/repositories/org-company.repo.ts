@@ -35,6 +35,26 @@ interface CompanyRow {
   updated_at: string
 }
 
+export interface CompanyMergeResult {
+  targetCompanyId: string
+  sourceCompanyId: string
+  relinked: {
+    meetingLinks: number
+    emailLinks: number
+    contactPrimaries: number
+    contactLinks: number
+    deals: number
+    notes: number
+    conversations: number
+    memos: number
+    industries: number
+    themes: number
+    theses: number
+    artifacts: number
+    aliases: number
+  }
+}
+
 function normalizeCompanyName(name: string): string {
   return name
     .trim()
@@ -43,8 +63,51 @@ function normalizeCompanyName(name: string): string {
     .replace(/\s+/g, ' ')
 }
 
-function normalizeDomain(domain: string): string {
-  return domain.trim().toLowerCase().replace(/^www\./, '')
+const COMMON_SECOND_LEVEL_TLDS = new Set(['co', 'com', 'org', 'net', 'gov', 'edu'])
+
+function normalizeDomain(domain: string | null | undefined): string | null {
+  if (!domain) return null
+  const cleaned = domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+  if (!cleaned) return null
+  return cleaned.replace(/^www\./, '')
+}
+
+function getRegistrableDomain(domain: string): string {
+  const labels = domain.split('.').filter(Boolean)
+  if (labels.length <= 2) return labels.join('.')
+
+  const tld = labels[labels.length - 1]
+  const secondLevel = labels[labels.length - 2]
+  if (tld.length === 2 && COMMON_SECOND_LEVEL_TLDS.has(secondLevel) && labels.length >= 3) {
+    return labels.slice(-3).join('.')
+  }
+  return labels.slice(-2).join('.')
+}
+
+function getDomainLookupCandidates(domain: string): string[] {
+  const normalized = normalizeDomain(domain)
+  if (!normalized) return []
+  const registrable = getRegistrableDomain(normalized)
+  return [...new Set([normalized, registrable, `www.${registrable}`])]
+}
+
+function upsertCompanyAlias(
+  db: ReturnType<typeof getDatabase>,
+  companyId: string,
+  aliasValue: string | null | undefined,
+  aliasType: 'name' | 'domain'
+): void {
+  const normalizedAlias = aliasType === 'domain'
+    ? normalizeDomain(aliasValue || '')
+    : (aliasValue || '').trim()
+  if (!normalizedAlias) return
+
+  db.prepare(`
+    INSERT OR IGNORE INTO org_company_aliases (
+      id, company_id, alias_value, alias_type, created_at
+    )
+    VALUES (?, ?, ?, ?, datetime('now'))
+  `).run(randomUUID(), companyId, normalizedAlias, aliasType)
 }
 
 function normalizeEntityType(value: string | null | undefined): CompanyEntityType {
@@ -263,10 +326,11 @@ export function createCompany(data: {
   includeInCompaniesView?: boolean
   classificationSource?: 'manual' | 'auto'
   classificationConfidence?: number | null
-}): CompanyDetail {
+}, userId: string | null = null): CompanyDetail {
   const db = getDatabase()
   const canonicalName = data.canonicalName.trim()
   const normalizedName = normalizeCompanyName(canonicalName)
+  const normalizedPrimaryDomain = normalizeDomain(data.primaryDomain ?? null)
   const entityType = normalizeEntityType(data.entityType ?? 'prospect')
   const includeInCompaniesView = data.includeInCompaniesView ?? (entityType === 'prospect')
   const classificationSource = data.classificationSource ?? 'manual'
@@ -278,9 +342,9 @@ export function createCompany(data: {
     INSERT INTO org_companies (
       id, canonical_name, normalized_name, description, primary_domain, website_url, stage, status,
       entity_type, include_in_companies_view, classification_source, classification_confidence,
-      created_at, updated_at
+      created_by_user_id, updated_by_user_id, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     ON CONFLICT(normalized_name) DO UPDATE SET
       canonical_name = excluded.canonical_name,
       description = COALESCE(excluded.description, org_companies.description),
@@ -292,20 +356,23 @@ export function createCompany(data: {
       include_in_companies_view = excluded.include_in_companies_view,
       classification_source = excluded.classification_source,
       classification_confidence = excluded.classification_confidence,
+      updated_by_user_id = excluded.updated_by_user_id,
       updated_at = datetime('now')
   `).run(
     id,
     canonicalName,
     normalizedName,
     data.description ?? null,
-    data.primaryDomain ? normalizeDomain(data.primaryDomain) : null,
+    normalizedPrimaryDomain,
     data.websiteUrl ?? null,
     data.stage ?? null,
     data.status ?? 'active',
     entityType,
     includeInCompaniesView ? 1 : 0,
     classificationSource,
-    classificationConfidence
+    classificationConfidence,
+    userId,
+    userId
   )
 
   const row = db
@@ -313,6 +380,13 @@ export function createCompany(data: {
     .get(normalizedName) as { id: string } | undefined
   if (!row) {
     throw new Error('Failed to create or load company')
+  }
+
+  upsertCompanyAlias(db, row.id, canonicalName, 'name')
+  if (normalizedPrimaryDomain) {
+    for (const candidate of getDomainLookupCandidates(normalizedPrimaryDomain)) {
+      upsertCompanyAlias(db, row.id, candidate, 'domain')
+    }
   }
 
   const detail = getCompany(row.id)
@@ -336,14 +410,19 @@ export function updateCompany(
     classificationSource: 'manual' | 'auto'
     classificationConfidence: number | null
   }>
+,
+  userId: string | null = null
 ): CompanyDetail | null {
   const db = getDatabase()
   const sets: string[] = []
   const params: unknown[] = []
+  let normalizedCanonicalName: string | null = null
+  let normalizedPrimaryDomain: string | null = null
 
   if (data.canonicalName !== undefined) {
+    normalizedCanonicalName = data.canonicalName.trim()
     sets.push('canonical_name = ?')
-    params.push(data.canonicalName.trim())
+    params.push(normalizedCanonicalName)
     sets.push('normalized_name = ?')
     params.push(normalizeCompanyName(data.canonicalName))
   }
@@ -352,8 +431,9 @@ export function updateCompany(
     params.push(data.description)
   }
   if (data.primaryDomain !== undefined) {
+    normalizedPrimaryDomain = normalizeDomain(data.primaryDomain)
     sets.push('primary_domain = ?')
-    params.push(data.primaryDomain ? normalizeDomain(data.primaryDomain) : null)
+    params.push(normalizedPrimaryDomain)
   }
   if (data.websiteUrl !== undefined) {
     sets.push('website_url = ?')
@@ -393,48 +473,99 @@ export function updateCompany(
   }
 
   if (sets.length > 0) {
+    if (userId) {
+      sets.push('updated_by_user_id = ?')
+      params.push(userId)
+    }
     sets.push("updated_at = datetime('now')")
     params.push(companyId)
     db.prepare(`UPDATE org_companies SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+
+    if (normalizedCanonicalName) {
+      upsertCompanyAlias(db, companyId, normalizedCanonicalName, 'name')
+    }
+    if (data.primaryDomain !== undefined && normalizedPrimaryDomain) {
+      for (const candidate of getDomainLookupCandidates(normalizedPrimaryDomain)) {
+        upsertCompanyAlias(db, companyId, candidate, 'domain')
+      }
+    }
   }
 
   return getCompany(companyId)
 }
 
-function findCompanyIdByNameOrDomain(
+export function findCompanyIdByDomain(domain: string): string | null {
+  const db = getDatabase()
+  const domainCandidates = getDomainLookupCandidates(domain)
+  if (domainCandidates.length === 0) return null
+
+  const findByPrimaryDomain = db.prepare(`
+    SELECT id
+    FROM org_companies
+    WHERE
+      lower(trim(primary_domain)) = ?
+      OR (
+        CASE
+          WHEN lower(trim(primary_domain)) LIKE 'www.%' THEN substr(lower(trim(primary_domain)), 5)
+          ELSE lower(trim(primary_domain))
+        END
+      ) = ?
+    LIMIT 1
+  `)
+  const findByDomainAlias = db.prepare(`
+    SELECT company_id
+    FROM org_company_aliases
+    WHERE alias_type = 'domain'
+      AND lower(trim(alias_value)) = lower(trim(?))
+    LIMIT 1
+  `)
+
+  for (const candidate of domainCandidates) {
+    const byPrimary = findByPrimaryDomain.get(candidate, candidate) as { id: string } | undefined
+    if (byPrimary?.id) return byPrimary.id
+
+    const byAlias = findByDomainAlias.get(candidate) as { company_id: string } | undefined
+    if (byAlias?.company_id) return byAlias.company_id
+  }
+
+  return null
+}
+
+export function findCompanyIdByNameOrDomain(
   canonicalName: string,
   primaryDomain?: string | null
 ): string | null {
   const db = getDatabase()
-  const normalizedName = normalizeCompanyName(canonicalName)
-  const byName = db
-    .prepare('SELECT id FROM org_companies WHERE normalized_name = ?')
-    .get(normalizedName) as { id: string } | undefined
-  if (byName?.id) return byName.id
+  const trimmedName = canonicalName.trim()
+  const normalizedName = normalizeCompanyName(trimmedName)
 
-  const normalizedDomain = primaryDomain ? normalizeDomain(primaryDomain) : null
+  if (normalizedName) {
+    const byName = db
+      .prepare('SELECT id FROM org_companies WHERE normalized_name = ?')
+      .get(normalizedName) as { id: string } | undefined
+    if (byName?.id) return byName.id
+
+    const byNameAlias = db
+      .prepare(`
+        SELECT company_id
+        FROM org_company_aliases
+        WHERE alias_type = 'name'
+          AND lower(trim(alias_value)) = lower(trim(?))
+        LIMIT 1
+      `)
+      .get(trimmedName) as { company_id: string } | undefined
+    if (byNameAlias?.company_id) return byNameAlias.company_id
+  }
+
+  const normalizedDomain = normalizeDomain(primaryDomain)
   if (!normalizedDomain) return null
-
-  const byDomain = db
-    .prepare(`
-      SELECT id
-      FROM org_companies
-      WHERE
-        primary_domain = ?
-        OR LOWER(TRIM(primary_domain)) = ?
-        OR (
-          CASE
-            WHEN LOWER(TRIM(primary_domain)) LIKE 'www.%' THEN SUBSTR(LOWER(TRIM(primary_domain)), 5)
-            ELSE LOWER(TRIM(primary_domain))
-          END
-        ) = ?
-      LIMIT 1
-    `)
-    .get(normalizedDomain, normalizedDomain, normalizedDomain) as { id: string } | undefined
-  return byDomain?.id || null
+  return findCompanyIdByDomain(normalizedDomain)
 }
 
-export function getOrCreateCompanyByName(canonicalName: string): CompanyDetail {
+export function getOrCreateCompanyByName(
+  canonicalName: string,
+  userId: string | null = null
+): CompanyDetail {
   const companyName = canonicalName.trim()
   if (!companyName) {
     throw new Error('Company name is required')
@@ -455,7 +586,7 @@ export function getOrCreateCompanyByName(canonicalName: string): CompanyDetail {
     includeInCompaniesView: true,
     classificationSource: 'manual',
     classificationConfidence: 1
-  })
+  }, userId)
 }
 
 export function getEntityTypeByNameOrDomain(
@@ -477,7 +608,7 @@ export function upsertCompanyClassification(data: {
   includeInCompaniesView?: boolean
   classificationSource?: 'manual' | 'auto'
   classificationConfidence?: number | null
-}): CompanyDetail {
+}, userId: string | null = null): CompanyDetail {
   const companyName = data.canonicalName.trim()
   if (!companyName) {
     throw new Error('Company name is required')
@@ -498,7 +629,7 @@ export function upsertCompanyClassification(data: {
       includeInCompaniesView,
       classificationSource,
       classificationConfidence
-    })
+    }, userId)
   }
 
   const existing = getCompany(existingId)
@@ -506,40 +637,238 @@ export function upsertCompanyClassification(data: {
     throw new Error('Company not found')
   }
 
+  const candidateDomain = normalizeDomain(data.primaryDomain ?? null)
   const shouldSetDomain =
-    data.primaryDomain
-    && (!existing.primaryDomain || existing.primaryDomain === normalizeDomain(data.primaryDomain))
+    Boolean(candidateDomain)
+    && (!existing.primaryDomain || existing.primaryDomain === candidateDomain)
 
   const updated = updateCompany(existingId, {
     canonicalName: companyName,
-    primaryDomain: shouldSetDomain ? data.primaryDomain : existing.primaryDomain,
+    primaryDomain: shouldSetDomain ? candidateDomain : existing.primaryDomain,
     entityType,
     includeInCompaniesView,
     classificationSource,
     classificationConfidence
-  })
+  }, userId)
   if (!updated) {
     throw new Error('Failed to update company classification')
   }
   return updated
 }
 
+export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string): CompanyMergeResult {
+  if (!targetCompanyId || !sourceCompanyId) {
+    throw new Error('Both targetCompanyId and sourceCompanyId are required')
+  }
+  if (targetCompanyId === sourceCompanyId) {
+    throw new Error('Target and source companies must be different')
+  }
+
+  const db = getDatabase()
+  const target = db
+    .prepare('SELECT id FROM org_companies WHERE id = ? LIMIT 1')
+    .get(targetCompanyId) as { id: string } | undefined
+  const source = db
+    .prepare('SELECT id FROM org_companies WHERE id = ? LIMIT 1')
+    .get(sourceCompanyId) as { id: string } | undefined
+
+  if (!target) throw new Error('Target company not found')
+  if (!source) throw new Error('Source company not found')
+
+  const relinked = {
+    meetingLinks: 0,
+    emailLinks: 0,
+    contactPrimaries: 0,
+    contactLinks: 0,
+    deals: 0,
+    notes: 0,
+    conversations: 0,
+    memos: 0,
+    industries: 0,
+    themes: 0,
+    theses: 0,
+    artifacts: 0,
+    aliases: 0
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO meeting_company_links (
+        meeting_id, company_id, confidence, linked_by, created_at
+      )
+      SELECT meeting_id, ?, confidence, linked_by, created_at
+      FROM meeting_company_links
+      WHERE company_id = ?
+      ON CONFLICT(meeting_id, company_id) DO UPDATE SET
+        confidence = CASE
+          WHEN excluded.confidence > meeting_company_links.confidence THEN excluded.confidence
+          ELSE meeting_company_links.confidence
+        END,
+        linked_by = excluded.linked_by
+    `).run(targetCompanyId, sourceCompanyId)
+    relinked.meetingLinks = db
+      .prepare('DELETE FROM meeting_company_links WHERE company_id = ?')
+      .run(sourceCompanyId).changes
+
+    db.prepare(`
+      INSERT INTO email_company_links (
+        message_id, company_id, confidence, linked_by, reason, created_at
+      )
+      SELECT message_id, ?, confidence, linked_by, reason, created_at
+      FROM email_company_links
+      WHERE company_id = ?
+      ON CONFLICT(message_id, company_id) DO UPDATE SET
+        confidence = CASE
+          WHEN excluded.confidence > email_company_links.confidence THEN excluded.confidence
+          ELSE email_company_links.confidence
+        END,
+        linked_by = excluded.linked_by,
+        reason = COALESCE(excluded.reason, email_company_links.reason)
+    `).run(targetCompanyId, sourceCompanyId)
+    relinked.emailLinks = db
+      .prepare('DELETE FROM email_company_links WHERE company_id = ?')
+      .run(sourceCompanyId).changes
+
+    relinked.contactPrimaries = db
+      .prepare(`
+        UPDATE contacts
+        SET primary_company_id = ?, updated_at = datetime('now')
+        WHERE primary_company_id = ?
+      `)
+      .run(targetCompanyId, sourceCompanyId).changes
+
+    db.prepare(`
+      INSERT OR IGNORE INTO org_company_contacts (
+        company_id, contact_id, role_label, is_primary, created_at
+      )
+      SELECT ?, contact_id, role_label, is_primary, created_at
+      FROM org_company_contacts
+      WHERE company_id = ?
+    `).run(targetCompanyId, sourceCompanyId)
+    relinked.contactLinks = db
+      .prepare('DELETE FROM org_company_contacts WHERE company_id = ?')
+      .run(sourceCompanyId).changes
+
+    relinked.deals = db
+      .prepare(`
+        UPDATE deals
+        SET company_id = ?, updated_at = datetime('now')
+        WHERE company_id = ?
+      `)
+      .run(targetCompanyId, sourceCompanyId).changes
+
+    relinked.notes = db
+      .prepare(`
+        UPDATE company_notes
+        SET company_id = ?, updated_at = datetime('now')
+        WHERE company_id = ?
+      `)
+      .run(targetCompanyId, sourceCompanyId).changes
+
+    relinked.conversations = db
+      .prepare(`
+        UPDATE company_conversations
+        SET company_id = ?, updated_at = datetime('now')
+        WHERE company_id = ?
+      `)
+      .run(targetCompanyId, sourceCompanyId).changes
+
+    relinked.memos = db
+      .prepare(`
+        UPDATE investment_memos
+        SET company_id = ?, updated_at = datetime('now')
+        WHERE company_id = ?
+      `)
+      .run(targetCompanyId, sourceCompanyId).changes
+
+    db.prepare(`
+      INSERT OR IGNORE INTO org_company_industries (
+        company_id, industry_id, confidence, is_primary, tagged_by, created_at
+      )
+      SELECT ?, industry_id, confidence, is_primary, tagged_by, created_at
+      FROM org_company_industries
+      WHERE company_id = ?
+    `).run(targetCompanyId, sourceCompanyId)
+    relinked.industries = db
+      .prepare('DELETE FROM org_company_industries WHERE company_id = ?')
+      .run(sourceCompanyId).changes
+
+    db.prepare(`
+      INSERT OR IGNORE INTO org_company_themes (
+        company_id, theme_id, relevance_score, rationale, linked_by, last_reviewed_at, created_at
+      )
+      SELECT ?, theme_id, relevance_score, rationale, linked_by, last_reviewed_at, created_at
+      FROM org_company_themes
+      WHERE company_id = ?
+    `).run(targetCompanyId, sourceCompanyId)
+    relinked.themes = db
+      .prepare('DELETE FROM org_company_themes WHERE company_id = ?')
+      .run(sourceCompanyId).changes
+
+    relinked.theses = db
+      .prepare(`
+        UPDATE theses
+        SET company_id = ?, updated_at = datetime('now')
+        WHERE company_id = ?
+      `)
+      .run(targetCompanyId, sourceCompanyId).changes
+
+    relinked.artifacts = db
+      .prepare(`
+        UPDATE artifacts
+        SET company_id = ?, updated_at = datetime('now')
+        WHERE company_id = ?
+      `)
+      .run(targetCompanyId, sourceCompanyId).changes
+
+    db.prepare(`
+      INSERT OR IGNORE INTO org_company_aliases (
+        id, company_id, alias_value, alias_type, created_at
+      )
+      SELECT lower(hex(randomblob(16))), ?, alias_value, alias_type, created_at
+      FROM org_company_aliases
+      WHERE company_id = ?
+    `).run(targetCompanyId, sourceCompanyId)
+    relinked.aliases = db
+      .prepare('DELETE FROM org_company_aliases WHERE company_id = ?')
+      .run(sourceCompanyId).changes
+
+    db.prepare(`
+      UPDATE org_companies
+      SET updated_at = datetime('now')
+      WHERE id = ?
+    `).run(targetCompanyId)
+
+    db.prepare('DELETE FROM org_companies WHERE id = ?').run(sourceCompanyId)
+  })
+
+  tx()
+
+  return {
+    targetCompanyId,
+    sourceCompanyId,
+    relinked
+  }
+}
+
 export function linkMeetingCompany(
   meetingId: string,
   companyId: string,
   confidence = 1,
-  linkedBy = 'manual'
+  linkedBy = 'manual',
+  userId: string | null = null
 ): void {
   const db = getDatabase()
   db.prepare(`
     INSERT INTO meeting_company_links (
-      meeting_id, company_id, confidence, linked_by, created_at
+      meeting_id, company_id, confidence, linked_by, created_by_user_id, updated_by_user_id, created_at
     )
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(meeting_id, company_id) DO UPDATE SET
       confidence = excluded.confidence,
-      linked_by = excluded.linked_by
-  `).run(meetingId, companyId, confidence, linkedBy)
+      linked_by = excluded.linked_by,
+      updated_by_user_id = excluded.updated_by_user_id
+  `).run(meetingId, companyId, confidence, linkedBy, userId, userId)
 }
 
 export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
@@ -838,13 +1167,16 @@ export function listCompanyFiles(companyId: string): CompanyFileRef[] {
 }
 
 export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
+  const db = getDatabase()
+
   const meetingItems: CompanyTimelineItem[] = listCompanyMeetings(companyId).map((meeting) => ({
     id: `meeting:${meeting.id}`,
     type: 'meeting',
     title: meeting.title,
     occurredAt: meeting.date,
     subtitle: meeting.status,
-    referenceId: meeting.id
+    referenceId: meeting.id,
+    referenceType: 'meeting'
   }))
 
   const emailItems: CompanyTimelineItem[] = listCompanyEmails(companyId).map((email) => ({
@@ -853,10 +1185,71 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
     title: email.subject?.trim() || '(no subject)',
     occurredAt: email.receivedAt || email.sentAt || new Date().toISOString(),
     subtitle: email.fromName ? `${email.fromName} <${email.fromEmail}>` : email.fromEmail,
-    referenceId: email.id
+    referenceId: email.id,
+    referenceType: 'email'
   }))
 
-  return [...meetingItems, ...emailItems].sort((a, b) =>
+  const noteRows = db
+    .prepare(`
+      SELECT id, title, content, created_at, updated_at
+      FROM company_notes
+      WHERE company_id = ?
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 300
+    `)
+    .all(companyId) as Array<{
+    id: string
+    title: string | null
+    content: string
+    created_at: string
+    updated_at: string
+  }>
+  const noteItems: CompanyTimelineItem[] = noteRows.map((note) => ({
+    id: `note:${note.id}`,
+    type: 'note',
+    title: note.title?.trim() || 'Note',
+    occurredAt: note.updated_at || note.created_at,
+    subtitle: note.content.trim().slice(0, 220) || null,
+    referenceId: note.id,
+    referenceType: 'company_note'
+  }))
+
+  const dealEventRows = db
+    .prepare(`
+      SELECT
+        dse.id,
+        dse.deal_id,
+        dse.from_stage,
+        dse.to_stage,
+        dse.note,
+        dse.event_time
+      FROM deal_stage_events dse
+      JOIN deals d ON d.id = dse.deal_id
+      WHERE d.company_id = ?
+      ORDER BY datetime(dse.event_time) DESC
+      LIMIT 300
+    `)
+    .all(companyId) as Array<{
+    id: string
+    deal_id: string
+    from_stage: string | null
+    to_stage: string
+    note: string | null
+    event_time: string
+  }>
+  const dealEventItems: CompanyTimelineItem[] = dealEventRows.map((event) => ({
+    id: `deal-event:${event.id}`,
+    type: 'deal_event',
+    title: event.from_stage
+      ? `${event.from_stage} -> ${event.to_stage}`
+      : `Moved to ${event.to_stage}`,
+    occurredAt: event.event_time,
+    subtitle: event.note?.trim() || `Deal ${event.deal_id}`,
+    referenceId: event.id,
+    referenceType: 'deal_stage_event'
+  }))
+
+  return [...meetingItems, ...emailItems, ...noteItems, ...dealEventItems].sort((a, b) =>
     new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()
   )
 }

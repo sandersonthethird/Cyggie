@@ -7,6 +7,8 @@ import type { CompanyEntityType, CompanyListFilter } from '../../shared/types/co
 import { ingestCompanyEmails } from '../services/company-email-ingest.service'
 import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
+import { getCurrentUserId } from '../security/current-user'
+import { logAudit } from '../database/repositories/audit.repo'
 
 export function registerCompanyHandlers(): void {
   ipcMain.handle(
@@ -35,7 +37,10 @@ export function registerCompanyHandlers(): void {
       if (!data?.canonicalName?.trim()) {
         throw new Error('Company name is required')
       }
-      return companyRepo.createCompany(data)
+      const userId = getCurrentUserId()
+      const created = companyRepo.createCompany(data, userId)
+      logAudit(userId, 'company', created.id, 'create', data)
+      return created
     }
   )
 
@@ -54,7 +59,31 @@ export function registerCompanyHandlers(): void {
       classificationConfidence: number | null
     }>) => {
       if (!companyId) throw new Error('companyId is required')
-      return companyRepo.updateCompany(companyId, updates || {})
+      const userId = getCurrentUserId()
+      const updated = companyRepo.updateCompany(companyId, updates || {}, userId)
+      if (updated) {
+        logAudit(userId, 'company', companyId, 'update', updates || {})
+      }
+      return updated
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_MERGE,
+    (_event, targetCompanyId: string, sourceCompanyId: string) => {
+      if (!targetCompanyId?.trim() || !sourceCompanyId?.trim()) {
+        throw new Error('Both targetCompanyId and sourceCompanyId are required')
+      }
+      const userId = getCurrentUserId()
+      const result = companyRepo.mergeCompanies(targetCompanyId, sourceCompanyId)
+      logAudit(userId, 'company', targetCompanyId, 'update', {
+        mergedFrom: sourceCompanyId,
+        relinked: result.relinked
+      })
+      logAudit(userId, 'company', sourceCompanyId, 'delete', {
+        mergedInto: targetCompanyId
+      })
+      return result
     }
   )
 
@@ -71,6 +100,7 @@ export function registerCompanyHandlers(): void {
     ) => {
       if (!meetingId) throw new Error('meetingId is required')
       if (!data?.canonicalName?.trim()) throw new Error('canonicalName is required')
+      const userId = getCurrentUserId()
 
       const company = companyRepo.upsertCompanyClassification({
         canonicalName: data.canonicalName,
@@ -79,9 +109,9 @@ export function registerCompanyHandlers(): void {
         includeInCompaniesView: data.entityType === 'prospect',
         classificationSource: 'manual',
         classificationConfidence: 1
-      })
+      }, userId)
 
-      companyRepo.linkMeetingCompany(meetingId, company.id, 1, 'manual')
+      companyRepo.linkMeetingCompany(meetingId, company.id, 1, 'manual', userId)
 
       const meeting = meetingRepo.getMeeting(meetingId)
       if (meeting) {
@@ -89,9 +119,14 @@ export function registerCompanyHandlers(): void {
         if (!existingCompanies.some((name) => name.toLowerCase() === company.canonicalName.toLowerCase())) {
           meetingRepo.updateMeeting(meetingId, {
             companies: [...existingCompanies, company.canonicalName]
-          })
+          }, userId)
         }
       }
+
+      logAudit(userId, 'meeting_company_link', `${meetingId}:${company.id}`, 'create', {
+        meetingId,
+        companyId: company.id
+      })
 
       return company
     }

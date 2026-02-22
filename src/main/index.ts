@@ -10,6 +10,7 @@ import { initializeStorage, setStoragePath, getRecordingsDir } from './storage/p
 import * as settingsRepo from './database/repositories/settings.repo'
 import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from './database/repositories/meeting.repo'
 import { cleanupOrphanedTempFiles } from './video/video-writer'
+import { getCurrentUserId } from './security/current-user'
 
 // Register media:// as a privileged scheme so the renderer can load local
 // video files through it (file:// is blocked by cross-origin restrictions).
@@ -185,6 +186,9 @@ app.whenReady().then(() => {
   if (savedStoragePath) {
     setStoragePath(savedStoragePath)
   }
+
+  // Ensure a local current-user identity exists so new writes are attributable.
+  getCurrentUserId()
 
   // System audio loopback is handled by electron-audio-loopback's IPC
   // handlers (enable-loopback-audio / disable-loopback-audio) registered

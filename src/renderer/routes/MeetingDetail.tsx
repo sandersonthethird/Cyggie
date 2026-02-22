@@ -407,7 +407,7 @@ export default function MeetingDetail() {
     if (!id) return
     const result = await window.api.invoke<MeetingData | null>(IPC_CHANNELS.MEETING_GET, id)
     if (!result) {
-      navigate('/')
+      navigate('/meetings')
       return
     }
     setData(result)
@@ -670,7 +670,7 @@ export default function MeetingDetail() {
     if (!id) return
     setDeleteDialogOpen(false)
     await window.api.invoke(IPC_CHANNELS.MEETING_DELETE, id)
-    navigate('/')
+    navigate('/meetings')
   }, [id, navigate])
 
   const handleToggleVideo = useCallback(async () => {

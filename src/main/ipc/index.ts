@@ -15,6 +15,10 @@ import { registerCompanyNotesHandlers } from './company-notes.ipc'
 import { registerCompanyChatHandlers } from './company-chat.ipc'
 import { registerInvestmentMemoHandlers } from './investment-memo.ipc'
 import { registerContactHandlers } from './contacts.ipc'
+import { registerUserHandlers } from './user.ipc'
+import { registerDashboardHandlers } from './dashboard.ipc'
+import { registerPipelineHandlers } from './pipeline.ipc'
+import { registerUnifiedSearchHandlers } from './unified-search.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -34,4 +38,8 @@ export function registerAllHandlers(): void {
   registerCompanyChatHandlers()
   registerInvestmentMemoHandlers()
   registerContactHandlers()
+  registerUserHandlers()
+  registerDashboardHandlers()
+  registerPipelineHandlers()
+  registerUnifiedSearchHandlers()
 }

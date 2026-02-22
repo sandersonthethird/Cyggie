@@ -69,7 +69,8 @@ function sendPhase(phase: string): void {
 
 export async function generateSummary(
   meetingId: string,
-  templateId: string
+  templateId: string,
+  userId: string | null = null
 ): Promise<string> {
   const meeting = meetingRepo.getMeeting(meetingId)
   if (!meeting) throw new Error('Meeting not found')
@@ -119,7 +120,7 @@ export async function generateSummary(
     summaryPath,
     templateId,
     status: 'summarized'
-  })
+  }, userId)
 
   // Update search index
   updateSummaryIndex(meetingId, summary)
@@ -129,7 +130,7 @@ export async function generateSummary(
     const fullPath = join(getSummariesDir(), summaryPath)
     uploadSummaryToDrive(fullPath)
       .then(({ driveId }) => {
-        meetingRepo.updateMeeting(meetingId, { summaryDriveId: driveId })
+        meetingRepo.updateMeeting(meetingId, { summaryDriveId: driveId }, userId)
         console.log('[Drive] Summary uploaded:', driveId)
       })
       .catch((err) => {

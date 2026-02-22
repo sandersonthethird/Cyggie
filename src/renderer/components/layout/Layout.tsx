@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react'
 import { Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import SearchBar from '../common/SearchBar'
+import CommandPalette from '../common/CommandPalette'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { Meeting } from '../../../shared/types/meeting'
 import styles from './Layout.module.css'
@@ -9,12 +11,27 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const showMeetingSearch = location.pathname === '/'
+  const showMeetingSearch = location.pathname === '/meetings'
   const showCompanySearch = location.pathname === '/companies'
   const showContactSearch = location.pathname === '/contacts'
   const showEntitySearch = showCompanySearch || showContactSearch
   const entityQuery = searchParams.get('q') || ''
   const showEntityNew = searchParams.get('new') === '1'
+  const [paletteOpen, setPaletteOpen] = useState(false)
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setPaletteOpen(true)
+      }
+      if (event.key === 'Escape') {
+        setPaletteOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const handleCreateNote = async () => {
     try {
@@ -74,6 +91,10 @@ export default function Layout() {
             </button>
           </div>
         )}
+        {!showMeetingSearch && !showEntitySearch && <div className={styles.titlebarSpacer} />}
+        <button className={styles.askButton} onClick={() => setPaletteOpen(true)}>
+          Ask (Cmd+K)
+        </button>
       </div>
       <div className={styles.body}>
         <Sidebar />
@@ -83,6 +104,7 @@ export default function Layout() {
           </div>
         </div>
       </div>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   )
 }

@@ -17,6 +17,8 @@ import { join } from 'path'
 import { RecordingAutoStop } from '../recording/auto-stop'
 import { extractCompaniesFromEmails } from '../utils/company-extractor'
 import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
+import { getCurrentUserId } from '../security/current-user'
+import { logAudit } from '../database/repositories/audit.repo'
 import type { TranscriptResult } from '../deepgram/types'
 import type { TranscriptSegment } from '../../shared/types/recording'
 import { DEFAULT_DEEPGRAM_KEYWORDS } from '../../shared/constants/deepgram-keywords'
@@ -85,6 +87,7 @@ export function registerRecordingHandlers(): void {
     if (currentMeetingId) {
       throw new Error('Already recording')
     }
+    const userId = getCurrentUserId()
 
     const deepgramKey = getCredential('deepgramApiKey')
     if (!deepgramKey) {
@@ -121,9 +124,9 @@ export function registerRecordingHandlers(): void {
         }
       }
 
-      meetingRepo.updateMeeting(appendToMeetingId, { status: 'recording' })
+      meetingRepo.updateMeeting(appendToMeetingId, { status: 'recording' }, userId)
       try {
-        syncContactsFromAttendees(existing.attendees, existing.attendeeEmails)
+        syncContactsFromAttendees(existing.attendees, existing.attendeeEmails, userId)
       } catch (err) {
         console.error('[Contacts] Failed to sync from appended meeting:', err)
       }
@@ -173,6 +176,7 @@ export function registerRecordingHandlers(): void {
       let meeting = calendarEventId
         ? meetingRepo.findMeetingByCalendarEventId(calendarEventId)
         : null
+      let createdNewMeeting = false
 
       const now = Date.now()
       const twentyFourHours = 24 * 60 * 60 * 1000
@@ -192,7 +196,7 @@ export function registerRecordingHandlers(): void {
           updates.attendeeEmails = calendarAttendeeEmails
           updates.companies = extractCompaniesFromEmails(calendarAttendeeEmails)
         }
-        meeting = meetingRepo.updateMeeting(meeting.id, updates) || meeting
+        meeting = meetingRepo.updateMeeting(meeting.id, updates, userId) || meeting
       } else {
         meeting = meetingRepo.createMeeting({
           title: meetingTitle,
@@ -203,11 +207,19 @@ export function registerRecordingHandlers(): void {
           attendees: calendarAttendees.length > 0 ? calendarAttendees : null,
           attendeeEmails: calendarAttendeeEmails.length > 0 ? calendarAttendeeEmails : null,
           companies: calendarAttendeeEmails.length > 0 ? extractCompaniesFromEmails(calendarAttendeeEmails) : null
+        }, userId)
+        createdNewMeeting = true
+      }
+
+      if (createdNewMeeting) {
+        logAudit(userId, 'meeting', meeting.id, 'create', {
+          source: 'recording-start',
+          calendarEventId: calendarEventId ?? null
         })
       }
 
       try {
-        syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails)
+        syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails, userId)
       } catch (err) {
         console.error('[Contacts] Failed to sync from recording start:', err)
       }
@@ -378,6 +390,7 @@ export function registerRecordingHandlers(): void {
     if (!currentMeetingId) {
       throw new Error('Not recording')
     }
+    const userId = getCurrentUserId()
 
     const meetingId = currentMeetingId
     const duration = recordingStartTime
@@ -455,6 +468,10 @@ export function registerRecordingHandlers(): void {
         speakerCount,
         speakerMap,
         status: 'transcribed'
+      }, userId)
+      logAudit(userId, 'meeting', meetingId, 'update', {
+        status: 'transcribed',
+        transcript: true
       })
 
       // Index for search
@@ -467,7 +484,7 @@ export function registerRecordingHandlers(): void {
         const fullPath = join(getTranscriptsDir(), transcriptPath)
         uploadTranscript(fullPath)
           .then(({ driveId }) => {
-            meetingRepo.updateMeeting(meetingId, { transcriptDriveId: driveId })
+            meetingRepo.updateMeeting(meetingId, { transcriptDriveId: driveId }, userId)
             console.log('[Drive] Transcript uploaded:', driveId)
           })
           .catch((err) => {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
+import { findCompanyIdByDomain } from './org-company.repo'
 import type {
   ContactSummary,
   ContactSyncResult,
@@ -20,6 +21,9 @@ interface ContactRow {
   linkedin_url: string | null
   crm_contact_id: string | null
   crm_provider: string | null
+  meeting_count?: number
+  email_count?: number
+  last_touchpoint?: string | null
   created_at: string
   updated_at: string
 }
@@ -62,6 +66,9 @@ function rowToContactSummary(row: ContactRow): ContactSummary {
     linkedinUrl: row.linkedin_url,
     crmContactId: row.crm_contact_id,
     crmProvider: row.crm_provider,
+    meetingCount: row.meeting_count || 0,
+    emailCount: row.email_count || 0,
+    lastTouchpoint: row.last_touchpoint ?? row.updated_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -218,6 +225,53 @@ function normalizeForCompare(value: string | null | undefined): string {
   return value.trim().toLowerCase()
 }
 
+function extractDomainFromEmail(value: string | null | undefined): string | null {
+  if (!value) return null
+  const normalizedEmail = normalizeEmail(value)
+  if (!normalizedEmail) return null
+  const [, domain = ''] = normalizedEmail.split('@')
+  const cleanedDomain = domain.trim().toLowerCase().replace(/^www\./, '')
+  return cleanedDomain || null
+}
+
+function ensurePrimaryCompanyLink(
+  db: ReturnType<typeof getDatabase>,
+  contactId: string,
+  companyId: string,
+  userId: string | null = null
+): boolean {
+  const updateResult = userId
+    ? db.prepare(`
+      UPDATE contacts
+      SET primary_company_id = ?, updated_by_user_id = ?, updated_at = datetime('now')
+      WHERE id = ? AND (primary_company_id IS NULL OR TRIM(primary_company_id) = '')
+    `).run(companyId, userId, contactId)
+    : db.prepare(`
+      UPDATE contacts
+      SET primary_company_id = ?, updated_at = datetime('now')
+      WHERE id = ? AND (primary_company_id IS NULL OR TRIM(primary_company_id) = '')
+    `).run(companyId, contactId)
+
+  if (updateResult.changes > 0) {
+    db.prepare(`
+      INSERT INTO org_company_contacts (
+        company_id, contact_id, is_primary, created_at
+      )
+      VALUES (?, ?, 1, datetime('now'))
+      ON CONFLICT(company_id, contact_id) DO UPDATE SET
+        is_primary = 1
+    `).run(companyId, contactId)
+  }
+
+  return updateResult.changes > 0
+}
+
+function findCompanyIdByEmail(email: string | null | undefined): string | null {
+  const domain = extractDomainFromEmail(email)
+  if (!domain) return null
+  return findCompanyIdByDomain(domain)
+}
+
 function listContactEmailAddresses(
   db: ReturnType<typeof getDatabase>,
   contactId: string,
@@ -324,10 +378,10 @@ function buildCandidateMap(
   }
 }
 
-function applyCandidates(candidates: CandidateContact[]): ContactSyncStats {
+function applyCandidates(candidates: CandidateContact[], userId: string | null = null): ContactSyncStats {
   const db = getDatabase()
   const getByEmail = db.prepare(`
-    SELECT c.id, c.full_name, c.first_name, c.last_name, c.normalized_name, c.email
+    SELECT c.id, c.full_name, c.first_name, c.last_name, c.normalized_name, c.email, c.primary_company_id
     FROM contacts c
     WHERE lower(c.email) = ?
       OR EXISTS (
@@ -339,9 +393,10 @@ function applyCandidates(candidates: CandidateContact[]): ContactSyncStats {
   `)
   const insertContact = db.prepare(`
     INSERT INTO contacts (
-      id, full_name, first_name, last_name, normalized_name, email, created_at, updated_at
+      id, full_name, first_name, last_name, normalized_name, email, primary_company_id,
+      created_by_user_id, updated_by_user_id, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
   `)
   const updateContact = db.prepare(`
     UPDATE contacts
@@ -350,12 +405,13 @@ function applyCandidates(candidates: CandidateContact[]): ContactSyncStats {
       first_name = ?,
       last_name = ?,
       normalized_name = ?,
+      updated_by_user_id = ?,
       updated_at = datetime('now')
     WHERE id = ?
   `)
   const updateContactPrimaryEmail = db.prepare(`
     UPDATE contacts
-    SET email = ?, updated_at = datetime('now')
+    SET email = ?, updated_by_user_id = ?, updated_at = datetime('now')
     WHERE id = ? AND (email IS NULL OR TRIM(email) = '')
   `)
 
@@ -376,20 +432,28 @@ function applyCandidates(candidates: CandidateContact[]): ContactSyncStats {
         last_name: string | null
         normalized_name: string
         email: string | null
+        primary_company_id: string | null
       } | undefined
 
       if (!existing) {
         const contactId = randomUUID()
         const split = splitFullNameParts(candidate.fullName)
+        const inferredCompanyId = findCompanyIdByEmail(candidate.email)
         insertContact.run(
           contactId,
           candidate.fullName,
           split.firstName,
           split.lastName,
           candidate.normalizedName,
-          candidate.email
+          candidate.email,
+          inferredCompanyId,
+          userId,
+          userId
         )
         attachEmailToContact(db, contactId, candidate.email, true)
+        if (inferredCompanyId) {
+          ensurePrimaryCompanyLink(db, contactId, inferredCompanyId, userId)
+        }
         stats.inserted += 1
         continue
       }
@@ -412,14 +476,14 @@ function applyCandidates(candidates: CandidateContact[]): ContactSyncStats {
         || split.firstName !== existing.first_name
         || split.lastName !== existing.last_name
       ) {
-        updateContact.run(nextName, split.firstName, split.lastName, nextNormalized, existing.id)
+        updateContact.run(nextName, split.firstName, split.lastName, nextNormalized, userId, existing.id)
         stats.updated += 1
       } else {
         stats.skipped += 1
       }
 
       if (!existing.email || !existing.email.trim()) {
-        updateContactPrimaryEmail.run(candidate.email, existing.id)
+        updateContactPrimaryEmail.run(candidate.email, userId, existing.id)
       }
       attachEmailToContact(
         db,
@@ -427,6 +491,13 @@ function applyCandidates(candidates: CandidateContact[]): ContactSyncStats {
         candidate.email,
         !existing.email || normalizeEmail(existing.email || '') === candidate.email
       )
+
+      if (!existing.primary_company_id) {
+        const inferredCompanyId = findCompanyIdByEmail(candidate.email)
+        if (inferredCompanyId) {
+          ensurePrimaryCompanyLink(db, existing.id, inferredCompanyId, userId)
+        }
+      }
     }
   })
 
@@ -442,10 +513,10 @@ export function listContacts(filter?: {
   const db = getDatabase()
   const query = filter?.query?.trim()
   const params: unknown[] = []
-  const conditions: string[] = ['email IS NOT NULL']
+  const conditions: string[] = ['c.email IS NOT NULL']
 
   if (query) {
-    conditions.push('(full_name LIKE ? OR email LIKE ?)')
+    conditions.push('(c.full_name LIKE ? OR c.email LIKE ?)')
     const like = `%${query}%`
     params.push(like, like)
   }
@@ -456,23 +527,61 @@ export function listContacts(filter?: {
 
   const rows = db
     .prepare(`
+      WITH meeting_stats AS (
+        SELECT
+          c.id AS contact_id,
+          COUNT(DISTINCT m.id) AS meeting_count,
+          MAX(m.date) AS last_meeting_at
+        FROM contacts c
+        JOIN contact_emails ce ON ce.contact_id = c.id
+        JOIN meetings m ON EXISTS (
+          SELECT 1
+          FROM json_each(COALESCE(m.attendee_emails, '[]')) e
+          WHERE lower(trim(e.value)) = lower(trim(ce.email))
+        )
+        GROUP BY c.id
+      ),
+      email_stats AS (
+        SELECT
+          c.id AS contact_id,
+          COUNT(DISTINCT p.message_id) AS email_count,
+          MAX(COALESCE(em.received_at, em.sent_at, em.created_at)) AS last_email_at
+        FROM contacts c
+        JOIN contact_emails ce ON ce.contact_id = c.id
+        JOIN email_message_participants p ON lower(trim(p.email)) = lower(trim(ce.email))
+        JOIN email_messages em ON em.id = p.message_id
+        GROUP BY c.id
+      )
       SELECT
-        id,
-        full_name,
-        first_name,
-        last_name,
-        normalized_name,
-        email,
-        primary_company_id,
-        title,
-        linkedin_url,
-        crm_contact_id,
-        crm_provider,
-        created_at,
-        updated_at
-      FROM contacts
+        c.id,
+        c.full_name,
+        c.first_name,
+        c.last_name,
+        c.normalized_name,
+        c.email,
+        c.primary_company_id,
+        c.title,
+        c.linkedin_url,
+        c.crm_contact_id,
+        c.crm_provider,
+        COALESCE(ms.meeting_count, 0) AS meeting_count,
+        COALESCE(es.email_count, 0) AS email_count,
+        COALESCE(
+          CASE
+            WHEN ms.last_meeting_at IS NULL THEN es.last_email_at
+            WHEN es.last_email_at IS NULL THEN ms.last_meeting_at
+            WHEN ms.last_meeting_at > es.last_email_at THEN ms.last_meeting_at
+            ELSE es.last_email_at
+          END,
+          c.updated_at
+        ) AS last_touchpoint,
+        c.created_at,
+        c.updated_at
+      FROM contacts c
+      LEFT JOIN meeting_stats ms ON ms.contact_id = c.id
+      LEFT JOIN email_stats es ON es.contact_id = c.id
       ${where}
-      ORDER BY full_name ASC, email ASC
+      ORDER BY datetime(last_touchpoint) DESC, c.full_name ASC, c.email ASC
       LIMIT ? OFFSET ?
     `)
     .all(...params, limit, offset) as ContactRow[]
@@ -486,7 +595,7 @@ export function createContact(data: {
   lastName?: string | null
   email: string
   title?: string | null
-}): ContactSummary {
+}, userId: string | null = null): ContactSummary {
   const db = getDatabase()
   const providedFirstName = (data.firstName || '').trim()
   const providedLastName = (data.lastName || '').trim()
@@ -500,6 +609,7 @@ export function createContact(data: {
   if (!email) {
     throw new Error('Valid contact email is required')
   }
+  const inferredCompanyId = findCompanyIdByEmail(email)
 
   const normalizedName = normalizeName(fullName)
   const splitName = explicitName
@@ -561,9 +671,10 @@ export function createContact(data: {
     contactId = randomUUID()
     db.prepare(`
       INSERT INTO contacts (
-        id, full_name, first_name, last_name, normalized_name, email, title, created_at, updated_at
+        id, full_name, first_name, last_name, normalized_name, email, primary_company_id,
+        title, created_by_user_id, updated_by_user_id, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     `).run(
       contactId,
       fullName,
@@ -571,33 +682,67 @@ export function createContact(data: {
       splitName.lastName,
       normalizedName,
       email,
-      data.title?.trim() || null
+      inferredCompanyId,
+      data.title?.trim() || null,
+      userId,
+      userId
     )
     attachEmailToContact(db, contactId, email, true)
+    if (inferredCompanyId) {
+      ensurePrimaryCompanyLink(db, contactId, inferredCompanyId, userId)
+    }
   } else {
-    db.prepare(`
-      UPDATE contacts
-      SET
-        full_name = ?,
-        first_name = ?,
-        last_name = ?,
-        normalized_name = ?,
-        title = COALESCE(?, title),
-        email = COALESCE(NULLIF(TRIM(email), ''), ?),
-        updated_at = datetime('now')
-      WHERE id = ?
-    `).run(
-      fullName,
-      splitName.firstName,
-      splitName.lastName,
-      normalizedName,
-      data.title?.trim() || null,
-      email,
-      contactId
-    )
+    if (userId) {
+      db.prepare(`
+        UPDATE contacts
+        SET
+          full_name = ?,
+          first_name = ?,
+          last_name = ?,
+          normalized_name = ?,
+          title = COALESCE(?, title),
+          email = COALESCE(NULLIF(TRIM(email), ''), ?),
+          updated_by_user_id = ?,
+          updated_at = datetime('now')
+        WHERE id = ?
+      `).run(
+        fullName,
+        splitName.firstName,
+        splitName.lastName,
+        normalizedName,
+        data.title?.trim() || null,
+        email,
+        userId,
+        contactId
+      )
+    } else {
+      db.prepare(`
+        UPDATE contacts
+        SET
+          full_name = ?,
+          first_name = ?,
+          last_name = ?,
+          normalized_name = ?,
+          title = COALESCE(?, title),
+          email = COALESCE(NULLIF(TRIM(email), ''), ?),
+          updated_at = datetime('now')
+        WHERE id = ?
+      `).run(
+        fullName,
+        splitName.firstName,
+        splitName.lastName,
+        normalizedName,
+        data.title?.trim() || null,
+        email,
+        contactId
+      )
+    }
 
     const primaryEmail = normalizeEmail(existing?.email || '')
     attachEmailToContact(db, contactId, email, !primaryEmail || primaryEmail === email)
+    if (!existing.primary_company_id && inferredCompanyId) {
+      ensurePrimaryCompanyLink(db, contactId, inferredCompanyId, userId)
+    }
   }
 
   const row = selectById.get(contactId) as ContactRow | undefined
@@ -609,7 +754,11 @@ export function createContact(data: {
   return rowToContactSummary(row)
 }
 
-export function addContactEmail(contactId: string, emailInput: string): ContactDetail {
+export function addContactEmail(
+  contactId: string,
+  emailInput: string,
+  userId: string | null = null
+): ContactDetail {
   const db = getDatabase()
   const email = normalizeEmail(emailInput)
   if (!email) {
@@ -618,12 +767,12 @@ export function addContactEmail(contactId: string, emailInput: string): ContactD
 
   const contact = db
     .prepare(`
-      SELECT id, email
+      SELECT id, email, primary_company_id
       FROM contacts
       WHERE id = ?
       LIMIT 1
     `)
-    .get(contactId) as { id: string; email: string | null } | undefined
+    .get(contactId) as { id: string; email: string | null; primary_company_id: string | null } | undefined
   if (!contact) {
     throw new Error('Contact not found')
   }
@@ -645,13 +794,27 @@ export function addContactEmail(contactId: string, emailInput: string): ContactD
 
   const tx = db.transaction(() => {
     if (!currentPrimaryEmail) {
-      db.prepare(`
-        UPDATE contacts
-        SET email = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `).run(email, contactId)
+      if (userId) {
+        db.prepare(`
+          UPDATE contacts
+          SET email = ?, updated_by_user_id = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).run(email, userId, contactId)
+      } else {
+        db.prepare(`
+          UPDATE contacts
+          SET email = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).run(email, contactId)
+      }
     }
     attachEmailToContact(db, contactId, email, shouldBePrimary)
+    if (!contact.primary_company_id) {
+      const inferredCompanyId = findCompanyIdByEmail(email)
+      if (inferredCompanyId) {
+        ensurePrimaryCompanyLink(db, contactId, inferredCompanyId, userId)
+      }
+    }
   })
   tx()
 
@@ -662,7 +825,11 @@ export function addContactEmail(contactId: string, emailInput: string): ContactD
   return updated
 }
 
-export function setContactPrimaryCompany(contactId: string, companyId: string | null): ContactDetail {
+export function setContactPrimaryCompany(
+  contactId: string,
+  companyId: string | null,
+  userId: string | null = null
+): ContactDetail {
   const db = getDatabase()
 
   const contact = db
@@ -692,11 +859,17 @@ export function setContactPrimaryCompany(contactId: string, companyId: string | 
     }
   }
 
-  const updatePrimaryCompany = db.prepare(`
-    UPDATE contacts
-    SET primary_company_id = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `)
+  const updatePrimaryCompany = userId
+    ? db.prepare(`
+      UPDATE contacts
+      SET primary_company_id = ?, updated_by_user_id = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `)
+    : db.prepare(`
+      UPDATE contacts
+      SET primary_company_id = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `)
   const deleteAllLinksForContact = db.prepare(`
     DELETE FROM org_company_contacts
     WHERE contact_id = ?
@@ -715,7 +888,11 @@ export function setContactPrimaryCompany(contactId: string, companyId: string | 
   `)
 
   const tx = db.transaction((nextCompanyId: string | null) => {
-    updatePrimaryCompany.run(nextCompanyId, contactId)
+    if (userId) {
+      updatePrimaryCompany.run(nextCompanyId, userId, contactId)
+    } else {
+      updatePrimaryCompany.run(nextCompanyId, contactId)
+    }
     if (!nextCompanyId) {
       deleteAllLinksForContact.run(contactId)
       return
@@ -973,19 +1150,53 @@ export function listContactEmails(contactId: string): ContactEmailRef[] {
   }))
 }
 
+export function autoLinkContactsByDomain(limit = 5000, userId: string | null = null): number {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      SELECT id, email
+      FROM contacts
+      WHERE primary_company_id IS NULL OR TRIM(primary_company_id) = ''
+      ORDER BY datetime(updated_at) DESC
+      LIMIT ?
+    `)
+    .all(limit) as Array<{
+    id: string
+    email: string | null
+  }>
+
+  let linked = 0
+  for (const row of rows) {
+    const emails = listContactEmailAddresses(db, row.id, row.email)
+    let companyId: string | null = null
+    for (const email of emails) {
+      companyId = findCompanyIdByEmail(email)
+      if (companyId) break
+    }
+    if (!companyId) continue
+    if (ensurePrimaryCompanyLink(db, row.id, companyId, userId)) {
+      linked += 1
+    }
+  }
+
+  return linked
+}
+
 export function syncContactsFromAttendees(
   attendees: string[] | null | undefined,
-  attendeeEmails: string[] | null | undefined
+  attendeeEmails: string[] | null | undefined,
+  userId: string | null = null
 ): ContactSyncStats {
   const { candidates, invalid } = buildCandidateMap(attendees, attendeeEmails)
-  const result = applyCandidates(candidates)
+  const result = applyCandidates(candidates, userId)
+  autoLinkContactsByDomain(5000, userId)
   return {
     ...result,
     invalid
   }
 }
 
-export function syncContactsFromMeetings(): ContactSyncResult {
+export function syncContactsFromMeetings(userId: string | null = null): ContactSyncResult {
   const db = getDatabase()
   const rows = db
     .prepare(`
@@ -1008,7 +1219,8 @@ export function syncContactsFromMeetings(): ContactSyncResult {
     }
   }
 
-  const result = applyCandidates([...mergedMap.values()])
+  const result = applyCandidates([...mergedMap.values()], userId)
+  autoLinkContactsByDomain(5000, userId)
   return {
     scannedMeetings: rows.length,
     candidates: result.candidates,

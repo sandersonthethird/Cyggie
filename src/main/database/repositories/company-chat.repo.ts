@@ -97,21 +97,24 @@ export function createConversation(data: {
   themeId?: string | null
   modelProvider?: string | null
   modelName?: string | null
-}): CompanyConversation {
+}, userId: string | null = null): CompanyConversation {
   const db = getDatabase()
   const id = randomUUID()
   db.prepare(`
     INSERT INTO company_conversations (
       id, company_id, theme_id, title, model_provider, model_name,
-      is_pinned, is_archived, last_message_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, NULL, datetime('now'), datetime('now'))
+      is_pinned, is_archived, last_message_at,
+      created_by_user_id, updated_by_user_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, NULL, ?, ?, datetime('now'), datetime('now'))
   `).run(
     id,
     data.companyId,
     data.themeId ?? null,
     data.title,
     data.modelProvider ?? null,
-    data.modelName ?? null
+    data.modelName ?? null,
+    userId,
+    userId
   )
 
   const row = db.prepare(`
@@ -142,27 +145,30 @@ export function appendMessage(data: {
   content: string
   citationsJson?: string | null
   tokenCount?: number | null
-}): CompanyConversationMessage {
+}, userId: string | null = null): CompanyConversationMessage {
   const db = getDatabase()
   const id = randomUUID()
   db.prepare(`
     INSERT INTO company_conversation_messages (
-      id, conversation_id, role, content, citations_json, token_count, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      id, conversation_id, role, content, citations_json, token_count,
+      created_by_user_id, updated_by_user_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
     id,
     data.conversationId,
     data.role,
     data.content,
     data.citationsJson ?? null,
-    data.tokenCount ?? null
+    data.tokenCount ?? null,
+    userId,
+    userId
   )
 
   db.prepare(`
     UPDATE company_conversations
-    SET last_message_at = datetime('now'), updated_at = datetime('now')
+    SET last_message_at = datetime('now'), updated_by_user_id = ?, updated_at = datetime('now')
     WHERE id = ?
-  `).run(data.conversationId)
+  `).run(userId, data.conversationId)
 
   const row = db.prepare(`
     SELECT id, conversation_id, role, content, citations_json, token_count, created_at

@@ -1,6 +1,8 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyChatRepo from '../database/repositories/company-chat.repo'
+import { getCurrentUserId } from '../security/current-user'
+import { logAudit } from '../database/repositories/audit.repo'
 
 export function registerCompanyChatHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.COMPANY_CHAT_LIST, (_event, companyId: string) => {
@@ -22,7 +24,10 @@ export function registerCompanyChatHandlers(): void {
     ) => {
       if (!data?.companyId) throw new Error('companyId is required')
       if (!data?.title?.trim()) throw new Error('title is required')
-      return companyChatRepo.createConversation(data)
+      const userId = getCurrentUserId()
+      const conversation = companyChatRepo.createConversation(data, userId)
+      logAudit(userId, 'company_conversation', conversation.id, 'create', data)
+      return conversation
     }
   )
 
@@ -45,7 +50,13 @@ export function registerCompanyChatHandlers(): void {
     ) => {
       if (!data?.conversationId) throw new Error('conversationId is required')
       if (!data?.content?.trim()) throw new Error('content is required')
-      return companyChatRepo.appendMessage(data)
+      const userId = getCurrentUserId()
+      const message = companyChatRepo.appendMessage(data, userId)
+      logAudit(userId, 'company_conversation_message', message.id, 'create', {
+        conversationId: data.conversationId,
+        role: data.role
+      })
+      return message
     }
   )
 }

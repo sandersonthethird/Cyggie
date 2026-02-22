@@ -44,6 +44,7 @@ export const IPC_CHANNELS = {
   COMPANY_GET: 'company:get',
   COMPANY_CREATE: 'company:create',
   COMPANY_UPDATE: 'company:update',
+  COMPANY_MERGE: 'company:merge',
   COMPANY_TAG_FROM_MEETING: 'company:tag-from-meeting',
   COMPANY_MEETINGS: 'company:meetings',
   COMPANY_CONTACTS: 'company:contacts',
@@ -61,6 +62,24 @@ export const IPC_CHANNELS = {
   CONTACT_ADD_EMAIL: 'contact:add-email',
   CONTACT_SET_COMPANY: 'contact:set-company',
   CONTACT_SYNC_FROM_MEETINGS: 'contact:sync-from-meetings',
+
+  // Dashboard
+  DASHBOARD_GET: 'dashboard:get',
+  DASHBOARD_ENRICH_CALENDAR: 'dashboard:enrich-calendar',
+
+  // Pipeline
+  PIPELINE_GET_BOARD: 'pipeline:get-board',
+  PIPELINE_CREATE_DEAL: 'pipeline:create-deal',
+  PIPELINE_MOVE_DEAL: 'pipeline:move-deal',
+  PIPELINE_GET_COMPANY_ACTIVE_DEAL: 'pipeline:get-company-active-deal',
+  PIPELINE_GET_CONFIG: 'pipeline:get-config',
+  PIPELINE_UPSERT_STAGE: 'pipeline:upsert-stage',
+  PIPELINE_DELETE_STAGE: 'pipeline:delete-stage',
+  PIPELINE_REORDER_STAGES: 'pipeline:reorder-stages',
+
+  // Unified Ask
+  UNIFIED_SEARCH_QUERY: 'unified-search:query',
+  UNIFIED_SEARCH_ANSWER: 'unified-search:answer',
 
   // Company notes
   COMPANY_NOTES_LIST: 'company-notes:list',
@@ -119,6 +138,8 @@ export const IPC_CHANNELS = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_GET_ALL: 'settings:get-all',
+  USER_GET_CURRENT: 'user:get-current',
+  USER_UPDATE_CURRENT: 'user:update-current',
 
   // Drive
   DRIVE_GET_SHARE_LINK: 'drive:get-share-link',
