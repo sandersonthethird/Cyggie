@@ -39,6 +39,7 @@ export default function Contacts() {
   const [newName, setNewName] = useState('')
   const [newEmail, setNewEmail] = useState('')
   const [newTitle, setNewTitle] = useState('')
+  const createCardRef = useRef<HTMLDivElement>(null)
   const query = (searchParams.get('q') || '').trim()
   const showCreate = searchParams.get('new') === '1'
 
@@ -150,6 +151,11 @@ export default function Contacts() {
     }
   }, [contactsEnabled, loadContacts])
 
+  useEffect(() => {
+    if (!showCreate) return
+    createCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [showCreate])
+
   if (!flagsLoading && !contactsEnabled) {
     return (
       <EmptyState
@@ -176,7 +182,7 @@ export default function Contacts() {
       )}
 
       {showCreate && (
-        <div className={styles.createCard}>
+        <div ref={createCardRef} className={styles.createCard}>
           <input
             className={styles.input}
             placeholder="Contact name"

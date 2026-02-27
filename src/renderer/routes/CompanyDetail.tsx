@@ -47,6 +47,15 @@ interface CompanyConversationMessage {
   createdAt: string
 }
 
+interface CompanyFilesLookupResult {
+  companyRoot: string | null
+  files: CompanyDriveFileRef[]
+}
+
+interface CompanyFilesCacheEntry extends CompanyFilesLookupResult {
+  resolvedAt: number
+}
+
 const COMPANY_ENTITY_TYPE_OPTIONS: Array<{ value: CompanyEntityType; label: string }> = [
   { value: 'prospect', label: 'prospect' },
   { value: 'portfolio', label: 'portfolio' },
@@ -58,6 +67,15 @@ const COMPANY_ENTITY_TYPE_OPTIONS: Array<{ value: CompanyEntityType; label: stri
   { value: 'other', label: 'other' },
   { value: 'unknown', label: 'unknown' }
 ]
+
+const COMPANY_FILES_CACHE_TTL_MS = 15 * 60 * 1000
+const companyFilesCache = new Map<string, CompanyFilesCacheEntry>()
+const companyFilesInFlight = new Map<string, Promise<CompanyFilesLookupResult>>()
+
+function companyFilesLookupKey(companyId: string, browsePath?: string): string {
+  const path = (browsePath || '').trim()
+  return `${companyId}::${path}`
+}
 
 function formatDateTime(value: string | null): string {
   if (!value) return 'Unknown'
@@ -163,6 +181,7 @@ export default function CompanyDetail() {
   const [cityDraft, setCityDraft] = useState('')
   const [stateDraft, setStateDraft] = useState('')
   const nameInputRef = useRef<HTMLInputElement>(null)
+  const latestCompanyIdRef = useRef(companyId)
 
   const [conversations, setConversations] = useState<CompanyConversation[]>([])
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
@@ -172,6 +191,10 @@ export default function CompanyDetail() {
   const [chatStreaming, setChatStreaming] = useState('')
 
   const FILES_ENTITY_TYPES: Set<CompanyEntityType> = new Set(['prospect', 'portfolio', 'pass'])
+
+  useEffect(() => {
+    latestCompanyIdRef.current = companyId
+  }, [companyId])
 
   const visibleTabs = useMemo(() => {
     const tabs: CompanyTab[] = ['overview', 'timeline', 'contacts']
@@ -316,19 +339,51 @@ export default function CompanyDetail() {
 
   const loadFiles = useCallback(async (browsePath?: string) => {
     if (!companyId) return
+    const requestCompanyId = companyId
+    const lookupKey = companyFilesLookupKey(requestCompanyId, browsePath)
+    const cached = companyFilesCache.get(lookupKey)
+    const isFreshCache = cached && (Date.now() - cached.resolvedAt) < COMPANY_FILES_CACHE_TTL_MS
+    if (isFreshCache) {
+      setFiles(cached.files)
+      setFileCompanyRoot(cached.companyRoot)
+      setFileBrowsePath(browsePath || cached.companyRoot)
+      setFilesLoaded(true)
+      return
+    }
+
     try {
-      const raw = await window.api.invoke<unknown>(IPC_CHANNELS.COMPANY_FILES, companyId, browsePath)
-      // Handle both { companyRoot, files } and legacy array formats
-      const result = raw && typeof raw === 'object' && 'files' in raw
-        ? (raw as { companyRoot: string | null; files: CompanyDriveFileRef[] })
-        : { companyRoot: null, files: Array.isArray(raw) ? (raw as CompanyDriveFileRef[]) : [] }
+      let pending = companyFilesInFlight.get(lookupKey)
+      if (!pending) {
+        pending = window.api
+          .invoke<unknown>(IPC_CHANNELS.COMPANY_FILES, requestCompanyId, browsePath)
+          .then((raw): CompanyFilesLookupResult => {
+            // Handle both { companyRoot, files } and legacy array formats
+            const result = raw && typeof raw === 'object' && 'files' in raw
+              ? (raw as CompanyFilesLookupResult)
+              : { companyRoot: null, files: Array.isArray(raw) ? (raw as CompanyDriveFileRef[]) : [] }
+            companyFilesCache.set(lookupKey, {
+              ...result,
+              resolvedAt: Date.now()
+            })
+            return result
+          })
+          .finally(() => {
+            companyFilesInFlight.delete(lookupKey)
+          })
+        companyFilesInFlight.set(lookupKey, pending)
+      }
+
+      const result = await pending
+      if (latestCompanyIdRef.current !== requestCompanyId) return
       setFiles(result.files)
       if (result.companyRoot) setFileCompanyRoot(result.companyRoot)
       setFileBrowsePath(browsePath || result.companyRoot)
     } catch (err) {
+      if (latestCompanyIdRef.current !== requestCompanyId) return
       setError(displayError(err))
       setFiles([])
     } finally {
+      if (latestCompanyIdRef.current !== requestCompanyId) return
       setFilesLoaded(true)
     }
   }, [companyId])
@@ -1412,6 +1467,7 @@ export default function CompanyDetail() {
             <div className={styles.chatDockRow}>
               <input
                 className={styles.chatDockInput}
+                data-chat-shortcut="true"
                 value={chatInput}
                 onChange={(event) => setChatInput(event.target.value)}
                 onKeyDown={handleChatDockKeyDown}
@@ -1422,7 +1478,7 @@ export default function CompanyDetail() {
                 onClick={() => void handleSendChat()}
                 disabled={!chatInput.trim() || chatAsking}
               >
-                {chatAsking ? 'Asking...' : 'Send'}
+                {chatAsking ? 'Asking...' : 'Ask (Cmd+K)'}
               </button>
             </div>
           </div>

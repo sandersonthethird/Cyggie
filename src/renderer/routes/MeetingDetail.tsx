@@ -971,7 +971,15 @@ export default function MeetingDetail() {
                   Record
                 </button>
               )}
-              {!isRecording && (meeting.status === 'transcribed' || meeting.status === 'summarized') && (
+              {isThisMeetingRecording ? (
+                <button
+                  className={styles.stopMeetingBtn}
+                  onClick={handleStop}
+                  title="Stop meeting transcription (and any active screen recording)"
+                >
+                  Stop Meeting
+                </button>
+              ) : (!isRecording && (meeting.status === 'transcribed' || meeting.status === 'summarized')) && (
                 <button className={styles.recordBtn} onClick={handleContinueRecording}>
                   Continue Recording
                 </button>
@@ -1121,31 +1129,41 @@ export default function MeetingDetail() {
           <div className={styles.recordingBar}>
             <div className={styles.recordingStatus}>
               <span className={`${styles.recordingDot} ${isPaused ? styles.paused : ''}`} />
-              <span className={styles.recordingTimer}>
-                {formatTime(duration)}
-                {isPaused && <span className={styles.pausedLabel}> (Paused)</span>}
-              </span>
+              <div className={styles.recordingStatusText}>
+                <span className={styles.recordingModeLabel}>Meeting transcription</span>
+                <span className={styles.recordingTimer}>
+                  {formatTime(duration)}
+                  {isPaused && <span className={styles.pausedLabel}> (Paused)</span>}
+                </span>
+              </div>
             </div>
             <div className={styles.recordingControls}>
-              <button
-                className={`${styles.videoToggle} ${videoCapture.isVideoRecording ? styles.videoActive : ''}`}
-                onClick={handleToggleVideo}
-                title={videoCapture.isVideoRecording ? 'Stop screen recording' : 'Record screen'}
-              >
-                {videoCapture.isVideoRecording ? '\u25A0' : 'Record Screen'}
-              </button>
-              {isPaused ? (
-                <button className={styles.resumeBtn} onClick={handleResume}>
-                  Resume
+              <div className={styles.controlGroup}>
+                <span className={styles.controlLabel}>Screen Recording</span>
+                <button
+                  className={`${styles.videoToggle} ${videoCapture.isVideoRecording ? styles.videoActive : ''}`}
+                  onClick={handleToggleVideo}
+                  title={videoCapture.isVideoRecording ? 'Stop screen recording only' : 'Start screen recording'}
+                >
+                  <span
+                    className={`${styles.videoToggleDot} ${videoCapture.isVideoRecording ? styles.videoToggleDotActive : ''}`}
+                    aria-hidden="true"
+                  />
+                  {videoCapture.isVideoRecording ? 'Stop Screen' : 'Start Screen'}
                 </button>
-              ) : (
-                <button className={styles.pauseBtn} onClick={handlePause}>
-                  Pause
-                </button>
-              )}
-              <button className={styles.stopBtn} onClick={handleStop}>
-                Stop
-              </button>
+              </div>
+              <div className={styles.controlGroup}>
+                <span className={styles.controlLabel}>Meeting Transcription</span>
+                {isPaused ? (
+                  <button className={styles.resumeBtn} onClick={handleResume}>
+                    Resume
+                  </button>
+                ) : (
+                  <button className={styles.pauseBtn} onClick={handlePause}>
+                    Pause
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}

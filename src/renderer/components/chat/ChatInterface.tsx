@@ -200,6 +200,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
         <textarea
           ref={textareaRef}
           className={styles.input}
+          data-chat-shortcut="true"
           value={input}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
@@ -212,7 +213,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
           onClick={isLoading ? handleStop : handleSubmit}
           disabled={!isLoading && !input.trim()}
         >
-          {isLoading ? '\u25A0' : 'Ask'}
+          {isLoading ? '\u25A0' : 'Ask (Cmd+K)'}
         </button>
       </div>
     </div>

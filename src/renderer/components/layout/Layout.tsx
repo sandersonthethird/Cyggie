@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import Sidebar from './Sidebar'
-import CommandPalette from '../common/CommandPalette'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { Meeting } from '../../../shared/types/meeting'
 import styles from './Layout.module.css'
@@ -9,22 +8,34 @@ import styles from './Layout.module.css'
 export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const showMeetingPage = location.pathname === '/meetings'
   const showCompanySearch = location.pathname === '/companies'
   const showContactSearch = location.pathname === '/contacts'
   const showEntitySearch = showCompanySearch || showContactSearch
   const showEntityNew = searchParams.get('new') === '1'
-  const [paletteOpen, setPaletteOpen] = useState(false)
 
   useEffect(() => {
+    const focusChatInput = (): boolean => {
+      const candidates = Array.from(
+        document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-chat-shortcut="true"]')
+      ).filter((el) => !el.disabled && el.offsetParent !== null)
+
+      if (candidates.length === 0) return false
+      const target = candidates[candidates.length - 1]
+      target.focus()
+      if ('selectionStart' in target && 'value' in target) {
+        const end = target.value.length
+        target.setSelectionRange(end, end)
+      }
+      return true
+    }
+
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setPaletteOpen(true)
-      }
-      if (event.key === 'Escape') {
-        setPaletteOpen(false)
+        if (focusChatInput()) {
+          event.preventDefault()
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -41,13 +52,16 @@ export default function Layout() {
   }
 
   const handleEntityNewToggle = () => {
+    if (!showEntitySearch) return
     const next = new URLSearchParams(searchParams)
     if (showEntityNew) {
       next.delete('new')
     } else {
       next.set('new', '1')
     }
-    setSearchParams(next)
+    const targetPath = showCompanySearch ? '/companies' : '/contacts'
+    const query = next.toString()
+    navigate(query ? `${targetPath}?${query}` : targetPath)
   }
 
   return (
@@ -68,9 +82,6 @@ export default function Layout() {
           </div>
         )}
         {!showMeetingPage && !showEntitySearch && <div className={styles.titlebarSpacer} />}
-        <button className={styles.askButton} onClick={() => setPaletteOpen(true)}>
-          Ask (Cmd+K)
-        </button>
       </div>
       <div className={styles.body}>
         <Sidebar />
@@ -80,7 +91,6 @@ export default function Layout() {
           </div>
         </div>
       </div>
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   )
 }

@@ -448,7 +448,7 @@ export function createCompany(data: {
   const canonicalName = data.canonicalName.trim()
   const normalizedName = normalizeCompanyName(canonicalName)
   const normalizedPrimaryDomain = normalizeDomain(data.primaryDomain ?? null)
-  const entityType = normalizeEntityType(data.entityType ?? 'prospect')
+  const entityType = normalizeEntityType(data.entityType ?? 'unknown')
   const includeInCompaniesView = data.includeInCompaniesView ?? (entityType === 'prospect')
   const classificationSource = data.classificationSource ?? 'manual'
   const classificationConfidence =
@@ -738,7 +738,7 @@ export function getOrCreateCompanyByName(
 
   return createCompany({
     canonicalName: companyName,
-    entityType: 'prospect',
+    entityType: 'unknown',
     includeInCompaniesView: true,
     classificationSource: 'manual',
     classificationConfidence: 1
@@ -1057,6 +1057,18 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
     status: row.status,
     durationSeconds: row.duration_seconds
   }))
+}
+
+export function listMeetingCompanies(meetingId: string): CompanySummary[] {
+  const db = getDatabase()
+  const rows = db
+    .prepare(
+      `${baseCompanySelect('WHERE c.id IN (SELECT company_id FROM meeting_company_links WHERE meeting_id = ?)')}
+       ORDER BY datetime(c.updated_at) DESC, c.canonical_name ASC`
+    )
+    .all(meetingId) as CompanyRow[]
+
+  return rows.map(rowToCompanySummary)
 }
 
 export function listCompanyContacts(companyId: string): CompanyContactRef[] {

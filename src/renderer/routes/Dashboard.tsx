@@ -61,6 +61,13 @@ function groupCalendarEventsByDate(events: CalendarEvent[]): [string, CalendarEv
   return Array.from(groups.entries())
 }
 
+function eventStillActive(event: CalendarEvent, now: Date): boolean {
+  const end = new Date(event.endTime).getTime()
+  if (Number.isFinite(end)) return end > now.getTime()
+  const start = new Date(event.startTime).getTime()
+  return Number.isFinite(start) && start > now.getTime()
+}
+
 const STAGES: { value: CompanyPipelineStage; label: string }[] = [
   { value: 'screening', label: 'Screening' },
   { value: 'diligence', label: 'Diligence' },
@@ -169,7 +176,7 @@ export default function Dashboard() {
   )
   const scheduleEvents = useMemo(
     () => visibleEvents
-      .filter((event) => isWithinWeek(event.startTime, now) && new Date(event.startTime).getTime() > now.getTime())
+      .filter((event) => isWithinWeek(event.startTime, now) && eventStillActive(event, now))
       .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()),
     [visibleEvents, now]
   )
@@ -302,14 +309,8 @@ export default function Dashboard() {
   return (
     <div className={styles.page}>
       <div className={styles.quickActions}>
-        <button className={styles.secondaryButton} onClick={() => navigate('/companies?new=1')}>
-          + Company
-        </button>
         <button className={styles.secondaryButton} onClick={handleQuickNote}>
           + Note
-        </button>
-        <button className={styles.primaryButton} onClick={() => void handleRecord()}>
-          + Record
         </button>
       </div>
 

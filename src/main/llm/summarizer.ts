@@ -16,6 +16,7 @@ import { getSummariesDir } from '../storage/paths'
 import { join } from 'path'
 import { critiqueText } from './critique'
 import type { LlmProvider } from '../../shared/types/settings'
+import { syncProspectCompaniesFromVcSummary } from '../services/company-summary-sync.service'
 
 let summaryAbortController: AbortController | null = null
 
@@ -124,6 +125,16 @@ export async function generateSummary(
 
   // Update search index
   updateSummaryIndex(meetingId, summary)
+
+  // VC pitch summaries often include structured company facts in the executive
+  // summary; sync those into the linked prospect company profile on first touch.
+  if (template.category === 'vc_pitch') {
+    try {
+      syncProspectCompaniesFromVcSummary(meetingId, summary, userId)
+    } catch (err) {
+      console.error('[Company AutoFill] Failed to sync VC summary fields:', err)
+    }
+  }
 
   // Upload summary to Drive (fire-and-forget)
   if (hasDriveScope()) {

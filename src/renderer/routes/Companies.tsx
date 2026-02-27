@@ -24,6 +24,7 @@ const SCOPE_LABELS: Record<CompanyScope, string> = {
 }
 
 const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
+  { value: 'unknown', label: 'Unknown' },
   { value: 'prospect', label: 'Prospect' },
   { value: 'portfolio', label: 'Portfolio' },
   { value: 'pass', label: 'Pass' },
@@ -108,12 +109,13 @@ export default function Companies() {
   const [newDomain, setNewDomain] = useState('')
   const [newCity, setNewCity] = useState('')
   const [newState, setNewState] = useState('')
-  const [newEntityType, setNewEntityType] = useState<CompanyEntityType>('prospect')
+  const [newEntityType, setNewEntityType] = useState<CompanyEntityType>('unknown')
   const [newPipelineStage, setNewPipelineStage] = useState<CompanyPipelineStage | ''>('')
   const [newPriority, setNewPriority] = useState<CompanyPriority | ''>('')
   const [newRound, setNewRound] = useState<CompanyRound | ''>('')
   const [newPostMoney, setNewPostMoney] = useState('')
   const [newRaiseSize, setNewRaiseSize] = useState('')
+  const createCardRef = useRef<HTMLDivElement>(null)
   const query = (searchParams.get('q') || '').trim()
   const showCreate = searchParams.get('new') === '1'
 
@@ -167,13 +169,18 @@ export default function Companies() {
     setNewDomain('')
     setNewCity('')
     setNewState('')
-    setNewEntityType('prospect')
+    setNewEntityType('unknown')
     setNewPipelineStage('')
     setNewPriority('')
     setNewRound('')
     setNewPostMoney('')
     setNewRaiseSize('')
   }, [])
+
+  useEffect(() => {
+    if (!showCreate) return
+    createCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [showCreate])
 
   const handleCreateCompany = async () => {
     if (!newName.trim()) return
@@ -233,7 +240,7 @@ export default function Companies() {
       </div>
 
       {showCreate && (
-        <div className={styles.createCard}>
+        <div ref={createCardRef} className={styles.createCard}>
           <div className={styles.createFormGrid}>
             <div className={styles.createFieldFull}>
               <label className={styles.createLabel}>Company Name</label>

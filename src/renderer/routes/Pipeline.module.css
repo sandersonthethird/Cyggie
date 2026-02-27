@@ -261,7 +261,8 @@
 }
 
 .pipelineTable {
-  width: 100%;
+  width: max-content;
+  display: inline-table;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -292,7 +293,13 @@
   background: var(--color-card-hover);
 }
 
+.companyColumn {
+  width: 1%;
+  white-space: nowrap;
+}
+
 .companyLink {
+  display: inline-block;
   font-weight: 600;
   color: var(--color-text);
   text-decoration: none;
@@ -301,6 +308,7 @@
   border: none;
   padding: 0;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .companyLink:hover {

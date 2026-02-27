@@ -12,6 +12,7 @@ import ChatInterface from '../components/chat/ChatInterface'
 import styles from './Pipeline.module.css'
 
 const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
+  { value: 'unknown', label: 'Unknown' },
   { value: 'prospect', label: 'Prospect' },
   { value: 'portfolio', label: 'Portfolio' },
   { value: 'pass', label: 'Pass' },
@@ -88,7 +89,7 @@ export default function Pipeline() {
   const [createDescription, setCreateDescription] = useState('')
   const [createCity, setCreateCity] = useState('')
   const [createState, setCreateState] = useState('')
-  const [createEntityType, setCreateEntityType] = useState<CompanyEntityType>('prospect')
+  const [createEntityType, setCreateEntityType] = useState<CompanyEntityType>('unknown')
   const [createPipelineStage, setCreatePipelineStage] = useState<CompanyPipelineStage | ''>('screening')
   const [createPriority, setCreatePriority] = useState<CompanyPriority | ''>('')
   const [createRound, setCreateRound] = useState<CompanyRound | ''>('')
@@ -124,7 +125,7 @@ export default function Pipeline() {
     setCreateDescription('')
     setCreateCity('')
     setCreateState('')
-    setCreateEntityType('prospect')
+    setCreateEntityType('unknown')
     setCreatePipelineStage('screening')
     setCreatePriority('')
     setCreateRound('')
@@ -389,7 +390,7 @@ export default function Pipeline() {
             <table className={styles.pipelineTable}>
               <thead>
                 <tr>
-                  <th>Company</th>
+                  <th className={styles.companyColumn}>Company</th>
                   <th>Priority</th>
                   <th>Stage</th>
                   <th>Round</th>
@@ -401,7 +402,7 @@ export default function Pipeline() {
               <tbody>
                 {filteredCompanies.map((company) => (
                   <tr key={company.id}>
-                    <td>
+                    <td className={styles.companyColumn}>
                       <button
                         className={styles.companyLink}
                         onClick={() => navigate(`/company/${company.id}`)}

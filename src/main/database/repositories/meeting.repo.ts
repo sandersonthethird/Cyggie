@@ -338,8 +338,12 @@ export function listMeetings(filter?: MeetingListFilter): Meeting[] {
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-  const limit = filter?.limit ? `LIMIT ${filter.limit}` : 'LIMIT 100'
-  const offset = filter?.offset ? `OFFSET ${filter.offset}` : ''
+  const hasLimit = Number.isFinite(filter?.limit) && Number(filter?.limit) >= 0
+  const hasOffset = Number.isFinite(filter?.offset) && Number(filter?.offset) > 0
+  const limit = hasLimit
+    ? `LIMIT ${Math.floor(Number(filter!.limit))}`
+    : (hasOffset ? 'LIMIT -1' : '')
+  const offset = hasOffset ? `OFFSET ${Math.floor(Number(filter!.offset))}` : ''
 
   const rows = db
     .prepare(`SELECT * FROM meetings ${where} ORDER BY date DESC ${limit} ${offset}`)

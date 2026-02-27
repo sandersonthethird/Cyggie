@@ -91,6 +91,21 @@
   cursor: default;
 }
 
+.stopMeetingBtn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: white;
+  background: var(--color-danger);
+  border-radius: var(--radius-md);
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.stopMeetingBtn:hover {
+  opacity: 0.9;
+}
+
 .deleteBtn {
   padding: 6px 16px;
   font-size: 13px;
@@ -298,6 +313,20 @@
   gap: 10px;
 }
 
+.recordingStatusText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.recordingModeLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
 .recordingDot {
   width: 10px;
   height: 10px;
@@ -331,25 +360,81 @@
 
 .recordingControls {
   display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.controlGroup {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
 }
 
-.stopBtn {
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  background: var(--color-danger);
-  color: white;
-  border-radius: var(--radius-md);
-  transition: opacity 0.15s;
+.controlLabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
 
-.stopBtn:hover {
-  opacity: 0.9;
+.videoToggleDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-text-tertiary);
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+.videoToggleDotActive {
+  background: var(--color-danger);
+  animation: videoBlink 1s steps(1, end) infinite;
+}
+
+@keyframes videoBlink {
+  0%, 55% {
+    opacity: 1;
+  }
+
+  56%, 100% {
+    opacity: 0.25;
+  }
+}
+
+.videoToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.videoToggle:hover {
+  background: var(--color-bg);
+  border-color: var(--color-text-secondary);
+}
+
+.videoActive {
+  background: rgba(255, 59, 48, 0.1);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.videoActive:hover {
+  background: rgba(255, 59, 48, 0.15);
 }
 
 .pauseBtn {
-  padding: 6px 16px;
+  padding: 6px 14px;
   font-size: 13px;
   font-weight: 500;
   background: transparent;
@@ -366,7 +451,7 @@
 }
 
 .resumeBtn {
-  padding: 6px 16px;
+  padding: 6px 14px;
   font-size: 13px;
   font-weight: 500;
   background: var(--color-primary);
@@ -377,6 +462,20 @@
 
 .resumeBtn:hover {
   background: var(--color-primary-hover);
+}
+
+.stopBtn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--color-danger);
+  color: white;
+  border-radius: var(--radius-md);
+  transition: opacity 0.15s;
+}
+
+.stopBtn:hover {
+  opacity: 0.9;
 }
 
 .recordingError {
@@ -406,6 +505,24 @@
   margin-bottom: 20px;
   border-bottom: 1px solid var(--color-border);
   padding-bottom: 0;
+}
+
+@media (max-width: 980px) {
+  .recordingBar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .recordingControls {
+    width: 100%;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .controlGroup {
+    flex-wrap: wrap;
+  }
 }
 
 .tab {
@@ -740,33 +857,6 @@
   padding: 40px;
   text-align: center;
   color: var(--color-text-secondary);
-}
-
-.videoToggle {
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  background: transparent;
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-
-.videoToggle:hover {
-  background: var(--color-bg);
-  border-color: var(--color-text-secondary);
-}
-
-.videoActive {
-  background: rgba(255, 59, 48, 0.1);
-  border-color: var(--color-danger);
-  color: var(--color-danger);
-}
-
-.videoActive:hover {
-  background: rgba(255, 59, 48, 0.15);
 }
 
 .videoTab {
