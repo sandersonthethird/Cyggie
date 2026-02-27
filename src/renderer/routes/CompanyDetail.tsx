@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlags } from '../hooks/useFeatureFlags'
 import type {
@@ -15,12 +16,12 @@ import type {
   InvestmentMemoVersion,
   InvestmentMemoWithLatest
 } from '../../shared/types/company'
-import type { CompanyActiveDeal } from '../../shared/types/pipeline'
+import type { CompanyPipelineStage, CompanyPriority, CompanyRound } from '../../shared/types/company'
 import type { UnifiedSearchAnswerResponse } from '../../shared/types/unified-search'
 import styles from './CompanyDetail.module.css'
 
-type CompanyTab = 'overview' | 'timeline' | 'notes' | 'memo' | 'contacts' | 'files' | 'chat'
-type TimelineFilter = 'all' | 'meeting' | 'email' | 'note' | 'deal_event'
+type CompanyTab = 'overview' | 'timeline' | 'notes' | 'memo' | 'contacts' | 'files'
+type TimelineFilter = 'all' | 'meeting' | 'email' | 'note'
 
 interface CompanyConversation {
   id: string
@@ -49,6 +50,7 @@ interface CompanyConversationMessage {
 const COMPANY_ENTITY_TYPE_OPTIONS: Array<{ value: CompanyEntityType; label: string }> = [
   { value: 'prospect', label: 'prospect' },
   { value: 'portfolio', label: 'portfolio' },
+  { value: 'pass', label: 'pass' },
   { value: 'vc_fund', label: 'vc fund' },
   { value: 'customer', label: 'customer' },
   { value: 'partner', label: 'partner' },
@@ -132,10 +134,15 @@ export default function CompanyDetail() {
   const [contacts, setContacts] = useState<CompanyContactRef[]>([])
   const [files, setFiles] = useState<CompanyDriveFileRef[]>([])
   const [filesLoaded, setFilesLoaded] = useState(false)
-  const [activeDeal, setActiveDeal] = useState<CompanyActiveDeal | null>(null)
+  const [fileCompanyRoot, setFileCompanyRoot] = useState<string | null>(null)
+  const [fileBrowsePath, setFileBrowsePath] = useState<string | null>(null)
+  const [pipelineStageDraft, setPipelineStageDraft] = useState<CompanyPipelineStage | ''>('')
+  const [priorityDraft, setPriorityDraft] = useState<CompanyPriority | ''>('')
+  const [roundDraft, setRoundDraft] = useState<CompanyRound | ''>('')
+  const [postMoneyDraft, setPostMoneyDraft] = useState('')
+  const [raiseSizeDraft, setRaiseSizeDraft] = useState('')
 
   const [notes, setNotes] = useState<CompanyNote[]>([])
-  const [noteTitle, setNoteTitle] = useState('')
   const [noteContent, setNoteContent] = useState('')
 
   const [memo, setMemo] = useState<InvestmentMemoWithLatest | null>(null)
@@ -148,6 +155,15 @@ export default function CompanyDetail() {
   const [emailIngestSummary, setEmailIngestSummary] = useState<string | null>(null)
   const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null)
 
+  const [editingHeader, setEditingHeader] = useState(false)
+  const [savingHeader, setSavingHeader] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const [descriptionDraft, setDescriptionDraft] = useState('')
+  const [domainDraft, setDomainDraft] = useState('')
+  const [cityDraft, setCityDraft] = useState('')
+  const [stateDraft, setStateDraft] = useState('')
+  const nameInputRef = useRef<HTMLInputElement>(null)
+
   const [conversations, setConversations] = useState<CompanyConversation[]>([])
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<CompanyConversationMessage[]>([])
@@ -155,14 +171,15 @@ export default function CompanyDetail() {
   const [chatAsking, setChatAsking] = useState(false)
   const [chatStreaming, setChatStreaming] = useState('')
 
+  const FILES_ENTITY_TYPES: Set<CompanyEntityType> = new Set(['prospect', 'portfolio', 'pass'])
+
   const visibleTabs = useMemo(() => {
     const tabs: CompanyTab[] = ['overview', 'timeline', 'contacts']
     if (flags.ff_company_notes_v1) tabs.push('notes')
     if (flags.ff_investment_memo_v1) tabs.push('memo')
-    tabs.push('files')
-    if (flags.ff_company_chat_v1) tabs.push('chat')
+    if (company && FILES_ENTITY_TYPES.has(company.entityType)) tabs.push('files')
     return tabs
-  }, [flags.ff_company_chat_v1, flags.ff_company_notes_v1, flags.ff_investment_memo_v1])
+  }, [company, flags.ff_company_notes_v1, flags.ff_investment_memo_v1])
 
   const loadChatConversations = useCallback(async () => {
     if (!companyId || !flags.ff_company_chat_v1) {
@@ -204,7 +221,6 @@ export default function CompanyDetail() {
         setMeetings([])
         setEmails([])
         setContacts([])
-        setActiveDeal(null)
         setNotes([])
         setMemo(null)
         setMemoVersions([])
@@ -217,7 +233,6 @@ export default function CompanyDetail() {
         meetingResult,
         emailResult,
         contactResult,
-        dealResult,
         noteResult,
         memoResult
       ] = await Promise.allSettled([
@@ -225,7 +240,6 @@ export default function CompanyDetail() {
         window.api.invoke<CompanyMeetingRef[]>(IPC_CHANNELS.COMPANY_MEETINGS, companyId),
         window.api.invoke<CompanyEmailRef[]>(IPC_CHANNELS.COMPANY_EMAILS, companyId),
         window.api.invoke<CompanyContactRef[]>(IPC_CHANNELS.COMPANY_CONTACTS, companyId),
-        window.api.invoke<CompanyActiveDeal | null>(IPC_CHANNELS.PIPELINE_GET_COMPANY_ACTIVE_DEAL, companyId),
         flags.ff_company_notes_v1
           ? window.api.invoke<CompanyNote[]>(IPC_CHANNELS.COMPANY_NOTES_LIST, companyId)
           : Promise.resolve([]),
@@ -252,11 +266,6 @@ export default function CompanyDetail() {
       const meetingData = resolveOrFallback(meetingResult, [] as CompanyMeetingRef[])
       const emailData = resolveOrFallback(emailResult, [] as CompanyEmailRef[])
       const contactData = resolveOrFallback(contactResult, [] as CompanyContactRef[])
-      const dealData = resolveOrFallback(
-        dealResult,
-        null as CompanyActiveDeal | null,
-        IPC_CHANNELS.PIPELINE_GET_COMPANY_ACTIVE_DEAL
-      )
       const noteData = resolveOrFallback(noteResult, [] as CompanyNote[])
       const memoData = resolveOrFallback(memoResult, null as InvestmentMemoWithLatest | null)
 
@@ -264,7 +273,6 @@ export default function CompanyDetail() {
       setMeetings(meetingData)
       setEmails(emailData)
       setContacts(contactData)
-      setActiveDeal(dealData)
       setNotes(noteData)
       setMemo(memoData)
 
@@ -306,19 +314,24 @@ export default function CompanyDetail() {
     loadChatConversations
   ])
 
-  const loadFiles = useCallback(async () => {
-    if (!companyId || filesLoaded) return
+  const loadFiles = useCallback(async (browsePath?: string) => {
+    if (!companyId) return
     try {
-      const fileRows = await window.api.invoke<CompanyDriveFileRef[]>(
-        IPC_CHANNELS.COMPANY_FILES,
-        companyId
-      )
-      setFiles(fileRows)
-      setFilesLoaded(true)
+      const raw = await window.api.invoke<unknown>(IPC_CHANNELS.COMPANY_FILES, companyId, browsePath)
+      // Handle both { companyRoot, files } and legacy array formats
+      const result = raw && typeof raw === 'object' && 'files' in raw
+        ? (raw as { companyRoot: string | null; files: CompanyDriveFileRef[] })
+        : { companyRoot: null, files: Array.isArray(raw) ? (raw as CompanyDriveFileRef[]) : [] }
+      setFiles(result.files)
+      if (result.companyRoot) setFileCompanyRoot(result.companyRoot)
+      setFileBrowsePath(browsePath || result.companyRoot)
     } catch (err) {
       setError(displayError(err))
+      setFiles([])
+    } finally {
+      setFilesLoaded(true)
     }
-  }, [companyId, filesLoaded])
+  }, [companyId])
 
   useEffect(() => {
     void loadCore()
@@ -344,16 +357,13 @@ export default function CompanyDetail() {
       requestedFilter === 'meetings'
       || requestedFilter === 'emails'
       || requestedFilter === 'notes'
-      || requestedFilter === 'deal-events'
     ) {
       const mappedFilter: TimelineFilter =
         requestedFilter === 'meetings'
           ? 'meeting'
           : requestedFilter === 'emails'
               ? 'email'
-              : requestedFilter === 'notes'
-                  ? 'note'
-                  : 'deal_event'
+              : 'note'
       setTimelineFilter(mappedFilter)
     }
   }, [searchParams])
@@ -362,13 +372,17 @@ export default function CompanyDetail() {
     setEditingEntityType(false)
     setUpdatingEntityType(false)
     setEmailIngestSummary(null)
+    setFilesLoaded(false)
+    setFiles([])
+    setFileCompanyRoot(null)
+    setFileBrowsePath(null)
   }, [companyId])
 
   useEffect(() => {
-    if (activeTab === 'files') {
+    if (activeTab === 'files' && !filesLoaded) {
       void loadFiles()
     }
-  }, [activeTab, loadFiles])
+  }, [activeTab, filesLoaded, loadFiles])
 
   useEffect(() => {
     if (!chatAsking) return
@@ -387,6 +401,14 @@ export default function CompanyDetail() {
     return timeline.filter((item) => item.type === timelineFilter)
   }, [timeline, timelineFilter])
 
+  const latestAssistantReply = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i]
+      if (message.role === 'assistant') return message.content
+    }
+    return ''
+  }, [messages])
+
   const handleOpenExternal = useCallback(async (url: string) => {
     try {
       await window.api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, url)
@@ -400,10 +422,8 @@ export default function CompanyDetail() {
     try {
       await window.api.invoke(IPC_CHANNELS.COMPANY_NOTES_CREATE, {
         companyId,
-        title: noteTitle.trim() || null,
         content: noteContent.trim()
       })
-      setNoteTitle('')
       setNoteContent('')
       const refreshed = await window.api.invoke<CompanyNote[]>(
         IPC_CHANNELS.COMPANY_NOTES_LIST,
@@ -418,7 +438,7 @@ export default function CompanyDetail() {
     } catch (err) {
       setError(displayError(err))
     }
-  }, [companyId, noteContent, noteTitle])
+  }, [companyId, noteContent])
 
   const handleTogglePinNote = useCallback(async (note: CompanyNote) => {
     try {
@@ -561,6 +581,77 @@ export default function CompanyDetail() {
     }
   }, [company, updatingEntityType])
 
+  const startHeaderEdit = useCallback(() => {
+    if (!company || savingHeader) return
+    setNameDraft(company.canonicalName)
+    setDescriptionDraft(company.description || '')
+    setDomainDraft(company.primaryDomain || '')
+    setCityDraft(company.city || '')
+    setStateDraft(company.state || '')
+    setPipelineStageDraft(company.pipelineStage || '')
+    setPriorityDraft(company.priority || '')
+    setRoundDraft(company.round || '')
+    setPostMoneyDraft(company.postMoneyValuation != null ? String(company.postMoneyValuation) : '')
+    setRaiseSizeDraft(company.raiseSize != null ? String(company.raiseSize) : '')
+    setEditingHeader(true)
+    setTimeout(() => {
+      nameInputRef.current?.focus()
+      nameInputRef.current?.select()
+    }, 0)
+  }, [company, savingHeader])
+
+  const cancelHeaderEdit = useCallback(() => {
+    setEditingHeader(false)
+  }, [])
+
+  const saveHeader = useCallback(async () => {
+    if (!company || savingHeader) return
+    const nextName = nameDraft.trim()
+    if (!nextName) {
+      setError('Company name is required')
+      cancelHeaderEdit()
+      return
+    }
+
+    setSavingHeader(true)
+    setError(null)
+    try {
+      const updated = await window.api.invoke<CompanyDetailType | null>(
+        IPC_CHANNELS.COMPANY_UPDATE,
+        company.id,
+        {
+          canonicalName: nextName,
+          description: descriptionDraft.trim() || null,
+          primaryDomain: domainDraft.trim() || null,
+          city: cityDraft.trim() || null,
+          state: stateDraft.trim() || null,
+          pipelineStage: (pipelineStageDraft || null) as CompanyPipelineStage | null,
+          priority: (priorityDraft || null) as CompanyPriority | null,
+          round: (roundDraft || null) as CompanyRound | null,
+          postMoneyValuation: postMoneyDraft.trim() ? Number(postMoneyDraft) : null,
+          raiseSize: raiseSizeDraft.trim() ? Number(raiseSizeDraft) : null
+        }
+      )
+      if (!updated) throw new Error('Failed to update company.')
+      setCompany(updated)
+      setEditingHeader(false)
+    } catch (err) {
+      setError(displayError(err))
+    } finally {
+      setSavingHeader(false)
+    }
+  }, [company, savingHeader, nameDraft, descriptionDraft, domainDraft, cityDraft, stateDraft, pipelineStageDraft, priorityDraft, roundDraft, postMoneyDraft, raiseSizeDraft, cancelHeaderEdit])
+
+  const handleHeaderInputKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      void saveHeader()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      cancelHeaderEdit()
+    }
+  }, [saveHeader, cancelHeaderEdit])
+
   const loadConversationMessages = useCallback(async (conversationId: string) => {
     const rows = await window.api.invoke<CompanyConversationMessage[]>(
       IPC_CHANNELS.COMPANY_CHAT_MESSAGES,
@@ -644,6 +735,12 @@ export default function CompanyDetail() {
     loadConversationMessages
   ])
 
+  const handleChatDockKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    void handleSendChat()
+  }, [handleSendChat])
+
   if (!flagsLoading && !flags.ff_companies_ui_v1) {
     return <div className={styles.page}>Companies view is disabled by feature flag.</div>
   }
@@ -669,45 +766,273 @@ export default function CompanyDetail() {
       </button>
 
       <section className={styles.header}>
-        <div className={styles.titleRow}>
-          <h1 className={styles.title}>{company.canonicalName}</h1>
-          {editingEntityType ? (
-            <select
-              className={styles.typeSelect}
-              value={company.entityType}
-              onChange={(event) => void handleEntityTypeChange(event.target.value as CompanyEntityType)}
-              onBlur={() => setEditingEntityType(false)}
-              disabled={updatingEntityType}
-              autoFocus
-              aria-label="Company type"
-            >
-              {COMPANY_ENTITY_TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <button
-              type="button"
-              className={styles.typeBadgeButton}
-              onClick={() => setEditingEntityType(true)}
-              disabled={updatingEntityType}
-              title="Click to change company type"
-            >
-              {company.entityType.replace('_', ' ')}
-            </button>
-          )}
-          {company.stage && <span className={styles.stageBadge}>{company.stage}</span>}
-        </div>
-        <div className={styles.metaRow}>
-          <span>{company.primaryDomain || 'No domain'}</span>
-          <span>{company.status}</span>
-          <span>{touchDays == null ? 'No touchpoint' : `Last touch ${touchDays}d ago`}</span>
-        </div>
-        <p className={styles.description}>
-          {(company.description || '').trim() || 'No business description added yet.'}
-        </p>
+        {editingHeader ? (
+          <div className={styles.editForm}>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Name</label>
+              <input
+                ref={nameInputRef}
+                className={styles.editInput}
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={handleHeaderInputKeyDown}
+                disabled={savingHeader}
+                placeholder="Company name"
+                aria-label="Company name"
+              />
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Website</label>
+              <input
+                className={styles.editInput}
+                value={domainDraft}
+                onChange={(e) => setDomainDraft(e.target.value)}
+                onKeyDown={handleHeaderInputKeyDown}
+                disabled={savingHeader}
+                placeholder="e.g. acme.com"
+                aria-label="Website domain"
+              />
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>City</label>
+              <input
+                className={styles.editInput}
+                value={cityDraft}
+                onChange={(e) => setCityDraft(e.target.value)}
+                onKeyDown={handleHeaderInputKeyDown}
+                disabled={savingHeader}
+                placeholder="e.g. San Francisco"
+                aria-label="City"
+              />
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>State</label>
+              <input
+                className={styles.editInput}
+                value={stateDraft}
+                onChange={(e) => setStateDraft(e.target.value)}
+                onKeyDown={handleHeaderInputKeyDown}
+                disabled={savingHeader}
+                placeholder="e.g. CA"
+                aria-label="State"
+              />
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Pipeline Stage</label>
+              <select
+                className={styles.editSelect}
+                value={pipelineStageDraft}
+                onChange={(e) => setPipelineStageDraft(e.target.value as CompanyPipelineStage | '')}
+                disabled={savingHeader}
+                aria-label="Pipeline stage"
+              >
+                <option value="">None</option>
+                <option value="screening">Screening</option>
+                <option value="diligence">Diligence</option>
+                <option value="decision">Decision</option>
+                <option value="documentation">Documentation</option>
+                <option value="pass">Pass</option>
+              </select>
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Priority</label>
+              <select
+                className={styles.editSelect}
+                value={priorityDraft}
+                onChange={(e) => setPriorityDraft(e.target.value as CompanyPriority | '')}
+                disabled={savingHeader}
+                aria-label="Priority"
+              >
+                <option value="">None</option>
+                <option value="high">High</option>
+                <option value="further_work">Further Work</option>
+                <option value="monitor">Monitor</option>
+              </select>
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Round</label>
+              <select
+                className={styles.editSelect}
+                value={roundDraft}
+                onChange={(e) => setRoundDraft(e.target.value as CompanyRound | '')}
+                disabled={savingHeader}
+                aria-label="Round"
+              >
+                <option value="">None</option>
+                <option value="pre_seed">Pre-Seed</option>
+                <option value="seed">Seed</option>
+                <option value="seed_extension">Seed Extension</option>
+                <option value="series_a">Series A</option>
+                <option value="series_b">Series B</option>
+              </select>
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Post Money ($M)</label>
+              <input
+                className={styles.editInput}
+                type="number"
+                step="0.1"
+                value={postMoneyDraft}
+                onChange={(e) => setPostMoneyDraft(e.target.value)}
+                disabled={savingHeader}
+                placeholder="e.g. 25"
+                aria-label="Post money valuation in millions"
+              />
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Raise Size ($M)</label>
+              <input
+                className={styles.editInput}
+                type="number"
+                step="0.1"
+                value={raiseSizeDraft}
+                onChange={(e) => setRaiseSizeDraft(e.target.value)}
+                disabled={savingHeader}
+                placeholder="e.g. 5"
+                aria-label="Raise size in millions"
+              />
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Type</label>
+              <select
+                className={styles.editSelect}
+                value={company.entityType}
+                onChange={(event) => void handleEntityTypeChange(event.target.value as CompanyEntityType)}
+                disabled={updatingEntityType || savingHeader}
+                aria-label="Company type"
+              >
+                {COMPANY_ENTITY_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Description</label>
+              <textarea
+                className={styles.editTextarea}
+                value={descriptionDraft}
+                onChange={(e) => setDescriptionDraft(e.target.value)}
+                disabled={savingHeader}
+                placeholder="Brief description of the company"
+                aria-label="Description"
+                rows={3}
+              />
+            </div>
+            <div className={styles.editActions}>
+              <button
+                type="button"
+                className={styles.editSaveButton}
+                onClick={() => void saveHeader()}
+                disabled={savingHeader || !nameDraft.trim()}
+              >
+                {savingHeader ? 'Saving...' : 'Save'}
+              </button>
+              <button
+                type="button"
+                className={styles.editCancelButton}
+                onClick={cancelHeaderEdit}
+                disabled={savingHeader}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className={styles.titleRow}>
+              <h1 className={styles.title}>
+                {company.canonicalName}
+                {company.primaryDomain && (
+                  <img
+                    src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(company.primaryDomain)}&sz=64`}
+                    alt=""
+                    className={styles.titleLogo}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  />
+                )}
+              </h1>
+              {editingEntityType ? (
+                <select
+                  className={styles.typeSelect}
+                  value={company.entityType}
+                  onChange={(event) => void handleEntityTypeChange(event.target.value as CompanyEntityType)}
+                  onBlur={() => setEditingEntityType(false)}
+                  disabled={updatingEntityType}
+                  autoFocus
+                  aria-label="Company type"
+                >
+                  {COMPANY_ENTITY_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.typeBadgeButton}
+                  onClick={() => setEditingEntityType(true)}
+                  disabled={updatingEntityType}
+                  title="Click to change company type"
+                >
+                  {company.entityType.replace('_', ' ')}
+                </button>
+              )}
+              {company.pipelineStage && (
+                <span className={styles.pipelineStageBadge}>
+                  {company.pipelineStage === 'screening' ? 'Screening'
+                    : company.pipelineStage === 'diligence' ? 'Diligence'
+                    : company.pipelineStage === 'decision' ? 'Decision'
+                    : company.pipelineStage === 'documentation' ? 'Documentation'
+                    : 'Pass'}
+                </span>
+              )}
+              {company.priority && (
+                <span className={`${styles.priorityBadge} ${
+                  company.priority === 'high' ? styles.priorityHigh
+                    : company.priority === 'further_work' ? styles.priorityFurtherWork
+                    : styles.priorityMonitor
+                }`}>
+                  {company.priority === 'high' ? 'High'
+                    : company.priority === 'further_work' ? 'Further Work'
+                    : 'Monitor'}
+                </span>
+              )}
+              {company.round && (
+                <span className={styles.roundBadge}>
+                  {company.round.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                </span>
+              )}
+              <button
+                type="button"
+                className={styles.editButton}
+                onClick={startHeaderEdit}
+              >
+                Edit
+              </button>
+            </div>
+            <div className={styles.metaRow}>
+              <span>{company.primaryDomain || 'No domain'}</span>
+              {(company.city || company.state) && (
+                <span>{[company.city, company.state].filter(Boolean).join(', ')}</span>
+              )}
+              <span>{company.status}</span>
+              <span>{touchDays == null ? 'No touchpoint' : `Last touch ${touchDays}d ago`}</span>
+              {(company.postMoneyValuation != null || company.raiseSize != null) && (
+                <span>
+                  {company.postMoneyValuation != null && `Val: $${company.postMoneyValuation}M`}
+                  {company.postMoneyValuation != null && company.raiseSize != null && ' · '}
+                  {company.raiseSize != null && `Raise: $${company.raiseSize}M`}
+                </span>
+              )}
+            </div>
+            <p className={styles.description}>
+              {(company.description || '').trim() || 'No business description added yet.'}
+            </p>
+          </>
+        )}
       </section>
 
       <div className={styles.tabRow}>
@@ -745,24 +1070,56 @@ export default function CompanyDetail() {
             </div>
           </div>
 
-          {activeDeal ? (
-            <div className={styles.dealCard}>
-              <div className={styles.dealHeader}>
-                <h3>Active Deal</h3>
-                <span>{activeDeal.stageLabel}</span>
-              </div>
-              <p>In stage for {activeDeal.stageDurationDays} days.</p>
-              <div className={styles.dealHistory}>
-                {activeDeal.history.slice(0, 5).map((event) => (
-                  <div key={event.id} className={styles.dealHistoryRow}>
-                    <span>{event.fromStage ? `${event.fromStage} -> ${event.toStage}` : `Moved to ${event.toStage}`}</span>
-                    <span>{formatDateTime(event.eventTime)}</span>
+          {company.pipelineStage ? (
+            <div className={styles.pipelineCard}>
+              <h3>Pipeline</h3>
+              <div className={styles.pipelineCardGrid}>
+                <div className={styles.pipelineCardField}>
+                  <span className={styles.pipelineCardLabel}>Stage</span>
+                  <span className={styles.pipelineStageBadge}>
+                    {company.pipelineStage === 'screening' ? 'Screening'
+                      : company.pipelineStage === 'diligence' ? 'Diligence'
+                      : company.pipelineStage === 'decision' ? 'Decision'
+                      : company.pipelineStage === 'documentation' ? 'Documentation'
+                      : 'Pass'}
+                  </span>
+                </div>
+                {company.priority && (
+                  <div className={styles.pipelineCardField}>
+                    <span className={styles.pipelineCardLabel}>Priority</span>
+                    <span className={`${styles.priorityBadge} ${
+                      company.priority === 'high' ? styles.priorityHigh
+                        : company.priority === 'further_work' ? styles.priorityFurtherWork
+                        : styles.priorityMonitor
+                    }`}>
+                      {company.priority === 'high' ? 'High'
+                        : company.priority === 'further_work' ? 'Further Work'
+                        : 'Monitor'}
+                    </span>
                   </div>
-                ))}
+                )}
+                {company.round && (
+                  <div className={styles.pipelineCardField}>
+                    <span className={styles.pipelineCardLabel}>Round</span>
+                    <span>{company.round.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}</span>
+                  </div>
+                )}
+                {company.postMoneyValuation != null && (
+                  <div className={styles.pipelineCardField}>
+                    <span className={styles.pipelineCardLabel}>Post Money</span>
+                    <span>${company.postMoneyValuation}M</span>
+                  </div>
+                )}
+                {company.raiseSize != null && (
+                  <div className={styles.pipelineCardField}>
+                    <span className={styles.pipelineCardLabel}>Raise Size</span>
+                    <span>${company.raiseSize}M</span>
+                  </div>
+                )}
               </div>
             </div>
           ) : (
-            <p className={styles.empty}>No active deal yet.</p>
+            <p className={styles.empty}>Not in pipeline.</p>
           )}
 
           <div className={styles.tagGroup}>
@@ -779,7 +1136,7 @@ export default function CompanyDetail() {
       {activeTab === 'timeline' && (
         <section className={styles.section}>
           <div className={styles.filterRow}>
-            {(['all', 'meeting', 'email', 'note', 'deal_event'] as TimelineFilter[]).map((filter) => (
+            {(['all', 'meeting', 'email', 'note'] as TimelineFilter[]).map((filter) => (
               <button
                 key={filter}
                 className={`${styles.filterChip} ${timelineFilter === filter ? styles.activeFilter : ''}`}
@@ -877,12 +1234,6 @@ export default function CompanyDetail() {
       {activeTab === 'notes' && flags.ff_company_notes_v1 && (
         <section className={styles.section}>
           <div className={styles.noteEditor}>
-            <input
-              className={styles.input}
-              value={noteTitle}
-              onChange={(event) => setNoteTitle(event.target.value)}
-              placeholder="Optional title"
-            />
             <textarea
               className={styles.textarea}
               value={noteContent}
@@ -897,7 +1248,6 @@ export default function CompanyDetail() {
             {notes.map((note) => (
               <div key={note.id} className={styles.noteCard}>
                 <div className={styles.noteHeader}>
-                  <strong>{note.title || 'Note'}</strong>
                   <div className={styles.noteActions}>
                     <button className={styles.linkButton} onClick={() => void handleTogglePinNote(note)}>
                       {note.isPinned ? 'Unpin' : 'Pin'}
@@ -907,7 +1257,9 @@ export default function CompanyDetail() {
                     </button>
                   </div>
                 </div>
-                <p>{note.content}</p>
+                <div className={styles.noteContent}>
+                  <ReactMarkdown>{note.content}</ReactMarkdown>
+                </div>
                 <span className={styles.rowMeta}>{formatDateTime(note.updatedAt)}</span>
               </div>
             ))}
@@ -988,108 +1340,93 @@ export default function CompanyDetail() {
 
       {activeTab === 'files' && (
         <section className={styles.section}>
-          <div className={styles.list}>
-            {files.map((file) => (
-              <button
-                key={file.id}
-                className={styles.rowButton}
-                onClick={() => {
-                  if (file.webViewLink) {
-                    void handleOpenExternal(file.webViewLink)
-                  }
-                }}
-              >
-                <div className={styles.rowTitle}>{file.name}</div>
-                <div className={styles.rowMeta}>
-                  {[file.mimeType, formatFileSize(file.sizeBytes), formatDateTime(file.modifiedAt)].join(' · ')}
+          {fileBrowsePath && fileCompanyRoot && fileBrowsePath !== fileCompanyRoot && (
+            <button
+              className={styles.fileBackBtn}
+              onClick={() => {
+                const parent = fileBrowsePath.replace(/\/[^/]+\/?$/, '')
+                const target = parent.length >= fileCompanyRoot.length ? parent : fileCompanyRoot
+                setFilesLoaded(false)
+                void loadFiles(target)
+              }}
+            >
+              &larr; Back
+            </button>
+          )}
+          <div className={styles.fileList}>
+            {files.map((file) => {
+              const isFolder = file.mimeType === 'folder'
+              const isLocal = !file.webViewLink && file.id.startsWith('/')
+              return (
+                <div
+                  key={file.id}
+                  className={styles.fileRow}
+                  onDoubleClick={() => {
+                    if (isFolder && isLocal) {
+                      setFilesLoaded(false)
+                      void loadFiles(file.id)
+                    }
+                  }}
+                  onClick={() => {
+                    if (!isFolder && file.webViewLink) {
+                      void handleOpenExternal(file.webViewLink)
+                    } else if (!isFolder && isLocal) {
+                      void window.api.invoke(IPC_CHANNELS.APP_OPEN_PATH, file.id)
+                    }
+                  }}
+                >
+                  <div className={styles.fileRowMain}>
+                    <span className={styles.fileIcon}>{isFolder ? '\uD83D\uDCC1' : '\uD83D\uDCC4'}</span>
+                    <span className={styles.fileName}>{file.name}</span>
+                  </div>
+                  <span className={styles.fileMeta}>
+                    {isFolder
+                      ? ''
+                      : [formatFileSize(file.sizeBytes), formatDateTime(file.modifiedAt)].filter(Boolean).join(' · ')
+                    }
+                  </span>
                 </div>
-              </button>
-            ))}
-            {filesLoaded && files.length === 0 && <div className={styles.empty}>No linked files yet.</div>}
+              )
+            })}
+            {filesLoaded && files.length === 0 && <div className={styles.empty}>No files found.</div>}
             {!filesLoaded && <div className={styles.empty}>Loading files...</div>}
           </div>
         </section>
       )}
 
-      {activeTab === 'chat' && flags.ff_company_chat_v1 && (
-        <section className={styles.section}>
-          <div className={styles.chatLayout}>
-            <div className={styles.chatSidebar}>
+      {flags.ff_company_chat_v1 && (
+        <div className={styles.chatDockWrap}>
+          <div className={styles.chatDock}>
+            {chatAsking && chatStreaming && (
+              <div className={styles.chatDockPreview}>
+                <span className={styles.chatRole}>AI</span>
+                <span className={styles.chatDockTyping}>{chatStreaming}</span>
+              </div>
+            )}
+            {!chatAsking && latestAssistantReply && (
+              <div className={styles.chatDockPreview}>
+                <span className={styles.chatRole}>AI</span>
+                <span>{latestAssistantReply}</span>
+              </div>
+            )}
+            <div className={styles.chatDockRow}>
+              <input
+                className={styles.chatDockInput}
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                onKeyDown={handleChatDockKeyDown}
+                placeholder="Ask anything..."
+              />
               <button
-                className={styles.secondaryButton}
-                onClick={async () => {
-                  try {
-                    const created = await window.api.invoke<CompanyConversation>(
-                      IPC_CHANNELS.COMPANY_CHAT_CREATE,
-                      {
-                        companyId,
-                        title: `${company.canonicalName} Chat`
-                      }
-                    )
-                    setSelectedConversationId(created.id)
-                    await loadChatConversations()
-                  } catch (err) {
-                    setError(displayError(err))
-                  }
-                }}
+                className={styles.chatDockSend}
+                onClick={() => void handleSendChat()}
+                disabled={!chatInput.trim() || chatAsking}
               >
-                + Conversation
+                {chatAsking ? 'Asking...' : 'Send'}
               </button>
-              <div className={styles.list}>
-                {conversations.map((conversation) => (
-                  <button
-                    key={conversation.id}
-                    className={`${styles.rowButton} ${
-                      conversation.id === selectedConversationId ? styles.selectedConversation : ''
-                    }`}
-                    onClick={async () => {
-                      setSelectedConversationId(conversation.id)
-                      try {
-                        await loadConversationMessages(conversation.id)
-                      } catch (err) {
-                        setError(displayError(err))
-                      }
-                    }}
-                  >
-                    <div className={styles.rowTitle}>{conversation.title}</div>
-                    <div className={styles.rowMeta}>{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className={styles.chatMain}>
-              <div className={styles.chatMessages}>
-                {messages.map((message) => (
-                  <div key={message.id} className={styles.chatMessage}>
-                    <span className={styles.chatRole}>{message.role === 'assistant' ? 'AI' : 'You'}</span>
-                    <pre>{message.content}</pre>
-                  </div>
-                ))}
-                {chatAsking && chatStreaming && (
-                  <div className={styles.chatMessage}>
-                    <span className={styles.chatRole}>AI</span>
-                    <pre>{chatStreaming}</pre>
-                  </div>
-                )}
-                {!chatAsking && messages.length === 0 && (
-                  <div className={styles.empty}>Start a company-scoped conversation.</div>
-                )}
-              </div>
-              <div className={styles.chatInputRow}>
-                <textarea
-                  className={styles.textarea}
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  placeholder="Ask anything about this company..."
-                />
-                <button className={styles.primaryButton} onClick={() => void handleSendChat()} disabled={!chatInput.trim() || chatAsking}>
-                  {chatAsking ? 'Asking...' : 'Send'}
-                </button>
-              </div>
             </div>
           </div>
-        </section>
+        </div>
       )}
     </div>
   )

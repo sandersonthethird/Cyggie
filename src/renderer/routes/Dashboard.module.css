@@ -2,25 +2,13 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.headerRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
+  min-height: 100%;
 }
 
 .quickActions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -54,50 +42,29 @@
   font-size: 13px;
 }
 
-.eventList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.scheduleSection {
+  padding: 0 0 16px;
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.eventCard {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg);
-  padding: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.dateGroup {
+  margin-bottom: 14px;
 }
 
-.eventMain {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.eventTitleRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.eventTime {
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.eventTitle {
-  font-size: 14px;
+.dateHeader {
+  font-size: 11px;
   font-weight: 600;
+  color: var(--color-text-tertiary);
+  margin-bottom: 4px;
 }
 
-.eventMeta {
-  font-size: 12px;
-  color: var(--color-text-secondary);
+.eventRows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .eventActions {
@@ -106,30 +73,157 @@
   gap: 6px;
 }
 
-.weekSummary {
-  margin-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
+.showMoreBtn {
+  display: block;
+  margin: 8px auto 0;
+  padding: 4px 12px;
+  font-size: 11px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: color 0.15s;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+.showMoreBtn:hover {
+  color: var(--color-text);
+}
+
+.collapseGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.collapseHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.collapseToggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 10px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.configureButton {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.configureButton:hover {
+  color: var(--color-text);
+}
+
+.activityConfig {
+  padding: 6px 20px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.configGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.configLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-right: 2px;
+}
+
+.configCheckbox,
+.configRadio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.collapseToggle:hover {
+  background: var(--color-card-hover);
+}
+
+.chevron {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  transition: transform 0.15s;
+  display: inline-block;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.toggleCount {
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  padding: 0 6px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .summaryList,
 .activityList {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 1px;
+  padding-left: 20px;
 }
 
 .summaryRow,
-.activityRow,
+.activityRow {
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.summaryRow:hover,
+.activityRow:hover {
+  background: var(--color-card-hover);
+}
+
 .attentionRow {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -142,15 +236,27 @@
   text-align: left;
 }
 
-.summaryRow:hover,
-.activityRow:hover,
 .attentionRow:hover {
   background: var(--color-card-hover);
+}
+
+.activityIcon {
+  font-size: 16px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+  opacity: 0.85;
 }
 
 .activityTitle {
   font-size: 13px;
   font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
 }
 
 .activityMeta {
@@ -192,18 +298,133 @@
   background: var(--color-card-hover);
 }
 
+.chatSection {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+/* Pipeline stage counts */
+.stageCounts {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.stageCountCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+}
+
+.stageCountLabel {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stageCountValue {
+  min-width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+/* Pipeline table */
+.pipelineTableWrapper {
+  overflow-x: auto;
+  padding: 0 10px 6px 20px;
+}
+
+.pipelineTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pipelineTable th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  padding: 6px 8px;
+  border-bottom: 2px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.pipelineTable td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.pipelineTable tbody tr:hover {
+  background: var(--color-card-hover);
+}
+
+.companyLink {
+  font-weight: 600;
+  color: var(--color-text);
+  text-decoration: none;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+}
+
+.companyLink:hover {
+  text-decoration: underline;
+}
+
+.descriptionCell {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priorityBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.priorityHigh {
+  background: #d4edda;
+  color: #155724;
+}
+
+.priorityFurtherWork {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.priorityMonitor {
+  background: #f8d7da;
+  color: #721c24;
+}
+
 @media (max-width: 980px) {
-  .grid,
   .attentionGrid {
     grid-template-columns: 1fr;
-  }
-
-  .eventCard {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .eventActions {
-    justify-content: flex-end;
   }
 }

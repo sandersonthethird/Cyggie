@@ -1,4 +1,5 @@
 import type { CalendarEvent } from '../../../shared/types/calendar'
+import { getSingleCompanyDomain } from '../../../shared/utils/company-domain'
 import styles from './CalendarBadge.module.css'
 
 interface CalendarBadgeProps {
@@ -29,12 +30,21 @@ export default function CalendarBadge({ event, onRecord, onPrepare, onDismiss }:
     new Date(event.endTime).getTime() >= Date.now()
 
   const attendeeNames = event.attendees.join(', ')
+  const companyDomain = getSingleCompanyDomain(event.attendeeEmails)
 
   return (
     <div
       className={`${styles.card} ${isNow ? styles.active : ''}`}
       onClick={() => onPrepare(event)}
     >
+      {companyDomain && (
+        <img
+          src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(companyDomain)}&sz=32`}
+          alt=""
+          className={styles.logo}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+      )}
       <div className={styles.row}>
         <h3 className={styles.title}>{event.title}</h3>
         <span className={styles.time}>{formatTime(event.startTime)}</span>

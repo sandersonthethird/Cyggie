@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
+import ChatInterface from '../components/chat/ChatInterface'
 import type { ContactSummary, ContactSyncResult } from '../../shared/types/contact'
 import styles from './Contacts.module.css'
 
@@ -108,8 +109,19 @@ export default function Contacts() {
     }
   }
 
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => {
-    loadContacts(query)
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    if (!query) {
+      loadContacts('')
+      return
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      loadContacts(query)
+    }, 300)
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    }
   }, [loadContacts, query])
 
   useEffect(() => {
@@ -256,6 +268,10 @@ export default function Contacts() {
         {!loading && contacts.length === 0 && query && (
           <p className={styles.noResults}>No contacts match your search.</p>
         )}
+      </div>
+
+      <div className={styles.chatSection}>
+        <ChatInterface compact />
       </div>
     </div>
   )

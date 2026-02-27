@@ -1,10 +1,22 @@
 .card {
   position: relative;
   padding: 5px 12px;
+  padding-left: 12px;
   background: transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: background 0.15s;
+}
+
+.logo {
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 
 .card:hover {

@@ -74,6 +74,7 @@ const TAGGABLE_COMPANY_TYPES: CompanyEntityType[] = ['prospect', 'vc_fund', 'cus
 const TAG_LABELS: Record<CompanyEntityType, string> = {
   prospect: 'Prospect',
   portfolio: 'Portfolio',
+  pass: 'Pass',
   vc_fund: 'VC Fund',
   customer: 'Customer',
   partner: 'Partner',
@@ -165,6 +166,7 @@ export default function MeetingDetail() {
   const [companySuggestions, setCompanySuggestions] = useState<CompanySuggestion[]>([])
   const [companyTagSelections, setCompanyTagSelections] = useState<Record<string, CompanyEntityType>>({})
   const [savingCompanyTagKey, setSavingCompanyTagKey] = useState<string | null>(null)
+  const [attendeeContactMap, setAttendeeContactMap] = useState<Record<string, string>>({})
 
   // Close share menu on click outside
   useEffect(() => {
@@ -443,6 +445,16 @@ export default function MeetingDetail() {
       })
       .catch(() => {})
 
+    // Resolve attendee emails to contact IDs for clickable chips
+    if (result.meeting.attendeeEmails && result.meeting.attendeeEmails.length > 0) {
+      window.api.invoke<Record<string, string>>(
+        IPC_CHANNELS.CONTACT_RESOLVE_EMAILS,
+        result.meeting.attendeeEmails
+      )
+        .then(setAttendeeContactMap)
+        .catch(() => {})
+    }
+
     // Hydrate chat store from persisted messages (only if store is empty for this meeting)
     if (result.meeting.chatMessages && result.meeting.chatMessages.length > 0) {
       const existing = useChatStore.getState().conversations[id]
@@ -521,6 +533,24 @@ export default function MeetingDetail() {
       setSavingCompanyTagKey(null)
     }
   }, [id])
+
+  const handleOpenCompanyDetail = useCallback(async (company: CompanySuggestion) => {
+    if (!id) return
+    try {
+      const resolved = await window.api.invoke<{ id: string }>(
+        IPC_CHANNELS.COMPANY_TAG_FROM_MEETING,
+        id,
+        {
+          canonicalName: company.name,
+          primaryDomain: company.domain || null,
+          entityType: company.entityType || 'unknown'
+        }
+      )
+      navigate(`/company/${resolved.id}`)
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to open company detail:', err)
+    }
+  }, [id, navigate])
 
   const handleNotesChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const text = e.target.value
@@ -1008,6 +1038,40 @@ export default function MeetingDetail() {
                 })}
               </div>
             )}
+            {meeting.attendees && meeting.attendees.length > 0 && (
+              <div className={styles.speakers}>
+                {meeting.attendees.map((attendee, i) => {
+                  const email = meeting.attendeeEmails?.[i]?.trim().toLowerCase() || ''
+                  const contactId = attendeeContactMap[email]
+                  return (
+                    <button
+                      key={`${attendee}-${i}`}
+                      className={styles.speakerChip}
+                      onClick={async () => {
+                        if (contactId) {
+                          navigate(`/contact/${contactId}`)
+                          return
+                        }
+                        if (!email) return
+                        try {
+                          const created = await window.api.invoke<{ id: string }>(
+                            IPC_CHANNELS.CONTACT_CREATE,
+                            { fullName: attendee, email }
+                          )
+                          setAttendeeContactMap((prev) => ({ ...prev, [email]: created.id }))
+                          navigate(`/contact/${created.id}`)
+                        } catch (err) {
+                          console.error('[MeetingDetail] Failed to create contact:', err)
+                        }
+                      }}
+                      title="View contact"
+                    >
+                      {attendee}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             {companySuggestions.length > 0 && (
               <div className={styles.companies}>
                 {companySuggestions.map((c) => {
@@ -1015,7 +1079,11 @@ export default function MeetingDetail() {
                   const selectedType = companyTagSelections[suggestionKey]
                   return (
                     <div key={c.domain || c.name} className={styles.companyChip}>
-                      <span className={styles.companyChipMain}>
+                      <button
+                        type="button"
+                        className={styles.companyChipMain}
+                        onClick={() => void handleOpenCompanyDetail(c)}
+                      >
                         {c.domain && (
                           <img
                             src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.domain)}&sz=32`}
@@ -1025,7 +1093,7 @@ export default function MeetingDetail() {
                           />
                         )}
                         {c.name}
-                      </span>
+                      </button>
                       {!selectedType && (
                         <span className={styles.companyChipActions}>
                           {TAGGABLE_COMPANY_TYPES.map((entityType) => (

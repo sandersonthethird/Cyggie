@@ -1,12 +1,17 @@
 export type CompanyEntityType =
   | 'prospect'
   | 'portfolio'
+  | 'pass'
   | 'vc_fund'
   | 'customer'
   | 'partner'
   | 'vendor'
   | 'other'
   | 'unknown'
+
+export type CompanyPriority = 'high' | 'further_work' | 'monitor'
+export type CompanyRound = 'pre_seed' | 'seed' | 'seed_extension' | 'series_a' | 'series_b'
+export type CompanyPipelineStage = 'screening' | 'diligence' | 'decision' | 'documentation' | 'pass'
 
 export interface CompanyListFilter {
   query?: string
@@ -23,6 +28,8 @@ export interface CompanySummary {
   description: string | null
   primaryDomain: string | null
   websiteUrl: string | null
+  city: string | null
+  state: string | null
   stage: string | null
   status: string
   crmProvider: string | null
@@ -35,6 +42,11 @@ export interface CompanySummary {
   emailCount: number
   noteCount: number
   lastTouchpoint: string | null
+  priority: CompanyPriority | null
+  postMoneyValuation: number | null
+  raiseSize: number | null
+  round: CompanyRound | null
+  pipelineStage: CompanyPipelineStage | null
   createdAt: string
   updatedAt: string
 }
@@ -124,8 +136,8 @@ export interface CompanyEmailIngestResult {
   linkedContactCount: number
 }
 
-export type CompanyTimelineItemType = 'meeting' | 'email' | 'note' | 'deal_event'
-export type CompanyTimelineReferenceType = 'meeting' | 'email' | 'company_note' | 'deal_stage_event'
+export type CompanyTimelineItemType = 'meeting' | 'email' | 'note'
+export type CompanyTimelineReferenceType = 'meeting' | 'email' | 'company_note'
 
 export interface CompanyTimelineItem {
   id: string

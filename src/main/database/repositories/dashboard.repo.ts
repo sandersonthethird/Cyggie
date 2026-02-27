@@ -1,12 +1,16 @@
 import { getDatabase } from '../connection'
 import * as settingsRepo from './settings.repo'
-import * as dealRepo from './deal.repo'
 import type {
+  DashboardActivityFilter,
   DashboardActivityItem,
+  DashboardActivityType,
   DashboardCalendarCompanyContext,
   DashboardData,
   DashboardStaleCompany
 } from '../../../shared/types/dashboard'
+import { DEFAULT_ACTIVITY_FILTER } from '../../../shared/types/dashboard'
+import type { PipelineSummaryItem, StalledPipelineCompany } from '../../../shared/types/pipeline'
+import type { CompanyPipelineStage } from '../../../shared/types/company'
 
 interface CalendarEventLookup {
   id: string
@@ -22,101 +26,240 @@ function parseIntSetting(key: string, fallback: number): number {
 
 export function getDashboardThresholds(): {
   staleRelationshipDays: number
-  stuckDealDays: number
+  stalledPipelineDays: number
 } {
   return {
     staleRelationshipDays: parseIntSetting('dashboardStaleRelationshipDays', 21),
-    stuckDealDays: parseIntSetting('dashboardStuckDealDays', 21)
+    stalledPipelineDays: parseIntSetting('dashboardStalledPipelineDays', 21)
+  }
+}
+
+const STAGE_LABELS: Record<CompanyPipelineStage, string> = {
+  screening: 'Screening',
+  diligence: 'Diligence',
+  decision: 'Decision',
+  documentation: 'Documentation',
+  pass: 'Pass'
+}
+
+function getPipelineStageCounts(): PipelineSummaryItem[] {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      SELECT pipeline_stage, COUNT(*) AS count
+      FROM org_companies
+      WHERE pipeline_stage IS NOT NULL
+      GROUP BY pipeline_stage
+    `)
+    .all() as Array<{ pipeline_stage: string; count: number }>
+
+  const countByStage = new Map(rows.map((r) => [r.pipeline_stage, r.count]))
+
+  const stageOrder: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
+  return stageOrder.map((stage) => ({
+    pipelineStage: stage,
+    label: STAGE_LABELS[stage],
+    count: countByStage.get(stage) || 0
+  }))
+}
+
+function listStalledPipelineCompanies(staleDays: number, limit = 20): StalledPipelineCompany[] {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      WITH meeting_stats AS (
+        SELECT l.company_id, MAX(m.date) AS last_meeting_at
+        FROM meeting_company_links l
+        JOIN meetings m ON m.id = l.meeting_id
+        GROUP BY l.company_id
+      ),
+      email_stats AS (
+        SELECT l.company_id, MAX(COALESCE(em.received_at, em.sent_at, em.created_at)) AS last_email_at
+        FROM email_company_links l
+        JOIN email_messages em ON em.id = l.message_id
+        GROUP BY l.company_id
+      ),
+      touch AS (
+        SELECT
+          c.id AS company_id,
+          c.canonical_name AS company_name,
+          c.pipeline_stage,
+          COALESCE(
+            CASE
+              WHEN ms.last_meeting_at IS NULL THEN es.last_email_at
+              WHEN es.last_email_at IS NULL THEN ms.last_meeting_at
+              WHEN ms.last_meeting_at > es.last_email_at THEN ms.last_meeting_at
+              ELSE es.last_email_at
+            END,
+            c.updated_at
+          ) AS last_touchpoint
+        FROM org_companies c
+        LEFT JOIN meeting_stats ms ON ms.company_id = c.id
+        LEFT JOIN email_stats es ON es.company_id = c.id
+        WHERE c.pipeline_stage IN ('screening', 'diligence', 'decision', 'documentation')
+      )
+      SELECT
+        company_id,
+        company_name,
+        pipeline_stage,
+        last_touchpoint,
+        CAST(julianday('now') - julianday(last_touchpoint) AS INTEGER) AS days_since_touch
+      FROM touch
+      WHERE julianday('now') - julianday(last_touchpoint) >= ?
+      ORDER BY days_since_touch DESC, company_name ASC
+      LIMIT ?
+    `)
+    .all(staleDays, limit) as Array<{
+    company_id: string
+    company_name: string
+    pipeline_stage: string
+    last_touchpoint: string | null
+    days_since_touch: number
+  }>
+
+  return rows.map((row) => ({
+    companyId: row.company_id,
+    companyName: row.company_name,
+    pipelineStage: row.pipeline_stage as CompanyPipelineStage,
+    lastTouchpoint: row.last_touchpoint,
+    daysSinceTouch: row.days_since_touch || 0
+  }))
+}
+
+const ACTIVITY_SQL_MEETING = `
+  SELECT
+    'meeting:' || m.id AS id,
+    'meeting' AS type,
+    m.title AS title,
+    m.status AS subtitle,
+    m.date AS occurred_at,
+    m.id AS reference_id,
+    'meeting' AS reference_type,
+    (
+      SELECT l.company_id
+      FROM meeting_company_links l
+      WHERE l.meeting_id = m.id
+      ORDER BY l.confidence DESC, datetime(l.created_at) ASC
+      LIMIT 1
+    ) AS company_id
+  FROM meetings m
+`
+
+const ACTIVITY_SQL_EMAIL_ALL = `
+  SELECT
+    'email:' || em.id AS id,
+    'email' AS type,
+    COALESCE(NULLIF(TRIM(em.subject), ''), '(no subject)') AS title,
+    em.from_email AS subtitle,
+    COALESCE(em.received_at, em.sent_at, em.created_at) AS occurred_at,
+    em.id AS reference_id,
+    'email' AS reference_type,
+    (
+      SELECT l.company_id
+      FROM email_company_links l
+      WHERE l.message_id = em.id
+      ORDER BY l.confidence DESC, datetime(l.created_at) ASC
+      LIMIT 1
+    ) AS company_id
+  FROM email_messages em
+`
+
+const ACTIVITY_SQL_EMAIL_PIPELINE_PORTFOLIO = `
+  SELECT
+    'email:' || em.id AS id,
+    'email' AS type,
+    COALESCE(NULLIF(TRIM(em.subject), ''), '(no subject)') AS title,
+    em.from_email AS subtitle,
+    COALESCE(em.received_at, em.sent_at, em.created_at) AS occurred_at,
+    em.id AS reference_id,
+    'email' AS reference_type,
+    (
+      SELECT l.company_id
+      FROM email_company_links l
+      WHERE l.message_id = em.id
+      ORDER BY l.confidence DESC, datetime(l.created_at) ASC
+      LIMIT 1
+    ) AS company_id
+  FROM email_messages em
+  WHERE EXISTS (
+    SELECT 1
+    FROM email_company_links ecl
+    JOIN org_companies oc ON oc.id = ecl.company_id
+    WHERE ecl.message_id = em.id
+      AND (
+        oc.entity_type = 'portfolio'
+        OR oc.pipeline_stage IS NOT NULL
+      )
+  )
+`
+
+const ACTIVITY_SQL_NOTE = `
+  SELECT
+    'note:' || n.id AS id,
+    'note' AS type,
+    COALESCE(NULLIF(TRIM(n.title), ''), 'Note') AS title,
+    substr(replace(replace(trim(n.content), char(10), ' '), char(13), ' '), 1, 200) AS subtitle,
+    n.updated_at AS occurred_at,
+    n.id AS reference_id,
+    'company_note' AS reference_type,
+    n.company_id AS company_id
+  FROM company_notes n
+`
+
+function getActivityFilter(): DashboardActivityFilter {
+  const raw = settingsRepo.getSetting('dashboardActivityFilter')
+  if (!raw) return DEFAULT_ACTIVITY_FILTER
+  try {
+    const parsed = JSON.parse(raw) as Partial<DashboardActivityFilter>
+    const validTypes: DashboardActivityType[] = ['meeting', 'email', 'note']
+    const types = Array.isArray(parsed.types)
+      ? parsed.types.filter((t) => validTypes.includes(t as DashboardActivityType))
+      : DEFAULT_ACTIVITY_FILTER.types
+    const emailCompanyFilter =
+      parsed.emailCompanyFilter === 'all' || parsed.emailCompanyFilter === 'pipeline_portfolio'
+        ? parsed.emailCompanyFilter
+        : DEFAULT_ACTIVITY_FILTER.emailCompanyFilter
+    return { types: types as DashboardActivityType[], emailCompanyFilter }
+  } catch {
+    return DEFAULT_ACTIVITY_FILTER
   }
 }
 
 function listRecentActivity(limit = 20): DashboardActivityItem[] {
   const db = getDatabase()
-  const rows = db
-    .prepare(`
-      SELECT
-        activity.id,
-        activity.type,
-        activity.title,
-        activity.subtitle,
-        activity.occurred_at,
-        activity.reference_id,
-        activity.reference_type,
-        activity.company_id,
-        c.canonical_name AS company_name
-      FROM (
-        SELECT
-          'meeting:' || m.id AS id,
-          'meeting' AS type,
-          m.title AS title,
-          m.status AS subtitle,
-          m.date AS occurred_at,
-          m.id AS reference_id,
-          'meeting' AS reference_type,
-          (
-            SELECT l.company_id
-            FROM meeting_company_links l
-            WHERE l.meeting_id = m.id
-            ORDER BY l.confidence DESC, datetime(l.created_at) ASC
-            LIMIT 1
-          ) AS company_id
-        FROM meetings m
+  const filter = getActivityFilter()
+  const unions: string[] = []
 
-        UNION ALL
+  if (filter.types.includes('meeting')) unions.push(ACTIVITY_SQL_MEETING)
+  if (filter.types.includes('email')) {
+    unions.push(
+      filter.emailCompanyFilter === 'pipeline_portfolio'
+        ? ACTIVITY_SQL_EMAIL_PIPELINE_PORTFOLIO
+        : ACTIVITY_SQL_EMAIL_ALL
+    )
+  }
+  if (filter.types.includes('note')) unions.push(ACTIVITY_SQL_NOTE)
 
-        SELECT
-          'email:' || em.id AS id,
-          'email' AS type,
-          COALESCE(NULLIF(TRIM(em.subject), ''), '(no subject)') AS title,
-          em.from_email AS subtitle,
-          COALESCE(em.received_at, em.sent_at, em.created_at) AS occurred_at,
-          em.id AS reference_id,
-          'email' AS reference_type,
-          (
-            SELECT l.company_id
-            FROM email_company_links l
-            WHERE l.message_id = em.id
-            ORDER BY l.confidence DESC, datetime(l.created_at) ASC
-            LIMIT 1
-          ) AS company_id
-        FROM email_messages em
+  if (unions.length === 0) return []
 
-        UNION ALL
+  const sql = `
+    SELECT
+      activity.id,
+      activity.type,
+      activity.title,
+      activity.subtitle,
+      activity.occurred_at,
+      activity.reference_id,
+      activity.reference_type,
+      activity.company_id,
+      c.canonical_name AS company_name
+    FROM (${unions.join(' UNION ALL ')}) activity
+    LEFT JOIN org_companies c ON c.id = activity.company_id
+    ORDER BY datetime(activity.occurred_at) DESC
+    LIMIT ?
+  `
 
-        SELECT
-          'note:' || n.id AS id,
-          'note' AS type,
-          COALESCE(NULLIF(TRIM(n.title), ''), 'Note') AS title,
-          substr(replace(replace(trim(n.content), char(10), ' '), char(13), ' '), 1, 200) AS subtitle,
-          n.updated_at AS occurred_at,
-          n.id AS reference_id,
-          'company_note' AS reference_type,
-          n.company_id AS company_id
-        FROM company_notes n
-
-        UNION ALL
-
-        SELECT
-          'deal-event:' || dse.id AS id,
-          'deal_event' AS type,
-          CASE
-            WHEN dse.from_stage IS NULL OR TRIM(dse.from_stage) = ''
-              THEN 'Moved to ' || dse.to_stage
-            ELSE dse.from_stage || ' -> ' || dse.to_stage
-          END AS title,
-          dse.note AS subtitle,
-          dse.event_time AS occurred_at,
-          dse.id AS reference_id,
-          'deal_stage_event' AS reference_type,
-          d.company_id AS company_id
-        FROM deal_stage_events dse
-        JOIN deals d ON d.id = dse.deal_id
-      ) activity
-      LEFT JOIN org_companies c ON c.id = activity.company_id
-      ORDER BY datetime(activity.occurred_at) DESC
-      LIMIT ?
-    `)
-    .all(limit) as Array<{
+  const rows = db.prepare(sql).all(limit) as Array<{
     id: string
     type: DashboardActivityItem['type']
     title: string
@@ -209,16 +352,17 @@ function listStaleCompanies(staleDays: number, limit = 20): DashboardStaleCompan
 }
 
 export function getDashboardData(): DashboardData {
-  const { staleRelationshipDays, stuckDealDays } = getDashboardThresholds()
+  const { staleRelationshipDays, stalledPipelineDays } = getDashboardThresholds()
   return {
-    pipelineSummary: dealRepo.getPipelineSummary(),
+    pipelineSummary: getPipelineStageCounts(),
     recentActivity: listRecentActivity(20),
     needsAttention: {
       staleCompanies: listStaleCompanies(staleRelationshipDays, 20),
-      stuckDeals: dealRepo.listStuckDeals(stuckDealDays)
+      stalledCompanies: listStalledPipelineCompanies(stalledPipelineDays)
     },
     staleRelationshipDays,
-    stuckDealDays
+    stalledPipelineDays,
+    activityFilter: getActivityFilter()
   }
 }
 
@@ -309,6 +453,7 @@ export function enrichCalendarEventsWithCompanyContext(
         c.id,
         c.canonical_name,
         c.entity_type,
+        c.pipeline_stage,
         COALESCE(ms.meeting_count, 0) AS meeting_count,
         COALESCE(es.email_count, 0) AS email_count,
         COALESCE(
@@ -319,15 +464,7 @@ export function enrichCalendarEventsWithCompanyContext(
             ELSE es.last_email_at
           END,
           c.updated_at
-        ) AS last_touchpoint,
-        (
-          SELECT COALESCE(ps.label, d.stage)
-          FROM deals d
-          LEFT JOIN pipeline_stages ps ON ps.id = d.stage_id
-          WHERE d.company_id = c.id
-          ORDER BY datetime(d.updated_at) DESC
-          LIMIT 1
-        ) AS active_deal_stage
+        ) AS last_touchpoint
       FROM org_companies c
       LEFT JOIN meeting_stats ms ON ms.company_id = c.id
       LEFT JOIN email_stats es ON es.company_id = c.id
@@ -337,10 +474,10 @@ export function enrichCalendarEventsWithCompanyContext(
     id: string
     canonical_name: string
     entity_type: string
+    pipeline_stage: string | null
     meeting_count: number
     email_count: number
     last_touchpoint: string | null
-    active_deal_stage: string | null
   }>
   const companyMap = new Map(companyRows.map((row) => [row.id, row]))
 
@@ -356,7 +493,7 @@ export function enrichCalendarEventsWithCompanyContext(
       lastTouchpoint: company.last_touchpoint,
       meetingCount: company.meeting_count || 0,
       emailCount: company.email_count || 0,
-      activeDealStage: company.active_deal_stage
+      pipelineStage: company.pipeline_stage
     })
   })
 

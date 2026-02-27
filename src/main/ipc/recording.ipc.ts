@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { AudioCapture } from '../audio/capture'
+import { AudioStreamManager } from '../audio/stream-manager'
 import { DeepgramStreamingClient } from '../deepgram/client'
 import { TranscriptAssembler } from '../deepgram/transcript-assembler'
 import * as meetingRepo from '../database/repositories/meeting.repo'
@@ -30,6 +31,11 @@ let autoStop: RecordingAutoStop | null = null
 let currentMeetingId: string | null = null
 let recordingStartTime: number | null = null
 let isPaused = false
+let monoMode = false
+let switchingToMono = false
+let deepgramApiKey: string | null = null
+let deepgramMaxSpeakers: number | undefined
+let deepgramKeytermsCache: string[] = []
 let calendarSelfName: string | null = null
 let calendarAttendees: string[] = []
 let calendarAttendeeEmails: string[] = []
@@ -80,6 +86,60 @@ function buildDeepgramKeyterms(meetingTitle: string | undefined, attendees: stri
   }
 
   return [...terms].slice(0, 100)
+}
+
+function wireDeepgramEvents(client: DeepgramStreamingClient): void {
+  client.on('transcript', (result: TranscriptResult) => {
+    if (DEBUG_TRANSCRIPTION) {
+      console.log('[Recording] Deepgram transcript received:', {
+        text: result.text,
+        isFinal: result.isFinal,
+        speechFinal: result.speechFinal,
+        fromFinalize: result.fromFinalize,
+        wordCount: result.words?.length || 0
+      })
+    }
+    transcriptAssembler?.addResult(result)
+
+    const interim = transcriptAssembler?.getInterimSegment()
+    const finalized = transcriptAssembler?.getFinalizedSegments()
+    const speakerCount = transcriptAssembler?.getSpeakerCount() || 0
+
+    if (result.isFinal && finalized && finalized.length > 0) {
+      autoStop?.onSpeechDetected()
+      const lastSegment = finalized[finalized.length - 1]
+      sendToRenderer(IPC_CHANNELS.RECORDING_TRANSCRIPT_UPDATE, { ...lastSegment, isFinal: true })
+    } else if (interim) {
+      autoStop?.onSpeechDetected()
+      sendToRenderer(IPC_CHANNELS.RECORDING_TRANSCRIPT_UPDATE, { ...interim, isFinal: false })
+    }
+
+    sendToRenderer(IPC_CHANNELS.RECORDING_STATUS, {
+      isRecording: true,
+      isPaused,
+      meetingId: currentMeetingId,
+      startTime: recordingStartTime,
+      durationSeconds: Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000),
+      speakerCount
+    })
+  })
+
+  client.on('error', (error: unknown) => {
+    console.error('[Recording] Deepgram error:', error)
+    sendToRenderer(IPC_CHANNELS.RECORDING_ERROR, String(error))
+  })
+
+  client.on('connected', () => {
+    console.log('[Recording] Deepgram connected successfully')
+    sendToRenderer(IPC_CHANNELS.RECORDING_STATUS, {
+      isRecording: true,
+      isPaused: false,
+      meetingId: currentMeetingId,
+      startTime: recordingStartTime,
+      durationSeconds: 0,
+      speakerCount: 0
+    })
+  })
 }
 
 export function registerRecordingHandlers(): void {
@@ -235,6 +295,11 @@ export function registerRecordingHandlers(): void {
       meetingForKeywords?.attendees || calendarAttendees
     )
 
+    // Store config for potential mono reconnection later
+    deepgramApiKey = deepgramKey
+    deepgramMaxSpeakers = maxSpeakers
+    deepgramKeytermsCache = deepgramKeyterms
+
     // Create Deepgram client with speaker count constraint and multichannel audio
     deepgramClient = new DeepgramStreamingClient({
       apiKey: deepgramKey,
@@ -243,69 +308,19 @@ export function registerRecordingHandlers(): void {
       keyterms: deepgramKeyterms
     })
 
-    // Wire audio -> Deepgram
+    // Wire audio -> Deepgram (stereo-to-mono conversion when monoMode is active)
     audioCapture.on('audio-chunk', (chunk: Buffer) => {
       if (DEBUG_TRANSCRIPTION) {
         console.log('[Recording] Audio chunk received:', chunk.length, 'bytes')
       }
-      deepgramClient?.sendAudio(chunk)
-    })
-
-    // Wire Deepgram -> transcript assembler -> renderer
-    deepgramClient.on('transcript', (result: TranscriptResult) => {
-      if (DEBUG_TRANSCRIPTION) {
-        console.log('[Recording] Deepgram transcript received:', {
-          text: result.text,
-          isFinal: result.isFinal,
-          speechFinal: result.speechFinal,
-          fromFinalize: result.fromFinalize,
-          wordCount: result.words?.length || 0
-        })
+      if (monoMode) {
+        deepgramClient?.sendAudio(AudioStreamManager.stereoToMono(chunk))
+      } else {
+        deepgramClient?.sendAudio(chunk)
       }
-      transcriptAssembler?.addResult(result)
-
-      const interim = transcriptAssembler?.getInterimSegment()
-      const finalized = transcriptAssembler?.getFinalizedSegments()
-      const speakerCount = transcriptAssembler?.getSpeakerCount() || 0
-
-      if (result.isFinal && finalized && finalized.length > 0) {
-        autoStop?.onSpeechDetected()
-        const lastSegment = finalized[finalized.length - 1]
-        sendToRenderer(IPC_CHANNELS.RECORDING_TRANSCRIPT_UPDATE, { ...lastSegment, isFinal: true })
-      } else if (interim) {
-        // Also update speech detection for interim results - this prevents
-        // false silence detection during continuous speech
-        autoStop?.onSpeechDetected()
-        sendToRenderer(IPC_CHANNELS.RECORDING_TRANSCRIPT_UPDATE, { ...interim, isFinal: false })
-      }
-
-      // Send status update
-      sendToRenderer(IPC_CHANNELS.RECORDING_STATUS, {
-        isRecording: true,
-        isPaused,
-        meetingId: currentMeetingId,
-        startTime: recordingStartTime,
-        durationSeconds: Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000),
-        speakerCount
-      })
     })
 
-    deepgramClient.on('error', (error: unknown) => {
-      console.error('[Recording] Deepgram error:', error)
-      sendToRenderer(IPC_CHANNELS.RECORDING_ERROR, String(error))
-    })
-
-    deepgramClient.on('connected', () => {
-      console.log('[Recording] Deepgram connected successfully')
-      sendToRenderer(IPC_CHANNELS.RECORDING_STATUS, {
-        isRecording: true,
-        isPaused: false,
-        meetingId: currentMeetingId,
-        startTime: recordingStartTime,
-        durationSeconds: 0,
-        speakerCount: 0
-      })
-    })
+    wireDeepgramEvents(deepgramClient)
 
     // Start everything
     console.log('[Recording] Starting Deepgram connection...')
@@ -336,15 +351,34 @@ export function registerRecordingHandlers(): void {
     if (transcriptAssembler && !hasSystemAudio) {
       transcriptAssembler.setSystemAudioUnavailable()
     }
-    // Warn the user if audio was lost mid-recording
-    if (!hasSystemAudio && currentMeetingId) {
-      const win = BrowserWindow.getAllWindows()[0]
-      if (win) {
-        win.webContents.send(
-          IPC_CHANNELS.RECORDING_ERROR,
-          'System audio capture was lost — transcription may be incomplete. Try stopping and restarting the recording.'
-        )
-      }
+    // Reconnect Deepgram in mono mode for better diarization on a single mic channel
+    if (!hasSystemAudio && currentMeetingId && deepgramClient && deepgramApiKey && !switchingToMono && !monoMode) {
+      switchingToMono = true
+      console.log('[Recording] Switching Deepgram to mono mode for diarization')
+
+      const oldClient = deepgramClient
+      oldClient.close().catch((err) => {
+        console.warn('[Recording] Error closing stereo Deepgram client:', err)
+      })
+
+      const newClient = new DeepgramStreamingClient({
+        apiKey: deepgramApiKey,
+        maxSpeakers: deepgramMaxSpeakers,
+        channels: 1,
+        keyterms: deepgramKeytermsCache
+      })
+      wireDeepgramEvents(newClient)
+      deepgramClient = newClient
+      monoMode = true
+
+      newClient.connect().then(() => {
+        console.log('[Recording] Deepgram reconnected in mono mode')
+      }).catch((err) => {
+        console.error('[Recording] Failed to reconnect Deepgram in mono mode:', err)
+        sendToRenderer(IPC_CHANNELS.RECORDING_ERROR, 'Failed to reconnect transcription in mono mode.')
+      }).finally(() => {
+        switchingToMono = false
+      })
     }
   })
 
@@ -502,6 +536,11 @@ export function registerRecordingHandlers(): void {
     currentMeetingId = null
     recordingStartTime = null
     isPaused = false
+    monoMode = false
+    switchingToMono = false
+    deepgramApiKey = null
+    deepgramMaxSpeakers = undefined
+    deepgramKeytermsCache = []
     calendarSelfName = null
     calendarAttendees = []
     calendarAttendeeEmails = []

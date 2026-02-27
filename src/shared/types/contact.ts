@@ -1,3 +1,5 @@
+export type ContactType = 'investor' | 'founder' | 'operator'
+
 export interface ContactSummary {
   id: string
   fullName: string
@@ -7,6 +9,7 @@ export interface ContactSummary {
   email: string | null
   primaryCompanyId: string | null
   title: string | null
+  contactType: ContactType | null
   linkedinUrl: string | null
   crmContactId: string | null
   crmProvider: string | null

@@ -11,7 +11,7 @@ export function registerDashboardHandlers(): void {
     logAppEvent(userId, 'dashboard.loaded', {
       recentActivityCount: data.recentActivity.length,
       staleCompaniesCount: data.needsAttention.staleCompanies.length,
-      stuckDealsCount: data.needsAttention.stuckDeals.length
+      stalledCompaniesCount: data.needsAttention.stalledCompanies.length
     })
     return data
   })

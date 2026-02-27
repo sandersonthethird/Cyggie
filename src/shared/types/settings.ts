@@ -11,6 +11,7 @@ export interface AppSettings {
   autoRecord: boolean
   showLiveTranscript: boolean
   companyDriveRootFolder: string
+  companyLocalFilesRoot: string
   theme: 'system' | 'light' | 'dark'
 }
 
@@ -25,5 +26,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoRecord: false,
   showLiveTranscript: true,
   companyDriveRootFolder: '',
+  companyLocalFilesRoot: '',
   theme: 'system'
 }

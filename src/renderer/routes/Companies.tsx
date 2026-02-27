@@ -1,19 +1,60 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
-import type { CompanyListFilter, CompanySummary } from '../../shared/types/company'
+import ChatInterface from '../components/chat/ChatInterface'
+import type {
+  CompanyEntityType,
+  CompanyListFilter,
+  CompanyPipelineStage,
+  CompanyPriority,
+  CompanyRound,
+  CompanySummary
+} from '../../shared/types/company'
 import styles from './Companies.module.css'
 
 type CompanyScope = 'prospects' | 'all' | 'vc_fund' | 'unknown'
 
 const SCOPE_LABELS: Record<CompanyScope, string> = {
-  prospects: 'Prospects',
   all: 'All Orgs',
+  prospects: 'Prospects',
   vc_fund: 'VC Funds',
   unknown: 'Unknown'
 }
+
+const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
+  { value: 'prospect', label: 'Prospect' },
+  { value: 'portfolio', label: 'Portfolio' },
+  { value: 'pass', label: 'Pass' },
+  { value: 'vc_fund', label: 'VC Fund' },
+  { value: 'customer', label: 'Customer' },
+  { value: 'partner', label: 'Partner' },
+  { value: 'vendor', label: 'Vendor' },
+  { value: 'other', label: 'Other' }
+]
+
+const STAGES: { value: CompanyPipelineStage; label: string }[] = [
+  { value: 'screening', label: 'Screening' },
+  { value: 'diligence', label: 'Diligence' },
+  { value: 'decision', label: 'Decision' },
+  { value: 'documentation', label: 'Documentation' },
+  { value: 'pass', label: 'Pass' }
+]
+
+const PRIORITIES: { value: CompanyPriority; label: string }[] = [
+  { value: 'high', label: 'High' },
+  { value: 'further_work', label: 'Further Work' },
+  { value: 'monitor', label: 'Monitor' }
+]
+
+const ROUNDS: { value: CompanyRound; label: string }[] = [
+  { value: 'pre_seed', label: 'Pre-Seed' },
+  { value: 'seed', label: 'Seed' },
+  { value: 'seed_extension', label: 'Seed Extension' },
+  { value: 'series_a', label: 'Series A' },
+  { value: 'series_b', label: 'Series B' }
+]
 
 function formatLastTouch(value: string | null): string {
   if (!value) return ''
@@ -61,10 +102,18 @@ export default function Companies() {
   const [companies, setCompanies] = useState<CompanySummary[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [scope, setScope] = useState<CompanyScope>('prospects')
+  const [scope, setScope] = useState<CompanyScope>('all')
   const [newName, setNewName] = useState('')
   const [newDescription, setNewDescription] = useState('')
   const [newDomain, setNewDomain] = useState('')
+  const [newCity, setNewCity] = useState('')
+  const [newState, setNewState] = useState('')
+  const [newEntityType, setNewEntityType] = useState<CompanyEntityType>('prospect')
+  const [newPipelineStage, setNewPipelineStage] = useState<CompanyPipelineStage | ''>('')
+  const [newPriority, setNewPriority] = useState<CompanyPriority | ''>('')
+  const [newRound, setNewRound] = useState<CompanyRound | ''>('')
+  const [newPostMoney, setNewPostMoney] = useState('')
+  const [newRaiseSize, setNewRaiseSize] = useState('')
   const query = (searchParams.get('q') || '').trim()
   const showCreate = searchParams.get('new') === '1'
 
@@ -97,9 +146,34 @@ export default function Companies() {
     }
   }, [companiesEnabled, query, scope])
 
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => {
-    fetchCompanies()
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    if (!query) {
+      fetchCompanies()
+      return
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      fetchCompanies()
+    }, 300)
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    }
   }, [fetchCompanies])
+
+  const resetNewForm = useCallback(() => {
+    setNewName('')
+    setNewDescription('')
+    setNewDomain('')
+    setNewCity('')
+    setNewState('')
+    setNewEntityType('prospect')
+    setNewPipelineStage('')
+    setNewPriority('')
+    setNewRound('')
+    setNewPostMoney('')
+    setNewRaiseSize('')
+  }, [])
 
   const handleCreateCompany = async () => {
     if (!newName.trim()) return
@@ -110,13 +184,22 @@ export default function Companies() {
           canonicalName: newName.trim(),
           description: newDescription.trim() || null,
           primaryDomain: newDomain.trim() || null,
-          entityType: 'prospect'
+          entityType: newEntityType
         }
       )
+      const updates: Record<string, unknown> = {}
+      if (newCity.trim()) updates.city = newCity.trim()
+      if (newState.trim()) updates.state = newState.trim()
+      if (newPipelineStage) updates.pipelineStage = newPipelineStage
+      if (newPriority) updates.priority = newPriority
+      if (newRound) updates.round = newRound
+      if (newPostMoney.trim()) updates.postMoneyValuation = Number(newPostMoney)
+      if (newRaiseSize.trim()) updates.raiseSize = Number(newRaiseSize)
+      if (Object.keys(updates).length > 0) {
+        await window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, created.id, updates)
+      }
       closeCreateForm()
-      setNewName('')
-      setNewDescription('')
-      setNewDomain('')
+      resetNewForm()
       await fetchCompanies()
       navigate(`/company/${created.id}`)
     } catch (err) {
@@ -151,10 +234,64 @@ export default function Companies() {
 
       {showCreate && (
         <div className={styles.createCard}>
-          <input className={styles.input} placeholder="Company name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-          <input className={styles.input} placeholder="Domain (optional)" value={newDomain} onChange={(e) => setNewDomain(e.target.value)} />
-          <textarea className={styles.textarea} placeholder="Description (optional)" value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
-          <button className={styles.createBtn} onClick={handleCreateCompany}>Create</button>
+          <div className={styles.createFormGrid}>
+            <div className={styles.createFieldFull}>
+              <label className={styles.createLabel}>Company Name</label>
+              <input className={styles.input} value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus />
+            </div>
+            <div>
+              <label className={styles.createLabel}>Domain</label>
+              <input className={styles.input} placeholder="e.g. acme.com" value={newDomain} onChange={(e) => setNewDomain(e.target.value)} />
+            </div>
+            <div>
+              <label className={styles.createLabel}>City</label>
+              <input className={styles.input} value={newCity} onChange={(e) => setNewCity(e.target.value)} />
+            </div>
+            <div>
+              <label className={styles.createLabel}>State</label>
+              <input className={styles.input} placeholder="e.g. CA" value={newState} onChange={(e) => setNewState(e.target.value)} />
+            </div>
+            <div className={styles.createFieldFull}>
+              <label className={styles.createLabel}>Description</label>
+              <textarea className={styles.textarea} value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
+            </div>
+            <div>
+              <label className={styles.createLabel}>Entity Type</label>
+              <select className={styles.createSelect} value={newEntityType} onChange={(e) => setNewEntityType(e.target.value as CompanyEntityType)}>
+                {ENTITY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={styles.createLabel}>Pipeline Stage</label>
+              <select className={styles.createSelect} value={newPipelineStage} onChange={(e) => setNewPipelineStage(e.target.value as CompanyPipelineStage | '')}>
+                <option value="">None</option>
+                {STAGES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={styles.createLabel}>Priority</label>
+              <select className={styles.createSelect} value={newPriority} onChange={(e) => setNewPriority(e.target.value as CompanyPriority | '')}>
+                <option value="">None</option>
+                {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={styles.createLabel}>Round</label>
+              <select className={styles.createSelect} value={newRound} onChange={(e) => setNewRound(e.target.value as CompanyRound | '')}>
+                <option value="">None</option>
+                {ROUNDS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={styles.createLabel}>Post Money ($M)</label>
+              <input className={styles.input} type="number" step="0.1" value={newPostMoney} onChange={(e) => setNewPostMoney(e.target.value)} />
+            </div>
+            <div>
+              <label className={styles.createLabel}>Raise Size ($M)</label>
+              <input className={styles.input} type="number" step="0.1" value={newRaiseSize} onChange={(e) => setNewRaiseSize(e.target.value)} />
+            </div>
+          </div>
+          <button className={styles.createBtn} onClick={handleCreateCompany} disabled={!newName.trim()}>Create</button>
         </div>
       )}
 
@@ -226,6 +363,10 @@ export default function Companies() {
             )}
           </>
         )}
+      </div>
+
+      <div className={styles.chatSection}>
+        <ChatInterface compact />
       </div>
     </div>
   )

@@ -26,6 +26,10 @@ import { runContactNamePartsMigration } from './migrations/023-contact-name-part
 import { runDataIntegrityMigration } from './migrations/024-data-integrity'
 import { runAuthFoundationMigration } from './migrations/025-auth-foundation'
 import { runPipelineStagesMigration } from './migrations/026-pipeline-stages'
+import { runContactTypeMigration } from './migrations/027-contact-type'
+import { runCompanyLocationMigration } from './migrations/028-company-location'
+import { runPipelineCompanyFieldsMigration } from './migrations/029-pipeline-company-fields'
+import { runPerformanceIndexesMigration } from './migrations/030-performance-indexes'
 
 let db: Database.Database | null = null
 
@@ -60,6 +64,10 @@ export function getDatabase(): Database.Database {
     runDataIntegrityMigration(db)
     runAuthFoundationMigration(db)
     runPipelineStagesMigration(db)
+    runContactTypeMigration(db)
+    runCompanyLocationMigration(db)
+    runPipelineCompanyFieldsMigration(db)
+    runPerformanceIndexesMigration(db)
   }
   return db
 }

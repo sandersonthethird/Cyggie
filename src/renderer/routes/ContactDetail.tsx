@@ -8,7 +8,8 @@ import type {
   ContactEmailIngestResult,
   ContactEmailRef,
   ContactMeetingRef,
-  ContactSummary
+  ContactSummary,
+  ContactType
 } from '../../shared/types/contact'
 import type { CompanyDetail as CompanyDetailType } from '../../shared/types/company'
 import type { Meeting } from '../../shared/types/meeting'
@@ -217,14 +218,15 @@ export default function ContactDetail() {
   const [ingestingEmails, setIngestingEmails] = useState(false)
   const [emailIngestSummary, setEmailIngestSummary] = useState<string | null>(null)
   const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null)
-  const [companyNameInput, setCompanyNameInput] = useState('')
-  const [savingCompany, setSavingCompany] = useState(false)
   const [newContactEmail, setNewContactEmail] = useState('')
   const [addingContactEmail, setAddingContactEmail] = useState(false)
   const [nameUpdateDialog, setNameUpdateDialog] = useState<{ currentName: string; newName: string } | null>(null)
   const [editingContactName, setEditingContactName] = useState(false)
   const [firstNameDraft, setFirstNameDraft] = useState('')
   const [lastNameDraft, setLastNameDraft] = useState('')
+  const [titleDraft, setTitleDraft] = useState('')
+  const [contactTypeDraft, setContactTypeDraft] = useState<ContactType | ''>('')
+  const [linkedinUrlDraft, setLinkedinUrlDraft] = useState('')
   const [savingContactName, setSavingContactName] = useState(false)
   const firstNameInputRef = useRef<HTMLInputElement>(null)
 
@@ -235,8 +237,8 @@ export default function ContactDetail() {
 
   const loadContactFallback = useCallback(async (): Promise<ContactDetailType | null> => {
     const [contacts, allMeetings] = await Promise.all([
-      window.api.invoke<ContactSummary[]>(IPC_CHANNELS.CONTACT_LIST, { limit: 5000 }),
-      window.api.invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, { limit: 5000 })
+      window.api.invoke<ContactSummary[]>(IPC_CHANNELS.CONTACT_LIST, { limit: 100 }),
+      window.api.invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, { limit: 100 })
     ])
     const summary = contacts.find((item) => item.id === contactId)
     if (!summary) return null
@@ -375,10 +377,6 @@ export default function ContactDetail() {
   }, [loadContact])
 
   useEffect(() => {
-    setCompanyNameInput(contact?.primaryCompany?.canonicalName || '')
-  }, [contact?.id, contact?.primaryCompany?.canonicalName])
-
-  useEffect(() => {
     if (!contact || editingContactName) return
     const parsed = splitNameForEditor(contact.fullName)
     setFirstNameDraft((contact.firstName || '').trim() || parsed.firstName)
@@ -394,6 +392,9 @@ export default function ContactDetail() {
     setEditingContactName(false)
     setFirstNameDraft('')
     setLastNameDraft('')
+    setTitleDraft('')
+    setContactTypeDraft('')
+    setLinkedinUrlDraft('')
     setSavingContactName(false)
   }, [contactId])
 
@@ -436,32 +437,6 @@ export default function ContactDetail() {
     }
   }, [contactId, loadEmails, promptForContactNameUpdate])
 
-  const handleSaveCompany = useCallback(async () => {
-    if (!contactId) return
-    const nextCompanyName = companyNameInput.trim()
-    if (!nextCompanyName) {
-      setError('Company name is required')
-      return
-    }
-
-    setSavingCompany(true)
-    setError(null)
-    try {
-      const updated = await window.api.invoke<ContactDetailType>(
-        IPC_CHANNELS.CONTACT_SET_COMPANY,
-        contactId,
-        nextCompanyName
-      )
-      setContact(updated)
-      setMeetings(updated.meetings || [])
-      setCompanyNameInput(updated.primaryCompany?.canonicalName || nextCompanyName)
-    } catch (err) {
-      setError(toDisplayError(err))
-    } finally {
-      setSavingCompany(false)
-    }
-  }, [companyNameInput, contactId])
-
   const handleOpenWebsite = useCallback(async (url: string) => {
     try {
       await window.api.invoke<boolean>(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, url)
@@ -495,6 +470,9 @@ export default function ContactDetail() {
     const parsed = splitNameForEditor(contact.fullName)
     setFirstNameDraft((contact.firstName || '').trim() || parsed.firstName)
     setLastNameDraft((contact.lastName || '').trim() || parsed.lastName)
+    setTitleDraft(contact.title || '')
+    setContactTypeDraft(contact.contactType || '')
+    setLinkedinUrlDraft(contact.linkedinUrl || '')
     setEditingContactName(true)
     setTimeout(() => {
       const input = firstNameInputRef.current
@@ -509,9 +487,15 @@ export default function ContactDetail() {
       const parsed = splitNameForEditor(contact.fullName)
       setFirstNameDraft((contact.firstName || '').trim() || parsed.firstName)
       setLastNameDraft((contact.lastName || '').trim() || parsed.lastName)
+      setTitleDraft(contact.title || '')
+      setContactTypeDraft(contact.contactType || '')
+      setLinkedinUrlDraft(contact.linkedinUrl || '')
     } else {
       setFirstNameDraft('')
       setLastNameDraft('')
+      setTitleDraft('')
+      setContactTypeDraft('')
+      setLinkedinUrlDraft('')
     }
     setEditingContactName(false)
   }, [contact])
@@ -526,52 +510,29 @@ export default function ContactDetail() {
       cancelContactNameEdit()
       return
     }
-    const currentFirstName = (contact.firstName || '').trim()
-    const currentLastName = (contact.lastName || '').trim()
-    const currentName = contact.fullName.trim()
 
-    if (
-      nextName === currentName
-      && nextFirstName === currentFirstName
-      && nextLastName === currentLastName
-    ) {
-      setEditingContactName(false)
-      return
-    }
-
-    const targetEmail = normalizeEmail(contact.email)
-      || (Array.isArray(contact.emails)
-        ? contact.emails.map((value) => normalizeEmail(value)).find((value) => Boolean(value))
-        : '')
-      || ''
-    if (!targetEmail) {
-      setError('Cannot rename contact without an email address.')
-      cancelContactNameEdit()
-      return
-    }
+    const nextTitle = titleDraft.trim() || null
+    const nextContactType = (contactTypeDraft || null) as ContactType | null
+    const nextLinkedinUrl = linkedinUrlDraft.trim() || null
 
     setSavingContactName(true)
     setError(null)
     try {
-      const updated = await window.api.invoke<ContactSummary>(IPC_CHANNELS.CONTACT_CREATE, {
-        fullName: nextName,
-        firstName: nextFirstName || null,
-        lastName: nextLastName || null,
-        email: targetEmail,
-        title: contact.title
-      })
-
-      setContact((prev) => {
-        if (!prev) return prev
-        return {
-          ...prev,
-          fullName: updated.fullName,
-          firstName: updated.firstName,
-          lastName: updated.lastName,
-          normalizedName: updated.normalizedName,
-          updatedAt: updated.updatedAt
+      const updated = await window.api.invoke<ContactDetailType>(
+        IPC_CHANNELS.CONTACT_UPDATE,
+        contact.id,
+        {
+          fullName: nextName,
+          firstName: nextFirstName || null,
+          lastName: nextLastName || null,
+          title: nextTitle,
+          contactType: nextContactType,
+          linkedinUrl: nextLinkedinUrl
         }
-      })
+      )
+
+      setContact(updated)
+      setMeetings(updated.meetings || [])
       setFirstNameDraft(updated.firstName || '')
       setLastNameDraft(updated.lastName || '')
       setEditingContactName(false)
@@ -580,7 +541,7 @@ export default function ContactDetail() {
     } finally {
       setSavingContactName(false)
     }
-  }, [contact, firstNameDraft, lastNameDraft, savingContactName, cancelContactNameEdit])
+  }, [contact, firstNameDraft, lastNameDraft, titleDraft, contactTypeDraft, linkedinUrlDraft, savingContactName, cancelContactNameEdit])
 
   const handleContactNameInputKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -593,12 +554,6 @@ export default function ContactDetail() {
       cancelContactNameEdit()
     }
   }, [saveContactName, cancelContactNameEdit])
-
-  const handleContactNameHeadingKeyDown = useCallback((event: KeyboardEvent<HTMLHeadingElement>) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    startContactNameEdit()
-  }, [startContactNameEdit])
 
   if (!flagsLoading && !contactsEnabled) {
     return (
@@ -638,11 +593,6 @@ export default function ContactDetail() {
   )
   const companyWebsiteLabel = (contact.primaryCompany?.websiteUrl || '').trim()
     || (contact.primaryCompany?.primaryDomain || '').trim()
-  const nextCompanyName = companyNameInput.trim()
-  const currentCompanyName = (contact.primaryCompany?.canonicalName || '').trim()
-  const canSaveCompany = !savingCompany
-    && nextCompanyName.length > 0
-    && nextCompanyName !== currentCompanyName
   const canSaveContactName = !savingContactName
     && ([firstNameDraft.trim(), lastNameDraft.trim()].filter(Boolean).join(' ').trim().length > 0)
   const primaryEmail = normalizeEmail(contact.email)
@@ -656,53 +606,100 @@ export default function ContactDetail() {
       <div className={styles.headerCard}>
         <div className={styles.titleRow}>
           {editingContactName ? (
-            <div className={styles.nameEditor}>
-              <input
-                ref={firstNameInputRef}
-                className={styles.nameInput}
-                value={firstNameDraft}
-                onChange={(event) => setFirstNameDraft(event.target.value)}
-                onKeyDown={handleContactNameInputKeyDown}
-                disabled={savingContactName}
-                placeholder="First name"
-                aria-label="First name"
-              />
-              <input
-                className={styles.nameInput}
-                value={lastNameDraft}
-                onChange={(event) => setLastNameDraft(event.target.value)}
-                onKeyDown={handleContactNameInputKeyDown}
-                disabled={savingContactName}
-                placeholder="Last name"
-                aria-label="Last name"
-              />
-              <button
-                type="button"
-                className={styles.nameSaveButton}
-                onClick={() => void saveContactName()}
-                disabled={!canSaveContactName}
-              >
-                {savingContactName ? 'Saving...' : 'Save'}
-              </button>
-              <button
-                type="button"
-                className={styles.nameCancelButton}
-                onClick={cancelContactNameEdit}
-                disabled={savingContactName}
-              >
-                Cancel
-              </button>
+            <div className={styles.editForm}>
+              <div className={styles.editRow}>
+                <label className={styles.editLabel}>Name</label>
+                <div className={styles.editFieldGroup}>
+                  <input
+                    ref={firstNameInputRef}
+                    className={styles.nameInput}
+                    value={firstNameDraft}
+                    onChange={(event) => setFirstNameDraft(event.target.value)}
+                    onKeyDown={handleContactNameInputKeyDown}
+                    disabled={savingContactName}
+                    placeholder="First name"
+                    aria-label="First name"
+                  />
+                  <input
+                    className={styles.nameInput}
+                    value={lastNameDraft}
+                    onChange={(event) => setLastNameDraft(event.target.value)}
+                    onKeyDown={handleContactNameInputKeyDown}
+                    disabled={savingContactName}
+                    placeholder="Last name"
+                    aria-label="Last name"
+                  />
+                </div>
+              </div>
+              <div className={styles.editRow}>
+                <label className={styles.editLabel}>Job Title</label>
+                <input
+                  className={styles.editInput}
+                  value={titleDraft}
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                  onKeyDown={handleContactNameInputKeyDown}
+                  disabled={savingContactName}
+                  placeholder="e.g. Partner, CEO, Engineering Manager"
+                  aria-label="Job title"
+                />
+              </div>
+              <div className={styles.editRow}>
+                <label className={styles.editLabel}>Type</label>
+                <select
+                  className={styles.editSelect}
+                  value={contactTypeDraft}
+                  onChange={(event) => setContactTypeDraft(event.target.value as ContactType | '')}
+                  disabled={savingContactName}
+                  aria-label="Contact type"
+                >
+                  <option value="">Not set</option>
+                  <option value="investor">Investor</option>
+                  <option value="founder">Founder</option>
+                  <option value="operator">Operator</option>
+                </select>
+              </div>
+              <div className={styles.editRow}>
+                <label className={styles.editLabel}>LinkedIn</label>
+                <input
+                  className={styles.editInput}
+                  value={linkedinUrlDraft}
+                  onChange={(event) => setLinkedinUrlDraft(event.target.value)}
+                  onKeyDown={handleContactNameInputKeyDown}
+                  disabled={savingContactName}
+                  placeholder="https://linkedin.com/in/..."
+                  aria-label="LinkedIn URL"
+                />
+              </div>
+              <div className={styles.editActions}>
+                <button
+                  type="button"
+                  className={styles.nameSaveButton}
+                  onClick={() => void saveContactName()}
+                  disabled={!canSaveContactName}
+                >
+                  {savingContactName ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  className={styles.nameCancelButton}
+                  onClick={cancelContactNameEdit}
+                  disabled={savingContactName}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           ) : (
-            <h2
-              className={`${styles.title} ${styles.editableTitle}`}
-              role="button"
-              tabIndex={0}
-              onClick={startContactNameEdit}
-              onKeyDown={handleContactNameHeadingKeyDown}
-            >
-              {contact.fullName}
-            </h2>
+            <>
+              <h2 className={styles.title}>{contact.fullName}</h2>
+              <button
+                type="button"
+                className={styles.editButton}
+                onClick={startContactNameEdit}
+              >
+                Edit
+              </button>
+            </>
           )}
         </div>
         <div className={styles.metaRow}>
@@ -718,6 +715,20 @@ export default function ContactDetail() {
             <span>No email</span>
           )}
           {contact.title && <span>{contact.title}</span>}
+          {contact.contactType && (
+            <span className={styles.contactTypeBadge}>
+              {contact.contactType.charAt(0).toUpperCase() + contact.contactType.slice(1)}
+            </span>
+          )}
+          {contact.linkedinUrl && (
+            <button
+              type="button"
+              className={styles.emailLink}
+              onClick={() => void handleOpenWebsite(contact.linkedinUrl!)}
+            >
+              LinkedIn
+            </button>
+          )}
           <span>Updated: {formatDateTime(contact.updatedAt)}</span>
         </div>
         <div className={styles.companyBlock}>
@@ -751,29 +762,6 @@ export default function ContactDetail() {
           ) : (
             <span className={styles.meta}>No company linked yet.</span>
           )}
-          <div className={styles.companyEditor}>
-            <input
-              className={styles.companyInput}
-              type="text"
-              value={companyNameInput}
-              placeholder="Enter company name"
-              onChange={(event) => setCompanyNameInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && canSaveCompany) {
-                  event.preventDefault()
-                  void handleSaveCompany()
-                }
-              }}
-            />
-            <button
-              type="button"
-              className={styles.companySaveButton}
-              onClick={() => void handleSaveCompany()}
-              disabled={!canSaveCompany}
-            >
-              {savingCompany ? 'Saving...' : 'Save company'}
-            </button>
-          </div>
         </div>
       </div>
 

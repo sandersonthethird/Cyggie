@@ -1,13 +1,26 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore, selectHasActiveFilters } from '../../stores/app.store'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CategorizedSuggestions } from '../../../shared/types/meeting'
+import type { CompanySummary } from '../../../shared/types/company'
+import type { ContactSummary } from '../../../shared/types/contact'
 import styles from './SearchBar.module.css'
 
-export default function SearchBar() {
+interface SearchBarProps {
+  placeholder?: string
+}
+
+function normalizeLookup(value: string | null | undefined): string {
+  return (value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
+export default function SearchBar({ placeholder = 'Search meetings...' }: SearchBarProps) {
   const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [value, setValue] = useState('')
+  const searchQuery = useAppStore((s) => s.searchQuery)
   const setSearchQuery = useAppStore((s) => s.setSearchQuery)
   const setSearchFilter = useAppStore((s) => s.setSearchFilter)
   const [categorized, setCategorized] = useState<CategorizedSuggestions>({ people: [], companies: [], meetings: [] })
@@ -30,6 +43,10 @@ export default function SearchBar() {
   const clearAdvancedFilters = useAppStore((s) => s.clearAdvancedFilters)
   const clearSearch = useAppStore((s) => s.clearSearch)
   const hasActiveFilters = useAppStore(selectHasActiveFilters)
+  const isCompaniesPage = location.pathname === '/companies'
+  const isContactsPage = location.pathname === '/contacts'
+  const isEntityListPage = isCompaniesPage || isContactsPage
+  const entityQuery = (searchParams.get('q') || '').trim()
 
   const flatItems = useMemo(() => {
     const items: { type: 'person' | 'company' | 'meeting'; label: string; id?: string; domain?: string }[] = []
@@ -39,7 +56,21 @@ export default function SearchBar() {
     return items
   }, [categorized])
 
-  // Clear search state when SearchBar unmounts (user navigated away from meetings)
+  useEffect(() => {
+    if (isEntityListPage) {
+      if (entityQuery === value) return
+      const active = document.activeElement
+      const isInputFocused = Boolean(active && wrapperRef.current?.contains(active))
+      if (isInputFocused) return
+      setValue(entityQuery)
+      return
+    }
+    if (searchQuery !== value) {
+      setValue(searchQuery)
+    }
+  }, [isEntityListPage, entityQuery, searchQuery, value])
+
+  // Clear search state if the layout unmounts (app teardown/navigation reset)
   useEffect(() => {
     return () => clearSearch()
   }, [clearSearch])
@@ -86,15 +117,75 @@ export default function SearchBar() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [setShowFilterPanel])
 
-  const handleSuggestionSelect = useCallback((item: typeof flatItems[number]) => {
+  const handleSuggestionSelect = useCallback(async (item: typeof flatItems[number]) => {
     setShowSuggestions(false)
     setCategorized({ people: [], companies: [], meetings: [] })
-    if (item.type === 'meeting') {
+    setActiveSuggestion(-1)
+    setValue(item.label)
+    setSearchQuery(item.label)
+    setSearchFilter(null)
+
+    if (item.type === 'meeting' && item.id) {
       navigate(`/meeting/${item.id}`)
-    } else {
-      setValue(item.label)
-      setSearchQuery(item.label)
-      setSearchFilter({ type: item.type, value: item.label })
+      return
+    }
+
+    try {
+      if (item.type === 'company') {
+        const primary = item.label.trim()
+        const fallback = (item.domain || '').trim()
+        let companies = await window.api.invoke<CompanySummary[]>(
+          IPC_CHANNELS.COMPANY_LIST,
+          { query: primary, view: 'all', limit: 50 }
+        )
+        if (companies.length === 0 && fallback) {
+          companies = await window.api.invoke<CompanySummary[]>(
+            IPC_CHANNELS.COMPANY_LIST,
+            { query: fallback, view: 'all', limit: 50 }
+          )
+        }
+
+        const nameKey = normalizeLookup(item.label)
+        const domainKey = normalizeLookup(item.domain)
+        const bestMatch = companies.find((company) =>
+          normalizeLookup(company.canonicalName) === nameKey
+          || (domainKey !== '' && normalizeLookup(company.primaryDomain) === domainKey)
+        ) || companies[0]
+
+        if (bestMatch) {
+          navigate(`/company/${bestMatch.id}`)
+          return
+        }
+
+        const next = new URLSearchParams()
+        next.set('q', primary || fallback)
+        navigate(`/companies?${next.toString()}`)
+        return
+      }
+
+      if (item.type === 'person') {
+        const contacts = await window.api.invoke<ContactSummary[]>(
+          IPC_CHANNELS.CONTACT_LIST,
+          { query: item.label.trim(), limit: 50 }
+        )
+
+        const targetKey = normalizeLookup(item.label)
+        const bestMatch = contacts.find((contact) =>
+          normalizeLookup(contact.fullName) === targetKey
+          || normalizeLookup(contact.email) === targetKey
+        ) || contacts[0]
+
+        if (bestMatch) {
+          navigate(`/contact/${bestMatch.id}`)
+          return
+        }
+
+        const next = new URLSearchParams()
+        next.set('q', item.label)
+        navigate(`/contacts?${next.toString()}`)
+      }
+    } catch (err) {
+      console.error('Failed to open search suggestion:', err)
     }
   }, [navigate, setSearchQuery, setSearchFilter])
 
@@ -104,19 +195,41 @@ export default function SearchBar() {
       setValue(query)
       setSearchQuery(query)
       setSearchFilter(null)
+      if (isEntityListPage) {
+        const next = new URLSearchParams(searchParams)
+        if (query.trim()) {
+          next.set('q', query.trim())
+        } else {
+          next.delete('q')
+        }
+        setSearchParams(next)
+      }
     },
-    [setSearchQuery, setSearchFilter]
+    [isEntityListPage, searchParams, setSearchParams, setSearchQuery, setSearchFilter]
   )
 
   const handleClear = useCallback(() => {
     setValue('')
     setSearchQuery('')
     setSearchFilter(null)
+    if (isEntityListPage) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('q')
+      setSearchParams(next)
+    }
     clearAdvancedFilters()
     setCategorized({ people: [], companies: [], meetings: [] })
     setShowSuggestions(false)
     setShowFilterPanel(false)
-  }, [setSearchQuery, setSearchFilter, clearAdvancedFilters, setShowFilterPanel])
+  }, [
+    isEntityListPage,
+    searchParams,
+    setSearchParams,
+    setSearchQuery,
+    setSearchFilter,
+    clearAdvancedFilters,
+    setShowFilterPanel
+  ])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!showSuggestions || flatItems.length === 0) return
@@ -126,9 +239,10 @@ export default function SearchBar() {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActiveSuggestion((prev) => (prev <= 0 ? flatItems.length - 1 : prev - 1))
-    } else if (e.key === 'Enter' && activeSuggestion >= 0) {
+    } else if (e.key === 'Enter') {
       e.preventDefault()
-      handleSuggestionSelect(flatItems[activeSuggestion])
+      const selectedIndex = activeSuggestion >= 0 ? activeSuggestion : 0
+      void handleSuggestionSelect(flatItems[selectedIndex])
     } else if (e.key === 'Escape') {
       setShowSuggestions(false)
     }
@@ -153,7 +267,7 @@ export default function SearchBar() {
       <input
         type="text"
         className={styles.input}
-        placeholder="Search meetings..."
+        placeholder={placeholder}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
@@ -190,7 +304,7 @@ export default function SearchBar() {
                     <div
                       key={`person-${name}`}
                       className={`${styles.suggestionItem} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
-                      onMouseDown={() => handleSuggestionSelect({ type: 'person', label: name })}
+                      onMouseDown={() => { void handleSuggestionSelect({ type: 'person', label: name }) }}
                       onMouseEnter={() => setActiveSuggestion(i)}
                     >
                       {name}
@@ -208,7 +322,7 @@ export default function SearchBar() {
                     <div
                       key={`company-${company.domain || company.name}`}
                       className={`${styles.suggestionItem} ${styles.companySuggestion} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
-                      onMouseDown={() => handleSuggestionSelect({ type: 'company', label: company.name, domain: company.domain })}
+                      onMouseDown={() => { void handleSuggestionSelect({ type: 'company', label: company.name, domain: company.domain }) }}
                       onMouseEnter={() => setActiveSuggestion(i)}
                     >
                       {company.domain && (
@@ -234,7 +348,7 @@ export default function SearchBar() {
                     <div
                       key={`meeting-${m.id}`}
                       className={`${styles.suggestionItem} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
-                      onMouseDown={() => handleSuggestionSelect({ type: 'meeting', label: m.title, id: m.id })}
+                      onMouseDown={() => { void handleSuggestionSelect({ type: 'meeting', label: m.title, id: m.id }) }}
                       onMouseEnter={() => setActiveSuggestion(i)}
                     >
                       {m.title}

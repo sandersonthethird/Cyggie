@@ -6,7 +6,7 @@ const DEBUG_TRANSCRIPTION =
   process.env['NODE_ENV'] === 'development' && process.env['GORP_DEBUG_TRANSCRIPTION'] === '1'
 const SPEAKER_SWITCH_MIN_WORDS = 4
 const SPEAKER_SWITCH_MIN_DURATION_SECONDS = 1.0
-const SPEAKER_SWITCH_MIN_CONFIDENCE = 0.6
+const SPEAKER_SWITCH_MIN_CONFIDENCE = 0.3
 
 export class TranscriptAssembler {
   private finalizedSegments: TranscriptSegment[] = []

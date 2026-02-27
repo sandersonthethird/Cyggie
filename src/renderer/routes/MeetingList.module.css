@@ -29,6 +29,9 @@
   letter-spacing: 0.5px;
   color: var(--color-text-tertiary);
   margin-bottom: 10px;
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .resultCount {
@@ -49,12 +52,17 @@
   font-weight: 600;
   color: var(--color-text-tertiary);
   margin-bottom: 4px;
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .list {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  max-width: 640px;
+  margin: 0 auto;
 }
 
 .showMoreBtn {

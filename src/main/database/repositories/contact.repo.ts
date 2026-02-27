@@ -6,7 +6,8 @@ import type {
   ContactSyncResult,
   ContactDetail,
   ContactMeetingRef,
-  ContactEmailRef
+  ContactEmailRef,
+  ContactType
 } from '../../../shared/types/contact'
 
 interface ContactRow {
@@ -18,6 +19,7 @@ interface ContactRow {
   email: string | null
   primary_company_id: string | null
   title: string | null
+  contact_type: string | null
   linkedin_url: string | null
   crm_contact_id: string | null
   crm_provider: string | null
@@ -53,6 +55,8 @@ interface MeetingAttendeeRow {
   attendee_emails: string | null
 }
 
+const VALID_CONTACT_TYPES = new Set<string>(['investor', 'founder', 'operator'])
+
 function rowToContactSummary(row: ContactRow): ContactSummary {
   return {
     id: row.id,
@@ -63,6 +67,9 @@ function rowToContactSummary(row: ContactRow): ContactSummary {
     email: row.email,
     primaryCompanyId: row.primary_company_id,
     title: row.title,
+    contactType: (row.contact_type && VALID_CONTACT_TYPES.has(row.contact_type)
+      ? row.contact_type
+      : null) as ContactType | null,
     linkedinUrl: row.linkedin_url,
     crmContactId: row.crm_contact_id,
     crmProvider: row.crm_provider,
@@ -561,6 +568,7 @@ export function listContacts(filter?: {
         c.email,
         c.primary_company_id,
         c.title,
+        c.contact_type,
         c.linkedin_url,
         c.crm_contact_id,
         c.crm_provider,
@@ -582,6 +590,56 @@ export function listContacts(filter?: {
       LEFT JOIN email_stats es ON es.contact_id = c.id
       ${where}
       ORDER BY datetime(last_touchpoint) DESC, c.full_name ASC, c.email ASC
+      LIMIT ? OFFSET ?
+    `)
+    .all(...params, limit, offset) as ContactRow[]
+
+  return rows.map(rowToContactSummary)
+}
+
+export function listContactsLight(filter?: {
+  query?: string
+  limit?: number
+  offset?: number
+}): ContactSummary[] {
+  const db = getDatabase()
+  const query = filter?.query?.trim()
+  const params: unknown[] = []
+  const conditions: string[] = ['c.email IS NOT NULL']
+
+  if (query) {
+    conditions.push('(c.full_name LIKE ? OR c.email LIKE ?)')
+    const like = `%${query}%`
+    params.push(like, like)
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const limit = filter?.limit ?? 200
+  const offset = filter?.offset ?? 0
+
+  const rows = db
+    .prepare(`
+      SELECT
+        c.id,
+        c.full_name,
+        c.first_name,
+        c.last_name,
+        c.normalized_name,
+        c.email,
+        c.primary_company_id,
+        c.title,
+        c.contact_type,
+        c.linkedin_url,
+        c.crm_contact_id,
+        c.crm_provider,
+        0 AS meeting_count,
+        0 AS email_count,
+        c.updated_at AS last_touchpoint,
+        c.created_at,
+        c.updated_at
+      FROM contacts c
+      ${where}
+      ORDER BY datetime(c.updated_at) DESC, c.full_name ASC
       LIMIT ? OFFSET ?
     `)
     .all(...params, limit, offset) as ContactRow[]
@@ -628,6 +686,7 @@ export function createContact(data: {
       email,
       primary_company_id,
       title,
+      contact_type,
       linkedin_url,
       crm_contact_id,
       crm_provider,
@@ -649,6 +708,7 @@ export function createContact(data: {
         c.email,
         c.primary_company_id,
         c.title,
+        c.contact_type,
         c.linkedin_url,
         c.crm_contact_id,
         c.crm_provider,
@@ -752,6 +812,86 @@ export function createContact(data: {
   }
 
   return rowToContactSummary(row)
+}
+
+export function updateContact(
+  contactId: string,
+  data: {
+    fullName?: string
+    firstName?: string | null
+    lastName?: string | null
+    title?: string | null
+    contactType?: string | null
+    linkedinUrl?: string | null
+  },
+  userId: string | null = null
+): ContactDetail {
+  const db = getDatabase()
+
+  const existing = db
+    .prepare(`SELECT id, full_name, first_name, last_name FROM contacts WHERE id = ? LIMIT 1`)
+    .get(contactId) as { id: string; full_name: string; first_name: string | null; last_name: string | null } | undefined
+  if (!existing) {
+    throw new Error('Contact not found')
+  }
+
+  const sets: string[] = []
+  const params: unknown[] = []
+
+  if (data.fullName !== undefined) {
+    const fullName = data.fullName.trim()
+    if (!fullName) throw new Error('Contact name is required')
+    const normalizedName = normalizeName(fullName)
+    const split = splitFullNameParts(fullName)
+    sets.push('full_name = ?', 'normalized_name = ?', 'first_name = ?', 'last_name = ?')
+    params.push(fullName, normalizedName, split.firstName, split.lastName)
+  } else {
+    if (data.firstName !== undefined || data.lastName !== undefined) {
+      const firstName = data.firstName !== undefined ? data.firstName : existing.first_name
+      const lastName = data.lastName !== undefined ? data.lastName : existing.last_name
+      const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || existing.full_name
+      sets.push('full_name = ?', 'normalized_name = ?', 'first_name = ?', 'last_name = ?')
+      params.push(fullName, normalizeName(fullName), firstName || null, lastName || null)
+    }
+  }
+
+  if (data.title !== undefined) {
+    sets.push('title = ?')
+    params.push(data.title?.trim() || null)
+  }
+
+  if (data.contactType !== undefined) {
+    const ct = data.contactType?.trim() || null
+    if (ct && !VALID_CONTACT_TYPES.has(ct)) {
+      throw new Error(`Invalid contact type: ${ct}`)
+    }
+    sets.push('contact_type = ?')
+    params.push(ct)
+  }
+
+  if (data.linkedinUrl !== undefined) {
+    sets.push('linkedin_url = ?')
+    params.push(data.linkedinUrl?.trim() || null)
+  }
+
+  if (sets.length === 0) {
+    const detail = getContact(contactId)
+    if (!detail) throw new Error('Contact not found')
+    return detail
+  }
+
+  if (userId) {
+    sets.push('updated_by_user_id = ?')
+    params.push(userId)
+  }
+  sets.push("updated_at = datetime('now')")
+  params.push(contactId)
+
+  db.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+
+  const detail = getContact(contactId)
+  if (!detail) throw new Error('Failed to load updated contact')
+  return detail
 }
 
 export function addContactEmail(
@@ -924,6 +1064,7 @@ export function getContact(contactId: string): ContactDetail | null {
         c.email,
         c.primary_company_id,
         c.title,
+        c.contact_type,
         c.linkedin_url,
         c.crm_contact_id,
         c.crm_provider,
@@ -1229,4 +1370,33 @@ export function syncContactsFromMeetings(userId: string | null = null): ContactS
     skipped: result.skipped,
     invalid
   }
+}
+
+/** Given a list of emails, return a map of lowercase email -> contactId for any that match a known contact. */
+export function resolveContactsByEmails(emails: string[]): Record<string, string> {
+  if (!emails || emails.length === 0) return {}
+  const db = getDatabase()
+  const result: Record<string, string> = {}
+
+  const placeholders = emails.map(() => '?').join(', ')
+  const normalized = emails.map((e) => e.trim().toLowerCase())
+
+  const rows = db
+    .prepare(`
+      SELECT ce.email, ce.contact_id
+      FROM contact_emails ce
+      WHERE lower(trim(ce.email)) IN (${placeholders})
+      UNION
+      SELECT lower(trim(c.email)), c.id
+      FROM contacts c
+      WHERE lower(trim(c.email)) IN (${placeholders})
+        AND c.email IS NOT NULL
+    `)
+    .all(...normalized, ...normalized) as { email: string; contact_id: string }[]
+
+  for (const row of rows) {
+    result[row.email.toLowerCase().trim()] = row.contact_id
+  }
+
+  return result
 }

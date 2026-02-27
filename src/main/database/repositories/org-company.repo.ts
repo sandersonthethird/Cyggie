@@ -2,6 +2,9 @@ import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 import type {
   CompanyEntityType,
+  CompanyPriority,
+  CompanyRound,
+  CompanyPipelineStage,
   CompanyListFilter,
   CompanySummary,
   CompanyDetail,
@@ -19,6 +22,8 @@ interface CompanyRow {
   description: string | null
   primary_domain: string | null
   website_url: string | null
+  city: string | null
+  state: string | null
   stage: string | null
   status: string
   crm_provider: string | null
@@ -30,6 +35,11 @@ interface CompanyRow {
   meeting_count: number
   email_count: number
   note_count: number
+  priority: string | null
+  post_money_valuation: number | null
+  raise_size: number | null
+  round: string | null
+  pipeline_stage: string | null
   last_touchpoint: string | null
   created_at: string
   updated_at: string
@@ -115,6 +125,7 @@ function normalizeEntityType(value: string | null | undefined): CompanyEntityTyp
   const allowed: CompanyEntityType[] = [
     'prospect',
     'portfolio',
+    'pass',
     'vc_fund',
     'customer',
     'partner',
@@ -166,6 +177,8 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     description: row.description,
     primaryDomain: row.primary_domain,
     websiteUrl: row.website_url,
+    city: row.city,
+    state: row.state,
     stage: row.stage,
     status: row.status,
     crmProvider: row.crm_provider,
@@ -177,6 +190,11 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     meetingCount: row.meeting_count || 0,
     emailCount: row.email_count || 0,
     noteCount: row.note_count || 0,
+    priority: (row.priority as CompanyPriority) || null,
+    postMoneyValuation: row.post_money_valuation,
+    raiseSize: row.raise_size,
+    round: (row.round as CompanyRound) || null,
+    pipelineStage: (row.pipeline_stage as CompanyPipelineStage) || null,
     lastTouchpoint: row.last_touchpoint,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -192,6 +210,8 @@ function baseCompanySelect(whereClause = ''): string {
       c.description,
       c.primary_domain,
       c.website_url,
+      c.city,
+      c.state,
       c.stage,
       c.status,
       c.crm_provider,
@@ -200,6 +220,11 @@ function baseCompanySelect(whereClause = ''): string {
       c.include_in_companies_view,
       c.classification_source,
       c.classification_confidence,
+      c.priority,
+      c.post_money_valuation,
+      c.raise_size,
+      c.round,
+      c.pipeline_stage,
       COALESCE(mc.meeting_count, 0) AS meeting_count,
       COALESCE(ec.email_count, 0) AS email_count,
       COALESCE(nc.note_count, 0) AS note_count,
@@ -242,6 +267,41 @@ function baseCompanySelect(whereClause = ''): string {
   `
 }
 
+function baseCompanySelectLight(whereClause = ''): string {
+  return `
+    SELECT
+      c.id,
+      c.canonical_name,
+      c.normalized_name,
+      c.description,
+      c.primary_domain,
+      c.website_url,
+      c.city,
+      c.state,
+      c.stage,
+      c.status,
+      c.crm_provider,
+      c.crm_company_id,
+      c.entity_type,
+      c.include_in_companies_view,
+      c.classification_source,
+      c.classification_confidence,
+      c.priority,
+      c.post_money_valuation,
+      c.raise_size,
+      c.round,
+      c.pipeline_stage,
+      0 AS meeting_count,
+      0 AS email_count,
+      0 AS note_count,
+      c.updated_at AS last_touchpoint,
+      c.created_at,
+      c.updated_at
+    FROM org_companies c
+    ${whereClause}
+  `
+}
+
 export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
   const db = getDatabase()
   const query = filter?.query?.trim()
@@ -272,11 +332,66 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
 
   const rows = db
     .prepare(
-      `${baseCompanySelect(where)}
-       ORDER BY datetime(last_touchpoint) DESC, c.canonical_name ASC
+      `${baseCompanySelectLight(where)}
+       ORDER BY datetime(c.updated_at) DESC, c.canonical_name ASC
        LIMIT ? OFFSET ?`
     )
     .all(...params, limit, offset) as CompanyRow[]
+
+  return rows.map(rowToCompanySummary)
+}
+
+export function listPipelineCompanies(filter?: {
+  pipelineStage?: CompanyPipelineStage | null
+  priority?: CompanyPriority | null
+  round?: CompanyRound | null
+  query?: string
+}): CompanySummary[] {
+  const db = getDatabase()
+  const conditions: string[] = ['c.pipeline_stage IS NOT NULL']
+  const params: unknown[] = []
+
+  if (filter?.pipelineStage) {
+    conditions.push('c.pipeline_stage = ?')
+    params.push(filter.pipelineStage)
+  }
+  if (filter?.priority) {
+    conditions.push('c.priority = ?')
+    params.push(filter.priority)
+  }
+  if (filter?.round) {
+    conditions.push('c.round = ?')
+    params.push(filter.round)
+  }
+  if (filter?.query?.trim()) {
+    conditions.push('(c.canonical_name LIKE ? OR c.description LIKE ?)')
+    const like = `%${filter.query.trim()}%`
+    params.push(like, like)
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`
+  const rows = db
+    .prepare(
+      `${baseCompanySelect(where)}
+       ORDER BY
+         CASE c.pipeline_stage
+           WHEN 'screening' THEN 0
+           WHEN 'diligence' THEN 1
+           WHEN 'decision' THEN 2
+           WHEN 'documentation' THEN 3
+           WHEN 'pass' THEN 4
+           ELSE 5
+         END,
+         CASE c.priority
+           WHEN 'high' THEN 0
+           WHEN 'further_work' THEN 1
+           WHEN 'monitor' THEN 2
+           ELSE 3
+         END,
+         c.canonical_name ASC
+       LIMIT 500`
+    )
+    .all(...params) as CompanyRow[]
 
   return rows.map(rowToCompanySummary)
 }
@@ -320,6 +435,8 @@ export function createCompany(data: {
   description?: string | null
   primaryDomain?: string | null
   websiteUrl?: string | null
+  city?: string | null
+  state?: string | null
   stage?: string | null
   status?: string
   entityType?: CompanyEntityType
@@ -340,16 +457,18 @@ export function createCompany(data: {
 
   db.prepare(`
     INSERT INTO org_companies (
-      id, canonical_name, normalized_name, description, primary_domain, website_url, stage, status,
+      id, canonical_name, normalized_name, description, primary_domain, website_url, city, state, stage, status,
       entity_type, include_in_companies_view, classification_source, classification_confidence,
       created_by_user_id, updated_by_user_id, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     ON CONFLICT(normalized_name) DO UPDATE SET
       canonical_name = excluded.canonical_name,
       description = COALESCE(excluded.description, org_companies.description),
       primary_domain = COALESCE(excluded.primary_domain, org_companies.primary_domain),
       website_url = COALESCE(excluded.website_url, org_companies.website_url),
+      city = COALESCE(excluded.city, org_companies.city),
+      state = COALESCE(excluded.state, org_companies.state),
       stage = COALESCE(excluded.stage, org_companies.stage),
       status = COALESCE(excluded.status, org_companies.status),
       entity_type = excluded.entity_type,
@@ -365,6 +484,8 @@ export function createCompany(data: {
     data.description ?? null,
     normalizedPrimaryDomain,
     data.websiteUrl ?? null,
+    data.city ?? null,
+    data.state ?? null,
     data.stage ?? null,
     data.status ?? 'active',
     entityType,
@@ -403,12 +524,19 @@ export function updateCompany(
     description: string | null
     primaryDomain: string | null
     websiteUrl: string | null
+    city: string | null
+    state: string | null
     stage: string | null
     status: string
     entityType: CompanyEntityType
     includeInCompaniesView: boolean
     classificationSource: 'manual' | 'auto'
     classificationConfidence: number | null
+    priority: CompanyPriority | null
+    postMoneyValuation: number | null
+    raiseSize: number | null
+    round: CompanyRound | null
+    pipelineStage: CompanyPipelineStage | null
   }>
 ,
   userId: string | null = null
@@ -438,6 +566,14 @@ export function updateCompany(
   if (data.websiteUrl !== undefined) {
     sets.push('website_url = ?')
     params.push(data.websiteUrl)
+  }
+  if (data.city !== undefined) {
+    sets.push('city = ?')
+    params.push(data.city)
+  }
+  if (data.state !== undefined) {
+    sets.push('state = ?')
+    params.push(data.state)
   }
   if (data.stage !== undefined) {
     sets.push('stage = ?')
@@ -470,6 +606,26 @@ export function updateCompany(
   if (data.classificationConfidence !== undefined) {
     sets.push('classification_confidence = ?')
     params.push(data.classificationConfidence)
+  }
+  if (data.priority !== undefined) {
+    sets.push('priority = ?')
+    params.push(data.priority)
+  }
+  if (data.postMoneyValuation !== undefined) {
+    sets.push('post_money_valuation = ?')
+    params.push(data.postMoneyValuation)
+  }
+  if (data.raiseSize !== undefined) {
+    sets.push('raise_size = ?')
+    params.push(data.raiseSize)
+  }
+  if (data.round !== undefined) {
+    sets.push('round = ?')
+    params.push(data.round)
+  }
+  if (data.pipelineStage !== undefined) {
+    sets.push('pipeline_stage = ?')
+    params.push(data.pipelineStage)
   }
 
   if (sets.length > 0) {
@@ -1214,42 +1370,7 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
     referenceType: 'company_note'
   }))
 
-  const dealEventRows = db
-    .prepare(`
-      SELECT
-        dse.id,
-        dse.deal_id,
-        dse.from_stage,
-        dse.to_stage,
-        dse.note,
-        dse.event_time
-      FROM deal_stage_events dse
-      JOIN deals d ON d.id = dse.deal_id
-      WHERE d.company_id = ?
-      ORDER BY datetime(dse.event_time) DESC
-      LIMIT 300
-    `)
-    .all(companyId) as Array<{
-    id: string
-    deal_id: string
-    from_stage: string | null
-    to_stage: string
-    note: string | null
-    event_time: string
-  }>
-  const dealEventItems: CompanyTimelineItem[] = dealEventRows.map((event) => ({
-    id: `deal-event:${event.id}`,
-    type: 'deal_event',
-    title: event.from_stage
-      ? `${event.from_stage} -> ${event.to_stage}`
-      : `Moved to ${event.to_stage}`,
-    occurredAt: event.event_time,
-    subtitle: event.note?.trim() || `Deal ${event.deal_id}`,
-    referenceId: event.id,
-    referenceType: 'deal_stage_event'
-  }))
-
-  return [...meetingItems, ...emailItems, ...noteItems, ...dealEventItems].sort((a, b) =>
+  return [...meetingItems, ...emailItems, ...noteItems].sort((a, b) =>
     new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()
   )
 }

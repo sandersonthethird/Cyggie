@@ -142,11 +142,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
     [handleSubmit]
   )
 
-  const defaultPlaceholder = meetingIds
-    ? 'Ask about these search results...'
-    : meetingId
-      ? 'Ask about this meeting...'
-      : 'Ask about your meetings...'
+  const defaultPlaceholder = 'Ask anything...'
 
   const containerClass = fillHeight
     ? `${styles.container} ${styles.fillHeight}`

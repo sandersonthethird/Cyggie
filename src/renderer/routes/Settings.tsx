@@ -4,9 +4,32 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useCalendar } from '../hooks/useCalendar'
 import type { LlmProvider } from '../../shared/types/settings'
 import type { DriveFolderRef } from '../../shared/types/drive'
-import type { PipelineStage } from '../../shared/types/pipeline'
 import type { UserProfile } from '../../shared/types/user'
 import styles from './Settings.module.css'
+
+function splitDriveRoots(raw: string): string[] {
+  const values = raw
+    .split(/[\n,;]+/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  const unique: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    if (seen.has(value)) continue
+    seen.add(value)
+    unique.push(value)
+  }
+  return unique
+}
+
+function appendDriveRoot(raw: string, nextRoot: string): string {
+  const trimmedNext = nextRoot.trim()
+  if (!trimmedNext) return raw
+  const existing = splitDriveRoots(raw)
+  if (existing.includes(trimmedNext)) return existing.join('\n')
+  return [...existing, trimmedNext].join('\n')
+}
 
 interface SettingsState {
   deepgramApiKey: string
@@ -17,6 +40,7 @@ interface SettingsState {
   showLiveTranscript: boolean
   defaultMaxSpeakers: string
   companyDriveRootFolder: string
+  companyLocalFilesRoot: string
 }
 
 export default function Settings() {
@@ -28,7 +52,8 @@ export default function Settings() {
     ollamaModel: 'llama3.1',
     showLiveTranscript: true,
     defaultMaxSpeakers: '',
-    companyDriveRootFolder: ''
+    companyDriveRootFolder: '',
+    companyLocalFilesRoot: ''
   })
   const [saved, setSaved] = useState(false)
   const [storagePath, setStoragePath] = useState('')
@@ -36,13 +61,8 @@ export default function Settings() {
   const [userDisplayName, setUserDisplayName] = useState('')
   const [userEmail, setUserEmail] = useState('')
   const [profileError, setProfileError] = useState('')
-  const [pipelineConfigId, setPipelineConfigId] = useState('')
-  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([])
-  const [newStageLabel, setNewStageLabel] = useState('')
-  const [newStageColor, setNewStageColor] = useState('#5A7DA3')
-  const [stageBusyId, setStageBusyId] = useState<string | null>(null)
   const [staleRelationshipDays, setStaleRelationshipDays] = useState('21')
-  const [stuckDealDays, setStuckDealDays] = useState('21')
+  const [stalledPipelineDays, setStalledPipelineDays] = useState('21')
 
   // Calendar state
   const { calendarConnected, connect, disconnect } = useCalendar()
@@ -79,24 +99,13 @@ export default function Settings() {
     )
   }, [])
 
-  const refreshPipelineConfig = useCallback(async () => {
-    const result = await window.api.invoke<{ config: { id: string }; stages: PipelineStage[] }>(
-      IPC_CHANNELS.PIPELINE_GET_CONFIG
-    )
-    setPipelineConfigId(result.config.id)
-    setPipelineStages(result.stages)
-  }, [])
-
   useEffect(() => {
     async function load() {
       try {
-        const [allResult, currentPathResult, userResult, pipelineResult] = await Promise.allSettled([
+        const [allResult, currentPathResult, userResult] = await Promise.allSettled([
           window.api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL),
           window.api.invoke<string>(IPC_CHANNELS.APP_GET_STORAGE_PATH),
-          window.api.invoke<UserProfile>(IPC_CHANNELS.USER_GET_CURRENT),
-          window.api.invoke<{ config: { id: string }; stages: PipelineStage[] }>(
-            IPC_CHANNELS.PIPELINE_GET_CONFIG
-          )
+          window.api.invoke<UserProfile>(IPC_CHANNELS.USER_GET_CURRENT)
         ])
 
         if (allResult.status === 'fulfilled') {
@@ -109,10 +118,11 @@ export default function Settings() {
             ollamaModel: all.ollamaModel || 'llama3.1',
             showLiveTranscript: all.showLiveTranscript !== 'false',
             defaultMaxSpeakers: all.defaultMaxSpeakers || '',
-            companyDriveRootFolder: all.companyDriveRootFolder || ''
+            companyDriveRootFolder: all.companyDriveRootFolder || '',
+            companyLocalFilesRoot: all.companyLocalFilesRoot || ''
           })
           setStaleRelationshipDays(all.dashboardStaleRelationshipDays || '21')
-          setStuckDealDays(all.dashboardStuckDealDays || '21')
+          setStalledPipelineDays(all.dashboardStalledPipelineDays || '21')
         }
 
         if (currentPathResult.status === 'fulfilled') {
@@ -123,11 +133,6 @@ export default function Settings() {
           setUserProfile(userResult.value)
           setUserDisplayName(userResult.value.displayName || '')
           setUserEmail(userResult.value.email || '')
-        }
-
-        if (pipelineResult.status === 'fulfilled') {
-          setPipelineConfigId(pipelineResult.value.config.id)
-          setPipelineStages(pipelineResult.value.stages)
         }
       } finally {
         await refreshGoogleScopes()
@@ -165,91 +170,12 @@ export default function Settings() {
     )
     await window.api.invoke(
       IPC_CHANNELS.SETTINGS_SET,
-      'dashboardStuckDealDays',
-      stuckDealDays.trim() || '21'
+      'dashboardStalledPipelineDays',
+      stalledPipelineDays.trim() || '21'
     )
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }, [settings, userDisplayName, userEmail, staleRelationshipDays, stuckDealDays])
-
-  const handleStageSave = useCallback(async (stage: PipelineStage) => {
-    setStageBusyId(stage.id)
-    try {
-      const saved = await window.api.invoke<PipelineStage>(
-        IPC_CHANNELS.PIPELINE_UPSERT_STAGE,
-        {
-          id: stage.id,
-          pipelineConfigId: stage.pipelineConfigId,
-          label: stage.label,
-          slug: stage.slug,
-          sortOrder: stage.sortOrder,
-          color: stage.color,
-          isTerminal: stage.isTerminal
-        }
-      )
-      setPipelineStages((prev) => prev.map((item) => (item.id === saved.id ? saved : item)))
-    } catch (err) {
-      setProfileError(String(err))
-    } finally {
-      setStageBusyId(null)
-    }
-  }, [])
-
-  const moveStage = useCallback(async (stageId: string, direction: -1 | 1) => {
-    if (!pipelineConfigId) return
-    const idx = pipelineStages.findIndex((stage) => stage.id === stageId)
-    if (idx < 0) return
-    const target = idx + direction
-    if (target < 0 || target >= pipelineStages.length) return
-
-    const next = [...pipelineStages]
-    const [moved] = next.splice(idx, 1)
-    next.splice(target, 0, moved)
-    const orderedIds = next.map((stage) => stage.id)
-    try {
-      const reordered = await window.api.invoke<PipelineStage[]>(
-        IPC_CHANNELS.PIPELINE_REORDER_STAGES,
-        pipelineConfigId,
-        orderedIds
-      )
-      setPipelineStages(reordered)
-    } catch (err) {
-      setProfileError(String(err))
-    }
-  }, [pipelineConfigId, pipelineStages])
-
-  const handleStageDelete = useCallback(async (stageId: string) => {
-    if (!pipelineConfigId) return
-    try {
-      const remaining = await window.api.invoke<PipelineStage[]>(
-        IPC_CHANNELS.PIPELINE_DELETE_STAGE,
-        stageId,
-        null
-      )
-      setPipelineStages(remaining)
-    } catch (err) {
-      setProfileError(String(err))
-    }
-  }, [pipelineConfigId])
-
-  const handleAddStage = useCallback(async () => {
-    if (!newStageLabel.trim()) return
-    try {
-      await window.api.invoke<PipelineStage>(
-        IPC_CHANNELS.PIPELINE_UPSERT_STAGE,
-        {
-          pipelineConfigId,
-          label: newStageLabel.trim(),
-          color: newStageColor,
-          isTerminal: false
-        }
-      )
-      setNewStageLabel('')
-      await refreshPipelineConfig()
-    } catch (err) {
-      setProfileError(String(err))
-    }
-  }, [newStageColor, newStageLabel, pipelineConfigId, refreshPipelineConfig])
+  }, [settings, userDisplayName, userEmail, staleRelationshipDays, stalledPipelineDays])
 
   const handleOpenStorage = useCallback(async () => {
     await window.api.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_DIR)
@@ -380,7 +306,10 @@ export default function Settings() {
     if (!currentFolder) return
     setSettings((prev) => ({
       ...prev,
-      companyDriveRootFolder: `https://drive.google.com/drive/folders/${currentFolder.id}`
+      companyDriveRootFolder: appendDriveRoot(
+        prev.companyDriveRootFolder,
+        `https://drive.google.com/drive/folders/${currentFolder.id}`
+      )
     }))
     setFolderPickerOpen(false)
   }, [folderPickerPath])
@@ -418,88 +347,6 @@ export default function Settings() {
       </section>
 
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Pipeline</h3>
-        <div className={styles.field}>
-          <label className={styles.label}>Stages</label>
-          <div className={styles.stageList}>
-            {pipelineStages.map((stage) => (
-              <div key={stage.id} className={styles.stageRow}>
-                <input
-                  className={styles.input}
-                  value={stage.label}
-                  onChange={(event) =>
-                    setPipelineStages((prev) =>
-                      prev.map((item) =>
-                        item.id === stage.id ? { ...item, label: event.target.value } : item
-                      )
-                    )
-                  }
-                />
-                <input
-                  type="color"
-                  className={styles.colorInput}
-                  value={stage.color || '#5A7DA3'}
-                  onChange={(event) =>
-                    setPipelineStages((prev) =>
-                      prev.map((item) =>
-                        item.id === stage.id ? { ...item, color: event.target.value } : item
-                      )
-                    )
-                  }
-                />
-                <label className={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={stage.isTerminal}
-                    onChange={(event) =>
-                      setPipelineStages((prev) =>
-                        prev.map((item) =>
-                          item.id === stage.id ? { ...item, isTerminal: event.target.checked } : item
-                        )
-                      )
-                    }
-                  />
-                  Terminal
-                </label>
-                <div className={styles.stageActions}>
-                  <button className={styles.linkBtn} onClick={() => void moveStage(stage.id, -1)}>Up</button>
-                  <button className={styles.linkBtn} onClick={() => void moveStage(stage.id, 1)}>Down</button>
-                  <button className={styles.linkBtn} onClick={() => void handleStageSave(stage)}>
-                    {stageBusyId === stage.id ? 'Saving...' : 'Save'}
-                  </button>
-                  {pipelineStages.length > 1 && (
-                    <button className={styles.linkBtn} onClick={() => void handleStageDelete(stage.id)}>
-                      Delete
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Add Stage</label>
-          <div className={styles.addStageRow}>
-            <input
-              className={styles.input}
-              value={newStageLabel}
-              onChange={(event) => setNewStageLabel(event.target.value)}
-              placeholder="Stage label"
-            />
-            <input
-              type="color"
-              className={styles.colorInput}
-              value={newStageColor}
-              onChange={(event) => setNewStageColor(event.target.value)}
-            />
-            <button className={styles.connectBtn} onClick={() => void handleAddStage()}>
-              Add
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Relationship Thresholds</h3>
         <div className={styles.field}>
           <label className={styles.label}>Stale relationship after (days)</label>
@@ -512,12 +359,12 @@ export default function Settings() {
           />
         </div>
         <div className={styles.field}>
-          <label className={styles.label}>Stuck deal after (days)</label>
+          <label className={styles.label}>Stalled pipeline after (days)</label>
           <input
             type="number"
             className={styles.input}
-            value={stuckDealDays}
-            onChange={(event) => setStuckDealDays(event.target.value)}
+            value={stalledPipelineDays}
+            onChange={(event) => setStalledPipelineDays(event.target.value)}
             min="1"
           />
         </div>
@@ -785,17 +632,48 @@ export default function Settings() {
           </button>
         </div>
         <div className={styles.field}>
+          <label className={styles.label}>Company Files Root Folder (Local)</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className={styles.input}
+              style={{ flex: 1 }}
+              value={settings.companyLocalFilesRoot}
+              onChange={(e) =>
+                setSettings({ ...settings, companyLocalFilesRoot: e.target.value })
+              }
+              placeholder="/path/to/company-files"
+            />
+            <button
+              className={styles.linkBtn}
+              onClick={async () => {
+                const chosen = await window.api.invoke<string | null>(
+                  IPC_CHANNELS.APP_PICK_FOLDER
+                )
+                if (chosen) {
+                  setSettings((prev) => ({ ...prev, companyLocalFilesRoot: chosen }))
+                }
+              }}
+            >
+              Browse
+            </button>
+          </div>
+          <p className={styles.hint}>
+            Local folder that contains per-company sub-folders. The app will match folders by company name.
+          </p>
+        </div>
+        <div className={styles.field}>
           <label className={styles.label}>Company Files Root Folder (Drive)</label>
-          <input
+          <textarea
             className={styles.input}
             value={settings.companyDriveRootFolder}
             onChange={(e) =>
               setSettings({ ...settings, companyDriveRootFolder: e.target.value })
             }
-            placeholder="Google Drive folder URL or folder ID"
+            rows={3}
+            placeholder="One folder URL or ID per line (or comma-separated)"
           />
           <p className={styles.hint}>
-            Used by Company Detail &gt; Files. Set this to the Drive folder that contains your per-company folders.
+            Used by Company Detail &gt; Files. You can set multiple Drive root folders (one per line) when company folders live in different areas.
           </p>
           <div className={styles.folderPickerActions}>
             <button
@@ -853,7 +731,7 @@ export default function Settings() {
                   onClick={handleUseCurrentFolder}
                   disabled={folderPickerPath.length === 0}
                 >
-                  Use Current Folder
+                  Add Current Folder
                 </button>
               </div>
             </div>

@@ -6,7 +6,8 @@
   flex-direction: column;
   padding: 10px 8px;
   flex-shrink: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .logoBlock {
@@ -23,6 +24,18 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+
+.searchSection {
+  padding: 2px 4px 10px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 10px;
+}
+
+.calendarSection {
+  margin-top: 12px;
+  padding: 8px 4px 0;
+  border-top: 1px solid var(--color-border);
 }
 
 .bottom {

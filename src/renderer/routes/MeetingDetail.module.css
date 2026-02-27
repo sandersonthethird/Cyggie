@@ -234,6 +234,17 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.companyChipMain:hover {
+  color: var(--color-text);
 }
 
 .companyChipActions {

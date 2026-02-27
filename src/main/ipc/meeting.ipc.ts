@@ -147,6 +147,11 @@ export function registerMeetingHandlers(): void {
 
       const updates: Parameters<typeof meetingRepo.updateMeeting>[1] = { title: trimmed }
 
+      // Promote scheduled notes so they aren't cleaned up as expired
+      if (meeting.status === 'scheduled') {
+        updates.status = 'transcribed'
+      }
+
       if (meeting.transcriptPath) {
         updates.transcriptPath = renameTranscript(meeting.transcriptPath, id, trimmed, meeting.date, meeting.attendees)
       }
@@ -182,7 +187,12 @@ export function registerMeetingHandlers(): void {
       const userId = getCurrentUserId()
       const meeting = meetingRepo.getMeeting(id)
       if (!meeting) throw new Error('Meeting not found')
-      meetingRepo.updateMeeting(id, { notes: notes || null }, userId)
+      const noteUpdates: Parameters<typeof meetingRepo.updateMeeting>[1] = { notes: notes || null }
+      // Promote scheduled notes so they aren't cleaned up as expired
+      if (meeting.status === 'scheduled' && notes?.trim()) {
+        noteUpdates.status = 'transcribed'
+      }
+      meetingRepo.updateMeeting(id, noteUpdates, userId)
       logAudit(userId, 'meeting', id, 'update', { notes: Boolean(notes) })
       return meetingRepo.getMeeting(id)
     }
@@ -322,8 +332,24 @@ export function registerMeetingHandlers(): void {
     return shell.openExternal(parsed.toString())
   })
 
+  ipcMain.handle(IPC_CHANNELS.APP_OPEN_PATH, (_event, filePath: string) => {
+    if (typeof filePath !== 'string' || !filePath.trim()) {
+      throw new Error('Path is required')
+    }
+    return shell.openPath(filePath.trim())
+  })
+
   ipcMain.handle(IPC_CHANNELS.APP_GET_STORAGE_PATH, () => {
     return getStoragePath()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.APP_PICK_FOLDER, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Choose folder',
+      properties: ['openDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
   })
 
   ipcMain.handle(IPC_CHANNELS.APP_CHANGE_STORAGE_DIR, async () => {

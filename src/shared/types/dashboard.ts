@@ -1,6 +1,6 @@
-import type { PipelineSummaryItem, StuckDealItem } from './pipeline'
+import type { PipelineSummaryItem, StalledPipelineCompany } from './pipeline'
 
-export type DashboardActivityType = 'meeting' | 'email' | 'note' | 'deal_event'
+export type DashboardActivityType = 'meeting' | 'email' | 'note'
 
 export interface DashboardActivityItem {
   id: string
@@ -9,7 +9,7 @@ export interface DashboardActivityItem {
   subtitle: string | null
   occurredAt: string
   referenceId: string
-  referenceType: 'meeting' | 'email' | 'company_note' | 'deal_stage_event'
+  referenceType: 'meeting' | 'email' | 'company_note'
   companyId: string | null
   companyName: string | null
 }
@@ -25,7 +25,7 @@ export interface DashboardStaleCompany {
 
 export interface DashboardNeedsAttention {
   staleCompanies: DashboardStaleCompany[]
-  stuckDeals: StuckDealItem[]
+  stalledCompanies: StalledPipelineCompany[]
 }
 
 export interface DashboardData {
@@ -33,7 +33,18 @@ export interface DashboardData {
   recentActivity: DashboardActivityItem[]
   needsAttention: DashboardNeedsAttention
   staleRelationshipDays: number
-  stuckDealDays: number
+  stalledPipelineDays: number
+  activityFilter: DashboardActivityFilter
+}
+
+export interface DashboardActivityFilter {
+  types: DashboardActivityType[]
+  emailCompanyFilter: 'all' | 'pipeline_portfolio'
+}
+
+export const DEFAULT_ACTIVITY_FILTER: DashboardActivityFilter = {
+  types: ['meeting', 'email'],
+  emailCompanyFilter: 'pipeline_portfolio'
 }
 
 export interface DashboardCalendarCompanyContext {
@@ -44,5 +55,5 @@ export interface DashboardCalendarCompanyContext {
   lastTouchpoint: string | null
   meetingCount: number
   emailCount: number
-  activeDealStage: string | null
+  pipelineStage: string | null
 }

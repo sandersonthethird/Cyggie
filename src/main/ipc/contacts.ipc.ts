@@ -9,8 +9,11 @@ import { logAudit } from '../database/repositories/audit.repo'
 export function registerContactHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.CONTACT_LIST,
-    (_event, filter?: { query?: string; limit?: number; offset?: number }) => {
-      return contactRepo.listContacts(filter)
+    (_event, filter?: { query?: string; limit?: number; offset?: number; includeStats?: boolean }) => {
+      if (filter?.includeStats) {
+        return contactRepo.listContacts(filter)
+      }
+      return contactRepo.listContactsLight(filter)
     }
   )
 
@@ -51,6 +54,28 @@ export function registerContactHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC_CHANNELS.CONTACT_UPDATE,
+    (
+      _event,
+      contactId: string,
+      data: {
+        fullName?: string
+        firstName?: string | null
+        lastName?: string | null
+        title?: string | null
+        contactType?: string | null
+        linkedinUrl?: string | null
+      }
+    ) => {
+      if (!contactId?.trim()) throw new Error('contactId is required')
+      const userId = getCurrentUserId()
+      const updated = contactRepo.updateContact(contactId, data, userId)
+      logAudit(userId, 'contact', contactId, 'update', data)
+      return updated
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.CONTACT_SET_COMPANY,
     (_event, contactId: string, companyName: string) => {
       if (!contactId?.trim()) throw new Error('contactId is required')
@@ -77,6 +102,14 @@ export function registerContactHandlers(): void {
         addedEmail: email
       })
       return updated
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_RESOLVE_EMAILS,
+    (_event, emails: string[]) => {
+      if (!Array.isArray(emails)) return {}
+      return contactRepo.resolveContactsByEmails(emails)
     }
   )
 

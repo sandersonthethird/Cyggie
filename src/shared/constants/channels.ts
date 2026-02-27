@@ -61,21 +61,16 @@ export const IPC_CHANNELS = {
   CONTACT_CREATE: 'contact:create',
   CONTACT_ADD_EMAIL: 'contact:add-email',
   CONTACT_SET_COMPANY: 'contact:set-company',
+  CONTACT_UPDATE: 'contact:update',
   CONTACT_SYNC_FROM_MEETINGS: 'contact:sync-from-meetings',
+  CONTACT_RESOLVE_EMAILS: 'contact:resolve-emails',
 
   // Dashboard
   DASHBOARD_GET: 'dashboard:get',
   DASHBOARD_ENRICH_CALENDAR: 'dashboard:enrich-calendar',
 
   // Pipeline
-  PIPELINE_GET_BOARD: 'pipeline:get-board',
-  PIPELINE_CREATE_DEAL: 'pipeline:create-deal',
-  PIPELINE_MOVE_DEAL: 'pipeline:move-deal',
-  PIPELINE_GET_COMPANY_ACTIVE_DEAL: 'pipeline:get-company-active-deal',
-  PIPELINE_GET_CONFIG: 'pipeline:get-config',
-  PIPELINE_UPSERT_STAGE: 'pipeline:upsert-stage',
-  PIPELINE_DELETE_STAGE: 'pipeline:delete-stage',
-  PIPELINE_REORDER_STAGES: 'pipeline:reorder-stages',
+  PIPELINE_LIST: 'pipeline:list',
 
   // Unified Ask
   UNIFIED_SEARCH_QUERY: 'unified-search:query',
@@ -165,7 +160,9 @@ export const IPC_CHANNELS = {
   APP_OPEN_STORAGE_DIR: 'app:open-storage-dir',
   APP_OPEN_EXTERNAL_URL: 'app:open-external-url',
   APP_GET_STORAGE_PATH: 'app:get-storage-path',
-  APP_CHANGE_STORAGE_DIR: 'app:change-storage-dir'
+  APP_CHANGE_STORAGE_DIR: 'app:change-storage-dir',
+  APP_OPEN_PATH: 'app:open-path',
+  APP_PICK_FOLDER: 'app:pick-folder'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

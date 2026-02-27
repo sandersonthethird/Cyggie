@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Meeting } from '../../../shared/types/meeting'
+import { getSingleCompanyDomain } from '../../../shared/utils/company-domain'
 import styles from './MeetingCard.module.css'
 
 interface MeetingCardProps {
@@ -48,9 +49,18 @@ export default function MeetingCard({ meeting, snippet, onClick, onDelete, onCop
     ? meeting.attendees
     : Object.values(meeting.speakerMap)
   const speakerNames = attendees.join(', ')
+  const companyDomain = getSingleCompanyDomain(meeting.attendeeEmails)
 
   return (
     <div className={styles.card} onClick={onClick}>
+      {companyDomain && (
+        <img
+          src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(companyDomain)}&sz=32`}
+          alt=""
+          className={styles.logo}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+      )}
       <div className={styles.row}>
         <h3 className={styles.title}>{meeting.title}</h3>
         <span className={styles.time}>{formatTime(meeting.date)}</span>
