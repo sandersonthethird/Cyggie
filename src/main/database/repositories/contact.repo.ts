@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
-import { findCompanyIdByDomain } from './org-company.repo'
+import { findCompanyIdByDomain, linkMeetingsForContactCompany } from './org-company.repo'
 import type {
   ContactSummary,
   ContactSyncResult,
@@ -1043,6 +1043,17 @@ export function setContactPrimaryCompany(
   })
 
   tx(companyId)
+
+  // Backfill meeting-company links for meetings where this contact is an attendee
+  if (companyId) {
+    const emails = db
+      .prepare(`SELECT email FROM contact_emails WHERE contact_id = ?`)
+      .all(contactId) as Array<{ email: string }>
+    const contactEmails = emails.map((e) => e.email)
+    if (contactEmails.length > 0) {
+      linkMeetingsForContactCompany(companyId, contactEmails, userId)
+    }
+  }
 
   const updated = getContact(contactId)
   if (!updated) {

@@ -13,6 +13,13 @@ import type { CompanyEntityType } from '../../shared/types/company'
 import type { MeetingTemplate } from '../../shared/types/template'
 import type { DriveShareResponse } from '../../shared/types/drive'
 import type { WebShareResponse } from '../../shared/types/web-share'
+import type {
+  CompanySummaryUpdateChange,
+  CompanySummaryUpdateProposal,
+  SummaryGenerateResult
+} from '../../shared/types/summary'
+import type { Task, ProposedTask, TaskCreateData } from '../../shared/types/task'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import styles from './MeetingDetail.module.css'
 
@@ -87,17 +94,56 @@ function companySuggestionKey(company: CompanySuggestion): string {
   return `${company.name.toLowerCase()}::${(company.domain || '').toLowerCase()}`
 }
 
+function toTitleCase(value: string): string {
+  return value
+    .split('_')
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ')
+}
+
+function fieldLabel(field: CompanySummaryUpdateChange['field']): string {
+  if (field === 'description') return 'Description'
+  if (field === 'round') return 'Round'
+  if (field === 'raiseSize') return 'Raise Size'
+  if (field === 'postMoneyValuation') return 'Post Money'
+  if (field === 'city') return 'City'
+  if (field === 'state') return 'State'
+  return 'Pipeline Stage'
+}
+
+function formatFieldValue(field: CompanySummaryUpdateChange['field'], value: string | number | null): string {
+  if (value == null || String(value).trim() === '') return 'empty'
+  if (field === 'raiseSize' || field === 'postMoneyValuation') return `$${value}M`
+  if (field === 'round' || field === 'pipelineStage') return toTitleCase(String(value))
+  return String(value)
+}
+
+function buildCompanyUpdatePrompt(proposals: CompanySummaryUpdateProposal[]): string {
+  if (proposals.length === 0) return ''
+  return proposals.map((proposal) => {
+    const parts: string[] = []
+    if (proposal.changes.length > 0) {
+      const changePreview = proposal.changes
+        .slice(0, 5)
+        .map((change) =>
+          `${fieldLabel(change.field)}: ${formatFieldValue(change.field, change.from)} -> ${formatFieldValue(change.field, change.to)}`
+        )
+        .join('; ')
+      const extra = proposal.changes.length > 5 ? ` (+${proposal.changes.length - 5} more)` : ''
+      parts.push(`${changePreview}${extra}`)
+    }
+    if (proposal.founderUpdate) {
+      parts.push(`Tag ${proposal.founderUpdate.contactName} as founder`)
+    }
+    return `${proposal.companyName}: ${parts.join('; ')}`
+  }).join(' | ')
+}
+
 export default function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const locationState = location.state as { fromCompanyId?: unknown } | null
-  const fromCompanyId = typeof locationState?.fromCompanyId === 'string'
-    && locationState.fromCompanyId.trim()
-    ? locationState.fromCompanyId
-    : null
-  const backHref = fromCompanyId ? `/company/${fromCompanyId}` : '/'
-  const backLabel = fromCompanyId ? 'Back to Company' : 'Back to Meetings'
+  const backLabel = 'Back'
   const [data, setData] = useState<MeetingData | null>(null)
   const [activeTab, setActiveTab] = useState<'notes' | 'transcript' | 'recording'>('notes')
   const [templates, setTemplates] = useState<MeetingTemplate[]>([])
@@ -134,6 +180,7 @@ export default function MeetingDetail() {
   const setRecordingError = useRecordingStore((s) => s.setError)
   const liveTranscript = useRecordingStore((s) => s.liveTranscript)
   const interimSegment = useRecordingStore((s) => s.interimSegment)
+  const channelMode = useRecordingStore((s) => s.channelMode)
   const audioCapture = useSharedAudioCapture()
   const videoCapture = useSharedVideoCapture()
   const prevRecordingRef = useRef(false)
@@ -142,6 +189,8 @@ export default function MeetingDetail() {
   const [isVideoLoading, setIsVideoLoading] = useState(false)
   const [videoBlobFailed, setVideoBlobFailed] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [companyUpdateDialogOpen, setCompanyUpdateDialogOpen] = useState(false)
+  const [pendingCompanyUpdates, setPendingCompanyUpdates] = useState<CompanySummaryUpdateProposal[]>([])
   const videoRef = useRef<HTMLVideoElement>(null)
   const playRequestRef = useRef<Promise<void> | null>(null)
   const videoWrapperRef = useRef<HTMLDivElement>(null)
@@ -167,6 +216,10 @@ export default function MeetingDetail() {
   const [companyTagSelections, setCompanyTagSelections] = useState<Record<string, CompanyEntityType>>({})
   const [savingCompanyTagKey, setSavingCompanyTagKey] = useState<string | null>(null)
   const [attendeeContactMap, setAttendeeContactMap] = useState<Record<string, string>>({})
+  const [meetingTasks, setMeetingTasks] = useState<Task[]>([])
+  const [taskProposalDialogOpen, setTaskProposalDialogOpen] = useState(false)
+  const [pendingProposedTasks, setPendingProposedTasks] = useState<ProposedTask[]>([])
+  const [proposedTaskSelections, setProposedTaskSelections] = useState<Record<string, boolean>>({})
 
   // Close share menu on click outside
   useEffect(() => {
@@ -419,6 +472,11 @@ export default function MeetingDetail() {
     setSummaryDraft(result.summary || '')
     summaryDraftRef.current = result.summary || ''
     if (result.summary) setShowNotes(false)
+
+    // Load tasks linked to this meeting
+    window.api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
+      .then(setMeetingTasks)
+      .catch((err) => console.error('[MeetingDetail] Failed to load tasks:', err))
 
     // Ask main process for a playable recording path (includes legacy/fallback resolution).
     window.api.invoke<string | null>(IPC_CHANNELS.VIDEO_GET_PATH, id)
@@ -724,6 +782,37 @@ export default function MeetingDetail() {
     window.api.invoke(IPC_CHANNELS.SUMMARY_ABORT)
   }, [])
 
+  const handleApplyCompanyUpdates = useCallback(async () => {
+    if (pendingCompanyUpdates.length === 0) {
+      setCompanyUpdateDialogOpen(false)
+      if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
+      return
+    }
+
+    const proposals = [...pendingCompanyUpdates]
+    setCompanyUpdateDialogOpen(false)
+    setPendingCompanyUpdates([])
+
+    try {
+      for (const proposal of proposals) {
+        if (Object.keys(proposal.updates).length > 0) {
+          await window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, proposal.companyId, proposal.updates)
+        }
+        if (proposal.founderUpdate) {
+          await window.api.invoke(
+            IPC_CHANNELS.CONTACT_UPDATE,
+            proposal.founderUpdate.contactId,
+            { contactType: proposal.founderUpdate.toType }
+          )
+        }
+      }
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to apply company updates from summary:', err)
+    }
+
+    if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
+  }, [pendingCompanyUpdates, pendingProposedTasks])
+
   const handleGenerateSummary = useCallback(async () => {
     if (!id || !selectedTemplateId || isGenerating) return
     // Save any pending notes first
@@ -736,17 +825,48 @@ export default function MeetingDetail() {
     setActiveTab('notes')
 
     try {
-      const summary = await window.api.invoke<string>(
+      const result = await window.api.invoke<SummaryGenerateResult | string>(
         IPC_CHANNELS.SUMMARY_GENERATE,
         id,
         selectedTemplateId
       )
+      const summary = typeof result === 'string' ? result : result.summary
+      const companyUpdateProposals = typeof result === 'string'
+        ? []
+        : (result.companyUpdateProposals || [])
       setData((prev) =>
         prev ? { ...prev, summary, meeting: { ...prev.meeting, status: 'summarized' } } : prev
       )
       setSummaryDraft(summary)
       setStreamedSummary('')
       setShowNotes(false)
+      // Handle task proposals
+      const taskResult = typeof result === 'string' ? undefined : result.taskExtractionResult
+      const proposedTasks = taskResult?.proposed || []
+
+      if (proposedTasks.length > 0) {
+        setPendingProposedTasks(proposedTasks)
+        const selections: Record<string, boolean> = {}
+        for (const task of proposedTasks) {
+          selections[task.key] = true
+        }
+        setProposedTaskSelections(selections)
+      }
+
+      if (companyUpdateProposals.length > 0) {
+        setPendingCompanyUpdates(companyUpdateProposals)
+        setCompanyUpdateDialogOpen(true)
+        // Task dialog will open after company updates dialog closes
+      } else if (proposedTasks.length > 0) {
+        setTaskProposalDialogOpen(true)
+      }
+
+      // Refresh existing tasks
+      if (id) {
+        window.api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
+          .then(setMeetingTasks)
+          .catch((err2) => console.error('[MeetingDetail] Failed to refresh tasks:', err2))
+      }
     } catch (err) {
       const errStr = String(err)
       if (!errStr.includes('abort') && !errStr.includes('Abort')) {
@@ -758,6 +878,54 @@ export default function MeetingDetail() {
       setSummaryPhase('')
     }
   }, [id, selectedTemplateId, isGenerating, notesDraft, saveNotes])
+
+  const handleAcceptProposedTasks = useCallback(async () => {
+    const selected = pendingProposedTasks.filter((t) => proposedTaskSelections[t.key])
+    setTaskProposalDialogOpen(false)
+    setPendingProposedTasks([])
+    setProposedTaskSelections({})
+
+    if (selected.length === 0) return
+
+    try {
+      const createData: TaskCreateData[] = selected.map((t) => ({
+        title: t.title,
+        description: t.description,
+        meetingId: t.meetingId,
+        companyId: t.companyId,
+        category: t.category,
+        assignee: t.assignee,
+        source: 'auto' as const,
+        sourceSection: t.sourceSection,
+        extractionHash: t.extractionHash
+      }))
+      await window.api.invoke(IPC_CHANNELS.TASK_BULK_CREATE, createData)
+      if (id) {
+        const tasks = await window.api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
+        setMeetingTasks(tasks)
+      }
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to create tasks:', err)
+    }
+  }, [id, pendingProposedTasks, proposedTaskSelections])
+
+  const handleDismissProposedTasks = useCallback(() => {
+    setTaskProposalDialogOpen(false)
+    setPendingProposedTasks([])
+    setProposedTaskSelections({})
+  }, [])
+
+  const selectedTaskCount = Object.values(proposedTaskSelections).filter(Boolean).length
+
+  const pendingCompanyUpdateCount = pendingCompanyUpdates.reduce(
+    (total, proposal) => total + proposal.changes.length + (proposal.founderUpdate ? 1 : 0),
+    0
+  )
+  const companyUpdatePromptTitle =
+    pendingCompanyUpdateCount === 1
+      ? 'Apply 1 company update?'
+      : `Apply ${pendingCompanyUpdateCount} company updates?`
+  const companyUpdatePromptMessage = buildCompanyUpdatePrompt(pendingCompanyUpdates)
 
   const handleTitleClick = useCallback(() => {
     if (!data) return
@@ -940,7 +1108,7 @@ export default function MeetingDetail() {
       )}
 
       <div className={styles.stickyHeader}>
-        <button className={styles.back} onClick={() => navigate(backHref)}>
+        <button className={styles.back} onClick={() => navigate(-1)}>
           &larr; {backLabel}
         </button>
 
@@ -1130,7 +1298,14 @@ export default function MeetingDetail() {
             <div className={styles.recordingStatus}>
               <span className={`${styles.recordingDot} ${isPaused ? styles.paused : ''}`} />
               <div className={styles.recordingStatusText}>
-                <span className={styles.recordingModeLabel}>Meeting transcription</span>
+                <span className={styles.recordingModeLabel}>
+                  Meeting transcription
+                  {channelMode && channelMode !== 'detecting' && (
+                    <span className={styles.channelModeBadge}>
+                      {channelMode === 'multichannel' ? 'Stereo' : 'Mic Only'}
+                    </span>
+                  )}
+                </span>
                 <span className={styles.recordingTimer}>
                   {formatTime(duration)}
                   {isPaused && <span className={styles.pausedLabel}> (Paused)</span>}
@@ -1292,6 +1467,46 @@ export default function MeetingDetail() {
                   </div>
                 )}
               </>
+            )}
+
+            {meetingTasks.length > 0 && (
+              <div className={styles.meetingTasksSection}>
+                <div className={styles.summaryDivider}>
+                  <span>Tasks ({meetingTasks.length})</span>
+                </div>
+                {meetingTasks.map((task) => (
+                  <div key={task.id} className={styles.meetingTaskRow}>
+                    <input
+                      type="checkbox"
+                      checked={task.status === 'done'}
+                      className={styles.meetingTaskCheckbox}
+                      onChange={async () => {
+                        const newStatus = task.status === 'done' ? 'open' : 'done'
+                        try {
+                          await window.api.invoke(IPC_CHANNELS.TASK_UPDATE, task.id, { status: newStatus })
+                          setMeetingTasks((prev) =>
+                            prev.map((t) => (t.id === task.id ? { ...t, status: newStatus } : t))
+                          )
+                        } catch (err) {
+                          console.error('Failed to update task:', err)
+                        }
+                      }}
+                    />
+                    <span className={task.status === 'done' ? styles.meetingTaskDone : styles.meetingTaskTitle}>
+                      {task.title}
+                    </span>
+                    <span className={styles.meetingTaskBadge}>
+                      {task.category === 'action_item' ? 'Action' : task.category === 'decision' ? 'Decision' : 'Follow-up'}
+                    </span>
+                  </div>
+                ))}
+                <button
+                  className={styles.meetingTasksViewAll}
+                  onClick={() => navigate('/tasks')}
+                >
+                  View all tasks
+                </button>
+              </div>
             )}
 
             {!displaySummary && !hasTranscript && !notesDraft && (
@@ -1499,6 +1714,68 @@ export default function MeetingDetail() {
         onConfirm={() => void handleConfirmDelete()}
         onCancel={() => setDeleteDialogOpen(false)}
       />
+      <ConfirmDialog
+        open={companyUpdateDialogOpen}
+        title={companyUpdatePromptTitle}
+        message={companyUpdatePromptMessage}
+        confirmLabel="Apply updates"
+        cancelLabel="Keep current values"
+        onConfirm={() => void handleApplyCompanyUpdates()}
+        onCancel={() => {
+          setCompanyUpdateDialogOpen(false)
+          setPendingCompanyUpdates([])
+          if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
+        }}
+      />
+      {taskProposalDialogOpen && createPortal(
+        <div className={styles.taskProposalOverlay}>
+          <div className={styles.taskProposalDialog}>
+            <h3 className={styles.taskProposalTitle}>
+              Add {pendingProposedTasks.length} proposed task{pendingProposedTasks.length !== 1 ? 's' : ''}?
+            </h3>
+            <p className={styles.taskProposalSubtitle}>
+              Select the tasks you'd like to keep from this meeting.
+            </p>
+            <div className={styles.taskProposalList}>
+              {pendingProposedTasks.map((task) => (
+                <label key={task.key} className={styles.taskProposalRow}>
+                  <input
+                    type="checkbox"
+                    checked={proposedTaskSelections[task.key] ?? true}
+                    onChange={() => {
+                      setProposedTaskSelections((prev) => ({
+                        ...prev,
+                        [task.key]: !prev[task.key]
+                      }))
+                    }}
+                    className={styles.taskProposalCheckbox}
+                  />
+                  <span className={styles.taskProposalText}>{task.title}</span>
+                  <span className={styles.taskProposalBadge}>
+                    {task.category === 'action_item' ? 'Action' : task.category === 'decision' ? 'Decision' : 'Follow-up'}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className={styles.taskProposalActions}>
+              <button
+                className={styles.taskProposalSkip}
+                onClick={handleDismissProposedTasks}
+              >
+                Skip All
+              </button>
+              <button
+                className={styles.taskProposalAccept}
+                onClick={() => void handleAcceptProposedTasks()}
+                disabled={selectedTaskCount === 0}
+              >
+                Add {selectedTaskCount} Task{selectedTaskCount !== 1 ? 's' : ''}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

@@ -24,4 +24,5 @@ export interface RecordingStatus {
   startTime: number | null
   durationSeconds: number
   speakerCount: number
+  channelMode?: 'detecting' | 'multichannel' | 'diarization'
 }

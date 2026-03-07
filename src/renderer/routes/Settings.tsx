@@ -60,6 +60,8 @@ export default function Settings() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [userDisplayName, setUserDisplayName] = useState('')
   const [userEmail, setUserEmail] = useState('')
+  const [userTitle, setUserTitle] = useState('')
+  const [userJobFunction, setUserJobFunction] = useState('')
   const [profileError, setProfileError] = useState('')
   const [staleRelationshipDays, setStaleRelationshipDays] = useState('21')
   const [stalledPipelineDays, setStalledPipelineDays] = useState('21')
@@ -133,6 +135,8 @@ export default function Settings() {
           setUserProfile(userResult.value)
           setUserDisplayName(userResult.value.displayName || '')
           setUserEmail(userResult.value.email || '')
+          setUserTitle(userResult.value.title || '')
+          setUserJobFunction(userResult.value.jobFunction || '')
         }
       } finally {
         await refreshGoogleScopes()
@@ -152,12 +156,16 @@ export default function Settings() {
       IPC_CHANNELS.USER_UPDATE_CURRENT,
       {
         displayName: userDisplayName.trim(),
-        email: userEmail.trim() || null
+        email: userEmail.trim() || null,
+        title: userTitle.trim() || null,
+        jobFunction: userJobFunction.trim() || null
       }
     )
     setUserProfile(updatedProfile)
     setUserDisplayName(updatedProfile.displayName)
     setUserEmail(updatedProfile.email || '')
+    setUserTitle(updatedProfile.title || '')
+    setUserJobFunction(updatedProfile.jobFunction || '')
 
     const entries = Object.entries(settings) as [string, string | boolean][]
     for (const [key, value] of entries) {
@@ -175,7 +183,7 @@ export default function Settings() {
     )
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }, [settings, userDisplayName, userEmail, staleRelationshipDays, stalledPipelineDays])
+  }, [settings, userDisplayName, userEmail, userTitle, userJobFunction, staleRelationshipDays, stalledPipelineDays])
 
   const handleOpenStorage = useCallback(async () => {
     await window.api.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_DIR)
@@ -338,9 +346,26 @@ export default function Settings() {
             onChange={(e) => setUserEmail(e.target.value)}
             placeholder="you@firm.com"
           />
+        </div>
+        <div className={styles.field}>
+          <label className={styles.label}>Title</label>
+          <input
+            className={styles.input}
+            value={userTitle}
+            onChange={(e) => setUserTitle(e.target.value)}
+            placeholder="e.g. Partner, Principal, Associate"
+          />
+        </div>
+        <div className={styles.field}>
+          <label className={styles.label}>Job Function</label>
+          <input
+            className={styles.input}
+            value={userJobFunction}
+            onChange={(e) => setUserJobFunction(e.target.value)}
+            placeholder="e.g. Venture Capital, Private Equity"
+          />
           <p className={styles.hint}>
-            Used for authorship and audit metadata.
-            {userProfile?.role ? ` Role: ${userProfile.role}` : ''}
+            Your profile is used to personalize meeting summaries and task extraction.
           </p>
         </div>
         {profileError && <p className={styles.error}>{profileError}</p>}

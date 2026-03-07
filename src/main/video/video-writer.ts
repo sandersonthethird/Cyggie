@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync, renameSync, readdirSync, statSync } from 'fs'
+import { existsSync, unlinkSync, renameSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { join, extname, basename } from 'path'
 import { spawn, spawnSync } from 'child_process'
 import type { ChildProcessWithoutNullStreams } from 'child_process'
@@ -122,6 +122,67 @@ function buildPlaybackFilename(sourceFilename: string): string {
   const ext = extname(sourceFilename)
   const base = basename(sourceFilename, ext)
   return `${base}.play.mp4`
+}
+
+async function concatVideoFiles(
+  ffmpegPath: string,
+  inputPaths: string[],
+  outputPath: string
+): Promise<void> {
+  const listPath = outputPath + '.concat.txt'
+  const listContent = inputPaths
+    .map((p) => `file '${p.replace(/'/g, "'\\''")}'`)
+    .join('\n')
+  writeFileSync(listPath, listContent, 'utf-8')
+
+  const args = [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-nostdin',
+    '-f',
+    'concat',
+    '-safe',
+    '0',
+    '-i',
+    listPath,
+    '-c',
+    'copy',
+    '-movflags',
+    '+faststart',
+    '-y',
+    outputPath
+  ]
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+      const stderrLines: string[] = []
+
+      proc.stderr.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString('utf-8').trim().split('\n').filter(Boolean)
+        stderrLines.push(...lines)
+        if (stderrLines.length > 20) {
+          stderrLines.splice(0, stderrLines.length - 20)
+        }
+      })
+
+      proc.once('error', (err) => reject(err))
+      proc.once('exit', (code) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(
+            new Error(
+              `FFmpeg concat failed (exit ${code})${stderrLines.length ? `: ${stderrLines.join('\n')}` : ''}`
+            )
+          )
+        }
+      })
+    })
+  } finally {
+    if (existsSync(listPath)) unlinkSync(listPath)
+  }
 }
 
 function findRecordingByMeetingId(meetingId: string): string | null {
@@ -330,7 +391,11 @@ async function waitForProcessExit(recording: ActiveRecording, timeoutMs: number)
   return code
 }
 
-export async function finalizeVideoFile(meetingId: string, filename: string): Promise<string> {
+export async function finalizeVideoFile(
+  meetingId: string,
+  filename: string,
+  previousRecordingPath?: string
+): Promise<string> {
   if (!activeRecording || activeRecording.meetingId !== meetingId) {
     throw new Error('No active video recording for this meeting')
   }
@@ -374,12 +439,45 @@ export async function finalizeVideoFile(meetingId: string, filename: string): Pr
     throw recording.error
   }
 
-  const finalPath = join(getRecordingsDir(), filename)
-  renameSync(tempPath, finalPath)
+  const dir = getRecordingsDir()
+  const finalPath = join(dir, filename)
 
-  console.log(
-    `[VideoWriter] Finalized ${finalPath} (${(bytesWritten / 1024 / 1024).toFixed(1)} MB via ${recording.ffmpegPath})`
-  )
+  // Check for an existing recording to concatenate with
+  const previousFullPath = previousRecordingPath
+    ? join(dir, previousRecordingPath)
+    : null
+
+  if (previousFullPath && existsSync(previousFullPath)) {
+    const prevTempPath = join(dir, `${meetingId}.prev.tmp.mp4`)
+    renameSync(previousFullPath, prevTempPath)
+
+    try {
+      await concatVideoFiles(recording.ffmpegPath, [prevTempPath, tempPath], finalPath)
+      // Clean up segment temp files
+      if (existsSync(prevTempPath)) unlinkSync(prevTempPath)
+      if (existsSync(tempPath)) unlinkSync(tempPath)
+      console.log(
+        `[VideoWriter] Concatenated segments into ${finalPath} (${recording.ffmpegPath})`
+      )
+    } catch (err) {
+      console.warn('[VideoWriter] Concat failed, saving new segment only:', err)
+      // Restore previous file and save new segment separately
+      if (existsSync(prevTempPath)) {
+        try {
+          renameSync(prevTempPath, previousFullPath)
+        } catch {
+          // ignore
+        }
+      }
+      renameSync(tempPath, finalPath)
+    }
+  } else {
+    renameSync(tempPath, finalPath)
+    console.log(
+      `[VideoWriter] Finalized ${finalPath} (${(bytesWritten / 1024 / 1024).toFixed(1)} MB via ${recording.ffmpegPath})`
+    )
+  }
+
   return filename
 }
 
@@ -495,7 +593,12 @@ export function cleanupOrphanedTempFiles(): void {
   const dir = getRecordingsDir()
   if (!existsSync(dir)) return
   const tmpFiles = readdirSync(dir).filter(
-    (f) => f.endsWith('.webm.tmp') || f.endsWith('.mp4.tmp') || f.endsWith('.tmp.mp4')
+    (f) =>
+      f.endsWith('.webm.tmp') ||
+      f.endsWith('.mp4.tmp') ||
+      f.endsWith('.tmp.mp4') ||
+      f.endsWith('.prev.tmp.mp4') ||
+      f.endsWith('.concat.txt')
   )
   for (const f of tmpFiles) {
     unlinkSync(join(dir, f))

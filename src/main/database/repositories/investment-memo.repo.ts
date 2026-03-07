@@ -1,10 +1,77 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
+import { getSetting } from './settings.repo'
 import type {
   InvestmentMemo,
   InvestmentMemoVersion,
   InvestmentMemoWithLatest
 } from '../../../shared/types/company'
+
+const MEMO_DEFAULT_TEMPLATE_SETTING_KEY = 'memo_default_template_markdown'
+const COMPANY_NAME_TOKEN_PATTERNS = [
+  /\{\{\s*company_name\s*\}\}/gi,
+  /\{\{\s*companyName\s*\}\}/gi,
+  /\{\{\s*company\s*\}\}/gi
+]
+
+function defaultInitialMemoContent(companyName: string): string {
+  return [
+    `# ${companyName} Investment Memo`,
+    '',
+    '## Exec Summary',
+    '',
+    '',
+    '## Investment Highlights',
+    '- ',
+    '',
+    '## Business',
+    '',
+    '',
+    '## Market / Industry',
+    '',
+    '',
+    '## Team',
+    '',
+    '',
+    '## Traction',
+    '',
+    '',
+    '## Financials',
+    '',
+    '',
+    '## Risks',
+    '- ',
+    '',
+    '## Checklist',
+    '- ',
+    '',
+    '## Capitalization',
+    '',
+    '',
+    '## References',
+    '- ',
+    '',
+    '## Appendix',
+    ''
+  ].join('\n')
+}
+
+function renderMemoTemplate(template: string, companyName: string): string {
+  let rendered = template
+  for (const pattern of COMPANY_NAME_TOKEN_PATTERNS) {
+    rendered = rendered.replace(pattern, companyName)
+  }
+  return rendered
+}
+
+function buildInitialMemoContent(companyName: string): string {
+  const configuredTemplate = getSetting(MEMO_DEFAULT_TEMPLATE_SETTING_KEY)
+  if (configuredTemplate?.trim()) {
+    const rendered = renderMemoTemplate(configuredTemplate, companyName).trim()
+    if (rendered) return rendered
+  }
+  return defaultInitialMemoContent(companyName)
+}
 
 interface MemoRow {
   id: string
@@ -132,21 +199,7 @@ export function getOrCreateMemoForCompany(
     title: `${companyName} Investment Memo`
   }, userId)
 
-  const initialContent = [
-    `# ${companyName} Investment Memo`,
-    '',
-    '## Thesis',
-    '- ',
-    '',
-    '## Why Now',
-    '- ',
-    '',
-    '## Risks / Open Questions',
-    '- ',
-    '',
-    '## Next Steps',
-    '- '
-  ].join('\n')
+  const initialContent = buildInitialMemoContent(companyName)
 
   const version = saveMemoVersion(memo.id, {
     contentMarkdown: initialContent,

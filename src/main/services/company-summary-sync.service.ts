@@ -1,7 +1,18 @@
 import * as companyRepo from '../database/repositories/org-company.repo'
+import { resolveContactsByEmails } from '../database/repositories/contact.repo'
+import { getContact } from '../database/repositories/contact.repo'
 import type { CompanyPipelineStage, CompanyRound, CompanySummary } from '../../shared/types/company'
+import type {
+  CompanySummaryUpdateChange,
+  CompanySummaryUpdatePayload,
+  CompanySummaryUpdateProposal,
+  ContactTypeUpdateProposal
+} from '../../shared/types/summary'
 
-type CompanyUpdateInput = Parameters<typeof companyRepo.updateCompany>[1]
+export interface MeetingContext {
+  attendees: string[] | null
+  attendeeEmails: string[] | null
+}
 
 interface ParsedVcSummaryFields {
   description: string | null
@@ -33,6 +44,19 @@ const MONEY_FRAGMENT_RE = /\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:billion|bn|b|million|mm
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
+}
+
+function isDifferentText(next: string | null | undefined, current: string | null | undefined): boolean {
+  if (!next) return false
+  const normalizedNext = normalizeWhitespace(next).toLowerCase()
+  const normalizedCurrent = normalizeWhitespace(current || '').toLowerCase()
+  return normalizedNext !== normalizedCurrent
+}
+
+function isDifferentNumber(next: number | null | undefined, current: number | null | undefined): boolean {
+  if (next == null) return false
+  if (current == null) return true
+  return Math.abs(next - current) > 0.001
 }
 
 function stripMarkdown(value: string): string {
@@ -263,6 +287,83 @@ function inferPipelineStage(text: string): CompanyPipelineStage | null {
   return null
 }
 
+function extractFounderName(summary: string): string | null {
+  const teamSection = extractSection(summary, ['team', 'founders', 'team / founders', 'team & founders'])
+  if (!teamSection) return null
+
+  // Look for patterns like "Founded by X", "CEO: X", "Founder: X", or just the first
+  // capitalized multi-word name mentioned (likely a person name)
+  const founderPatterns = [
+    /(?:founded by|founder[s]?:?\s*|ceo[:\s]+)([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)/i,
+    /([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*[\(,\-–—]\s*(?:founder|ceo|co-founder)/i
+  ]
+
+  for (const pattern of founderPatterns) {
+    const match = teamSection.match(pattern)
+    if (match?.[1]) return normalizeWhitespace(match[1])
+  }
+
+  return null
+}
+
+function matchFounderToAttendee(
+  founderName: string | null,
+  meetingContext: MeetingContext,
+  companyId: string
+): ContactTypeUpdateProposal | null {
+  const attendees = meetingContext.attendees?.filter(Boolean) || []
+  const attendeeEmails = meetingContext.attendeeEmails?.filter(Boolean) || []
+  if (attendees.length === 0 || attendeeEmails.length === 0) return null
+
+  // Resolve attendee emails to contact IDs
+  const emailToContactId = resolveContactsByEmails(attendeeEmails)
+  if (Object.keys(emailToContactId).length === 0) return null
+
+  // Build pairs of (attendee name, contact ID)
+  const candidates: Array<{ name: string; contactId: string }> = []
+  for (let i = 0; i < attendees.length; i += 1) {
+    const email = attendeeEmails[i]?.trim().toLowerCase()
+    if (!email) continue
+    const contactId = emailToContactId[email]
+    if (!contactId) continue
+    candidates.push({ name: attendees[i], contactId })
+  }
+
+  if (candidates.length === 0) return null
+
+  // Try to match the extracted founder name against attendees
+  let matched = candidates[0] // default to first external attendee
+  if (founderName) {
+    const lowerFounder = founderName.toLowerCase()
+    const exactMatch = candidates.find((c) => c.name.toLowerCase() === lowerFounder)
+    const partialMatch = candidates.find((c) => {
+      const lowerName = c.name.toLowerCase()
+      return lowerName.includes(lowerFounder) || lowerFounder.includes(lowerName)
+    })
+    if (exactMatch) {
+      matched = exactMatch
+    } else if (partialMatch) {
+      matched = partialMatch
+    }
+  }
+
+  // Verify contact exists and check current type
+  const contact = getContact(matched.contactId)
+  if (!contact) return null
+  if (contact.contactType === 'founder') return null // already tagged
+
+  // Verify contact is linked to the target company
+  const isLinked = contact.primaryCompanyId === companyId
+  if (!isLinked) return null
+
+  return {
+    contactId: contact.id,
+    contactName: contact.fullName,
+    fromType: contact.contactType,
+    toType: 'founder'
+  }
+}
+
 function parseVcPitchSummary(summary: string): ParsedVcSummaryFields {
   const executive = extractSection(summary, ['executive summary']) || ''
   const overview = extractSection(summary, ['company overview']) || ''
@@ -295,20 +396,69 @@ function selectTargetCompanies(companies: CompanySummary[], summary: string): Co
   return explicitMatches.length === 1 ? explicitMatches : []
 }
 
-export function syncProspectCompaniesFromVcSummary(
+function buildProposalForCompany(
+  company: CompanySummary,
+  parsed: ParsedVcSummaryFields
+): CompanySummaryUpdateProposal | null {
+  const updates: CompanySummaryUpdatePayload = {}
+  const changes: CompanySummaryUpdateChange[] = []
+
+  if (isDifferentText(parsed.description, company.description)) {
+    updates.description = parsed.description
+    changes.push({ field: 'description', from: company.description, to: parsed.description })
+  }
+  if (parsed.round && parsed.round !== company.round) {
+    updates.round = parsed.round
+    changes.push({ field: 'round', from: company.round, to: parsed.round })
+  }
+  if (isDifferentNumber(parsed.raiseSize, company.raiseSize)) {
+    updates.raiseSize = parsed.raiseSize
+    changes.push({ field: 'raiseSize', from: company.raiseSize, to: parsed.raiseSize })
+  }
+  if (isDifferentNumber(parsed.postMoneyValuation, company.postMoneyValuation)) {
+    updates.postMoneyValuation = parsed.postMoneyValuation
+    changes.push({
+      field: 'postMoneyValuation',
+      from: company.postMoneyValuation,
+      to: parsed.postMoneyValuation
+    })
+  }
+  if (isDifferentText(parsed.city, company.city)) {
+    updates.city = parsed.city
+    changes.push({ field: 'city', from: company.city, to: parsed.city })
+  }
+  if (isDifferentText(parsed.state, company.state)) {
+    updates.state = parsed.state
+    changes.push({ field: 'state', from: company.state, to: parsed.state })
+  }
+  if (parsed.pipelineStage && parsed.pipelineStage !== company.pipelineStage) {
+    updates.pipelineStage = parsed.pipelineStage
+    changes.push({ field: 'pipelineStage', from: company.pipelineStage, to: parsed.pipelineStage })
+  }
+
+  if (changes.length === 0) return null
+  return {
+    companyId: company.id,
+    companyName: company.canonicalName,
+    updates,
+    changes
+  }
+}
+
+export function getVcSummaryCompanyUpdateProposals(
   meetingId: string,
   summary: string,
-  userId: string | null = null
-): void {
+  meetingContext?: MeetingContext
+): CompanySummaryUpdateProposal[] {
   const trimmedSummary = summary.trim()
-  if (!meetingId || !trimmedSummary) return
+  if (!meetingId || !trimmedSummary) return []
 
   const linkedProspects = companyRepo
     .listMeetingCompanies(meetingId)
     .filter((company) => company.entityType === 'prospect')
     .filter((company) => isFirstMeetingForCompany(company.id, meetingId))
 
-  if (linkedProspects.length === 0) return
+  if (linkedProspects.length === 0) return []
 
   const targets = selectTargetCompanies(linkedProspects, trimmedSummary)
   if (targets.length === 0) {
@@ -316,10 +466,12 @@ export function syncProspectCompaniesFromVcSummary(
       meetingId,
       candidates: linkedProspects.map((company) => company.canonicalName)
     })
-    return
+    return []
   }
 
   const parsed = parseVcPitchSummary(trimmedSummary)
+  const founderName = extractFounderName(trimmedSummary)
+
   const hasExtractedData = Boolean(
     parsed.description
     || parsed.round
@@ -328,45 +480,32 @@ export function syncProspectCompaniesFromVcSummary(
     || parsed.city
     || parsed.state
     || parsed.pipelineStage
+    || founderName
   )
 
-  if (!hasExtractedData) return
+  if (!hasExtractedData) return []
 
-  for (const company of targets) {
-    const updates: CompanyUpdateInput = {}
+  return targets
+    .map((company) => {
+      const proposal = buildProposalForCompany(company, parsed)
+      // Attach founder update if meeting context is available
+      let founderUpdate: ContactTypeUpdateProposal | null = null
+      if (meetingContext) {
+        try {
+          founderUpdate = matchFounderToAttendee(founderName, meetingContext, company.id)
+        } catch (err) {
+          console.error('[Company AutoFill] Failed to match founder:', err)
+        }
+      }
 
-    if (parsed.description && !company.description?.trim()) {
-      updates.description = parsed.description
-    }
-    if (parsed.round && !company.round) {
-      updates.round = parsed.round
-    }
-    if (parsed.raiseSize != null && company.raiseSize == null) {
-      updates.raiseSize = parsed.raiseSize
-    }
-    if (parsed.postMoneyValuation != null && company.postMoneyValuation == null) {
-      updates.postMoneyValuation = parsed.postMoneyValuation
-    }
-    if (parsed.city && !company.city) {
-      updates.city = parsed.city
-    }
-    if (parsed.state && !company.state) {
-      updates.state = parsed.state
-    }
-    if (parsed.pipelineStage && !company.pipelineStage) {
-      updates.pipelineStage = parsed.pipelineStage
-    }
-
-    if (Object.keys(updates).length === 0) continue
-
-    const updated = companyRepo.updateCompany(company.id, updates, userId)
-    if (!updated) continue
-
-    console.log('[Company AutoFill] Synced company fields from VC summary', {
-      meetingId,
-      companyId: company.id,
-      companyName: company.canonicalName,
-      updates
+      if (!proposal && !founderUpdate) return null
+      return {
+        companyId: company.id,
+        companyName: company.canonicalName,
+        updates: proposal?.updates || {},
+        changes: proposal?.changes || [],
+        founderUpdate
+      } satisfies CompanySummaryUpdateProposal
     })
-  }
+    .filter((proposal): proposal is CompanySummaryUpdateProposal => proposal !== null)
 }

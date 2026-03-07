@@ -69,7 +69,7 @@ export function registerVideoHandlers(): void {
       meeting.attendees
     )
 
-    await finalizeVideoFile(meetingId, filename)
+    await finalizeVideoFile(meetingId, filename, meeting.recordingPath || undefined)
 
     meetingRepo.updateMeeting(meetingId, {
       recordingPath: filename

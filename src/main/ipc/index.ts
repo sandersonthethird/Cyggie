@@ -19,6 +19,7 @@ import { registerUserHandlers } from './user.ipc'
 import { registerDashboardHandlers } from './dashboard.ipc'
 import { registerPipelineHandlers } from './pipeline.ipc'
 import { registerUnifiedSearchHandlers } from './unified-search.ipc'
+import { registerTaskHandlers } from './task.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -42,4 +43,5 @@ export function registerAllHandlers(): void {
   registerDashboardHandlers()
   registerPipelineHandlers()
   registerUnifiedSearchHandlers()
+  registerTaskHandlers()
 }

@@ -635,7 +635,10 @@ export function updateCompany(
     }
     sets.push("updated_at = datetime('now')")
     params.push(companyId)
-    db.prepare(`UPDATE org_companies SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+    const result = db.prepare(`UPDATE org_companies SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+    if (result.changes === 0) {
+      console.error(`[updateCompany] UPDATE matched 0 rows for companyId=${companyId}`)
+    }
 
     if (normalizedCanonicalName) {
       upsertCompanyAlias(db, companyId, normalizedCanonicalName, 'name')
@@ -647,7 +650,13 @@ export function updateCompany(
     }
   }
 
-  return getCompany(companyId)
+  const detail = getCompany(companyId)
+  if (detail && normalizedCanonicalName && detail.canonicalName !== normalizedCanonicalName) {
+    console.error(
+      `[updateCompany] Name mismatch after save: expected="${normalizedCanonicalName}" got="${detail.canonicalName}"`
+    )
+  }
+  return detail
 }
 
 export function findCompanyIdByDomain(domain: string): string | null {
@@ -1007,6 +1016,38 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
   }
 }
 
+export function deleteCompany(companyId: string): void {
+  if (!companyId) throw new Error('companyId is required')
+
+  const db = getDatabase()
+  const company = db
+    .prepare('SELECT id FROM org_companies WHERE id = ? LIMIT 1')
+    .get(companyId) as { id: string } | undefined
+  if (!company) throw new Error('Company not found')
+
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM meeting_company_links WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM email_company_links WHERE company_id = ?').run(companyId)
+    db.prepare('UPDATE contacts SET primary_company_id = NULL, updated_at = datetime(\'now\') WHERE primary_company_id = ?').run(companyId)
+    db.prepare('DELETE FROM org_company_contacts WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM deals WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM company_notes WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM company_conversations WHERE company_id = ?').run(companyId)
+    // Delete memo versions first, then memos
+    db.prepare('DELETE FROM investment_memo_versions WHERE memo_id IN (SELECT id FROM investment_memos WHERE company_id = ?)').run(companyId)
+    db.prepare('DELETE FROM investment_memos WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM org_company_industries WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM org_company_themes WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM theses WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM artifacts WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM org_company_aliases WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM tasks WHERE company_id = ?').run(companyId)
+    db.prepare('DELETE FROM org_companies WHERE id = ?').run(companyId)
+  })
+
+  tx()
+}
+
 export function linkMeetingCompany(
   meetingId: string,
   companyId: string,
@@ -1027,6 +1068,31 @@ export function linkMeetingCompany(
   `).run(meetingId, companyId, confidence, linkedBy, userId, userId)
 }
 
+export function linkMeetingsForContactCompany(
+  companyId: string,
+  contactEmails: string[],
+  userId: string | null = null
+): number {
+  const normalized = contactEmails
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+  if (normalized.length === 0) return 0
+
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      SELECT DISTINCT m.id
+      FROM meetings m, json_each(COALESCE(m.attendee_emails, '[]')) e
+      WHERE lower(trim(e.value)) IN (${normalized.map(() => '?').join(', ')})
+    `)
+    .all(...normalized) as Array<{ id: string }>
+
+  for (const row of rows) {
+    linkMeetingCompany(row.id, companyId, 0.8, 'contact_association', userId)
+  }
+  return rows.length
+}
+
 export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
   const db = getDatabase()
   const rows = db
@@ -1037,12 +1103,21 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
         m.date,
         m.status,
         m.duration_seconds
-      FROM meeting_company_links l
-      JOIN meetings m ON m.id = l.meeting_id
-      WHERE l.company_id = ?
+      FROM meetings m
+      WHERE m.id IN (
+        SELECT l.meeting_id FROM meeting_company_links l WHERE l.company_id = ?
+        UNION
+        SELECT m2.id FROM meetings m2
+        JOIN contacts c ON c.primary_company_id = ?
+        WHERE c.email IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM json_each(COALESCE(m2.attendee_emails, '[]')) e
+            WHERE lower(trim(e.value)) = lower(trim(c.email))
+          )
+      )
       ORDER BY datetime(m.date) DESC
     `)
-    .all(companyId) as Array<{
+    .all(companyId, companyId) as Array<{
     id: string
     title: string
     date: string
@@ -1056,6 +1131,36 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
     date: row.date,
     status: row.status,
     durationSeconds: row.duration_seconds
+  }))
+}
+
+export function listCompanyMeetingSummaryPaths(companyId: string): Array<{ meetingId: string; title: string; date: string; summaryPath: string }> {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      SELECT m.id, m.title, m.date, m.summary_path
+      FROM meetings m
+      WHERE m.summary_path IS NOT NULL
+        AND m.id IN (
+          SELECT l.meeting_id FROM meeting_company_links l WHERE l.company_id = ?
+          UNION
+          SELECT m2.id FROM meetings m2
+          JOIN contacts c ON c.primary_company_id = ?
+          WHERE c.email IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM json_each(COALESCE(m2.attendee_emails, '[]')) e
+              WHERE lower(trim(e.value)) = lower(trim(c.email))
+            )
+        )
+      ORDER BY datetime(m.date) DESC
+    `)
+    .all(companyId, companyId) as Array<{ id: string; title: string; date: string; summary_path: string }>
+
+  return rows.map((row) => ({
+    meetingId: row.id,
+    title: row.title,
+    date: row.date,
+    summaryPath: row.summary_path
   }))
 }
 
@@ -1080,10 +1185,14 @@ export function listCompanyContacts(companyId: string): CompanyContactRef[] {
         c.full_name,
         c.email,
         c.title,
+        c.contact_type,
+        c.linkedin_url,
         c.updated_at,
+        COALESCE(occ.is_primary, 0) AS is_primary,
         COALESCE(ms.meeting_count, 0) AS meeting_count,
         ms.last_meeting_at
       FROM contacts c
+      LEFT JOIN org_company_contacts occ ON occ.contact_id = c.id AND occ.company_id = ?
       LEFT JOIN (
         SELECT
           lower(e.value) AS attendee_email,
@@ -1095,12 +1204,8 @@ export function listCompanyContacts(companyId: string): CompanyContactRef[] {
       ) ms ON ms.attendee_email = lower(c.email)
       WHERE
         c.primary_company_id = ?
-        OR EXISTS (
-          SELECT 1
-          FROM org_company_contacts occ
-          WHERE occ.company_id = ? AND occ.contact_id = c.id
-        )
-      ORDER BY datetime(COALESCE(ms.last_meeting_at, c.updated_at)) DESC, c.full_name ASC
+        OR occ.company_id IS NOT NULL
+      ORDER BY is_primary DESC, datetime(COALESCE(ms.last_meeting_at, c.updated_at)) DESC, c.full_name ASC
       LIMIT 300
     `)
     .all(companyId, companyId) as Array<{
@@ -1108,7 +1213,10 @@ export function listCompanyContacts(companyId: string): CompanyContactRef[] {
     full_name: string
     email: string | null
     title: string | null
+    contact_type: string | null
+    linkedin_url: string | null
     updated_at: string
+    is_primary: number
     meeting_count: number
     last_meeting_at: string | null
   }>
@@ -1118,17 +1226,45 @@ export function listCompanyContacts(companyId: string): CompanyContactRef[] {
     fullName: row.full_name,
     email: row.email,
     title: row.title,
+    contactType: row.contact_type,
+    linkedinUrl: row.linkedin_url,
+    isPrimary: row.is_primary === 1,
     meetingCount: row.meeting_count || 0,
     lastInteractedAt: row.last_meeting_at ?? row.updated_at,
     updatedAt: row.updated_at
   }))
 }
 
+export function setCompanyPrimaryContact(companyId: string, contactId: string): void {
+  const db = getDatabase()
+  db.transaction(() => {
+    // Clear any existing primary contact for this company
+    db.prepare(`
+      UPDATE org_company_contacts
+      SET is_primary = 0
+      WHERE company_id = ?
+    `).run(companyId)
+
+    // Ensure the contact has a link row, then mark it primary
+    db.prepare(`
+      INSERT INTO org_company_contacts (company_id, contact_id, is_primary, created_at)
+      VALUES (?, ?, 1, datetime('now'))
+      ON CONFLICT(company_id, contact_id) DO UPDATE SET is_primary = 1
+    `).run(companyId, contactId)
+  })()
+}
+
 export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
   const db = getDatabase()
   const rows = db
     .prepare(`
-      WITH linked AS (
+      WITH company_contact_ids AS (
+        SELECT c.id
+        FROM contacts c
+        LEFT JOIN org_company_contacts occ ON occ.contact_id = c.id
+        WHERE occ.company_id = ? OR c.primary_company_id = ?
+      ),
+      linked AS (
         SELECT
           em.id,
           em.subject,
@@ -1146,6 +1282,24 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
         FROM email_company_links l
         JOIN email_messages em ON em.id = l.message_id
         WHERE l.company_id = ?
+        UNION
+        SELECT
+          em.id,
+          em.subject,
+          em.from_email,
+          em.from_name,
+          em.received_at,
+          em.sent_at,
+          em.snippet,
+          em.body_text,
+          em.is_unread,
+          em.thread_id,
+          em.updated_at,
+          COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
+          COALESCE(em.thread_id, em.id) AS thread_group
+        FROM email_message_participants p
+        JOIN email_messages em ON em.id = p.message_id
+        WHERE p.contact_id IN (SELECT id FROM company_contact_ids)
       ),
       ranked AS (
         SELECT
@@ -1229,7 +1383,7 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
       ORDER BY datetime(ranked.sort_at) DESC, ranked.id DESC
       LIMIT 200
     `)
-    .all(companyId) as Array<{
+    .all(companyId, companyId, companyId) as Array<{
     id: string
     subject: string | null
     from_email: string

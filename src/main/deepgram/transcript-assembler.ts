@@ -4,9 +4,10 @@ import type { TranscriptSegment, TranscriptWord } from '../../shared/types/recor
 type ChannelMode = 'detecting' | 'multichannel' | 'diarization'
 const DEBUG_TRANSCRIPTION =
   process.env['NODE_ENV'] === 'development' && process.env['GORP_DEBUG_TRANSCRIPTION'] === '1'
-const SPEAKER_SWITCH_MIN_WORDS = 4
-const SPEAKER_SWITCH_MIN_DURATION_SECONDS = 1.0
-const SPEAKER_SWITCH_MIN_CONFIDENCE = 0.3
+const SPEAKER_SWITCH_MIN_WORDS = 2
+const SPEAKER_SWITCH_MIN_DURATION_SECONDS = 0.5
+const SPEAKER_SWITCH_MIN_CONFIDENCE = 0.15
+const SPEAKER_SWITCH_CASCADE_LIMIT = 3
 
 export class TranscriptAssembler {
   private finalizedSegments: TranscriptSegment[] = []
@@ -15,6 +16,9 @@ export class TranscriptAssembler {
   private timeOffset = 0
   private activeChannels = new Set<number>()
   private expectedSpeakerCount: number | null = null
+  private consecutiveSuppressedSwitches = 0
+  private suppressedSwitchTargetSpeaker: number | null = null
+  private totalSuppressedSwitches = 0
 
   /**
    * Auto-detection state machine for channel mode:
@@ -54,6 +58,20 @@ export class TranscriptAssembler {
 
   getChannelMode(): ChannelMode {
     return this.channelMode
+  }
+
+  getDiagnostics(): {
+    channelMode: ChannelMode
+    speakerCount: number
+    totalSegments: number
+    totalSuppressedSwitches: number
+  } {
+    return {
+      channelMode: this.channelMode,
+      speakerCount: this.knownSpeakers.size,
+      totalSegments: this.finalizedSegments.length,
+      totalSuppressedSwitches: this.totalSuppressedSwitches
+    }
   }
 
   addResult(result: TranscriptResult): void {
@@ -266,9 +284,33 @@ export class TranscriptAssembler {
     const stabilized: TranscriptSegment[] = []
 
     for (const seg of segments) {
-      if (seg.speaker === activeSpeaker || this.shouldAcceptSpeakerSwitch(seg)) {
+      if (seg.speaker === activeSpeaker) {
+        this.consecutiveSuppressedSwitches = 0
+        this.suppressedSwitchTargetSpeaker = null
+        stabilized.push(seg)
+      } else if (this.shouldAcceptSpeakerSwitch(seg)) {
         stabilized.push(seg)
         activeSpeaker = seg.speaker
+        this.consecutiveSuppressedSwitches = 0
+        this.suppressedSwitchTargetSpeaker = null
+      } else if (
+        this.consecutiveSuppressedSwitches >= SPEAKER_SWITCH_CASCADE_LIMIT &&
+        seg.speaker === this.suppressedSwitchTargetSpeaker
+      ) {
+        // Anti-cascade: Deepgram has consistently identified a different speaker
+        // N times in a row but each segment was too short/low-confidence.
+        // Accept the switch to prevent snowballing into a single-speaker transcript.
+        if (DEBUG_TRANSCRIPTION) {
+          console.log(
+            '[TranscriptAssembler] Anti-cascade: accepting speaker switch after',
+            `${this.consecutiveSuppressedSwitches} consecutive suppressions`,
+            `from=${activeSpeaker} to=${seg.speaker}`
+          )
+        }
+        stabilized.push(seg)
+        activeSpeaker = seg.speaker
+        this.consecutiveSuppressedSwitches = 0
+        this.suppressedSwitchTargetSpeaker = null
       } else {
         if (DEBUG_TRANSCRIPTION) {
           console.log(
@@ -277,6 +319,13 @@ export class TranscriptAssembler {
               `duration=${(seg.endTime - seg.startTime).toFixed(2)}s`
           )
         }
+        if (seg.speaker === this.suppressedSwitchTargetSpeaker) {
+          this.consecutiveSuppressedSwitches++
+        } else {
+          this.consecutiveSuppressedSwitches = 1
+          this.suppressedSwitchTargetSpeaker = seg.speaker
+        }
+        this.totalSuppressedSwitches++
         stabilized.push(this.reassignSegmentSpeaker(seg, activeSpeaker))
       }
     }
@@ -638,5 +687,8 @@ export class TranscriptAssembler {
     this.channelMode = 'detecting'
     this.channel0FinalCount = 0
     this.expectedSpeakerCount = null
+    this.consecutiveSuppressedSwitches = 0
+    this.suppressedSwitchTargetSpeaker = null
+    this.totalSuppressedSwitches = 0
   }
 }

@@ -8,7 +8,7 @@ import styles from './Layout.module.css'
 export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const showMeetingPage = location.pathname === '/meetings'
   const showCompanySearch = location.pathname === '/companies'
   const showContactSearch = location.pathname === '/contacts'
@@ -59,9 +59,7 @@ export default function Layout() {
     } else {
       next.set('new', '1')
     }
-    const targetPath = showCompanySearch ? '/companies' : '/contacts'
-    const query = next.toString()
-    navigate(query ? `${targetPath}?${query}` : targetPath)
+    setSearchParams(next)
   }
 
   return (

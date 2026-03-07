@@ -54,3 +54,24 @@ export interface FtsRow {
   transcript_text: string
   summary_text: string
 }
+
+export interface TaskRow {
+  id: string
+  title: string
+  description: string | null
+  meeting_id: string | null
+  company_id: string | null
+  contact_id: string | null
+  status: string
+  category: string
+  priority: string | null
+  assignee: string | null
+  due_date: string | null
+  source: string
+  source_section: string | null
+  extraction_hash: string | null
+  created_by_user_id: string | null
+  updated_by_user_id: string | null
+  created_at: string
+  updated_at: string
+}

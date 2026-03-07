@@ -30,6 +30,8 @@ import { runContactTypeMigration } from './migrations/027-contact-type'
 import { runCompanyLocationMigration } from './migrations/028-company-location'
 import { runPipelineCompanyFieldsMigration } from './migrations/029-pipeline-company-fields'
 import { runPerformanceIndexesMigration } from './migrations/030-performance-indexes'
+import { runTasksMigration } from './migrations/031-tasks'
+import { runUserProfileFieldsMigration } from './migrations/032-user-profile-fields'
 
 let db: Database.Database | null = null
 
@@ -68,6 +70,8 @@ export function getDatabase(): Database.Database {
     runCompanyLocationMigration(db)
     runPipelineCompanyFieldsMigration(db)
     runPerformanceIndexesMigration(db)
+    runTasksMigration(db)
+    runUserProfileFieldsMigration(db)
   }
   return db
 }

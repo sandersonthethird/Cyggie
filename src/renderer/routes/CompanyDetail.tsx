@@ -11,16 +11,18 @@ import type {
   CompanyEmailIngestResult,
   CompanyEmailRef,
   CompanyMeetingRef,
+  CompanyMeetingSummaryRef,
   CompanyNote,
   CompanyTimelineItem,
   InvestmentMemoVersion,
   InvestmentMemoWithLatest
 } from '../../shared/types/company'
 import type { CompanyPipelineStage, CompanyPriority, CompanyRound } from '../../shared/types/company'
+import type { ContactSummary } from '../../shared/types/contact'
 import type { UnifiedSearchAnswerResponse } from '../../shared/types/unified-search'
 import styles from './CompanyDetail.module.css'
 
-type CompanyTab = 'overview' | 'timeline' | 'notes' | 'memo' | 'contacts' | 'files'
+type CompanyTab = 'timeline' | 'notes' | 'memo' | 'contacts' | 'files'
 type TimelineFilter = 'all' | 'meeting' | 'email' | 'note'
 
 interface CompanyConversation {
@@ -66,6 +68,31 @@ const COMPANY_ENTITY_TYPE_OPTIONS: Array<{ value: CompanyEntityType; label: stri
   { value: 'vendor', label: 'vendor' },
   { value: 'other', label: 'other' },
   { value: 'unknown', label: 'unknown' }
+]
+
+const PIPELINE_STAGE_OPTIONS: Array<{ value: CompanyPipelineStage | ''; label: string }> = [
+  { value: '', label: 'None' },
+  { value: 'screening', label: 'Screening' },
+  { value: 'diligence', label: 'Diligence' },
+  { value: 'decision', label: 'Decision' },
+  { value: 'documentation', label: 'Documentation' },
+  { value: 'pass', label: 'Pass' }
+]
+
+const PRIORITY_OPTIONS: Array<{ value: CompanyPriority | ''; label: string }> = [
+  { value: '', label: 'None' },
+  { value: 'high', label: 'High' },
+  { value: 'further_work', label: 'Further Work' },
+  { value: 'monitor', label: 'Monitor' }
+]
+
+const ROUND_OPTIONS: Array<{ value: CompanyRound | ''; label: string }> = [
+  { value: '', label: 'No Round' },
+  { value: 'pre_seed', label: 'Pre-Seed' },
+  { value: 'seed', label: 'Seed' },
+  { value: 'seed_extension', label: 'Seed Extension' },
+  { value: 'series_a', label: 'Series A' },
+  { value: 'series_b', label: 'Series B' }
 ]
 
 const COMPANY_FILES_CACHE_TTL_MS = 15 * 60 * 1000
@@ -140,10 +167,17 @@ export default function CompanyDetail() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<CompanyTab>('overview')
+  const [activeTab, setActiveTab] = useState<CompanyTab>('timeline')
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>('all')
   const [editingEntityType, setEditingEntityType] = useState(false)
   const [updatingEntityType, setUpdatingEntityType] = useState(false)
+  const [editingStage, setEditingStage] = useState(false)
+  const [updatingStage, setUpdatingStage] = useState(false)
+  const [editingPriority, setEditingPriority] = useState(false)
+  const [updatingPriority, setUpdatingPriority] = useState(false)
+  const [editingRound, setEditingRound] = useState(false)
+  const [updatingRound, setUpdatingRound] = useState(false)
+  const [editingPrimaryContact, setEditingPrimaryContact] = useState(false)
 
   const [company, setCompany] = useState<CompanyDetailType | null>(null)
   const [timeline, setTimeline] = useState<CompanyTimelineItem[]>([])
@@ -162,6 +196,9 @@ export default function CompanyDetail() {
 
   const [notes, setNotes] = useState<CompanyNote[]>([])
   const [noteContent, setNoteContent] = useState('')
+  const [addingNote, setAddingNote] = useState(false)
+  const [meetingSummaries, setMeetingSummaries] = useState<CompanyMeetingSummaryRef[]>([])
+  const [expandedSummaryId, setExpandedSummaryId] = useState<string | null>(null)
 
   const [memo, setMemo] = useState<InvestmentMemoWithLatest | null>(null)
   const [memoVersions, setMemoVersions] = useState<InvestmentMemoVersion[]>([])
@@ -169,6 +206,9 @@ export default function CompanyDetail() {
   const [memoChangeNote, setMemoChangeNote] = useState('')
   const [savingMemo, setSavingMemo] = useState(false)
   const [exportingMemo, setExportingMemo] = useState(false)
+  const [memoMode, setMemoMode] = useState<'view' | 'edit'>('view')
+  const [generatingMemo, setGeneratingMemo] = useState(false)
+  const [memoGenerateProgress, setMemoGenerateProgress] = useState('')
   const [ingestingEmails, setIngestingEmails] = useState(false)
   const [emailIngestSummary, setEmailIngestSummary] = useState<string | null>(null)
   const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null)
@@ -182,6 +222,14 @@ export default function CompanyDetail() {
   const [stateDraft, setStateDraft] = useState('')
   const nameInputRef = useRef<HTMLInputElement>(null)
   const latestCompanyIdRef = useRef(companyId)
+
+  const [contactSearchQuery, setContactSearchQuery] = useState('')
+  const [contactSearchResults, setContactSearchResults] = useState<ContactSummary[]>([])
+  const [contactEmail, setContactEmail] = useState('')
+  const [showContactDropdown, setShowContactDropdown] = useState(false)
+  const [contactDropdownIndex, setContactDropdownIndex] = useState(-1)
+  const contactSearchRef = useRef<HTMLDivElement>(null)
+  const contactSearchDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const [conversations, setConversations] = useState<CompanyConversation[]>([])
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
@@ -197,7 +245,7 @@ export default function CompanyDetail() {
   }, [companyId])
 
   const visibleTabs = useMemo(() => {
-    const tabs: CompanyTab[] = ['overview', 'timeline', 'contacts']
+    const tabs: CompanyTab[] = ['timeline', 'contacts']
     if (flags.ff_company_notes_v1) tabs.push('notes')
     if (flags.ff_investment_memo_v1) tabs.push('memo')
     if (company && FILES_ENTITY_TYPES.has(company.entityType)) tabs.push('files')
@@ -257,7 +305,8 @@ export default function CompanyDetail() {
         emailResult,
         contactResult,
         noteResult,
-        memoResult
+        memoResult,
+        meetingSummaryResult
       ] = await Promise.allSettled([
         window.api.invoke<CompanyTimelineItem[]>(IPC_CHANNELS.COMPANY_TIMELINE, companyId),
         window.api.invoke<CompanyMeetingRef[]>(IPC_CHANNELS.COMPANY_MEETINGS, companyId),
@@ -268,7 +317,10 @@ export default function CompanyDetail() {
           : Promise.resolve([]),
         flags.ff_investment_memo_v1
           ? window.api.invoke<InvestmentMemoWithLatest>(IPC_CHANNELS.INVESTMENT_MEMO_GET_OR_CREATE, companyId)
-          : Promise.resolve(null)
+          : Promise.resolve(null),
+        flags.ff_company_notes_v1
+          ? window.api.invoke<CompanyMeetingSummaryRef[]>(IPC_CHANNELS.COMPANY_MEETING_SUMMARIES, companyId)
+          : Promise.resolve([])
       ])
 
       const partialErrors: string[] = []
@@ -291,6 +343,7 @@ export default function CompanyDetail() {
       const contactData = resolveOrFallback(contactResult, [] as CompanyContactRef[])
       const noteData = resolveOrFallback(noteResult, [] as CompanyNote[])
       const memoData = resolveOrFallback(memoResult, null as InvestmentMemoWithLatest | null)
+      const meetingSummaryData = resolveOrFallback(meetingSummaryResult, [] as CompanyMeetingSummaryRef[], IPC_CHANNELS.COMPANY_MEETING_SUMMARIES)
 
       setTimeline(timelineData)
       setMeetings(meetingData)
@@ -298,6 +351,7 @@ export default function CompanyDetail() {
       setContacts(contactData)
       setNotes(noteData)
       setMemo(memoData)
+      setMeetingSummaries(meetingSummaryData)
 
       if (memoData) {
         try {
@@ -394,7 +448,7 @@ export default function CompanyDetail() {
 
   useEffect(() => {
     if (!visibleTabs.includes(activeTab)) {
-      setActiveTab('overview')
+      setActiveTab('timeline')
     }
   }, [activeTab, visibleTabs])
 
@@ -426,6 +480,8 @@ export default function CompanyDetail() {
   useEffect(() => {
     setEditingEntityType(false)
     setUpdatingEntityType(false)
+    setEditingRound(false)
+    setUpdatingRound(false)
     setEmailIngestSummary(null)
     setFilesLoaded(false)
     setFiles([])
@@ -456,6 +512,15 @@ export default function CompanyDetail() {
     return timeline.filter((item) => item.type === timelineFilter)
   }, [timeline, timelineFilter])
 
+  const primaryContact = useMemo(() => {
+    if (contacts.length === 0) return null
+    return (
+      contacts.find((c) => c.isPrimary) ||
+      contacts.find((c) => c.contactType === 'founder') ||
+      contacts[0]
+    )
+  }, [contacts])
+
   const latestAssistantReply = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const message = messages[i]
@@ -472,6 +537,111 @@ export default function CompanyDetail() {
     }
   }, [])
 
+  const handleSetPrimaryContact = useCallback(async (contactId: string) => {
+    if (!companyId) return
+    try {
+      await window.api.invoke(IPC_CHANNELS.COMPANY_SET_PRIMARY_CONTACT, companyId, contactId)
+      const updated = await window.api.invoke<CompanyContactRef[]>(IPC_CHANNELS.COMPANY_CONTACTS, companyId)
+      setContacts(updated)
+    } catch (err) {
+      setError(displayError(err))
+    } finally {
+      setEditingPrimaryContact(false)
+    }
+  }, [companyId])
+
+  // Contact search: debounced query
+  useEffect(() => {
+    if (contactSearchDebounceRef.current) clearTimeout(contactSearchDebounceRef.current)
+    const q = contactSearchQuery.trim()
+    if (q.length < 2) {
+      setContactSearchResults([])
+      setShowContactDropdown(false)
+      return
+    }
+    contactSearchDebounceRef.current = setTimeout(async () => {
+      try {
+        const results = await window.api.invoke<ContactSummary[]>(
+          IPC_CHANNELS.CONTACT_LIST,
+          { query: q, limit: 8 }
+        )
+        setContactSearchResults(results)
+        setShowContactDropdown(results.length > 0)
+        setContactDropdownIndex(-1)
+      } catch {
+        setContactSearchResults([])
+        setShowContactDropdown(false)
+      }
+    }, 150)
+    return () => {
+      if (contactSearchDebounceRef.current) clearTimeout(contactSearchDebounceRef.current)
+    }
+  }, [contactSearchQuery])
+
+  // Contact search: click-outside to close dropdown
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (contactSearchRef.current && !contactSearchRef.current.contains(e.target as Node)) {
+        setShowContactDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const handleSelectExistingContact = useCallback(async (contact: ContactSummary) => {
+    if (!companyId) return
+    try {
+      await window.api.invoke(IPC_CHANNELS.COMPANY_SET_PRIMARY_CONTACT, companyId, contact.id)
+      const updated = await window.api.invoke<CompanyContactRef[]>(IPC_CHANNELS.COMPANY_CONTACTS, companyId)
+      setContacts(updated)
+      setContactSearchQuery('')
+      setContactEmail('')
+      setContactSearchResults([])
+      setShowContactDropdown(false)
+      setEditingPrimaryContact(false)
+    } catch (err) {
+      setError(displayError(err))
+    }
+  }, [companyId])
+
+  const handleCreateAndLinkContact = useCallback(async () => {
+    if (!companyId || !contactSearchQuery.trim() || !contactEmail.trim()) return
+    try {
+      const created = await window.api.invoke<ContactSummary>(
+        IPC_CHANNELS.CONTACT_CREATE,
+        { fullName: contactSearchQuery.trim(), email: contactEmail.trim() }
+      )
+      await window.api.invoke(IPC_CHANNELS.COMPANY_SET_PRIMARY_CONTACT, companyId, created.id)
+      const updated = await window.api.invoke<CompanyContactRef[]>(IPC_CHANNELS.COMPANY_CONTACTS, companyId)
+      setContacts(updated)
+      setContactSearchQuery('')
+      setContactEmail('')
+      setContactSearchResults([])
+      setShowContactDropdown(false)
+      setEditingPrimaryContact(false)
+    } catch (err) {
+      setError(displayError(err))
+    }
+  }, [companyId, contactSearchQuery, contactEmail])
+
+  const handleContactSearchKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (!showContactDropdown || contactSearchResults.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setContactDropdownIndex((prev) => Math.min(prev + 1, contactSearchResults.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setContactDropdownIndex((prev) => Math.max(prev - 1, -1))
+    } else if (e.key === 'Enter' && contactDropdownIndex >= 0) {
+      e.preventDefault()
+      void handleSelectExistingContact(contactSearchResults[contactDropdownIndex])
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setShowContactDropdown(false)
+    }
+  }, [showContactDropdown, contactSearchResults, contactDropdownIndex, handleSelectExistingContact])
+
   const handleCreateNote = useCallback(async () => {
     if (!companyId || !noteContent.trim()) return
     try {
@@ -480,6 +650,7 @@ export default function CompanyDetail() {
         content: noteContent.trim()
       })
       setNoteContent('')
+      setAddingNote(false)
       const refreshed = await window.api.invoke<CompanyNote[]>(
         IPC_CHANNELS.COMPANY_NOTES_LIST,
         companyId
@@ -582,6 +753,45 @@ export default function CompanyDetail() {
     }
   }, [memo])
 
+  const handleGenerateMemo = useCallback(async () => {
+    if (!companyId) return
+    setGeneratingMemo(true)
+    setMemoGenerateProgress('')
+    try {
+      await window.api.invoke(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE, companyId)
+      // Refresh memo data after generation
+      const refreshedMemo = await window.api.invoke<InvestmentMemoWithLatest>(
+        IPC_CHANNELS.INVESTMENT_MEMO_GET_OR_CREATE,
+        companyId
+      )
+      setMemo(refreshedMemo)
+      setMemoDraft(refreshedMemo.latestVersion?.contentMarkdown || '')
+      const refreshedVersions = await window.api.invoke<InvestmentMemoVersion[]>(
+        IPC_CHANNELS.INVESTMENT_MEMO_LIST_VERSIONS,
+        refreshedMemo.id
+      )
+      setMemoVersions(refreshedVersions)
+      setMemoMode('view')
+    } catch (err) {
+      setError(displayError(err))
+    } finally {
+      setGeneratingMemo(false)
+      setMemoGenerateProgress('')
+    }
+  }, [companyId])
+
+  // Listen for memo generation progress
+  useEffect(() => {
+    const cleanup = window.api.on(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE_PROGRESS, (text: unknown) => {
+      if (text === null) {
+        setMemoGenerateProgress('')
+      } else if (typeof text === 'string') {
+        setMemoGenerateProgress((prev) => prev + text)
+      }
+    })
+    return cleanup
+  }, [])
+
   const handleIngestEmails = useCallback(async () => {
     if (!companyId) return
     setIngestingEmails(true)
@@ -636,6 +846,87 @@ export default function CompanyDetail() {
     }
   }, [company, updatingEntityType])
 
+  const handleStageChange = useCallback(async (nextStage: CompanyPipelineStage | '') => {
+    if (!company || updatingStage) return
+    if (nextStage === (company.pipelineStage || '')) {
+      setEditingStage(false)
+      return
+    }
+
+    setUpdatingStage(true)
+    setError(null)
+    try {
+      const updated = await window.api.invoke<CompanyDetailType | null>(
+        IPC_CHANNELS.COMPANY_UPDATE,
+        company.id,
+        { pipelineStage: nextStage || null }
+      )
+      if (!updated) {
+        throw new Error('Failed to update pipeline stage.')
+      }
+      setCompany(updated)
+      setEditingStage(false)
+    } catch (err) {
+      setError(displayError(err))
+    } finally {
+      setUpdatingStage(false)
+    }
+  }, [company, updatingStage])
+
+  const handlePriorityChange = useCallback(async (nextPriority: CompanyPriority | '') => {
+    if (!company || updatingPriority) return
+    if (nextPriority === (company.priority || '')) {
+      setEditingPriority(false)
+      return
+    }
+
+    setUpdatingPriority(true)
+    setError(null)
+    try {
+      const updated = await window.api.invoke<CompanyDetailType | null>(
+        IPC_CHANNELS.COMPANY_UPDATE,
+        company.id,
+        { priority: nextPriority || null }
+      )
+      if (!updated) {
+        throw new Error('Failed to update priority.')
+      }
+      setCompany(updated)
+      setEditingPriority(false)
+    } catch (err) {
+      setError(displayError(err))
+    } finally {
+      setUpdatingPriority(false)
+    }
+  }, [company, updatingPriority])
+
+  const handleRoundChange = useCallback(async (nextRound: CompanyRound | '') => {
+    if (!company || updatingRound) return
+    if (nextRound === (company.round || '')) {
+      setEditingRound(false)
+      return
+    }
+
+    setUpdatingRound(true)
+    setError(null)
+    try {
+      const updated = await window.api.invoke<CompanyDetailType | null>(
+        IPC_CHANNELS.COMPANY_UPDATE,
+        company.id,
+        { round: nextRound || null }
+      )
+      if (!updated) {
+        throw new Error('Failed to update round.')
+      }
+      setCompany(updated)
+      setEditingRound(false)
+    } catch (err) {
+      setError(displayError(err))
+    } finally {
+      setUpdatingRound(false)
+    }
+  }, [company, updatingRound])
+
   const startHeaderEdit = useCallback(() => {
     if (!company || savingHeader) return
     setNameDraft(company.canonicalName)
@@ -658,6 +949,18 @@ export default function CompanyDetail() {
   const cancelHeaderEdit = useCallback(() => {
     setEditingHeader(false)
   }, [])
+
+  const handleDeleteCompany = useCallback(async () => {
+    if (!company) return
+    const confirmed = window.confirm(`Delete "${company.canonicalName}" and all associated data? This cannot be undone.`)
+    if (!confirmed) return
+    try {
+      await window.api.invoke(IPC_CHANNELS.COMPANY_DELETE, company.id)
+      navigate('/companies')
+    } catch (err) {
+      setError(displayError(err))
+    }
+  }, [company, navigate])
 
   const saveHeader = useCallback(async () => {
     if (!company || savingHeader) return
@@ -816,8 +1119,14 @@ export default function CompanyDetail() {
 
   return (
     <div className={styles.page}>
-      <button className={styles.backButton} onClick={() => navigate('/companies')}>
-        {'< Back to Companies'}
+      <button className={styles.backButton} onClick={() => {
+        if (editingHeader) {
+          cancelHeaderEdit()
+        } else {
+          navigate(-1)
+        }
+      }}>
+        {'< Back'}
       </button>
 
       <section className={styles.header}>
@@ -975,6 +1284,61 @@ export default function CompanyDetail() {
                 rows={3}
               />
             </div>
+            {contacts.length === 0 && (
+              <div className={styles.editRow}>
+                <label className={styles.editLabel}>Contact</label>
+                <div className={styles.contactSearchWrapper} ref={contactSearchRef}>
+                  <input
+                    className={styles.editInput}
+                    value={contactSearchQuery}
+                    onChange={(e) => setContactSearchQuery(e.target.value)}
+                    onKeyDown={handleContactSearchKeyDown}
+                    onFocus={() => {
+                      if (contactSearchResults.length > 0) setShowContactDropdown(true)
+                    }}
+                    disabled={savingHeader}
+                    placeholder="Search or enter contact name"
+                    aria-label="Contact name"
+                  />
+                  {showContactDropdown && contactSearchResults.length > 0 && (
+                    <div className={styles.contactDropdown}>
+                      {contactSearchResults.map((c, i) => (
+                        <div
+                          key={c.id}
+                          className={`${styles.contactDropdownItem} ${i === contactDropdownIndex ? styles.contactDropdownActive : ''}`}
+                          onMouseDown={() => void handleSelectExistingContact(c)}
+                          onMouseEnter={() => setContactDropdownIndex(i)}
+                        >
+                          <span className={styles.contactDropdownName}>{c.fullName}</span>
+                          {c.email && <span className={styles.contactDropdownEmail}>{c.email}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {contactSearchQuery.trim().length >= 2 && !showContactDropdown && (
+                    <div className={styles.contactAddRow}>
+                      <input
+                        className={styles.editInput}
+                        value={contactEmail}
+                        onChange={(e) => setContactEmail(e.target.value)}
+                        placeholder="Email address"
+                        aria-label="Contact email"
+                        disabled={savingHeader}
+                      />
+                      <button
+                        type="button"
+                        className={styles.editSaveButton}
+                        onClick={() => void handleCreateAndLinkContact()}
+                        disabled={!contactEmail.trim() || savingHeader}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {error && <div className={styles.error}>{error}</div>}
             <div className={styles.editActions}>
               <button
                 type="button"
@@ -991,6 +1355,14 @@ export default function CompanyDetail() {
                 disabled={savingHeader}
               >
                 Cancel
+              </button>
+              <button
+                type="button"
+                className={styles.editDeleteButton}
+                onClick={() => void handleDeleteCompany()}
+                disabled={savingHeader}
+              >
+                Delete Company
               </button>
             </div>
           </div>
@@ -1035,30 +1407,92 @@ export default function CompanyDetail() {
                   {company.entityType.replace('_', ' ')}
                 </button>
               )}
-              {company.pipelineStage && (
-                <span className={styles.pipelineStageBadge}>
-                  {company.pipelineStage === 'screening' ? 'Screening'
-                    : company.pipelineStage === 'diligence' ? 'Diligence'
-                    : company.pipelineStage === 'decision' ? 'Decision'
-                    : company.pipelineStage === 'documentation' ? 'Documentation'
-                    : 'Pass'}
-                </span>
+              {editingStage ? (
+                <select
+                  className={styles.typeSelect}
+                  value={company.pipelineStage || ''}
+                  onChange={(event) => void handleStageChange(event.target.value as CompanyPipelineStage | '')}
+                  onBlur={() => setEditingStage(false)}
+                  disabled={updatingStage}
+                  autoFocus
+                  aria-label="Pipeline stage"
+                >
+                  {PIPELINE_STAGE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.stageBadgeButton}
+                  onClick={() => setEditingStage(true)}
+                  disabled={updatingStage}
+                  title="Click to change pipeline stage"
+                >
+                  {company.pipelineStage
+                    ? PIPELINE_STAGE_OPTIONS.find((o) => o.value === company.pipelineStage)?.label || company.pipelineStage
+                    : 'No Stage'}
+                </button>
               )}
-              {company.priority && (
-                <span className={`${styles.priorityBadge} ${
-                  company.priority === 'high' ? styles.priorityHigh
-                    : company.priority === 'further_work' ? styles.priorityFurtherWork
-                    : styles.priorityMonitor
-                }`}>
-                  {company.priority === 'high' ? 'High'
-                    : company.priority === 'further_work' ? 'Further Work'
-                    : 'Monitor'}
-                </span>
+              {editingPriority ? (
+                <select
+                  className={styles.typeSelect}
+                  value={company.priority || ''}
+                  onChange={(event) => void handlePriorityChange(event.target.value as CompanyPriority | '')}
+                  onBlur={() => setEditingPriority(false)}
+                  disabled={updatingPriority}
+                  autoFocus
+                  aria-label="Priority"
+                >
+                  {PRIORITY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.priorityBadgeButton}
+                  onClick={() => setEditingPriority(true)}
+                  disabled={updatingPriority}
+                  title="Click to change priority"
+                >
+                  {company.priority
+                    ? PRIORITY_OPTIONS.find((o) => o.value === company.priority)?.label || company.priority
+                    : 'No Priority'}
+                </button>
               )}
-              {company.round && (
-                <span className={styles.roundBadge}>
-                  {company.round.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-                </span>
+              {editingRound ? (
+                <select
+                  className={styles.typeSelect}
+                  value={company.round || ''}
+                  onChange={(event) => void handleRoundChange(event.target.value as CompanyRound | '')}
+                  onBlur={() => setEditingRound(false)}
+                  disabled={updatingRound}
+                  autoFocus
+                  aria-label="Round"
+                >
+                  {ROUND_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.roundBadgeButton}
+                  onClick={() => setEditingRound(true)}
+                  disabled={updatingRound}
+                  title="Click to change round"
+                >
+                  {company.round
+                    ? ROUND_OPTIONS.find((o) => o.value === company.round)?.label || company.round
+                    : 'No Round'}
+                </button>
               )}
               <button
                 type="button"
@@ -1069,23 +1503,155 @@ export default function CompanyDetail() {
               </button>
             </div>
             <div className={styles.metaRow}>
-              <span>{company.primaryDomain || 'No domain'}</span>
-              {(company.city || company.state) && (
-                <span>{[company.city, company.state].filter(Boolean).join(', ')}</span>
-              )}
-              <span>{company.status}</span>
-              <span>{touchDays == null ? 'No touchpoint' : `Last touch ${touchDays}d ago`}</span>
-              {(company.postMoneyValuation != null || company.raiseSize != null) && (
-                <span>
-                  {company.postMoneyValuation != null && `Val: $${company.postMoneyValuation}M`}
-                  {company.postMoneyValuation != null && company.raiseSize != null && ' · '}
-                  {company.raiseSize != null && `Raise: $${company.raiseSize}M`}
-                </span>
-              )}
+              <div className={styles.metaLeft}>
+                <span>{company.primaryDomain || 'No domain'}</span>
+                {(company.city || company.state) && (
+                  <span>{[company.city, company.state].filter(Boolean).join(', ')}</span>
+                )}
+                {(company.postMoneyValuation != null || company.raiseSize != null) && (
+                  <span>
+                    {company.postMoneyValuation != null && `Val: $${company.postMoneyValuation}M`}
+                    {company.postMoneyValuation != null && company.raiseSize != null && ' · '}
+                    {company.raiseSize != null && `Raise: $${company.raiseSize}M`}
+                  </span>
+                )}
+              </div>
+              <div className={styles.metaRight}>
+                <span>{touchDays == null ? 'No touchpoint' : `Last touch ${touchDays}d ago`}</span>
+                <span>{company.status}</span>
+              </div>
             </div>
             <p className={styles.description}>
               {(company.description || '').trim() || 'No business description added yet.'}
             </p>
+            <div className={styles.founderRow}>
+              <span className={styles.founderLabel}>Primary Contact</span>
+              {contacts.length > 0 ? (
+                editingPrimaryContact ? (
+                  <select
+                    className={styles.primaryContactSelect}
+                    value={primaryContact?.id || ''}
+                    onChange={(e) => void handleSetPrimaryContact(e.target.value)}
+                    onBlur={() => setEditingPrimaryContact(false)}
+                    autoFocus
+                  >
+                    {contacts.map((c) => (
+                      <option key={c.id} value={c.id}>{c.fullName}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={styles.founderLink}
+                      onClick={() => primaryContact && navigate(`/contact/${primaryContact.id}`)}
+                    >
+                      {primaryContact?.fullName}
+                    </button>
+                    {contacts.length > 1 && (
+                      <button
+                        type="button"
+                        className={styles.editPrimaryBtn}
+                        onClick={() => setEditingPrimaryContact(true)}
+                        title="Change primary contact"
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {primaryContact?.linkedinUrl && (
+                      <button
+                        type="button"
+                        className={styles.linkedinLink}
+                        onClick={() => void handleOpenExternal(primaryContact.linkedinUrl!)}
+                      >
+                        LinkedIn
+                      </button>
+                    )}
+                  </>
+                )
+              ) : editingPrimaryContact ? (
+                <div className={styles.contactSearchWrapper} ref={contactSearchRef}>
+                  <input
+                    className={styles.editInput}
+                    value={contactSearchQuery}
+                    onChange={(e) => setContactSearchQuery(e.target.value)}
+                    onKeyDown={handleContactSearchKeyDown}
+                    onFocus={() => {
+                      if (contactSearchResults.length > 0) setShowContactDropdown(true)
+                    }}
+                    placeholder="Search or enter contact name"
+                    aria-label="Contact name"
+                    autoFocus
+                  />
+                  {showContactDropdown && contactSearchResults.length > 0 && (
+                    <div className={styles.contactDropdown}>
+                      {contactSearchResults.map((c, i) => (
+                        <div
+                          key={c.id}
+                          className={`${styles.contactDropdownItem} ${i === contactDropdownIndex ? styles.contactDropdownActive : ''}`}
+                          onMouseDown={() => void handleSelectExistingContact(c)}
+                          onMouseEnter={() => setContactDropdownIndex(i)}
+                        >
+                          <span className={styles.contactDropdownName}>{c.fullName}</span>
+                          {c.email && <span className={styles.contactDropdownEmail}>{c.email}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {contactSearchQuery.trim().length >= 2 && !showContactDropdown && (
+                    <div className={styles.contactAddRow}>
+                      <input
+                        className={styles.editInput}
+                        value={contactEmail}
+                        onChange={(e) => setContactEmail(e.target.value)}
+                        placeholder="Email address"
+                        aria-label="Contact email"
+                      />
+                      <button
+                        type="button"
+                        className={styles.editSaveButton}
+                        onClick={() => void handleCreateAndLinkContact()}
+                        disabled={!contactEmail.trim()}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.editPrimaryBtn}
+                  onClick={() => setEditingPrimaryContact(true)}
+                >
+                  + Add Contact
+                </button>
+              )}
+            </div>
+            <div className={styles.metricGrid}>
+              <div className={styles.metricCard}>
+                <span className={styles.metricLabel}>Meetings</span>
+                <strong>{company.meetingCount}</strong>
+              </div>
+              <div className={styles.metricCard}>
+                <span className={styles.metricLabel}>Emails</span>
+                <strong>{company.emailCount}</strong>
+              </div>
+              <div className={styles.metricCard}>
+                <span className={styles.metricLabel}>Contacts</span>
+                <strong>{contacts.length}</strong>
+              </div>
+            </div>
+            {(company.industries.length > 0 || company.themes.length > 0) && (
+              <div className={styles.tagGroup}>
+                {company.industries.map((industry) => (
+                  <span key={industry} className={styles.tag}>{industry}</span>
+                ))}
+                {company.themes.map((theme) => (
+                  <span key={theme} className={styles.tag}>{theme}</span>
+                ))}
+              </div>
+            )}
           </>
         )}
       </section>
@@ -1103,90 +1669,6 @@ export default function CompanyDetail() {
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
-
-      {activeTab === 'overview' && (
-        <section className={styles.section}>
-          <div className={styles.metricGrid}>
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>Meetings</span>
-              <strong>{company.meetingCount}</strong>
-            </div>
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>Emails</span>
-              <strong>{company.emailCount}</strong>
-            </div>
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>Contacts</span>
-              <strong>{contacts.length}</strong>
-            </div>
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>Days Since Touch</span>
-              <strong>{touchDays == null ? '-' : touchDays}</strong>
-            </div>
-          </div>
-
-          {company.pipelineStage ? (
-            <div className={styles.pipelineCard}>
-              <h3>Pipeline</h3>
-              <div className={styles.pipelineCardGrid}>
-                <div className={styles.pipelineCardField}>
-                  <span className={styles.pipelineCardLabel}>Stage</span>
-                  <span className={styles.pipelineStageBadge}>
-                    {company.pipelineStage === 'screening' ? 'Screening'
-                      : company.pipelineStage === 'diligence' ? 'Diligence'
-                      : company.pipelineStage === 'decision' ? 'Decision'
-                      : company.pipelineStage === 'documentation' ? 'Documentation'
-                      : 'Pass'}
-                  </span>
-                </div>
-                {company.priority && (
-                  <div className={styles.pipelineCardField}>
-                    <span className={styles.pipelineCardLabel}>Priority</span>
-                    <span className={`${styles.priorityBadge} ${
-                      company.priority === 'high' ? styles.priorityHigh
-                        : company.priority === 'further_work' ? styles.priorityFurtherWork
-                        : styles.priorityMonitor
-                    }`}>
-                      {company.priority === 'high' ? 'High'
-                        : company.priority === 'further_work' ? 'Further Work'
-                        : 'Monitor'}
-                    </span>
-                  </div>
-                )}
-                {company.round && (
-                  <div className={styles.pipelineCardField}>
-                    <span className={styles.pipelineCardLabel}>Round</span>
-                    <span>{company.round.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}</span>
-                  </div>
-                )}
-                {company.postMoneyValuation != null && (
-                  <div className={styles.pipelineCardField}>
-                    <span className={styles.pipelineCardLabel}>Post Money</span>
-                    <span>${company.postMoneyValuation}M</span>
-                  </div>
-                )}
-                {company.raiseSize != null && (
-                  <div className={styles.pipelineCardField}>
-                    <span className={styles.pipelineCardLabel}>Raise Size</span>
-                    <span>${company.raiseSize}M</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <p className={styles.empty}>Not in pipeline.</p>
-          )}
-
-          <div className={styles.tagGroup}>
-            {company.industries.map((industry) => (
-              <span key={industry} className={styles.tag}>{industry}</span>
-            ))}
-            {company.themes.map((theme) => (
-              <span key={theme} className={styles.tag}>{theme}</span>
-            ))}
-          </div>
-        </section>
-      )}
 
       {activeTab === 'timeline' && (
         <section className={styles.section}>
@@ -1225,7 +1707,7 @@ export default function CompanyDetail() {
                 <button
                   key={meeting.id}
                   className={styles.rowButton}
-                  onClick={() => navigate(`/meeting/${meeting.id}`)}
+                  onClick={() => navigate(`/meeting/${meeting.id}`, { state: { fromCompanyId: companyId } })}
                 >
                   <div className={styles.rowTitle}>{meeting.title}</div>
                   <div className={styles.rowMeta}>
@@ -1267,7 +1749,7 @@ export default function CompanyDetail() {
                   className={styles.rowButton}
                   onClick={() => {
                     if (item.referenceType === 'meeting') {
-                      navigate(`/meeting/${item.referenceId}`)
+                      navigate(`/meeting/${item.referenceId}`, { state: { fromCompanyId: companyId } })
                     }
                   }}
                 >
@@ -1288,17 +1770,30 @@ export default function CompanyDetail() {
 
       {activeTab === 'notes' && flags.ff_company_notes_v1 && (
         <section className={styles.section}>
-          <div className={styles.noteEditor}>
-            <textarea
-              className={styles.textarea}
-              value={noteContent}
-              onChange={(event) => setNoteContent(event.target.value)}
-              placeholder="Write a company note..."
-            />
-            <button className={styles.primaryButton} onClick={() => void handleCreateNote()}>
-              Add note
+          <div className={styles.notesHeader}>
+            <h3 className={styles.sectionTitle}>Notes</h3>
+            <button
+              type="button"
+              className={styles.addNoteButton}
+              onClick={() => setAddingNote(!addingNote)}
+            >
+              {addingNote ? 'Cancel' : '+ Note'}
             </button>
           </div>
+          {addingNote && (
+            <div className={styles.noteEditor}>
+              <textarea
+                className={styles.textarea}
+                value={noteContent}
+                onChange={(event) => setNoteContent(event.target.value)}
+                placeholder="Write a company note..."
+                autoFocus
+              />
+              <button className={styles.primaryButton} onClick={() => void handleCreateNote()} disabled={!noteContent.trim()}>
+                Save
+              </button>
+            </div>
+          )}
           <div className={styles.list}>
             {notes.map((note) => (
               <div key={note.id} className={styles.noteCard}>
@@ -1318,52 +1813,158 @@ export default function CompanyDetail() {
                 <span className={styles.rowMeta}>{formatDateTime(note.updatedAt)}</span>
               </div>
             ))}
-            {notes.length === 0 && <div className={styles.empty}>No notes yet.</div>}
+            {notes.length === 0 && meetingSummaries.length === 0 && <div className={styles.empty}>No notes yet.</div>}
           </div>
+          {meetingSummaries.length > 0 && (
+            <>
+              <div className={styles.notesHeader}>
+                <h3 className={styles.sectionTitle}>Meeting Notes</h3>
+              </div>
+              <div className={styles.list}>
+                {meetingSummaries.map((ms) => (
+                  <div key={ms.meetingId} className={styles.noteCard}>
+                    <button
+                      type="button"
+                      className={styles.meetingSummaryToggle}
+                      onClick={() => setExpandedSummaryId((prev) => (prev === ms.meetingId ? null : ms.meetingId))}
+                    >
+                      <span className={styles.meetingSummaryTitle}>{ms.title}</span>
+                      <span className={styles.rowMeta}>{formatDateTime(ms.date)}</span>
+                      <span className={styles.expandArrow}>{expandedSummaryId === ms.meetingId ? '\u25B4' : '\u25BE'}</span>
+                    </button>
+                    {expandedSummaryId === ms.meetingId && (
+                      <div className={styles.meetingSummaryBody}>
+                        <div className={styles.noteContent}>
+                          <ReactMarkdown>{ms.summary}</ReactMarkdown>
+                        </div>
+                        <button
+                          type="button"
+                          className={styles.linkButton}
+                          onClick={() => navigate(`/meeting/${ms.meetingId}`, { state: { fromCompanyId: companyId } })}
+                        >
+                          Open meeting
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </section>
       )}
 
       {activeTab === 'memo' && flags.ff_investment_memo_v1 && (
         <section className={styles.section}>
-          <div className={styles.memoActions}>
-            <select
-              className={styles.select}
-              value={memo?.status || 'draft'}
-              onChange={(event) => void handleMemoStatus(event.target.value as InvestmentMemoWithLatest['status'])}
-              disabled={!memo}
-            >
-              <option value="draft">Draft</option>
-              <option value="review">Review</option>
-              <option value="final">Final</option>
-              <option value="archived">Archived</option>
-            </select>
-            <button className={styles.secondaryButton} onClick={() => void handleExportMemo()} disabled={exportingMemo || !memo}>
-              {exportingMemo ? 'Exporting...' : 'Export PDF'}
-            </button>
-          </div>
-          <textarea
-            className={styles.memoEditor}
-            value={memoDraft}
-            onChange={(event) => setMemoDraft(event.target.value)}
-            placeholder="Investment memo markdown..."
-          />
-          <input
-            className={styles.input}
-            value={memoChangeNote}
-            onChange={(event) => setMemoChangeNote(event.target.value)}
-            placeholder="Change note (optional)"
-          />
-          <button className={styles.primaryButton} onClick={() => void handleSaveMemo()} disabled={savingMemo || !memoDraft.trim()}>
-            {savingMemo ? 'Saving...' : 'Save Memo Version'}
-          </button>
-          <div className={styles.list}>
-            {memoVersions.map((version) => (
-              <div key={version.id} className={styles.versionCard}>
-                <strong>v{version.versionNumber}</strong>
-                <span>{version.changeNote || 'No change note'}</span>
-                <span className={styles.rowMeta}>{formatDateTime(version.createdAt)}</span>
+          <div className={styles.memoTab}>
+            <div className={styles.memoActions}>
+              <div className={styles.memoViewToggle}>
+                <button
+                  className={memoMode === 'view' ? styles.activeToggle : undefined}
+                  onClick={() => setMemoMode('view')}
+                >
+                  View
+                </button>
+                <button
+                  className={memoMode === 'edit' ? styles.activeToggle : undefined}
+                  onClick={() => setMemoMode('edit')}
+                >
+                  Edit
+                </button>
               </div>
-            ))}
+              <select
+                className={styles.select}
+                value={memo?.status || 'draft'}
+                onChange={(event) => void handleMemoStatus(event.target.value as InvestmentMemoWithLatest['status'])}
+                disabled={!memo}
+              >
+                <option value="draft">Draft</option>
+                <option value="review">Review</option>
+                <option value="final">Final</option>
+                <option value="archived">Archived</option>
+              </select>
+              <button
+                className={styles.primaryButton}
+                onClick={() => void handleGenerateMemo()}
+                disabled={generatingMemo || !companyId}
+              >
+                {generatingMemo ? 'Generating...' : 'Generate Memo'}
+              </button>
+              <button className={styles.secondaryButton} onClick={() => void handleExportMemo()} disabled={exportingMemo || !memo}>
+                {exportingMemo ? 'Exporting...' : 'Export PDF'}
+              </button>
+            </div>
+
+            {generatingMemo && memoGenerateProgress && (
+              <div className={styles.memoRendered}>
+                <ReactMarkdown>{memoGenerateProgress}</ReactMarkdown>
+              </div>
+            )}
+
+            {!generatingMemo && (
+              <div className={styles.memoBody}>
+                {memoMode === 'view' ? (
+                  <div className={styles.memoRendered}>
+                    {memoDraft.trim() ? (
+                      <ReactMarkdown>{memoDraft}</ReactMarkdown>
+                    ) : (
+                      <span className={styles.empty}>No memo content yet. Click "Generate Memo" to create one from meeting data, or switch to Edit mode.</span>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <textarea
+                      className={styles.memoEditor}
+                      value={memoDraft}
+                      onChange={(event) => setMemoDraft(event.target.value)}
+                      placeholder="Write your investment memo in markdown..."
+                    />
+                    <div className={styles.memoSaveRow}>
+                      <input
+                        className={styles.input}
+                        value={memoChangeNote}
+                        onChange={(event) => setMemoChangeNote(event.target.value)}
+                        placeholder="Change note (optional)"
+                      />
+                      <button className={styles.primaryButton} onClick={() => void handleSaveMemo()} disabled={savingMemo || !memoDraft.trim()}>
+                        {savingMemo ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {memoVersions.length > 0 && (
+              <details className={styles.versionsCollapsible}>
+                <summary>Version History ({memoVersions.length})</summary>
+                <div className={styles.list}>
+                  {memoVersions.map((version) => (
+                    <div
+                      key={version.id}
+                      className={styles.versionCard}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        setMemoDraft(version.contentMarkdown)
+                        setMemoMode('view')
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          setMemoDraft(version.contentMarkdown)
+                          setMemoMode('view')
+                        }
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <strong>v{version.versionNumber}</strong>
+                      <span>{version.changeNote || 'No change note'}</span>
+                      <span className={styles.rowMeta}>{formatDateTime(version.createdAt)}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         </section>
       )}
@@ -1444,7 +2045,7 @@ export default function CompanyDetail() {
               )
             })}
             {filesLoaded && files.length === 0 && <div className={styles.empty}>No files found.</div>}
-            {!filesLoaded && <div className={styles.empty}>Loading files...</div>}
+            {!filesLoaded && <div className={`${styles.empty} ${styles.pulse}`}>Loading files...</div>}
           </div>
         </section>
       )}

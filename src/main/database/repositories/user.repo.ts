@@ -7,6 +7,8 @@ export interface UserRecord {
   email: string | null
   avatarUrl: string | null
   role: 'admin' | 'member'
+  title: string | null
+  jobFunction: string | null
   createdAt: string
 }
 
@@ -16,6 +18,8 @@ interface UserRow {
   email: string | null
   avatar_url: string | null
   role: 'admin' | 'member'
+  title: string | null
+  job_function: string | null
   created_at: string
 }
 
@@ -26,6 +30,8 @@ function mapUser(row: UserRow): UserRecord {
     email: row.email,
     avatarUrl: row.avatar_url,
     role: row.role,
+    title: row.title,
+    jobFunction: row.job_function,
     createdAt: row.created_at
   }
 }
@@ -42,7 +48,7 @@ export function getUser(userId: string): UserRecord | null {
   const db = getDatabase()
   const row = db
     .prepare(`
-      SELECT id, display_name, email, avatar_url, role, created_at
+      SELECT id, display_name, email, avatar_url, role, title, job_function, created_at
       FROM users
       WHERE id = ?
       LIMIT 1
@@ -55,7 +61,7 @@ export function listUsers(limit = 100): UserRecord[] {
   const db = getDatabase()
   const rows = db
     .prepare(`
-      SELECT id, display_name, email, avatar_url, role, created_at
+      SELECT id, display_name, email, avatar_url, role, title, job_function, created_at
       FROM users
       ORDER BY datetime(created_at) ASC
       LIMIT ?
@@ -120,6 +126,8 @@ export function updateUser(
     email: string | null
     avatarUrl: string | null
     role: 'admin' | 'member'
+    title: string | null
+    jobFunction: string | null
   }>
 ): UserRecord | null {
   const db = getDatabase()
@@ -143,6 +151,14 @@ export function updateUser(
   if (data.role !== undefined) {
     sets.push('role = ?')
     params.push(data.role)
+  }
+  if (data.title !== undefined) {
+    sets.push('title = ?')
+    params.push(data.title?.trim() || null)
+  }
+  if (data.jobFunction !== undefined) {
+    sets.push('job_function = ?')
+    params.push(data.jobFunction?.trim() || null)
   }
 
   if (sets.length === 0) return getUser(userId)

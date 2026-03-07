@@ -4,5 +4,7 @@ export interface UserProfile {
   email: string | null
   avatarUrl: string | null
   role: 'admin' | 'member'
+  title: string | null
+  jobFunction: string | null
   createdAt: string
 }

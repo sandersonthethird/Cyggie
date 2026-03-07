@@ -106,6 +106,13 @@ export default function Sidebar() {
           <span className={styles.icon}>&#9776;</span>
           Meetings
         </NavLink>
+        <NavLink
+          to="/tasks"
+          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
+        >
+          <span className={styles.icon}>&#9745;</span>
+          Tasks
+        </NavLink>
       </div>
 
       {calendarConnected && (

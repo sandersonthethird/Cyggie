@@ -16,7 +16,8 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "import:granola": "node scripts/import-granola.js"
+    "import:granola": "node scripts/import-granola.js",
+    "import:memos": "node scripts/import-memos-from-google-docs.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -25,6 +26,7 @@
     "electron-audio-loopback": "^1.0.6",
     "googleapis": "^144.0.0",
     "ollama": "^0.5.14",
+    "pdf-parse": "^1.1.1",
     "uuid": "^11.0.0"
   },
   "devDependencies": {

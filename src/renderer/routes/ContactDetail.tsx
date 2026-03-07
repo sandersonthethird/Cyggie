@@ -11,7 +11,7 @@ import type {
   ContactSummary,
   ContactType
 } from '../../shared/types/contact'
-import type { CompanyDetail as CompanyDetailType } from '../../shared/types/company'
+import type { CompanyDetail as CompanyDetailType, CompanySummary } from '../../shared/types/company'
 import type { Meeting } from '../../shared/types/meeting'
 import styles from './ContactDetail.module.css'
 
@@ -59,13 +59,6 @@ function formatTime(value: string): string {
 function formatDuration(seconds: number | null): string | null {
   if (!seconds || seconds <= 0) return null
   return `${Math.round(seconds / 60)} min`
-}
-
-function buildWebsiteHref(websiteUrl: string | null, primaryDomain: string | null): string | null {
-  const candidate = (websiteUrl || '').trim() || (primaryDomain || '').trim()
-  if (!candidate) return null
-  if (/^https?:\/\//i.test(candidate)) return candidate
-  return `https://${candidate}`
 }
 
 function buildGmailComposeHref(email: string): string {
@@ -228,6 +221,12 @@ export default function ContactDetail() {
   const [contactTypeDraft, setContactTypeDraft] = useState<ContactType | ''>('')
   const [linkedinUrlDraft, setLinkedinUrlDraft] = useState('')
   const [savingContactName, setSavingContactName] = useState(false)
+  const [companyDraft, setCompanyDraft] = useState('')
+  const [companySearchResults, setCompanySearchResults] = useState<CompanySummary[]>([])
+  const [showCompanyDropdown, setShowCompanyDropdown] = useState(false)
+  const [companyDropdownIndex, setCompanyDropdownIndex] = useState(-1)
+  const companySearchRef = useRef<HTMLDivElement>(null)
+  const companySearchDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const firstNameInputRef = useRef<HTMLInputElement>(null)
 
   const tabCounts = useMemo(() => ({
@@ -473,6 +472,7 @@ export default function ContactDetail() {
     setTitleDraft(contact.title || '')
     setContactTypeDraft(contact.contactType || '')
     setLinkedinUrlDraft(contact.linkedinUrl || '')
+    setCompanyDraft(contact.primaryCompany?.canonicalName || '')
     setEditingContactName(true)
     setTimeout(() => {
       const input = firstNameInputRef.current
@@ -490,15 +490,81 @@ export default function ContactDetail() {
       setTitleDraft(contact.title || '')
       setContactTypeDraft(contact.contactType || '')
       setLinkedinUrlDraft(contact.linkedinUrl || '')
+      setCompanyDraft(contact.primaryCompany?.canonicalName || '')
     } else {
       setFirstNameDraft('')
       setLastNameDraft('')
       setTitleDraft('')
       setContactTypeDraft('')
       setLinkedinUrlDraft('')
+      setCompanyDraft('')
     }
+    setShowCompanyDropdown(false)
+    setCompanySearchResults([])
     setEditingContactName(false)
   }, [contact])
+
+  // Company search: debounced query
+  useEffect(() => {
+    if (companySearchDebounceRef.current) clearTimeout(companySearchDebounceRef.current)
+    const q = companyDraft.trim()
+    if (q.length < 2 || q === (contact?.primaryCompany?.canonicalName || '')) {
+      setCompanySearchResults([])
+      setShowCompanyDropdown(false)
+      return
+    }
+    companySearchDebounceRef.current = setTimeout(async () => {
+      try {
+        const results = await window.api.invoke<CompanySummary[]>(
+          IPC_CHANNELS.COMPANY_LIST,
+          { query: q, limit: 8 }
+        )
+        setCompanySearchResults(results)
+        setShowCompanyDropdown(results.length > 0)
+        setCompanyDropdownIndex(-1)
+      } catch {
+        setCompanySearchResults([])
+        setShowCompanyDropdown(false)
+      }
+    }, 150)
+    return () => {
+      if (companySearchDebounceRef.current) clearTimeout(companySearchDebounceRef.current)
+    }
+  }, [companyDraft, contact?.primaryCompany?.canonicalName])
+
+  // Company search: click-outside to close dropdown
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (companySearchRef.current && !companySearchRef.current.contains(e.target as Node)) {
+        setShowCompanyDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const handleCompanySelect = useCallback((company: CompanySummary) => {
+    setCompanyDraft(company.canonicalName)
+    setShowCompanyDropdown(false)
+    setCompanySearchResults([])
+  }, [])
+
+  const handleCompanySearchKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (!showCompanyDropdown || companySearchResults.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setCompanyDropdownIndex((prev) => Math.min(prev + 1, companySearchResults.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setCompanyDropdownIndex((prev) => Math.max(prev - 1, -1))
+    } else if (e.key === 'Enter' && companyDropdownIndex >= 0) {
+      e.preventDefault()
+      handleCompanySelect(companySearchResults[companyDropdownIndex])
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setShowCompanyDropdown(false)
+    }
+  }, [showCompanyDropdown, companySearchResults, companyDropdownIndex, handleCompanySelect])
 
   const saveContactName = useCallback(async () => {
     if (!contact || savingContactName) return
@@ -518,7 +584,7 @@ export default function ContactDetail() {
     setSavingContactName(true)
     setError(null)
     try {
-      const updated = await window.api.invoke<ContactDetailType>(
+      let updated = await window.api.invoke<ContactDetailType>(
         IPC_CHANNELS.CONTACT_UPDATE,
         contact.id,
         {
@@ -531,6 +597,16 @@ export default function ContactDetail() {
         }
       )
 
+      const nextCompany = companyDraft.trim()
+      const currentCompany = contact.primaryCompany?.canonicalName || ''
+      if (nextCompany && nextCompany !== currentCompany) {
+        updated = await window.api.invoke<ContactDetailType>(
+          IPC_CHANNELS.CONTACT_SET_COMPANY,
+          contact.id,
+          nextCompany
+        )
+      }
+
       setContact(updated)
       setMeetings(updated.meetings || [])
       setFirstNameDraft(updated.firstName || '')
@@ -541,7 +617,7 @@ export default function ContactDetail() {
     } finally {
       setSavingContactName(false)
     }
-  }, [contact, firstNameDraft, lastNameDraft, titleDraft, contactTypeDraft, linkedinUrlDraft, savingContactName, cancelContactNameEdit])
+  }, [contact, firstNameDraft, lastNameDraft, titleDraft, contactTypeDraft, linkedinUrlDraft, companyDraft, savingContactName, cancelContactNameEdit])
 
   const handleContactNameInputKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -587,12 +663,6 @@ export default function ContactDetail() {
     )
   }
 
-  const companyWebsiteHref = buildWebsiteHref(
-    contact.primaryCompany?.websiteUrl ?? null,
-    contact.primaryCompany?.primaryDomain ?? null
-  )
-  const companyWebsiteLabel = (contact.primaryCompany?.websiteUrl || '').trim()
-    || (contact.primaryCompany?.primaryDomain || '').trim()
   const canSaveContactName = !savingContactName
     && ([firstNameDraft.trim(), lastNameDraft.trim()].filter(Boolean).join(' ').trim().length > 0)
   const primaryEmail = normalizeEmail(contact.email)
@@ -670,6 +740,38 @@ export default function ContactDetail() {
                   aria-label="LinkedIn URL"
                 />
               </div>
+              <div className={styles.editRow}>
+                <label className={styles.editLabel}>Company</label>
+                <div className={styles.companySearchWrapper} ref={companySearchRef}>
+                  <input
+                    className={styles.editInput}
+                    value={companyDraft}
+                    onChange={(e) => setCompanyDraft(e.target.value)}
+                    onKeyDown={handleCompanySearchKeyDown}
+                    onFocus={() => {
+                      if (companySearchResults.length > 0) setShowCompanyDropdown(true)
+                    }}
+                    disabled={savingContactName}
+                    placeholder="Search or type company name"
+                    aria-label="Company name"
+                  />
+                  {showCompanyDropdown && companySearchResults.length > 0 && (
+                    <div className={styles.companyDropdown}>
+                      {companySearchResults.map((c, i) => (
+                        <div
+                          key={c.id}
+                          className={`${styles.companyDropdownItem} ${i === companyDropdownIndex ? styles.companyDropdownActive : ''}`}
+                          onMouseDown={() => handleCompanySelect(c)}
+                          onMouseEnter={() => setCompanyDropdownIndex(i)}
+                        >
+                          <span className={styles.companyDropdownName}>{c.canonicalName}</span>
+                          {c.primaryDomain && <span className={styles.companyDropdownDomain}>{c.primaryDomain}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
               <div className={styles.editActions}>
                 <button
                   type="button"
@@ -692,6 +794,31 @@ export default function ContactDetail() {
           ) : (
             <>
               <h2 className={styles.title}>{contact.fullName}</h2>
+              {(contact.primaryCompany || contact.title || contact.contactType) && (
+                <div className={styles.subtitleRow}>
+                  {contact.primaryCompany && (
+                    <button
+                      type="button"
+                      className={styles.companySubtitle}
+                      onClick={() => navigate(`/company/${contact.primaryCompany.id}`)}
+                    >
+                      {contact.primaryCompany.canonicalName}
+                    </button>
+                  )}
+                  {(contact.title || contact.contactType) && (
+                    <div className={styles.titleChipRow}>
+                      {contact.title && (
+                        <span className={styles.titleSubtitle}>{contact.title}</span>
+                      )}
+                      {contact.contactType && (
+                        <span className={styles.contactTypeBadge}>
+                          {contact.contactType.charAt(0).toUpperCase() + contact.contactType.slice(1)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 className={styles.editButton}
@@ -714,12 +841,6 @@ export default function ContactDetail() {
           ) : (
             <span>No email</span>
           )}
-          {contact.title && <span>{contact.title}</span>}
-          {contact.contactType && (
-            <span className={styles.contactTypeBadge}>
-              {contact.contactType.charAt(0).toUpperCase() + contact.contactType.slice(1)}
-            </span>
-          )}
           {contact.linkedinUrl && (
             <button
               type="button"
@@ -730,38 +851,6 @@ export default function ContactDetail() {
             </button>
           )}
           <span>Updated: {formatDateTime(contact.updatedAt)}</span>
-        </div>
-        <div className={styles.companyBlock}>
-          <span className={styles.label}>Company</span>
-          {contact.primaryCompany ? (
-            <>
-              <button
-                className={styles.companyLink}
-                onClick={() => navigate(`/company/${contact.primaryCompany.id}`)}
-              >
-                {contact.primaryCompany.canonicalName}
-              </button>
-              {companyWebsiteHref && companyWebsiteLabel && (
-                <span className={styles.meta}>
-                  {'('}<a
-                    className={styles.companyWebsiteLink}
-                    href={companyWebsiteHref}
-                    rel="noreferrer"
-                    onClick={(event) => {
-                      event.preventDefault()
-                      void handleOpenWebsite(companyWebsiteHref)
-                    }}
-                    onAuxClick={(event) => {
-                      event.preventDefault()
-                      void handleOpenWebsite(companyWebsiteHref)
-                    }}
-                  >{companyWebsiteLabel}</a>{')'}
-                </span>
-              )}
-            </>
-          ) : (
-            <span className={styles.meta}>No company linked yet.</span>
-          )}
         </div>
       </div>
 

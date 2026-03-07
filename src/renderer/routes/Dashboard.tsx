@@ -17,6 +17,7 @@ import type {
 } from '../../shared/types/dashboard'
 import { DEFAULT_ACTIVITY_FILTER } from '../../shared/types/dashboard'
 import type { Meeting } from '../../shared/types/meeting'
+import type { TaskListItem, TaskSummaryStats } from '../../shared/types/task'
 import CalendarBadge from '../components/meetings/CalendarBadge'
 import ChatInterface from '../components/chat/ChatInterface'
 import styles from './Dashboard.module.css'
@@ -164,6 +165,9 @@ export default function Dashboard() {
   const [activityConfigOpen, setActivityConfigOpen] = useState(false)
   const [activityFilter, setActivityFilter] = useState<DashboardActivityFilter>(DEFAULT_ACTIVITY_FILTER)
   const [pipelineCompanies, setPipelineCompanies] = useState<CompanySummary[]>([])
+  const [tasksOpen, setTasksOpen] = useState(false)
+  const [taskStats, setTaskStats] = useState<TaskSummaryStats | null>(null)
+  const [recentTasks, setRecentTasks] = useState<TaskListItem[]>([])
 
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -195,12 +199,19 @@ export default function Dashboard() {
     setLoading(true)
     setError(null)
     try {
-      const [result, pipelineData] = await Promise.all([
+      const [result, pipelineData, stats, tasks] = await Promise.all([
         window.api.invoke<DashboardData>(IPC_CHANNELS.DASHBOARD_GET),
-        window.api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST)
+        window.api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST),
+        window.api.invoke<TaskSummaryStats>(IPC_CHANNELS.TASK_SUMMARY_STATS),
+        window.api.invoke<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, {
+          status: ['open', 'in_progress'],
+          limit: 5
+        })
       ])
       setData(result)
       setPipelineCompanies(pipelineData)
+      setTaskStats(stats)
+      setRecentTasks(tasks)
       if (result.activityFilter) {
         setActivityFilter(result.activityFilter)
       }
@@ -421,6 +432,53 @@ export default function Dashboard() {
                 </table>
               ) : (
                 <p className={styles.empty}>No companies in pipeline yet.</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <button
+            className={styles.collapseToggle}
+            onClick={() => setTasksOpen((v) => !v)}
+          >
+            <span className={`${styles.chevron} ${tasksOpen ? styles.chevronOpen : ''}`}>&#9656;</span>
+            <span>Tasks</span>
+            {taskStats && (taskStats.openCount + taskStats.inProgressCount) > 0 && (
+              <span className={styles.toggleCount}>{taskStats.openCount + taskStats.inProgressCount}</span>
+            )}
+          </button>
+          {tasksOpen && (
+            <div className={styles.summaryList}>
+              {taskStats && (taskStats.overdueCount > 0 || taskStats.dueThisWeek > 0) && (
+                <div className={styles.taskStatsRow}>
+                  {taskStats.overdueCount > 0 && (
+                    <span className={styles.taskStatOverdue}>{taskStats.overdueCount} overdue</span>
+                  )}
+                  {taskStats.dueThisWeek > 0 && (
+                    <span className={styles.taskStatDue}>{taskStats.dueThisWeek} due this week</span>
+                  )}
+                </div>
+              )}
+              {recentTasks.map((task) => (
+                <button
+                  key={task.id}
+                  className={styles.summaryRow}
+                  onClick={() => navigate('/tasks')}
+                >
+                  <span className={styles.activityTitle}>{task.title}</span>
+                  <span className={styles.activityMeta}>
+                    {task.companyName || task.meetingTitle || ''}
+                  </span>
+                </button>
+              ))}
+              {recentTasks.length === 0 && (
+                <p className={styles.empty}>No open tasks.</p>
+              )}
+              {recentTasks.length > 0 && (
+                <button className={styles.showMoreBtn} onClick={() => navigate('/tasks')}>
+                  View all tasks
+                </button>
               )}
             </div>
           )}

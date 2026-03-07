@@ -120,7 +120,8 @@ function wireDeepgramEvents(client: DeepgramStreamingClient): void {
       meetingId: currentMeetingId,
       startTime: recordingStartTime,
       durationSeconds: Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000),
-      speakerCount
+      speakerCount,
+      channelMode: transcriptAssembler?.getChannelMode() || 'detecting'
     })
   })
 
@@ -137,7 +138,8 @@ function wireDeepgramEvents(client: DeepgramStreamingClient): void {
       meetingId: currentMeetingId,
       startTime: recordingStartTime,
       durationSeconds: 0,
-      speakerCount: 0
+      speakerCount: 0,
+      channelMode: transcriptAssembler?.getChannelMode() || 'detecting'
     })
   })
 }
@@ -223,7 +225,13 @@ export function registerRecordingHandlers(): void {
       } else {
         // Fall back to user's default setting for ad-hoc recordings
         const defaultMax = getSetting('defaultMaxSpeakers')
-        if (defaultMax) maxSpeakers = parseInt(defaultMax, 10) || undefined
+        if (defaultMax) {
+          maxSpeakers = parseInt(defaultMax, 10) || 2
+        } else {
+          // Default to 2 speakers (most common case: 1-on-1 calls)
+          maxSpeakers = 2
+        }
+        expectedSpeakerCount = maxSpeakers
       }
 
       if (!meetingTitle) {
@@ -402,7 +410,8 @@ export function registerRecordingHandlers(): void {
       meetingId: currentMeetingId,
       startTime: recordingStartTime,
       durationSeconds: Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000),
-      speakerCount: transcriptAssembler?.getSpeakerCount() || 0
+      speakerCount: transcriptAssembler?.getSpeakerCount() || 0,
+      channelMode: transcriptAssembler?.getChannelMode() || 'detecting'
     })
   })
 
@@ -416,7 +425,8 @@ export function registerRecordingHandlers(): void {
       meetingId: currentMeetingId,
       startTime: recordingStartTime,
       durationSeconds: Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000),
-      speakerCount: transcriptAssembler?.getSpeakerCount() || 0
+      speakerCount: transcriptAssembler?.getSpeakerCount() || 0,
+      channelMode: transcriptAssembler?.getChannelMode() || 'detecting'
     })
   })
 
@@ -453,6 +463,15 @@ export function registerRecordingHandlers(): void {
     if (transcriptAssembler) {
       transcriptAssembler.finalize()
       transcriptAssembler.correctSpeakerBoundaries()
+
+      const diagnostics = transcriptAssembler.getDiagnostics()
+      console.log(
+        '[Recording] Transcript diagnostics:',
+        `mode=${diagnostics.channelMode}`,
+        `speakers=${diagnostics.speakerCount}`,
+        `segments=${diagnostics.totalSegments}`,
+        `suppressedSwitches=${diagnostics.totalSuppressedSwitches}`
+      )
 
       // Merge phantom speakers created by Deepgram diarization.
       // When we know the expected participant count from the calendar,

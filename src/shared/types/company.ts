@@ -64,11 +64,21 @@ export interface CompanyMeetingRef {
   durationSeconds: number | null
 }
 
+export interface CompanyMeetingSummaryRef {
+  meetingId: string
+  title: string
+  date: string
+  summary: string
+}
+
 export interface CompanyContactRef {
   id: string
   fullName: string
   email: string | null
   title: string | null
+  contactType: string | null
+  linkedinUrl: string | null
+  isPrimary: boolean
   meetingCount: number
   lastInteractedAt: string | null
   updatedAt: string

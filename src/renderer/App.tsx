@@ -9,6 +9,7 @@ import CompanyDetail from './routes/CompanyDetail'
 import Contacts from './routes/Contacts'
 import ContactDetail from './routes/ContactDetail'
 import Pipeline from './routes/Pipeline'
+import Tasks from './routes/Tasks'
 import LiveRecording from './routes/LiveRecording'
 import Templates from './routes/Templates'
 import Settings from './routes/Settings'
@@ -60,6 +61,7 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/meetings" element={<MeetingList />} />
+            <Route path="/tasks" element={<Tasks />} />
             <Route path="/recording" element={<LiveRecording />} />
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/meeting/:id" element={<MeetingDetail />} />

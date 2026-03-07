@@ -1,11 +1,15 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import * as memoRepo from '../database/repositories/investment-memo.repo'
 import * as artifactRepo from '../database/repositories/artifact.repo'
+import * as notesRepo from '../database/repositories/company-notes.repo'
 import { exportMemoMarkdownToPdf } from '../services/memo-export.service'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
+import * as meetingRepo from '../database/repositories/meeting.repo'
+import { readSummary, readTranscript } from '../storage/file-manager'
+import { generateMemo } from '../llm/memo-generator'
 
 export function registerInvestmentMemoHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_GET_OR_CREATE, (_event, companyId: string) => {
@@ -105,5 +109,89 @@ export function registerInvestmentMemoHandlers(): void {
       success: true,
       path: exported.absolutePath
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE, async (_event, companyId: string) => {
+    if (!companyId) throw new Error('companyId is required')
+    const company = companyRepo.getCompany(companyId)
+    if (!company) throw new Error('Company not found')
+
+    const userId = getCurrentUserId()
+    const memoData = memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName, userId)
+
+    const sendProgress = (text: string | null): void => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE_PROGRESS, text)
+        }
+      }
+    }
+
+    // Gather meeting summaries
+    const summaryRows = companyRepo.listCompanyMeetingSummaryPaths(companyId)
+    const summaries: Array<{ title: string; date: string; content: string }> = []
+    for (const row of summaryRows) {
+      const content = readSummary(row.summaryPath)
+      if (content) summaries.push({ title: row.title, date: row.date, content })
+    }
+
+    // Gather meeting transcripts for meetings without summaries
+    const meetings = companyRepo.listCompanyMeetings(companyId)
+    const meetingsWithSummary = new Set(summaryRows.map((r) => r.meetingId))
+    const transcripts: Array<{ title: string; date: string; content: string }> = []
+    for (const meeting of meetings) {
+      if (meetingsWithSummary.has(meeting.id)) continue
+      const full = meetingRepo.getMeeting(meeting.id)
+      if (!full?.transcriptPath) continue
+      const content = readTranscript(full.transcriptPath)
+      if (content) transcripts.push({ title: meeting.title, date: meeting.date, content })
+    }
+
+    // Gather company notes
+    const notes = notesRepo.listCompanyNotes(companyId)
+    const noteTexts = notes
+      .filter((n) => n.content?.trim())
+      .map((n) => (n.title ? `**${n.title}**\n${n.content}` : n.content))
+
+    // Get existing memo content for context
+    const existingContent = memoData.latestVersion?.contentMarkdown || ''
+
+    const generated = await generateMemo({
+      companyName: company.canonicalName,
+      companyDescription: company.description || '',
+      summaries,
+      transcripts,
+      notes: noteTexts,
+      existingMemo: existingContent,
+      companyDetails: {
+        stage: company.stage,
+        round: company.round,
+        raiseSize: company.raiseSize,
+        postMoneyValuation: company.postMoneyValuation,
+        city: company.city,
+        state: company.state,
+        industries: company.industries,
+        themes: company.themes
+      }
+    }, (chunk) => {
+      sendProgress(chunk)
+    })
+
+    sendProgress(null)
+
+    // Save as new version
+    const version = memoRepo.saveMemoVersion(memoData.id, {
+      contentMarkdown: generated,
+      changeNote: 'Generated from meeting data'
+    }, userId)
+
+    logAudit(userId, 'investment_memo_version', version.id, 'create', {
+      memoId: memoData.id,
+      versionNumber: version.versionNumber,
+      changeNote: 'Generated from meeting data',
+      source: 'llm_generate'
+    })
+
+    return { success: true, content: generated }
   })
 }

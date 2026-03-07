@@ -115,6 +115,8 @@ export default function Companies() {
   const [newRound, setNewRound] = useState<CompanyRound | ''>('')
   const [newPostMoney, setNewPostMoney] = useState('')
   const [newRaiseSize, setNewRaiseSize] = useState('')
+  const [newContactName, setNewContactName] = useState('')
+  const [newContactEmail, setNewContactEmail] = useState('')
   const createCardRef = useRef<HTMLDivElement>(null)
   const query = (searchParams.get('q') || '').trim()
   const showCreate = searchParams.get('new') === '1'
@@ -175,6 +177,8 @@ export default function Companies() {
     setNewRound('')
     setNewPostMoney('')
     setNewRaiseSize('')
+    setNewContactName('')
+    setNewContactEmail('')
   }, [])
 
   useEffect(() => {
@@ -191,7 +195,10 @@ export default function Companies() {
           canonicalName: newName.trim(),
           description: newDescription.trim() || null,
           primaryDomain: newDomain.trim() || null,
-          entityType: newEntityType
+          entityType: newEntityType,
+          primaryContact: newContactName.trim() && newContactEmail.trim()
+            ? { fullName: newContactName.trim(), email: newContactEmail.trim() }
+            : undefined
         }
       )
       const updates: Record<string, unknown> = {}
@@ -296,6 +303,14 @@ export default function Companies() {
             <div>
               <label className={styles.createLabel}>Raise Size ($M)</label>
               <input className={styles.input} type="number" step="0.1" value={newRaiseSize} onChange={(e) => setNewRaiseSize(e.target.value)} />
+            </div>
+            <div>
+              <label className={styles.createLabel}>Primary Contact Name</label>
+              <input className={styles.input} placeholder="e.g. Jane Smith" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
+            </div>
+            <div>
+              <label className={styles.createLabel}>Primary Contact Email</label>
+              <input className={styles.input} placeholder="e.g. jane@acme.com" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
             </div>
           </div>
           <button className={styles.createBtn} onClick={handleCreateCompany} disabled={!newName.trim()}>Create</button>

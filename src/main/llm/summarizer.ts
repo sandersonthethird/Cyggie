@@ -16,7 +16,12 @@ import { getSummariesDir } from '../storage/paths'
 import { join } from 'path'
 import { critiqueText } from './critique'
 import type { LlmProvider } from '../../shared/types/settings'
-import { syncProspectCompaniesFromVcSummary } from '../services/company-summary-sync.service'
+import { getVcSummaryCompanyUpdateProposals } from '../services/company-summary-sync.service'
+import { extractTasksFromSummary } from '../services/task-extraction.service'
+import { listMeetingCompanies } from '../database/repositories/org-company.repo'
+import { getUser } from '../database/repositories/user.repo'
+import type { SummaryGenerateResult } from '../../shared/types/summary'
+import type { TaskExtractionResult } from '../../shared/types/task'
 
 let summaryAbortController: AbortController | null = null
 
@@ -72,7 +77,7 @@ export async function generateSummary(
   meetingId: string,
   templateId: string,
   userId: string | null = null
-): Promise<string> {
+): Promise<SummaryGenerateResult> {
   const meeting = meetingRepo.getMeeting(meetingId)
   if (!meeting) throw new Error('Meeting not found')
   if (!meeting.transcriptPath) throw new Error('No transcript available')
@@ -94,13 +99,30 @@ export async function generateSummary(
     speakers.push('Unknown participants')
   }
 
+  // Load user profile for task attribution context
+  let userIdentity: { displayName: string; email: string | null; title: string | null; jobFunction: string | null } | undefined
+  if (userId) {
+    const userProfile = getUser(userId)
+    if (userProfile) {
+      userIdentity = {
+        displayName: userProfile.displayName,
+        email: userProfile.email,
+        title: userProfile.title,
+        jobFunction: userProfile.jobFunction
+      }
+    }
+  }
+
   const { systemPrompt, userPrompt } = buildPrompt(template, {
     transcript,
     meetingTitle: meeting.title,
     date: new Date(meeting.date).toLocaleDateString(),
     duration: durationMin,
     speakers,
-    notes: meeting.notes || undefined
+    notes: meeting.notes || undefined,
+    companies: meeting.companies || undefined,
+    attendees: meeting.attendees || undefined,
+    userIdentity
   })
 
   summaryAbortController = new AbortController()
@@ -126,14 +148,29 @@ export async function generateSummary(
   // Update search index
   updateSummaryIndex(meetingId, summary)
 
-  // VC pitch summaries often include structured company facts in the executive
-  // summary; sync those into the linked prospect company profile on first touch.
+  let companyUpdateProposals: SummaryGenerateResult['companyUpdateProposals'] = []
   if (template.category === 'vc_pitch') {
     try {
-      syncProspectCompaniesFromVcSummary(meetingId, summary, userId)
+      companyUpdateProposals = getVcSummaryCompanyUpdateProposals(meetingId, summary, {
+        attendees: meeting.attendees,
+        attendeeEmails: meeting.attendeeEmails
+      })
     } catch (err) {
-      console.error('[Company AutoFill] Failed to sync VC summary fields:', err)
+      console.error('[Company AutoFill] Failed to parse VC summary fields:', err)
     }
+  }
+
+  // Extract tasks from summary
+  let taskExtractionResult: TaskExtractionResult | undefined
+  try {
+    const linkedCompanies = listMeetingCompanies(meetingId)
+    const primaryCompanyId = linkedCompanies[0]?.id || null
+    taskExtractionResult = extractTasksFromSummary(meetingId, summary, primaryCompanyId, userId)
+    if (taskExtractionResult.proposed.length > 0) {
+      console.log(`[Tasks] Proposed ${taskExtractionResult.proposed.length} tasks from meeting ${meetingId}`)
+    }
+  } catch (err) {
+    console.error('[Tasks] Failed to extract tasks from summary:', err)
   }
 
   // Upload summary to Drive (fire-and-forget)
@@ -149,5 +186,5 @@ export async function generateSummary(
       })
   }
 
-  return summary
+  return { summary, companyUpdateProposals, taskExtractionResult }
 }

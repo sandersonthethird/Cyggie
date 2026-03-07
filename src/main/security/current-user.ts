@@ -62,11 +62,15 @@ export function getCurrentUserProfile(): userRepo.UserRecord {
 export function updateCurrentUserProfile(data: {
   displayName: string
   email?: string | null
+  title?: string | null
+  jobFunction?: string | null
 }): userRepo.UserRecord {
   const currentUserId = getCurrentUserId()
   const updated = userRepo.updateUser(currentUserId, {
     displayName: data.displayName,
-    email: data.email ?? null
+    email: data.email ?? null,
+    title: data.title,
+    jobFunction: data.jobFunction
   })
   if (!updated) {
     throw new Error('Failed to update current user profile')

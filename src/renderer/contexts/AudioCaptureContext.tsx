@@ -22,6 +22,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
   const setInterimSegment = useRecordingStore((s) => s.setInterimSegment)
   const setDuration = useRecordingStore((s) => s.setDuration)
   const setSpeakerCount = useRecordingStore((s) => s.setSpeakerCount)
+  const setChannelMode = useRecordingStore((s) => s.setChannelMode)
   const startedRef = useRef(false)
 
   // Auto-start audio capture when recording begins
@@ -56,6 +57,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
         const s = status as RecordingStatus
         if (!s.isPaused) setDuration(s.durationSeconds)
         setSpeakerCount(s.speakerCount)
+        if (s.channelMode) setChannelMode(s.channelMode)
       }
     )
 
@@ -84,7 +86,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       unsubError()
       unsubAutoStop()
     }
-  }, [addTranscriptSegment, setInterimSegment, setDuration, setSpeakerCount, setError, audioCapture, videoCapture])
+  }, [addTranscriptSegment, setInterimSegment, setDuration, setSpeakerCount, setChannelMode, setError, audioCapture, videoCapture])
 
   // Duration timer — local tick for responsive updates between IPC status messages
   useEffect(() => {

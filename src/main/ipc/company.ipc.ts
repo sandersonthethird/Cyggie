@@ -4,6 +4,7 @@ import { readdir, stat } from 'fs/promises'
 import { join, extname, basename, resolve as resolvePath } from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyRepo from '../database/repositories/org-company.repo'
+import * as contactRepo from '../database/repositories/contact.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import * as settingsRepo from '../database/repositories/settings.repo'
 import type {
@@ -19,6 +20,7 @@ import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
+import { readSummary } from '../storage/file-manager'
 
 const companyDriveRootCache = new Map<string, string>()
 
@@ -75,23 +77,33 @@ function parseDriveRootFolderRefs(raw: string): string[] {
   return unique
 }
 
+interface ScanResult {
+  companyFolder: string | null
+  nameMatchedFiles: CompanyDriveFileRef[]
+}
+
 /**
- * Search `rootDir` for a folder whose normalized name matches the company
- * name or domain (exact first, then fuzzy substring). Depth-limited to
- * avoid scanning entire virtual filesystems (e.g. Google Drive FUSE).
+ * Single-pass BFS scan of `rootDir` (depth-limited to 3) that simultaneously:
+ * 1. Finds a folder matching the company name/domain (exact preferred over fuzzy)
+ * 2. Collects files whose names match the company lookup keys
+ *
+ * Files inside the matched company folder are excluded from `nameMatchedFiles`
+ * since those are listed separately via `listDirContents`.
  */
-async function findCompanyFolder(
+async function scanCompanyRoot(
   rootDir: string,
   companyName: string,
   primaryDomain?: string | null
-): Promise<string | null> {
+): Promise<ScanResult> {
   const MAX_DEPTH = 3
   const lookupKeys = buildLookupKeys(companyName, primaryDomain)
-  if (lookupKeys.length === 0) return null
+  if (lookupKeys.length === 0) return { companyFolder: null, nameMatchedFiles: [] }
 
   const start = Date.now()
   const queue: Array<{ path: string; depth: number }> = [{ path: rootDir, depth: 0 }]
-  let fuzzyMatch: string | null = null
+  let exactFolderMatch: string | null = null
+  let fuzzyFolderMatch: string | null = null
+  const matchedFiles: CompanyDriveFileRef[] = []
   let dirsChecked = 0
 
   while (queue.length > 0) {
@@ -99,31 +111,55 @@ async function findCompanyFolder(
     try {
       const entries = await readdir(dir, { withFileTypes: true })
       dirsChecked++
+
       for (const entry of entries) {
-        if (!entry.isDirectory()) continue
-        const normalized = normalizeName(entry.name)
-        if (!normalized) continue
+        if (entry.name.startsWith('.')) continue
         const fullPath = join(dir, entry.name)
 
-        // Exact normalized match — return immediately
-        if (lookupKeys.includes(normalized)) {
-          console.log(`[Company Files] Found exact match "${entry.name}" at depth ${depth} (${dirsChecked} dirs in ${Date.now() - start}ms)`)
-          return fullPath
-        }
-
-        // Fuzzy: folder name contains a lookup key (for keys >= 5 chars)
-        if (!fuzzyMatch) {
-          for (const key of lookupKeys) {
-            if (hasFuzzyKeyOverlap(normalized, key)) {
-              fuzzyMatch = fullPath
-              break
+        if (entry.isDirectory()) {
+          const normalized = normalizeName(entry.name)
+          if (normalized) {
+            // Exact normalized folder match
+            if (!exactFolderMatch && lookupKeys.includes(normalized)) {
+              exactFolderMatch = fullPath
+              console.log(`[Company Files] Found exact match "${entry.name}" at depth ${depth} (${dirsChecked} dirs in ${Date.now() - start}ms)`)
+            }
+            // Fuzzy folder match (first one wins)
+            if (!exactFolderMatch && !fuzzyFolderMatch) {
+              for (const key of lookupKeys) {
+                if (hasFuzzyKeyOverlap(normalized, key)) {
+                  fuzzyFolderMatch = fullPath
+                  break
+                }
+              }
             }
           }
-        }
+          // Recurse into subdirectories within depth limit
+          if (depth + 1 < MAX_DEPTH) {
+            queue.push({ path: fullPath, depth: depth + 1 })
+          }
+        } else {
+          // Check file name against lookup keys
+          const normalizedFileName = normalizeName(entry.name.replace(/\.[^.]+$/, ''))
+          if (!normalizedFileName) continue
 
-        // Only recurse deeper if within depth limit
-        if (depth + 1 < MAX_DEPTH) {
-          queue.push({ path: fullPath, depth: depth + 1 })
+          const matches = lookupKeys.some((key) => hasFuzzyKeyOverlap(normalizedFileName, key))
+          if (!matches) continue
+
+          let fileStat: Awaited<ReturnType<typeof stat>> | null = null
+          try {
+            fileStat = await stat(fullPath)
+          } catch { /* ignore */ }
+
+          matchedFiles.push({
+            id: fullPath,
+            name: entry.name,
+            mimeType: extname(entry.name).slice(1) || 'file',
+            modifiedAt: fileStat?.mtime?.toISOString() ?? null,
+            webViewLink: null,
+            sizeBytes: fileStat?.size ?? null,
+            parentFolderName: basename(dir)
+          })
         }
       }
     } catch {
@@ -131,8 +167,19 @@ async function findCompanyFolder(
     }
   }
 
-  console.log(`[Company Files] Search done: ${dirsChecked} dirs in ${Date.now() - start}ms, keys=${JSON.stringify(lookupKeys)}, match=${fuzzyMatch ? 'fuzzy' : 'none'}`)
-  return fuzzyMatch
+  const companyFolder = exactFolderMatch || fuzzyFolderMatch
+  console.log(`[Company Files] Scan done: ${dirsChecked} dirs in ${Date.now() - start}ms, keys=${JSON.stringify(lookupKeys)}, folder=${companyFolder ? (exactFolderMatch ? 'exact' : 'fuzzy') : 'none'}, nameMatches=${matchedFiles.length}`)
+
+  // Filter out files that live inside the company folder (listed separately)
+  let nameMatchedFiles = matchedFiles
+  if (companyFolder) {
+    const folderPrefix = resolvePath(companyFolder).toLowerCase()
+    nameMatchedFiles = matchedFiles.filter(
+      (f) => !resolvePath(f.id).toLowerCase().startsWith(folderPrefix)
+    )
+  }
+
+  return { companyFolder, nameMatchedFiles }
 }
 
 interface LocalFilesResult {
@@ -184,22 +231,43 @@ async function listLocalCompanyFiles(
 ): Promise<LocalFilesResult | null> {
   if (!existsSync(rootDir)) return null
 
-  const companyDir = await findCompanyFolder(rootDir, companyName, primaryDomain)
-  if (!companyDir) return null
+  const { companyFolder, nameMatchedFiles } = await scanCompanyRoot(rootDir, companyName, primaryDomain)
 
-  // Resolve browsePath relative to companyDir (not CWD)
-  const targetDir = browsePath ? resolvePath(companyDir, browsePath) : companyDir
-  const resolved = resolvePath(targetDir)
-  const companyResolved = resolvePath(companyDir)
+  // When browsing into a subfolder, only show that folder's contents
+  if (browsePath && companyFolder) {
+    const targetDir = resolvePath(companyFolder, browsePath)
+    const resolved = resolvePath(targetDir)
+    const companyResolved = resolvePath(companyFolder)
 
-  // Case-insensitive check for macOS/Windows filesystem compatibility
-  if (!resolved.toLowerCase().startsWith(companyResolved.toLowerCase())) {
-    return { companyRoot: companyDir, files: [] }
+    // Case-insensitive check for macOS/Windows filesystem compatibility
+    if (!resolved.toLowerCase().startsWith(companyResolved.toLowerCase())) {
+      return { companyRoot: companyFolder, files: [] }
+    }
+
+    return {
+      companyRoot: companyFolder,
+      files: await listDirContents(resolved)
+    }
   }
 
+  // Top-level: combine company folder contents + name-matched files from elsewhere
+  const folderFiles = companyFolder ? await listDirContents(companyFolder) : []
+
+  // Deduplicate by full path (id)
+  const seenIds = new Set(folderFiles.map((f) => f.id))
+  const merged = [...folderFiles]
+  for (const file of nameMatchedFiles) {
+    if (!seenIds.has(file.id)) {
+      seenIds.add(file.id)
+      merged.push(file)
+    }
+  }
+
+  if (merged.length === 0 && !companyFolder) return null
+
   return {
-    companyRoot: companyDir,
-    files: await listDirContents(resolved)
+    companyRoot: companyFolder || rootDir,
+    files: merged
   }
 }
 
@@ -226,6 +294,7 @@ export function registerCompanyHandlers(): void {
       stage?: string | null
       status?: string
       entityType?: CompanyEntityType
+      primaryContact?: { fullName: string; email: string }
     }) => {
       if (!data?.canonicalName?.trim()) {
         throw new Error('Company name is required')
@@ -233,6 +302,19 @@ export function registerCompanyHandlers(): void {
       const userId = getCurrentUserId()
       const created = companyRepo.createCompany(data, userId)
       logAudit(userId, 'company', created.id, 'create', data)
+
+      if (data.primaryContact?.fullName?.trim() && data.primaryContact?.email?.trim()) {
+        try {
+          const contact = contactRepo.createContact({
+            fullName: data.primaryContact.fullName.trim(),
+            email: data.primaryContact.email.trim()
+          }, userId)
+          companyRepo.setCompanyPrimaryContact(created.id, contact.id)
+        } catch (err) {
+          console.error('[COMPANY_CREATE] Failed to create primary contact:', err)
+        }
+      }
+
       return created
     }
   )
@@ -286,6 +368,18 @@ export function registerCompanyHandlers(): void {
       return result
     }
   )
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_DELETE, (_event, companyId: string) => {
+    if (!companyId?.trim()) throw new Error('companyId is required')
+    const userId = getCurrentUserId()
+    const company = companyRepo.getCompany(companyId)
+    if (!company) throw new Error('Company not found')
+    companyRepo.deleteCompany(companyId)
+    logAudit(userId, 'company', companyId, 'delete', {
+      canonicalName: company.canonicalName
+    })
+    return { success: true }
+  })
 
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_TAG_FROM_MEETING,
@@ -341,6 +435,16 @@ export function registerCompanyHandlers(): void {
     if (!companyId) throw new Error('companyId is required')
     return companyRepo.listCompanyContacts(companyId)
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_SET_PRIMARY_CONTACT,
+    (_event, companyId: string, contactId: string) => {
+      if (!companyId) throw new Error('companyId is required')
+      if (!contactId) throw new Error('contactId is required')
+      companyRepo.setCompanyPrimaryContact(companyId, contactId)
+      return { success: true }
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_EMAILS, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
@@ -415,6 +519,18 @@ export function registerCompanyHandlers(): void {
       console.error('[Company Files] Error:', err)
       return empty
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_MEETING_SUMMARIES, (_event, companyId: string) => {
+    if (!companyId) throw new Error('companyId is required')
+    const rows = companyRepo.listCompanyMeetingSummaryPaths(companyId)
+    return rows
+      .map((row) => {
+        const content = readSummary(row.summaryPath)
+        if (!content) return null
+        return { meetingId: row.meetingId, title: row.title, date: row.date, summary: content }
+      })
+      .filter(Boolean)
   })
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_TIMELINE, (_event, companyId: string) => {

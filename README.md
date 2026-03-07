@@ -119,6 +119,32 @@ To auto-detect meetings and upload files to Drive, connect your Google account i
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run lint` | Lint with ESLint |
 | `npm run format` | Format code with Prettier |
+| `npm run import:memos -- <csv_path> [options]` | Import Google Docs investment memos from CSV into company memo versions |
+
+### Import Existing Investment Memos
+
+Two supported input modes:
+
+1. Local folder/file mode (no Google access required)
+
+```bash
+npm run import:memos -- import/memos/raw --dry-run
+npm run import:memos -- import/memos/raw
+```
+
+2. CSV + Google Docs URL mode
+
+```bash
+npm run import:memos -- import/memos/raw/investment_memos.csv \\
+  --source csv-google-docs \\
+  --oauth-client /path/to/google-oauth-client.json \\
+  --token-file import/memos/.google-docs-token.json
+```
+
+Useful flags:
+- `--dry-run` to validate matches/extraction without writing to the DB
+- `--create-missing-companies` to auto-create unmatched companies as `unknown`
+- `--no-template-update` to skip updating the default memo template from imported memo structure
 
 ## Project Structure
 

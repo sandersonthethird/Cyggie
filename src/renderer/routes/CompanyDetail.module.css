@@ -49,7 +49,10 @@
 
 .typeBadge,
 .typeBadgeButton,
-.stageBadge {
+.stageBadge,
+.stageBadgeButton,
+.priorityBadgeButton,
+.roundBadgeButton {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
@@ -67,7 +70,10 @@
   cursor: pointer;
 }
 
-.typeBadgeButton:disabled {
+.typeBadgeButton:disabled,
+.stageBadgeButton:disabled,
+.priorityBadgeButton:disabled,
+.roundBadgeButton:disabled {
   opacity: 0.75;
   cursor: default;
 }
@@ -88,13 +94,40 @@
   color: var(--color-text-secondary);
 }
 
+.stageBadgeButton {
+  background: rgba(66, 133, 244, 0.14);
+  color: #4285f4;
+  border: none;
+  cursor: pointer;
+}
+
+.priorityBadgeButton {
+  background: var(--color-card-hover);
+  color: var(--color-text-secondary);
+  border: none;
+  cursor: pointer;
+}
+
 .metaRow {
   margin-top: 6px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
+  justify-content: space-between;
+  align-items: flex-start;
   font-size: 12px;
   color: var(--color-text-secondary);
+}
+
+.metaLeft {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.metaRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
 }
 
 .description {
@@ -191,9 +224,26 @@
 }
 
 .editSaveButton:disabled,
-.editCancelButton:disabled {
+.editCancelButton:disabled,
+.editDeleteButton:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.editDeleteButton {
+  border: 1px solid #e5484d;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: #e5484d;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.editDeleteButton:hover {
+  background: #e5484d;
+  color: #fff;
 }
 
 .tabRow {
@@ -236,10 +286,128 @@
   font-size: 12px;
 }
 
+.founderRow {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.founderLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.founderLink {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.founderLink:hover {
+  text-decoration: underline;
+}
+
+.linkedinLink {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.linkedinLink:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.primaryContactSelect {
+  font-size: 13px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.editPrimaryBtn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.editPrimaryBtn:hover {
+  color: var(--color-primary);
+}
+
+.contactSearchWrapper {
+  position: relative;
+  flex: 1;
+}
+
+.contactDropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 4px 0;
+  z-index: 10;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.contactDropdownItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.contactDropdownItem:hover,
+.contactDropdownActive {
+  background: var(--color-primary);
+  color: white;
+}
+
+.contactDropdownName {
+  font-weight: 500;
+}
+
+.contactDropdownEmail {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.contactAddRow {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .metricGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+  margin-top: 10px;
 }
 
 .metricCard {
@@ -323,15 +491,11 @@
   color: #ea4335;
 }
 
-.roundBadge {
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 8px;
+.roundBadgeButton {
   background: var(--color-card-hover);
   color: var(--color-text-secondary);
-  display: inline-block;
-  width: fit-content;
+  border: none;
+  cursor: pointer;
 }
 
 .tagGroup {
@@ -462,6 +626,28 @@
   white-space: pre-wrap;
 }
 
+.notesHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.addNoteButton {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.addNoteButton:hover {
+  background: rgba(61, 122, 74, 0.08);
+}
+
 .noteEditor {
   display: flex;
   flex-direction: column;
@@ -486,9 +672,19 @@
 }
 
 .memoEditor {
-  min-height: 280px;
+  min-height: 400px;
+  flex: 1;
   resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sectionTitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
 }
 
 .noteCard {
@@ -503,6 +699,45 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.meetingSummaryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.meetingSummaryToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-text);
+}
+
+.meetingSummaryTitle {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.expandArrow {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.meetingSummaryBody {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
 }
 
 .noteActions {
@@ -533,6 +768,183 @@
   margin-bottom: 8px;
 }
 
+.memoTab {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.memoViewToggle {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.memoViewToggle button {
+  border: none;
+  background: var(--color-card-bg);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.memoViewToggle button:not(:last-child) {
+  border-right: 1px solid var(--color-border);
+}
+
+.memoViewToggle button:hover {
+  background: var(--color-card-hover);
+}
+
+.memoViewToggle button.activeToggle {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.memoBody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.memoRendered {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-text);
+  padding: 2px 0;
+}
+
+.memoRendered h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 18px 0 6px;
+  color: var(--color-text);
+}
+
+.memoRendered h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 16px 0 4px;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 4px;
+}
+
+.memoRendered h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 12px 0 2px;
+  color: var(--color-text);
+}
+
+.memoRendered h1:first-child,
+.memoRendered h2:first-child,
+.memoRendered h3:first-child {
+  margin-top: 0;
+}
+
+.memoRendered p {
+  margin: 4px 0 8px;
+}
+
+.memoRendered ul,
+.memoRendered ol {
+  margin: 2px 0 8px;
+  padding-left: 24px;
+}
+
+.memoRendered ul {
+  list-style-type: disc;
+}
+
+.memoRendered ol {
+  list-style-type: decimal;
+}
+
+.memoRendered li {
+  margin: 2px 0;
+  padding: 0;
+}
+
+.memoRendered li > ul,
+.memoRendered li > ol {
+  margin: 2px 0 0;
+}
+
+.memoRendered strong {
+  font-weight: 700;
+}
+
+.memoRendered em {
+  font-style: italic;
+}
+
+.memoRendered code {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  background: var(--color-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.memoRendered hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 14px 0;
+}
+
+.memoRendered table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.memoRendered th {
+  text-align: left;
+  font-weight: 600;
+  background: var(--color-bg-secondary, var(--color-bg));
+  border: 1px solid var(--color-border);
+  padding: 6px 10px;
+}
+
+.memoRendered td {
+  border: 1px solid var(--color-border);
+  padding: 6px 10px;
+}
+
+.memoRendered tr:nth-child(even) {
+  background: var(--color-bg);
+}
+
+.memoRendered blockquote {
+  border-left: 3px solid var(--color-border);
+  margin: 4px 0 8px;
+  padding: 2px 12px;
+  color: var(--color-text-secondary);
+}
+
+.memoSaveRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memoSaveRow .input {
+  flex: 1;
+}
+
+.memoGenerateProgress {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  padding: 8px 0;
+}
+
 .versionCard {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -542,6 +954,19 @@
   flex-direction: column;
   gap: 3px;
   font-size: 12px;
+}
+
+.versionsCollapsible summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 4px 0;
+  user-select: none;
+}
+
+.versionsCollapsible summary:hover {
+  color: var(--color-text);
 }
 
 .chatLayout {
@@ -734,6 +1159,10 @@
 .empty {
   color: var(--color-text-secondary);
   font-size: 12px;
+}
+
+.pulse {
+  animation: pulse 1.8s ease-in-out infinite;
 }
 
 @keyframes pulse {

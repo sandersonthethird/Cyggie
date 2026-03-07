@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { TranscriptSegment } from '../../shared/types/recording'
 
+type ChannelMode = 'detecting' | 'multichannel' | 'diarization'
+
 interface RecordingState {
   isRecording: boolean
   isPaused: boolean
@@ -11,6 +13,7 @@ interface RecordingState {
   liveTranscript: TranscriptSegment[]
   interimSegment: TranscriptSegment | null
   speakerCount: number
+  channelMode: ChannelMode | null
   error: string | null
 
   startRecording: (meetingId: string, meetingPlatform?: string | null) => void
@@ -21,6 +24,7 @@ interface RecordingState {
   setInterimSegment: (segment: TranscriptSegment | null) => void
   setDuration: (duration: number) => void
   setSpeakerCount: (count: number) => void
+  setChannelMode: (mode: ChannelMode | null) => void
   setError: (error: string | null) => void
   clearTranscript: () => void
 }
@@ -35,6 +39,7 @@ export const useRecordingStore = create<RecordingState>((set) => ({
   liveTranscript: [],
   interimSegment: null,
   speakerCount: 0,
+  channelMode: null,
   error: null,
 
   startRecording: (meetingId, meetingPlatform) =>
@@ -48,6 +53,7 @@ export const useRecordingStore = create<RecordingState>((set) => ({
       liveTranscript: [],
       interimSegment: null,
       speakerCount: 0,
+      channelMode: null,
       error: null
     }),
 
@@ -58,7 +64,8 @@ export const useRecordingStore = create<RecordingState>((set) => ({
       meetingId: null,
       meetingPlatform: null,
       startTime: null,
-      interimSegment: null
+      interimSegment: null,
+      channelMode: null
     }),
 
   pauseRecording: () => set({ isPaused: true }),
@@ -75,6 +82,8 @@ export const useRecordingStore = create<RecordingState>((set) => ({
   setDuration: (duration) => set({ duration }),
 
   setSpeakerCount: (count) => set({ speakerCount: count }),
+
+  setChannelMode: (mode) => set({ channelMode: mode }),
 
   setError: (error) => set({ error }),
 

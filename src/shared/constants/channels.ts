@@ -45,6 +45,7 @@ export const IPC_CHANNELS = {
   COMPANY_CREATE: 'company:create',
   COMPANY_UPDATE: 'company:update',
   COMPANY_MERGE: 'company:merge',
+  COMPANY_DELETE: 'company:delete',
   COMPANY_TAG_FROM_MEETING: 'company:tag-from-meeting',
   COMPANY_MEETINGS: 'company:meetings',
   COMPANY_CONTACTS: 'company:contacts',
@@ -52,6 +53,8 @@ export const IPC_CHANNELS = {
   COMPANY_EMAIL_INGEST: 'company:email-ingest',
   COMPANY_FILES: 'company:files',
   COMPANY_TIMELINE: 'company:timeline',
+  COMPANY_MEETING_SUMMARIES: 'company:meeting-summaries',
+  COMPANY_SET_PRIMARY_CONTACT: 'company:set-primary-contact',
 
   // Contacts
   CONTACT_LIST: 'contact:list',
@@ -94,6 +97,8 @@ export const IPC_CHANNELS = {
   INVESTMENT_MEMO_SAVE_VERSION: 'investment-memo:save-version',
   INVESTMENT_MEMO_SET_STATUS: 'investment-memo:set-status',
   INVESTMENT_MEMO_EXPORT_PDF: 'investment-memo:export-pdf',
+  INVESTMENT_MEMO_GENERATE: 'investment-memo:generate',
+  INVESTMENT_MEMO_GENERATE_PROGRESS: 'investment-memo:generate-progress',
 
   // Speaker rename
   MEETING_RENAME_SPEAKERS: 'meeting:rename-speakers',
@@ -154,6 +159,18 @@ export const IPC_CHANNELS = {
   VIDEO_FIND_WINDOW: 'video:find-window',
   VIDEO_SET_WINDOW_SOURCE: 'video:set-window-source',
   VIDEO_CLEAR_WINDOW_SOURCE: 'video:clear-window-source',
+
+  // Tasks
+  TASK_LIST: 'task:list',
+  TASK_GET: 'task:get',
+  TASK_CREATE: 'task:create',
+  TASK_UPDATE: 'task:update',
+  TASK_DELETE: 'task:delete',
+  TASK_LIST_FOR_MEETING: 'task:list-for-meeting',
+  TASK_LIST_FOR_COMPANY: 'task:list-for-company',
+  TASK_SUMMARY_STATS: 'task:summary-stats',
+  TASK_BULK_UPDATE_STATUS: 'task:bulk-update-status',
+  TASK_BULK_CREATE: 'task:bulk-create',
 
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',

@@ -9,12 +9,14 @@ export function registerUserHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.USER_UPDATE_CURRENT,
-    (_event, data: { displayName: string; email?: string | null }) => {
+    (_event, data: { displayName: string; email?: string | null; title?: string | null; jobFunction?: string | null }) => {
       const displayName = (data?.displayName || '').trim()
       if (!displayName) throw new Error('displayName is required')
       return updateCurrentUserProfile({
         displayName,
-        email: data?.email ?? null
+        email: data?.email ?? null,
+        title: data?.title,
+        jobFunction: data?.jobFunction
       })
     }
   )
