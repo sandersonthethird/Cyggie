@@ -5,6 +5,8 @@ import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import ConfirmDialog from '../components/common/ConfirmDialog'
 import type {
   ContactDetail as ContactDetailType,
+  ContactEnrichmentResult,
+  ContactEnrichmentOptions,
   ContactEmailIngestResult,
   ContactEmailRef,
   ContactMeetingRef,
@@ -22,10 +24,31 @@ const TAB_LABELS: Record<ContactTab, string> = {
   emails: 'Emails'
 }
 
-function formatDateTime(value: string): string {
-  const date = new Date(value)
+const DAY_MS = 1000 * 60 * 60 * 24
+const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
+
+function parseTimestamp(value: string | null | undefined): number {
+  if (!value) return Number.NaN
+  const trimmed = value.trim()
+  if (!trimmed) return Number.NaN
+  const normalized = SQLITE_DATETIME_RE.test(trimmed)
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed
+  return Date.parse(normalized)
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  const timestamp = parseTimestamp(value)
+  if (Number.isNaN(timestamp)) return 'Unknown'
+  const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return 'Unknown'
   return date.toLocaleString()
+}
+
+function daysSince(value: string | null | undefined): number | null {
+  const timestamp = parseTimestamp(value)
+  if (Number.isNaN(timestamp)) return null
+  return Math.max(0, Math.floor((Date.now() - timestamp) / DAY_MS))
 }
 
 function formatDateHeading(value: string): string {
@@ -196,6 +219,18 @@ function splitNameForEditor(fullName: string): { firstName: string; lastName: st
   }
 }
 
+function deriveDomainFromWebsite(websiteUrl: string | null | undefined): string | null {
+  const raw = (websiteUrl || '').trim()
+  if (!raw) return null
+  try {
+    const parsed = new URL(raw.includes('://') ? raw : `https://${raw}`)
+    const hostname = parsed.hostname.trim().toLowerCase().replace(/^www\./, '')
+    return hostname || null
+  } catch {
+    return null
+  }
+}
+
 export default function ContactDetail() {
   const { contactId = '' } = useParams()
   const navigate = useNavigate()
@@ -210,6 +245,8 @@ export default function ContactDetail() {
   const [error, setError] = useState<string | null>(null)
   const [ingestingEmails, setIngestingEmails] = useState(false)
   const [emailIngestSummary, setEmailIngestSummary] = useState<string | null>(null)
+  const [enrichingContact, setEnrichingContact] = useState(false)
+  const [contactEnrichmentSummary, setContactEnrichmentSummary] = useState<string | null>(null)
   const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null)
   const [newContactEmail, setNewContactEmail] = useState('')
   const [addingContactEmail, setAddingContactEmail] = useState(false)
@@ -228,6 +265,8 @@ export default function ContactDetail() {
   const companySearchRef = useRef<HTMLDivElement>(null)
   const companySearchDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const firstNameInputRef = useRef<HTMLInputElement>(null)
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
+  const actionsMenuRef = useRef<HTMLDivElement>(null)
 
   const tabCounts = useMemo(() => ({
     meetings: meetings.length,
@@ -386,6 +425,8 @@ export default function ContactDetail() {
     setEmails([])
     setEmailsLoaded(false)
     setEmailIngestSummary(null)
+    setEnrichingContact(false)
+    setContactEnrichmentSummary(null)
     setExpandedEmailId(null)
     setActiveTab('meetings')
     setEditingContactName(false)
@@ -435,6 +476,31 @@ export default function ContactDetail() {
       setIngestingEmails(false)
     }
   }, [contactId, loadEmails, promptForContactNameUpdate])
+
+  const handleEnrichContact = useCallback(async (webLookup = false) => {
+    if (!contactId) return
+    setEnrichingContact(true)
+    setError(null)
+    setContactEnrichmentSummary(null)
+    try {
+      const options: ContactEnrichmentOptions | undefined = webLookup
+        ? { webLookup: true, webLookupLimit: 1 }
+        : undefined
+      const result = await window.api.invoke<ContactEnrichmentResult>(
+        IPC_CHANNELS.CONTACT_ENRICH_ONE,
+        contactId,
+        options
+      )
+      setContactEnrichmentSummary(
+        `Enrichment complete. Names: ${result.updatedNames}, LinkedIn: ${result.updatedLinkedinUrls}, Titles: ${result.updatedTitles}, Companies: ${result.linkedCompanies}${result.webLookups > 0 ? `, Web lookups: ${result.webLookups}` : ''}.`
+      )
+      await loadContact()
+    } catch (err) {
+      setError(toDisplayError(err))
+    } finally {
+      setEnrichingContact(false)
+    }
+  }, [contactId, loadContact])
 
   const handleOpenWebsite = useCallback(async (url: string) => {
     try {
@@ -542,6 +608,17 @@ export default function ContactDetail() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  useEffect(() => {
+    if (!actionsMenuOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) {
+        setActionsMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [actionsMenuOpen])
 
   const handleCompanySelect = useCallback((company: CompanySummary) => {
     setCompanyDraft(company.canonicalName)
@@ -666,6 +743,20 @@ export default function ContactDetail() {
   const canSaveContactName = !savingContactName
     && ([firstNameDraft.trim(), lastNameDraft.trim()].filter(Boolean).join(' ').trim().length > 0)
   const primaryEmail = normalizeEmail(contact.email)
+  const lastTouchTimestamp = contact.lastTouchpoint || contact.updatedAt
+  const lastTouchDays = daysSince(lastTouchTimestamp)
+  const lastTouchBadgeClass = lastTouchDays == null
+    ? styles.warmthUnknown
+    : lastTouchDays < 14
+        ? styles.warmthGreen
+        : lastTouchDays <= 30
+            ? styles.warmthYellow
+            : styles.warmthRed
+  const companyFaviconDomain = (
+    contact.primaryCompany?.primaryDomain?.trim()
+    || deriveDomainFromWebsite(contact.primaryCompany?.websiteUrl)
+    || ''
+  ).toLowerCase()
 
   return (
     <div className={styles.page}>
@@ -802,6 +893,14 @@ export default function ContactDetail() {
                       className={styles.companySubtitle}
                       onClick={() => navigate(`/company/${contact.primaryCompany.id}`)}
                     >
+                      {companyFaviconDomain && (
+                        <img
+                          src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(companyFaviconDomain)}&sz=32`}
+                          alt=""
+                          className={styles.companyFavicon}
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        />
+                      )}
                       {contact.primaryCompany.canonicalName}
                     </button>
                   )}
@@ -819,13 +918,38 @@ export default function ContactDetail() {
                   )}
                 </div>
               )}
-              <button
-                type="button"
-                className={styles.editButton}
-                onClick={startContactNameEdit}
-              >
-                Edit
-              </button>
+              <div className={styles.headerActions} ref={actionsMenuRef}>
+                <button
+                  type="button"
+                  className={styles.secondaryHeaderButton}
+                  onClick={() => setActionsMenuOpen((v) => !v)}
+                  disabled={enrichingContact}
+                >
+                  {enrichingContact ? 'Enriching...' : 'Actions'}
+                </button>
+                {actionsMenuOpen && (
+                  <div className={styles.actionsDropdown}>
+                    <button
+                      className={styles.actionsDropdownItem}
+                      onClick={() => { setActionsMenuOpen(false); startContactNameEdit() }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className={styles.actionsDropdownItem}
+                      onClick={() => { setActionsMenuOpen(false); void handleEnrichContact(false) }}
+                    >
+                      Enrich contact
+                    </button>
+                    <button
+                      className={styles.actionsDropdownItem}
+                      onClick={() => { setActionsMenuOpen(false); void handleEnrichContact(true) }}
+                    >
+                      Enrich + web
+                    </button>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
@@ -850,8 +974,16 @@ export default function ContactDetail() {
               LinkedIn
             </button>
           )}
-          <span>Updated: {formatDateTime(contact.updatedAt)}</span>
+          <span className={styles.touchMeta}>
+            <span>Last touch: {formatDateTime(lastTouchTimestamp)}</span>
+            <span className={`${styles.warmthBadge} ${lastTouchBadgeClass}`}>
+              {lastTouchDays == null ? '--' : `${lastTouchDays}d`}
+            </span>
+          </span>
         </div>
+        {contactEnrichmentSummary && (
+          <div className={styles.metaNote}>{contactEnrichmentSummary}</div>
+        )}
       </div>
 
       <div className={styles.tabRow}>

@@ -12,11 +12,15 @@ export interface DashboardActivityItem {
   referenceType: 'meeting' | 'email' | 'company_note'
   companyId: string | null
   companyName: string | null
+  companyDomain: string | null
+  bodyText: string | null
+  snippet: string | null
 }
 
 export interface DashboardStaleCompany {
   companyId: string
   companyName: string
+  companyDomain?: string | null
   lastTouchpoint: string | null
   daysSinceTouch: number
   meetingCount: number

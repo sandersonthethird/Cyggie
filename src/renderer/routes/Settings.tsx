@@ -1,9 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 
 import { useCalendar } from '../hooks/useCalendar'
 import type { LlmProvider } from '../../shared/types/settings'
-import type { DriveFolderRef } from '../../shared/types/drive'
+import type {
+  ContactEmailOnboardingOptions,
+  ContactEmailOnboardingResult,
+  ContactEmailOnboardingProgress
+} from '../../shared/types/contact'
 import type { UserProfile } from '../../shared/types/user'
 import styles from './Settings.module.css'
 
@@ -23,12 +28,23 @@ function splitDriveRoots(raw: string): string[] {
   return unique
 }
 
-function appendDriveRoot(raw: string, nextRoot: string): string {
-  const trimmedNext = nextRoot.trim()
-  if (!trimmedNext) return raw
-  const existing = splitDriveRoots(raw)
-  if (existing.includes(trimmedNext)) return existing.join('\n')
-  return [...existing, trimmedNext].join('\n')
+function formatOnboardingStage(stage: ContactEmailOnboardingProgress['stage']): string {
+  if (stage === 'starting') return 'Starting'
+  if (stage === 'checking') return 'Checking contact'
+  if (stage === 'ingesting') return 'Ingesting emails'
+  if (stage === 'enriching') return 'Enriching contact'
+  if (stage === 'completed') return 'Completed'
+  if (stage === 'failed') return 'Failed'
+  return 'Running'
+}
+
+type SettingsTab = 'profile' | 'ai' | 'integrations' | 'storage'
+
+const TAB_LABELS: Record<SettingsTab, string> = {
+  profile: 'Profile',
+  ai: 'AI & Transcription',
+  integrations: 'Integrations',
+  storage: 'Storage'
 }
 
 interface SettingsState {
@@ -44,6 +60,13 @@ interface SettingsState {
 }
 
 export default function Settings() {
+  const [searchParams] = useSearchParams()
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    const tab = searchParams.get('tab')
+    if (tab === 'ai' || tab === 'integrations' || tab === 'storage' || tab === 'profile') return tab
+    return 'profile'
+  })
+  const [initialLoad, setInitialLoad] = useState(true)
   const [settings, setSettings] = useState<SettingsState>({
     deepgramApiKey: '',
     llmProvider: 'claude',
@@ -59,12 +82,22 @@ export default function Settings() {
   const [storagePath, setStoragePath] = useState('')
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [userDisplayName, setUserDisplayName] = useState('')
+  const [userFirstName, setUserFirstName] = useState('')
+  const [userLastName, setUserLastName] = useState('')
   const [userEmail, setUserEmail] = useState('')
   const [userTitle, setUserTitle] = useState('')
   const [userJobFunction, setUserJobFunction] = useState('')
+  const [editingProfile, setEditingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
   const [staleRelationshipDays, setStaleRelationshipDays] = useState('21')
   const [stalledPipelineDays, setStalledPipelineDays] = useState('21')
+  const [contactOnboardingRunning, setContactOnboardingRunning] = useState(false)
+  const [contactOnboardingUseWebLookup, setContactOnboardingUseWebLookup] = useState(false)
+  const [contactOnboardingError, setContactOnboardingError] = useState('')
+  const [contactOnboardingResult, setContactOnboardingResult] =
+    useState<ContactEmailOnboardingResult | null>(null)
+  const [contactOnboardingProgress, setContactOnboardingProgress] =
+    useState<ContactEmailOnboardingProgress | null>(null)
 
   // Calendar state
   const { calendarConnected, connect, disconnect } = useCalendar()
@@ -80,11 +113,8 @@ export default function Settings() {
   const [driveGranting, setDriveGranting] = useState(false)
   const [driveFilesGranting, setDriveFilesGranting] = useState(false)
   const [driveError, setDriveError] = useState('')
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
-  const [folderPickerLoading, setFolderPickerLoading] = useState(false)
-  const [folderPickerError, setFolderPickerError] = useState('')
-  const [folderPickerFolders, setFolderPickerFolders] = useState<DriveFolderRef[]>([])
-  const [folderPickerPath, setFolderPickerPath] = useState<DriveFolderRef[]>([])
+  const [driveFilesExpanded, setDriveFilesExpanded] = useState(false)
+  const [editingThresholds, setEditingThresholds] = useState(false)
 
   const refreshGoogleScopes = useCallback(async () => {
     const [driveScopeResult, driveFilesScopeResult, gmailConnectedResult] = await Promise.allSettled([
@@ -134,28 +164,69 @@ export default function Settings() {
         if (userResult.status === 'fulfilled') {
           setUserProfile(userResult.value)
           setUserDisplayName(userResult.value.displayName || '')
+          setUserFirstName(userResult.value.firstName || '')
+          setUserLastName(userResult.value.lastName || '')
           setUserEmail(userResult.value.email || '')
           setUserTitle(userResult.value.title || '')
           setUserJobFunction(userResult.value.jobFunction || '')
+          const hasProfileValues = Boolean(
+            userResult.value.displayName
+            || userResult.value.firstName
+            || userResult.value.lastName
+            || userResult.value.email
+            || userResult.value.title
+            || userResult.value.jobFunction
+          )
+          setEditingProfile(!hasProfileValues)
         }
       } finally {
         await refreshGoogleScopes()
+        setInitialLoad(false)
       }
     }
     load()
   }, [refreshGoogleScopes])
 
-  const handleSave = useCallback(async () => {
+  // Auto-navigate new users to the AI tab when setup is needed
+  useEffect(() => {
+    if (initialLoad) return
+    const deepgramMissing = !settings.deepgramApiKey
+    const claudeMissing = settings.llmProvider === 'claude' && !settings.claudeApiKey
+    if ((deepgramMissing || claudeMissing) && !searchParams.get('tab')) {
+      setActiveTab('ai')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLoad])
+
+  useEffect(() => {
+    const unsubscribe = window.api.on(
+      IPC_CHANNELS.CONTACT_ONBOARD_PROGRESS,
+      (payload: unknown) => {
+        if (!payload || typeof payload !== 'object') return
+        setContactOnboardingProgress(payload as ContactEmailOnboardingProgress)
+      }
+    )
+    return unsubscribe
+  }, [])
+
+  const saveUserProfile = useCallback(async (): Promise<boolean> => {
     setProfileError('')
-    if (!userDisplayName.trim()) {
+    const nextFirstName = userFirstName.trim()
+    const nextLastName = userLastName.trim()
+    const fallbackDisplayName = [nextFirstName, nextLastName].filter(Boolean).join(' ').trim()
+    const nextDisplayName = userDisplayName.trim() || fallbackDisplayName
+    if (!nextDisplayName) {
       setProfileError('Display name is required.')
-      return
+      setActiveTab('profile')
+      return false
     }
 
     const updatedProfile = await window.api.invoke<UserProfile>(
       IPC_CHANNELS.USER_UPDATE_CURRENT,
       {
-        displayName: userDisplayName.trim(),
+        displayName: nextDisplayName,
+        firstName: nextFirstName || null,
+        lastName: nextLastName || null,
         email: userEmail.trim() || null,
         title: userTitle.trim() || null,
         jobFunction: userJobFunction.trim() || null
@@ -163,9 +234,38 @@ export default function Settings() {
     )
     setUserProfile(updatedProfile)
     setUserDisplayName(updatedProfile.displayName)
+    setUserFirstName(updatedProfile.firstName || '')
+    setUserLastName(updatedProfile.lastName || '')
     setUserEmail(updatedProfile.email || '')
     setUserTitle(updatedProfile.title || '')
     setUserJobFunction(updatedProfile.jobFunction || '')
+    return true
+  }, [userDisplayName, userFirstName, userLastName, userEmail, userTitle, userJobFunction])
+
+  const handleSaveProfile = useCallback(async () => {
+    const savedProfile = await saveUserProfile()
+    if (!savedProfile) return
+    setEditingProfile(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }, [saveUserProfile])
+
+  const handleCancelProfileEdit = useCallback(() => {
+    setProfileError('')
+    if (userProfile) {
+      setUserDisplayName(userProfile.displayName || '')
+      setUserFirstName(userProfile.firstName || '')
+      setUserLastName(userProfile.lastName || '')
+      setUserEmail(userProfile.email || '')
+      setUserTitle(userProfile.title || '')
+      setUserJobFunction(userProfile.jobFunction || '')
+    }
+    setEditingProfile(false)
+  }, [userProfile])
+
+  const handleSave = useCallback(async () => {
+    const savedProfile = await saveUserProfile()
+    if (!savedProfile) return
 
     const entries = Object.entries(settings) as [string, string | boolean][]
     for (const [key, value] of entries) {
@@ -183,7 +283,7 @@ export default function Settings() {
     )
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }, [settings, userDisplayName, userEmail, userTitle, userJobFunction, staleRelationshipDays, stalledPipelineDays])
+  }, [settings, saveUserProfile, staleRelationshipDays, stalledPipelineDays])
 
   const handleOpenStorage = useCallback(async () => {
     await window.api.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_DIR)
@@ -266,135 +366,290 @@ export default function Settings() {
     await refreshGoogleScopes()
   }, [refreshGoogleScopes])
 
-  const loadDriveFolders = useCallback(async (parentId: string) => {
-    setFolderPickerLoading(true)
-    setFolderPickerError('')
+  const handleRunContactOnboarding = useCallback(async () => {
+    setContactOnboardingRunning(true)
+    setContactOnboardingError('')
+    setContactOnboardingResult(null)
+    setContactOnboardingProgress(null)
     try {
-      const folders = await window.api.invoke<DriveFolderRef[]>(
-        IPC_CHANNELS.DRIVE_LIST_FOLDERS,
-        parentId
+      const options: ContactEmailOnboardingOptions = {
+        ingestOnlyMissingEmailHistory: true,
+        webLookup: contactOnboardingUseWebLookup,
+        webLookupLimit: contactOnboardingUseWebLookup ? 500 : undefined
+      }
+      const result = await window.api.invoke<ContactEmailOnboardingResult>(
+        IPC_CHANNELS.CONTACT_ONBOARD_FROM_EMAIL,
+        options
       )
-      setFolderPickerFolders(folders)
+      setContactOnboardingResult(result)
     } catch (err) {
-      setFolderPickerFolders([])
-      setFolderPickerError(String(err))
+      setContactOnboardingError(String(err))
     } finally {
-      setFolderPickerLoading(false)
+      setContactOnboardingRunning(false)
     }
-  }, [])
-
-  const handleOpenFolderPicker = useCallback(async () => {
-    if (!hasDriveFilesScope) {
-      setDriveError('Drive Files access is missing. Click "Grant Drive Files Access" below, then try again.')
-      setFolderPickerOpen(false)
-      return
-    }
-
-    setDriveError('')
-    setFolderPickerOpen(true)
-    setFolderPickerPath([])
-    await loadDriveFolders('root')
-  }, [hasDriveFilesScope, loadDriveFolders])
-
-  const handleFolderOpen = useCallback(async (folder: DriveFolderRef) => {
-    setFolderPickerPath((prev) => [...prev, folder])
-    await loadDriveFolders(folder.id)
-  }, [loadDriveFolders])
-
-  const handleFolderBack = useCallback(async () => {
-    if (folderPickerPath.length === 0) return
-    const nextPath = folderPickerPath.slice(0, -1)
-    setFolderPickerPath(nextPath)
-    const nextParentId = nextPath.length > 0 ? nextPath[nextPath.length - 1].id : 'root'
-    await loadDriveFolders(nextParentId)
-  }, [folderPickerPath, loadDriveFolders])
-
-  const handleUseCurrentFolder = useCallback(() => {
-    const currentFolder = folderPickerPath[folderPickerPath.length - 1]
-    if (!currentFolder) return
-    setSettings((prev) => ({
-      ...prev,
-      companyDriveRootFolder: appendDriveRoot(
-        prev.companyDriveRootFolder,
-        `https://drive.google.com/drive/folders/${currentFolder.id}`
-      )
-    }))
-    setFolderPickerOpen(false)
-  }, [folderPickerPath])
+  }, [contactOnboardingUseWebLookup])
 
   const needsDeepgram = !settings.deepgramApiKey
   const needsClaude = settings.llmProvider === 'claude' && !settings.claudeApiKey
+  const needsSetup = needsDeepgram || needsClaude
+  const profileName = userDisplayName.trim()
+    || [userFirstName.trim(), userLastName.trim()].filter(Boolean).join(' ')
+    || 'No name set'
+  const profileTitle = userTitle.trim() || 'No title'
+  const profileJobFunction = userJobFunction.trim() || 'No job function'
+  const profileEmail = userEmail.trim() || 'No email'
 
   return (
     <div className={styles.container}>
+      <div className={styles.tabRow}>
+        {(['profile', 'ai', 'integrations', 'storage'] as SettingsTab[]).map((tab) => (
+          <button
+            key={tab}
+            className={`${styles.tab} ${activeTab === tab ? styles.activeTab : ''}`}
+            onClick={() => setActiveTab(tab)}
+          >
+            {TAB_LABELS[tab]}
+            {tab === 'ai' && needsSetup && (
+              <span className={styles.tabBadge}>Setup needed</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'profile' && (
+        <>
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>User Profile</h3>
-        <div className={styles.field}>
-          <label className={styles.label}>Display Name</label>
-          <input
-            className={styles.input}
-            value={userDisplayName}
-            onChange={(e) => setUserDisplayName(e.target.value)}
-            placeholder="Your name"
-          />
+        <div className={styles.sectionTitleRow}>
+          <h3 className={styles.sectionTitle}>User Profile</h3>
+          {!editingProfile && (
+            <button
+              className={styles.linkBtn}
+              onClick={() => setEditingProfile(true)}
+            >
+              Edit
+            </button>
+          )}
         </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Email</label>
-          <input
-            className={styles.input}
-            value={userEmail}
-            onChange={(e) => setUserEmail(e.target.value)}
-            placeholder="you@firm.com"
-          />
-        </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Title</label>
-          <input
-            className={styles.input}
-            value={userTitle}
-            onChange={(e) => setUserTitle(e.target.value)}
-            placeholder="e.g. Partner, Principal, Associate"
-          />
-        </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Job Function</label>
-          <input
-            className={styles.input}
-            value={userJobFunction}
-            onChange={(e) => setUserJobFunction(e.target.value)}
-            placeholder="e.g. Venture Capital, Private Equity"
-          />
-          <p className={styles.hint}>
-            Your profile is used to personalize meeting summaries and task extraction.
-          </p>
-        </div>
+        {!editingProfile ? (
+          <>
+            <div className={styles.profileIdentity}>
+              <p className={styles.profileName}>{profileName}</p>
+              <p className={styles.profileEmail}>{profileEmail}</p>
+            </div>
+            <p className={styles.profileMeta}>Title: {profileTitle}</p>
+            <p className={styles.profileMeta}>Job function: {profileJobFunction}</p>
+            <p className={styles.hint}>
+              Your profile is used to personalize meeting summaries and task extraction.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className={styles.fieldRow}>
+              <div className={styles.field}>
+                <label className={styles.label}>First Name</label>
+                <input
+                  className={styles.input}
+                  value={userFirstName}
+                  onChange={(e) => setUserFirstName(e.target.value)}
+                  placeholder="Your first name"
+                />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Last Name</label>
+                <input
+                  className={styles.input}
+                  value={userLastName}
+                  onChange={(e) => setUserLastName(e.target.value)}
+                  placeholder="Your last name"
+                />
+              </div>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Display Name</label>
+              <input
+                className={styles.input}
+                value={userDisplayName}
+                onChange={(e) => setUserDisplayName(e.target.value)}
+                placeholder="Your name"
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Email</label>
+              <input
+                className={styles.input}
+                value={userEmail}
+                onChange={(e) => setUserEmail(e.target.value)}
+                placeholder="you@firm.com"
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Title</label>
+              <input
+                className={styles.input}
+                value={userTitle}
+                onChange={(e) => setUserTitle(e.target.value)}
+                placeholder="e.g. Partner, Principal, Associate"
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Job Function</label>
+              <input
+                className={styles.input}
+                value={userJobFunction}
+                onChange={(e) => setUserJobFunction(e.target.value)}
+                placeholder="e.g. Venture Capital, Private Equity"
+              />
+              <p className={styles.hint}>
+                Your profile is used to personalize meeting summaries and task extraction.
+              </p>
+            </div>
+            <div className={styles.profileEditActions}>
+              <button className={styles.connectBtn} onClick={handleSaveProfile}>
+                Save Profile
+              </button>
+              <button className={styles.linkBtn} onClick={handleCancelProfileEdit}>
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
         {profileError && <p className={styles.error}>{profileError}</p>}
       </section>
 
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Relationship Thresholds</h3>
-        <div className={styles.field}>
-          <label className={styles.label}>Stale relationship after (days)</label>
-          <input
-            type="number"
-            className={styles.input}
-            value={staleRelationshipDays}
-            onChange={(event) => setStaleRelationshipDays(event.target.value)}
-            min="1"
-          />
+        <div className={styles.sectionTitleRow}>
+          <h3 className={styles.sectionTitle}>Relationship Thresholds</h3>
+          {!editingThresholds && (
+            <button className={styles.linkBtn} onClick={() => setEditingThresholds(true)}>
+              Edit
+            </button>
+          )}
         </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Stalled pipeline after (days)</label>
-          <input
-            type="number"
-            className={styles.input}
-            value={stalledPipelineDays}
-            onChange={(event) => setStalledPipelineDays(event.target.value)}
-            min="1"
-          />
-        </div>
+        {editingThresholds ? (
+          <>
+            <div className={styles.field}>
+              <label className={styles.label}>Stale relationship after (days)</label>
+              <input
+                type="number"
+                className={styles.input}
+                value={staleRelationshipDays}
+                onChange={(event) => setStaleRelationshipDays(event.target.value)}
+                min="1"
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Stalled pipeline after (days)</label>
+              <input
+                type="number"
+                className={styles.input}
+                value={stalledPipelineDays}
+                onChange={(event) => setStalledPipelineDays(event.target.value)}
+                min="1"
+              />
+            </div>
+            <div className={styles.profileEditActions}>
+              <button className={styles.connectBtn} onClick={() => setEditingThresholds(false)}>
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className={styles.profileMeta}>Stale relationship after: {staleRelationshipDays} days</p>
+            <p className={styles.profileMeta}>Stalled pipeline after: {stalledPipelineDays} days</p>
+          </>
+        )}
       </section>
 
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Contact Onboarding</h3>
+        <div className={styles.field}>
+          <p className={styles.hint}>
+            One-time pass: ingest Gmail threads for all contacts, enrich name/company details, and
+            backfill Contact &gt; Emails for contacts missing email history.
+          </p>
+          <label className={styles.checkboxLabel} style={{ marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={contactOnboardingUseWebLookup}
+              onChange={(event) => setContactOnboardingUseWebLookup(event.target.checked)}
+            />
+            Use web lookup for missing title/company/LinkedIn
+          </label>
+          <div className={styles.onboardingActionRow}>
+            <button
+              className={styles.connectBtn}
+              onClick={handleRunContactOnboarding}
+              disabled={contactOnboardingRunning}
+            >
+              {contactOnboardingRunning
+                ? 'Running contact onboarding...'
+                : 'Ingest + Enrich Contacts from Gmail'}
+            </button>
+          </div>
+          {contactOnboardingRunning && (
+            <div className={styles.onboardingProgress}>
+              {contactOnboardingProgress ? (
+                <>
+                  <p className={styles.hint}>
+                    {formatOnboardingStage(contactOnboardingProgress.stage)}: {' '}
+                    {contactOnboardingProgress.completedContacts}/
+                    {contactOnboardingProgress.totalContacts}
+                    {contactOnboardingProgress.currentContactName
+                      ? ` (${contactOnboardingProgress.currentContactName})`
+                      : ''}
+                  </p>
+                  <p className={styles.hint}>
+                    Ingested {contactOnboardingProgress.ingestedContacts}, skipped already ingested{' '}
+                    {contactOnboardingProgress.skippedAlreadyIngested}, ingest failures{' '}
+                    {contactOnboardingProgress.ingestFailures}, enrichment failures{' '}
+                    {contactOnboardingProgress.enrichmentFailures}.
+                  </p>
+                </>
+              ) : (
+                <p className={styles.hint}>Starting contact onboarding...</p>
+              )}
+            </div>
+          )}
+          {contactOnboardingError && (
+            <p className={styles.error}>{contactOnboardingError}</p>
+          )}
+          {contactOnboardingResult && (
+            <div className={styles.onboardingResult}>
+              <p className={styles.hint}>
+                Scanned {contactOnboardingResult.scannedContacts} contacts. Ingested{' '}
+                {contactOnboardingResult.ingestedContacts}, skipped as already ingested{' '}
+                {contactOnboardingResult.skippedAlreadyIngested}, enriched{' '}
+                {contactOnboardingResult.enrichedContacts}.
+              </p>
+              <p className={styles.hint}>
+                Messages inserted/updated: {contactOnboardingResult.insertedMessageCount}/
+                {contactOnboardingResult.updatedMessageCount}, linked messages:{' '}
+                {contactOnboardingResult.linkedMessageCount}, linked contacts:{' '}
+                {contactOnboardingResult.linkedContactCount}.
+              </p>
+              <p className={styles.hint}>
+                Updates: names {contactOnboardingResult.updatedNames}, companies{' '}
+                {contactOnboardingResult.linkedCompanies}, titles{' '}
+                {contactOnboardingResult.updatedTitles}, LinkedIn{' '}
+                {contactOnboardingResult.updatedLinkedinUrls}.
+              </p>
+              {(contactOnboardingResult.ingestFailures > 0
+                || contactOnboardingResult.enrichmentFailures > 0) && (
+                <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
+                  Failures: ingest {contactOnboardingResult.ingestFailures}, enrich{' '}
+                  {contactOnboardingResult.enrichmentFailures}.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+        </>
+      )}
+
+      {activeTab === 'ai' && (
+        <>
       {(needsDeepgram || needsClaude) && (
         <div className={styles.setupBanner}>
           <h3>Welcome to Cyggie</h3>
@@ -526,7 +781,11 @@ export default function Settings() {
           </>
         )}
       </section>
+        </>
+      )}
 
+      {activeTab === 'integrations' && (
+        <>
       <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Google Calendar</h3>
         {calendarConnected ? (
@@ -540,18 +799,6 @@ export default function Settings() {
             <p className={styles.hint}>
               Calendar events power meeting prep and attendee context.
             </p>
-            <div className={styles.scopeStatusRow}>
-              <span
-                className={`${styles.scopePill} ${hasDriveScope ? styles.scopeGranted : styles.scopeMissing}`}
-              >
-                Drive Uploads: {hasDriveScope ? 'Granted' : 'Missing'}
-              </span>
-              <span
-                className={`${styles.scopePill} ${hasDriveFilesScope ? styles.scopeGranted : styles.scopeMissing}`}
-              >
-                Drive Files: {hasDriveFilesScope ? 'Granted' : 'Missing'}
-              </span>
-            </div>
           </div>
         ) : (
           <>
@@ -640,34 +887,58 @@ export default function Settings() {
       </section>
 
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Storage</h3>
-        <div className={styles.field}>
-          <label className={styles.label}>Storage Directory</label>
-          <div className={styles.storagePathRow}>
-            <span className={styles.storagePath}>{storagePath}</span>
-            <button className={styles.linkBtn} onClick={handleChangeStorage}>
-              Change
-            </button>
-          </div>
-          <p className={styles.hint}>
-            Transcripts and summaries are stored as Markdown files in this directory.
-          </p>
-          <button className={styles.linkBtn} onClick={handleOpenStorage}>
-            Open in Finder
-          </button>
+        <h3 className={styles.sectionTitle}>Google Drive</h3>
+        <p className={styles.hint} style={{ marginBottom: 12 }}>
+          Drive Uploads lets Cyggie save meeting files to your Drive. Drive Files allows browsing
+          company folders in Company Detail &gt; Files. Both permissions use the Google OAuth
+          credentials configured in Google Calendar above.
+        </p>
+        <div className={styles.scopeStatusRow}>
+          <span
+            className={`${styles.scopePill} ${hasDriveScope ? styles.scopeGranted : styles.scopeMissing}`}
+          >
+            Drive Uploads: {hasDriveScope ? 'Granted' : 'Missing'}
+          </span>
+          <span
+            className={`${styles.scopePill} ${hasDriveFilesScope ? styles.scopeGranted : styles.scopeMissing}`}
+          >
+            Drive Files: {hasDriveFilesScope ? 'Granted' : 'Missing'}
+          </span>
         </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Company Files Root Folder (Local)</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              className={styles.input}
-              style={{ flex: 1 }}
-              value={settings.companyLocalFilesRoot}
-              onChange={(e) =>
-                setSettings({ ...settings, companyLocalFilesRoot: e.target.value })
-              }
-              placeholder="/path/to/company-files"
-            />
+      </section>
+        </>
+      )}
+
+      {activeTab === 'storage' && (
+        <>
+      {/* Transcripts & Summaries */}
+      <div className={styles.storageCard}>
+        <div className={styles.storageCardHeader}>
+          <div>
+            <p className={styles.storageCardLabel}>Transcripts &amp; Summaries</p>
+            <p className={styles.storageCardDesc}>
+              Meeting transcripts and AI summaries stored as Markdown files.
+            </p>
+          </div>
+          <div className={styles.storageCardActions}>
+            <button className={styles.linkBtn} onClick={handleChangeStorage}>Change</button>
+            <button className={styles.linkBtn} onClick={handleOpenStorage}>Open in Finder</button>
+          </div>
+        </div>
+        {!storagePath && <p className={styles.storageCardStatusWarn}>Not configured</p>}
+      </div>
+
+      {/* Company Files */}
+      <div className={styles.storageCard}>
+        <div className={styles.storageCardHeader}>
+          <div>
+            <p className={styles.storageCardLabel}>Company Files</p>
+            <p className={styles.storageCardDesc}>
+              Root folder containing per-company sub-folders. The app matches folders by company name.
+              Works with local folders and Google Drive folders synced via Drive for Desktop.
+            </p>
+          </div>
+          <div className={styles.storageCardActions}>
             <button
               className={styles.linkBtn}
               onClick={async () => {
@@ -679,125 +950,88 @@ export default function Settings() {
                 }
               }}
             >
-              Browse
+              {settings.companyLocalFilesRoot ? 'Change' : 'Select Folder'}
             </button>
-          </div>
-          <p className={styles.hint}>
-            Local folder that contains per-company sub-folders. The app will match folders by company name.
-          </p>
-        </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Company Files Root Folder (Drive)</label>
-          <textarea
-            className={styles.input}
-            value={settings.companyDriveRootFolder}
-            onChange={(e) =>
-              setSettings({ ...settings, companyDriveRootFolder: e.target.value })
-            }
-            rows={3}
-            placeholder="One folder URL or ID per line (or comma-separated)"
-          />
-          <p className={styles.hint}>
-            Used by Company Detail &gt; Files. You can set multiple Drive root folders (one per line) when company folders live in different areas.
-          </p>
-          <div className={styles.folderPickerActions}>
-            <button
-              className={styles.linkBtn}
-              onClick={handleOpenFolderPicker}
-            >
-              Browse Drive Folders
-            </button>
-            {folderPickerOpen && (
+            {settings.companyLocalFilesRoot && (
               <button
                 className={styles.linkBtn}
-                onClick={() => setFolderPickerOpen(false)}
+                onClick={() => window.api.invoke(IPC_CHANNELS.APP_OPEN_PATH, settings.companyLocalFilesRoot)}
               >
-                Close Browser
+                Open in Finder
               </button>
             )}
           </div>
-          {folderPickerOpen && (
-            <div className={styles.folderPickerPanel}>
-              <div className={styles.folderPickerToolbar}>
-                <button
-                  className={styles.linkBtn}
-                  onClick={() => void handleFolderBack()}
-                  disabled={folderPickerLoading || folderPickerPath.length === 0}
-                >
-                  Back
-                </button>
-                <span className={styles.folderPickerPath}>
-                  {folderPickerPath.length > 0
-                    ? `My Drive / ${folderPickerPath.map((f) => f.name).join(' / ')}`
-                    : 'My Drive'}
-                </span>
-              </div>
-              {folderPickerError && <p className={styles.error}>{folderPickerError}</p>}
-              {folderPickerLoading ? (
-                <p className={styles.hint}>Loading folders...</p>
-              ) : folderPickerFolders.length === 0 ? (
-                <p className={styles.hint}>No subfolders found.</p>
-              ) : (
-                <div className={styles.folderList}>
-                  {folderPickerFolders.map((folder) => (
-                    <button
-                      key={folder.id}
-                      className={styles.folderListItem}
-                      onClick={() => void handleFolderOpen(folder)}
-                    >
-                      {folder.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className={styles.folderPickerFooter}>
-                <button
-                  className={styles.connectBtn}
-                  onClick={handleUseCurrentFolder}
-                  disabled={folderPickerPath.length === 0}
-                >
-                  Add Current Folder
-                </button>
-              </div>
-            </div>
-          )}
         </div>
-        {(!hasDriveScope || !hasDriveFilesScope) && (
-          <div className={styles.field}>
-            {driveError && <p className={styles.error}>{driveError}</p>}
-            {!hasDriveScope && (
-              <div className={styles.scopeGrantRow}>
-                <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
-                  Grant Drive Uploads access to save and manage app-generated meeting files.
-                </p>
-                <button
-                  className={styles.connectBtn}
-                  onClick={handleReauthorizeGoogleScopes}
-                  disabled={driveGranting}
-                  style={{ marginTop: 8 }}
-                >
-                  {driveGranting ? 'Connecting...' : 'Grant Drive Upload Access'}
-                </button>
-              </div>
-            )}
-            {!hasDriveFilesScope && (
-              <div className={styles.scopeGrantRow}>
-                <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
-                  Grant Drive Files access to browse the Company Files root folder (read-only metadata scope).
-                </p>
-                <button
-                  className={styles.connectBtn}
-                  onClick={handleGrantDriveFilesAccess}
-                  disabled={driveFilesGranting}
-                  style={{ marginTop: 8 }}
-                >
-                  {driveFilesGranting ? 'Connecting...' : 'Grant Drive Files Access'}
-                </button>
+        {!settings.companyLocalFilesRoot && <p className={styles.storageCardStatusWarn}>Not configured</p>}
+        {!settings.companyLocalFilesRoot && (
+          <p className={styles.hint} style={{ marginTop: 6 }}>
+            Click &quot;Select Folder&quot; to choose the folder where your company files are stored.
+            If your files are on Google Drive, select them from Finder via the Google Drive mount.
+          </p>
+        )}
+        {/* Advanced: Drive URL fallback */}
+        <button
+          className={styles.storageCardToggle}
+          onClick={() => setDriveFilesExpanded((v) => !v)}
+          style={{ marginTop: 10 }}
+        >
+          {driveFilesExpanded ? 'Hide advanced' : 'Advanced'}
+        </button>
+        {driveFilesExpanded && (
+          <div className={styles.storageCardBody}>
+            <p className={styles.storageCardDesc} style={{ marginBottom: 10 }}>
+              If you can&apos;t select the folder locally, paste Google Drive folder URLs here instead.
+              The app will use the Drive API to find company files. One URL or folder ID per line.
+            </p>
+            <textarea
+              className={styles.input}
+              value={settings.companyDriveRootFolder}
+              onChange={(e) =>
+                setSettings({ ...settings, companyDriveRootFolder: e.target.value })
+              }
+              rows={3}
+              placeholder="https://drive.google.com/drive/folders/..."
+            />
+            {(!hasDriveScope || !hasDriveFilesScope) && (
+              <div style={{ marginTop: 12 }}>
+                {driveError && <p className={styles.error}>{driveError}</p>}
+                {!hasDriveScope && (
+                  <div className={styles.scopeGrantRow}>
+                    <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
+                      Grant Drive Uploads access to save and manage app-generated meeting files.
+                    </p>
+                    <button
+                      className={styles.connectBtn}
+                      onClick={handleReauthorizeGoogleScopes}
+                      disabled={driveGranting}
+                      style={{ marginTop: 8 }}
+                    >
+                      {driveGranting ? 'Connecting...' : 'Grant Drive Upload Access'}
+                    </button>
+                  </div>
+                )}
+                {!hasDriveFilesScope && (
+                  <div className={styles.scopeGrantRow}>
+                    <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
+                      Grant Drive Files access to query company files via the Drive API (read-only).
+                    </p>
+                    <button
+                      className={styles.connectBtn}
+                      onClick={handleGrantDriveFilesAccess}
+                      disabled={driveFilesGranting}
+                      style={{ marginTop: 8 }}
+                    >
+                      {driveFilesGranting ? 'Connecting...' : 'Grant Drive Files Access'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
         )}
-      </section>
+      </div>
+        </>
+      )}
 
       <div className={styles.actions}>
         <button className={styles.saveBtn} onClick={handleSave}>

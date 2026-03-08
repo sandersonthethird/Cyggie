@@ -66,6 +66,10 @@ export const IPC_CHANNELS = {
   CONTACT_SET_COMPANY: 'contact:set-company',
   CONTACT_UPDATE: 'contact:update',
   CONTACT_SYNC_FROM_MEETINGS: 'contact:sync-from-meetings',
+  CONTACT_ENRICH_EXISTING: 'contact:enrich-existing',
+  CONTACT_ENRICH_ONE: 'contact:enrich-one',
+  CONTACT_ONBOARD_FROM_EMAIL: 'contact:onboard-from-email',
+  CONTACT_ONBOARD_PROGRESS: 'contact:onboard-progress',
   CONTACT_RESOLVE_EMAILS: 'contact:resolve-emails',
 
   // Dashboard

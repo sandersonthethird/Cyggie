@@ -1,4 +1,15 @@
 export type ContactType = 'investor' | 'founder' | 'operator'
+export type ContactSortBy = 'recent_touch' | 'first_name' | 'last_name' | 'company'
+
+export interface ContactEnrichmentOptions {
+  webLookup?: boolean
+  webLookupLimit?: number
+}
+
+export interface ContactEmailOnboardingOptions extends ContactEnrichmentOptions {
+  maxContacts?: number
+  ingestOnlyMissingEmailHistory?: boolean
+}
 
 export interface ContactSummary {
   id: string
@@ -8,6 +19,7 @@ export interface ContactSummary {
   normalizedName: string
   email: string | null
   primaryCompanyId: string | null
+  primaryCompanyName?: string | null
   title: string | null
   contactType: ContactType | null
   linkedinUrl: string | null
@@ -85,4 +97,65 @@ export interface ContactSyncResult {
   updated: number
   skipped: number
   invalid: number
+}
+
+export interface ContactEnrichmentResult {
+  scannedContacts: number
+  updatedNames: number
+  updatedLinkedinUrls: number
+  updatedTitles: number
+  linkedCompanies: number
+  webLookups: number
+  skipped: number
+}
+
+export interface ContactEmailOnboardingFailure {
+  contactId: string
+  contactName: string
+  stage: 'ingest' | 'enrich'
+  reason: string
+}
+
+export interface ContactEmailOnboardingResult {
+  scannedContacts: number
+  attemptedIngest: number
+  skippedAlreadyIngested: number
+  ingestedContacts: number
+  ingestFailures: number
+  enrichedContacts: number
+  enrichmentFailures: number
+  insertedMessageCount: number
+  updatedMessageCount: number
+  linkedMessageCount: number
+  linkedContactCount: number
+  updatedNames: number
+  updatedLinkedinUrls: number
+  updatedTitles: number
+  linkedCompanies: number
+  webLookups: number
+  skippedEnrichment: number
+  failures: ContactEmailOnboardingFailure[]
+}
+
+export type ContactEmailOnboardingProgressStage =
+  | 'starting'
+  | 'checking'
+  | 'ingesting'
+  | 'enriching'
+  | 'completed'
+  | 'failed'
+
+export interface ContactEmailOnboardingProgress {
+  stage: ContactEmailOnboardingProgressStage
+  totalContacts: number
+  processedContacts: number
+  completedContacts: number
+  currentContactId: string | null
+  currentContactName: string | null
+  attemptedIngest: number
+  skippedAlreadyIngested: number
+  ingestedContacts: number
+  ingestFailures: number
+  enrichedContacts: number
+  enrichmentFailures: number
 }

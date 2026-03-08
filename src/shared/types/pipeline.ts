@@ -9,6 +9,7 @@ export interface PipelineSummaryItem {
 export interface StalledPipelineCompany {
   companyId: string
   companyName: string
+  companyDomain?: string | null
   pipelineStage: CompanyPipelineStage
   lastTouchpoint: string | null
   daysSinceTouch: number

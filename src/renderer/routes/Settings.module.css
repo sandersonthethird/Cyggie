@@ -2,6 +2,50 @@
   max-width: 600px;
 }
 
+/* Tab navigation */
+.tabRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 24px;
+}
+
+.tab {
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.activeTab {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.tabBadge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(255, 159, 10, 0.12);
+  color: var(--color-warning);
+}
+
 .setupBanner {
   padding: 16px;
   margin-bottom: 28px;
@@ -42,14 +86,70 @@
   border-bottom: 1px solid var(--color-border);
 }
 
+.sectionTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.sectionTitleRow .sectionTitle {
+  margin-bottom: 0;
+}
+
 .sectionTitle {
   font-size: 16px;
   font-weight: 600;
   margin-bottom: 16px;
 }
 
+.profileCard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  background: var(--color-bg);
+}
+
+.profileCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.profileIdentity {
+  min-width: 0;
+}
+
+.profileName {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.profileEmail {
+  margin: 4px 0 0;
+  font-size: 15px;
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
+
+.profileMeta {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
 .field {
   margin-bottom: 16px;
+}
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .label {
@@ -209,83 +309,95 @@
   margin-bottom: 12px;
 }
 
-.storagePathRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 4px;
-}
-
-.storagePath {
-  font-size: 13px;
-  color: var(--color-text-secondary);
-  font-family: var(--font-mono, monospace);
-  word-break: break-all;
-}
-
-.folderPickerActions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 8px;
-}
-
-.folderPickerPanel {
-  margin-top: 10px;
+.storageCard {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: 10px;
-  background: rgba(var(--color-primary-rgb, 59, 130, 246), 0.03);
-}
-
-.folderPickerToolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.folderPickerPath {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.folderList {
-  display: flex;
-  flex-direction: column;
-  max-height: 220px;
-  overflow: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin-bottom: 12px;
   background: var(--color-bg);
 }
 
-.folderListItem {
-  text-align: left;
-  padding: 8px 10px;
-  font-size: 13px;
+.storageCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.storageCardLabel {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--color-text);
-  border-bottom: 1px solid var(--color-border);
 }
 
-.folderListItem:last-child {
-  border-bottom: none;
+.storageCardDesc {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
 }
 
-.folderListItem:hover {
-  background: var(--color-card-hover);
+.storageCardActions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
-.folderPickerFooter {
+.storageCardStatus {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.storageCardStatusWarn {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--color-danger, #ef4444);
+}
+
+.storageCardBody {
   margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.storageCardToggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.storageCardToggle:hover {
+  color: var(--color-text-secondary);
 }
 
 .scopeGrantRow + .scopeGrantRow {
   margin-top: 16px;
+}
+
+.profileEditActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.onboardingActionRow {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.onboardingProgress {
+  margin-bottom: 10px;
+}
+
+.onboardingResult {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .stageList {

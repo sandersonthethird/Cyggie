@@ -4,6 +4,8 @@ import { getDatabase } from '../connection'
 export interface UserRecord {
   id: string
   displayName: string
+  firstName: string | null
+  lastName: string | null
   email: string | null
   avatarUrl: string | null
   role: 'admin' | 'member'
@@ -15,6 +17,8 @@ export interface UserRecord {
 interface UserRow {
   id: string
   display_name: string
+  first_name: string | null
+  last_name: string | null
   email: string | null
   avatar_url: string | null
   role: 'admin' | 'member'
@@ -27,6 +31,8 @@ function mapUser(row: UserRow): UserRecord {
   return {
     id: row.id,
     displayName: row.display_name,
+    firstName: row.first_name,
+    lastName: row.last_name,
     email: row.email,
     avatarUrl: row.avatar_url,
     role: row.role,
@@ -44,11 +50,25 @@ function normalizeEmail(value: string | null | undefined): string | null {
   return cleaned
 }
 
+function splitDisplayName(displayName: string): { firstName: string | null; lastName: string | null } {
+  const tokens = displayName
+    .trim()
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+  if (tokens.length === 0) return { firstName: null, lastName: null }
+  if (tokens.length === 1) return { firstName: tokens[0], lastName: null }
+  return {
+    firstName: tokens[0] || null,
+    lastName: tokens.slice(1).join(' ') || null
+  }
+}
+
 export function getUser(userId: string): UserRecord | null {
   const db = getDatabase()
   const row = db
     .prepare(`
-      SELECT id, display_name, email, avatar_url, role, title, job_function, created_at
+      SELECT id, display_name, first_name, last_name, email, avatar_url, role, title, job_function, created_at
       FROM users
       WHERE id = ?
       LIMIT 1
@@ -61,7 +81,7 @@ export function listUsers(limit = 100): UserRecord[] {
   const db = getDatabase()
   const rows = db
     .prepare(`
-      SELECT id, display_name, email, avatar_url, role, title, job_function, created_at
+      SELECT id, display_name, first_name, last_name, email, avatar_url, role, title, job_function, created_at
       FROM users
       ORDER BY datetime(created_at) ASC
       LIMIT ?
@@ -72,6 +92,8 @@ export function listUsers(limit = 100): UserRecord[] {
 
 export function createUser(data: {
   displayName: string
+  firstName?: string | null
+  lastName?: string | null
   email?: string | null
   avatarUrl?: string | null
   role?: 'admin' | 'member'
@@ -80,6 +102,9 @@ export function createUser(data: {
   const displayName = data.displayName.trim()
   if (!displayName) throw new Error('displayName is required')
   const email = normalizeEmail(data.email ?? null)
+  const split = splitDisplayName(displayName)
+  const firstName = data.firstName?.trim() || split.firstName
+  const lastName = data.lastName?.trim() || split.lastName
 
   const byEmail = email
     ? (db.prepare(`
@@ -93,6 +118,8 @@ export function createUser(data: {
   if (byEmail?.id) {
     const updated = updateUser(byEmail.id, {
       displayName,
+      firstName,
+      lastName,
       email,
       avatarUrl: data.avatarUrl ?? null,
       role: data.role ?? undefined
@@ -104,11 +131,13 @@ export function createUser(data: {
   const id = randomUUID()
   db.prepare(`
     INSERT INTO users (
-      id, display_name, email, avatar_url, role, created_at
-    ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+      id, display_name, first_name, last_name, email, avatar_url, role, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
     id,
     displayName,
+    firstName,
+    lastName,
     email,
     data.avatarUrl ?? null,
     data.role ?? 'member'
@@ -123,6 +152,8 @@ export function updateUser(
   userId: string,
   data: Partial<{
     displayName: string
+    firstName: string | null
+    lastName: string | null
     email: string | null
     avatarUrl: string | null
     role: 'admin' | 'member'
@@ -139,6 +170,14 @@ export function updateUser(
     if (!displayName) throw new Error('displayName cannot be empty')
     sets.push('display_name = ?')
     params.push(displayName)
+  }
+  if (data.firstName !== undefined) {
+    sets.push('first_name = ?')
+    params.push(data.firstName?.trim() || null)
+  }
+  if (data.lastName !== undefined) {
+    sets.push('last_name = ?')
+    params.push(data.lastName?.trim() || null)
   }
   if (data.email !== undefined) {
     sets.push('email = ?')

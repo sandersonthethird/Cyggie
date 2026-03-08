@@ -32,6 +32,7 @@ import { runPipelineCompanyFieldsMigration } from './migrations/029-pipeline-com
 import { runPerformanceIndexesMigration } from './migrations/030-performance-indexes'
 import { runTasksMigration } from './migrations/031-tasks'
 import { runUserProfileFieldsMigration } from './migrations/032-user-profile-fields'
+import { runUserNamePartsMigration } from './migrations/033-user-name-parts'
 
 let db: Database.Database | null = null
 
@@ -72,6 +73,7 @@ export function getDatabase(): Database.Database {
     runPerformanceIndexesMigration(db)
     runTasksMigration(db)
     runUserProfileFieldsMigration(db)
+    runUserNamePartsMigration(db)
   }
   return db
 }

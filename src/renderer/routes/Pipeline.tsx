@@ -473,7 +473,7 @@ export default function Pipeline() {
                       />
                     </td>
                     <td className={styles.descriptionCell}>
-                      {(company.description || '').slice(0, 100) || '-'}
+                      {company.description || '-'}
                     </td>
                   </tr>
                 ))}

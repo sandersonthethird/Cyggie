@@ -36,6 +36,37 @@
   margin-right: auto;
 }
 
+.controlsRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+  padding: 0 16px;
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.sortGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sortLabel {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.sortSelect {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-card-bg);
+  color: var(--color-text-primary);
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
 .scopeButton {
   border: 1px solid var(--color-border);
   border-radius: 999px;
@@ -227,8 +258,13 @@
   resize: vertical;
 }
 
+.createActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .createBtn {
-  align-self: flex-start;
   border: 0;
   border-radius: var(--radius-md);
   padding: 6px 14px;
@@ -237,6 +273,27 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.createBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.createCancelBtn {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.createCancelBtn:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text-primary);
 }
 
 .resultCount {

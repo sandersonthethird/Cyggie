@@ -10,6 +10,7 @@ import type {
   CompanyPipelineStage,
   CompanyPriority,
   CompanyRound,
+  CompanySortBy,
   CompanySummary
 } from '../../shared/types/company'
 import styles from './Companies.module.css'
@@ -57,13 +58,25 @@ const ROUNDS: { value: CompanyRound; label: string }[] = [
   { value: 'series_b', label: 'Series B' }
 ]
 
+const DAY_MS = 1000 * 60 * 60 * 24
+const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
+
+function parseTimestamp(value: string | null | undefined): number {
+  if (!value) return Number.NaN
+  const trimmed = value.trim()
+  if (!trimmed) return Number.NaN
+  const normalized = SQLITE_DATETIME_RE.test(trimmed)
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed
+  return Date.parse(normalized)
+}
+
 function formatLastTouch(value: string | null): string {
   if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  const timestamp = parseTimestamp(value)
+  if (Number.isNaN(timestamp)) return ''
+  const date = new Date(timestamp)
+  const diffDays = Math.max(0, Math.floor((Date.now() - timestamp) / DAY_MS))
   if (diffDays === 0) return 'Today'
   if (diffDays === 1) return 'Yesterday'
   if (diffDays < 7) return `${diffDays}d ago`
@@ -73,15 +86,17 @@ function formatLastTouch(value: string | null): string {
 
 function daysSince(value: string | null): number | null {
   if (!value) return null
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return null
-  return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24))
+  const timestamp = parseTimestamp(value)
+  if (Number.isNaN(timestamp)) return null
+  return Math.max(0, Math.floor((Date.now() - timestamp) / DAY_MS))
 }
 
-function buildFilter(query: string, scope: CompanyScope): CompanyListFilter {
+function buildFilter(query: string, scope: CompanyScope, sortBy: CompanySortBy): CompanyListFilter {
   const filter: CompanyListFilter = {
     query: query.trim(),
-    limit: 400
+    limit: 400,
+    sortBy,
+    includeStats: true
   }
 
   if (scope === 'prospects') {
@@ -120,6 +135,10 @@ export default function Companies() {
   const createCardRef = useRef<HTMLDivElement>(null)
   const query = (searchParams.get('q') || '').trim()
   const showCreate = searchParams.get('new') === '1'
+  const rawSort = (searchParams.get('sort') || '').trim()
+  const sortBy: CompanySortBy = rawSort === 'name' || rawSort === 'recent_touch'
+    ? rawSort
+    : 'recent_touch'
 
   const openCreateForm = useCallback(() => {
     const next = new URLSearchParams(searchParams)
@@ -133,6 +152,16 @@ export default function Companies() {
     setSearchParams(next)
   }, [searchParams, setSearchParams])
 
+  const setSort = useCallback((nextSort: CompanySortBy) => {
+    const next = new URLSearchParams(searchParams)
+    if (nextSort === 'recent_touch') {
+      next.delete('sort')
+    } else {
+      next.set('sort', nextSort)
+    }
+    setSearchParams(next)
+  }, [searchParams, setSearchParams])
+
   const fetchCompanies = useCallback(async () => {
     if (!companiesEnabled) return
     setLoading(true)
@@ -140,7 +169,7 @@ export default function Companies() {
     try {
       const results = await window.api.invoke<CompanySummary[]>(
         IPC_CHANNELS.COMPANY_LIST,
-        buildFilter(query, scope)
+        buildFilter(query, scope, sortBy)
       )
       setCompanies(results)
     } catch (err) {
@@ -148,7 +177,7 @@ export default function Companies() {
     } finally {
       setLoading(false)
     }
-  }, [companiesEnabled, query, scope])
+  }, [companiesEnabled, query, scope, sortBy])
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => {
@@ -245,6 +274,20 @@ export default function Companies() {
           </button>
         ))}
       </div>
+      <div className={styles.controlsRow}>
+        <div className={styles.sortGroup}>
+          <label htmlFor="company-sort" className={styles.sortLabel}>Sort</label>
+          <select
+            id="company-sort"
+            className={styles.sortSelect}
+            value={sortBy}
+            onChange={(e) => setSort(e.target.value as CompanySortBy)}
+          >
+            <option value="recent_touch">Recent touch</option>
+            <option value="name">Name (A-Z)</option>
+          </select>
+        </div>
+      </div>
 
       {showCreate && (
         <div ref={createCardRef} className={styles.createCard}>
@@ -313,7 +356,10 @@ export default function Companies() {
               <input className={styles.input} placeholder="e.g. jane@acme.com" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
             </div>
           </div>
-          <button className={styles.createBtn} onClick={handleCreateCompany} disabled={!newName.trim()}>Create</button>
+          <div className={styles.createActions}>
+            <button className={styles.createBtn} onClick={handleCreateCompany} disabled={!newName.trim()}>Create</button>
+            <button className={styles.createCancelBtn} onClick={closeCreateForm}>Cancel</button>
+          </div>
         </div>
       )}
 

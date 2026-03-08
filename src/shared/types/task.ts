@@ -25,6 +25,7 @@ export interface TaskListItem extends Task {
   meetingTitle: string | null
   meetingDate: string | null
   companyName: string | null
+  companyDomain?: string | null
 }
 
 export interface TaskListFilter {

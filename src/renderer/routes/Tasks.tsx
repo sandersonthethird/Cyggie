@@ -8,6 +8,7 @@ import type {
   TaskListFilter,
   TaskStatus,
   TaskCategory,
+  TaskCreateData,
   TaskUpdateData
 } from '../../shared/types/task'
 import styles from './Tasks.module.css'
@@ -42,6 +43,12 @@ function formatDueDate(dateStr: string): string {
 
 function isOverdue(dateStr: string): boolean {
   return new Date(dateStr) < new Date(new Date().toDateString())
+}
+
+function daysSinceCreated(dateStr: string): number {
+  const created = new Date(dateStr).getTime()
+  if (Number.isNaN(created)) return 0
+  return Math.max(0, Math.floor((Date.now() - created) / (1000 * 60 * 60 * 24)))
 }
 
 function groupTasks(tasks: TaskListItem[], groupBy: GroupBy): [string, TaskListItem[]][] {
@@ -92,6 +99,7 @@ export default function Tasks() {
 
   // Detail panel
   const [detailTask, setDetailTask] = useState<TaskListItem | null>(null)
+  const [showDetailedCreate, setShowDetailedCreate] = useState(false)
 
   const fetchTasks = useCallback(async () => {
     setLoading(true)
@@ -199,8 +207,24 @@ export default function Tasks() {
   }, [selectedIds, fetchTasks, detailTask])
 
   const handleOpenDetail = useCallback((task: TaskListItem) => {
+    setShowDetailedCreate(false)
     setDetailTask(task)
   }, [])
+
+  const handleDetailedCreate = useCallback(async (data: TaskCreateData) => {
+    if (!data.title.trim()) return
+    try {
+      await window.api.invoke(IPC_CHANNELS.TASK_CREATE, {
+        ...data,
+        title: data.title.trim(),
+        source: 'manual'
+      })
+      setShowDetailedCreate(false)
+      await fetchTasks()
+    } catch (err) {
+      setError(String(err))
+    }
+  }, [fetchTasks])
 
   const handleDetailUpdate = useCallback(async (field: keyof TaskUpdateData, value: unknown) => {
     if (!detailTask) return
@@ -296,6 +320,17 @@ export default function Tasks() {
           <button type="submit" className={styles.addButton} disabled={!newTaskTitle.trim()}>
             Add
           </button>
+          <button
+            type="button"
+            className={styles.detailedCreateBtn}
+            title="Create with details"
+            onClick={() => {
+              setDetailTask(null)
+              setShowDetailedCreate(true)
+            }}
+          >
+            ＋
+          </button>
         </form>
 
         {error && <div className={styles.error}>{error}</div>}
@@ -376,6 +411,7 @@ export default function Tasks() {
                           </span>
                         )}
                         {task.source === 'auto' && <span className={styles.autoBadge}>Auto</span>}
+                        <span className={styles.ageBadge}>{daysSinceCreated(task.createdAt)}d</span>
                       </div>
                     </div>
                     {task.priority && (
@@ -406,6 +442,16 @@ export default function Tasks() {
           />
         </>
       )}
+      {showDetailedCreate && !detailTask && (
+        <>
+          <div className={styles.detailOverlay} onClick={() => setShowDetailedCreate(false)} />
+          <DetailPanel
+            createMode
+            onCreate={handleDetailedCreate}
+            onClose={() => setShowDetailedCreate(false)}
+          />
+        </>
+      )}
 
       <div className={styles.chatSection}>
         <ChatInterface compact />
@@ -414,23 +460,44 @@ export default function Tasks() {
   )
 }
 
-function DetailPanel({
-  task,
-  onUpdate,
-  onDelete,
-  onClose,
-  onNavigateMeeting,
-  onNavigateCompany
-}: {
+type DetailPanelEditProps = {
+  createMode?: false
   task: TaskListItem
   onUpdate: (field: keyof TaskUpdateData, value: unknown) => void
   onDelete: () => void
   onClose: () => void
   onNavigateMeeting: (id: string) => void
   onNavigateCompany: (id: string) => void
-}) {
-  const [title, setTitle] = useState(task.title)
-  const [description, setDescription] = useState(task.description || '')
+  onCreate?: never
+}
+
+type DetailPanelCreateProps = {
+  createMode: true
+  onCreate: (data: TaskCreateData) => void
+  onClose: () => void
+  task?: never
+  onUpdate?: never
+  onDelete?: never
+  onNavigateMeeting?: never
+  onNavigateCompany?: never
+}
+
+function DetailPanel(props: DetailPanelEditProps | DetailPanelCreateProps) {
+  const { onClose, createMode } = props
+
+  // Create mode local state
+  const [createTitle, setCreateTitle] = useState('')
+  const [createDescription, setCreateDescription] = useState('')
+  const [createCategory, setCreateCategory] = useState<TaskCategory>('action_item')
+  const [createStatus, setCreateStatus] = useState<TaskStatus>('open')
+  const [createPriority, setCreatePriority] = useState<string>('')
+  const [createDueDate, setCreateDueDate] = useState('')
+  const [createAssignee, setCreateAssignee] = useState('')
+
+  // Edit mode local state
+  const task = createMode ? null : props.task
+  const [title, setTitle] = useState(task?.title || '')
+  const [description, setDescription] = useState(task?.description || '')
   const descRef = useRef<HTMLTextAreaElement>(null)
 
   const autoResizeDesc = useCallback(() => {
@@ -440,22 +507,157 @@ function DetailPanel({
     el.style.height = `${Math.max(60, el.scrollHeight)}px`
   }, [])
 
-  // Sync local state when task changes
+  // Sync local state when task changes (edit mode)
   useEffect(() => {
-    setTitle(task.title)
-    setDescription(task.description || '')
-  }, [task.id, task.title, task.description])
+    if (task) {
+      setTitle(task.title)
+      setDescription(task.description || '')
+    }
+  }, [task?.id, task?.title, task?.description])
 
   // Auto-resize on mount and when description changes externally
   useEffect(() => {
     autoResizeDesc()
-  }, [task.id, task.description, autoResizeDesc])
+  }, [task?.id, task?.description, autoResizeDesc])
+
+  if (createMode) {
+    const handleSubmit = () => {
+      if (!createTitle.trim()) return
+      props.onCreate({
+        title: createTitle.trim(),
+        description: createDescription.trim() || null,
+        category: createCategory,
+        priority: createPriority ? (createPriority as TaskCreateData['priority']) : null,
+        dueDate: createDueDate || null,
+        assignee: createAssignee.trim() || null
+      })
+    }
+
+    return (
+      <div className={styles.detailPanel}>
+        <div className={styles.detailHeader}>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>New Task</span>
+          <button className={styles.detailCloseBtn} onClick={onClose}>&times;</button>
+        </div>
+
+        <div className={styles.detailField}>
+          <label className={styles.detailLabel}>Title</label>
+          <input
+            className={styles.detailInput}
+            value={createTitle}
+            onChange={(e) => setCreateTitle(e.target.value)}
+            placeholder="Task title..."
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSubmit()
+            }}
+          />
+        </div>
+
+        <div className={styles.detailField}>
+          <label className={styles.detailLabel}>Description</label>
+          <textarea
+            ref={descRef}
+            className={styles.detailTextarea}
+            value={createDescription}
+            onChange={(e) => {
+              setCreateDescription(e.target.value)
+              autoResizeDesc()
+            }}
+            placeholder="Add a description..."
+          />
+        </div>
+
+        <div className={styles.detailRow}>
+          <div className={styles.detailField}>
+            <label className={styles.detailLabel}>Status</label>
+            <select
+              className={styles.detailSelect}
+              value={createStatus}
+              onChange={(e) => setCreateStatus(e.target.value as TaskStatus)}
+            >
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+            </select>
+          </div>
+
+          <div className={styles.detailField}>
+            <label className={styles.detailLabel}>Type</label>
+            <select
+              className={styles.detailSelect}
+              value={createCategory}
+              onChange={(e) => setCreateCategory(e.target.value as TaskCategory)}
+            >
+              <option value="action_item">Action Item</option>
+              <option value="decision">Decision</option>
+              <option value="follow_up">Follow-up</option>
+            </select>
+          </div>
+        </div>
+
+        <div className={styles.detailRow}>
+          <div className={styles.detailField}>
+            <label className={styles.detailLabel}>Priority</label>
+            <select
+              className={styles.detailSelect}
+              value={createPriority}
+              onChange={(e) => setCreatePriority(e.target.value)}
+            >
+              <option value="">None</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+
+          <div className={styles.detailField}>
+            <label className={styles.detailLabel}>Due Date</label>
+            <input
+              type="date"
+              className={styles.detailInput}
+              value={createDueDate}
+              onChange={(e) => setCreateDueDate(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className={styles.detailField}>
+          <label className={styles.detailLabel}>Assignee</label>
+          <input
+            className={styles.detailInput}
+            value={createAssignee}
+            onChange={(e) => setCreateAssignee(e.target.value)}
+            placeholder="Assign to someone..."
+          />
+        </div>
+
+        <div className={styles.detailCreateActions}>
+          <button
+            className={styles.addButton}
+            disabled={!createTitle.trim()}
+            onClick={handleSubmit}
+          >
+            Create Task
+          </button>
+          <button
+            className={styles.detailCancelBtn}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Edit mode
+  const { onUpdate, onDelete, onNavigateMeeting, onNavigateCompany } = props
 
   return (
     <div className={styles.detailPanel}>
       <div className={styles.detailHeader}>
-        <span className={`${styles.categoryBadge} ${styles[`category_${task.category}`]}`}>
-          {CATEGORY_LABELS[task.category]}
+        <span className={`${styles.categoryBadge} ${styles[`category_${task!.category}`]}`}>
+          {CATEGORY_LABELS[task!.category]}
         </span>
         <button className={styles.detailCloseBtn} onClick={onClose}>&times;</button>
       </div>
@@ -467,7 +669,7 @@ function DetailPanel({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onBlur={() => {
-            if (title.trim() && title !== task.title) onUpdate('title', title.trim())
+            if (title.trim() && title !== task!.title) onUpdate('title', title.trim())
           }}
         />
       </div>
@@ -484,7 +686,7 @@ function DetailPanel({
           }}
           onBlur={() => {
             const val = description.trim() || null
-            if (val !== (task.description || '')) onUpdate('description', val)
+            if (val !== (task!.description || '')) onUpdate('description', val)
           }}
           placeholder="Add a description..."
         />
@@ -495,7 +697,7 @@ function DetailPanel({
           <label className={styles.detailLabel}>Status</label>
           <select
             className={styles.detailSelect}
-            value={task.status}
+            value={task!.status}
             onChange={(e) => onUpdate('status', e.target.value)}
           >
             <option value="open">Open</option>
@@ -509,7 +711,7 @@ function DetailPanel({
           <label className={styles.detailLabel}>Type</label>
           <select
             className={styles.detailSelect}
-            value={task.category}
+            value={task!.category}
             onChange={(e) => onUpdate('category', e.target.value)}
           >
             <option value="action_item">Action Item</option>
@@ -524,7 +726,7 @@ function DetailPanel({
           <label className={styles.detailLabel}>Priority</label>
           <select
             className={styles.detailSelect}
-            value={task.priority || ''}
+            value={task!.priority || ''}
             onChange={(e) => onUpdate('priority', e.target.value || null)}
           >
             <option value="">None</option>
@@ -539,7 +741,7 @@ function DetailPanel({
           <input
             type="date"
             className={styles.detailInput}
-            value={task.dueDate || ''}
+            value={task!.dueDate || ''}
             onChange={(e) => onUpdate('dueDate', e.target.value || null)}
           />
         </div>
@@ -548,51 +750,51 @@ function DetailPanel({
       <div className={styles.detailField}>
         <label className={styles.detailLabel}>Assignee</label>
         <input
-          key={`assignee-${task.id}-${task.assignee}`}
+          key={`assignee-${task!.id}-${task!.assignee}`}
           className={styles.detailInput}
-          defaultValue={task.assignee || ''}
+          defaultValue={task!.assignee || ''}
           onBlur={(e) => {
             const val = e.target.value.trim() || null
-            if (val !== task.assignee) onUpdate('assignee', val)
+            if (val !== task!.assignee) onUpdate('assignee', val)
           }}
           placeholder="Assign to someone..."
         />
       </div>
 
       {/* Source links */}
-      {(task.meetingTitle || task.companyName) && (
+      {(task!.meetingTitle || task!.companyName) && (
         <div className={styles.detailMeta}>
-          {task.meetingTitle && task.meetingId && (
+          {task!.meetingTitle && task!.meetingId && (
             <p>
               Meeting:{' '}
               <button
                 className={styles.detailSourceLink}
-                onClick={() => onNavigateMeeting(task.meetingId!)}
+                onClick={() => onNavigateMeeting(task!.meetingId!)}
               >
-                {task.meetingTitle}
+                {task!.meetingTitle}
               </button>
             </p>
           )}
-          {task.companyName && task.companyId && (
+          {task!.companyName && task!.companyId && (
             <p>
               Company:{' '}
               <button
                 className={styles.detailSourceLink}
-                onClick={() => onNavigateCompany(task.companyId!)}
+                onClick={() => onNavigateCompany(task!.companyId!)}
               >
-                {task.companyName}
+                {task!.companyName}
               </button>
             </p>
           )}
-          {task.source === 'auto' && (
+          {task!.source === 'auto' && (
             <p>Source: Auto-extracted from summary</p>
           )}
         </div>
       )}
 
       <div className={styles.detailMeta}>
-        <p>Created: {new Date(task.createdAt).toLocaleString()}</p>
-        <p>Updated: {new Date(task.updatedAt).toLocaleString()}</p>
+        <p>Created: {new Date(task!.createdAt).toLocaleString()}</p>
+        <p>Updated: {new Date(task!.updatedAt).toLocaleString()}</p>
       </div>
 
       <button className={styles.detailDeleteBtn} onClick={onDelete}>

@@ -83,6 +83,7 @@ function listStalledPipelineCompanies(staleDays: number, limit = 20): StalledPip
         SELECT
           c.id AS company_id,
           c.canonical_name AS company_name,
+          c.primary_domain AS company_domain,
           c.pipeline_stage,
           COALESCE(
             CASE
@@ -101,6 +102,7 @@ function listStalledPipelineCompanies(staleDays: number, limit = 20): StalledPip
       SELECT
         company_id,
         company_name,
+        company_domain,
         pipeline_stage,
         last_touchpoint,
         CAST(julianday('now') - julianday(last_touchpoint) AS INTEGER) AS days_since_touch
@@ -112,6 +114,7 @@ function listStalledPipelineCompanies(staleDays: number, limit = 20): StalledPip
     .all(staleDays, limit) as Array<{
     company_id: string
     company_name: string
+    company_domain: string | null
     pipeline_stage: string
     last_touchpoint: string | null
     days_since_touch: number
@@ -120,6 +123,7 @@ function listStalledPipelineCompanies(staleDays: number, limit = 20): StalledPip
   return rows.map((row) => ({
     companyId: row.company_id,
     companyName: row.company_name,
+    companyDomain: row.company_domain,
     pipelineStage: row.pipeline_stage as CompanyPipelineStage,
     lastTouchpoint: row.last_touchpoint,
     daysSinceTouch: row.days_since_touch || 0
@@ -141,7 +145,9 @@ const ACTIVITY_SQL_MEETING = `
       WHERE l.meeting_id = m.id
       ORDER BY l.confidence DESC, datetime(l.created_at) ASC
       LIMIT 1
-    ) AS company_id
+    ) AS company_id,
+    NULL AS body_text,
+    NULL AS snippet
   FROM meetings m
 `
 
@@ -160,8 +166,23 @@ const ACTIVITY_SQL_EMAIL_ALL = `
       WHERE l.message_id = em.id
       ORDER BY l.confidence DESC, datetime(l.created_at) ASC
       LIMIT 1
-    ) AS company_id
+    ) AS company_id,
+    em.body_text,
+    em.snippet
   FROM email_messages em
+  WHERE em.id IN (
+    SELECT e2.id FROM email_messages e2
+    WHERE e2.thread_id IS NULL
+    UNION ALL
+    SELECT e3.id FROM (
+      SELECT e4.id, ROW_NUMBER() OVER (
+        PARTITION BY e4.thread_id
+        ORDER BY COALESCE(e4.received_at, e4.sent_at, e4.created_at) DESC
+      ) AS rn
+      FROM email_messages e4
+      WHERE e4.thread_id IS NOT NULL
+    ) e3 WHERE e3.rn = 1
+  )
 `
 
 const ACTIVITY_SQL_EMAIL_PIPELINE_PORTFOLIO = `
@@ -179,9 +200,24 @@ const ACTIVITY_SQL_EMAIL_PIPELINE_PORTFOLIO = `
       WHERE l.message_id = em.id
       ORDER BY l.confidence DESC, datetime(l.created_at) ASC
       LIMIT 1
-    ) AS company_id
+    ) AS company_id,
+    em.body_text,
+    em.snippet
   FROM email_messages em
-  WHERE EXISTS (
+  WHERE em.id IN (
+    SELECT e2.id FROM email_messages e2
+    WHERE e2.thread_id IS NULL
+    UNION ALL
+    SELECT e3.id FROM (
+      SELECT e4.id, ROW_NUMBER() OVER (
+        PARTITION BY e4.thread_id
+        ORDER BY COALESCE(e4.received_at, e4.sent_at, e4.created_at) DESC
+      ) AS rn
+      FROM email_messages e4
+      WHERE e4.thread_id IS NOT NULL
+    ) e3 WHERE e3.rn = 1
+  )
+  AND EXISTS (
     SELECT 1
     FROM email_company_links ecl
     JOIN org_companies oc ON oc.id = ecl.company_id
@@ -202,7 +238,9 @@ const ACTIVITY_SQL_NOTE = `
     n.updated_at AS occurred_at,
     n.id AS reference_id,
     'company_note' AS reference_type,
-    n.company_id AS company_id
+    n.company_id AS company_id,
+    NULL AS body_text,
+    NULL AS snippet
   FROM company_notes n
 `
 
@@ -252,9 +290,13 @@ function listRecentActivity(limit = 20): DashboardActivityItem[] {
       activity.reference_id,
       activity.reference_type,
       activity.company_id,
-      c.canonical_name AS company_name
+      c.canonical_name AS company_name,
+      c.primary_domain AS company_domain,
+      activity.body_text,
+      activity.snippet
     FROM (${unions.join(' UNION ALL ')}) activity
     LEFT JOIN org_companies c ON c.id = activity.company_id
+    WHERE datetime(activity.occurred_at) <= datetime('now')
     ORDER BY datetime(activity.occurred_at) DESC
     LIMIT ?
   `
@@ -269,6 +311,9 @@ function listRecentActivity(limit = 20): DashboardActivityItem[] {
     reference_type: DashboardActivityItem['referenceType']
     company_id: string | null
     company_name: string | null
+    company_domain: string | null
+    body_text: string | null
+    snippet: string | null
   }>
 
   return rows.map((row) => ({
@@ -280,7 +325,10 @@ function listRecentActivity(limit = 20): DashboardActivityItem[] {
     referenceId: row.reference_id,
     referenceType: row.reference_type,
     companyId: row.company_id,
-    companyName: row.company_name
+    companyName: row.company_name,
+    companyDomain: row.company_domain,
+    bodyText: row.body_text,
+    snippet: row.snippet
   }))
 }
 
@@ -305,6 +353,7 @@ function listStaleCompanies(staleDays: number, limit = 20): DashboardStaleCompan
         SELECT
           c.id AS company_id,
           c.canonical_name AS company_name,
+          c.primary_domain AS company_domain,
           COALESCE(ms.meeting_count, 0) AS meeting_count,
           COALESCE(es.email_count, 0) AS email_count,
           COALESCE(
@@ -323,6 +372,7 @@ function listStaleCompanies(staleDays: number, limit = 20): DashboardStaleCompan
       SELECT
         company_id,
         company_name,
+        company_domain,
         meeting_count,
         email_count,
         last_touchpoint,
@@ -335,6 +385,7 @@ function listStaleCompanies(staleDays: number, limit = 20): DashboardStaleCompan
     .all(staleDays, limit) as Array<{
     company_id: string
     company_name: string
+    company_domain: string | null
     meeting_count: number
     email_count: number
     last_touchpoint: string | null
@@ -344,6 +395,7 @@ function listStaleCompanies(staleDays: number, limit = 20): DashboardStaleCompan
   return rows.map((row) => ({
     companyId: row.company_id,
     companyName: row.company_name,
+    companyDomain: row.company_domain,
     meetingCount: row.meeting_count || 0,
     emailCount: row.email_count || 0,
     lastTouchpoint: row.last_touchpoint,

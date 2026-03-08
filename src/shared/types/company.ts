@@ -12,6 +12,7 @@ export type CompanyEntityType =
 export type CompanyPriority = 'high' | 'further_work' | 'monitor'
 export type CompanyRound = 'pre_seed' | 'seed' | 'seed_extension' | 'series_a' | 'series_b'
 export type CompanyPipelineStage = 'screening' | 'diligence' | 'decision' | 'documentation' | 'pass'
+export type CompanySortBy = 'recent_touch' | 'name'
 
 export interface CompanyListFilter {
   query?: string
@@ -19,6 +20,8 @@ export interface CompanyListFilter {
   offset?: number
   view?: 'companies' | 'all'
   entityTypes?: CompanyEntityType[]
+  sortBy?: CompanySortBy
+  includeStats?: boolean
 }
 
 export interface CompanySummary {

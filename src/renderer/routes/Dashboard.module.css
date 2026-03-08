@@ -12,6 +12,45 @@
   gap: 8px;
 }
 
+.newMenuContainer {
+  position: relative;
+}
+
+.newMenuDropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 140px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.newMenuItem {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.newMenuItem:hover {
+  background: var(--color-card-hover);
+}
+
 .section {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -88,6 +127,73 @@
 
 .showMoreBtn:hover {
   color: var(--color-text);
+}
+
+.tabsSection {
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.tabRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.activeTab {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.tabCount {
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  padding: 0 6px;
+  background: #e5edf9;
+  color: #1e3a5f;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.activeTab .tabCount {
+  background: #1668dc;
+  color: #fff;
+}
+
+.tabPanel {
+  padding-top: 10px;
+}
+
+.tabToolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
 }
 
 .collapseGroup {
@@ -201,7 +307,7 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding-left: 20px;
+  padding-left: 0;
 }
 
 .summaryRow,
@@ -224,6 +330,22 @@
   background: var(--color-card-hover);
 }
 
+.summaryTitleGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.itemCompanyIcon {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
 .attentionRow {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -238,6 +360,43 @@
 
 .attentionRow:hover {
   background: var(--color-card-hover);
+}
+
+.attentionRowWrapper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.attentionRowWrapper .summaryRow {
+  flex: 1;
+  min-width: 0;
+}
+
+.dismissBtn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.attentionRowWrapper:hover .dismissBtn {
+  opacity: 1;
+}
+
+.dismissBtn:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text);
 }
 
 .activityIcon {
@@ -263,6 +422,54 @@
   font-size: 11px;
   color: var(--color-text-secondary);
   white-space: nowrap;
+}
+
+.activityDateGroup {
+  margin-bottom: 4px;
+}
+
+.activityDateHeader {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  margin-bottom: 2px;
+  margin-top: 8px;
+}
+
+.activityDateGroup:first-child .activityDateHeader {
+  margin-top: 0;
+}
+
+.activityItemWrapper {
+  border-radius: var(--radius-md);
+}
+
+.activityItemExpanded {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.activityCompanyIcon {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.activityCompanyIcon:hover {
+  opacity: 1;
+}
+
+.activityEmailBody {
+  border-top: 1px solid var(--color-border);
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .attentionGrid {
@@ -350,7 +557,8 @@
 }
 
 .pipelineTable {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -395,9 +603,6 @@
 }
 
 .descriptionCell {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

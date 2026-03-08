@@ -1,19 +1,14 @@
-import { useEffect } from 'react'
-import { Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Outlet, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { Meeting } from '../../../shared/types/meeting'
 import styles from './Layout.module.css'
 
 export default function Layout() {
-  const location = useLocation()
   const navigate = useNavigate()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const showMeetingPage = location.pathname === '/meetings'
-  const showCompanySearch = location.pathname === '/companies'
-  const showContactSearch = location.pathname === '/contacts'
-  const showEntitySearch = showCompanySearch || showContactSearch
-  const showEntityNew = searchParams.get('new') === '1'
+  const [newMenuOpen, setNewMenuOpen] = useState(false)
+  const newMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const focusChatInput = (): boolean => {
@@ -42,7 +37,19 @@ export default function Layout() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  const handleCreateNote = async () => {
+  useEffect(() => {
+    if (!newMenuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) {
+        setNewMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [newMenuOpen])
+
+  const handleNewNote = async () => {
+    setNewMenuOpen(false)
     try {
       const meeting = await window.api.invoke<Meeting>(IPC_CHANNELS.MEETING_CREATE)
       navigate(`/meeting/${meeting.id}`)
@@ -51,35 +58,50 @@ export default function Layout() {
     }
   }
 
-  const handleEntityNewToggle = () => {
-    if (!showEntitySearch) return
-    const next = new URLSearchParams(searchParams)
-    if (showEntityNew) {
-      next.delete('new')
-    } else {
-      next.set('new', '1')
-    }
-    setSearchParams(next)
+  const handleNewCompany = () => {
+    setNewMenuOpen(false)
+    navigate('/companies?new=1')
+  }
+
+  const handleNewContact = () => {
+    setNewMenuOpen(false)
+    navigate('/contacts?new=1')
+  }
+
+  const handleNewTask = () => {
+    setNewMenuOpen(false)
+    navigate('/tasks')
   }
 
   return (
     <div className={styles.layout}>
       <div className={styles.titlebar}>
-        {showMeetingPage && (
-          <div className={styles.titlebarControls}>
-            <button className={styles.titlebarNewNote} onClick={handleCreateNote}>
-              + New Note
+        <div className={styles.titlebarControls}>
+          <div className={styles.titlebarNewDropdown} ref={newMenuRef}>
+            <button
+              className={styles.titlebarNewBtn}
+              onClick={() => setNewMenuOpen((v) => !v)}
+            >
+              + New
             </button>
+            {newMenuOpen && (
+              <div className={styles.titlebarNewMenu}>
+                <button className={styles.titlebarNewMenuItem} onClick={handleNewNote}>
+                  Note
+                </button>
+                <button className={styles.titlebarNewMenuItem} onClick={handleNewCompany}>
+                  Company
+                </button>
+                <button className={styles.titlebarNewMenuItem} onClick={handleNewContact}>
+                  Contact
+                </button>
+                <button className={styles.titlebarNewMenuItem} onClick={handleNewTask}>
+                  Task
+                </button>
+              </div>
+            )}
           </div>
-        )}
-        {showEntitySearch && (
-          <div className={styles.titlebarEntityControls}>
-            <button className={styles.titlebarEntityNewBtn} onClick={handleEntityNewToggle}>
-              {showEntityNew ? 'Cancel' : (showCompanySearch ? '+ New Company' : '+ New Contact')}
-            </button>
-          </div>
-        )}
-        {!showMeetingPage && !showEntitySearch && <div className={styles.titlebarSpacer} />}
+        </div>
       </div>
       <div className={styles.body}>
         <Sidebar />

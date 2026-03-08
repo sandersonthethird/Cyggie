@@ -15,6 +15,7 @@ interface TaskListRow extends TaskRow {
   meeting_title: string | null
   meeting_date: string | null
   company_name: string | null
+  company_domain: string | null
 }
 
 function rowToTask(row: TaskRow): Task {
@@ -42,7 +43,8 @@ function rowToTaskListItem(row: TaskListRow): TaskListItem {
     ...rowToTask(row),
     meetingTitle: row.meeting_title,
     meetingDate: row.meeting_date,
-    companyName: row.company_name
+    companyName: row.company_name,
+    companyDomain: row.company_domain
   }
 }
 
@@ -51,7 +53,8 @@ const LIST_SELECT = `
     t.*,
     m.title AS meeting_title,
     m.date AS meeting_date,
-    c.canonical_name AS company_name
+    c.canonical_name AS company_name,
+    c.primary_domain AS company_domain
   FROM tasks t
   LEFT JOIN meetings m ON m.id = t.meeting_id
   LEFT JOIN org_companies c ON c.id = t.company_id

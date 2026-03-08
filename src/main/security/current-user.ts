@@ -61,6 +61,8 @@ export function getCurrentUserProfile(): userRepo.UserRecord {
 
 export function updateCurrentUserProfile(data: {
   displayName: string
+  firstName?: string | null
+  lastName?: string | null
   email?: string | null
   title?: string | null
   jobFunction?: string | null
@@ -68,6 +70,8 @@ export function updateCurrentUserProfile(data: {
   const currentUserId = getCurrentUserId()
   const updated = userRepo.updateUser(currentUserId, {
     displayName: data.displayName,
+    firstName: data.firstName,
+    lastName: data.lastName,
     email: data.email ?? null,
     title: data.title,
     jobFunction: data.jobFunction

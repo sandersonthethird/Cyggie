@@ -5,6 +5,7 @@ import type {
   CompanyPriority,
   CompanyRound,
   CompanyPipelineStage,
+  CompanySortBy,
   CompanyListFilter,
   CompanySummary,
   CompanyDetail,
@@ -302,6 +303,26 @@ function baseCompanySelectLight(whereClause = ''): string {
   `
 }
 
+function buildCompanyOrderBy(sortBy: CompanySortBy | undefined, includeLastTouchpoint: boolean): string {
+  if (sortBy === 'name') {
+    return `
+      ORDER BY
+        lower(c.canonical_name) ASC,
+        lower(COALESCE(c.primary_domain, '')) ASC
+    `
+  }
+
+  if (includeLastTouchpoint) {
+    return `
+      ORDER BY datetime(last_touchpoint) DESC, c.canonical_name ASC
+    `
+  }
+
+  return `
+    ORDER BY datetime(c.updated_at) DESC, c.canonical_name ASC
+  `
+}
+
 export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
   const db = getDatabase()
   const query = filter?.query?.trim()
@@ -329,11 +350,12 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
   const limit = filter?.limit ?? 200
   const offset = filter?.offset ?? 0
+  const includeStats = filter?.includeStats === true
 
   const rows = db
     .prepare(
-      `${baseCompanySelectLight(where)}
-       ORDER BY datetime(c.updated_at) DESC, c.canonical_name ASC
+      `${includeStats ? baseCompanySelect(where) : baseCompanySelectLight(where)}
+       ${buildCompanyOrderBy(filter?.sortBy, includeStats)}
        LIMIT ? OFFSET ?`
     )
     .all(...params, limit, offset) as CompanyRow[]
