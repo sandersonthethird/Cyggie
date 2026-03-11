@@ -62,7 +62,7 @@ const COMPANY_ENTITY_TYPE_OPTIONS: Array<{ value: CompanyEntityType; label: stri
   { value: 'prospect', label: 'prospect' },
   { value: 'portfolio', label: 'portfolio' },
   { value: 'pass', label: 'pass' },
-  { value: 'vc_fund', label: 'vc fund' },
+  { value: 'vc_fund', label: 'investor' },
   { value: 'customer', label: 'customer' },
   { value: 'partner', label: 'partner' },
   { value: 'vendor', label: 'vendor' },
@@ -145,9 +145,13 @@ function formatFileSize(bytes: number | null): string {
 
 function displayError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
-  return raw
+  const cleaned = raw
     .replace(/^Error invoking remote method '.*?':\s*/, '')
     .replace(/^Error:\s*/, '')
+  if (cleaned.toLowerCase().includes('unique constraint failed') && cleaned.includes('normalized_name')) {
+    return 'A company with this name already exists. Please use a different name.'
+  }
+  return cleaned
 }
 
 function isMissingHandlerError(message: string, channel: string): boolean {
@@ -177,7 +181,6 @@ export default function CompanyDetail() {
   const [updatingPriority, setUpdatingPriority] = useState(false)
   const [editingRound, setEditingRound] = useState(false)
   const [updatingRound, setUpdatingRound] = useState(false)
-  const [editingPrimaryContact, setEditingPrimaryContact] = useState(false)
 
   const [company, setCompany] = useState<CompanyDetailType | null>(null)
   const [timeline, setTimeline] = useState<CompanyTimelineItem[]>([])
@@ -209,6 +212,11 @@ export default function CompanyDetail() {
   const [memoMode, setMemoMode] = useState<'view' | 'edit'>('view')
   const [generatingMemo, setGeneratingMemo] = useState(false)
   const [memoGenerateProgress, setMemoGenerateProgress] = useState('')
+  const [showMemoFileSelect, setShowMemoFileSelect] = useState(false)
+  const [memoSelectableFiles, setMemoSelectableFiles] = useState<CompanyDriveFileRef[]>([])
+  const [memoSelectedFileIds, setMemoSelectedFileIds] = useState<Set<string>>(new Set())
+  const [memoIncludeEmails, setMemoIncludeEmails] = useState(true)
+  const [loadingMemoFiles, setLoadingMemoFiles] = useState(false)
   const [ingestingEmails, setIngestingEmails] = useState(false)
   const [emailIngestSummary, setEmailIngestSummary] = useState<string | null>(null)
   const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null)
@@ -238,8 +246,6 @@ export default function CompanyDetail() {
   const [chatAsking, setChatAsking] = useState(false)
   const [chatStreaming, setChatStreaming] = useState('')
 
-  const FILES_ENTITY_TYPES: Set<CompanyEntityType> = new Set(['prospect', 'portfolio', 'pass'])
-
   useEffect(() => {
     latestCompanyIdRef.current = companyId
   }, [companyId])
@@ -248,7 +254,7 @@ export default function CompanyDetail() {
     const tabs: CompanyTab[] = ['timeline', 'contacts']
     if (flags.ff_company_notes_v1) tabs.push('notes')
     if (flags.ff_investment_memo_v1) tabs.push('memo')
-    if (company && FILES_ENTITY_TYPES.has(company.entityType)) tabs.push('files')
+    if (company) tabs.push('files')
     return tabs
   }, [company, flags.ff_company_notes_v1, flags.ff_investment_memo_v1])
 
@@ -545,8 +551,6 @@ export default function CompanyDetail() {
       setContacts(updated)
     } catch (err) {
       setError(displayError(err))
-    } finally {
-      setEditingPrimaryContact(false)
     }
   }, [companyId])
 
@@ -595,11 +599,10 @@ export default function CompanyDetail() {
       await window.api.invoke(IPC_CHANNELS.COMPANY_SET_PRIMARY_CONTACT, companyId, contact.id)
       const updated = await window.api.invoke<CompanyContactRef[]>(IPC_CHANNELS.COMPANY_CONTACTS, companyId)
       setContacts(updated)
-      setContactSearchQuery('')
+      setContactSearchQuery(contact.fullName)
       setContactEmail('')
       setContactSearchResults([])
       setShowContactDropdown(false)
-      setEditingPrimaryContact(false)
     } catch (err) {
       setError(displayError(err))
     }
@@ -615,11 +618,10 @@ export default function CompanyDetail() {
       await window.api.invoke(IPC_CHANNELS.COMPANY_SET_PRIMARY_CONTACT, companyId, created.id)
       const updated = await window.api.invoke<CompanyContactRef[]>(IPC_CHANNELS.COMPANY_CONTACTS, companyId)
       setContacts(updated)
-      setContactSearchQuery('')
+      setContactSearchQuery(created.fullName)
       setContactEmail('')
       setContactSearchResults([])
       setShowContactDropdown(false)
-      setEditingPrimaryContact(false)
     } catch (err) {
       setError(displayError(err))
     }
@@ -753,12 +755,12 @@ export default function CompanyDetail() {
     }
   }, [memo])
 
-  const handleGenerateMemo = useCallback(async () => {
+  const handleGenerateMemo = useCallback(async (selectedFileIds: string[], includeEmails: boolean) => {
     if (!companyId) return
     setGeneratingMemo(true)
     setMemoGenerateProgress('')
     try {
-      await window.api.invoke(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE, companyId)
+      await window.api.invoke(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE, { companyId, selectedFileIds, includeEmails })
       // Refresh memo data after generation
       const refreshedMemo = await window.api.invoke<InvestmentMemoWithLatest>(
         IPC_CHANNELS.INVESTMENT_MEMO_GET_OR_CREATE,
@@ -779,6 +781,31 @@ export default function CompanyDetail() {
       setMemoGenerateProgress('')
     }
   }, [companyId])
+
+  const handleOpenMemoFileSelect = useCallback(async () => {
+    if (!companyId) return
+    setLoadingMemoFiles(true)
+    try {
+      const readableFiles = await window.api.invoke<CompanyDriveFileRef[]>(
+        IPC_CHANNELS.COMPANY_FILES_READABLE,
+        companyId
+      )
+      if (readableFiles.length === 0) {
+        // No files — go straight to generation with emails only
+        void handleGenerateMemo([], true)
+        return
+      }
+      setMemoSelectableFiles(readableFiles)
+      setMemoSelectedFileIds(new Set(readableFiles.map((f) => f.id)))
+      setMemoIncludeEmails(true)
+      setShowMemoFileSelect(true)
+    } catch {
+      // On error, proceed without files
+      void handleGenerateMemo([], true)
+    } finally {
+      setLoadingMemoFiles(false)
+    }
+  }, [companyId, handleGenerateMemo])
 
   // Listen for memo generation progress
   useEffect(() => {
@@ -939,6 +966,10 @@ export default function CompanyDetail() {
     setRoundDraft(company.round || '')
     setPostMoneyDraft(company.postMoneyValuation != null ? String(company.postMoneyValuation) : '')
     setRaiseSizeDraft(company.raiseSize != null ? String(company.raiseSize) : '')
+    setContactSearchQuery(primaryContact?.fullName || '')
+    setContactEmail('')
+    setContactSearchResults([])
+    setShowContactDropdown(false)
     setEditingHeader(true)
     setTimeout(() => {
       nameInputRef.current?.focus()
@@ -1284,60 +1315,38 @@ export default function CompanyDetail() {
                 rows={3}
               />
             </div>
-            {contacts.length === 0 && (
-              <div className={styles.editRow}>
-                <label className={styles.editLabel}>Contact</label>
-                <div className={styles.contactSearchWrapper} ref={contactSearchRef}>
-                  <input
-                    className={styles.editInput}
-                    value={contactSearchQuery}
-                    onChange={(e) => setContactSearchQuery(e.target.value)}
-                    onKeyDown={handleContactSearchKeyDown}
-                    onFocus={() => {
-                      if (contactSearchResults.length > 0) setShowContactDropdown(true)
-                    }}
-                    disabled={savingHeader}
-                    placeholder="Search or enter contact name"
-                    aria-label="Contact name"
-                  />
-                  {showContactDropdown && contactSearchResults.length > 0 && (
-                    <div className={styles.contactDropdown}>
-                      {contactSearchResults.map((c, i) => (
-                        <div
-                          key={c.id}
-                          className={`${styles.contactDropdownItem} ${i === contactDropdownIndex ? styles.contactDropdownActive : ''}`}
-                          onMouseDown={() => void handleSelectExistingContact(c)}
-                          onMouseEnter={() => setContactDropdownIndex(i)}
-                        >
-                          <span className={styles.contactDropdownName}>{c.fullName}</span>
-                          {c.email && <span className={styles.contactDropdownEmail}>{c.email}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {contactSearchQuery.trim().length >= 2 && !showContactDropdown && (
-                    <div className={styles.contactAddRow}>
-                      <input
-                        className={styles.editInput}
-                        value={contactEmail}
-                        onChange={(e) => setContactEmail(e.target.value)}
-                        placeholder="Email address"
-                        aria-label="Contact email"
-                        disabled={savingHeader}
-                      />
-                      <button
-                        type="button"
-                        className={styles.editSaveButton}
-                        onClick={() => void handleCreateAndLinkContact()}
-                        disabled={!contactEmail.trim() || savingHeader}
+            <div className={styles.editRow}>
+              <label className={styles.editLabel}>Contact</label>
+              <div className={styles.contactSearchWrapper} ref={contactSearchRef}>
+                <input
+                  className={styles.editInput}
+                  value={contactSearchQuery}
+                  onChange={(e) => setContactSearchQuery(e.target.value)}
+                  onKeyDown={handleContactSearchKeyDown}
+                  onFocus={() => {
+                    if (contactSearchResults.length > 0) setShowContactDropdown(true)
+                  }}
+                  disabled={savingHeader}
+                  placeholder="Search contacts"
+                  aria-label="Contact name"
+                />
+                {showContactDropdown && contactSearchResults.length > 0 && (
+                  <div className={styles.contactDropdown}>
+                    {contactSearchResults.map((c, i) => (
+                      <div
+                        key={c.id}
+                        className={`${styles.contactDropdownItem} ${i === contactDropdownIndex ? styles.contactDropdownActive : ''}`}
+                        onMouseDown={() => void handleSelectExistingContact(c)}
+                        onMouseEnter={() => setContactDropdownIndex(i)}
                       >
-                        Add
-                      </button>
-                    </div>
-                  )}
-                </div>
+                        <span className={styles.contactDropdownName}>{c.fullName}</span>
+                        {c.email && <span className={styles.contactDropdownEmail}>{c.email}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
             {error && <div className={styles.error}>{error}</div>}
             <div className={styles.editActions}>
               <button
@@ -1504,7 +1513,18 @@ export default function CompanyDetail() {
             </div>
             <div className={styles.metaRow}>
               <div className={styles.metaLeft}>
-                <span>{company.primaryDomain || 'No domain'}</span>
+                {company.primaryDomain ? (
+                  <a
+                    href={`https://${company.primaryDomain}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {company.primaryDomain}
+                  </a>
+                ) : (
+                  <span>No domain</span>
+                )}
                 {(company.city || company.state) && (
                   <span>{[company.city, company.state].filter(Boolean).join(', ')}</span>
                 )}
@@ -1526,103 +1546,30 @@ export default function CompanyDetail() {
             </p>
             <div className={styles.founderRow}>
               <span className={styles.founderLabel}>Primary Contact</span>
-              {contacts.length > 0 ? (
-                editingPrimaryContact ? (
-                  <select
-                    className={styles.primaryContactSelect}
-                    value={primaryContact?.id || ''}
-                    onChange={(e) => void handleSetPrimaryContact(e.target.value)}
-                    onBlur={() => setEditingPrimaryContact(false)}
-                    autoFocus
+              {primaryContact ? (
+                <>
+                  <button
+                    type="button"
+                    className={styles.founderLink}
+                    onClick={() => navigate(`/contact/${primaryContact.id}`)}
                   >
-                    {contacts.map((c) => (
-                      <option key={c.id} value={c.id}>{c.fullName}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <>
+                    {primaryContact.fullName}
+                  </button>
+                  {primaryContact.linkedinUrl && (
                     <button
                       type="button"
-                      className={styles.founderLink}
-                      onClick={() => primaryContact && navigate(`/contact/${primaryContact.id}`)}
+                      className={styles.linkedinLink}
+                      onClick={() => void handleOpenExternal(primaryContact.linkedinUrl!)}
                     >
-                      {primaryContact?.fullName}
+                      LinkedIn
                     </button>
-                    {contacts.length > 1 && (
-                      <button
-                        type="button"
-                        className={styles.editPrimaryBtn}
-                        onClick={() => setEditingPrimaryContact(true)}
-                        title="Change primary contact"
-                      >
-                        Edit
-                      </button>
-                    )}
-                    {primaryContact?.linkedinUrl && (
-                      <button
-                        type="button"
-                        className={styles.linkedinLink}
-                        onClick={() => void handleOpenExternal(primaryContact.linkedinUrl!)}
-                      >
-                        LinkedIn
-                      </button>
-                    )}
-                  </>
-                )
-              ) : editingPrimaryContact ? (
-                <div className={styles.contactSearchWrapper} ref={contactSearchRef}>
-                  <input
-                    className={styles.editInput}
-                    value={contactSearchQuery}
-                    onChange={(e) => setContactSearchQuery(e.target.value)}
-                    onKeyDown={handleContactSearchKeyDown}
-                    onFocus={() => {
-                      if (contactSearchResults.length > 0) setShowContactDropdown(true)
-                    }}
-                    placeholder="Search or enter contact name"
-                    aria-label="Contact name"
-                    autoFocus
-                  />
-                  {showContactDropdown && contactSearchResults.length > 0 && (
-                    <div className={styles.contactDropdown}>
-                      {contactSearchResults.map((c, i) => (
-                        <div
-                          key={c.id}
-                          className={`${styles.contactDropdownItem} ${i === contactDropdownIndex ? styles.contactDropdownActive : ''}`}
-                          onMouseDown={() => void handleSelectExistingContact(c)}
-                          onMouseEnter={() => setContactDropdownIndex(i)}
-                        >
-                          <span className={styles.contactDropdownName}>{c.fullName}</span>
-                          {c.email && <span className={styles.contactDropdownEmail}>{c.email}</span>}
-                        </div>
-                      ))}
-                    </div>
                   )}
-                  {contactSearchQuery.trim().length >= 2 && !showContactDropdown && (
-                    <div className={styles.contactAddRow}>
-                      <input
-                        className={styles.editInput}
-                        value={contactEmail}
-                        onChange={(e) => setContactEmail(e.target.value)}
-                        placeholder="Email address"
-                        aria-label="Contact email"
-                      />
-                      <button
-                        type="button"
-                        className={styles.editSaveButton}
-                        onClick={() => void handleCreateAndLinkContact()}
-                        disabled={!contactEmail.trim()}
-                      >
-                        Add
-                      </button>
-                    </div>
-                  )}
-                </div>
+                </>
               ) : (
                 <button
                   type="button"
                   className={styles.editPrimaryBtn}
-                  onClick={() => setEditingPrimaryContact(true)}
+                  onClick={startHeaderEdit}
                 >
                   + Add Contact
                 </button>
@@ -1885,10 +1832,10 @@ export default function CompanyDetail() {
               </select>
               <button
                 className={styles.primaryButton}
-                onClick={() => void handleGenerateMemo()}
-                disabled={generatingMemo || !companyId}
+                onClick={() => void handleOpenMemoFileSelect()}
+                disabled={generatingMemo || loadingMemoFiles || !companyId}
               >
-                {generatingMemo ? 'Generating...' : 'Generate Memo'}
+                {generatingMemo ? 'Generating...' : loadingMemoFiles ? 'Loading...' : 'Generate Memo'}
               </button>
               <button className={styles.secondaryButton} onClick={() => void handleExportMemo()} disabled={exportingMemo || !memo}>
                 {exportingMemo ? 'Exporting...' : 'Export PDF'}
@@ -2080,6 +2027,86 @@ export default function CompanyDetail() {
                 disabled={!chatInput.trim() || chatAsking}
               >
                 {chatAsking ? 'Asking...' : 'Ask (Cmd+K)'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMemoFileSelect && (
+        <div className={styles.memoFileSelectOverlay} onClick={() => setShowMemoFileSelect(false)}>
+          <div className={styles.memoFileSelectDialog} onClick={(e) => e.stopPropagation()}>
+            <h3 className={styles.memoFileSelectTitle}>Select sources for memo generation</h3>
+
+            <div className={styles.memoFileSelectSection}>
+              <label className={styles.memoFileSelectCheckRow}>
+                <input
+                  type="checkbox"
+                  checked={memoIncludeEmails}
+                  onChange={(e) => setMemoIncludeEmails(e.target.checked)}
+                />
+                <span>Include linked emails</span>
+              </label>
+            </div>
+
+            {memoSelectableFiles.length > 0 && (
+              <div className={styles.memoFileSelectSection}>
+                <div className={styles.memoFileSelectHeader}>
+                  <span className={styles.memoFileSelectSectionLabel}>Company files</span>
+                  <button
+                    className={styles.memoFileSelectToggle}
+                    onClick={() => {
+                      if (memoSelectedFileIds.size === memoSelectableFiles.length) {
+                        setMemoSelectedFileIds(new Set())
+                      } else {
+                        setMemoSelectedFileIds(new Set(memoSelectableFiles.map((f) => f.id)))
+                      }
+                    }}
+                  >
+                    {memoSelectedFileIds.size === memoSelectableFiles.length ? 'Deselect all' : 'Select all'}
+                  </button>
+                </div>
+                <div className={styles.memoFileList}>
+                  {memoSelectableFiles.map((file) => (
+                    <label key={file.id} className={styles.memoFileSelectCheckRow}>
+                      <input
+                        type="checkbox"
+                        checked={memoSelectedFileIds.has(file.id)}
+                        onChange={(e) => {
+                          setMemoSelectedFileIds((prev) => {
+                            const next = new Set(prev)
+                            if (e.target.checked) next.add(file.id)
+                            else next.delete(file.id)
+                            return next
+                          })
+                        }}
+                      />
+                      <span className={styles.memoFileName}>{file.name}</span>
+                      {file.sizeBytes != null && (
+                        <span className={styles.memoFileSize}>
+                          {file.sizeBytes < 1024 * 1024
+                            ? `${Math.round(file.sizeBytes / 1024)}KB`
+                            : `${(file.sizeBytes / (1024 * 1024)).toFixed(1)}MB`}
+                        </span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className={styles.memoFileSelectActions}>
+              <button className={styles.secondaryButton} onClick={() => setShowMemoFileSelect(false)}>
+                Cancel
+              </button>
+              <button
+                className={styles.primaryButton}
+                onClick={() => {
+                  setShowMemoFileSelect(false)
+                  void handleGenerateMemo([...memoSelectedFileIds], memoIncludeEmails)
+                }}
+              >
+                Generate
               </button>
             </div>
           </div>

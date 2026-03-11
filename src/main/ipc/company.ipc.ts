@@ -441,7 +441,14 @@ export function registerCompanyHandlers(): void {
     (_event, companyId: string, contactId: string) => {
       if (!companyId) throw new Error('companyId is required')
       if (!contactId) throw new Error('contactId is required')
+      const userId = getCurrentUserId()
       companyRepo.setCompanyPrimaryContact(companyId, contactId)
+      // Also update the contact's primary company field so it appears on the contact record
+      try {
+        contactRepo.setContactPrimaryCompany(contactId, companyId, userId)
+      } catch (err) {
+        console.warn('[COMPANY_SET_PRIMARY_CONTACT] Could not update contact primary company:', err)
+      }
       return { success: true }
     }
   )
@@ -518,6 +525,27 @@ export function registerCompanyHandlers(): void {
     } catch (err) {
       console.error('[Company Files] Error:', err)
       return empty
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_FILES_READABLE, async (_event, companyId: string) => {
+    const READABLE_EXTS = new Set(['.pdf', '.txt', '.md', '.csv'])
+    try {
+      if (!companyId) return []
+      const company = companyRepo.getCompany(companyId)
+      if (!company) return []
+      const localRoot = (settingsRepo.getSetting('companyLocalFilesRoot') || '').trim()
+      if (!localRoot) return []
+      const result = await listLocalCompanyFiles(localRoot, company.canonicalName, company.primaryDomain)
+      if (!result || result.files.length === 0) return []
+      return result.files.filter((f) => {
+        if (f.mimeType === 'folder') return false
+        const ext = f.name.includes('.') ? '.' + f.name.split('.').pop()!.toLowerCase() : ''
+        return READABLE_EXTS.has(ext)
+      })
+    } catch (err) {
+      console.error('[Company Files Readable] Error:', err)
+      return []
     }
   })
 

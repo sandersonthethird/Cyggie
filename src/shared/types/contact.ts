@@ -159,3 +159,46 @@ export interface ContactEmailOnboardingProgress {
   enrichedContacts: number
   enrichmentFailures: number
 }
+
+export type ContactDedupAction = 'skip' | 'delete' | 'merge'
+
+export interface ContactDuplicateSummary {
+  id: string
+  fullName: string
+  email: string | null
+  primaryCompanyId: string | null
+  primaryCompanyName: string | null
+  title: string | null
+  updatedAt: string
+}
+
+export interface ContactDuplicateGroup {
+  key: string
+  normalizedName: string
+  reason: string
+  suggestedKeepContactId: string
+  contacts: ContactDuplicateSummary[]
+}
+
+export interface ContactDedupDecision {
+  groupKey: string
+  action: ContactDedupAction
+  keepContactId: string
+  contactIds: string[]
+}
+
+export interface ContactDedupFailure {
+  groupKey: string
+  action: ContactDedupAction
+  reason: string
+}
+
+export interface ContactDedupApplyResult {
+  reviewedGroups: number
+  mergedGroups: number
+  deletedGroups: number
+  skippedGroups: number
+  mergedContacts: number
+  deletedContacts: number
+  failures: ContactDedupFailure[]
+}

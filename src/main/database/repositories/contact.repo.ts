@@ -14,7 +14,12 @@ import type {
   ContactDetail,
   ContactMeetingRef,
   ContactEmailRef,
-  ContactType
+  ContactType,
+  ContactDuplicateGroup,
+  ContactDuplicateSummary,
+  ContactDedupDecision,
+  ContactDedupApplyResult,
+  ContactDedupAction
 } from '../../../shared/types/contact'
 
 interface ContactRow {
@@ -68,7 +73,78 @@ interface MeetingAttendeeRow {
   attendee_emails: string | null
 }
 
+interface ContactDuplicateRow {
+  id: string
+  full_name: string
+  normalized_name: string
+  email: string | null
+  primary_company_id: string | null
+  primary_company_name: string | null
+  title: string | null
+  updated_at: string
+}
+
+interface ContactMergeRow {
+  id: string
+  full_name: string
+  first_name: string | null
+  last_name: string | null
+  normalized_name: string
+  email: string | null
+  primary_company_id: string | null
+  title: string | null
+  contact_type: string | null
+  linkedin_url: string | null
+  crm_contact_id: string | null
+  crm_provider: string | null
+}
+
 const VALID_CONTACT_TYPES = new Set<string>(['investor', 'founder', 'operator'])
+const GENERIC_DUPLICATE_NAMES = new Set<string>([
+  'unknown',
+  'unknown contact',
+  'noreply',
+  'no reply',
+  'support',
+  'team'
+])
+
+function compareDuplicateCandidates(a: ContactDuplicateSummary, b: ContactDuplicateSummary): number {
+  const completeness = (contact: ContactDuplicateSummary): number => {
+    let score = 0
+    if (contact.email) score += 3
+    if (contact.primaryCompanyId) score += 2
+    if (contact.title) score += 1
+    const tokenCount = contact.fullName
+      .trim()
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean).length
+    if (tokenCount >= 2) score += 1
+    return score
+  }
+
+  const aScore = completeness(a)
+  const bScore = completeness(b)
+  if (aScore !== bScore) return bScore - aScore
+
+  const aTs = parseTimestamp(a.updatedAt)
+  const bTs = parseTimestamp(b.updatedAt)
+  if (!Number.isNaN(aTs) && !Number.isNaN(bTs) && aTs !== bTs) {
+    return bTs - aTs
+  }
+
+  return a.id.localeCompare(b.id)
+}
+
+function choosePrimaryEmailForMergedContact(
+  preferredEmail: string | null,
+  allEmails: string[]
+): string | null {
+  if (allEmails.length === 0) return null
+  if (preferredEmail && allEmails.includes(preferredEmail)) return preferredEmail
+  return allEmails[0] || null
+}
 
 function rowToContactSummary(row: ContactRow): ContactSummary {
   return {
@@ -743,10 +819,15 @@ function applyCandidates(candidates: CandidateContact[], userId: string | null =
       let nextName = existing.full_name
       let nextNormalized = existing.normalized_name
 
-      if (candidate.explicitName && candidate.fullName !== existing.full_name) {
-        nextName = candidate.fullName
-        nextNormalized = candidate.normalizedName
-      } else if (!existing.full_name.trim() || !existing.normalized_name) {
+      const existingNormalizedName = normalizeName(existing.full_name)
+      const namesDiffer = candidate.normalizedName !== existingNormalizedName
+      const existingNameLowQuality = isLikelyLowQualityStoredName(existing.full_name, existing.email)
+      const shouldUpgradeName = nameQualityScore(candidate.fullName) >= nameQualityScore(existing.full_name) + 12
+
+      if (
+        (!existing.full_name.trim() || !existing.normalized_name)
+        || (candidate.explicitName && namesDiffer && (existingNameLowQuality || shouldUpgradeName))
+      ) {
         nextName = candidate.fullName
         nextNormalized = candidate.normalizedName
       }
@@ -1454,6 +1535,7 @@ export function updateContact(
     title?: string | null
     contactType?: string | null
     linkedinUrl?: string | null
+    email?: string | null
   },
   userId: string | null = null
 ): ContactDetail {
@@ -1505,6 +1587,27 @@ export function updateContact(
     params.push(data.linkedinUrl?.trim() || null)
   }
 
+  let emailToAttach: string | null = null
+  let shouldUpdateEmail = false
+  if (data.email !== undefined) {
+    const newEmail = normalizeEmail(data.email || '')
+    shouldUpdateEmail = true
+    if (newEmail) {
+      const existingOwner = db
+        .prepare(`SELECT contact_id FROM contact_emails WHERE lower(email) = ? LIMIT 1`)
+        .get(newEmail) as { contact_id: string } | undefined
+      if (existingOwner && existingOwner.contact_id !== contactId) {
+        throw new Error('Email is already linked to another contact')
+      }
+      sets.push('email = ?')
+      params.push(newEmail)
+      emailToAttach = newEmail
+    } else {
+      sets.push('email = ?')
+      params.push(null)
+    }
+  }
+
   if (sets.length === 0) {
     const detail = getContact(contactId)
     if (!detail) throw new Error('Contact not found')
@@ -1519,6 +1622,11 @@ export function updateContact(
   params.push(contactId)
 
   db.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+
+  if (shouldUpdateEmail && emailToAttach) {
+    db.prepare(`UPDATE contact_emails SET is_primary = 0 WHERE contact_id = ? AND is_primary = 1`).run(contactId)
+    attachEmailToContact(db, contactId, emailToAttach, true)
+  }
 
   const detail = getContact(contactId)
   if (!detail) throw new Error('Failed to load updated contact')
@@ -2588,4 +2696,540 @@ export function resolveContactsByEmails(emails: string[]): Record<string, string
   }
 
   return result
+}
+
+function mergeContactsIntoOne(
+  db: ReturnType<typeof getDatabase>,
+  keepContactId: string,
+  sourceContactIds: string[],
+  userId: string | null = null
+): number {
+  const normalizedKeepId = keepContactId.trim()
+  if (!normalizedKeepId) {
+    throw new Error('keepContactId is required')
+  }
+
+  const normalizedSources = [...new Set(
+    sourceContactIds
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0 && id !== normalizedKeepId)
+  )]
+
+  if (normalizedSources.length === 0) return 0
+
+  const selectContactById = db.prepare(`
+    SELECT
+      id,
+      full_name,
+      first_name,
+      last_name,
+      normalized_name,
+      email,
+      primary_company_id,
+      title,
+      contact_type,
+      linkedin_url,
+      crm_contact_id,
+      crm_provider
+    FROM contacts
+    WHERE id = ?
+    LIMIT 1
+  `)
+
+  const keep = selectContactById.get(normalizedKeepId) as ContactMergeRow | undefined
+  if (!keep) {
+    throw new Error('Keep contact not found')
+  }
+
+  const sourcePlaceholders = normalizedSources.map(() => '?').join(', ')
+  const sourceRows = db
+    .prepare(`
+      SELECT
+        id,
+        full_name,
+        first_name,
+        last_name,
+        normalized_name,
+        email,
+        primary_company_id,
+        title,
+        contact_type,
+        linkedin_url,
+        crm_contact_id,
+        crm_provider
+      FROM contacts
+      WHERE id IN (${sourcePlaceholders})
+    `)
+    .all(...normalizedSources) as ContactMergeRow[]
+
+  if (sourceRows.length !== normalizedSources.length) {
+    throw new Error('One or more source contacts were not found')
+  }
+
+  const sourceById = new Map(sourceRows.map((row) => [row.id, row]))
+  const orderedSources = normalizedSources.map((id) => {
+    const row = sourceById.get(id)
+    if (!row) {
+      throw new Error('One or more source contacts were not found')
+    }
+    return row
+  })
+
+  const clearPrimaryEmail = db.prepare(`
+    UPDATE contact_emails
+    SET is_primary = 0
+    WHERE contact_id = ? AND is_primary = 1
+  `)
+  const moveContactEmails = db.prepare(`
+    UPDATE OR IGNORE contact_emails
+    SET contact_id = ?
+    WHERE contact_id = ?
+  `)
+  const moveCompanyLinks = db.prepare(`
+    INSERT INTO org_company_contacts (
+      company_id, contact_id, role_label, is_primary, created_at
+    )
+    SELECT
+      company_id,
+      ?,
+      role_label,
+      is_primary,
+      datetime('now')
+    FROM org_company_contacts
+    WHERE contact_id = ?
+    ON CONFLICT(company_id, contact_id) DO UPDATE SET
+      is_primary = CASE
+        WHEN excluded.is_primary = 1 THEN 1
+        ELSE org_company_contacts.is_primary
+      END,
+      role_label = COALESCE(org_company_contacts.role_label, excluded.role_label)
+  `)
+  const moveEmailContactLinks = db.prepare(`
+    INSERT INTO email_contact_links (
+      message_id, contact_id, confidence, linked_by, created_at
+    )
+    SELECT
+      message_id,
+      ?,
+      confidence,
+      linked_by,
+      created_at
+    FROM email_contact_links
+    WHERE contact_id = ?
+    ON CONFLICT(message_id, contact_id) DO UPDATE SET
+      confidence = CASE
+        WHEN excluded.confidence > email_contact_links.confidence THEN excluded.confidence
+        ELSE email_contact_links.confidence
+      END
+  `)
+  const moveEmailParticipants = db.prepare(`
+    UPDATE email_message_participants
+    SET contact_id = ?
+    WHERE contact_id = ?
+  `)
+  const moveTasks = db.prepare(`
+    UPDATE tasks
+    SET contact_id = ?
+    WHERE contact_id = ?
+  `)
+  const deleteContactById = db.prepare(`DELETE FROM contacts WHERE id = ?`)
+  const setPrimaryEmail = db.prepare(`
+    UPDATE contact_emails
+    SET is_primary = CASE
+      WHEN lower(email) = lower(?) THEN 1
+      ELSE 0
+    END
+    WHERE contact_id = ?
+  `)
+  const ensurePrimaryCompany = db.prepare(`
+    INSERT INTO org_company_contacts (
+      company_id, contact_id, is_primary, created_at
+    )
+    VALUES (?, ?, 1, datetime('now'))
+    ON CONFLICT(company_id, contact_id) DO UPDATE SET
+      is_primary = 1
+  `)
+
+  const updateMergedContact = userId
+    ? db.prepare(`
+      UPDATE contacts
+      SET
+        full_name = ?,
+        first_name = ?,
+        last_name = ?,
+        normalized_name = ?,
+        email = ?,
+        primary_company_id = ?,
+        title = ?,
+        contact_type = ?,
+        linkedin_url = ?,
+        crm_contact_id = ?,
+        crm_provider = ?,
+        updated_by_user_id = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `)
+    : db.prepare(`
+      UPDATE contacts
+      SET
+        full_name = ?,
+        first_name = ?,
+        last_name = ?,
+        normalized_name = ?,
+        email = ?,
+        primary_company_id = ?,
+        title = ?,
+        contact_type = ?,
+        linkedin_url = ?,
+        crm_contact_id = ?,
+        crm_provider = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `)
+
+  const tx = db.transaction(() => {
+    const merged: ContactMergeRow = { ...keep }
+    let preferredPrimaryEmail = normalizeEmail(keep.email || '')
+    const existingKeepEmails = listContactEmailAddresses(db, normalizedKeepId, keep.email)
+    if (!preferredPrimaryEmail && existingKeepEmails.length > 0) {
+      preferredPrimaryEmail = existingKeepEmails[0] || null
+    }
+
+    for (const source of orderedSources) {
+      const sourceEmail = normalizeEmail(source.email || '')
+      if (!preferredPrimaryEmail && sourceEmail) {
+        preferredPrimaryEmail = sourceEmail
+      }
+
+      const currentNameLowQuality = isLikelyLowQualityStoredName(merged.full_name, merged.email)
+      const sourceNameLowQuality = isLikelyLowQualityStoredName(source.full_name, source.email)
+      const namesEquivalent = normalizeName(merged.full_name) === normalizeName(source.full_name)
+      if (
+        (currentNameLowQuality && !sourceNameLowQuality)
+        || (namesEquivalent && source.full_name.length > merged.full_name.length)
+      ) {
+        merged.full_name = source.full_name
+        merged.first_name = source.first_name
+        merged.last_name = source.last_name
+        merged.normalized_name = source.normalized_name || normalizeName(source.full_name)
+      }
+
+      if (!merged.first_name && source.first_name) merged.first_name = source.first_name
+      if (!merged.last_name && source.last_name) merged.last_name = source.last_name
+      if (!merged.email && sourceEmail) merged.email = sourceEmail
+      if ((!merged.primary_company_id || !merged.primary_company_id.trim()) && source.primary_company_id?.trim()) {
+        merged.primary_company_id = source.primary_company_id.trim()
+      }
+      if ((!merged.title || !merged.title.trim()) && source.title?.trim()) {
+        merged.title = source.title.trim()
+      }
+      if (
+        (!merged.contact_type || !VALID_CONTACT_TYPES.has(merged.contact_type))
+        && source.contact_type
+        && VALID_CONTACT_TYPES.has(source.contact_type)
+      ) {
+        merged.contact_type = source.contact_type
+      }
+      if ((!merged.linkedin_url || !merged.linkedin_url.trim()) && source.linkedin_url?.trim()) {
+        merged.linkedin_url = source.linkedin_url.trim()
+      }
+      if ((!merged.crm_contact_id || !merged.crm_contact_id.trim()) && source.crm_contact_id?.trim()) {
+        merged.crm_contact_id = source.crm_contact_id.trim()
+      }
+      if ((!merged.crm_provider || !merged.crm_provider.trim()) && source.crm_provider?.trim()) {
+        merged.crm_provider = source.crm_provider.trim()
+      }
+
+      clearPrimaryEmail.run(source.id)
+      moveContactEmails.run(normalizedKeepId, source.id)
+
+      if (sourceEmail) {
+        attachEmailToContact(db, normalizedKeepId, sourceEmail, false)
+      }
+
+      moveCompanyLinks.run(normalizedKeepId, source.id)
+      moveEmailContactLinks.run(normalizedKeepId, source.id)
+      moveEmailParticipants.run(normalizedKeepId, source.id)
+      moveTasks.run(normalizedKeepId, source.id)
+      deleteContactById.run(source.id)
+    }
+
+    if (!merged.full_name.trim()) {
+      merged.full_name = keep.full_name
+    }
+    if (!merged.normalized_name.trim()) {
+      merged.normalized_name = normalizeName(merged.full_name)
+    }
+
+    const split = splitFullNameParts(merged.full_name)
+    if (!merged.first_name && split.firstName) merged.first_name = split.firstName
+    if (!merged.last_name && split.lastName) merged.last_name = split.lastName
+
+    if (merged.email) {
+      const normalizedMergedEmail = normalizeEmail(merged.email)
+      merged.email = normalizedMergedEmail
+      if (normalizedMergedEmail) {
+        attachEmailToContact(db, normalizedKeepId, normalizedMergedEmail, false)
+      }
+    }
+
+    const allMergedEmails = listContactEmailAddresses(db, normalizedKeepId, merged.email)
+    const primaryEmail = choosePrimaryEmailForMergedContact(preferredPrimaryEmail, allMergedEmails)
+    if (primaryEmail) {
+      setPrimaryEmail.run(primaryEmail, normalizedKeepId)
+      merged.email = primaryEmail
+    } else {
+      merged.email = null
+    }
+
+    if (merged.primary_company_id) {
+      ensurePrimaryCompany.run(merged.primary_company_id, normalizedKeepId)
+    }
+
+    merged.title = merged.title?.trim() || null
+    merged.linkedin_url = merged.linkedin_url?.trim() || null
+    merged.crm_contact_id = merged.crm_contact_id?.trim() || null
+    merged.crm_provider = merged.crm_provider?.trim() || null
+    if (merged.contact_type && !VALID_CONTACT_TYPES.has(merged.contact_type)) {
+      merged.contact_type = null
+    }
+
+    if (userId) {
+      updateMergedContact.run(
+        merged.full_name,
+        merged.first_name,
+        merged.last_name,
+        merged.normalized_name,
+        merged.email,
+        merged.primary_company_id,
+        merged.title,
+        merged.contact_type,
+        merged.linkedin_url,
+        merged.crm_contact_id,
+        merged.crm_provider,
+        userId,
+        normalizedKeepId
+      )
+    } else {
+      updateMergedContact.run(
+        merged.full_name,
+        merged.first_name,
+        merged.last_name,
+        merged.normalized_name,
+        merged.email,
+        merged.primary_company_id,
+        merged.title,
+        merged.contact_type,
+        merged.linkedin_url,
+        merged.crm_contact_id,
+        merged.crm_provider,
+        normalizedKeepId
+      )
+    }
+  })
+
+  tx()
+  return normalizedSources.length
+}
+
+export function listSuspectedDuplicateContacts(limitGroups = 30): ContactDuplicateGroup[] {
+  const db = getDatabase()
+  const normalizedLimit = Number.isFinite(limitGroups)
+    ? Math.max(1, Math.min(Math.floor(limitGroups), 200))
+    : 30
+
+  const candidateNames = db
+    .prepare(`
+      SELECT normalized_name
+      FROM contacts
+      WHERE normalized_name IS NOT NULL
+        AND TRIM(normalized_name) <> ''
+      GROUP BY normalized_name
+      HAVING COUNT(*) > 1
+      ORDER BY COUNT(*) DESC, normalized_name ASC
+      LIMIT ?
+    `)
+    .all(normalizedLimit) as Array<{ normalized_name: string }>
+
+  const normalizedNames = candidateNames
+    .map((row) => (row.normalized_name || '').trim())
+    .filter((name) => name.length > 0 && !GENERIC_DUPLICATE_NAMES.has(name))
+
+  if (normalizedNames.length === 0) return []
+
+  const placeholders = normalizedNames.map(() => '?').join(', ')
+  const rows = db
+    .prepare(`
+      SELECT
+        c.id,
+        c.full_name,
+        c.normalized_name,
+        c.email,
+        c.primary_company_id,
+        oc.canonical_name AS primary_company_name,
+        c.title,
+        c.updated_at
+      FROM contacts c
+      LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
+      WHERE c.normalized_name IN (${placeholders})
+      ORDER BY c.normalized_name ASC, datetime(c.updated_at) DESC, c.id ASC
+    `)
+    .all(...normalizedNames) as ContactDuplicateRow[]
+
+  const groupsByName = new Map<string, ContactDuplicateSummary[]>()
+  for (const row of rows) {
+    const normalizedName = (row.normalized_name || '').trim()
+    if (!normalizedName) continue
+
+    const summary: ContactDuplicateSummary = {
+      id: row.id,
+      fullName: row.full_name,
+      email: row.email,
+      primaryCompanyId: row.primary_company_id,
+      primaryCompanyName: row.primary_company_name,
+      title: row.title,
+      updatedAt: row.updated_at
+    }
+
+    const existing = groupsByName.get(normalizedName)
+    if (existing) {
+      existing.push(summary)
+    } else {
+      groupsByName.set(normalizedName, [summary])
+    }
+  }
+
+  const groups: ContactDuplicateGroup[] = []
+  for (const [normalizedName, contacts] of groupsByName.entries()) {
+    if (contacts.length < 2) continue
+    const sortedContacts = [...contacts].sort(compareDuplicateCandidates)
+    const suggestedKeep = sortedContacts[0]
+    if (!suggestedKeep) continue
+
+    groups.push({
+      key: `normalized-name:${normalizedName}`,
+      normalizedName,
+      reason: `Same normalized name: ${suggestedKeep.fullName}`,
+      suggestedKeepContactId: suggestedKeep.id,
+      contacts: sortedContacts
+    })
+  }
+
+  groups.sort((a, b) => {
+    if (a.contacts.length !== b.contacts.length) {
+      return b.contacts.length - a.contacts.length
+    }
+    return a.normalizedName.localeCompare(b.normalizedName)
+  })
+
+  return groups
+}
+
+export function applyContactDedupDecisions(
+  decisions: ContactDedupDecision[],
+  userId: string | null = null
+): ContactDedupApplyResult {
+  const db = getDatabase()
+  const result: ContactDedupApplyResult = {
+    reviewedGroups: 0,
+    mergedGroups: 0,
+    deletedGroups: 0,
+    skippedGroups: 0,
+    mergedContacts: 0,
+    deletedContacts: 0,
+    failures: []
+  }
+
+  if (!Array.isArray(decisions) || decisions.length === 0) {
+    return result
+  }
+
+  const deleteContacts = db.transaction((contactIds: string[]) => {
+    for (const id of contactIds) {
+      db.prepare(`DELETE FROM contacts WHERE id = ?`).run(id)
+    }
+  })
+
+  for (const decision of decisions) {
+    const groupKey = (decision.groupKey || '').trim() || 'unknown-group'
+    const action: ContactDedupAction = decision.action
+    result.reviewedGroups += 1
+
+    if (action === 'skip') {
+      result.skippedGroups += 1
+      continue
+    }
+
+    try {
+      if (action !== 'delete' && action !== 'merge') {
+        throw new Error(`Unsupported action: ${action}`)
+      }
+
+      const keepContactId = (decision.keepContactId || '').trim()
+      if (!keepContactId) {
+        throw new Error('keepContactId is required')
+      }
+
+      const normalizedContactIds = [...new Set(
+        (decision.contactIds || [])
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0)
+      )]
+
+      if (normalizedContactIds.length < 2) {
+        throw new Error('At least two contacts are required for de-duplication')
+      }
+      if (!normalizedContactIds.includes(keepContactId)) {
+        throw new Error('keepContactId must be included in contactIds')
+      }
+
+      const placeholders = normalizedContactIds.map(() => '?').join(', ')
+      const existing = db
+        .prepare(`
+          SELECT id
+          FROM contacts
+          WHERE id IN (${placeholders})
+        `)
+        .all(...normalizedContactIds) as Array<{ id: string }>
+      if (existing.length !== normalizedContactIds.length) {
+        throw new Error('One or more contacts no longer exist')
+      }
+
+      const sourceIds = normalizedContactIds.filter((id) => id !== keepContactId)
+      if (sourceIds.length === 0) {
+        result.skippedGroups += 1
+        continue
+      }
+
+      if (action === 'delete') {
+        deleteContacts(sourceIds)
+        result.deletedGroups += 1
+        result.deletedContacts += sourceIds.length
+        continue
+      }
+
+      const mergedCount = mergeContactsIntoOne(db, keepContactId, sourceIds, userId)
+      result.mergedGroups += 1
+      result.mergedContacts += mergedCount
+    } catch (err) {
+      result.failures.push({
+        groupKey,
+        action,
+        reason: err instanceof Error ? err.message : String(err)
+      })
+    }
+  }
+
+  return result
+}
+
+export function deleteContact(contactId: string): void {
+  const db = getDatabase()
+  const existing = db
+    .prepare(`SELECT id FROM contacts WHERE id = ? LIMIT 1`)
+    .get(contactId)
+  if (!existing) {
+    throw new Error('Contact not found')
+  }
+  db.prepare(`DELETE FROM contacts WHERE id = ?`).run(contactId)
 }

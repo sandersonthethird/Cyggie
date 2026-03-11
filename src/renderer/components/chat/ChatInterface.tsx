@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatStore } from '../../stores/chat.store'
@@ -10,12 +11,13 @@ interface ChatInterfaceProps {
   placeholder?: string
   fillHeight?: boolean // If true, container expands to fill available space
   compact?: boolean // If true, hides empty state text — just shows the input bar
+  floating?: boolean // If true, renders as a fixed bottom bar with a pop-up overlay for responses
 }
 
 // Stable empty array to avoid infinite re-renders
 const EMPTY_MESSAGES: { role: 'user' | 'assistant'; content: string }[] = []
 
-export default function ChatInterface({ meetingId, meetingIds, placeholder, fillHeight = false, compact = false }: ChatInterfaceProps) {
+export default function ChatInterface({ meetingId, meetingIds, placeholder, fillHeight = false, compact = false, floating = false }: ChatInterfaceProps) {
   // Use different context keys for different chat modes
   const contextId = meetingIds ? 'search-results' : (meetingId ?? 'global')
 
@@ -27,6 +29,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
   const [isLoading, setIsLoading] = useState(false)
   const [streamedContent, setStreamedContent] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [floatingPanelOpen, setFloatingPanelOpen] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -86,6 +89,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
     // Add user message to store
     addMessage(contextId, { role: 'user', content: question })
     setIsLoading(true)
+    if (floating) setFloatingPanelOpen(true)
 
     try {
       let response: string
@@ -148,39 +152,97 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
     ? `${styles.container} ${styles.fillHeight}`
     : styles.container
 
+  const messagesContent = (
+    <>
+      {messages.map((msg, i) => (
+        <div key={i} className={styles.message}>
+          <span className={`${styles.messageRole} ${styles[msg.role]}`}>
+            {msg.role === 'user' ? 'You' : 'AI'}
+          </span>
+          <div className={styles.messageContent}>
+            {msg.role === 'assistant'
+              ? <ReactMarkdown>{msg.content}</ReactMarkdown>
+              : msg.content}
+          </div>
+        </div>
+      ))}
+      {isLoading && streamedContent && (
+        <div className={styles.message}>
+          <span className={`${styles.messageRole} ${styles.assistant}`}>AI</span>
+          <div className={`${styles.messageContent} ${styles.streaming}`}>
+            <ReactMarkdown>{streamedContent}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+      {isLoading && !streamedContent && (
+        <div className={styles.message}>
+          <span className={`${styles.messageRole} ${styles.assistant}`}>AI</span>
+          <div className={`${styles.messageContent} ${styles.streaming}`}>
+            Thinking...
+          </div>
+        </div>
+      )}
+      <div ref={messagesEndRef} />
+    </>
+  )
+
+  const inputBar = (
+    <div className={floating ? styles.floatingInputRow : styles.inputRow}>
+      <textarea
+        ref={textareaRef}
+        className={styles.input}
+        data-chat-shortcut="true"
+        value={input}
+        onChange={handleInputChange}
+        onKeyDown={handleKeyDown}
+        onFocus={() => { if (floating && messages.length > 0) setFloatingPanelOpen(true) }}
+        placeholder={placeholder || defaultPlaceholder}
+        disabled={isLoading}
+        rows={1}
+      />
+      <button
+        className={`${styles.sendBtn} ${isLoading ? styles.stopBtn : ''}`}
+        onClick={isLoading ? handleStop : handleSubmit}
+        disabled={!isLoading && !input.trim()}
+      >
+        {isLoading ? '\u25A0' : 'Ask'}
+      </button>
+    </div>
+  )
+
+  if (floating) {
+    const showPanel = floatingPanelOpen && (messages.length > 0 || isLoading)
+    return createPortal(
+      <div className={styles.floatingRoot}>
+        {showPanel && (
+          <div className={styles.floatingPanel}>
+            <div className={styles.floatingPanelHeader}>
+              <span className={styles.floatingPanelTitle}>Ask AI</span>
+              <button
+                className={styles.floatingPanelClose}
+                onClick={() => setFloatingPanelOpen(false)}
+                title="Minimize"
+              >
+                ✕
+              </button>
+            </div>
+            <div className={styles.floatingMessages}>
+              {messagesContent}
+            </div>
+            {error && <div className={`${styles.error} ${styles.floatingError}`}>{error}</div>}
+          </div>
+        )}
+        {inputBar}
+      </div>,
+      document.body
+    )
+  }
+
   return (
     <div className={containerClass}>
       {messages.length > 0 && (
         <div className={styles.messages}>
-          {messages.map((msg, i) => (
-            <div key={i} className={styles.message}>
-              <span className={`${styles.messageRole} ${styles[msg.role]}`}>
-                {msg.role === 'user' ? 'You' : 'AI'}
-              </span>
-              <div className={styles.messageContent}>
-                {msg.role === 'assistant'
-                  ? <ReactMarkdown>{msg.content}</ReactMarkdown>
-                  : msg.content}
-              </div>
-            </div>
-          ))}
-          {isLoading && streamedContent && (
-            <div className={styles.message}>
-              <span className={`${styles.messageRole} ${styles.assistant}`}>AI</span>
-              <div className={`${styles.messageContent} ${styles.streaming}`}>
-                <ReactMarkdown>{streamedContent}</ReactMarkdown>
-              </div>
-            </div>
-          )}
-          {isLoading && !streamedContent && (
-            <div className={styles.message}>
-              <span className={`${styles.messageRole} ${styles.assistant}`}>AI</span>
-              <div className={`${styles.messageContent} ${styles.streaming}`}>
-                Thinking...
-              </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
+          {messagesContent}
         </div>
       )}
 

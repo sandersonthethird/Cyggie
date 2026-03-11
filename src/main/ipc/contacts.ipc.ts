@@ -12,6 +12,7 @@ import { logAudit } from '../database/repositories/audit.repo'
 import type {
   ContactEnrichmentOptions,
   ContactSortBy,
+  ContactDedupDecision,
   ContactEmailOnboardingOptions,
   ContactEmailOnboardingResult,
   ContactEmailOnboardingProgress,
@@ -100,6 +101,7 @@ export function registerContactHandlers(): void {
         title?: string | null
         contactType?: string | null
         linkedinUrl?: string | null
+        email?: string | null
       }
     ) => {
       if (!contactId?.trim()) throw new Error('contactId is required')
@@ -145,6 +147,34 @@ export function registerContactHandlers(): void {
     (_event, emails: string[]) => {
       if (!Array.isArray(emails)) return {}
       return contactRepo.resolveContactsByEmails(emails)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_DEDUP_SUSPECTED,
+    (_event, limit?: number) => {
+      return contactRepo.listSuspectedDuplicateContacts(limit)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_DEDUP_APPLY,
+    (_event, decisions: ContactDedupDecision[]) => {
+      if (!Array.isArray(decisions)) {
+        throw new Error('decisions must be an array')
+      }
+      const userId = getCurrentUserId()
+      const result = contactRepo.applyContactDedupDecisions(decisions, userId)
+      logAudit(userId, 'contact', 'dedup-bulk', 'update', {
+        reviewedGroups: result.reviewedGroups,
+        mergedGroups: result.mergedGroups,
+        deletedGroups: result.deletedGroups,
+        skippedGroups: result.skippedGroups,
+        mergedContacts: result.mergedContacts,
+        deletedContacts: result.deletedContacts,
+        failures: result.failures.slice(0, 20)
+      })
+      return result
     }
   )
 
@@ -342,6 +372,16 @@ export function registerContactHandlers(): void {
         emitProgress('failed', null)
         throw err
       }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_DELETE,
+    (_event, contactId: string) => {
+      if (!contactId?.trim()) throw new Error('contactId is required')
+      const userId = getCurrentUserId()
+      contactRepo.deleteContact(contactId)
+      logAudit(userId, 'contact', contactId, 'delete', {})
     }
   )
 

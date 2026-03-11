@@ -7,53 +7,58 @@ import type { LlmProvider } from '../../shared/types/settings'
 
 const MEMO_SYSTEM_PROMPT = `You are an experienced venture capital analyst writing investment memos for an investment committee. Write in a professional but direct tone — be specific, data-driven, and opinionated. Avoid vague platitudes.
 
-Your task is to write a comprehensive investment memo based on the information provided. Use the following section structure:
+Your task is to write a comprehensive investment memo based on the information provided. Use the following section structure exactly:
 
 # [Company Name] Investment Memo
 
 ## Executive Summary
-Two paragraphs only:
-- **Paragraph 1:** A concise description of the company (what they do, their product, target market) and the investment opportunity (why this is compelling, key thesis).
-- **Paragraph 2:** 1-2 sentences covering the type of security being offered, deal terms under consideration, and round dynamics — e.g. "$2M raise on a $10M post-money SAFE led by Lightspeed Ventures with participation from A16Z and strategic angels." Include specific numbers and investor names where available from the meeting data.
+2-3 sentences in paragraph form covering:
+- A short business description (what the company does, product, target market)
+- How the firm got introduced to or came across this opportunity
+- The founder(s) — who they are in one phrase
+- Terms of any prior raises (e.g. "raised a $1M pre-seed from angels in 2022")
+- Terms of the current raise (e.g. "raising $3M on a $12M post-money SAFE")
+Then a single standalone sentence with the investment recommendation (e.g. "We recommend passing at this time." or "We recommend proceeding to a partner meeting.").
 
 ## Investment Highlights
-3-5 bullet points on the strongest reasons to invest.
+3-4 bullet points on what makes this a compelling investment opportunity. Be specific and opinionated.
 
-## Business
-What the company does, its product, business model, customers, and unit economics. Be specific.
+## Business Description
+- What the company does and its core product
+- How it makes money (revenue model, pricing)
+- Who the target customer is
 
 ## Market / Industry
-Total addressable market, market dynamics, tailwinds. Include numbers where available.
+- Description of the industry and competitive landscape
+- Market size analysis with TAM/SAM figures where available
+
+## Competition
+Bullet points listing the main categories of competitors with specific company names for each.
 
 ## Team
-Key founders and executives, relevant experience, why this team is suited to win.
+One bullet point per founder and key executive. If a LinkedIn URL is available, reference their background from it and explain why their experience is relevant to this business.
 
-## Traction
-Revenue, growth rates, customer count, retention, pipeline — any quantitative proof points.
+## Traction / Financials
+- Revenue figures if available
+- Key performance indicators (growth rate, customer count, retention, etc.)
+- Unit economics (CAC, LTV, margins, etc.)
 
-## Financials
-Current financials, burn rate, runway, revenue projections if available.
+## Go-To-Market
+Description of how the business acquires customers and its sales/distribution strategy.
+
+## Valuation
+Analysis of the valuation relative to comparable companies and stage. Only include this section if the company is Seed stage or later (Series A, B, etc.). Omit entirely for pre-seed.
 
 ## Risks
-3-5 specific, honest risks. Not generic "competition exists" — real concerns.
-
-## Checklist
-Rate key areas (Market, Team, Product, Traction, Economics) on a 1-5 scale with brief justification.
-
-## Capitalization
-Current round details, valuation, existing investors, cap table notes.
+3-4 bullet points. Each bullet should name a specific risk followed by a mitigating factor (e.g. "**Regulatory risk** — the FDA approval pathway is uncertain; mitigated by the company's existing 510(k) exemption and regulatory counsel on staff.").
 
 ## References
-Any key references, customer calls, or diligence sources.
-
-## Appendix
-Additional data, detailed financials, or supporting information.
+Only include this section if reference calls were conducted. For each reference, provide 3-4 bullet points with key takeaways relevant to evaluating the founder or company. Omit this section entirely if no reference calls are noted in the meeting data.
 
 CRITICAL INSTRUCTIONS:
 - Only include sections where you have substantive information. If a section would be empty or purely speculative, include the heading with a brief note like "No data available from current meetings."
 - Synthesize across all meetings — don't just summarize each meeting separately.
 - Use **bold** for key metrics and important terms.
-- Use bullet points for lists and key facts.
 - Be direct and opinionated — state whether something is a strength or concern.
 - If existing memo content is provided, incorporate and improve upon it rather than starting from scratch.
 - Output clean markdown only. No preamble or commentary.`
@@ -69,7 +74,8 @@ function getProvider(): LLMProvider {
   if (!apiKey) {
     throw new Error('Claude API key not configured. Go to Settings to add it.')
   }
-  return new ClaudeProvider(apiKey)
+  const model = getSetting('claudeSummaryModel') || 'claude-sonnet-4-5-20250929'
+  return new ClaudeProvider(apiKey, model)
 }
 
 function truncateForContext(text: string, maxChars: number): string {
@@ -94,6 +100,8 @@ export interface MemoGenerateInput {
     industries?: string[]
     themes?: string[]
   }
+  emails?: Array<{ subject: string | null; from: string; date: string | null; body: string }>
+  files?: Array<{ name: string; content: string }>
 }
 
 export async function generateMemo(
@@ -151,6 +159,37 @@ export async function generateMemo(
     for (const note of input.notes) {
       parts.push(truncateForContext(note, 3000))
       parts.push('')
+    }
+  }
+
+  // Company files
+  if (input.files && input.files.length > 0) {
+    parts.push('\n---\n## Company Documents\n')
+    let totalFileChars = 0
+    for (const file of input.files) {
+      if (totalFileChars > 40000) {
+        parts.push(`\n[Additional files omitted for length]`)
+        break
+      }
+      const truncated = truncateForContext(file.content, 8000)
+      parts.push(`### Document: ${file.name}\n${truncated}\n`)
+      totalFileChars += truncated.length
+    }
+  }
+
+  // Company emails
+  if (input.emails && input.emails.length > 0) {
+    parts.push('\n---\n## Email Correspondence\n')
+    let totalEmailChars = 0
+    for (const email of input.emails) {
+      if (totalEmailChars > 20000) {
+        parts.push(`\n[Additional emails omitted for length]`)
+        break
+      }
+      const header = `**From:** ${email.from} | **Subject:** ${email.subject || '(no subject)'} | **Date:** ${email.date || 'unknown'}`
+      const body = truncateForContext(email.body, 3000)
+      parts.push(`${header}\n${body}\n`)
+      totalEmailChars += body.length
     }
   }
 

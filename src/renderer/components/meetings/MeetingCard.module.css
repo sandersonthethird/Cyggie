@@ -19,6 +19,18 @@
   flex-shrink: 0;
 }
 
+.profilePic {
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
 .card:hover {
   background: var(--color-card-hover);
 }

@@ -1,11 +1,13 @@
 .container {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  height: 100%;
 }
 
 .scrollArea {
   flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .section {
@@ -404,4 +406,390 @@
   color: var(--color-danger);
   font-size: 12px;
   padding: 8px 16px;
+}
+
+.cardWrapper {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.checkboxZone {
+  position: absolute;
+  left: -28px;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  cursor: pointer;
+}
+
+.cardWrapper:hover .checkboxZone,
+.cardWrapperSelected .checkboxZone {
+  opacity: 1;
+}
+
+.contactCheckbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--color-accent);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.bulkBar {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #1a1a1a;
+  border-radius: 999px;
+  padding: 8px 6px 8px 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.bulkClear {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 10px 0 0;
+  opacity: 0.9;
+}
+
+.bulkClear:hover {
+  opacity: 1;
+}
+
+.bulkMenuWrap {
+  position: relative;
+}
+
+.bulkMenuBtn {
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.bulkMenuBtn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.bulkMenuBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bulkMenu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 200px;
+  background: var(--color-card-bg, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  padding: 4px;
+  z-index: 201;
+}
+
+.bulkMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.bulkMenuItem:hover {
+  background: var(--color-card-hover);
+}
+
+.bulkMenuItem:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bulkMenuItemDanger {
+  color: var(--color-danger);
+}
+
+.dedupOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(10, 18, 31, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.dedupDialog {
+  width: min(960px, 100%);
+  max-height: min(86vh, 900px);
+  background: var(--color-card-bg, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
+}
+
+.dedupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dedupTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.dedupCloseButton {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.dedupCloseButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dedupSubtitle {
+  margin: 0;
+  padding: 10px 16px 12px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.dedupTableWrap {
+  overflow: auto;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dedupTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.dedupTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-card-bg, #fff);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.dedupTable td {
+  vertical-align: top;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+}
+
+.dedupReason {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.dedupReasonMeta {
+  margin-top: 2px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.dedupContactList {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dedupContactItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dedupContactRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dedupContactSelect {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.dedupContactCheckbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.dedupContactName {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dedupContactMeta {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.dedupContactEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dedupContactInput {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+.dedupContactEditorActions {
+  display: flex;
+  gap: 6px;
+}
+
+.dedupContactEditButton {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.dedupContactEditButton:hover {
+  color: var(--color-text-primary);
+  background: var(--color-card-hover);
+}
+
+.dedupContactEditButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dedupSelect {
+  width: 170px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.dedupFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.dedupSummary {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.dedupActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dedupCancelButton {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.dedupApplyButton {
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.dedupCancelButton:disabled,
+.dedupApplyButton:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

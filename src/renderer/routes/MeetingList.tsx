@@ -1,4 +1,5 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate } from 'react-router-dom'
 import { useMeetings } from '../hooks/useMeetings'
 import { useSearch } from '../hooks/useSearch'
@@ -67,6 +68,10 @@ function groupCalendarEventsByDate(events: CalendarEvent[]): [string, CalendarEv
   return Array.from(groups.entries())
 }
 
+type VirtualRow =
+  | { type: 'header'; heading: string }
+  | { type: 'item'; item: DisplayItem }
+
 export default function MeetingList() {
   const navigate = useNavigate()
   const { meetings, deleteMeeting } = useMeetings()
@@ -79,6 +84,11 @@ export default function MeetingList() {
   const startRecording = useRecordingStore((s) => s.startRecording)
   const clearConversation = useChatStore((s) => s.clearConversation)
   const [showAllUpcoming, setShowAllUpcoming] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkMenuOpen, setBulkMenuOpen] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const bulkMenuRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   const UPCOMING_LIMIT = 2
 
@@ -99,6 +109,28 @@ export default function MeetingList() {
       .then(setCalendarEvents)
       .catch((err) => console.error('Failed to refresh calendar events:', err))
   }, [calendarConnected, setCalendarEvents])
+
+  useEffect(() => {
+    if (!bulkMenuOpen) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (bulkMenuRef.current && !bulkMenuRef.current.contains(e.target as Node)) {
+        setBulkMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [bulkMenuOpen])
+
+  const handleBulkDelete = useCallback(() => {
+    if (selectedIds.size === 0 || bulkDeleting) return
+    setBulkMenuOpen(false)
+    setBulkDeleting(true)
+    for (const id of selectedIds) {
+      deleteMeeting(id)
+    }
+    setSelectedIds(new Set())
+    setBulkDeleting(false)
+  }, [selectedIds, bulkDeleting, deleteMeeting])
 
   const handleRecordFromCalendar = async (event: CalendarEvent) => {
     try {
@@ -137,7 +169,7 @@ export default function MeetingList() {
   }
 
   // Only show meetings that have been transcribed or summarized (not scheduled, recording, or error)
-  const pastMeetings = meetings.filter((m) => m.status === 'transcribed' || m.status === 'summarized')
+  const pastMeetings = meetings.filter((m) => m.status === 'recording' || m.status === 'transcribed' || m.status === 'summarized')
 
   const displayItems = hasSearch
     ? searchResults.map((r) => ({
@@ -155,6 +187,25 @@ export default function MeetingList() {
     clearConversation('search-results')
   }, [searchResultIds, clearConversation])
 
+  // Flatten grouped items into a virtual-friendly list of headers + meeting rows
+  const virtualRows = useMemo<VirtualRow[]>(() => {
+    const rows: VirtualRow[] = []
+    for (const [heading, items] of groupByDate(displayItems)) {
+      rows.push({ type: 'header', heading })
+      for (const item of items) {
+        rows.push({ type: 'item', item })
+      }
+    }
+    return rows
+  }, [displayItems])
+
+  const virtualizer = useVirtualizer({
+    count: virtualRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => virtualRows[i]?.type === 'header' ? 30 : 52,
+    overscan: 5
+  })
+
   if (!searchQuery && !hasFilters && pastMeetings.length === 0 && !showUpcoming) {
     return (
       <EmptyState
@@ -170,7 +221,7 @@ export default function MeetingList() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.scrollArea}>
+      <div className={styles.scrollArea} ref={scrollRef}>
       {showUpcoming && (
         <div className={`${styles.section} ${styles.upcoming}`}>
           <h3 className={styles.sectionHeader}>Upcoming</h3>
@@ -215,46 +266,77 @@ export default function MeetingList() {
 
       {(displayItems.length > 0 || hasSearch) && (
         <div className={`${styles.section} ${styles.recent}`}>
-          {!hasSearch && showUpcoming && (
+          {!hasSearch && (
             <h3 className={styles.sectionHeader}>Recent Meetings</h3>
           )}
-          {groupByDate(displayItems).map(([dateHeading, items]) => (
-            <div key={dateHeading} className={styles.dateGroup}>
-              <div className={styles.dateHeader}>
-                <span>{dateHeading}</span>
-              </div>
-              <div className={styles.list}>
-                {items.map(
-                  ({ id, meeting, snippet }) =>
-                    meeting && (
-                      <MeetingCard
-                        key={id}
-                        meeting={meeting}
-                        snippet={snippet}
-                        onClick={() => navigate(`/meeting/${id}`)}
-                        onDelete={() => deleteMeeting(id)}
-                        onCopyLink={async () => {
-                          try {
-                            const result = await window.api.invoke<DriveShareResponse>(
-                              IPC_CHANNELS.DRIVE_GET_SHARE_LINK,
-                              meeting.id
-                            )
-                            if (result.success) {
-                              await navigator.clipboard.writeText(result.url)
-                            } else {
-                              alert(result.message)
-                            }
-                          } catch (err) {
-                            console.error('Failed to get Drive link:', err)
-                            alert('Failed to get shareable link.')
-                          }
-                        }}
-                      />
-                    )
-                )}
-              </div>
-            </div>
-          ))}
+          <div className={styles.virtualList} style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+            {virtualizer.getVirtualItems().map((vrow) => {
+              const row = virtualRows[vrow.index]
+              if (row.type === 'header') {
+                return (
+                  <div
+                    key={`h-${row.heading}`}
+                    style={{ position: 'absolute', top: vrow.start, left: 0, right: 0 }}
+                    className={styles.dateHeader}
+                  >
+                    <span>{row.heading}</span>
+                  </div>
+                )
+              }
+              const { id, meeting, snippet } = row.item
+              if (!meeting) return null
+              return (
+                <div
+                  key={id}
+                  style={{ position: 'absolute', top: vrow.start, left: 0, right: 0 }}
+                  className={`${styles.cardWrapper} ${selectedIds.has(id) ? styles.cardWrapperSelected : ''}`}
+                >
+                  <div
+                    className={styles.checkboxZone}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedIds((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(id)) next.delete(id)
+                        else next.add(id)
+                        return next
+                      })
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      className={styles.meetingCheckbox}
+                      checked={selectedIds.has(id)}
+                      onChange={() => {}}
+                      tabIndex={-1}
+                    />
+                  </div>
+                  <MeetingCard
+                    meeting={meeting}
+                    snippet={snippet}
+                    onClick={() => navigate(`/meeting/${id}`)}
+                    onDelete={() => deleteMeeting(id)}
+                    onCopyLink={async () => {
+                      try {
+                        const result = await window.api.invoke<DriveShareResponse>(
+                          IPC_CHANNELS.DRIVE_GET_SHARE_LINK,
+                          meeting.id
+                        )
+                        if (result.success) {
+                          await navigator.clipboard.writeText(result.url)
+                        } else {
+                          alert(result.message)
+                        }
+                      } catch (err) {
+                        console.error('Failed to get Drive link:', err)
+                        alert('Failed to get shareable link.')
+                      }
+                    }}
+                  />
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -262,6 +344,38 @@ export default function MeetingList() {
         <p className={styles.noResults}>No meetings match your search.</p>
       )}
       </div>
+
+      {selectedIds.size > 0 && (
+        <div className={styles.bulkBar}>
+          <button
+            className={styles.bulkClear}
+            onClick={() => setSelectedIds(new Set())}
+            aria-label="Clear selection"
+          >
+            {selectedIds.size} selected ✕
+          </button>
+          <div className={styles.bulkMenuWrap} ref={bulkMenuRef}>
+            <button
+              className={styles.bulkMenuBtn}
+              onClick={() => setBulkMenuOpen((v) => !v)}
+              disabled={bulkDeleting}
+            >
+              {bulkDeleting ? 'Working…' : 'Actions ▾'}
+            </button>
+            {bulkMenuOpen && (
+              <div className={styles.bulkMenu}>
+                <button
+                  className={`${styles.bulkMenuItem} ${styles.bulkMenuItemDanger}`}
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                >
+                  Delete {selectedIds.size} meeting{selectedIds.size !== 1 ? 's' : ''}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className={styles.chatSection}>
         {hasSearch && !isSearching && searchResults.length > 0 ? (

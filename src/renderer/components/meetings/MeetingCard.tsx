@@ -19,7 +19,7 @@ function formatDuration(seconds: number | null): string {
     const h = Math.floor(m / 60)
     return `${h}h ${m % 60}m`
   }
-  return `${m}m ${s}s`
+  return s > 0 ? `${m}m ${s}s` : `${m}m`
 }
 
 function formatTime(dateStr: string): string {
@@ -50,17 +50,27 @@ export default function MeetingCard({ meeting, snippet, onClick, onDelete, onCop
     : Object.values(meeting.speakerMap)
   const speakerNames = attendees.join(', ')
   const companyDomain = getSingleCompanyDomain(meeting.attendeeEmails)
+  const gmailEmail = !companyDomain
+    ? (meeting.attendeeEmails ?? []).find((e) => e.toLowerCase().endsWith('@gmail.com')) ?? null
+    : null
 
   return (
     <div className={styles.card} onClick={onClick}>
-      {companyDomain && (
+      {companyDomain ? (
         <img
           src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(companyDomain)}&sz=32`}
           alt=""
           className={styles.logo}
           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
         />
-      )}
+      ) : gmailEmail ? (
+        <img
+          src={`https://www.google.com/s2/photos/profile/${encodeURIComponent(gmailEmail)}?sz=32`}
+          alt=""
+          className={styles.profilePic}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+      ) : null}
       <div className={styles.row}>
         <h3 className={styles.title}>{meeting.title}</h3>
         <span className={styles.time}>{formatTime(meeting.date)}</span>

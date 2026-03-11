@@ -9,6 +9,7 @@ import type {
   CompanyRound
 } from '../../shared/types/company'
 import ChatInterface from '../components/chat/ChatInterface'
+import MultiSelectFilter from '../components/common/MultiSelectFilter'
 import styles from './Pipeline.module.css'
 
 const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
@@ -16,7 +17,7 @@ const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
   { value: 'prospect', label: 'Prospect' },
   { value: 'portfolio', label: 'Portfolio' },
   { value: 'pass', label: 'Pass' },
-  { value: 'vc_fund', label: 'VC Fund' },
+  { value: 'vc_fund', label: 'Investor' },
   { value: 'customer', label: 'Customer' },
   { value: 'partner', label: 'Partner' },
   { value: 'vendor', label: 'Vendor' },
@@ -31,10 +32,10 @@ const STAGES: { value: CompanyPipelineStage; label: string }[] = [
   { value: 'pass', label: 'Pass' }
 ]
 
-const PRIORITIES: { value: CompanyPriority; label: string }[] = [
-  { value: 'high', label: 'High' },
-  { value: 'further_work', label: 'Further Work' },
-  { value: 'monitor', label: 'Monitor' }
+const PRIORITIES: { value: CompanyPriority; label: string; color: string }[] = [
+  { value: 'high', label: 'High', color: '#2d8a4e' },
+  { value: 'further_work', label: 'Further Work', color: '#c49a0b' },
+  { value: 'monitor', label: 'Monitor', color: '#c0392b' }
 ]
 
 const ROUNDS: { value: CompanyRound; label: string }[] = [
@@ -77,6 +78,7 @@ function formatLastTouch(value: string | null): string {
   return `${days}d ago`
 }
 
+
 export default function Pipeline() {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
@@ -96,10 +98,12 @@ export default function Pipeline() {
   const [createPostMoney, setCreatePostMoney] = useState('')
   const [createRaiseSize, setCreateRaiseSize] = useState('')
 
-  // Table filters
-  const [filterStage, setFilterStage] = useState<CompanyPipelineStage | ''>('')
-  const [filterPriority, setFilterPriority] = useState<CompanyPriority | ''>('')
-  const [filterRound, setFilterRound] = useState<CompanyRound | ''>('')
+  // Table filters — sets (empty = show all). Default excludes 'pass'.
+  const [filterStages, setFilterStages] = useState<Set<CompanyPipelineStage>>(
+    new Set<CompanyPipelineStage>(['screening', 'diligence', 'decision', 'documentation'])
+  )
+  const [filterPriorities, setFilterPriorities] = useState<Set<CompanyPriority>>(new Set())
+  const [filterRounds, setFilterRounds] = useState<Set<CompanyRound>>(new Set())
   const [filterQuery, setFilterQuery] = useState('')
 
   const loadData = useCallback(async () => {
@@ -190,9 +194,9 @@ export default function Pipeline() {
 
   const filteredCompanies = useMemo(() => {
     let result = companies
-    if (filterStage) result = result.filter((c) => c.pipelineStage === filterStage)
-    if (filterPriority) result = result.filter((c) => c.priority === filterPriority)
-    if (filterRound) result = result.filter((c) => c.round === filterRound)
+    if (filterStages.size > 0) result = result.filter((c) => c.pipelineStage != null && filterStages.has(c.pipelineStage))
+    if (filterPriorities.size > 0) result = result.filter((c) => c.priority != null && filterPriorities.has(c.priority))
+    if (filterRounds.size > 0) result = result.filter((c) => c.round != null && filterRounds.has(c.round))
     if (filterQuery.trim()) {
       const q = filterQuery.trim().toLowerCase()
       result = result.filter((c) =>
@@ -201,7 +205,7 @@ export default function Pipeline() {
       )
     }
     return result
-  }, [companies, filterStage, filterPriority, filterRound, filterQuery])
+  }, [companies, filterStages, filterPriorities, filterRounds, filterQuery])
 
   if (loading && companies.length === 0) {
     return <div className={styles.page}>Loading pipeline...</div>
@@ -348,36 +352,26 @@ export default function Pipeline() {
       </div>
 
       <div className={styles.filterBar}>
-            <select
-              className={styles.filterSelect}
-              value={filterStage}
-              onChange={(e) => setFilterStage(e.target.value as CompanyPipelineStage | '')}
-            >
-              <option value="">All Stages</option>
-              {STAGES.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
-            <select
-              className={styles.filterSelect}
-              value={filterPriority}
-              onChange={(e) => setFilterPriority(e.target.value as CompanyPriority | '')}
-            >
-              <option value="">All Priorities</option>
-              {PRIORITIES.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
-            <select
-              className={styles.filterSelect}
-              value={filterRound}
-              onChange={(e) => setFilterRound(e.target.value as CompanyRound | '')}
-            >
-              <option value="">All Rounds</option>
-              {ROUNDS.map((r) => (
-                <option key={r.value} value={r.value}>{r.label}</option>
-              ))}
-            </select>
+            <MultiSelectFilter
+              options={STAGES}
+              selected={filterStages}
+              onChange={setFilterStages}
+              allLabel="All Stages"
+              fixedLabel="Stage"
+            />
+            <MultiSelectFilter
+              options={PRIORITIES}
+              selected={filterPriorities}
+              onChange={setFilterPriorities}
+              allLabel="All Priorities"
+              fixedLabel="Priority"
+            />
+            <MultiSelectFilter
+              options={ROUNDS}
+              selected={filterRounds}
+              onChange={setFilterRounds}
+              allLabel="All Rounds"
+            />
             <input
               className={styles.filterInput}
               placeholder="Search companies..."

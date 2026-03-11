@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 
 import { useCalendar } from '../hooks/useCalendar'
@@ -38,6 +38,20 @@ function formatOnboardingStage(stage: ContactEmailOnboardingProgress['stage']): 
   return 'Running'
 }
 
+const CLAUDE_MODEL_LABELS: Record<string, string> = {
+  'claude-opus-4-6': 'Claude Opus 4.6',
+  'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+  'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
+  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+}
+
+const CLAUDE_MODEL_OPTIONS = [
+  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+  { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+]
+
 type SettingsTab = 'profile' | 'ai' | 'integrations' | 'storage'
 
 const TAB_LABELS: Record<SettingsTab, string> = {
@@ -51,6 +65,8 @@ interface SettingsState {
   deepgramApiKey: string
   llmProvider: LlmProvider
   claudeApiKey: string
+  claudeSummaryModel: string
+  claudeEnrichmentModel: string
   ollamaHost: string
   ollamaModel: string
   showLiveTranscript: boolean
@@ -60,6 +76,7 @@ interface SettingsState {
 }
 
 export default function Settings() {
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     const tab = searchParams.get('tab')
@@ -71,6 +88,8 @@ export default function Settings() {
     deepgramApiKey: '',
     llmProvider: 'claude',
     claudeApiKey: '',
+    claudeSummaryModel: 'claude-sonnet-4-5-20250929',
+    claudeEnrichmentModel: 'claude-haiku-4-5-20251001',
     ollamaHost: 'http://127.0.0.1:11434',
     ollamaModel: 'llama3.1',
     showLiveTranscript: true,
@@ -115,6 +134,8 @@ export default function Settings() {
   const [driveError, setDriveError] = useState('')
   const [driveFilesExpanded, setDriveFilesExpanded] = useState(false)
   const [editingThresholds, setEditingThresholds] = useState(false)
+  const [editingTranscription, setEditingTranscription] = useState(false)
+  const [editingSummarization, setEditingSummarization] = useState(false)
 
   const refreshGoogleScopes = useCallback(async () => {
     const [driveScopeResult, driveFilesScopeResult, gmailConnectedResult] = await Promise.allSettled([
@@ -187,11 +208,13 @@ export default function Settings() {
     load()
   }, [refreshGoogleScopes])
 
-  // Auto-navigate new users to the AI tab when setup is needed
+  // Auto-navigate new users to the AI tab when setup is needed, and open relevant edit sections
   useEffect(() => {
     if (initialLoad) return
     const deepgramMissing = !settings.deepgramApiKey
     const claudeMissing = settings.llmProvider === 'claude' && !settings.claudeApiKey
+    if (deepgramMissing) setEditingTranscription(true)
+    if (claudeMissing) setEditingSummarization(true)
     if ((deepgramMissing || claudeMissing) && !searchParams.get('tab')) {
       setActiveTab('ai')
     }
@@ -683,101 +706,213 @@ export default function Settings() {
       )}
 
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Transcription</h3>
-        <div className={styles.field}>
-          <label className={styles.label}>Deepgram API Key</label>
-          <input
-            type="password"
-            className={styles.input}
-            value={settings.deepgramApiKey}
-            onChange={(e) => setSettings({ ...settings, deepgramApiKey: e.target.value })}
-            placeholder="Enter your Deepgram API key"
-          />
-          <p className={styles.hint}>
-            Get your API key at{' '}
-            <a href="https://console.deepgram.com" target="_blank" rel="noreferrer">
-              console.deepgram.com
-            </a>
-          </p>
+        <div className={styles.sectionTitleRow}>
+          <h3 className={styles.sectionTitle}>Transcription</h3>
+          {!editingTranscription && (
+            <button className={styles.linkBtn} onClick={() => setEditingTranscription(true)}>
+              Edit
+            </button>
+          )}
         </div>
-        <div className={styles.field}>
-          <label className={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={settings.showLiveTranscript}
-              onChange={(e) =>
-                setSettings({ ...settings, showLiveTranscript: e.target.checked })
-              }
-            />
-            Show live transcript during recording
-          </label>
-        </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Default Speaker Count</label>
-          <input
-            type="number"
-            className={styles.input}
-            value={settings.defaultMaxSpeakers}
-            onChange={(e) => setSettings({ ...settings, defaultMaxSpeakers: e.target.value })}
-            placeholder="Auto-detect"
-            min="1"
-            max="20"
-            style={{ width: 120 }}
-          />
-          <p className={styles.hint}>
-            Limits how many speakers Deepgram identifies. When recording from a calendar event, this is set automatically from the attendee list. Leave blank for auto-detection.
-          </p>
-        </div>
+        <p className={styles.hint} style={{ marginBottom: 12 }}>
+          Powered by Deepgram. Converts meeting audio into a real-time transcript during recording.
+        </p>
+        {editingTranscription ? (
+          <>
+            <div className={styles.field}>
+              <input
+                type="password"
+                className={styles.input}
+                value={settings.deepgramApiKey}
+                onChange={(e) => setSettings({ ...settings, deepgramApiKey: e.target.value })}
+                placeholder="Enter your Deepgram API key"
+              />
+              <p className={styles.hint}>
+                Get your API key at{' '}
+                <a href="https://console.deepgram.com" target="_blank" rel="noreferrer">
+                  console.deepgram.com
+                </a>
+              </p>
+            </div>
+            <div className={styles.inlineFieldRow}>
+              <span className={styles.inlineFieldLabel}>Live transcript</span>
+              <select
+                className={styles.inlineSelect}
+                value={settings.showLiveTranscript ? 'on' : 'off'}
+                onChange={(e) => setSettings({ ...settings, showLiveTranscript: e.target.value === 'on' })}
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+            <div className={styles.inlineFieldRow}>
+              <span className={styles.inlineFieldLabel}>Default speaker count</span>
+              <select
+                className={styles.inlineSelect}
+                value={settings.defaultMaxSpeakers || ''}
+                onChange={(e) => setSettings({ ...settings, defaultMaxSpeakers: e.target.value })}
+              >
+                <option value="">Auto-detect</option>
+                {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={String(n)}>{n}</option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.profileEditActions}>
+              <button className={styles.connectBtn} onClick={() => setEditingTranscription(false)}>
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className={styles.profileMeta}>
+              API key: {settings.deepgramApiKey ? '••••••••' : <span style={{ color: 'var(--color-danger, #ef4444)' }}>Not configured</span>}
+            </p>
+            <div className={styles.inlineFieldRow}>
+              <span className={styles.inlineFieldLabel}>Live transcript</span>
+              <select
+                className={styles.inlineSelect}
+                value={settings.showLiveTranscript ? 'on' : 'off'}
+                onChange={(e) => setSettings({ ...settings, showLiveTranscript: e.target.value === 'on' })}
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+            <div className={styles.inlineFieldRow}>
+              <span className={styles.inlineFieldLabel}>Default speaker count</span>
+              <select
+                className={styles.inlineSelect}
+                value={settings.defaultMaxSpeakers || ''}
+                onChange={(e) => setSettings({ ...settings, defaultMaxSpeakers: e.target.value })}
+              >
+                <option value="">Auto-detect</option>
+                {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={String(n)}>{n}</option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
       </section>
 
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Summarization</h3>
-        <div className={styles.field}>
-          <label className={styles.label}>LLM Provider</label>
-          <select
-            className={styles.select}
-            value={settings.llmProvider}
-            onChange={(e) =>
-              setSettings({ ...settings, llmProvider: e.target.value as LlmProvider })
-            }
-          >
-            <option value="claude">Claude (Anthropic API)</option>
-            <option value="ollama">Ollama (Local)</option>
-          </select>
+        <div className={styles.sectionTitleRow}>
+          <h3 className={styles.sectionTitle}>Summarization</h3>
+          {!editingSummarization && (
+            <button className={styles.linkBtn} onClick={() => setEditingSummarization(true)}>
+              Edit
+            </button>
+          )}
         </div>
-
-        {settings.llmProvider === 'claude' && (
-          <div className={styles.field}>
-            <label className={styles.label}>Claude API Key</label>
-            <input
-              type="password"
-              className={styles.input}
-              value={settings.claudeApiKey}
-              onChange={(e) => setSettings({ ...settings, claudeApiKey: e.target.value })}
-              placeholder="Enter your Anthropic API key"
-            />
-          </div>
-        )}
-
-        {settings.llmProvider === 'ollama' && (
+        <p className={styles.hint} style={{ marginBottom: 12 }}>
+          Generates meeting summaries, extracts action items, and powers AI chat. Also used for contact web enrichment (title and LinkedIn inference). Uses Claude (Anthropic API) or a local Ollama model.
+        </p>
+        {editingSummarization ? (
           <>
             <div className={styles.field}>
-              <label className={styles.label}>Ollama Host</label>
-              <input
-                className={styles.input}
-                value={settings.ollamaHost}
-                onChange={(e) => setSettings({ ...settings, ollamaHost: e.target.value })}
-              />
+              <label className={styles.label}>LLM Provider</label>
+              <select
+                className={styles.select}
+                value={settings.llmProvider}
+                onChange={(e) =>
+                  setSettings({ ...settings, llmProvider: e.target.value as LlmProvider })
+                }
+              >
+                <option value="claude">Claude (Anthropic API)</option>
+                <option value="ollama">Ollama (Local)</option>
+              </select>
             </div>
-            <div className={styles.field}>
-              <label className={styles.label}>Model</label>
-              <input
-                className={styles.input}
-                value={settings.ollamaModel}
-                onChange={(e) => setSettings({ ...settings, ollamaModel: e.target.value })}
-                placeholder="e.g., llama3.1"
-              />
+            {settings.llmProvider === 'claude' && (
+              <>
+                <div className={styles.field}>
+                  <label className={styles.label}>Claude API Key</label>
+                  <input
+                    type="password"
+                    className={styles.input}
+                    value={settings.claudeApiKey}
+                    onChange={(e) => setSettings({ ...settings, claudeApiKey: e.target.value })}
+                    placeholder="Enter your Anthropic API key"
+                  />
+                </div>
+                <div className={styles.inlineFieldRow}>
+                  <span className={styles.inlineFieldLabel}>Summary model</span>
+                  <select
+                    className={styles.inlineSelect}
+                    value={settings.claudeSummaryModel}
+                    onChange={(e) => setSettings({ ...settings, claudeSummaryModel: e.target.value })}
+                  >
+                    {CLAUDE_MODEL_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className={styles.inlineFieldRow}>
+                  <span className={styles.inlineFieldLabel}>Enrichment model</span>
+                  <select
+                    className={styles.inlineSelect}
+                    value={settings.claudeEnrichmentModel}
+                    onChange={(e) => setSettings({ ...settings, claudeEnrichmentModel: e.target.value })}
+                  >
+                    {CLAUDE_MODEL_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+            {settings.llmProvider === 'ollama' && (
+              <>
+                <div className={styles.field}>
+                  <label className={styles.label}>Ollama Host</label>
+                  <input
+                    className={styles.input}
+                    value={settings.ollamaHost}
+                    onChange={(e) => setSettings({ ...settings, ollamaHost: e.target.value })}
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.label}>Model</label>
+                  <input
+                    className={styles.input}
+                    value={settings.ollamaModel}
+                    onChange={(e) => setSettings({ ...settings, ollamaModel: e.target.value })}
+                    placeholder="e.g., llama3.1"
+                  />
+                </div>
+              </>
+            )}
+            <div className={styles.profileEditActions}>
+              <button className={styles.connectBtn} onClick={() => setEditingSummarization(false)}>
+                Done
+              </button>
             </div>
+          </>
+        ) : (
+          <>
+            <p className={styles.profileMeta}>
+              Provider: {settings.llmProvider === 'claude' ? 'Claude (Anthropic API)' : 'Ollama (Local)'}
+            </p>
+            {settings.llmProvider === 'claude' && (
+              <>
+                <p className={styles.profileMeta}>
+                  API key: {settings.claudeApiKey ? '••••••••' : <span style={{ color: 'var(--color-danger, #ef4444)' }}>Not configured</span>}
+                </p>
+                <p className={styles.profileMeta}>
+                  Summary model: {CLAUDE_MODEL_LABELS[settings.claudeSummaryModel] ?? settings.claudeSummaryModel}
+                </p>
+                <p className={styles.profileMeta}>
+                  Enrichment model: {CLAUDE_MODEL_LABELS[settings.claudeEnrichmentModel] ?? settings.claudeEnrichmentModel}
+                </p>
+              </>
+            )}
+            {settings.llmProvider === 'ollama' && (
+              <>
+                <p className={styles.profileMeta}>Host: {settings.ollamaHost}</p>
+                <p className={styles.profileMeta}>Model: {settings.ollamaModel || 'Not set'}</p>
+              </>
+            )}
           </>
         )}
       </section>
@@ -912,32 +1047,22 @@ export default function Settings() {
       {activeTab === 'storage' && (
         <>
       {/* Transcripts & Summaries */}
-      <div className={styles.storageCard}>
-        <div className={styles.storageCardHeader}>
-          <div>
-            <p className={styles.storageCardLabel}>Transcripts &amp; Summaries</p>
-            <p className={styles.storageCardDesc}>
-              Meeting transcripts and AI summaries stored as Markdown files.
-            </p>
-          </div>
+      <section className={styles.section}>
+        <div className={styles.sectionTitleRow}>
+          <h3 className={styles.sectionTitle}>Transcripts &amp; Summaries</h3>
           <div className={styles.storageCardActions}>
-            <button className={styles.linkBtn} onClick={handleChangeStorage}>Change</button>
+            <button className={styles.linkBtn} onClick={handleChangeStorage}>Edit</button>
             <button className={styles.linkBtn} onClick={handleOpenStorage}>Open in Finder</button>
           </div>
         </div>
-        {!storagePath && <p className={styles.storageCardStatusWarn}>Not configured</p>}
-      </div>
+        <p className={styles.hint}>Meeting transcripts and AI summaries stored as Markdown files.</p>
+        {!storagePath && <p className={styles.storageCardStatusWarn} style={{ marginTop: 8 }}>Not configured</p>}
+      </section>
 
       {/* Company Files */}
-      <div className={styles.storageCard}>
-        <div className={styles.storageCardHeader}>
-          <div>
-            <p className={styles.storageCardLabel}>Company Files</p>
-            <p className={styles.storageCardDesc}>
-              Root folder containing per-company sub-folders. The app matches folders by company name.
-              Works with local folders and Google Drive folders synced via Drive for Desktop.
-            </p>
-          </div>
+      <section className={styles.section}>
+        <div className={styles.sectionTitleRow}>
+          <h3 className={styles.sectionTitle}>Company Files</h3>
           <div className={styles.storageCardActions}>
             <button
               className={styles.linkBtn}
@@ -950,7 +1075,7 @@ export default function Settings() {
                 }
               }}
             >
-              {settings.companyLocalFilesRoot ? 'Change' : 'Select Folder'}
+              {settings.companyLocalFilesRoot ? 'Edit' : 'Select Folder'}
             </button>
             {settings.companyLocalFilesRoot && (
               <button
@@ -962,13 +1087,11 @@ export default function Settings() {
             )}
           </div>
         </div>
-        {!settings.companyLocalFilesRoot && <p className={styles.storageCardStatusWarn}>Not configured</p>}
-        {!settings.companyLocalFilesRoot && (
-          <p className={styles.hint} style={{ marginTop: 6 }}>
-            Click &quot;Select Folder&quot; to choose the folder where your company files are stored.
-            If your files are on Google Drive, select them from Finder via the Google Drive mount.
-          </p>
-        )}
+        <p className={styles.hint}>
+          Root folder containing per-company sub-folders. The app matches folders by company name.
+          Works with local folders and Google Drive folders synced via Drive for Desktop.
+        </p>
+        {!settings.companyLocalFilesRoot && <p className={styles.storageCardStatusWarn} style={{ marginTop: 8 }}>Not configured</p>}
         {/* Advanced: Drive URL fallback */}
         <button
           className={styles.storageCardToggle}
@@ -978,8 +1101,8 @@ export default function Settings() {
           {driveFilesExpanded ? 'Hide advanced' : 'Advanced'}
         </button>
         {driveFilesExpanded && (
-          <div className={styles.storageCardBody}>
-            <p className={styles.storageCardDesc} style={{ marginBottom: 10 }}>
+          <div style={{ marginTop: 10 }}>
+            <p className={styles.hint} style={{ marginBottom: 8 }}>
               If you can&apos;t select the folder locally, paste Google Drive folder URLs here instead.
               The app will use the Drive API to find company files. One URL or folder ID per line.
             </p>
@@ -1029,9 +1152,19 @@ export default function Settings() {
             )}
           </div>
         )}
-      </div>
+      </section>
         </>
       )}
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionTitle}>Meeting Templates</h2>
+        <p className={styles.settingDescription}>
+          Customize the prompts used to generate meeting summaries. Create templates for different meeting types like VC pitches, check-ins, or partner meetings.
+        </p>
+        <button className={styles.manageTemplatesBtn} onClick={() => navigate('/templates')}>
+          Manage Templates →
+        </button>
+      </section>
 
       <div className={styles.actions}>
         <button className={styles.saveBtn} onClick={handleSave}>

@@ -137,15 +137,22 @@ export default function MiniCalendar({
     return dates
   }, [visibleEvents, monthMeetings])
 
-  const selectedDayEvents = visibleEvents.filter((e) =>
+  const now = new Date()
+
+  const selectedDayAllEvents = visibleEvents.filter((e) =>
     isSameDay(parseEventDate(e.startTime), selectedDate)
   )
+  const selectedDayEvents = selectedDayAllEvents.filter((e) => parseEventDate(e.startTime) > now)
+  const selectedDayPastEvents = selectedDayAllEvents.filter((e) => parseEventDate(e.startTime) <= now)
 
-  const selectedDayMeetings = monthMeetings.filter((m) =>
-    isSameDay(parseEventDate(m.date), selectedDate)
+  const pastEventIds = new Set(selectedDayPastEvents.map((e) => e.id))
+
+  const selectedDayMeetings = monthMeetings.filter(
+    (m) => isSameDay(parseEventDate(m.date), selectedDate) && !pastEventIds.has(m.calendarEventId ?? '')
   )
 
-  const hasSelectedDayContent = selectedDayEvents.length > 0 || selectedDayMeetings.length > 0
+  const hasRecentContent = selectedDayPastEvents.length > 0 || selectedDayMeetings.length > 0
+  const hasSelectedDayContent = selectedDayEvents.length > 0 || hasRecentContent
 
   return (
     <div className={styles.container}>
@@ -196,6 +203,18 @@ export default function MiniCalendar({
       {hasSelectedDayContent && (
         <div className={styles.dayEvents}>
           {selectedDayEvents.map((event) => (
+            <CalendarBadge
+              key={event.id}
+              event={event}
+              onRecord={onRecordEvent}
+              onPrepare={onPrepareEvent}
+              onDismiss={onDismissEvent}
+            />
+          ))}
+          {hasRecentContent && selectedDayEvents.length > 0 && (
+            <div className={styles.recentHeader}>Recent Meetings</div>
+          )}
+          {selectedDayPastEvents.map((event) => (
             <CalendarBadge
               key={event.id}
               event={event}

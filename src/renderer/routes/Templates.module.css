@@ -51,10 +51,14 @@
   font-weight: 500;
 }
 
-.itemCategory {
-  font-size: 11px;
+.itemBadge {
+  font-size: 10px;
   color: var(--color-text-tertiary);
-  text-transform: capitalize;
+  background: var(--color-bg-tertiary);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-top: 2px;
+  display: inline-block;
 }
 
 .detail {
@@ -100,6 +104,16 @@
   font-size: 13px;
 }
 
+.readOnlyNotice {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+
 .desc {
   font-size: 14px;
   color: var(--color-text-secondary);
@@ -120,14 +134,6 @@
   margin-bottom: 6px;
 }
 
-.hint {
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: normal;
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-}
-
 .pre {
   padding: 12px;
   background: var(--color-bg-secondary);
@@ -136,7 +142,7 @@
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
-  font-family: 'SF Mono', 'Menlo', monospace;
+  font-family: inherit;
   overflow-x: auto;
 }
 
@@ -162,15 +168,21 @@
   border-radius: var(--radius-md);
   background: var(--color-bg);
   color: var(--color-text);
-  font-size: 13px;
-  font-family: 'SF Mono', 'Menlo', monospace;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.6;
   outline: none;
   resize: vertical;
+  font-family: inherit;
 }
 
 .textarea:focus {
   border-color: var(--color-primary);
+}
+
+.instructionsHint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-top: 6px;
 }
 
 .formActions {
@@ -186,6 +198,11 @@
   border-radius: var(--radius-md);
   font-size: 14px;
   font-weight: 500;
+}
+
+.saveBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .cancelBtn {

@@ -12,6 +12,9 @@ const NOTIFY_BEFORE_MS = 1 * 60 * 1000 // Notify 1 minute before
 const notifiedEventIds = new Set<string>()
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
+// Keep references to active notifications to prevent GC from detaching click handlers
+const activeNotifications = new Set<Notification>()
+
 function getMainWindow(): BrowserWindow | null {
   const windows = BrowserWindow.getAllWindows()
   return windows.length > 0 ? windows[0] : null
@@ -22,7 +25,11 @@ function focusAndRecord(event: CalendarEvent): void {
   if (win) {
     if (!win.isVisible()) win.show()
     win.focus()
-    win.webContents.send('notification:start-recording', event.title)
+    win.webContents.send('notification:start-recording', {
+      title: event.title,
+      calendarEventId: event.id,
+      meetingUrl: event.meetingUrl
+    })
   }
 }
 
@@ -69,6 +76,8 @@ async function showMeetingNotification(event: CalendarEvent): Promise<void> {
     silent: false
   })
 
+  activeNotifications.add(notification)
+
   notification.on('click', () => {
     console.log('[MeetingNotifier] Starting meeting for:', event.title)
 
@@ -81,6 +90,11 @@ async function showMeetingNotification(event: CalendarEvent): Promise<void> {
 
     // Focus Cyggie window and start recording
     focusAndRecord(event)
+    activeNotifications.delete(notification)
+  })
+
+  notification.on('close', () => {
+    activeNotifications.delete(notification)
   })
 
   notification.show()

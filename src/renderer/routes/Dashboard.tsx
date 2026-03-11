@@ -21,6 +21,7 @@ import type { Meeting } from '../../shared/types/meeting'
 import type { TaskListItem, TaskSummaryStats } from '../../shared/types/task'
 import CalendarBadge from '../components/meetings/CalendarBadge'
 import ChatInterface from '../components/chat/ChatInterface'
+import MultiSelectFilter from '../components/common/MultiSelectFilter'
 import styles from './Dashboard.module.css'
 
 function isWithinWeek(value: string, base: Date): boolean {
@@ -178,6 +179,11 @@ export default function Dashboard() {
   const [dismissedStaleIds, setDismissedStaleIds] = useState<Set<string>>(new Set())
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const newMenuRef = useRef<HTMLDivElement>(null)
+  const [pipelineFilterStages, setPipelineFilterStages] = useState<Set<CompanyPipelineStage>>(
+    new Set<CompanyPipelineStage>(['screening', 'diligence', 'decision', 'documentation'])
+  )
+  const [pipelineFilterPriorities, setPipelineFilterPriorities] = useState<Set<CompanyPriority>>(new Set())
+  const [pipelineFilterRounds, setPipelineFilterRounds] = useState<Set<CompanyRound>>(new Set())
 
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -356,6 +362,14 @@ export default function Dashboard() {
     })
   }, [])
 
+  const filteredPipelineCompanies = useMemo(() => {
+    let result = pipelineCompanies
+    if (pipelineFilterStages.size > 0) result = result.filter((c) => c.pipelineStage != null && pipelineFilterStages.has(c.pipelineStage))
+    if (pipelineFilterPriorities.size > 0) result = result.filter((c) => c.priority != null && pipelineFilterPriorities.has(c.priority))
+    if (pipelineFilterRounds.size > 0) result = result.filter((c) => c.round != null && pipelineFilterRounds.has(c.round))
+    return result
+  }, [pipelineCompanies, pipelineFilterStages, pipelineFilterPriorities, pipelineFilterRounds])
+
   if (loading && !data) {
     return <div className={styles.page}>Loading dashboard...</div>
   }
@@ -364,6 +378,7 @@ export default function Dashboard() {
     .filter((company) => !dismissedStaleIds.has(company.companyId))
   const stalledCompanies = data?.needsAttention.stalledCompanies || []
   const openTaskCount = (taskStats?.openCount || 0) + (taskStats?.inProgressCount || 0)
+
   const tabCounts: Record<DashboardTab, number> = {
     pipeline: pipelineCompanies.length,
     tasks: openTaskCount,
@@ -485,6 +500,26 @@ export default function Dashboard() {
                   )
                 })}
               </div>
+              <div className={styles.pipelineFilterBar}>
+                <MultiSelectFilter
+                  options={STAGES}
+                  selected={pipelineFilterStages}
+                  onChange={setPipelineFilterStages}
+                  allLabel="All Stages"
+                />
+                <MultiSelectFilter
+                  options={PRIORITIES}
+                  selected={pipelineFilterPriorities}
+                  onChange={setPipelineFilterPriorities}
+                  allLabel="All Priorities"
+                />
+                <MultiSelectFilter
+                  options={ROUNDS}
+                  selected={pipelineFilterRounds}
+                  onChange={setPipelineFilterRounds}
+                  allLabel="All Rounds"
+                />
+              </div>
               {pipelineCompanies.length > 0 ? (
                 <table className={styles.pipelineTable}>
                   <thead>
@@ -499,7 +534,7 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pipelineCompanies.map((company) => (
+                    {filteredPipelineCompanies.map((company) => (
                       <tr key={company.id}>
                         <td>
                           <button
@@ -525,6 +560,13 @@ export default function Dashboard() {
                         </td>
                       </tr>
                     ))}
+                    {filteredPipelineCompanies.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className={styles.empty}>
+                          No companies match the current filters.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               ) : (

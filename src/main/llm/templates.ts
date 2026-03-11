@@ -17,11 +17,30 @@ export interface PromptContext {
   }
 }
 
+const INSTRUCTIONS_WRAPPER = `Meeting: {{meeting_title}}
+Date: {{date}} | Duration: {{duration}}
+Speakers: {{speakers}}
+
+---
+
+Transcript:
+{{transcript}}
+
+---
+
+{{instructions}}`
+
+const DEFAULT_INSTRUCTIONS_SYSTEM_PROMPT =
+  'You are an expert meeting analyst. Provide clear, structured meeting summaries in markdown format.'
+
 export function buildPrompt(
   template: MeetingTemplate,
   context: PromptContext
 ): { systemPrompt: string; userPrompt: string } {
-  let userPrompt = template.userPromptTemplate
+  const usingInstructions = Boolean(template.instructions)
+  let userPrompt = usingInstructions
+    ? INSTRUCTIONS_WRAPPER.replace('{{instructions}}', template.instructions!)
+    : template.userPromptTemplate
 
   const companiesStr = context.companies?.filter(Boolean).join(', ') || ''
   const attendeesStr = context.attendees?.filter(Boolean).join(', ') || ''
@@ -39,7 +58,8 @@ export function buildPrompt(
 
   // If the user has notes but the template doesn't use {{notes}},
   // append them to the transcript so the LLM can reference them
-  if (context.notes && !template.userPromptTemplate.includes('{{notes}}')) {
+  const promptForNotesCheck = usingInstructions ? template.instructions! : template.userPromptTemplate
+  if (context.notes && !promptForNotesCheck.includes('{{notes}}')) {
     variables.transcript = `${context.transcript}\n\n---\nUser Notes:\n${context.notes}`
   }
 
@@ -54,16 +74,16 @@ export function buildPrompt(
   const userIdentityStr = userIdentityParts.join(', ')
   variables.user_identity = userIdentityStr
 
-  // Append meeting context (companies, attendees, user identity) when the template
-  // doesn't explicitly use those placeholders
+  // Append meeting context (companies, attendees, user identity) always for instructions-based
+  // templates; for legacy templates, only when not explicitly referenced
   const contextParts: string[] = []
-  if (companiesStr && !template.userPromptTemplate.includes('{{companies}}')) {
+  if (companiesStr && (usingInstructions || !template.userPromptTemplate.includes('{{companies}}'))) {
     contextParts.push(`Company: ${companiesStr}`)
   }
-  if (attendeesStr && !template.userPromptTemplate.includes('{{attendees}}')) {
+  if (attendeesStr && (usingInstructions || !template.userPromptTemplate.includes('{{attendees}}'))) {
     contextParts.push(`Attendees: ${attendeesStr}`)
   }
-  if (userIdentityStr && !template.userPromptTemplate.includes('{{user_identity}}')) {
+  if (userIdentityStr && (usingInstructions || !template.userPromptTemplate.includes('{{user_identity}}'))) {
     contextParts.push(`Meeting Owner (you): ${userIdentityStr}`)
   }
   if (context.userIdentity) {
@@ -91,8 +111,12 @@ export function buildPrompt(
     userPrompt = userPrompt.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value)
   }
 
+  const systemPrompt = usingInstructions
+    ? (template.systemPrompt || DEFAULT_INSTRUCTIONS_SYSTEM_PROMPT)
+    : template.systemPrompt
+
   return {
-    systemPrompt: template.systemPrompt,
+    systemPrompt,
     userPrompt
   }
 }

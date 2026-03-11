@@ -4,7 +4,7 @@ const DEFAULT_SILENCE_THRESHOLD_MS = 10 * 60 * 1000 // 10 minutes of silence
 const DEFAULT_MIN_RECORDING_MS = 5 * 60 * 1000 // 5 minutes minimum recording
 const CALENDAR_GRACE_MS = 5 * 60 * 1000 // 5 minutes after scheduled end
 const PROCESS_POLL_INTERVAL_MS = 10 * 1000 // 10 seconds
-const ACTIVE_SPEECH_THRESHOLD_MS = 60 * 1000 // Speech within last 60s = still active
+const ACTIVE_SPEECH_THRESHOLD_MS = 5 * 60 * 1000 // Speech within last 5 min = still active
 const SILENCE_CHECK_INTERVAL_MS = 30 * 1000 // 30 seconds
 
 interface AutoStopOptions {

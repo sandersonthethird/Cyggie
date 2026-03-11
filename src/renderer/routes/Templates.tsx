@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import type { MeetingTemplate, TemplateCategory, OutputFormat } from '../../shared/types/template'
+import type { MeetingTemplate } from '../../shared/types/template'
 import EmptyState from '../components/common/EmptyState'
 import styles from './Templates.module.css'
 
@@ -8,14 +8,7 @@ export default function Templates() {
   const [templates, setTemplates] = useState<MeetingTemplate[]>([])
   const [selected, setSelected] = useState<MeetingTemplate | null>(null)
   const [isEditing, setIsEditing] = useState(false)
-  const [editForm, setEditForm] = useState({
-    name: '',
-    description: '',
-    category: 'custom' as TemplateCategory,
-    systemPrompt: '',
-    userPromptTemplate: '',
-    outputFormat: 'markdown' as OutputFormat
-  })
+  const [editForm, setEditForm] = useState({ name: '', context: '', instructions: '' })
 
   const fetchTemplates = useCallback(async () => {
     const result = await window.api.invoke<MeetingTemplate[]>(IPC_CHANNELS.TEMPLATE_LIST)
@@ -32,52 +25,66 @@ export default function Templates() {
   }
 
   const handleEdit = () => {
-    if (!selected) return
+    if (!selected || selected.isDefault) return
     setEditForm({
       name: selected.name,
-      description: selected.description,
-      category: selected.category,
-      systemPrompt: selected.systemPrompt,
-      userPromptTemplate: selected.userPromptTemplate,
-      outputFormat: selected.outputFormat
+      context: selected.systemPrompt,
+      instructions: selected.instructions ?? ''
     })
     setIsEditing(true)
   }
 
   const handleNew = () => {
     setSelected(null)
+    setEditForm({ name: '', context: '', instructions: '' })
+    setIsEditing(true)
+  }
+
+  const handleDuplicate = () => {
+    if (!selected) return
+    setSelected(null)
     setEditForm({
-      name: '',
-      description: '',
-      category: 'custom',
-      systemPrompt: '',
-      userPromptTemplate: '{{transcript}}',
-      outputFormat: 'markdown'
+      name: `${selected.name} (copy)`,
+      context: selected.systemPrompt,
+      instructions: selected.instructions ?? selected.description ?? ''
     })
     setIsEditing(true)
   }
 
   const handleSave = async () => {
+    const systemPrompt = editForm.context.trim()
+    const payload = {
+      name: editForm.name,
+      description: '',
+      category: 'custom' as const,
+      systemPrompt,
+      userPromptTemplate: '',
+      instructions: editForm.instructions || null,
+      outputFormat: 'markdown' as const
+    }
     let saved: MeetingTemplate | null = null
     if (selected) {
-      saved = await window.api.invoke<MeetingTemplate>(IPC_CHANNELS.TEMPLATE_UPDATE, selected.id, editForm)
+      saved = await window.api.invoke<MeetingTemplate>(IPC_CHANNELS.TEMPLATE_UPDATE, selected.id, {
+        name: payload.name,
+        systemPrompt: payload.systemPrompt,
+        instructions: payload.instructions
+      })
     } else {
-      saved = await window.api.invoke<MeetingTemplate>(IPC_CHANNELS.TEMPLATE_CREATE, editForm)
+      saved = await window.api.invoke<MeetingTemplate>(IPC_CHANNELS.TEMPLATE_CREATE, payload)
     }
     setIsEditing(false)
     await fetchTemplates()
-    if (saved) {
-      setSelected(saved)
-    }
+    if (saved) setSelected(saved)
   }
 
   const handleDelete = async (id: string) => {
     await window.api.invoke(IPC_CHANNELS.TEMPLATE_DELETE, id)
-    if (selected?.id === id) {
-      setSelected(null)
-    }
+    if (selected?.id === id) setSelected(null)
     await fetchTemplates()
   }
+
+  // Determine if this is a legacy custom template (no instructions, not default)
+  const isLegacy = selected && !selected.isDefault && selected.instructions === null
 
   return (
     <div className={styles.container}>
@@ -95,7 +102,7 @@ export default function Templates() {
             onClick={() => handleSelect(t)}
           >
             <span className={styles.itemName}>{t.name}</span>
-            <span className={styles.itemCategory}>{t.category}</span>
+            {t.isDefault && <span className={styles.itemBadge}>Built-in</span>}
           </div>
         ))}
       </div>
@@ -113,28 +120,50 @@ export default function Templates() {
             <div className={styles.previewHeader}>
               <h2>{selected.name}</h2>
               <div className={styles.previewActions}>
-                <button className={styles.editBtn} onClick={handleEdit}>
-                  Edit
-                </button>
-                {!selected.isDefault && (
-                  <button
-                    className={styles.deleteBtn}
-                    onClick={() => handleDelete(selected.id)}
-                  >
-                    Delete
+                {selected.isDefault ? (
+                  <button className={styles.editBtn} onClick={handleDuplicate}>
+                    Duplicate
                   </button>
+                ) : (
+                  <>
+                    <button className={styles.editBtn} onClick={handleEdit}>
+                      Edit
+                    </button>
+                    <button
+                      className={styles.deleteBtn}
+                      onClick={() => handleDelete(selected.id)}
+                    >
+                      Delete
+                    </button>
+                  </>
                 )}
               </div>
             </div>
-            <p className={styles.desc}>{selected.description}</p>
-            <div className={styles.field}>
-              <label>System Prompt</label>
-              <pre className={styles.pre}>{selected.systemPrompt}</pre>
-            </div>
-            <div className={styles.field}>
-              <label>User Prompt Template</label>
-              <pre className={styles.pre}>{selected.userPromptTemplate}</pre>
-            </div>
+
+            {selected.isDefault && (
+              <div className={styles.readOnlyNotice}>
+                This is a built-in template. Duplicate it to create a customized version.
+              </div>
+            )}
+
+            {selected.systemPrompt && (
+              <div className={styles.field}>
+                <label>Context</label>
+                <pre className={styles.pre}>{selected.systemPrompt}</pre>
+              </div>
+            )}
+
+            {selected.instructions ? (
+              <div className={styles.field}>
+                <label>Instructions</label>
+                <pre className={styles.pre}>{selected.instructions}</pre>
+              </div>
+            ) : isLegacy ? (
+              <div className={styles.field}>
+                <label>User Prompt Template</label>
+                <pre className={styles.pre}>{selected.userPromptTemplate}</pre>
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -147,44 +176,34 @@ export default function Templates() {
                 className={styles.input}
                 value={editForm.name}
                 onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                placeholder="e.g. VC Pitch Summary"
               />
             </div>
             <div className={styles.field}>
-              <label>Description</label>
-              <input
-                className={styles.input}
-                value={editForm.description}
-                onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-              />
-            </div>
-            <div className={styles.field}>
-              <label>System Prompt</label>
+              <label>Context</label>
               <textarea
                 className={styles.textarea}
-                rows={5}
-                value={editForm.systemPrompt}
-                onChange={(e) => setEditForm({ ...editForm, systemPrompt: e.target.value })}
+                rows={4}
+                value={editForm.context}
+                onChange={(e) => setEditForm({ ...editForm, context: e.target.value })}
+                placeholder="Describe the role or perspective for the AI. For example: You are an experienced venture capital analyst focused on early-stage investments."
               />
             </div>
             <div className={styles.field}>
-              <label>
-                User Prompt Template{' '}
-                <span className={styles.hint}>
-                  Use {'{{transcript}}'}, {'{{meeting_title}}'}, {'{{date}}'}, {'{{duration}}'},
-                  {'{{speakers}}'}
-                </span>
-              </label>
+              <label>Instructions</label>
               <textarea
                 className={styles.textarea}
                 rows={10}
-                value={editForm.userPromptTemplate}
-                onChange={(e) =>
-                  setEditForm({ ...editForm, userPromptTemplate: e.target.value })
-                }
+                value={editForm.instructions}
+                onChange={(e) => setEditForm({ ...editForm, instructions: e.target.value })}
+                placeholder="Describe what you want in the summary. For example: Focus on investment highlights, key risks, and next steps. Use clear bullet points and keep it concise."
               />
+              <p className={styles.instructionsHint}>
+                Write in plain English. The app automatically includes the transcript, meeting title, date, duration, and speakers.
+              </p>
             </div>
             <div className={styles.formActions}>
-              <button className={styles.saveBtn} onClick={handleSave}>
+              <button className={styles.saveBtn} onClick={handleSave} disabled={!editForm.name.trim()}>
                 Save
               </button>
               <button className={styles.cancelBtn} onClick={() => setIsEditing(false)}>

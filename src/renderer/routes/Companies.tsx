@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
@@ -20,7 +21,7 @@ type CompanyScope = 'prospects' | 'all' | 'vc_fund' | 'unknown'
 const SCOPE_LABELS: Record<CompanyScope, string> = {
   all: 'All Orgs',
   prospects: 'Prospects',
-  vc_fund: 'VC Funds',
+  vc_fund: 'Investors',
   unknown: 'Unknown'
 }
 
@@ -29,7 +30,7 @@ const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
   { value: 'prospect', label: 'Prospect' },
   { value: 'portfolio', label: 'Portfolio' },
   { value: 'pass', label: 'Pass' },
-  { value: 'vc_fund', label: 'VC Fund' },
+  { value: 'vc_fund', label: 'Investor' },
   { value: 'customer', label: 'Customer' },
   { value: 'partner', label: 'Partner' },
   { value: 'vendor', label: 'Vendor' },
@@ -132,7 +133,12 @@ export default function Companies() {
   const [newRaiseSize, setNewRaiseSize] = useState('')
   const [newContactName, setNewContactName] = useState('')
   const [newContactEmail, setNewContactEmail] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkMenuOpen, setBulkMenuOpen] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const bulkMenuRef = useRef<HTMLDivElement>(null)
   const createCardRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const query = (searchParams.get('q') || '').trim()
   const showCreate = searchParams.get('new') === '1'
   const rawSort = (searchParams.get('sort') || '').trim()
@@ -215,6 +221,37 @@ export default function Companies() {
     createCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [showCreate])
 
+  useEffect(() => {
+    if (!bulkMenuOpen) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (bulkMenuRef.current && !bulkMenuRef.current.contains(e.target as Node)) {
+        setBulkMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [bulkMenuOpen])
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0 || bulkDeleting) return
+    setBulkMenuOpen(false)
+    setBulkDeleting(true)
+    setError(null)
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map((id) =>
+          window.api.invoke(IPC_CHANNELS.COMPANY_DELETE, id)
+        )
+      )
+      setSelectedIds(new Set())
+      await fetchCompanies()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBulkDeleting(false)
+    }
+  }, [selectedIds, bulkDeleting, fetchCompanies])
+
   const handleCreateCompany = async () => {
     if (!newName.trim()) return
     try {
@@ -260,6 +297,13 @@ export default function Companies() {
   }
 
   const showEmptyState = !loading && companies.length === 0 && !query && !showCreate
+
+  const virtualizer = useVirtualizer({
+    count: companies.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 48,
+    overscan: 5
+  })
 
   return (
     <div className={styles.container}>
@@ -371,7 +415,7 @@ export default function Companies() {
         </p>
       )}
 
-      <div className={styles.scrollArea}>
+      <div className={styles.scrollArea} ref={scrollRef}>
         {showEmptyState ? (
           <EmptyState
             title="No companies yet"
@@ -384,8 +428,9 @@ export default function Companies() {
               <h3 className={styles.sectionHeader}>
                 {SCOPE_LABELS[scope]} ({companies.length})
               </h3>
-              <div className={styles.list}>
-                {companies.map((company) => {
+              <div className={styles.list} style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+                {virtualizer.getVirtualItems().map((vrow) => {
+                  const company = companies[vrow.index]
                   const touchDays = daysSince(company.lastTouchpoint)
                   const warmthClass = touchDays == null
                     ? styles.warmthUnknown
@@ -394,30 +439,66 @@ export default function Companies() {
                         : touchDays <= 30
                             ? styles.warmthYellow
                             : styles.warmthRed
+                  const isSelected = selectedIds.has(company.id)
                   return (
                     <div
                       key={company.id}
-                      className={styles.card}
-                      onClick={() => navigate(`/company/${company.id}`)}
+                      style={{ position: 'absolute', top: vrow.start, left: 0, right: 0 }}
+                      className={`${styles.cardWrapper} ${isSelected ? styles.cardWrapperSelected : ''}`}
                     >
-                      <div className={styles.cardRow}>
-                        <span className={styles.cardName}>{company.canonicalName}</span>
-                        <span className={styles.cardDomain}>{company.primaryDomain || ''}</span>
+                      <div
+                        className={styles.checkboxZone}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(company.id)) next.delete(company.id)
+                            else next.add(company.id)
+                            return next
+                          })
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          className={styles.companyCheckbox}
+                          checked={isSelected}
+                          onChange={() => {}}
+                          tabIndex={-1}
+                        />
                       </div>
-                      <div className={styles.cardRow}>
-                        <span className={styles.cardMeta}>
-                          {[
-                            company.meetingCount > 0 && `${company.meetingCount} meeting${company.meetingCount !== 1 ? 's' : ''}`,
-                            company.emailCount > 0 && `${company.emailCount} email${company.emailCount !== 1 ? 's' : ''}`
-                          ].filter(Boolean).join(', ') || 'No activity'}
-                        </span>
-                        <div className={styles.touchMeta}>
-                          <span className={styles.cardStage}>
-                            {formatLastTouch(company.lastTouchpoint)}
+                      <div
+                        className={styles.card}
+                        onClick={() => navigate(`/company/${company.id}`)}
+                      >
+                        <div className={styles.cardRow}>
+                          <div className={styles.cardNameGroup}>
+                            {company.primaryDomain && (
+                              <img
+                                src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(company.primaryDomain)}&sz=32`}
+                                alt=""
+                                className={styles.favicon}
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                              />
+                            )}
+                            <span className={styles.cardName}>{company.canonicalName}</span>
+                          </div>
+                          <span className={styles.cardDomain}>{company.primaryDomain || ''}</span>
+                        </div>
+                        <div className={styles.cardRow}>
+                          <span className={styles.cardMeta}>
+                            {[
+                              company.meetingCount > 0 && `${company.meetingCount} meeting${company.meetingCount !== 1 ? 's' : ''}`,
+                              company.emailCount > 0 && `${company.emailCount} email${company.emailCount !== 1 ? 's' : ''}`
+                            ].filter(Boolean).join(', ') || 'No activity'}
                           </span>
-                          <span className={`${styles.warmthBadge} ${warmthClass}`}>
-                            {touchDays == null ? '--' : `${touchDays}d`}
-                          </span>
+                          <div className={styles.touchMeta}>
+                            <span className={styles.cardStage}>
+                              {formatLastTouch(company.lastTouchpoint)}
+                            </span>
+                            <span className={`${styles.warmthBadge} ${warmthClass}`}>
+                              {touchDays == null ? '--' : `${touchDays}d`}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -432,6 +513,38 @@ export default function Companies() {
           </>
         )}
       </div>
+
+      {selectedIds.size > 0 && (
+        <div className={styles.bulkBar}>
+          <button
+            className={styles.bulkClear}
+            onClick={() => setSelectedIds(new Set())}
+            aria-label="Clear selection"
+          >
+            {selectedIds.size} selected ✕
+          </button>
+          <div className={styles.bulkMenuWrap} ref={bulkMenuRef}>
+            <button
+              className={styles.bulkMenuBtn}
+              onClick={() => setBulkMenuOpen((v) => !v)}
+              disabled={bulkDeleting}
+            >
+              {bulkDeleting ? 'Working…' : 'Actions ▾'}
+            </button>
+            {bulkMenuOpen && (
+              <div className={styles.bulkMenu}>
+                <button
+                  className={`${styles.bulkMenuItem} ${styles.bulkMenuItemDanger}`}
+                  onClick={() => void handleBulkDelete()}
+                  disabled={bulkDeleting}
+                >
+                  Delete {selectedIds.size} compan{selectedIds.size !== 1 ? 'ies' : 'y'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className={styles.chatSection}>
         <ChatInterface compact />

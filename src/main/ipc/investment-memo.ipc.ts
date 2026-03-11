@@ -8,8 +8,9 @@ import { exportMemoMarkdownToPdf } from '../services/memo-export.service'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
-import { readSummary, readTranscript } from '../storage/file-manager'
+import { readSummary, readTranscript, readLocalFile } from '../storage/file-manager'
 import { generateMemo } from '../llm/memo-generator'
+import { basename } from 'path'
 
 export function registerInvestmentMemoHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_GET_OR_CREATE, (_event, companyId: string) => {
@@ -111,7 +112,15 @@ export function registerInvestmentMemoHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE, async (_event, companyId: string) => {
+  ipcMain.handle(
+    IPC_CHANNELS.INVESTMENT_MEMO_GENERATE,
+    async (
+      _event,
+      payload: string | { companyId: string; selectedFileIds?: string[]; includeEmails?: boolean }
+    ) => {
+    const companyId = typeof payload === 'string' ? payload : payload.companyId
+    const selectedFileIds = typeof payload === 'string' ? [] : (payload.selectedFileIds ?? [])
+    const includeEmails = typeof payload === 'string' ? true : (payload.includeEmails ?? true)
     if (!companyId) throw new Error('companyId is required')
     const company = companyRepo.getCompany(companyId)
     if (!company) throw new Error('Company not found')
@@ -156,6 +165,31 @@ export function registerInvestmentMemoHandlers(): void {
     // Get existing memo content for context
     const existingContent = memoData.latestVersion?.contentMarkdown || ''
 
+    // Gather emails linked to the company
+    const emails: Array<{ subject: string | null; from: string; date: string | null; body: string }> = []
+    if (includeEmails) {
+      const emailRefs = companyRepo.listCompanyEmails(companyId).slice(0, 30)
+      for (const e of emailRefs) {
+        if (e.bodyText && e.bodyText.trim().length > 50) {
+          emails.push({
+            subject: e.subject,
+            from: e.fromEmail,
+            date: e.receivedAt || e.sentAt,
+            body: e.bodyText
+          })
+        }
+      }
+    }
+
+    // Read selected local files
+    const files: Array<{ name: string; content: string }> = []
+    for (const fileId of selectedFileIds) {
+      const content = await readLocalFile(fileId)
+      if (content && content.trim().length > 100) {
+        files.push({ name: basename(fileId), content })
+      }
+    }
+
     const generated = await generateMemo({
       companyName: company.canonicalName,
       companyDescription: company.description || '',
@@ -163,6 +197,8 @@ export function registerInvestmentMemoHandlers(): void {
       transcripts,
       notes: noteTexts,
       existingMemo: existingContent,
+      emails,
+      files,
       companyDetails: {
         stage: company.stage,
         round: company.round,

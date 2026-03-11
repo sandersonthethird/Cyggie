@@ -8,7 +8,6 @@ import { getSetting } from '../database/repositories/settings.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker } from '../database/repositories/search.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
-import { critiqueText } from './critique'
 import type { LlmProvider } from '../../shared/types/settings'
 
 let chatAbortController: AbortController | null = null
@@ -31,7 +30,8 @@ function getProvider(): LLMProvider {
   if (!apiKey) {
     throw new Error('Claude API key not configured. Go to Settings to add it.')
   }
-  return new ClaudeProvider(apiKey)
+  const model = getSetting('claudeSummaryModel') || 'claude-sonnet-4-5-20250929'
+  return new ClaudeProvider(apiKey, model)
 }
 
 function sendProgress(text: string): void {
@@ -132,11 +132,9 @@ User question: ${question}`
 
   const provider = getProvider()
   chatAbortController = new AbortController()
-  const draft = await provider.generateSummary(MEETING_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
-  sendClear()
-  const refined = await critiqueText(provider, draft, sendProgress, chatAbortController.signal)
+  const result = await provider.generateSummary(MEETING_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
   chatAbortController = null
-  return refined
+  return result
 }
 
 export async function queryGlobal(question: string): Promise<string> {
@@ -274,11 +272,9 @@ Please answer based on the meeting excerpts above. Cite the meeting title and da
 
   const provider = getProvider()
   chatAbortController = new AbortController()
-  const draft = await provider.generateSummary(GLOBAL_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
-  sendClear()
-  const refined = await critiqueText(provider, draft, sendProgress, chatAbortController.signal)
+  const result = await provider.generateSummary(GLOBAL_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
   chatAbortController = null
-  return refined
+  return result
 }
 
 export async function querySearchResults(meetingIds: string[], question: string): Promise<string> {
@@ -360,9 +356,7 @@ Please answer based on the meeting content above. Cite the meeting title and dat
 
   const provider = getProvider()
   chatAbortController = new AbortController()
-  const draft = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
-  sendClear()
-  const refined = await critiqueText(provider, draft, sendProgress, chatAbortController.signal)
+  const result = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
   chatAbortController = null
-  return refined
+  return result
 }

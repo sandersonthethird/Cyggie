@@ -8,6 +8,7 @@ import type {
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import { getCredential } from '../security/credentials'
+import { getSetting } from '../database/repositories/settings.repo'
 import { enrichCompany } from './company-enrichment'
 import { extractDomainFromEmail, humanizeDomainName } from '../utils/company-extractor'
 
@@ -222,7 +223,7 @@ async function inferWithLlm(
   try {
     const client = new Anthropic({ apiKey })
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: getSetting('claudeEnrichmentModel') || 'claude-haiku-4-5-20251001',
       max_tokens: 300,
       messages: [
         {

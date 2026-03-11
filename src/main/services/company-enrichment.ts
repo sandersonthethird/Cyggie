@@ -1,6 +1,7 @@
 import { net } from 'electron'
 import Anthropic from '@anthropic-ai/sdk'
 import { getCredential } from '../security/credentials'
+import { getSetting } from '../database/repositories/settings.repo'
 import * as companyCacheRepo from '../database/repositories/company.repo'
 import * as orgCompanyRepo from '../database/repositories/org-company.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
@@ -227,7 +228,7 @@ async function resolveViaLLM(domain: string): Promise<string | null> {
   try {
     const client = new Anthropic({ apiKey })
     const message = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: getSetting('claudeEnrichmentModel') || 'claude-haiku-4-5-20251001',
       max_tokens: 50,
       messages: [
         {

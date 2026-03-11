@@ -580,6 +580,7 @@
   gap: 16px;
   flex: 1;
   min-height: 0;
+  padding-bottom: 80px; /* space for floating chat bar */
 }
 
 .notesToggle {

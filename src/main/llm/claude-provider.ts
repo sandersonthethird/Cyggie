@@ -4,15 +4,17 @@ import type { LLMProvider } from './provider'
 export class ClaudeProvider implements LLMProvider {
   name = 'Claude'
   private client: Anthropic
+  private model: string
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, model = 'claude-sonnet-4-5-20250929') {
     this.client = new Anthropic({ apiKey })
+    this.model = model
   }
 
   async isAvailable(): Promise<boolean> {
     try {
       await this.client.messages.create({
-        model: 'claude-sonnet-4-5-20250929',
+        model: this.model,
         max_tokens: 10,
         messages: [{ role: 'user', content: 'ping' }]
       })
@@ -30,7 +32,7 @@ export class ClaudeProvider implements LLMProvider {
   ): Promise<string> {
     if (onProgress) {
       const stream = this.client.messages.stream({
-        model: 'claude-sonnet-4-5-20250929',
+        model: this.model,
         max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }]
@@ -49,7 +51,7 @@ export class ClaudeProvider implements LLMProvider {
     }
 
     const message = await this.client.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
+      model: this.model,
       max_tokens: 8192,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }]

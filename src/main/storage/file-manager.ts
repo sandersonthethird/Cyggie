@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, unlinkSync, renameSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, unlinkSync, renameSync, existsSync, statSync } from 'fs'
 import { join, extname } from 'path'
 import { getTranscriptsDir, getSummariesDir, getRecordingsDir } from './paths'
 import { extractCompanyFromEmail } from '../utils/company-extractor'
@@ -199,6 +199,29 @@ export function renameRecording(
     renameSync(oldPath, newPath)
   }
   return newFilename
+}
+
+const READABLE_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.csv'])
+const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+
+export async function readLocalFile(filePath: string): Promise<string | null> {
+  try {
+    if (!existsSync(filePath)) return null
+    const stat = statSync(filePath)
+    if (stat.size > MAX_FILE_SIZE) return null
+    const ext = extname(filePath).toLowerCase()
+    if (!READABLE_EXTENSIONS.has(ext)) return null
+    if (ext === '.pdf') {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
+      const buf = readFileSync(filePath)
+      const result = await pdfParse(buf)
+      return result.text || null
+    }
+    return readFileSync(filePath, 'utf-8')
+  } catch {
+    return null
+  }
 }
 
 export function buildRecordingFilename(

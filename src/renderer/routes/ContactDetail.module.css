@@ -141,6 +141,14 @@
   background: #f1f5fb;
 }
 
+.actionsDropdownItemDanger {
+  color: #c0392b;
+}
+
+.actionsDropdownItemDanger:hover {
+  background: #fff0ef;
+}
+
 .secondaryHeaderButton {
   border: 1px solid #c9d4e4;
   border-radius: 8px;
@@ -214,6 +222,29 @@
   color: #111827;
   font-size: 14px;
   padding: 6px 10px;
+}
+
+.additionalEmailFields {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inlineAddEmailButton {
+  align-self: flex-start;
+  border: 1px solid #c9d4e4;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.inlineAddEmailButton:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .editSelect {

@@ -1,11 +1,13 @@
 .container {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  height: 100%;
 }
 
 .scrollArea {
   flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .section {
@@ -103,13 +105,48 @@
   margin: 0 auto;
 }
 
+.cardWrapper {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.checkboxZone {
+  position: absolute;
+  left: -38px;
+  top: 0;
+  bottom: 0;
+  width: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  cursor: pointer;
+}
+
+.cardWrapper:hover .checkboxZone,
+.cardWrapperSelected .checkboxZone {
+  opacity: 1;
+}
+
+.companyCheckbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--color-accent);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
 .card {
+  flex: 1;
+  min-width: 0;
   padding: 8px 12px;
   background: transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: background 0.15s;
-  position: relative;
 }
 
 .card:hover {
@@ -125,6 +162,21 @@
 
 .cardRow + .cardRow {
   margin-top: -1px;
+}
+
+.cardNameGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.favicon {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  object-fit: contain;
 }
 
 .cardName {
@@ -311,6 +363,105 @@
   font-size: 12px;
   color: var(--color-text-secondary);
   padding: 40px 0;
+}
+
+.bulkBar {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #1a1a1a;
+  border-radius: 999px;
+  padding: 8px 6px 8px 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.bulkClear {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 10px 0 0;
+  opacity: 0.9;
+}
+
+.bulkClear:hover {
+  opacity: 1;
+}
+
+.bulkMenuWrap {
+  position: relative;
+}
+
+.bulkMenuBtn {
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.bulkMenuBtn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.bulkMenuBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bulkMenu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 200px;
+  background: var(--color-card-bg, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  padding: 4px;
+  z-index: 201;
+}
+
+.bulkMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.bulkMenuItem:hover {
+  background: var(--color-card-hover);
+}
+
+.bulkMenuItem:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bulkMenuItemDanger {
+  color: var(--color-danger);
 }
 
 .chatSection {

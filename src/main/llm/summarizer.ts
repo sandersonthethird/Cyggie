@@ -43,7 +43,8 @@ function getProvider(): LLMProvider {
   if (!apiKey) {
     throw new Error('Claude API key not configured. Go to Settings to add it.')
   }
-  return new ClaudeProvider(apiKey)
+  const model = getSetting('claudeSummaryModel') || 'claude-sonnet-4-5-20250929'
+  return new ClaudeProvider(apiKey, model)
 }
 
 function sendProgress(text: string): void {

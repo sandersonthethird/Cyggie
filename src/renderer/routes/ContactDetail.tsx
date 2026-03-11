@@ -165,6 +165,17 @@ function normalizeEmail(value: string | null | undefined): string {
   return value.trim().toLowerCase().replace(/^mailto:/, '')
 }
 
+function collectUniqueEmails(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>()
+  for (const value of values) {
+    const normalized = normalizeEmail(value)
+    if (!normalized) continue
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+  }
+  return [...seen]
+}
+
 function extractEmailsFromAttendees(attendees: string[] | null): string[] {
   if (!attendees || attendees.length === 0) return []
   const emails = new Set<string>()
@@ -248,15 +259,18 @@ export default function ContactDetail() {
   const [enrichingContact, setEnrichingContact] = useState(false)
   const [contactEnrichmentSummary, setContactEnrichmentSummary] = useState<string | null>(null)
   const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null)
-  const [newContactEmail, setNewContactEmail] = useState('')
-  const [addingContactEmail, setAddingContactEmail] = useState(false)
   const [nameUpdateDialog, setNameUpdateDialog] = useState<{ currentName: string; newName: string } | null>(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [editingContactName, setEditingContactName] = useState(false)
   const [firstNameDraft, setFirstNameDraft] = useState('')
   const [lastNameDraft, setLastNameDraft] = useState('')
   const [titleDraft, setTitleDraft] = useState('')
   const [contactTypeDraft, setContactTypeDraft] = useState<ContactType | ''>('')
   const [linkedinUrlDraft, setLinkedinUrlDraft] = useState('')
+  const [emailDraft, setEmailDraft] = useState('')
+  const [showAdditionalEmailFields, setShowAdditionalEmailFields] = useState(false)
+  const [secondaryEmailDraft, setSecondaryEmailDraft] = useState('')
+  const [tertiaryEmailDraft, setTertiaryEmailDraft] = useState('')
   const [savingContactName, setSavingContactName] = useState(false)
   const [companyDraft, setCompanyDraft] = useState('')
   const [companySearchResults, setCompanySearchResults] = useState<CompanySummary[]>([])
@@ -435,6 +449,10 @@ export default function ContactDetail() {
     setTitleDraft('')
     setContactTypeDraft('')
     setLinkedinUrlDraft('')
+    setEmailDraft('')
+    setShowAdditionalEmailFields(false)
+    setSecondaryEmailDraft('')
+    setTertiaryEmailDraft('')
     setSavingContactName(false)
   }, [contactId])
 
@@ -530,6 +548,35 @@ export default function ContactDetail() {
     setExpandedEmailId((prev) => (prev === emailId ? null : emailId))
   }, [])
 
+  const handleDeleteContact = useCallback(async () => {
+    if (!contact) return
+    try {
+      await window.api.invoke<void>(IPC_CHANNELS.CONTACT_DELETE, contact.id)
+      navigate('/contacts')
+    } catch (err) {
+      setError(toDisplayError(err))
+    }
+  }, [contact, navigate])
+
+  const syncEmailDraftsFromContact = useCallback((nextContact: ContactDetailType | null) => {
+    if (!nextContact) {
+      setEmailDraft('')
+      setSecondaryEmailDraft('')
+      setTertiaryEmailDraft('')
+      setShowAdditionalEmailFields(false)
+      return
+    }
+
+    const primary = normalizeEmail(nextContact.email)
+    const uniqueEmails = collectUniqueEmails([nextContact.email, ...(nextContact.emails || [])])
+    const additionalEmails = uniqueEmails.filter((email) => email !== primary)
+
+    setEmailDraft(primary)
+    setSecondaryEmailDraft(additionalEmails[0] || '')
+    setTertiaryEmailDraft(additionalEmails[1] || '')
+    setShowAdditionalEmailFields(additionalEmails.length > 0)
+  }, [])
+
   const startContactNameEdit = useCallback(() => {
     if (!contact || savingContactName) return
     const parsed = splitNameForEditor(contact.fullName)
@@ -538,6 +585,7 @@ export default function ContactDetail() {
     setTitleDraft(contact.title || '')
     setContactTypeDraft(contact.contactType || '')
     setLinkedinUrlDraft(contact.linkedinUrl || '')
+    syncEmailDraftsFromContact(contact)
     setCompanyDraft(contact.primaryCompany?.canonicalName || '')
     setEditingContactName(true)
     setTimeout(() => {
@@ -546,7 +594,7 @@ export default function ContactDetail() {
       input.focus()
       input.select()
     }, 0)
-  }, [contact, savingContactName])
+  }, [contact, savingContactName, syncEmailDraftsFromContact])
 
   const cancelContactNameEdit = useCallback(() => {
     if (contact) {
@@ -556,6 +604,7 @@ export default function ContactDetail() {
       setTitleDraft(contact.title || '')
       setContactTypeDraft(contact.contactType || '')
       setLinkedinUrlDraft(contact.linkedinUrl || '')
+      syncEmailDraftsFromContact(contact)
       setCompanyDraft(contact.primaryCompany?.canonicalName || '')
     } else {
       setFirstNameDraft('')
@@ -563,12 +612,13 @@ export default function ContactDetail() {
       setTitleDraft('')
       setContactTypeDraft('')
       setLinkedinUrlDraft('')
+      syncEmailDraftsFromContact(null)
       setCompanyDraft('')
     }
     setShowCompanyDropdown(false)
     setCompanySearchResults([])
     setEditingContactName(false)
-  }, [contact])
+  }, [contact, syncEmailDraftsFromContact])
 
   // Company search: debounced query
   useEffect(() => {
@@ -657,6 +707,22 @@ export default function ContactDetail() {
     const nextTitle = titleDraft.trim() || null
     const nextContactType = (contactTypeDraft || null) as ContactType | null
     const nextLinkedinUrl = linkedinUrlDraft.trim() || null
+    const nextEmail = normalizeEmail(emailDraft)
+    const currentEmail = normalizeEmail(contact.email)
+    const additionalDrafts = [secondaryEmailDraft.trim(), tertiaryEmailDraft.trim()]
+    const additionalEmails: string[] = []
+    for (const draft of additionalDrafts) {
+      if (!draft) continue
+      const normalized = normalizeEmail(draft)
+      if (!normalized) {
+        setError(`Invalid additional email: ${draft}`)
+        return
+      }
+      if (normalized === nextEmail) continue
+      if (!additionalEmails.includes(normalized)) {
+        additionalEmails.push(normalized)
+      }
+    }
 
     setSavingContactName(true)
     setError(null)
@@ -670,7 +736,8 @@ export default function ContactDetail() {
           lastName: nextLastName || null,
           title: nextTitle,
           contactType: nextContactType,
-          linkedinUrl: nextLinkedinUrl
+          linkedinUrl: nextLinkedinUrl,
+          ...(nextEmail !== currentEmail ? { email: nextEmail || null } : {})
         }
       )
 
@@ -684,17 +751,42 @@ export default function ContactDetail() {
         )
       }
 
+      const existingEmails = new Set(collectUniqueEmails([updated.email, ...(updated.emails || [])]))
+      for (const email of additionalEmails) {
+        if (existingEmails.has(email)) continue
+        updated = await window.api.invoke<ContactDetailType>(
+          IPC_CHANNELS.CONTACT_ADD_EMAIL,
+          contact.id,
+          email
+        )
+        existingEmails.add(email)
+      }
+
       setContact(updated)
       setMeetings(updated.meetings || [])
       setFirstNameDraft(updated.firstName || '')
       setLastNameDraft(updated.lastName || '')
+      syncEmailDraftsFromContact(updated)
       setEditingContactName(false)
     } catch (err) {
       setError(toDisplayError(err))
     } finally {
       setSavingContactName(false)
     }
-  }, [contact, firstNameDraft, lastNameDraft, titleDraft, contactTypeDraft, linkedinUrlDraft, companyDraft, savingContactName, cancelContactNameEdit])
+  }, [
+    contact,
+    firstNameDraft,
+    lastNameDraft,
+    titleDraft,
+    contactTypeDraft,
+    linkedinUrlDraft,
+    emailDraft,
+    secondaryEmailDraft,
+    tertiaryEmailDraft,
+    companyDraft,
+    savingContactName,
+    syncEmailDraftsFromContact
+  ])
 
   const handleContactNameInputKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -742,7 +834,9 @@ export default function ContactDetail() {
 
   const canSaveContactName = !savingContactName
     && ([firstNameDraft.trim(), lastNameDraft.trim()].filter(Boolean).join(' ').trim().length > 0)
-  const primaryEmail = normalizeEmail(contact.email)
+  const contactEmails = collectUniqueEmails([contact.email, ...(contact.emails || [])])
+  const primaryEmail = normalizeEmail(contact.email) || contactEmails[0] || ''
+  const additionalContactEmails = contactEmails.filter((email) => email !== primaryEmail)
   const lastTouchTimestamp = contact.lastTouchpoint || contact.updatedAt
   const lastTouchDays = daysSince(lastTouchTimestamp)
   const lastTouchBadgeClass = lastTouchDays == null
@@ -790,6 +884,57 @@ export default function ContactDetail() {
                     placeholder="Last name"
                     aria-label="Last name"
                   />
+                </div>
+              </div>
+              <div className={styles.editRow}>
+                <label className={styles.editLabel}>Email</label>
+                <input
+                  className={styles.editInput}
+                  type="email"
+                  value={emailDraft}
+                  onChange={(event) => setEmailDraft(event.target.value)}
+                  onKeyDown={handleContactNameInputKeyDown}
+                  disabled={savingContactName}
+                  placeholder="email@example.com"
+                  aria-label="Email address"
+                />
+              </div>
+              <div className={styles.editRow}>
+                <label className={styles.editLabel}>Other</label>
+                <div className={styles.additionalEmailFields}>
+                  {showAdditionalEmailFields ? (
+                    <>
+                      <input
+                        className={styles.editInput}
+                        type="email"
+                        value={secondaryEmailDraft}
+                        onChange={(event) => setSecondaryEmailDraft(event.target.value)}
+                        onKeyDown={handleContactNameInputKeyDown}
+                        disabled={savingContactName}
+                        placeholder="Secondary email (optional)"
+                        aria-label="Secondary email address"
+                      />
+                      <input
+                        className={styles.editInput}
+                        type="email"
+                        value={tertiaryEmailDraft}
+                        onChange={(event) => setTertiaryEmailDraft(event.target.value)}
+                        onKeyDown={handleContactNameInputKeyDown}
+                        disabled={savingContactName}
+                        placeholder="Tertiary email (optional)"
+                        aria-label="Tertiary email address"
+                      />
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.inlineAddEmailButton}
+                      onClick={() => setShowAdditionalEmailFields(true)}
+                      disabled={savingContactName}
+                    >
+                      Add secondary/tertiary email
+                    </button>
+                  )}
                 </div>
               </div>
               <div className={styles.editRow}>
@@ -947,6 +1092,12 @@ export default function ContactDetail() {
                     >
                       Enrich + web
                     </button>
+                    <button
+                      className={`${styles.actionsDropdownItem} ${styles.actionsDropdownItemDanger}`}
+                      onClick={() => { setActionsMenuOpen(false); setDeleteConfirmOpen(true) }}
+                    >
+                      Delete contact
+                    </button>
                   </div>
                 )}
               </div>
@@ -965,6 +1116,17 @@ export default function ContactDetail() {
           ) : (
             <span>No email</span>
           )}
+          {additionalContactEmails.map((email) => (
+            <button
+              key={email}
+              type="button"
+              className={styles.emailLink}
+              onClick={() => void handleComposeEmail(email)}
+              title="Additional email"
+            >
+              {email}
+            </button>
+          ))}
           {contact.linkedinUrl && (
             <button
               type="button"
@@ -1175,6 +1337,13 @@ export default function ContactDetail() {
         }
         onConfirm={() => void handleConfirmNameUpdate()}
         onCancel={() => setNameUpdateDialog(null)}
+      />
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="Delete contact"
+        message={`Are you sure you want to delete ${contact.fullName}? This cannot be undone.`}
+        onConfirm={() => { setDeleteConfirmOpen(false); void handleDeleteContact() }}
+        onCancel={() => setDeleteConfirmOpen(false)}
       />
     </div>
   )

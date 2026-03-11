@@ -34,6 +34,7 @@ export interface TemplateRow {
   category: string
   system_prompt: string
   user_prompt_template: string
+  instructions: string | null
   output_format: string
   is_default: number
   is_active: number

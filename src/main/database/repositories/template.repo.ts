@@ -12,6 +12,7 @@ function rowToTemplate(row: TemplateRow): MeetingTemplate {
     category: row.category as TemplateCategory,
     systemPrompt: row.system_prompt,
     userPromptTemplate: row.user_prompt_template,
+    instructions: row.instructions ?? null,
     outputFormat: row.output_format as OutputFormat,
     isDefault: row.is_default === 1,
     isActive: row.is_active === 1,
@@ -69,15 +70,16 @@ export function createTemplate(data: {
   category: TemplateCategory
   systemPrompt: string
   userPromptTemplate: string
+  instructions: string | null
   outputFormat: OutputFormat
 }): MeetingTemplate {
   const db = getDatabase()
   const id = uuidv4()
 
   db.prepare(
-    `INSERT INTO templates (id, name, description, category, system_prompt, user_prompt_template, output_format, is_default, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM templates))`
-  ).run(id, data.name, data.description, data.category, data.systemPrompt, data.userPromptTemplate, data.outputFormat)
+    `INSERT INTO templates (id, name, description, category, system_prompt, user_prompt_template, instructions, output_format, is_default, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM templates))`
+  ).run(id, data.name, data.description, data.category, data.systemPrompt, data.userPromptTemplate, data.instructions, data.outputFormat)
 
   return getTemplate(id)!
 }
@@ -89,6 +91,7 @@ export function updateTemplate(
     description: string
     systemPrompt: string
     userPromptTemplate: string
+    instructions: string | null
     outputFormat: OutputFormat
     isActive: boolean
   }>
@@ -112,6 +115,10 @@ export function updateTemplate(
   if (data.userPromptTemplate !== undefined) {
     sets.push('user_prompt_template = ?')
     params.push(data.userPromptTemplate)
+  }
+  if ('instructions' in data) {
+    sets.push('instructions = ?')
+    params.push(data.instructions ?? null)
   }
   if (data.outputFormat !== undefined) {
     sets.push('output_format = ?')

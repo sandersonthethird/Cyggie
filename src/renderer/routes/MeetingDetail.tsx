@@ -76,13 +76,13 @@ interface MeetingData {
   summary: string | null
 }
 
-const TAGGABLE_COMPANY_TYPES: CompanyEntityType[] = ['prospect', 'vc_fund', 'customer']
+const TAGGABLE_COMPANY_TYPES: CompanyEntityType[] = ['prospect', 'vc_fund', 'customer', 'portfolio', 'other']
 
 const TAG_LABELS: Record<CompanyEntityType, string> = {
   prospect: 'Prospect',
   portfolio: 'Portfolio',
   pass: 'Pass',
-  vc_fund: 'VC Fund',
+  vc_fund: 'Investor',
   customer: 'Customer',
   partner: 'Partner',
   vendor: 'Vendor',
@@ -1179,7 +1179,7 @@ export default function MeetingDetail() {
             </div>
           </div>
           <div className={styles.meta}>
-            <span>{new Date(meeting.date).toLocaleString()}</span>
+            <span>{new Date(meeting.date).toLocaleString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
             {meeting.durationSeconds && (
               <span>{Math.round(meeting.durationSeconds / 60)} min</span>
             )}
@@ -1515,14 +1515,6 @@ export default function MeetingDetail() {
               </div>
             )}
 
-            {hasTranscript && (
-              <>
-                <div className={styles.summaryDivider}>
-                  <span>Ask AI</span>
-                </div>
-                <ChatInterface meetingId={meeting.id} />
-              </>
-            )}
           </div>
         )}
         {activeTab === 'transcript' && (
@@ -1704,6 +1696,10 @@ export default function MeetingDetail() {
           </div>
         )}
       </div>
+
+      {hasTranscript && (
+        <ChatInterface meetingId={meeting.id} floating={true} />
+      )}
 
       <ConfirmDialog
         open={deleteDialogOpen}

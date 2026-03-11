@@ -33,6 +33,7 @@ import { runPerformanceIndexesMigration } from './migrations/030-performance-ind
 import { runTasksMigration } from './migrations/031-tasks'
 import { runUserProfileFieldsMigration } from './migrations/032-user-profile-fields'
 import { runUserNamePartsMigration } from './migrations/033-user-name-parts'
+import { runTemplateInstructionsMigration } from './migrations/034-template-instructions'
 
 let db: Database.Database | null = null
 
@@ -74,6 +75,7 @@ export function getDatabase(): Database.Database {
     runTasksMigration(db)
     runUserProfileFieldsMigration(db)
     runUserNamePartsMigration(db)
+    runTemplateInstructionsMigration(db)
   }
   return db
 }

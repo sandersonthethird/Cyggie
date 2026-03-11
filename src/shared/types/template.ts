@@ -15,6 +15,7 @@ export interface MeetingTemplate {
   category: TemplateCategory
   systemPrompt: string
   userPromptTemplate: string
+  instructions: string | null
   outputFormat: OutputFormat
   isDefault: boolean
   isActive: boolean

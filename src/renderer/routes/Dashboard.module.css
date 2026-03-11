@@ -556,6 +556,14 @@
   padding: 0 10px 6px 20px;
 }
 
+.pipelineFilterBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px 10px 0;
+}
+
 .pipelineTable {
   width: max-content;
   min-width: 100%;

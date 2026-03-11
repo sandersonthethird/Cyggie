@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import Layout from './components/layout/Layout'
 import Dashboard from './routes/Dashboard'
@@ -26,27 +26,37 @@ function CalendarInit() {
 function NotificationListener() {
   const navigate = useNavigate()
   const startRecording = useRecordingStore((s) => s.startRecording)
-  const isRecording = useRecordingStore((s) => s.isRecording)
-  const setError = useRecordingStore((s) => s.setError)
+  const isRecordingRef = useRef(useRecordingStore.getState().isRecording)
+
+  // Keep ref in sync without re-subscribing the effect
+  useEffect(() => {
+    return useRecordingStore.subscribe((s) => {
+      isRecordingRef.current = s.isRecording
+    })
+  }, [])
 
   useEffect(() => {
-    const unsub = window.api.on('notification:start-recording', async (title: unknown) => {
-      if (isRecording) return
+    const unsub = window.api.on('notification:start-recording', async (payload: unknown) => {
+      if (isRecordingRef.current) return
+
+      const { title, calendarEventId } = (payload as { title: string; calendarEventId?: string; meetingUrl?: string }) ?? {}
 
       try {
         const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
           IPC_CHANNELS.RECORDING_START,
-          title as string
+          title,
+          calendarEventId
         )
         startRecording(result.meetingId, result.meetingPlatform)
         navigate(`/meeting/${result.meetingId}`)
       } catch (err) {
-        setError(String(err))
+        // Show a visible alert since there's no UI context here
+        alert(`Failed to start recording: ${String(err)}`)
       }
     })
 
     return unsub
-  }, [navigate, startRecording, isRecording, setError])
+  }, [navigate, startRecording])
 
   return null
 }

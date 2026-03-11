@@ -52,6 +52,7 @@ export const IPC_CHANNELS = {
   COMPANY_EMAILS: 'company:emails',
   COMPANY_EMAIL_INGEST: 'company:email-ingest',
   COMPANY_FILES: 'company:files',
+  COMPANY_FILES_READABLE: 'company:files-readable',
   COMPANY_TIMELINE: 'company:timeline',
   COMPANY_MEETING_SUMMARIES: 'company:meeting-summaries',
   COMPANY_SET_PRIMARY_CONTACT: 'company:set-primary-contact',
@@ -65,12 +66,15 @@ export const IPC_CHANNELS = {
   CONTACT_ADD_EMAIL: 'contact:add-email',
   CONTACT_SET_COMPANY: 'contact:set-company',
   CONTACT_UPDATE: 'contact:update',
+  CONTACT_DELETE: 'contact:delete',
   CONTACT_SYNC_FROM_MEETINGS: 'contact:sync-from-meetings',
   CONTACT_ENRICH_EXISTING: 'contact:enrich-existing',
   CONTACT_ENRICH_ONE: 'contact:enrich-one',
   CONTACT_ONBOARD_FROM_EMAIL: 'contact:onboard-from-email',
   CONTACT_ONBOARD_PROGRESS: 'contact:onboard-progress',
   CONTACT_RESOLVE_EMAILS: 'contact:resolve-emails',
+  CONTACT_DEDUP_SUSPECTED: 'contact:dedup-suspected',
+  CONTACT_DEDUP_APPLY: 'contact:dedup-apply',
 
   // Dashboard
   DASHBOARD_GET: 'dashboard:get',
