@@ -128,15 +128,32 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
         )}
       </div>
 
-      {show(company.description) && (
-        <PropertyRow
-          label="Description"
-          value={company.description}
-          type="textarea"
-          editMode={isEditing}
-          onSave={(v) => save('description', v)}
-        />
+      {show(company.websiteUrl) && (
+        isEditing ? (
+          <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={true} onSave={(v) => save('websiteUrl', v)} />
+        ) : (
+          <a
+            className={styles.websiteLink}
+            href="#"
+            onClick={(e) => {
+              e.preventDefault()
+              if (company.websiteUrl) {
+                window.api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, company.websiteUrl).catch(console.error)
+              }
+            }}
+          >
+            {company.websiteUrl}
+          </a>
+        )
       )}
+      {show(company.description) && (
+        isEditing ? (
+          <PropertyRow label="Description" value={company.description} type="textarea" editMode={true} onSave={(v) => save('description', v)} />
+        ) : (
+          <p className={styles.descriptionText}>{company.description}</p>
+        )
+      )}
+      <div className={styles.headerDivider} />
 
       <SectionHeader title="Overview" />
       {show(company.sector) && <PropertyRow label="Sector" value={company.sector} type="text" editMode={isEditing} onSave={(v) => save('sector', v)} />}
@@ -237,7 +254,6 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
       {show(company.coInvestors) && <PropertyRow label="Co-Investors" value={company.coInvestors} type="text" editMode={isEditing} onSave={(v) => save('coInvestors', v)} />}
 
       <SectionHeader title="Links" />
-      {show(company.websiteUrl) && <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={isEditing} onSave={(v) => save('websiteUrl', v)} />}
       {show(company.linkedinCompanyUrl) && <PropertyRow label="LinkedIn" value={company.linkedinCompanyUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinCompanyUrl', v)} />}
       {show(company.crunchbaseUrl) && <PropertyRow label="Crunchbase" value={company.crunchbaseUrl} type="url" editMode={isEditing} onSave={(v) => save('crunchbaseUrl', v)} />}
       {show(company.angellistUrl) && <PropertyRow label="AngelList" value={company.angellistUrl} type="url" editMode={isEditing} onSave={(v) => save('angellistUrl', v)} />}

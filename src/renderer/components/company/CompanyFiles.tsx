@@ -38,6 +38,8 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
   function openFile(file: CompanyDriveFileRef) {
     if (file.webViewLink) {
       window.api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, file.webViewLink).catch(console.error)
+    } else if (file.id) {
+      window.api.invoke(IPC_CHANNELS.APP_OPEN_PATH, file.id).catch(console.error)
     }
   }
 

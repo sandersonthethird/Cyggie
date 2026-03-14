@@ -6,6 +6,7 @@ import { ContactPropertiesPanel } from '../components/contact/ContactPropertiesP
 import { ContactMeetings } from '../components/contact/ContactMeetings'
 import { ContactEmails } from '../components/contact/ContactEmails'
 import { ContactNotes } from '../components/contact/ContactNotes'
+import { usePanelResize } from '../hooks/usePanelResize'
 import styles from './ContactDetail.module.css'
 
 type ContactTab = 'meetings' | 'emails' | 'notes'
@@ -15,6 +16,7 @@ export default function ContactDetail() {
   const [contact, setContact] = useState<ContactDetailType | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<ContactTab>('meetings')
+  const { leftWidth, dividerProps } = usePanelResize()
 
   useEffect(() => {
     if (!id) return
@@ -44,11 +46,14 @@ export default function ContactDetail() {
   ]
 
   return (
-    <div className={styles.layout}>
+    <div className={styles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr` }}>
       {/* Left panel — properties */}
       <div className={styles.leftPanel}>
         <ContactPropertiesPanel contact={contact} onUpdate={handleUpdate} />
       </div>
+
+      {/* Resizable divider */}
+      <div className={styles.divider} {...dividerProps} />
 
       {/* Right panel — tabs */}
       <div className={styles.rightPanel}>

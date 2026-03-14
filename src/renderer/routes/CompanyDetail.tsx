@@ -8,6 +8,7 @@ import { CompanyContacts } from '../components/company/CompanyContacts'
 import { CompanyNotes } from '../components/company/CompanyNotes'
 import { CompanyMemo } from '../components/company/CompanyMemo'
 import { CompanyFiles } from '../components/company/CompanyFiles'
+import { usePanelResize } from '../hooks/usePanelResize'
 import styles from './CompanyDetail.module.css'
 
 type CompanyTab = 'timeline' | 'contacts' | 'notes' | 'memo' | 'files'
@@ -17,6 +18,7 @@ export default function CompanyDetail() {
   const [company, setCompany] = useState<CompanyDetailType | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<CompanyTab>('timeline')
+  const { leftWidth, dividerProps } = usePanelResize()
 
   useEffect(() => {
     if (!id) return
@@ -52,11 +54,14 @@ export default function CompanyDetail() {
   ]
 
   return (
-    <div className={styles.layout}>
+    <div className={styles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr` }}>
       {/* Left panel — properties */}
       <div className={styles.leftPanel}>
         <CompanyPropertiesPanel company={company} onUpdate={handleUpdate} />
       </div>
+
+      {/* Resizable divider */}
+      <div className={styles.divider} {...dividerProps} />
 
       {/* Right panel — tabs */}
       <div className={styles.rightPanel}>
