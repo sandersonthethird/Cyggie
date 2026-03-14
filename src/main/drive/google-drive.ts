@@ -8,6 +8,7 @@ import {
   hasDriveScope,
   isCalendarConnected
 } from '../calendar/google-auth'
+import { markdownToHtml, buildMemoDocTitle, type MemoHeaderParams } from '../services/memo-export.service'
 import type { DriveShareResponse } from '../../shared/types/drive'
 import type { CompanyDriveFileRef } from '../../shared/types/company'
 import type { DriveFolderRef } from '../../shared/types/drive'
@@ -24,6 +25,7 @@ export interface CompanyDriveLookupResult {
 let appFolderId: string | null = null
 let transcriptsFolderId: string | null = null
 let summariesFolderId: string | null = null
+let memosFolderId: string | null = null
 
 function getDriveClient(): DriveClient | null {
   const auth = getOAuth2Client()
@@ -122,6 +124,13 @@ async function ensureAppFolders(drive: DriveClient): Promise<{
   return { transcripts: transcriptsFolderId, summaries: summariesFolderId }
 }
 
+async function ensureMemosFolder(drive: DriveClient): Promise<string> {
+  if (memosFolderId) return memosFolderId
+  if (!appFolderId) appFolderId = await findOrCreateFolder(drive, 'Cyggie')
+  memosFolderId = await findOrCreateFolder(drive, 'memos', appFolderId)
+  return memosFolderId
+}
+
 async function uploadFileToDrive(
   drive: DriveClient,
   localPath: string,
@@ -199,6 +208,65 @@ export async function uploadSummary(
   const result = await uploadFileToDrive(drive, localPath, filename, folders.summaries)
 
   return { driveId: result.fileId, url: result.webViewLink }
+}
+
+export async function exportMemoToGoogleDoc(params: {
+  companyName: string
+  memoTitle: string
+  versionNumber: number
+  contentMarkdown: string
+  logoDataUrl?: string | null
+  companyDetails?: {
+    round?: string | null
+    raiseSize?: number | null
+    postMoneyValuation?: number | null
+  }
+}): Promise<{ docId: string; webViewLink: string }> {
+  if (!isCalendarConnected()) {
+    throw new Error('Connect your Google account in Settings to export to Google Docs.')
+  }
+  if (!hasDriveScope()) {
+    throw new Error(
+      'Drive access not granted. Please reconnect your Google account in Settings to enable Google Docs export.'
+    )
+  }
+
+  const drive = getDriveClient()
+  if (!drive) throw new Error('Google Drive client not available')
+
+  await verifyDriveAccess(drive)
+  const memoFolder = await ensureMemosFolder(drive)
+
+  const header: MemoHeaderParams | undefined = params.logoDataUrl
+    ? {
+        logoDataUrl: params.logoDataUrl,
+        title: buildMemoDocTitle(params.companyName, params.companyDetails),
+        date: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      }
+    : undefined
+  const html = markdownToHtml(params.contentMarkdown, header)
+  const docName = `${params.companyName} - ${params.memoTitle} (v${params.versionNumber})`
+
+  console.log(`[Drive] Creating Google Doc "${docName}"...`)
+
+  const res = await drive.files.create({
+    requestBody: {
+      name: docName,
+      mimeType: 'application/vnd.google-apps.document',
+      parents: [memoFolder]
+    },
+    media: {
+      mimeType: 'text/html',
+      body: Readable.from(html)
+    },
+    fields: 'id, webViewLink'
+  })
+
+  const docId = res.data.id!
+  const webViewLink = res.data.webViewLink || `https://docs.google.com/document/d/${docId}/edit`
+  console.log(`[Drive] Google Doc created: ${docId}`)
+
+  return { docId, webViewLink }
 }
 
 export async function getShareableLinkById(driveFileId: string): Promise<DriveShareResponse> {

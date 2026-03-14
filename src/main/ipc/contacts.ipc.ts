@@ -94,19 +94,12 @@ export function registerContactHandlers(): void {
     (
       _event,
       contactId: string,
-      data: {
-        fullName?: string
-        firstName?: string | null
-        lastName?: string | null
-        title?: string | null
-        contactType?: string | null
-        linkedinUrl?: string | null
-        email?: string | null
-      }
+      data: Record<string, unknown>
     ) => {
       if (!contactId?.trim()) throw new Error('contactId is required')
       const userId = getCurrentUserId()
-      const updated = contactRepo.updateContact(contactId, data, userId)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const updated = contactRepo.updateContact(contactId, data as any, userId)
       logAudit(userId, 'contact', contactId, 'update', data)
       return updated
     }

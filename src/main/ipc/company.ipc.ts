@@ -321,25 +321,7 @@ export function registerCompanyHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_UPDATE,
-    (_event, companyId: string, updates: Partial<{
-      canonicalName: string
-      description: string | null
-      primaryDomain: string | null
-      websiteUrl: string | null
-      city: string | null
-      state: string | null
-      stage: string | null
-      status: string
-      entityType: CompanyEntityType
-      includeInCompaniesView: boolean
-      classificationSource: 'manual' | 'auto'
-      classificationConfidence: number | null
-      priority: CompanyPriority | null
-      postMoneyValuation: number | null
-      raiseSize: number | null
-      round: CompanyRound | null
-      pipelineStage: CompanyPipelineStage | null
-    }>) => {
+    (_event, companyId: string, updates: Record<string, unknown>) => {
       if (!companyId) throw new Error('companyId is required')
       const userId = getCurrentUserId()
       const updated = companyRepo.updateCompany(companyId, updates || {}, userId)
@@ -453,6 +435,16 @@ export function registerCompanyHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_LINK_CONTACT,
+    (_event, companyId: string, contactId: string) => {
+      if (!companyId) throw new Error('companyId is required')
+      if (!contactId) throw new Error('contactId is required')
+      companyRepo.linkContactToCompany(companyId, contactId)
+      return { success: true }
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.COMPANY_EMAILS, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
     return companyRepo.listCompanyEmails(companyId)
@@ -460,7 +452,10 @@ export function registerCompanyHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_EMAIL_INGEST, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
-    return ingestCompanyEmails(companyId)
+    return ingestCompanyEmails(companyId).then((result) => {
+      console.log('[company-email-ingest]', result)
+      return result
+    })
   })
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_FILES, async (_event, companyId: string, browsePath?: string) => {
@@ -564,5 +559,10 @@ export function registerCompanyHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.COMPANY_TIMELINE, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
     return companyRepo.listCompanyTimeline(companyId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMAIL_GET, (_event, messageId: string) => {
+    if (!messageId) throw new Error('messageId is required')
+    return companyRepo.getCompanyEmailById(messageId)
   })
 }

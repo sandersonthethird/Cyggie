@@ -14,8 +14,8 @@
     "package:win": "electron-vite build && electron-builder --win",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "npm rebuild better-sqlite3 && vitest run && npx @electron/rebuild -f -w better-sqlite3 --buildFromSource",
+    "test:watch": "npm rebuild better-sqlite3 && vitest",
     "import:granola": "node scripts/import-granola.js",
     "import:memos": "node scripts/import-memos-from-google-docs.js"
   },
@@ -23,11 +23,14 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@deepgram/sdk": "^3.9.0",
     "@tanstack/react-virtual": "^3.13.21",
+    "@types/turndown": "^5.0.6",
     "better-sqlite3": "^12.6.0",
     "electron-audio-loopback": "^1.0.6",
     "googleapis": "^144.0.0",
     "ollama": "^0.5.14",
     "pdf-parse": "^1.1.1",
+    "rehype-raw": "^7.0.0",
+    "turndown": "^7.2.2",
     "uuid": "^11.0.0"
   },
   "devDependencies": {

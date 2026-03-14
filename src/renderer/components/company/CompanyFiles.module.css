@@ -1,0 +1,48 @@
+.root {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.root_ {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 8px;
+}
+
+.loading,
+.empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.file {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+}
+
+.file:hover {
+  background: var(--color-bg-secondary);
+}
+
+.fileName {
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.fileMeta {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.type,
+.date {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}

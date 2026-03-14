@@ -1,6 +1,8 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyChatRepo from '../database/repositories/company-chat.repo'
+import { getFlaggedFileIds, toggleFileFlag } from '../database/repositories/company-file-flags.repo'
+import { queryCompany } from '../llm/company-chat'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 
@@ -57,6 +59,27 @@ export function registerCompanyChatHandlers(): void {
         role: data.role
       })
       return message
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_FILE_FLAG_GET, (_event, companyId: string) => {
+    if (!companyId) throw new Error('companyId is required')
+    return getFlaggedFileIds(companyId)
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_FILE_FLAG_TOGGLE,
+    (_event, data: { companyId: string; fileId: string; fileName: string }) => {
+      if (!data?.companyId || !data?.fileId) throw new Error('companyId and fileId are required')
+      return toggleFileFlag(data.companyId, data.fileId, data.fileName)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_CHAT_QUERY,
+    async (_event, data: { companyId: string; question: string }) => {
+      if (!data?.companyId || !data?.question?.trim()) throw new Error('companyId and question are required')
+      return queryCompany(data.companyId, data.question.trim())
     }
   )
 }

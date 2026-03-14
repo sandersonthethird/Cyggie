@@ -11,6 +11,7 @@ import type {
 } from '../../shared/types/contact'
 import type { UserProfile } from '../../shared/types/user'
 import styles from './Settings.module.css'
+import { CustomFieldsSettings } from '../components/settings/CustomFieldsSettings'
 
 function splitDriveRoots(raw: string): string[] {
   const values = raw
@@ -52,12 +53,13 @@ const CLAUDE_MODEL_OPTIONS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ]
 
-type SettingsTab = 'profile' | 'ai' | 'integrations' | 'storage'
+type SettingsTab = 'profile' | 'ai' | 'integrations' | 'storage' | 'custom-fields'
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   profile: 'Profile',
   ai: 'AI & Transcription',
   integrations: 'Integrations',
+  'custom-fields': 'Custom Fields',
   storage: 'Storage'
 }
 
@@ -108,6 +110,7 @@ export default function Settings() {
   const [userJobFunction, setUserJobFunction] = useState('')
   const [editingProfile, setEditingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
+  const [brandingLogoDataUrl, setBrandingLogoDataUrl] = useState('')
   const [staleRelationshipDays, setStaleRelationshipDays] = useState('21')
   const [stalledPipelineDays, setStalledPipelineDays] = useState('21')
   const [contactOnboardingRunning, setContactOnboardingRunning] = useState(false)
@@ -176,6 +179,7 @@ export default function Settings() {
           })
           setStaleRelationshipDays(all.dashboardStaleRelationshipDays || '21')
           setStalledPipelineDays(all.dashboardStalledPipelineDays || '21')
+          setBrandingLogoDataUrl(all.brandingLogoDataUrl || '')
         }
 
         if (currentPathResult.status === 'fulfilled') {
@@ -425,7 +429,7 @@ export default function Settings() {
   return (
     <div className={styles.container}>
       <div className={styles.tabRow}>
-        {(['profile', 'ai', 'integrations', 'storage'] as SettingsTab[]).map((tab) => (
+        {(['profile', 'ai', 'integrations', 'storage', 'custom-fields'] as SettingsTab[]).map((tab) => (
           <button
             key={tab}
             className={`${styles.tab} ${activeTab === tab ? styles.activeTab : ''}`}
@@ -582,6 +586,45 @@ export default function Settings() {
             <p className={styles.profileMeta}>Stalled pipeline after: {stalledPipelineDays} days</p>
           </>
         )}
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Branding</h3>
+        <p className={styles.hint}>
+          Upload your firm logo. It will appear in the sidebar and at the top of exported memos.
+        </p>
+        <div className={styles.brandingLogoRow}>
+          {brandingLogoDataUrl ? (
+            <img src={brandingLogoDataUrl} alt="Firm logo" className={styles.brandingLogoPreview} />
+          ) : (
+            <div className={styles.brandingLogoPlaceholder}>No logo set</div>
+          )}
+          <div className={styles.brandingLogoActions}>
+            <button
+              className={styles.connectBtn}
+              onClick={async () => {
+                const dataUrl = await window.api.invoke<string | null>(IPC_CHANNELS.APP_PICK_LOGO_FILE)
+                if (dataUrl) {
+                  setBrandingLogoDataUrl(dataUrl)
+                  await window.api.invoke(IPC_CHANNELS.SETTINGS_SET, 'brandingLogoDataUrl', dataUrl)
+                }
+              }}
+            >
+              {brandingLogoDataUrl ? 'Replace Logo' : 'Upload Logo'}
+            </button>
+            {brandingLogoDataUrl && (
+              <button
+                className={styles.linkBtn}
+                onClick={async () => {
+                  setBrandingLogoDataUrl('')
+                  await window.api.invoke(IPC_CHANNELS.SETTINGS_SET, 'brandingLogoDataUrl', '')
+                }}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className={styles.section}>
@@ -1171,6 +1214,10 @@ export default function Settings() {
           {saved ? 'Saved' : 'Save Settings'}
         </button>
       </div>
+
+      {activeTab === 'custom-fields' && (
+        <CustomFieldsSettings />
+      )}
     </div>
   )
 }

@@ -44,6 +44,7 @@ export interface CompanySummary {
   meetingCount: number
   emailCount: number
   noteCount: number
+  contactCount: number
   lastTouchpoint: string | null
   priority: CompanyPriority | null
   postMoneyValuation: number | null
@@ -52,6 +53,33 @@ export interface CompanySummary {
   pipelineStage: CompanyPipelineStage | null
   createdAt: string
   updatedAt: string
+  // Firmographic / Business Profile
+  foundingYear: number | null
+  employeeCountRange: string | null
+  hqAddress: string | null
+  linkedinCompanyUrl: string | null
+  twitterHandle: string | null
+  crunchbaseUrl: string | null
+  angellistUrl: string | null
+  sector: string | null
+  targetCustomer: string | null
+  businessModel: string | null
+  productStage: string | null
+  revenueModel: string | null
+  // Financials
+  arr: number | null
+  burnRate: number | null
+  runwayMonths: number | null
+  lastFundingDate: string | null
+  totalFundingRaised: number | null
+  leadInvestor: string | null
+  coInvestors: string | null
+  // Deal Provenance
+  relationshipOwner: string | null
+  dealSource: string | null
+  warmIntroSource: string | null
+  referralContactId: string | null
+  nextFollowupDate: string | null
 }
 
 export interface CompanyDetail extends CompanySummary {

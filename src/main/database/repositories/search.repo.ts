@@ -661,6 +661,18 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     }
   }
 
+  // Also search org_companies (the main company entity table)
+  const orgCompanyRows = db
+    .prepare('SELECT id, canonical_name, primary_domain FROM org_companies WHERE canonical_name LIKE ? LIMIT ?')
+    .all(`%${prefix}%`, limit) as { id: string; canonical_name: string; primary_domain: string | null }[]
+
+  for (const row of orgCompanyRows) {
+    const key = row.primary_domain || row.id
+    if (!companyMap.has(key)) {
+      companyMap.set(key, row.canonical_name)
+    }
+  }
+
   // Also check companies column in meetings for names not yet in cache
   const meetingCompanyRows = db
     .prepare('SELECT companies FROM meetings WHERE companies IS NOT NULL')

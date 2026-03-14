@@ -17,19 +17,15 @@
 }
 
 .titlebarControls {
-  flex: 1;
+  margin-left: auto;
   display: flex;
   align-items: center;
-  justify-content: center;
-  position: relative;
-  padding: 0 16px;
+  padding-right: 10px;
   -webkit-app-region: no-drag;
-  align-self: stretch;
 }
 
 .titlebarNewDropdown {
-  position: absolute;
-  right: 16px;
+  position: relative;
 }
 
 .titlebarNewBtn {

@@ -506,6 +506,7 @@ export default function Dashboard() {
                   selected={pipelineFilterStages}
                   onChange={setPipelineFilterStages}
                   allLabel="All Stages"
+                  fixedLabel="Stage"
                 />
                 <MultiSelectFilter
                   options={PRIORITIES}

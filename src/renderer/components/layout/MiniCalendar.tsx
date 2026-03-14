@@ -100,8 +100,11 @@ export default function MiniCalendar({
     window.api
       .invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, { dateFrom, dateTo })
       .then((meetings) => {
+        const now = new Date()
         const past = meetings.filter(
-          (m) => m.status === 'transcribed' || m.status === 'summarized'
+          (m) =>
+            (m.status === 'transcribed' || m.status === 'summarized') &&
+            parseEventDate(m.date) <= now
         )
         meetingCacheRef.current.set(key, past)
         setMonthMeetings(past)

@@ -169,7 +169,13 @@ export default function MeetingList() {
   }
 
   // Only show meetings that have been transcribed or summarized (not scheduled, recording, or error)
-  const pastMeetings = meetings.filter((m) => m.status === 'recording' || m.status === 'transcribed' || m.status === 'summarized')
+  // Also require the meeting date to be in the past so future meetings with notes don't appear here
+  const now = new Date()
+  const pastMeetings = meetings.filter(
+    (m) =>
+      (m.status === 'recording' || m.status === 'transcribed' || m.status === 'summarized') &&
+      new Date(m.date) <= now
+  )
 
   const displayItems = hasSearch
     ? searchResults.map((r) => ({

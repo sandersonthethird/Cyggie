@@ -41,6 +41,29 @@ interface ContactRow {
   last_touchpoint?: string | null
   created_at: string
   updated_at: string
+  investor_stage?: string | null
+  city?: string | null
+  state?: string | null
+  notes?: string | null
+  // New fields from migration 038
+  phone?: string | null
+  twitter_handle?: string | null
+  other_socials?: string | null
+  timezone?: string | null
+  pronouns?: string | null
+  birthday?: string | null
+  university?: string | null
+  previous_companies?: string | null
+  tags?: string | null
+  relationship_strength?: string | null
+  last_met_event?: string | null
+  warm_intro_path?: string | null
+  fund_size?: number | null
+  typical_check_size_min?: number | null
+  typical_check_size_max?: number | null
+  investment_stage_focus?: string | null
+  investment_sector_focus?: string | null
+  proud_portfolio_companies?: string | null
 }
 
 export interface ContactEmailOnboardingCandidate {
@@ -1526,6 +1549,34 @@ export function createContact(data: {
   return rowToContactSummary(row)
 }
 
+// Maps TS property names to SQL column names for updateContact
+const CONTACT_UPDATABLE_FIELDS = {
+  investorStage: 'investor_stage',
+  city: 'city',
+  state: 'state',
+  notes: 'notes',
+  phone: 'phone',
+  twitterHandle: 'twitter_handle',
+  otherSocials: 'other_socials',
+  timezone: 'timezone',
+  pronouns: 'pronouns',
+  birthday: 'birthday',
+  university: 'university',
+  previousCompanies: 'previous_companies',
+  tags: 'tags',
+  relationshipStrength: 'relationship_strength',
+  lastMetEvent: 'last_met_event',
+  warmIntroPath: 'warm_intro_path',
+  fundSize: 'fund_size',
+  typicalCheckSizeMin: 'typical_check_size_min',
+  typicalCheckSizeMax: 'typical_check_size_max',
+  investmentStageFocus: 'investment_stage_focus',
+  investmentSectorFocus: 'investment_sector_focus',
+  proudPortfolioCompanies: 'proud_portfolio_companies',
+} as const
+
+type ContactUpdatableKey = keyof typeof CONTACT_UPDATABLE_FIELDS
+
 export function updateContact(
   contactId: string,
   data: {
@@ -1536,7 +1587,7 @@ export function updateContact(
     contactType?: string | null
     linkedinUrl?: string | null
     email?: string | null
-  },
+  } & Partial<Record<ContactUpdatableKey, unknown>>,
   userId: string | null = null
 ): ContactDetail {
   const db = getDatabase()
@@ -1585,6 +1636,14 @@ export function updateContact(
   if (data.linkedinUrl !== undefined) {
     sets.push('linkedin_url = ?')
     params.push(data.linkedinUrl?.trim() || null)
+  }
+
+  // Handle all type-safe updatable fields via the const map
+  for (const [tsProp, sqlCol] of Object.entries(CONTACT_UPDATABLE_FIELDS) as [ContactUpdatableKey, string][]) {
+    if (tsProp in data) {
+      sets.push(`${sqlCol} = ?`)
+      params.push((data as Record<string, unknown>)[tsProp] ?? null)
+    }
   }
 
   let emailToAttach: string | null = null
@@ -1887,6 +1946,28 @@ export function getContact(contactId: string): ContactDetail | null {
         c.linkedin_url,
         c.crm_contact_id,
         c.crm_provider,
+        c.investor_stage,
+        c.city,
+        c.state,
+        c.notes,
+        c.phone,
+        c.twitter_handle,
+        c.other_socials,
+        c.timezone,
+        c.pronouns,
+        c.birthday,
+        c.university,
+        c.previous_companies,
+        c.tags,
+        c.relationship_strength,
+        c.last_met_event,
+        c.warm_intro_path,
+        c.fund_size,
+        c.typical_check_size_min,
+        c.typical_check_size_max,
+        c.investment_stage_focus,
+        c.investment_sector_focus,
+        c.proud_portfolio_companies,
         c.created_at,
         c.updated_at,
         oc.canonical_name AS primary_company_name,
@@ -1974,7 +2055,29 @@ export function getContact(contactId: string): ContactDetail | null {
       }
       : null,
     emails: contactEmails,
-    meetings
+    meetings,
+    investorStage: row.investor_stage ?? null,
+    city: row.city ?? null,
+    state: row.state ?? null,
+    notes: row.notes ?? null,
+    phone: row.phone ?? null,
+    twitterHandle: row.twitter_handle ?? null,
+    otherSocials: row.other_socials ?? null,
+    timezone: row.timezone ?? null,
+    pronouns: row.pronouns ?? null,
+    birthday: row.birthday ?? null,
+    university: row.university ?? null,
+    previousCompanies: row.previous_companies ?? null,
+    tags: row.tags ?? null,
+    relationshipStrength: row.relationship_strength ?? null,
+    lastMetEvent: row.last_met_event ?? null,
+    warmIntroPath: row.warm_intro_path ?? null,
+    fundSize: row.fund_size ?? null,
+    typicalCheckSizeMin: row.typical_check_size_min ?? null,
+    typicalCheckSizeMax: row.typical_check_size_max ?? null,
+    investmentStageFocus: row.investment_stage_focus ?? null,
+    investmentSectorFocus: row.investment_sector_focus ?? null,
+    proudPortfolioCompanies: row.proud_portfolio_companies ?? null
   }
 }
 

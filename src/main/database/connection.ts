@@ -34,6 +34,12 @@ import { runTasksMigration } from './migrations/031-tasks'
 import { runUserProfileFieldsMigration } from './migrations/032-user-profile-fields'
 import { runUserNamePartsMigration } from './migrations/033-user-name-parts'
 import { runTemplateInstructionsMigration } from './migrations/034-template-instructions'
+import { runCompanyFlaggedFilesMigration } from './migrations/035-company-flagged-files'
+import { runContactExtraFieldsMigration } from './migrations/036-contact-extra-fields'
+import { runCompanyExtraFieldsMigration } from './migrations/037-company-extra-fields'
+import { runContactExtraFieldsV2Migration } from './migrations/038-contact-extra-fields-v2'
+import { runCustomFieldDefinitionsMigration } from './migrations/039-custom-field-definitions'
+import { runCustomFieldValuesMigration } from './migrations/040-custom-field-values'
 
 let db: Database.Database | null = null
 
@@ -76,6 +82,12 @@ export function getDatabase(): Database.Database {
     runUserProfileFieldsMigration(db)
     runUserNamePartsMigration(db)
     runTemplateInstructionsMigration(db)
+    runCompanyFlaggedFilesMigration(db)
+    runContactExtraFieldsMigration(db)
+    runCompanyExtraFieldsMigration(db)
+    runContactExtraFieldsV2Migration(db)
+    runCustomFieldDefinitionsMigration(db)
+    runCustomFieldValuesMigration(db)
   }
   return db
 }

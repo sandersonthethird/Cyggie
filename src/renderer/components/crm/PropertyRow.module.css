@@ -1,0 +1,123 @@
+.row {
+  display: grid;
+  grid-template-columns: 40% 60%;
+  align-items: start;
+  min-height: 28px;
+  padding: 2px 0;
+  border-radius: var(--radius-sm, 4px);
+  cursor: default;
+}
+
+.row:not(.editing):hover {
+  background: var(--color-bg-secondary);
+  cursor: pointer;
+}
+
+.editing {
+  cursor: default;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding: 5px 6px 5px 0;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.value {
+  font-size: 13px;
+  color: var(--color-text);
+  padding: 4px 6px;
+  line-height: 1.4;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.empty {
+  color: var(--color-text-tertiary);
+}
+
+.input {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.textarea {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  outline: none;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.select {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  outline: none;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.link {
+  color: var(--color-primary);
+  text-decoration: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  display: block;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.saving {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  align-self: center;
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: 11px;
+  font-weight: 700;
+  align-self: center;
+  cursor: help;
+}

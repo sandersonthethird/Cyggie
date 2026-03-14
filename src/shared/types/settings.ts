@@ -15,6 +15,7 @@ export interface AppSettings {
   companyDriveRootFolder: string
   companyLocalFilesRoot: string
   theme: 'system' | 'light' | 'dark'
+  brandingLogoDataUrl: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -31,5 +32,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showLiveTranscript: true,
   companyDriveRootFolder: '',
   companyLocalFilesRoot: '',
-  theme: 'system'
+  theme: 'system',
+  brandingLogoDataUrl: ''
 }

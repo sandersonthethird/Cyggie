@@ -5,6 +5,8 @@ import * as memoRepo from '../database/repositories/investment-memo.repo'
 import * as artifactRepo from '../database/repositories/artifact.repo'
 import * as notesRepo from '../database/repositories/company-notes.repo'
 import { exportMemoMarkdownToPdf } from '../services/memo-export.service'
+import { exportMemoToGoogleDoc } from '../drive/google-drive'
+import { getSetting } from '../database/repositories/settings.repo'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
@@ -79,11 +81,18 @@ export function registerInvestmentMemoHandlers(): void {
       throw new Error('Company not found')
     }
 
+    const logoDataUrl = getSetting('brandingLogoDataUrl') || null
     const exported = await exportMemoMarkdownToPdf({
       companyName: company.canonicalName,
       memoTitle: memo.title,
       versionNumber: latest.versionNumber,
-      contentMarkdown: latest.contentMarkdown
+      contentMarkdown: latest.contentMarkdown,
+      logoDataUrl,
+      companyDetails: {
+        round: company.round,
+        raiseSize: company.raiseSize,
+        postMoneyValuation: company.postMoneyValuation
+      }
     })
 
     const artifact = artifactRepo.createArtifact({
@@ -110,6 +119,58 @@ export function registerInvestmentMemoHandlers(): void {
       success: true,
       path: exported.absolutePath
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_EXPORT_GOOGLE_DOC, async (_event, memoId: string) => {
+    if (!memoId) throw new Error('memoId is required')
+    const memo = memoRepo.getMemo(memoId)
+    if (!memo) throw new Error('Memo not found')
+    const latest = memoRepo.getMemoLatestVersion(memo.id)
+    if (!latest) throw new Error('Memo has no versions to export')
+    const company = companyRepo.getCompany(memo.companyId)
+    if (!company) throw new Error('Company not found')
+
+    const logoDataUrl = getSetting('brandingLogoDataUrl') || null
+    const result = await exportMemoToGoogleDoc({
+      companyName: company.canonicalName,
+      memoTitle: memo.title,
+      versionNumber: latest.versionNumber,
+      contentMarkdown: latest.contentMarkdown,
+      logoDataUrl,
+      companyDetails: {
+        round: company.round,
+        raiseSize: company.raiseSize,
+        postMoneyValuation: company.postMoneyValuation
+      }
+    })
+
+    const userId = getCurrentUserId()
+    const artifact = artifactRepo.createArtifact({
+      companyId: memo.companyId,
+      themeId: memo.themeId,
+      artifactType: 'investment_memo_gdoc',
+      title: `${memo.title} (v${latest.versionNumber})`,
+      mimeType: 'application/vnd.google-apps.document',
+      storageUri: result.webViewLink,
+      sourceProvider: 'google_drive',
+      sourceExternalId: result.docId,
+      contentText: latest.contentMarkdown,
+      capturedAt: new Date().toISOString()
+    })
+
+    memoRepo.recordMemoExport({
+      memoVersionId: latest.id,
+      artifactId: artifact.id,
+      exportFormat: 'google_doc',
+      storageUri: result.webViewLink
+    })
+
+    logAudit(userId, 'investment_memo', memo.id, 'export', {
+      format: 'google_doc',
+      docId: result.docId
+    })
+
+    return { success: true, url: result.webViewLink }
   })
 
   ipcMain.handle(

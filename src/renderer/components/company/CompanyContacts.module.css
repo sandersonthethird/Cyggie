@@ -1,0 +1,82 @@
+.root {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.searchRow {
+  margin-bottom: 16px;
+  max-width: 280px;
+}
+
+.loading,
+.empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 20px 0;
+}
+
+.contact {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+}
+
+.contact:hover {
+  background: var(--color-bg-secondary);
+}
+
+.info {
+  flex: 1;
+  min-width: 0;
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.primary {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 8px;
+  padding: 1px 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.title {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-top: 1px;
+}
+
+.email {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1px 6px;
+}

@@ -36,6 +36,7 @@ interface CompanyRow {
   meeting_count: number
   email_count: number
   note_count: number
+  contact_count: number
   priority: string | null
   post_money_valuation: number | null
   raise_size: number | null
@@ -44,6 +45,31 @@ interface CompanyRow {
   last_touchpoint: string | null
   created_at: string
   updated_at: string
+  // New fields from migration 037
+  founding_year: number | null
+  employee_count_range: string | null
+  hq_address: string | null
+  linkedin_company_url: string | null
+  twitter_handle: string | null
+  crunchbase_url: string | null
+  angellist_url: string | null
+  sector: string | null
+  target_customer: string | null
+  business_model: string | null
+  product_stage: string | null
+  revenue_model: string | null
+  arr: number | null
+  burn_rate: number | null
+  runway_months: number | null
+  last_funding_date: string | null
+  total_funding_raised: number | null
+  lead_investor: string | null
+  co_investors: string | null
+  relationship_owner: string | null
+  deal_source: string | null
+  warm_intro_source: string | null
+  referral_contact_id: string | null
+  next_followup_date: string | null
 }
 
 export interface CompanyMergeResult {
@@ -170,6 +196,38 @@ function parseEmailParticipants(value: string | null): CompanyEmailRef['particip
   }
 }
 
+interface EmailMessageRow {
+  id: string
+  subject: string | null
+  from_email: string
+  from_name: string | null
+  received_at: string | null
+  sent_at: string | null
+  snippet: string | null
+  body_text: string | null
+  is_unread: number
+  thread_id: string | null
+  thread_message_count: number
+  participants_json: string
+}
+
+function mapEmailRow(row: EmailMessageRow): CompanyEmailRef {
+  return {
+    id: row.id,
+    subject: row.subject,
+    fromEmail: row.from_email,
+    fromName: row.from_name,
+    receivedAt: row.received_at,
+    sentAt: row.sent_at,
+    snippet: row.snippet,
+    bodyText: row.body_text,
+    isUnread: row.is_unread === 1,
+    threadId: row.thread_id,
+    threadMessageCount: row.thread_message_count || 1,
+    participants: parseEmailParticipants(row.participants_json)
+  }
+}
+
 function rowToCompanySummary(row: CompanyRow): CompanySummary {
   return {
     id: row.id,
@@ -191,6 +249,7 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     meetingCount: row.meeting_count || 0,
     emailCount: row.email_count || 0,
     noteCount: row.note_count || 0,
+    contactCount: row.contact_count || 0,
     priority: (row.priority as CompanyPriority) || null,
     postMoneyValuation: row.post_money_valuation,
     raiseSize: row.raise_size,
@@ -198,7 +257,32 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     pipelineStage: (row.pipeline_stage as CompanyPipelineStage) || null,
     lastTouchpoint: row.last_touchpoint,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    // New fields
+    foundingYear: row.founding_year ?? null,
+    employeeCountRange: row.employee_count_range ?? null,
+    hqAddress: row.hq_address ?? null,
+    linkedinCompanyUrl: row.linkedin_company_url ?? null,
+    twitterHandle: row.twitter_handle ?? null,
+    crunchbaseUrl: row.crunchbase_url ?? null,
+    angellistUrl: row.angellist_url ?? null,
+    sector: row.sector ?? null,
+    targetCustomer: row.target_customer ?? null,
+    businessModel: row.business_model ?? null,
+    productStage: row.product_stage ?? null,
+    revenueModel: row.revenue_model ?? null,
+    arr: row.arr ?? null,
+    burnRate: row.burn_rate ?? null,
+    runwayMonths: row.runway_months ?? null,
+    lastFundingDate: row.last_funding_date ?? null,
+    totalFundingRaised: row.total_funding_raised ?? null,
+    leadInvestor: row.lead_investor ?? null,
+    coInvestors: row.co_investors ?? null,
+    relationshipOwner: row.relationship_owner ?? null,
+    dealSource: row.deal_source ?? null,
+    warmIntroSource: row.warm_intro_source ?? null,
+    referralContactId: row.referral_contact_id ?? null,
+    nextFollowupDate: row.next_followup_date ?? null
   }
 }
 
@@ -229,6 +313,7 @@ function baseCompanySelect(whereClause = ''): string {
       COALESCE(mc.meeting_count, 0) AS meeting_count,
       COALESCE(ec.email_count, 0) AS email_count,
       COALESCE(nc.note_count, 0) AS note_count,
+      COALESCE(cc.contact_count, 0) AS contact_count,
       COALESCE(
         CASE
           WHEN mc.last_meeting_at IS NULL THEN ec.last_email_at
@@ -239,7 +324,31 @@ function baseCompanySelect(whereClause = ''): string {
         c.updated_at
       ) AS last_touchpoint,
       c.created_at,
-      c.updated_at
+      c.updated_at,
+      c.founding_year,
+      c.employee_count_range,
+      c.hq_address,
+      c.linkedin_company_url,
+      c.twitter_handle,
+      c.crunchbase_url,
+      c.angellist_url,
+      c.sector,
+      c.target_customer,
+      c.business_model,
+      c.product_stage,
+      c.revenue_model,
+      c.arr,
+      c.burn_rate,
+      c.runway_months,
+      c.last_funding_date,
+      c.total_funding_raised,
+      c.lead_investor,
+      c.co_investors,
+      c.relationship_owner,
+      c.deal_source,
+      c.warm_intro_source,
+      c.referral_contact_id,
+      c.next_followup_date
     FROM org_companies c
     LEFT JOIN (
       SELECT
@@ -264,6 +373,12 @@ function baseCompanySelect(whereClause = ''): string {
       FROM company_notes
       GROUP BY company_id
     ) nc ON nc.company_id = c.id
+    LEFT JOIN (
+      SELECT primary_company_id, COUNT(*) AS contact_count
+      FROM contacts
+      WHERE primary_company_id IS NOT NULL
+      GROUP BY primary_company_id
+    ) cc ON cc.primary_company_id = c.id
     ${whereClause}
   `
 }
@@ -539,28 +654,57 @@ export function createCompany(data: {
   return detail
 }
 
+// Maps TS property names to SQL column names for updateCompany
+const COMPANY_UPDATABLE_FIELDS = {
+  description: 'description',
+  websiteUrl: 'website_url',
+  city: 'city',
+  state: 'state',
+  stage: 'stage',
+  status: 'status',
+  foundingYear: 'founding_year',
+  employeeCountRange: 'employee_count_range',
+  hqAddress: 'hq_address',
+  linkedinCompanyUrl: 'linkedin_company_url',
+  twitterHandle: 'twitter_handle',
+  crunchbaseUrl: 'crunchbase_url',
+  angellistUrl: 'angellist_url',
+  sector: 'sector',
+  targetCustomer: 'target_customer',
+  businessModel: 'business_model',
+  productStage: 'product_stage',
+  revenueModel: 'revenue_model',
+  arr: 'arr',
+  burnRate: 'burn_rate',
+  runwayMonths: 'runway_months',
+  lastFundingDate: 'last_funding_date',
+  totalFundingRaised: 'total_funding_raised',
+  leadInvestor: 'lead_investor',
+  coInvestors: 'co_investors',
+  relationshipOwner: 'relationship_owner',
+  dealSource: 'deal_source',
+  warmIntroSource: 'warm_intro_source',
+  referralContactId: 'referral_contact_id',
+  nextFollowupDate: 'next_followup_date',
+  priority: 'priority',
+  postMoneyValuation: 'post_money_valuation',
+  raiseSize: 'raise_size',
+  round: 'round',
+  pipelineStage: 'pipeline_stage',
+} as const
+
+type CompanyUpdatableKey = keyof typeof COMPANY_UPDATABLE_FIELDS
+
 export function updateCompany(
   companyId: string,
   data: Partial<{
     canonicalName: string
-    description: string | null
     primaryDomain: string | null
-    websiteUrl: string | null
-    city: string | null
-    state: string | null
-    stage: string | null
-    status: string
     entityType: CompanyEntityType
     includeInCompaniesView: boolean
     classificationSource: 'manual' | 'auto'
     classificationConfidence: number | null
-    priority: CompanyPriority | null
-    postMoneyValuation: number | null
-    raiseSize: number | null
-    round: CompanyRound | null
-    pipelineStage: CompanyPipelineStage | null
-  }>
-,
+  } & Record<CompanyUpdatableKey, unknown>>,
   userId: string | null = null
 ): CompanyDetail | null {
   const db = getDatabase()
@@ -576,34 +720,10 @@ export function updateCompany(
     sets.push('normalized_name = ?')
     params.push(normalizeCompanyName(data.canonicalName))
   }
-  if (data.description !== undefined) {
-    sets.push('description = ?')
-    params.push(data.description)
-  }
   if (data.primaryDomain !== undefined) {
     normalizedPrimaryDomain = normalizeDomain(data.primaryDomain)
     sets.push('primary_domain = ?')
     params.push(normalizedPrimaryDomain)
-  }
-  if (data.websiteUrl !== undefined) {
-    sets.push('website_url = ?')
-    params.push(data.websiteUrl)
-  }
-  if (data.city !== undefined) {
-    sets.push('city = ?')
-    params.push(data.city)
-  }
-  if (data.state !== undefined) {
-    sets.push('state = ?')
-    params.push(data.state)
-  }
-  if (data.stage !== undefined) {
-    sets.push('stage = ?')
-    params.push(data.stage)
-  }
-  if (data.status !== undefined) {
-    sets.push('status = ?')
-    params.push(data.status)
   }
   if (data.entityType !== undefined) {
     const normalizedEntityType = normalizeEntityType(data.entityType)
@@ -629,25 +749,13 @@ export function updateCompany(
     sets.push('classification_confidence = ?')
     params.push(data.classificationConfidence)
   }
-  if (data.priority !== undefined) {
-    sets.push('priority = ?')
-    params.push(data.priority)
-  }
-  if (data.postMoneyValuation !== undefined) {
-    sets.push('post_money_valuation = ?')
-    params.push(data.postMoneyValuation)
-  }
-  if (data.raiseSize !== undefined) {
-    sets.push('raise_size = ?')
-    params.push(data.raiseSize)
-  }
-  if (data.round !== undefined) {
-    sets.push('round = ?')
-    params.push(data.round)
-  }
-  if (data.pipelineStage !== undefined) {
-    sets.push('pipeline_stage = ?')
-    params.push(data.pipelineStage)
+
+  // Handle all type-safe updatable fields via the const map
+  for (const [tsProp, sqlCol] of Object.entries(COMPANY_UPDATABLE_FIELDS) as [CompanyUpdatableKey, string][]) {
+    if (tsProp in data) {
+      sets.push(`${sqlCol} = ?`)
+      params.push((data as Record<string, unknown>)[tsProp] ?? null)
+    }
   }
 
   if (sets.length > 0) {
@@ -1276,6 +1384,15 @@ export function setCompanyPrimaryContact(companyId: string, contactId: string): 
   })()
 }
 
+export function linkContactToCompany(companyId: string, contactId: string): void {
+  const db = getDatabase()
+  db.prepare(`
+    INSERT INTO org_company_contacts (company_id, contact_id, is_primary, created_at)
+    VALUES (?, ?, 0, datetime('now'))
+    ON CONFLICT(company_id, contact_id) DO NOTHING
+  `).run(companyId, contactId)
+}
+
 export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
   const db = getDatabase()
   const rows = db
@@ -1405,35 +1522,52 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
       ORDER BY datetime(ranked.sort_at) DESC, ranked.id DESC
       LIMIT 200
     `)
-    .all(companyId, companyId, companyId) as Array<{
-    id: string
-    subject: string | null
-    from_email: string
-    from_name: string | null
-    received_at: string | null
-    sent_at: string | null
-    snippet: string | null
-    body_text: string | null
-    is_unread: number
-    thread_id: string | null
-    thread_message_count: number
-    participants_json: string
-  }>
+    .all(companyId, companyId, companyId) as EmailMessageRow[]
 
-  return rows.map((row) => ({
-    id: row.id,
-    subject: row.subject,
-    fromEmail: row.from_email,
-    fromName: row.from_name,
-    receivedAt: row.received_at,
-    sentAt: row.sent_at,
-    snippet: row.snippet,
-    bodyText: row.body_text,
-    isUnread: row.is_unread === 1,
-    threadId: row.thread_id,
-    threadMessageCount: row.thread_message_count || 1,
-    participants: parseEmailParticipants(row.participants_json)
-  }))
+  return rows.map(mapEmailRow)
+}
+
+export function getCompanyEmailById(messageId: string): CompanyEmailRef | null {
+  const db = getDatabase()
+  const row = db
+    .prepare(`
+      SELECT
+        em.id,
+        em.subject,
+        em.from_email,
+        em.from_name,
+        em.received_at,
+        em.sent_at,
+        em.snippet,
+        em.body_text,
+        em.is_unread,
+        em.thread_id,
+        1 AS thread_message_count,
+        COALESCE((
+          SELECT json_group_array(
+            json_object(
+              'role', p2.role,
+              'email', LOWER(p2.email),
+              'displayName', COALESCE(NULLIF(TRIM(p2.display_name), ''), NULLIF(TRIM(c2.full_name), '')),
+              'contactId', p2.contact_id
+            )
+          )
+          FROM (
+            SELECT p.role, p.email, p.display_name, p.contact_id
+            FROM email_message_participants p
+            WHERE p.message_id = em.id
+            ORDER BY
+              CASE p.role WHEN 'from' THEN 0 WHEN 'to' THEN 1 WHEN 'cc' THEN 2
+                          WHEN 'bcc' THEN 3 WHEN 'reply_to' THEN 4 ELSE 5 END,
+              p.email
+          ) p2
+          LEFT JOIN contacts c2 ON c2.id = p2.contact_id
+        ), '[]') AS participants_json
+      FROM email_messages em
+      WHERE em.id = ?
+    `)
+    .get(messageId) as EmailMessageRow | undefined
+  return row ? mapEmailRow(row) : null
 }
 
 export function listCompanyFiles(companyId: string): CompanyFileRef[] {

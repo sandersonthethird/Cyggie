@@ -1,0 +1,50 @@
+.root {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.meeting {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+}
+
+.meeting:hover {
+  background: var(--color-bg-secondary);
+}
+
+.title {
+  font-size: 13px;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.date {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  text-transform: capitalize;
+}

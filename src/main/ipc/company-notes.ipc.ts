@@ -10,6 +10,11 @@ export function registerCompanyNotesHandlers(): void {
     return notesRepo.listCompanyNotes(companyId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.COMPANY_NOTES_GET, (_event, noteId: string) => {
+    if (!noteId) throw new Error('noteId is required')
+    return notesRepo.getCompanyNote(noteId)
+  })
+
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_NOTES_CREATE,
     (_event, data: { companyId: string; title?: string | null; content: string; themeId?: string | null }) => {

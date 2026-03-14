@@ -9,6 +9,7 @@ import * as meetingRepo from '../database/repositories/meeting.repo'
 import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker } from '../database/repositories/search.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
 import type { LlmProvider } from '../../shared/types/settings'
+import type { ChatAttachment } from '../../shared/types/chat'
 
 let chatAbortController: AbortController | null = null
 
@@ -52,6 +53,15 @@ function sendClear(): void {
   }
 }
 
+function injectTextAttachments(question: string, attachments: ChatAttachment[]): string {
+  const textAtts = attachments.filter((a) => a.type === 'text')
+  if (textAtts.length === 0) return question
+  const sections = textAtts
+    .map((a) => `### ${a.name}\n\`\`\`\n${a.data.substring(0, 50000)}\n\`\`\``)
+    .join('\n\n')
+  return `${question}\n\n## Attached Files\n${sections}`
+}
+
 const MEETING_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about a meeting transcript.
 You have access to the full transcript, any user notes, and the AI-generated summary (if available).
 Answer questions accurately based on what was discussed in the meeting.
@@ -72,7 +82,7 @@ Always cite which meeting the information comes from using the format: "In [Meet
 If the information isn't in any of the provided meetings, say so.
 Be concise but thorough. Use bullet points when listing multiple items.`
 
-export async function queryMeeting(meetingId: string, question: string): Promise<string> {
+export async function queryMeeting(meetingId: string, question: string, attachments: ChatAttachment[] = []): Promise<string> {
   const meeting = meetingRepo.getMeeting(meetingId)
   if (!meeting) throw new Error('Meeting not found')
 
@@ -122,22 +132,25 @@ export async function queryMeeting(meetingId: string, question: string): Promise
     throw new Error('No transcript available for this meeting')
   }
 
+  const enhancedQuestion = injectTextAttachments(question, attachments)
+  const imageAtts = attachments.filter((a) => a.type === 'image')
+
   const userPrompt = `Here is the meeting information:
 
 ${context}
 
 ---
 
-User question: ${question}`
+User question: ${enhancedQuestion}`
 
   const provider = getProvider()
   chatAbortController = new AbortController()
-  const result = await provider.generateSummary(MEETING_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
+  const result = await provider.generateSummary(MEETING_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
   chatAbortController = null
   return result
 }
 
-export async function queryGlobal(question: string): Promise<string> {
+export async function queryGlobal(question: string, attachments: ChatAttachment[] = []): Promise<string> {
   const keywords = extractKeywords(question)
   const seenIds = new Set<string>()
   const searchResults: { meetingId: string; title: string; date: string; snippet: string; rank: number }[] = []
@@ -260,24 +273,27 @@ export async function queryGlobal(question: string): Promise<string> {
 
   const context = contextParts.join('\n')
 
+  const enhancedQuestion = injectTextAttachments(question, attachments)
+  const imageAtts = attachments.filter((a) => a.type === 'image')
+
   const userPrompt = `Here are relevant excerpts from the user's meetings:
 
 ${context}
 
 ---
 
-User question: ${question}
+User question: ${enhancedQuestion}
 
 Please answer based on the meeting excerpts above. Cite the meeting title and date when referencing specific information.`
 
   const provider = getProvider()
   chatAbortController = new AbortController()
-  const result = await provider.generateSummary(GLOBAL_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
+  const result = await provider.generateSummary(GLOBAL_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
   chatAbortController = null
   return result
 }
 
-export async function querySearchResults(meetingIds: string[], question: string): Promise<string> {
+export async function querySearchResults(meetingIds: string[], question: string, attachments: ChatAttachment[] = []): Promise<string> {
   if (meetingIds.length === 0) {
     return 'No meetings in the search results to query.'
   }
@@ -344,19 +360,22 @@ export async function querySearchResults(meetingIds: string[], question: string)
 
   const context = contextParts.join('\n')
 
+  const enhancedQuestion = injectTextAttachments(question, attachments)
+  const imageAtts = attachments.filter((a) => a.type === 'image')
+
   const userPrompt = `Here are the meetings from the user's search results:
 
 ${context}
 
 ---
 
-User question: ${question}
+User question: ${enhancedQuestion}
 
 Please answer based on the meeting content above. Cite the meeting title and date when referencing specific information.`
 
   const provider = getProvider()
   chatAbortController = new AbortController()
-  const result = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal)
+  const result = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
   chatAbortController = null
   return result
 }

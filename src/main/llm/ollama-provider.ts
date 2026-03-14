@@ -1,5 +1,6 @@
 import { Ollama } from 'ollama'
 import type { LLMProvider } from './provider'
+import type { ChatAttachment } from '../../shared/types/chat'
 
 export class OllamaProvider implements LLMProvider {
   name = 'Ollama (Local)'
@@ -25,7 +26,8 @@ export class OllamaProvider implements LLMProvider {
     systemPrompt: string,
     userPrompt: string,
     onProgress?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    _attachments?: ChatAttachment[]
   ): Promise<string> {
     if (onProgress) {
       const response = await this.client.chat({

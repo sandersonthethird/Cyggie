@@ -1,0 +1,73 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.entry {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.networkInput {
+  width: 90px;
+  flex-shrink: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  color: var(--color-text);
+  background: var(--color-card-bg);
+  outline: none;
+}
+
+.networkInput:focus {
+  border-color: var(--color-primary);
+}
+
+.urlInput {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  color: var(--color-text);
+  background: var(--color-card-bg);
+  outline: none;
+  min-width: 0;
+}
+
+.urlInput:focus {
+  border-color: var(--color-primary);
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  flex-shrink: 0;
+}
+
+.removeBtn:hover {
+  color: var(--color-danger);
+}
+
+.addBtn {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  padding: 2px 0;
+}
+
+.addBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

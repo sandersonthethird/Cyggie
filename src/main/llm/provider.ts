@@ -1,3 +1,5 @@
+import type { ChatAttachment } from '../../shared/types/chat'
+
 export interface LLMProvider {
   name: string
   isAvailable(): Promise<boolean>
@@ -5,6 +7,7 @@ export interface LLMProvider {
     systemPrompt: string,
     userPrompt: string,
     onProgress?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    attachments?: ChatAttachment[]
   ): Promise<string>
 }

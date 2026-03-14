@@ -1,0 +1,142 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  width: calc(100% - 48px);
+  max-width: 680px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.15s ease;
+  overflow: hidden;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 20px 16px;
+  flex-shrink: 0;
+}
+
+.subject {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.closeBtn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.closeBtn:hover {
+  color: var(--color-text);
+  background: var(--color-bg-secondary);
+}
+
+.meta {
+  padding: 0 20px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.metaRow {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.metaLabel {
+  color: var(--color-text-tertiary);
+  min-width: 36px;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.metaValue {
+  color: var(--color-text-secondary);
+  flex: 1;
+  word-break: break-word;
+}
+
+.participantLink {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.participantLink:hover {
+  text-decoration: underline;
+}
+
+.participantEmail {
+  color: var(--color-text-tertiary);
+}
+
+.divider {
+  height: 1px;
+  background: var(--color-bg-tertiary);
+  flex-shrink: 0;
+  margin: 0 20px;
+}
+
+.body {
+  padding: 16px 20px 20px;
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.noBody {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.stateMsg {
+  padding: 20px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}

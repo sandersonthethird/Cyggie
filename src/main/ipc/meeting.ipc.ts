@@ -1,4 +1,6 @@
 import { ipcMain, shell, dialog } from 'electron'
+import { readFileSync } from 'fs'
+import { extname } from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import * as settingsRepo from '../database/repositories/settings.repo'
@@ -350,6 +352,24 @@ export function registerMeetingHandlers(): void {
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
+  })
+
+  ipcMain.handle(IPC_CHANNELS.APP_PICK_LOGO_FILE, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Choose logo image',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg', 'gif', 'webp'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const filePath = result.filePaths[0]
+    const ext = extname(filePath).slice(1).toLowerCase()
+    const mimeMap: Record<string, string> = {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+      svg: 'image/svg+xml', gif: 'image/gif', webp: 'image/webp'
+    }
+    const mime = mimeMap[ext] || 'image/png'
+    const buf = readFileSync(filePath)
+    return `data:${mime};base64,${buf.toString('base64')}`
   })
 
   ipcMain.handle(IPC_CHANNELS.APP_CHANGE_STORAGE_DIR, async () => {

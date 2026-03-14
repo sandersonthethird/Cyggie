@@ -56,6 +56,7 @@ export const IPC_CHANNELS = {
   COMPANY_TIMELINE: 'company:timeline',
   COMPANY_MEETING_SUMMARIES: 'company:meeting-summaries',
   COMPANY_SET_PRIMARY_CONTACT: 'company:set-primary-contact',
+  COMPANY_LINK_CONTACT: 'company:link-contact',
 
   // Contacts
   CONTACT_LIST: 'contact:list',
@@ -89,15 +90,24 @@ export const IPC_CHANNELS = {
 
   // Company notes
   COMPANY_NOTES_LIST: 'company-notes:list',
+  COMPANY_NOTES_GET: 'company-notes:get',
   COMPANY_NOTES_CREATE: 'company-notes:create',
   COMPANY_NOTES_UPDATE: 'company-notes:update',
   COMPANY_NOTES_DELETE: 'company-notes:delete',
+
+  // Email detail
+  EMAIL_GET: 'email:get',
 
   // Company chat
   COMPANY_CHAT_LIST: 'company-chat:list',
   COMPANY_CHAT_CREATE: 'company-chat:create',
   COMPANY_CHAT_MESSAGES: 'company-chat:messages',
   COMPANY_CHAT_APPEND: 'company-chat:append',
+  COMPANY_CHAT_QUERY: 'company:chat-query',
+
+  // Company file flags (for chat context)
+  COMPANY_FILE_FLAG_GET: 'company:file-flag-get',
+  COMPANY_FILE_FLAG_TOGGLE: 'company:file-flag-toggle',
 
   // Investment memo
   INVESTMENT_MEMO_GET_OR_CREATE: 'investment-memo:get-or-create',
@@ -105,6 +115,7 @@ export const IPC_CHANNELS = {
   INVESTMENT_MEMO_SAVE_VERSION: 'investment-memo:save-version',
   INVESTMENT_MEMO_SET_STATUS: 'investment-memo:set-status',
   INVESTMENT_MEMO_EXPORT_PDF: 'investment-memo:export-pdf',
+  INVESTMENT_MEMO_EXPORT_GOOGLE_DOC: 'investment-memo:export-google-doc',
   INVESTMENT_MEMO_GENERATE: 'investment-memo:generate',
   INVESTMENT_MEMO_GENERATE_PROGRESS: 'investment-memo:generate-progress',
 
@@ -180,6 +191,17 @@ export const IPC_CHANNELS = {
   TASK_BULK_UPDATE_STATUS: 'task:bulk-update-status',
   TASK_BULK_CREATE: 'task:bulk-create',
 
+  // Custom Fields
+  CUSTOM_FIELD_LIST_DEFINITIONS: 'custom-field:list-definitions',
+  CUSTOM_FIELD_CREATE_DEFINITION: 'custom-field:create-definition',
+  CUSTOM_FIELD_UPDATE_DEFINITION: 'custom-field:update-definition',
+  CUSTOM_FIELD_DELETE_DEFINITION: 'custom-field:delete-definition',
+  CUSTOM_FIELD_REORDER_DEFINITIONS: 'custom-field:reorder-definitions',
+  CUSTOM_FIELD_GET_VALUES: 'custom-field:get-values',
+  CUSTOM_FIELD_SET_VALUE: 'custom-field:set-value',
+  CUSTOM_FIELD_DELETE_VALUE: 'custom-field:delete-value',
+  CUSTOM_FIELD_COUNT_VALUES: 'custom-field:count-values',
+
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',
   APP_OPEN_STORAGE_DIR: 'app:open-storage-dir',
@@ -187,7 +209,8 @@ export const IPC_CHANNELS = {
   APP_GET_STORAGE_PATH: 'app:get-storage-path',
   APP_CHANGE_STORAGE_DIR: 'app:change-storage-dir',
   APP_OPEN_PATH: 'app:open-path',
-  APP_PICK_FOLDER: 'app:pick-folder'
+  APP_PICK_FOLDER: 'app:pick-folder',
+  APP_PICK_LOGO_FILE: 'app:pick-logo-file'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

@@ -1,0 +1,90 @@
+.root {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.newNote {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  resize: vertical;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.textarea:focus {
+  border-color: var(--color-primary);
+}
+
+.saveBtn {
+  align-self: flex-end;
+  padding: 5px 14px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.saveBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.loading,
+.empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.note {
+  padding: 10px 12px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.noteContent {
+  font-size: 13px;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.noteMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.deleteBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.deleteBtn:hover {
+  color: var(--color-danger);
+}

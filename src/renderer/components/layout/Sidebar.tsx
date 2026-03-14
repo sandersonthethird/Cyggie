@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import styles from './Sidebar.module.css'
 import { useFeatureFlag } from '../../hooks/useFeatureFlags'
@@ -8,11 +8,18 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import MiniCalendar from './MiniCalendar'
 import SearchBar from '../common/SearchBar'
 import type { CalendarEvent } from '../../../shared/types/calendar'
-import logo from '../../assets/logo.png'
+import defaultLogo from '../../assets/logo.png'
 
 export default function Sidebar() {
   const navigate = useNavigate()
   const { enabled: companiesEnabled } = useFeatureFlag('ff_companies_ui_v1')
+  const [brandingLogo, setBrandingLogo] = useState<string | null>(null)
+
+  useEffect(() => {
+    window.api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'brandingLogoDataUrl')
+      .then((val) => { if (val) setBrandingLogo(val) })
+      .catch(() => { /* ignore */ })
+  }, [])
   const calendarConnected = useAppStore((s) => s.calendarConnected)
   const calendarEvents = useAppStore((s) => s.calendarEvents)
   const dismissedEventIds = useAppStore((s) => s.dismissedEventIds)
@@ -131,7 +138,7 @@ export default function Sidebar() {
 
       <div className={styles.bottom}>
         <div className={styles.logoBlock}>
-          <img src={logo} alt="Cyggie" className={styles.logoImg} />
+          <img src={brandingLogo ?? defaultLogo} alt="Logo" className={styles.logoImg} />
         </div>
         <NavLink
           to="/settings"

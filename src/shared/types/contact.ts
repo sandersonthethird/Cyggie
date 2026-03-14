@@ -75,6 +75,28 @@ export interface ContactDetail extends ContactSummary {
   primaryCompany: ContactCompanyRef | null
   emails: string[]
   meetings: ContactMeetingRef[]
+  investorStage: string | null
+  city: string | null
+  state: string | null
+  notes: string | null
+  phone: string | null
+  twitterHandle: string | null
+  otherSocials: string | null
+  timezone: string | null
+  pronouns: string | null
+  birthday: string | null
+  university: string | null
+  previousCompanies: string | null
+  tags: string | null
+  relationshipStrength: string | null
+  lastMetEvent: string | null
+  warmIntroPath: string | null
+  fundSize: number | null
+  typicalCheckSizeMin: number | null
+  typicalCheckSizeMax: number | null
+  investmentStageFocus: string | null
+  investmentSectorFocus: string | null
+  proudPortfolioCompanies: string | null
 }
 
 export interface ContactEmailIngestResult {

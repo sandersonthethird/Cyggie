@@ -10,7 +10,8 @@ export const FEATURE_FLAG_DEFAULTS = {
   ff_artifacts_ui_v1: false,
   ff_ask_unified_v1: true,
   ff_email_ingest_v1: false,
-  ff_crm_sync_read_v1: false
+  ff_crm_sync_read_v1: false,
+  ff_crm_v2: true
 } as const
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAG_DEFAULTS

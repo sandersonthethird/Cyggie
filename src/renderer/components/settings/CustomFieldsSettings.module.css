@@ -1,0 +1,271 @@
+.root {
+  padding: 20px 0;
+  max-width: 600px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0 0 8px;
+}
+
+.description {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0 0 16px;
+}
+
+.entityTabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 16px;
+}
+
+.entityTab {
+  padding: 7px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.entityTabActive {
+  color: var(--color-text);
+  font-weight: 600;
+  border-bottom-color: var(--color-primary);
+}
+
+.fieldList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 12px;
+}
+
+.empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.fieldRow {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--color-border);
+  margin-bottom: 4px;
+  background: var(--color-card-bg);
+  gap: 8px;
+}
+
+.fieldInfo {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.fieldType {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+
+.fieldKey {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-family: monospace;
+}
+
+.fieldActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iconBtn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.iconBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.deleteBtn {
+  background: none;
+  border: none;
+  color: var(--color-danger);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.deleteConfirm {
+  padding: 12px;
+  background: rgba(217, 69, 69, 0.08);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  color: var(--color-text);
+  margin-top: 8px;
+}
+
+.deleteConfirmActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.confirmDeleteBtn {
+  padding: 5px 14px;
+  background: var(--color-danger);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.confirmDeleteBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cancelBtn {
+  padding: 5px 14px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.addBtn {
+  padding: 6px 16px;
+  background: none;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-primary);
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.addBtn:hover {
+  background: var(--color-bg-secondary);
+}
+
+.form {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--color-card-bg);
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.formLabel {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.formInput {
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  color: var(--color-text);
+  background: var(--color-bg);
+  outline: none;
+}
+
+.formInput:focus {
+  border-color: var(--color-primary);
+}
+
+.formSelect {
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  color: var(--color-text);
+  background: var(--color-bg);
+  outline: none;
+}
+
+.formCheckboxRow {
+  display: flex;
+  gap: 16px;
+  padding-left: 108px;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.formError {
+  font-size: 12px;
+  color: var(--color-danger);
+  padding-left: 108px;
+}
+
+.formActions {
+  display: flex;
+  gap: 8px;
+  padding-left: 108px;
+}
+
+.saveBtn {
+  padding: 6px 16px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.saveBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
