@@ -97,6 +97,18 @@ export interface ContactDetail extends ContactSummary {
   investmentStageFocus: string | null
   investmentSectorFocus: string | null
   proudPortfolioCompanies: string | null
+  noteCount: number
+}
+
+export interface ContactNote {
+  id: string
+  contactId: string
+  themeId: string | null
+  title: string | null
+  content: string
+  isPinned: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 export interface ContactEmailIngestResult {
@@ -110,6 +122,7 @@ export interface ContactEmailIngestResult {
   linkedMessageCount: number
   linkedContactCount: number
   suggestedFullName: string | null
+  aborted?: boolean
 }
 
 export interface ContactSyncResult {

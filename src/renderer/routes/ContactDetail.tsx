@@ -5,9 +5,10 @@ import type { ContactDetail as ContactDetailType } from '../../shared/types/cont
 import { ContactPropertiesPanel } from '../components/contact/ContactPropertiesPanel'
 import { ContactMeetings } from '../components/contact/ContactMeetings'
 import { ContactEmails } from '../components/contact/ContactEmails'
+import { ContactNotes } from '../components/contact/ContactNotes'
 import styles from './ContactDetail.module.css'
 
-type ContactTab = 'meetings' | 'emails'
+type ContactTab = 'meetings' | 'emails' | 'notes'
 
 export default function ContactDetail() {
   const { contactId: id } = useParams<{ contactId: string }>()
@@ -38,7 +39,8 @@ export default function ContactDetail() {
 
   const tabs: Array<{ key: ContactTab; label: string; badge?: number }> = [
     { key: 'meetings', label: 'Meetings', badge: contact.meetingCount || undefined },
-    { key: 'emails', label: 'Emails', badge: contact.emailCount || undefined }
+    { key: 'emails', label: 'Emails', badge: contact.emailCount || undefined },
+    { key: 'notes', label: 'Notes', badge: contact.noteCount || undefined }
   ]
 
   return (
@@ -73,6 +75,10 @@ export default function ContactDetail() {
           <ContactEmails
             contactId={contact.id}
             className={activeTab !== 'emails' ? styles.hidden : ''}
+          />
+          <ContactNotes
+            contactId={contact.id}
+            className={activeTab !== 'notes' ? styles.hidden : ''}
           />
         </div>
       </div>

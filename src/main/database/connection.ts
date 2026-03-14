@@ -40,6 +40,7 @@ import { runCompanyExtraFieldsMigration } from './migrations/037-company-extra-f
 import { runContactExtraFieldsV2Migration } from './migrations/038-contact-extra-fields-v2'
 import { runCustomFieldDefinitionsMigration } from './migrations/039-custom-field-definitions'
 import { runCustomFieldValuesMigration } from './migrations/040-custom-field-values'
+import { runContactNotesMigration } from './migrations/041-contact-notes'
 
 let db: Database.Database | null = null
 
@@ -88,6 +89,7 @@ export function getDatabase(): Database.Database {
     runContactExtraFieldsV2Migration(db)
     runCustomFieldDefinitionsMigration(db)
     runCustomFieldValuesMigration(db)
+    runContactNotesMigration(db)
   }
   return db
 }

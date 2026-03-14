@@ -2077,7 +2077,15 @@ export function getContact(contactId: string): ContactDetail | null {
     typicalCheckSizeMax: row.typical_check_size_max ?? null,
     investmentStageFocus: row.investment_stage_focus ?? null,
     investmentSectorFocus: row.investment_sector_focus ?? null,
-    proudPortfolioCompanies: row.proud_portfolio_companies ?? null
+    proudPortfolioCompanies: row.proud_portfolio_companies ?? null,
+    noteCount: (() => {
+      try {
+        const countRow = db.prepare('SELECT COUNT(*) as count FROM contact_notes WHERE contact_id = ?').get(contactId) as { count: number } | undefined
+        return countRow?.count ?? 0
+      } catch {
+        return 0
+      }
+    })()
   }
 }
 

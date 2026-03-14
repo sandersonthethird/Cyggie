@@ -51,6 +51,8 @@ export const IPC_CHANNELS = {
   COMPANY_CONTACTS: 'company:contacts',
   COMPANY_EMAILS: 'company:emails',
   COMPANY_EMAIL_INGEST: 'company:email-ingest',
+  COMPANY_EMAIL_INGEST_PROGRESS: 'company:email-ingest:progress',
+  COMPANY_EMAIL_INGEST_CANCEL: 'company:email-ingest:cancel',
   COMPANY_FILES: 'company:files',
   COMPANY_FILES_READABLE: 'company:files-readable',
   COMPANY_TIMELINE: 'company:timeline',
@@ -63,6 +65,8 @@ export const IPC_CHANNELS = {
   CONTACT_GET: 'contact:get',
   CONTACT_EMAILS: 'contact:emails',
   CONTACT_EMAIL_INGEST: 'contact:email-ingest',
+  CONTACT_EMAIL_INGEST_PROGRESS: 'contact:email-ingest:progress',
+  CONTACT_EMAIL_INGEST_CANCEL: 'contact:email-ingest:cancel',
   CONTACT_CREATE: 'contact:create',
   CONTACT_ADD_EMAIL: 'contact:add-email',
   CONTACT_SET_COMPANY: 'contact:set-company',
@@ -94,6 +98,13 @@ export const IPC_CHANNELS = {
   COMPANY_NOTES_CREATE: 'company-notes:create',
   COMPANY_NOTES_UPDATE: 'company-notes:update',
   COMPANY_NOTES_DELETE: 'company-notes:delete',
+
+  // Contact notes
+  CONTACT_NOTES_LIST: 'contact-notes:list',
+  CONTACT_NOTES_GET: 'contact-notes:get',
+  CONTACT_NOTES_CREATE: 'contact-notes:create',
+  CONTACT_NOTES_UPDATE: 'contact-notes:update',
+  CONTACT_NOTES_DELETE: 'contact-notes:delete',
 
   // Email detail
   EMAIL_GET: 'email:get',

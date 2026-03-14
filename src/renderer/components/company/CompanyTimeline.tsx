@@ -1,21 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { CompanyEmailIngestResult, CompanyNote, CompanyTimelineItem } from '../../../shared/types/company'
+import type { CompanyNote, CompanyTimelineItem } from '../../../shared/types/company'
+import { useEmailSync } from '../../hooks/useEmailSync'
 import { EmailDetailModal } from '../crm/EmailDetailModal'
 import { NoteDetailModal } from '../crm/NoteDetailModal'
 import styles from './CompanyTimeline.module.css'
-
-function getLastSyncedLabel(key: string): string {
-  const raw = localStorage.getItem(key)
-  if (!raw) return 'Never synced'
-  const mins = Math.floor((Date.now() - new Date(raw).getTime()) / 60000)
-  if (mins < 1) return 'Last synced just now'
-  if (mins < 60) return `Last synced ${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `Last synced ${hours}h ago`
-  return `Last synced ${Math.floor(hours / 24)}d ago`
-}
 
 interface CompanyTimelineProps {
   companyId: string
@@ -34,15 +24,15 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
   const [loaded, setLoaded] = useState(false)
   const [selectedItem, setSelectedItem] = useState<CompanyTimelineItem | null>(null)
 
-  const isMountedRef = useRef(true)
-  useEffect(() => () => { isMountedRef.current = false }, [])
-
-  const [isSyncing, setIsSyncing] = useState(false)
-  const [syncError, setSyncError] = useState<string | null>(null)
-  const [syncResult, setSyncResult] = useState<CompanyEmailIngestResult | null>(null)
-  const [lastSyncedLabel, setLastSyncedLabel] = useState<string>(
-    () => getLastSyncedLabel(`sync:company:${companyId}`)
-  )
+  const {
+    isSyncing,
+    syncError,
+    syncResult,
+    lastSyncedLabel,
+    progressMsg,
+    handleSync,
+    handleCancel
+  } = useEmailSync('company', companyId, () => setLoaded(false))
 
   useEffect(() => {
     if (loaded) return
@@ -52,29 +42,6 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
       .catch(console.error)
       .finally(() => setLoaded(true))
   }, [companyId, loaded])
-
-  async function handleSync() {
-    if (!isMountedRef.current) return
-    setIsSyncing(true)
-    setSyncError(null)
-    setSyncResult(null)
-    try {
-      const result = await window.api.invoke<CompanyEmailIngestResult>(
-        IPC_CHANNELS.COMPANY_EMAIL_INGEST, companyId
-      )
-      if (!isMountedRef.current) return
-      setSyncResult(result)
-      setLoaded(false)
-      const key = `sync:company:${companyId}`
-      localStorage.setItem(key, new Date().toISOString())
-      setLastSyncedLabel('Last synced just now')
-    } catch (err) {
-      if (!isMountedRef.current) return
-      setSyncError(err instanceof Error ? err.message : 'Sync failed.')
-    } finally {
-      if (isMountedRef.current) setIsSyncing(false)
-    }
-  }
 
   function handleClick(item: CompanyTimelineItem) {
     if (item.type === 'meeting') {
@@ -99,11 +66,28 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
     setSelectedItem(null)
   }, [])
 
+  function getSyncResultMsg() {
+    if (!syncResult) return null
+    if (syncResult.aborted) {
+      return syncResult.insertedMessageCount > 0
+        ? `Cancelled — +${syncResult.insertedMessageCount} saved`
+        : 'Cancelled'
+    }
+    return syncResult.insertedMessageCount > 0
+      ? `+${syncResult.insertedMessageCount} new`
+      : 'Up to date'
+  }
+
+  const syncResultMsg = getSyncResultMsg()
+
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
       {(loaded || isSyncing) && (
         <div className={styles.syncRow}>
           <span className={styles.lastSynced}>{lastSyncedLabel}</span>
+          {progressMsg && isSyncing && (
+            <span className={styles.progressMsg}>{progressMsg}</span>
+          )}
           <button
             className={styles.syncBtn}
             onClick={handleSync}
@@ -113,12 +97,11 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
             <span className={isSyncing ? styles.spinning : ''}>↻</span>
             {' '}{isSyncing ? 'Syncing…' : 'Sync emails'}
           </button>
-          {syncResult && !isSyncing && (
-            <span className={styles.syncMsg}>
-              {syncResult.insertedMessageCount > 0
-                ? `+${syncResult.insertedMessageCount} new`
-                : 'Up to date'}
-            </span>
+          {isSyncing && (
+            <button className={styles.cancelBtn} onClick={handleCancel}>Cancel</button>
+          )}
+          {syncResultMsg && !isSyncing && (
+            <span className={styles.syncMsg}>{syncResultMsg}</span>
           )}
           {syncError && <span className={styles.syncError}>{syncError}</span>}
         </div>

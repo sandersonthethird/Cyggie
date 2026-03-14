@@ -175,6 +175,7 @@ export interface CompanyEmailIngestResult {
   updatedMessageCount: number
   linkedMessageCount: number
   linkedContactCount: number
+  aborted?: boolean
 }
 
 export type CompanyTimelineItemType = 'meeting' | 'email' | 'note'

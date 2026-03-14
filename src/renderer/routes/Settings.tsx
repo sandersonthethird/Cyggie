@@ -75,6 +75,7 @@ interface SettingsState {
   defaultMaxSpeakers: string
   companyDriveRootFolder: string
   companyLocalFilesRoot: string
+  autoSyncEmails: boolean
 }
 
 export default function Settings() {
@@ -97,7 +98,8 @@ export default function Settings() {
     showLiveTranscript: true,
     defaultMaxSpeakers: '',
     companyDriveRootFolder: '',
-    companyLocalFilesRoot: ''
+    companyLocalFilesRoot: '',
+    autoSyncEmails: true
   })
   const [saved, setSaved] = useState(false)
   const [storagePath, setStoragePath] = useState('')
@@ -175,7 +177,8 @@ export default function Settings() {
             showLiveTranscript: all.showLiveTranscript !== 'false',
             defaultMaxSpeakers: all.defaultMaxSpeakers || '',
             companyDriveRootFolder: all.companyDriveRootFolder || '',
-            companyLocalFilesRoot: all.companyLocalFilesRoot || ''
+            companyLocalFilesRoot: all.companyLocalFilesRoot || '',
+            autoSyncEmails: all.autoSyncEmails !== 'false'
           })
           setStaleRelationshipDays(all.dashboardStaleRelationshipDays || '21')
           setStalledPipelineDays(all.dashboardStalledPipelineDays || '21')
@@ -1061,6 +1064,19 @@ export default function Settings() {
               {gmailConnecting ? 'Connecting...' : 'Grant Gmail Access'}
             </button>
           </>
+        )}
+        {gmailConnected && (
+          <div className={styles.inlineFieldRow} style={{ marginTop: 12 }}>
+            <span className={styles.inlineFieldLabel}>Auto-sync emails on open</span>
+            <select
+              className={styles.inlineSelect}
+              value={settings.autoSyncEmails ? 'on' : 'off'}
+              onChange={(e) => setSettings({ ...settings, autoSyncEmails: e.target.value === 'on' })}
+            >
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
         )}
       </section>
 

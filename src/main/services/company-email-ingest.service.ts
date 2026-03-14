@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { BrowserWindow } from 'electron'
 import { google, type gmail_v1 } from 'googleapis'
 import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
@@ -11,6 +12,14 @@ import {
 import { findCompanyIdByDomain } from '../database/repositories/org-company.repo'
 import type { CompanyEmailIngestResult } from '../../shared/types/company'
 import type { ContactEmailIngestResult } from '../../shared/types/contact'
+import { IPC_CHANNELS } from '../../shared/constants/channels'
+
+function sendProgress(channel: string, payload: unknown): void {
+  BrowserWindow.getAllWindows()[0]?.webContents.send(channel, payload)
+}
+
+const activeCompanyControllers = new Map<string, AbortController>()
+const activeContactControllers = new Map<string, AbortController>()
 
 const MAX_CONTACT_CUES = 30
 const MAX_EMAILS_PER_CONTACT_QUERY = 120
@@ -829,7 +838,7 @@ function normalizeGmailIngestError(error: unknown): Error {
   return new Error(message)
 }
 
-export async function ingestCompanyEmails(companyId: string): Promise<CompanyEmailIngestResult> {
+async function _ingestCompanyEmails(companyId: string, signal: AbortSignal): Promise<CompanyEmailIngestResult> {
   if (!companyId) {
     throw new Error('companyId is required')
   }
@@ -863,8 +872,11 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
     accountId = account.accountId
     markSyncStarted(db, account.accountId)
 
+    sendProgress(IPC_CHANNELS.COMPANY_EMAIL_INGEST_PROGRESS, { companyId, phase: 'discovering', fetched: 0, total: 0 })
+
     const messageCueByProviderId = new Map<string, MessageCue>()
     for (const query of queries) {
+      if (signal.aborted) break
       if (messageCueByProviderId.size >= MAX_TOTAL_MATCHES) break
       const remaining = MAX_TOTAL_MATCHES - messageCueByProviderId.size
       const ids = await listMessageIdsForQuery(
@@ -882,6 +894,9 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
         }
       }
     }
+
+    const total = messageCueByProviderId.size
+    sendProgress(IPC_CHANNELS.COMPANY_EMAIL_INGEST_PROGRESS, { companyId, phase: 'fetching', fetched: 0, total })
 
     const selectThread = db.prepare(`
       SELECT id, subject, snippet, first_message_at, last_message_at
@@ -1095,8 +1110,10 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
     let updatedMessageCount = 0
     let linkedMessageCount = 0
     let linkedContactCount = 0
+    let fetchedCount = 0
 
     for (const [providerMessageId, cue] of messageCueByProviderId.entries()) {
+      if (signal.aborted) break
       let fullMessage: gmail_v1.Schema$Message
       try {
         const response = await gmail.users.messages.get({
@@ -1107,6 +1124,8 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
         fullMessage = response.data
       } catch (err) {
         console.warn('[Company Email Ingest] Failed to fetch message:', providerMessageId, err)
+        fetchedCount++
+        sendProgress(IPC_CHANNELS.COMPANY_EMAIL_INGEST_PROGRESS, { companyId, phase: 'fetching', fetched: fetchedCount, total })
         continue
       }
 
@@ -1249,6 +1268,9 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
         const contactLinkResult = upsertContactLink.run(messageId, contactId, 0.95)
         linkedContactCount += contactLinkResult.changes
       }
+
+      fetchedCount++
+      sendProgress(IPC_CHANNELS.COMPANY_EMAIL_INGEST_PROGRESS, { companyId, phase: 'fetching', fetched: fetchedCount, total })
     }
 
     markSyncCompleted(db, account.accountId, account.historyCursor)
@@ -1265,7 +1287,8 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
       insertedMessageCount,
       updatedMessageCount,
       linkedMessageCount,
-      linkedContactCount
+      linkedContactCount,
+      aborted: signal.aborted
     }
   } catch (err) {
     const normalizedError = normalizeGmailIngestError(err)
@@ -1274,7 +1297,21 @@ export async function ingestCompanyEmails(companyId: string): Promise<CompanyEma
   }
 }
 
-export async function ingestContactEmails(contactId: string): Promise<ContactEmailIngestResult> {
+export async function ingestCompanyEmails(companyId: string): Promise<CompanyEmailIngestResult> {
+  const controller = new AbortController()
+  activeCompanyControllers.set(companyId, controller)
+  try {
+    return await _ingestCompanyEmails(companyId, controller.signal)
+  } finally {
+    activeCompanyControllers.delete(companyId)
+  }
+}
+
+export function cancelCompanyEmailIngest(companyId: string): void {
+  activeCompanyControllers.get(companyId)?.abort()
+}
+
+async function _ingestContactEmails(contactId: string, signal: AbortSignal): Promise<ContactEmailIngestResult> {
   if (!contactId) {
     throw new Error('contactId is required')
   }
@@ -1315,8 +1352,11 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
     accountId = account.accountId
     markSyncStarted(db, account.accountId)
 
+    sendProgress(IPC_CHANNELS.CONTACT_EMAIL_INGEST_PROGRESS, { contactId, phase: 'discovering', fetched: 0, total: 0 })
+
     const messageCueByProviderId = new Map<string, MessageCue>()
     for (const query of queries) {
+      if (signal.aborted) break
       if (messageCueByProviderId.size >= MAX_TOTAL_MATCHES) break
       const remaining = MAX_TOTAL_MATCHES - messageCueByProviderId.size
       const ids = await listMessageIdsForQuery(
@@ -1334,6 +1374,9 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
         }
       }
     }
+
+    const contactTotal = messageCueByProviderId.size
+    sendProgress(IPC_CHANNELS.CONTACT_EMAIL_INGEST_PROGRESS, { contactId, phase: 'fetching', fetched: 0, total: contactTotal })
 
     const selectThread = db.prepare(`
       SELECT id, subject, snippet, first_message_at, last_message_at
@@ -1547,10 +1590,12 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
     let updatedMessageCount = 0
     let linkedMessageCount = 0
     let linkedContactCount = 0
+    let contactFetchedCount = 0
     const senderNamesForTargetContact = new Set<string>()
     const cueContactEmailSet = new Set(cues.contactEmails)
 
     for (const [providerMessageId, cue] of messageCueByProviderId.entries()) {
+      if (signal.aborted) break
       let fullMessage: gmail_v1.Schema$Message
       try {
         const response = await gmail.users.messages.get({
@@ -1561,6 +1606,8 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
         fullMessage = response.data
       } catch (err) {
         console.warn('[Contact Email Ingest] Failed to fetch message:', providerMessageId, err)
+        contactFetchedCount++
+        sendProgress(IPC_CHANNELS.CONTACT_EMAIL_INGEST_PROGRESS, { contactId, phase: 'fetching', fetched: contactFetchedCount, total: contactTotal })
         continue
       }
 
@@ -1719,6 +1766,9 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
         const confidence = linkedCompanyId === cues.primaryCompanyId ? cue.confidence : 0.75
         upsertCompanyLink.run(messageId, linkedCompanyId, confidence, `contact:${cues.contactEmail}`)
       }
+
+      contactFetchedCount++
+      sendProgress(IPC_CHANNELS.CONTACT_EMAIL_INGEST_PROGRESS, { contactId, phase: 'fetching', fetched: contactFetchedCount, total: contactTotal })
     }
 
     markSyncCompleted(db, account.accountId, account.historyCursor)
@@ -1737,11 +1787,26 @@ export async function ingestContactEmails(contactId: string): Promise<ContactEma
       updatedMessageCount,
       linkedMessageCount,
       linkedContactCount,
-      suggestedFullName
+      suggestedFullName,
+      aborted: signal.aborted
     }
   } catch (err) {
     const normalizedError = normalizeGmailIngestError(err)
     markSyncFailed(db, accountId, normalizedError.message)
     throw normalizedError
   }
+}
+
+export async function ingestContactEmails(contactId: string): Promise<ContactEmailIngestResult> {
+  const controller = new AbortController()
+  activeContactControllers.set(contactId, controller)
+  try {
+    return await _ingestContactEmails(contactId, controller.signal)
+  } finally {
+    activeContactControllers.delete(contactId)
+  }
+}
+
+export function cancelContactEmailIngest(contactId: string): void {
+  activeContactControllers.get(contactId)?.abort()
 }

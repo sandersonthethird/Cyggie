@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as companyRepo from '../database/repositories/org-company.repo'
-import { ingestContactEmails } from '../services/company-email-ingest.service'
+import { ingestContactEmails, cancelContactEmailIngest } from '../services/company-email-ingest.service'
 import {
   enrichContactsViaWebLookup,
   mergeContactEnrichmentResults
@@ -55,6 +55,11 @@ export function registerContactHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.CONTACT_EMAIL_INGEST, (_event, contactId: string) => {
     if (!contactId) throw new Error('contactId is required')
     return ingestContactEmails(contactId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_EMAIL_INGEST_CANCEL, (_event, contactId: string) => {
+    cancelContactEmailIngest(contactId)
+    return { cancelled: true }
   })
 
   ipcMain.handle(

@@ -16,6 +16,7 @@ export interface AppSettings {
   companyLocalFilesRoot: string
   theme: 'system' | 'light' | 'dark'
   brandingLogoDataUrl: string
+  autoSyncEmails: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -33,5 +34,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   companyDriveRootFolder: '',
   companyLocalFilesRoot: '',
   theme: 'system',
-  brandingLogoDataUrl: ''
+  brandingLogoDataUrl: '',
+  autoSyncEmails: true
 }

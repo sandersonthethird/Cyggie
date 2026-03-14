@@ -15,7 +15,7 @@ import type {
   CompanyRound,
   CompanyPipelineStage
 } from '../../shared/types/company'
-import { ingestCompanyEmails } from '../services/company-email-ingest.service'
+import { ingestCompanyEmails, cancelCompanyEmailIngest } from '../services/company-email-ingest.service'
 import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 import { getCurrentUserId } from '../security/current-user'
@@ -456,6 +456,11 @@ export function registerCompanyHandlers(): void {
       console.log('[company-email-ingest]', result)
       return result
     })
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_EMAIL_INGEST_CANCEL, (_event, companyId: string) => {
+    cancelCompanyEmailIngest(companyId)
+    return { cancelled: true }
   })
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_FILES, async (_event, companyId: string, browsePath?: string) => {
