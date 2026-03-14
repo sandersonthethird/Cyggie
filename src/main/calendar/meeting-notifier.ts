@@ -4,6 +4,7 @@ import { isCalendarConnected } from './google-auth'
 import { MEETING_APPS } from '../../shared/constants/meeting-apps'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
+import { getCurrentUserProfile } from '../security/current-user'
 
 const POLL_INTERVAL_MS = 30 * 1000 // Check every 30 seconds
 const NOTIFY_BEFORE_MS = 1 * 60 * 1000 // Notify 1 minute before
@@ -83,7 +84,18 @@ async function showMeetingNotification(event: CalendarEvent): Promise<void> {
 
     // Open the meeting URL externally (Zoom, Meet, Teams, etc.)
     if (event.meetingUrl) {
-      shell.openExternal(event.meetingUrl).catch((err) => {
+      let url = event.meetingUrl
+      try {
+        const parsed = new URL(url)
+        if (parsed.hostname === 'meet.google.com') {
+          const email = getCurrentUserProfile().email
+          if (email) parsed.searchParams.set('authuser', email)
+          url = parsed.toString()
+        }
+      } catch {
+        // Bad URL — open as-is
+      }
+      shell.openExternal(url).catch((err) => {
         console.error('[MeetingNotifier] Failed to open meeting URL:', err)
       })
     }

@@ -12,7 +12,7 @@ import { extractCompaniesFromEmails, extractCompaniesFromAttendees } from '../ut
 import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
 import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
 import type { ChatMessage, MeetingListFilter } from '../../shared/types/meeting'
-import { getCurrentUserId } from '../security/current-user'
+import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 
 export function registerMeetingHandlers(): void {
@@ -330,6 +330,15 @@ export function registerMeetingHandlers(): void {
     const parsed = new URL(trimmed)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error('Only http(s) URLs are allowed')
+    }
+    // Inject authuser for Google Meet so the browser opens with the configured account
+    if (parsed.hostname === 'meet.google.com') {
+      try {
+        const email = getCurrentUserProfile().email
+        if (email) parsed.searchParams.set('authuser', email)
+      } catch {
+        // Non-fatal: open without authuser if profile unavailable
+      }
     }
     return shell.openExternal(parsed.toString())
   })

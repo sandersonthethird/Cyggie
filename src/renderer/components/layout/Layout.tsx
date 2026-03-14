@@ -60,7 +60,7 @@ export default function Layout() {
 
   const handleBannerJoin = useCallback((event: CalendarEvent) => {
     if (event.meetingUrl) {
-      window.open(event.meetingUrl, '_blank')
+      window.api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, event.meetingUrl).catch(console.error)
     }
   }, [])
 
