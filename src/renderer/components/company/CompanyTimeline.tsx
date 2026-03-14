@@ -18,11 +18,21 @@ const TYPE_LABEL: Record<string, string> = {
   note: 'Note'
 }
 
+type TimelineFilter = 'all' | 'meeting' | 'email' | 'note'
+
+const FILTERS: Array<{ key: TimelineFilter; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'meeting', label: 'Meetings' },
+  { key: 'email', label: 'Emails' },
+  { key: 'note', label: 'Notes' }
+]
+
 export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) {
   const navigate = useNavigate()
   const [items, setItems] = useState<CompanyTimelineItem[]>([])
   const [loaded, setLoaded] = useState(false)
   const [selectedItem, setSelectedItem] = useState<CompanyTimelineItem | null>(null)
+  const [filter, setFilter] = useState<TimelineFilter>('all')
 
   const {
     isSyncing,
@@ -79,9 +89,23 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
   }
 
   const syncResultMsg = getSyncResultMsg()
+  const visibleItems = filter === 'all' ? items : items.filter((i) => i.type === filter)
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
+      {loaded && items.length > 0 && (
+        <div className={styles.filterRow}>
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              className={`${styles.filterPill} ${filter === f.key ? styles.filterActive : ''}`}
+              onClick={() => setFilter(f.key)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
       {(loaded || isSyncing) && (
         <div className={styles.syncRow}>
           <span className={styles.lastSynced}>{lastSyncedLabel}</span>
@@ -110,7 +134,10 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
       {loaded && items.length === 0 && (
         <div className={styles.empty}>No timeline activity yet.</div>
       )}
-      {items.map((item) => (
+      {loaded && items.length > 0 && visibleItems.length === 0 && (
+        <div className={styles.empty}>No {filter}s found.</div>
+      )}
+      {visibleItems.map((item) => (
         <div
           key={item.id}
           className={`${styles.item} ${styles[item.type]} ${styles.clickable}`}

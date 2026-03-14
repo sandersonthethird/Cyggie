@@ -86,6 +86,36 @@
   margin-top: 2px;
 }
 
+.filterRow {
+  display: flex;
+  gap: 6px;
+  padding: 0 0 10px;
+}
+
+.filterPill {
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: none;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.1s;
+}
+
+.filterPill:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.filterActive {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
 .syncRow {
   display: flex;
   align-items: center;
