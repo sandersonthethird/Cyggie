@@ -2,27 +2,79 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactDetail } from '../../../shared/types/contact'
-import { ContactAvatar } from '../crm/ContactAvatar'
+import type { CustomFieldWithValue } from '../../../shared/types/custom-fields'
+import { daysSince, formatCurrency, formatDate } from '../../utils/format'
+import { usePreferencesStore } from '../../stores/preferences.store'
+import { useCustomFieldStore } from '../../stores/custom-fields.store'
 import { PropertyRow } from '../crm/PropertyRow'
-import { SocialsEditor } from '../crm/SocialsEditor'
 import { CustomFieldsPanel } from '../crm/CustomFieldsPanel'
+import { ChipSelect } from '../crm/ChipSelect'
+import { SummaryConfigPopover } from '../crm/SummaryConfigPopover'
+import { SocialsEditor } from '../crm/SocialsEditor'
+import { ContactAvatar } from '../crm/ContactAvatar'
+import {
+  CONTACT_TYPES,
+  CONTACT_COLUMN_DEFS,
+  CONTACT_HEADER_KEYS
+} from './contactColumns'
 import styles from './ContactPropertiesPanel.module.css'
+
+const CONTACT_TYPE_STYLE: Record<string, string> = {
+  investor: styles.chipInvestor,
+  founder: styles.chipFounder,
+  operator: styles.chipOperator,
+}
 
 interface ContactPropertiesPanelProps {
   contact: ContactDetail
+  lastTouchpoint?: string | null
   onUpdate: (updates: Record<string, unknown>) => void
+}
+
+function LastTouchBadge({ lastTouchpoint }: { lastTouchpoint: string | null | undefined }) {
+  const days = daysSince(lastTouchpoint ?? null)
+  if (days == null) return <span className={`${styles.touchBadge} ${styles.touchNone}`}>No contact</span>
+  if (days <= 7) return <span className={`${styles.touchBadge} ${styles.touchGreen}`}>{days}d ago</span>
+  if (days <= 30) return <span className={`${styles.touchBadge} ${styles.touchYellow}`}>{days}d ago</span>
+  return <span className={`${styles.touchBadge} ${styles.touchRed}`}>{days}d ago</span>
 }
 
 function SectionHeader({ title }: { title: string }) {
   return <div className={styles.sectionHeader}>{title}</div>
 }
 
-export function ContactPropertiesPanel({ contact, onUpdate }: ContactPropertiesPanelProps) {
+function formatPinnedValue(value: unknown, type: string, options?: { value: string; label: string }[]): string | null {
+  if (value == null || value === '') return null
+  if (options) {
+    const opt = options.find((o) => o.value === String(value))
+    if (opt) return opt.label
+  }
+  switch (type) {
+    case 'currency': return formatCurrency(Number(value))
+    case 'date': return formatDate(String(value))
+    default: return String(value)
+  }
+}
+
+export function ContactPropertiesPanel({ contact, lastTouchpoint, onUpdate }: ContactPropertiesPanelProps) {
   const navigate = useNavigate()
   const [isEditing, setIsEditing] = useState(false)
   const [showAllFields, setShowAllFields] = useState(false)
   const [nameDraft, setNameDraft] = useState(contact.fullName)
+  const [showConfig, setShowConfig] = useState(false)
+  const [customFields, setCustomFields] = useState<CustomFieldWithValue[]>([])
   const nameInputRef = useRef<HTMLInputElement>(null)
+
+  const { getJSON, setJSON } = usePreferencesStore()
+  const { contactDefs } = useCustomFieldStore()
+  const pinnedKeys = getJSON<string[]>('cyggie:contact-summary-fields', [])
+
+  function togglePinnedKey(key: string) {
+    const next = pinnedKeys.includes(key)
+      ? pinnedKeys.filter((k) => k !== key)
+      : [...pinnedKeys, key]
+    setJSON('cyggie:contact-summary-fields', next)
+  }
 
   // Sync name draft when entering edit mode
   useEffect(() => {
@@ -43,7 +95,6 @@ export function ContactPropertiesPanel({ contact, onUpdate }: ContactPropertiesP
   }
 
   function handleDone() {
-    // Save name if changed
     const trimmed = nameDraft.trim()
     if (trimmed && trimmed !== contact.fullName) {
       const spaceIdx = trimmed.indexOf(' ')
@@ -62,10 +113,47 @@ export function ContactPropertiesPanel({ contact, onUpdate }: ContactPropertiesP
     if (e.key === 'Escape') setIsEditing(false)
   }
 
-  // Returns true if a field should be shown
   function show(value: unknown): boolean {
     if (isEditing || showAllFields) return true
     return value !== null && value !== undefined && value !== ''
+  }
+
+  function renderPinnedChip(key: string) {
+    if (key.startsWith('custom:')) {
+      const id = key.slice(7)
+      const def = contactDefs.find((d) => d.id === id)
+      if (!def) return null
+      const fieldWithValue = customFields.find((f) => f.id === id)
+      if (!fieldWithValue?.value) return null
+      let display = ''
+      const v = fieldWithValue.value
+      switch (def.fieldType) {
+        case 'currency': display = formatCurrency(v.valueNumber ?? 0); break
+        case 'date': display = v.valueDate ? formatDate(v.valueDate) : ''; break
+        case 'boolean': display = v.valueBoolean != null ? (v.valueBoolean ? 'Yes' : 'No') : ''; break
+        case 'contact_ref':
+        case 'company_ref': display = v.resolvedLabel ?? v.valueRefId ?? ''; break
+        default: display = v.valueText ?? ''
+      }
+      if (!display) return null
+      return (
+        <span key={key} className={`${styles.badge} ${styles.pinnedBadge}`} title={def.label}>
+          {def.label}: {display}
+        </span>
+      )
+    }
+
+    // Built-in field
+    const col = CONTACT_COLUMN_DEFS.find((c) => c.key === key)
+    if (!col || !col.field) return null
+    const value = (contact as Record<string, unknown>)[col.field]
+    const display = formatPinnedValue(value, col.type, col.options as { value: string; label: string }[] | undefined)
+    if (!display) return null
+    return (
+      <span key={key} className={`${styles.badge} ${styles.pinnedBadge}`} title={col.label}>
+        {col.label}: {display}
+      </span>
+    )
   }
 
   const hasHiddenFields = !isEditing && !showAllFields && (
@@ -104,16 +192,37 @@ export function ContactPropertiesPanel({ contact, onUpdate }: ContactPropertiesP
             )}
           </div>
           <div className={styles.headerBadge}>
-            <select
-              className={styles.badge}
+            <ChipSelect
               value={contact.contactType ?? ''}
-              onChange={(e) => save('contactType', e.target.value || null)}
-            >
-              <option value="">—</option>
-              <option value="investor">investor</option>
-              <option value="founder">founder</option>
-              <option value="operator">operator</option>
-            </select>
+              options={[{ value: '', label: '—' }, ...CONTACT_TYPES]}
+              isEditing={isEditing}
+              onSave={(v) => save('contactType', v || null)}
+              className={`${styles.badge} ${contact.contactType ? (CONTACT_TYPE_STYLE[contact.contactType] ?? '') : ''}`}
+              allowEmpty={true}
+            />
+            {pinnedKeys.map((key) => renderPinnedChip(key))}
+            <div className={styles.configureWrap}>
+              <button
+                className={styles.configureBtn}
+                title="Configure summary"
+                onClick={() => setShowConfig((s) => !s)}
+              >
+                ⊕
+              </button>
+              {showConfig && (
+                <SummaryConfigPopover
+                  pinnedKeys={pinnedKeys}
+                  onToggle={togglePinnedKey}
+                  columnDefs={CONTACT_COLUMN_DEFS}
+                  customDefs={contactDefs}
+                  entityData={contact as Record<string, unknown>}
+                  customFields={customFields}
+                  headerKeys={CONTACT_HEADER_KEYS}
+                  onClose={() => setShowConfig(false)}
+                />
+              )}
+            </div>
+            <LastTouchBadge lastTouchpoint={lastTouchpoint ?? contact.lastTouchpoint} />
           </div>
         </div>
         {isEditing ? (
@@ -196,7 +305,7 @@ export function ContactPropertiesPanel({ contact, onUpdate }: ContactPropertiesP
         </button>
       )}
 
-      <CustomFieldsPanel entityType="contact" entityId={contact.id} />
+      <CustomFieldsPanel entityType="contact" entityId={contact.id} onFieldsLoaded={setCustomFields} />
     </div>
   )
 }

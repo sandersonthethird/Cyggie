@@ -1,22 +1,33 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
 import ChatInterface from '../components/chat/ChatInterface'
+import { CompanyTable } from '../components/company/CompanyTable'
+import { ViewsBar } from '../components/crm/ViewsBar'
+import {
+  COLUMN_DEFS,
+  ENTITY_TYPES,
+  STAGES,
+  PRIORITIES,
+  ROUNDS,
+  buildUrlFilter,
+  filterCompanies,
+  loadColumnConfig,
+  sortRows,
+  type CompanyScope,
+  type SortState
+} from '../components/company/companyColumns'
 import type {
   CompanyEntityType,
-  CompanyListFilter,
   CompanyPipelineStage,
   CompanyPriority,
   CompanyRound,
-  CompanySortBy,
   CompanySummary
 } from '../../shared/types/company'
 import styles from './Companies.module.css'
-
-type CompanyScope = 'prospects' | 'all' | 'vc_fund' | 'unknown'
+import { api } from '../api'
 
 const SCOPE_LABELS: Record<CompanyScope, string> = {
   all: 'All Orgs',
@@ -25,261 +36,262 @@ const SCOPE_LABELS: Record<CompanyScope, string> = {
   unknown: 'Unknown'
 }
 
-const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
-  { value: 'unknown', label: 'Unknown' },
-  { value: 'prospect', label: 'Prospect' },
-  { value: 'portfolio', label: 'Portfolio' },
-  { value: 'pass', label: 'Pass' },
-  { value: 'vc_fund', label: 'Investor' },
-  { value: 'customer', label: 'Customer' },
-  { value: 'partner', label: 'Partner' },
-  { value: 'vendor', label: 'Vendor' },
-  { value: 'other', label: 'Other' }
-]
+// Backend-sortable column keys — all others are sorted client-side
+const BACKEND_SORT_KEYS = new Set(['name', 'lastTouchpoint'])
 
-const STAGES: { value: CompanyPipelineStage; label: string }[] = [
-  { value: 'screening', label: 'Screening' },
-  { value: 'diligence', label: 'Diligence' },
-  { value: 'decision', label: 'Decision' },
-  { value: 'documentation', label: 'Documentation' },
-  { value: 'pass', label: 'Pass' }
-]
-
-const PRIORITIES: { value: CompanyPriority; label: string }[] = [
-  { value: 'high', label: 'High' },
-  { value: 'further_work', label: 'Further Work' },
-  { value: 'monitor', label: 'Monitor' }
-]
-
-const ROUNDS: { value: CompanyRound; label: string }[] = [
-  { value: 'pre_seed', label: 'Pre-Seed' },
-  { value: 'seed', label: 'Seed' },
-  { value: 'seed_extension', label: 'Seed Extension' },
-  { value: 'series_a', label: 'Series A' },
-  { value: 'series_b', label: 'Series B' }
-]
-
-const DAY_MS = 1000 * 60 * 60 * 24
-const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
-
-function parseTimestamp(value: string | null | undefined): number {
-  if (!value) return Number.NaN
-  const trimmed = value.trim()
-  if (!trimmed) return Number.NaN
-  const normalized = SQLITE_DATETIME_RE.test(trimmed)
-    ? `${trimmed.replace(' ', 'T')}Z`
-    : trimmed
-  return Date.parse(normalized)
+interface CreateFormState {
+  name: string
+  description: string
+  domain: string
+  city: string
+  state: string
+  entityType: CompanyEntityType
+  pipelineStage: CompanyPipelineStage | ''
+  priority: CompanyPriority | ''
+  round: CompanyRound | ''
+  postMoney: string
+  raiseSize: string
+  contactName: string
+  contactEmail: string
 }
 
-function formatLastTouch(value: string | null): string {
-  if (!value) return ''
-  const timestamp = parseTimestamp(value)
-  if (Number.isNaN(timestamp)) return ''
-  const date = new Date(timestamp)
-  const diffDays = Math.max(0, Math.floor((Date.now() - timestamp) / DAY_MS))
-  if (diffDays === 0) return 'Today'
-  if (diffDays === 1) return 'Yesterday'
-  if (diffDays < 7) return `${diffDays}d ago`
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
-function daysSince(value: string | null): number | null {
-  if (!value) return null
-  const timestamp = parseTimestamp(value)
-  if (Number.isNaN(timestamp)) return null
-  return Math.max(0, Math.floor((Date.now() - timestamp) / DAY_MS))
-}
-
-function buildFilter(query: string, scope: CompanyScope, sortBy: CompanySortBy): CompanyListFilter {
-  const filter: CompanyListFilter = {
-    query: query.trim(),
-    limit: 400,
-    sortBy,
-    includeStats: true
-  }
-
-  if (scope === 'prospects') {
-    filter.view = 'all'
-    filter.entityTypes = ['prospect']
-    return filter
-  }
-
-  filter.view = 'all'
-  if (scope === 'vc_fund') filter.entityTypes = ['vc_fund']
-  if (scope === 'unknown') filter.entityTypes = ['unknown']
-  return filter
+const EMPTY_FORM: CreateFormState = {
+  name: '',
+  description: '',
+  domain: '',
+  city: '',
+  state: '',
+  entityType: 'unknown',
+  pipelineStage: '',
+  priority: '',
+  round: '',
+  postMoney: '',
+  raiseSize: '',
+  contactName: '',
+  contactEmail: ''
 }
 
 export default function Companies() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { enabled: companiesEnabled, loading: flagsLoading } = useFeatureFlag('ff_companies_ui_v1')
+
+  // ── URL-derived state ───────────────────────────────────────────────────────
+  const query = (searchParams.get('q') || '').trim()
+  const scope = (searchParams.get('scope') || 'all') as CompanyScope
+  const showCreate = searchParams.get('new') === '1'
+  const sort: SortState = {
+    key: searchParams.get('sortKey') || 'lastTouchpoint',
+    dir: (searchParams.get('sortDir') || 'desc') as 'asc' | 'desc'
+  }
+  const typeFilter = searchParams.getAll('type') as CompanyEntityType[]
+  const stageFilter = searchParams.getAll('stage') as CompanyPipelineStage[]
+  const priorityFilter = searchParams.getAll('priority') as CompanyPriority[]
+
+  // ── Column visibility (lifted from CompanyTable so ViewsBar can control it) ─
+  const [visibleKeys, setVisibleKeys] = useState<string[]>(() => loadColumnConfig())
+
+  // ── Data ────────────────────────────────────────────────────────────────────
   const [companies, setCompanies] = useState<CompanySummary[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [scope, setScope] = useState<CompanyScope>('all')
-  const [newName, setNewName] = useState('')
-  const [newDescription, setNewDescription] = useState('')
-  const [newDomain, setNewDomain] = useState('')
-  const [newCity, setNewCity] = useState('')
-  const [newState, setNewState] = useState('')
-  const [newEntityType, setNewEntityType] = useState<CompanyEntityType>('unknown')
-  const [newPipelineStage, setNewPipelineStage] = useState<CompanyPipelineStage | ''>('')
-  const [newPriority, setNewPriority] = useState<CompanyPriority | ''>('')
-  const [newRound, setNewRound] = useState<CompanyRound | ''>('')
-  const [newPostMoney, setNewPostMoney] = useState('')
-  const [newRaiseSize, setNewRaiseSize] = useState('')
-  const [newContactName, setNewContactName] = useState('')
-  const [newContactEmail, setNewContactEmail] = useState('')
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [bulkMenuOpen, setBulkMenuOpen] = useState(false)
-  const [bulkDeleting, setBulkDeleting] = useState(false)
-  const bulkMenuRef = useRef<HTMLDivElement>(null)
-  const createCardRef = useRef<HTMLDivElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const query = (searchParams.get('q') || '').trim()
-  const showCreate = searchParams.get('new') === '1'
-  const rawSort = (searchParams.get('sort') || '').trim()
-  const sortBy: CompanySortBy = rawSort === 'name' || rawSort === 'recent_touch'
-    ? rawSort
-    : 'recent_touch'
 
-  const openCreateForm = useCallback(() => {
-    const next = new URLSearchParams(searchParams)
-    next.set('new', '1')
-    setSearchParams(next)
-  }, [searchParams, setSearchParams])
+  // ── Filter picker ───────────────────────────────────────────────────────────
+  const [filterOpen, setFilterOpen] = useState(false)
+  const filterRef = useRef<HTMLDivElement>(null)
 
-  const closeCreateForm = useCallback(() => {
-    const next = new URLSearchParams(searchParams)
-    next.delete('new')
-    setSearchParams(next)
-  }, [searchParams, setSearchParams])
-
-  const setSort = useCallback((nextSort: CompanySortBy) => {
-    const next = new URLSearchParams(searchParams)
-    if (nextSort === 'recent_touch') {
-      next.delete('sort')
-    } else {
-      next.set('sort', nextSort)
-    }
-    setSearchParams(next)
-  }, [searchParams, setSearchParams])
-
-  const fetchCompanies = useCallback(async () => {
-    if (!companiesEnabled) return
-    setLoading(true)
-    setError(null)
-    try {
-      const results = await window.api.invoke<CompanySummary[]>(
-        IPC_CHANNELS.COMPANY_LIST,
-        buildFilter(query, scope, sortBy)
-      )
-      setCompanies(results)
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [companiesEnabled, query, scope, sortBy])
-
-  const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => {
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
-    if (!query) {
-      fetchCompanies()
-      return
+    if (!filterOpen) return
+    function handle(e: MouseEvent) {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setFilterOpen(false)
+      }
     }
-    searchDebounceRef.current = setTimeout(() => {
-      fetchCompanies()
-    }, 300)
-    return () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
-    }
-  }, [fetchCompanies])
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [filterOpen])
 
-  const resetNewForm = useCallback(() => {
-    setNewName('')
-    setNewDescription('')
-    setNewDomain('')
-    setNewCity('')
-    setNewState('')
-    setNewEntityType('unknown')
-    setNewPipelineStage('')
-    setNewPriority('')
-    setNewRound('')
-    setNewPostMoney('')
-    setNewRaiseSize('')
-    setNewContactName('')
-    setNewContactEmail('')
-  }, [])
+  // ── Create form ─────────────────────────────────────────────────────────────
+  const [formState, setFormState] = useState<CreateFormState>(EMPTY_FORM)
+  const createCardRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!showCreate) return
     createCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [showCreate])
 
-  useEffect(() => {
-    if (!bulkMenuOpen) return
-    const handleClickOutside = (e: MouseEvent) => {
-      if (bulkMenuRef.current && !bulkMenuRef.current.contains(e.target as Node)) {
-        setBulkMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [bulkMenuOpen])
+  const patchForm = (patch: Partial<CreateFormState>) =>
+    setFormState((prev) => ({ ...prev, ...patch }))
 
-  const handleBulkDelete = useCallback(async () => {
-    if (selectedIds.size === 0 || bulkDeleting) return
-    setBulkMenuOpen(false)
-    setBulkDeleting(true)
+  // ── URL helpers ─────────────────────────────────────────────────────────────
+  const setScope = useCallback(
+    (s: CompanyScope) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('scope', s)
+        next.delete('type') // scope already constrains entityType
+        return next
+      })
+    },
+    [setSearchParams]
+  )
+
+  const openCreateForm = useCallback(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('new', '1')
+      return next
+    })
+  }, [setSearchParams])
+
+  const closeCreateForm = useCallback(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('new')
+      return next
+    })
+    setFormState(EMPTY_FORM)
+  }, [setSearchParams])
+
+  const handleSort = useCallback(
+    (key: string, dir: 'asc' | 'desc') => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('sortKey', key)
+        next.set('sortDir', dir)
+        return next
+      })
+    },
+    [setSearchParams]
+  )
+
+  const toggleFilter = useCallback(
+    (param: string, value: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        const existing = next.getAll(param)
+        next.delete(param)
+        if (existing.includes(value)) {
+          existing.filter((v) => v !== value).forEach((v) => next.append(param, v))
+        } else {
+          [...existing, value].forEach((v) => next.append(param, v))
+        }
+        return next
+      })
+    },
+    [setSearchParams]
+  )
+
+  const clearFilter = useCallback(
+    (param: string, value?: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        if (value === undefined) {
+          next.delete(param)
+        } else {
+          const remaining = next.getAll(param).filter((v) => v !== value)
+          next.delete(param)
+          remaining.forEach((v) => next.append(param, v))
+        }
+        return next
+      })
+    },
+    [setSearchParams]
+  )
+
+  // ── Fetch ───────────────────────────────────────────────────────────────────
+  // Map sort key to the two backend-supported sort modes
+  const backendSortBy = sort.key === 'name' ? ('name' as const) : ('recent_touch' as const)
+
+  const fetchCompanies = useCallback(async () => {
+    if (!companiesEnabled) return
+    setLoading(true)
     setError(null)
     try {
-      await Promise.all(
-        Array.from(selectedIds).map((id) =>
-          window.api.invoke(IPC_CHANNELS.COMPANY_DELETE, id)
-        )
-      )
-      setSelectedIds(new Set())
-      await fetchCompanies()
+      const filter = buildUrlFilter(scope, query, backendSortBy)
+      const results = await api.invoke<CompanySummary[]>(IPC_CHANNELS.COMPANY_LIST, filter)
+      setCompanies(results)
     } catch (err) {
       setError(String(err))
     } finally {
-      setBulkDeleting(false)
+      setLoading(false)
     }
-  }, [selectedIds, bulkDeleting, fetchCompanies])
+  }, [companiesEnabled, scope, query, backendSortBy])
 
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
+  useEffect(() => {
+    clearTimeout(searchDebounceRef.current)
+    if (!query) {
+      void fetchCompanies()
+      return
+    }
+    searchDebounceRef.current = setTimeout(() => { void fetchCompanies() }, 300)
+    return () => { clearTimeout(searchDebounceRef.current) }
+  }, [fetchCompanies])
+
+  // ── Derived display list ─────────────────────────────────────────────────────
+  // searchParams captures all filter/sort URL state — no need to list individually
+  const displayCompanies = useMemo(() => {
+    const tFilter = searchParams.getAll('type') as CompanyEntityType[]
+    const sFilter = searchParams.getAll('stage') as CompanyPipelineStage[]
+    const pFilter = searchParams.getAll('priority') as CompanyPriority[]
+    const sortKey = searchParams.get('sortKey') || 'lastTouchpoint'
+    const sortDir = (searchParams.get('sortDir') || 'desc') as 'asc' | 'desc'
+    const filtered = filterCompanies(companies, tFilter, sFilter, pFilter)
+    if (BACKEND_SORT_KEYS.has(sortKey)) return filtered
+    return sortRows(filtered, { key: sortKey, dir: sortDir }, COLUMN_DEFS)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companies, searchParams])
+
+  // ── CompanyTable callbacks ──────────────────────────────────────────────────
+  const handlePatch = useCallback((id: string, patch: Record<string, unknown>) => {
+    setCompanies((prev) =>
+      prev.map((c) => (c.id === id ? ({ ...c, ...patch } as CompanySummary) : c))
+    )
+  }, [])
+
+  const handleBulkDelete = useCallback(async () => {
+    await fetchCompanies()
+  }, [fetchCompanies])
+
+  const handleCreateInline = useCallback(
+    async (name: string) => {
+      const created = await api.invoke<CompanySummary>(IPC_CHANNELS.COMPANY_CREATE, {
+        canonicalName: name,
+        entityType: 'unknown'
+      })
+      await fetchCompanies()
+      navigate(`/company/${created.id}`)
+    },
+    [fetchCompanies, navigate]
+  )
+
+  // ── Create form submit ──────────────────────────────────────────────────────
   const handleCreateCompany = async () => {
-    if (!newName.trim()) return
+    if (!formState.name.trim()) return
     try {
-      const created = await window.api.invoke<CompanySummary>(
-        IPC_CHANNELS.COMPANY_CREATE,
-        {
-          canonicalName: newName.trim(),
-          description: newDescription.trim() || null,
-          primaryDomain: newDomain.trim() || null,
-          entityType: newEntityType,
-          primaryContact: newContactName.trim() && newContactEmail.trim()
-            ? { fullName: newContactName.trim(), email: newContactEmail.trim() }
+      const created = await api.invoke<CompanySummary>(IPC_CHANNELS.COMPANY_CREATE, {
+        canonicalName: formState.name.trim(),
+        description: formState.description.trim() || null,
+        primaryDomain: formState.domain.trim() || null,
+        entityType: formState.entityType,
+        primaryContact:
+          formState.contactName.trim() && formState.contactEmail.trim()
+            ? { fullName: formState.contactName.trim(), email: formState.contactEmail.trim() }
             : undefined
-        }
-      )
+      })
       const updates: Record<string, unknown> = {}
-      if (newCity.trim()) updates.city = newCity.trim()
-      if (newState.trim()) updates.state = newState.trim()
-      if (newPipelineStage) updates.pipelineStage = newPipelineStage
-      if (newPriority) updates.priority = newPriority
-      if (newRound) updates.round = newRound
-      if (newPostMoney.trim()) updates.postMoneyValuation = Number(newPostMoney)
-      if (newRaiseSize.trim()) updates.raiseSize = Number(newRaiseSize)
+      if (formState.city.trim()) updates.city = formState.city.trim()
+      if (formState.state.trim()) updates.state = formState.state.trim()
+      if (formState.pipelineStage) updates.pipelineStage = formState.pipelineStage
+      if (formState.priority) updates.priority = formState.priority
+      if (formState.round) updates.round = formState.round
+      if (formState.postMoney.trim()) updates.postMoneyValuation = Number(formState.postMoney)
+      if (formState.raiseSize.trim()) updates.raiseSize = Number(formState.raiseSize)
       if (Object.keys(updates).length > 0) {
-        await window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, created.id, updates)
+        await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, created.id, updates)
       }
       closeCreateForm()
-      resetNewForm()
       await fetchCompanies()
       navigate(`/company/${created.id}`)
     } catch (err) {
@@ -287,6 +299,7 @@ export default function Companies() {
     }
   }
 
+  // ── Feature flag gate ───────────────────────────────────────────────────────
   if (!flagsLoading && !companiesEnabled) {
     return (
       <EmptyState
@@ -296,256 +309,316 @@ export default function Companies() {
     )
   }
 
-  const showEmptyState = !loading && companies.length === 0 && !query && !showCreate
-
-  const virtualizer = useVirtualizer({
-    count: companies.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 48,
-    overscan: 5
-  })
+  const activeFilterCount = typeFilter.length + stageFilter.length + priorityFilter.length
 
   return (
     <div className={styles.container}>
-      <div className={styles.scopeRow}>
-        {(Object.keys(SCOPE_LABELS) as CompanyScope[]).map((s) => (
-          <button
-            key={s}
-            className={`${styles.scopeButton} ${scope === s ? styles.activeScope : ''}`}
-            onClick={() => setScope(s)}
-          >
-            {SCOPE_LABELS[s]}
-          </button>
-        ))}
+      {/* Header: scope tabs + new button */}
+      <div className={styles.header}>
+        <div className={styles.scopeRow}>
+          {(Object.keys(SCOPE_LABELS) as CompanyScope[]).map((s) => (
+            <button
+              key={s}
+              className={`${styles.scopeButton} ${scope === s ? styles.activeScope : ''}`}
+              onClick={() => setScope(s)}
+            >
+              {SCOPE_LABELS[s]}
+            </button>
+          ))}
+        </div>
+        <button className={styles.newButton} onClick={openCreateForm}>+ New</button>
       </div>
-      <div className={styles.controlsRow}>
-        <div className={styles.sortGroup}>
-          <label htmlFor="company-sort" className={styles.sortLabel}>Sort</label>
-          <select
-            id="company-sort"
-            className={styles.sortSelect}
-            value={sortBy}
-            onChange={(e) => setSort(e.target.value as CompanySortBy)}
+
+      {/* Saved views bar */}
+      <ViewsBar
+        storageKey="cyggie:company-views"
+        currentParams={searchParams}
+        currentColumns={visibleKeys}
+        onApply={(params, columns) => {
+          setSearchParams(params)
+          setVisibleKeys(columns)
+        }}
+      />
+
+      {/* Filter chips row */}
+      <div className={styles.filterRow}>
+        {scope === 'all' &&
+          typeFilter.map((v) => {
+            const label = ENTITY_TYPES.find((o) => o.value === v)?.label ?? v
+            return (
+              <span key={v} className={styles.filterChip}>
+                Type: {label}
+                <button className={styles.filterChipX} onClick={() => clearFilter('type', v)}>
+                  ×
+                </button>
+              </span>
+            )
+          })}
+        {stageFilter.map((v) => {
+          const label = STAGES.find((o) => o.value === v)?.label ?? v
+          return (
+            <span key={v} className={styles.filterChip}>
+              Stage: {label}
+              <button className={styles.filterChipX} onClick={() => clearFilter('stage', v)}>
+                ×
+              </button>
+            </span>
+          )
+        })}
+        {priorityFilter.map((v) => {
+          const label = PRIORITIES.find((o) => o.value === v)?.label ?? v
+          return (
+            <span key={v} className={styles.filterChip}>
+              Priority: {label}
+              <button className={styles.filterChipX} onClick={() => clearFilter('priority', v)}>
+                ×
+              </button>
+            </span>
+          )
+        })}
+
+        {/* Filter picker dropdown */}
+        <div ref={filterRef} className={styles.filterPickerWrap}>
+          <button
+            className={`${styles.filterPickerBtn} ${activeFilterCount > 0 ? styles.filterPickerBtnActive : ''}`}
+            onClick={() => setFilterOpen((v) => !v)}
           >
-            <option value="recent_touch">Recent touch</option>
-            <option value="name">Name (A-Z)</option>
-          </select>
+            + Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+          </button>
+          {filterOpen && (
+            <div className={styles.filterDropdown}>
+              {scope === 'all' && (
+                <div className={styles.filterSection}>
+                  <div className={styles.filterSectionLabel}>Type</div>
+                  {ENTITY_TYPES.map((o) => (
+                    <label key={o.value} className={styles.filterOption}>
+                      <input
+                        type="checkbox"
+                        checked={typeFilter.includes(o.value)}
+                        onChange={() => toggleFilter('type', o.value)}
+                      />
+                      {o.label}
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className={styles.filterSection}>
+                <div className={styles.filterSectionLabel}>Stage</div>
+                {STAGES.map((o) => (
+                  <label key={o.value} className={styles.filterOption}>
+                    <input
+                      type="checkbox"
+                      checked={stageFilter.includes(o.value)}
+                      onChange={() => toggleFilter('stage', o.value)}
+                    />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+              <div className={styles.filterSection}>
+                <div className={styles.filterSectionLabel}>Priority</div>
+                {PRIORITIES.map((o) => (
+                  <label key={o.value} className={styles.filterOption}>
+                    <input
+                      type="checkbox"
+                      checked={priorityFilter.includes(o.value)}
+                      onChange={() => toggleFilter('priority', o.value)}
+                    />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+              {activeFilterCount > 0 && (
+                <div className={styles.filterClearAll}>
+                  <button
+                    onClick={() => {
+                      setSearchParams((prev) => {
+                        const next = new URLSearchParams(prev)
+                        next.delete('type')
+                        next.delete('stage')
+                        next.delete('priority')
+                        return next
+                      })
+                      setFilterOpen(false)
+                    }}
+                  >
+                    Clear all filters
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
+      {error && <div className={styles.error}>{error}</div>}
+
+      {/* Create form */}
       {showCreate && (
         <div ref={createCardRef} className={styles.createCard}>
           <div className={styles.createFormGrid}>
             <div className={styles.createFieldFull}>
               <label className={styles.createLabel}>Company Name</label>
-              <input className={styles.input} value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus />
+              <input
+                className={styles.input}
+                value={formState.name}
+                onChange={(e) => patchForm({ name: e.target.value })}
+                autoFocus
+              />
             </div>
             <div>
               <label className={styles.createLabel}>Domain</label>
-              <input className={styles.input} placeholder="e.g. acme.com" value={newDomain} onChange={(e) => setNewDomain(e.target.value)} />
+              <input
+                className={styles.input}
+                placeholder="e.g. acme.com"
+                value={formState.domain}
+                onChange={(e) => patchForm({ domain: e.target.value })}
+              />
             </div>
             <div>
               <label className={styles.createLabel}>City</label>
-              <input className={styles.input} value={newCity} onChange={(e) => setNewCity(e.target.value)} />
+              <input
+                className={styles.input}
+                value={formState.city}
+                onChange={(e) => patchForm({ city: e.target.value })}
+              />
             </div>
             <div>
               <label className={styles.createLabel}>State</label>
-              <input className={styles.input} placeholder="e.g. CA" value={newState} onChange={(e) => setNewState(e.target.value)} />
+              <input
+                className={styles.input}
+                placeholder="e.g. CA"
+                value={formState.state}
+                onChange={(e) => patchForm({ state: e.target.value })}
+              />
             </div>
             <div className={styles.createFieldFull}>
               <label className={styles.createLabel}>Description</label>
-              <textarea className={styles.textarea} value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
+              <textarea
+                className={styles.textarea}
+                value={formState.description}
+                onChange={(e) => patchForm({ description: e.target.value })}
+              />
             </div>
             <div>
               <label className={styles.createLabel}>Entity Type</label>
-              <select className={styles.createSelect} value={newEntityType} onChange={(e) => setNewEntityType(e.target.value as CompanyEntityType)}>
-                {ENTITY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              <select
+                className={styles.createSelect}
+                value={formState.entityType}
+                onChange={(e) => patchForm({ entityType: e.target.value as CompanyEntityType })}
+              >
+                {ENTITY_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
               </select>
             </div>
             <div>
               <label className={styles.createLabel}>Pipeline Stage</label>
-              <select className={styles.createSelect} value={newPipelineStage} onChange={(e) => setNewPipelineStage(e.target.value as CompanyPipelineStage | '')}>
+              <select
+                className={styles.createSelect}
+                value={formState.pipelineStage}
+                onChange={(e) => patchForm({ pipelineStage: e.target.value as CompanyPipelineStage | '' })}
+              >
                 <option value="">None</option>
-                {STAGES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                {STAGES.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
               </select>
             </div>
             <div>
               <label className={styles.createLabel}>Priority</label>
-              <select className={styles.createSelect} value={newPriority} onChange={(e) => setNewPriority(e.target.value as CompanyPriority | '')}>
+              <select
+                className={styles.createSelect}
+                value={formState.priority}
+                onChange={(e) => patchForm({ priority: e.target.value as CompanyPriority | '' })}
+              >
                 <option value="">None</option>
-                {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                {PRIORITIES.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
               </select>
             </div>
             <div>
               <label className={styles.createLabel}>Round</label>
-              <select className={styles.createSelect} value={newRound} onChange={(e) => setNewRound(e.target.value as CompanyRound | '')}>
+              <select
+                className={styles.createSelect}
+                value={formState.round}
+                onChange={(e) => patchForm({ round: e.target.value as CompanyRound | '' })}
+              >
                 <option value="">None</option>
-                {ROUNDS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                {ROUNDS.map((r) => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
               </select>
             </div>
             <div>
               <label className={styles.createLabel}>Post Money ($M)</label>
-              <input className={styles.input} type="number" step="0.1" value={newPostMoney} onChange={(e) => setNewPostMoney(e.target.value)} />
+              <input
+                className={styles.input}
+                type="number"
+                step="0.1"
+                value={formState.postMoney}
+                onChange={(e) => patchForm({ postMoney: e.target.value })}
+              />
             </div>
             <div>
               <label className={styles.createLabel}>Raise Size ($M)</label>
-              <input className={styles.input} type="number" step="0.1" value={newRaiseSize} onChange={(e) => setNewRaiseSize(e.target.value)} />
+              <input
+                className={styles.input}
+                type="number"
+                step="0.1"
+                value={formState.raiseSize}
+                onChange={(e) => patchForm({ raiseSize: e.target.value })}
+              />
             </div>
             <div>
               <label className={styles.createLabel}>Primary Contact Name</label>
-              <input className={styles.input} placeholder="e.g. Jane Smith" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
+              <input
+                className={styles.input}
+                placeholder="e.g. Jane Smith"
+                value={formState.contactName}
+                onChange={(e) => patchForm({ contactName: e.target.value })}
+              />
             </div>
             <div>
               <label className={styles.createLabel}>Primary Contact Email</label>
-              <input className={styles.input} placeholder="e.g. jane@acme.com" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
+              <input
+                className={styles.input}
+                placeholder="e.g. jane@acme.com"
+                value={formState.contactEmail}
+                onChange={(e) => patchForm({ contactEmail: e.target.value })}
+              />
             </div>
           </div>
           <div className={styles.createActions}>
-            <button className={styles.createBtn} onClick={handleCreateCompany} disabled={!newName.trim()}>Create</button>
-            <button className={styles.createCancelBtn} onClick={closeCreateForm}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {error && <div className={styles.error}>{error}</div>}
-
-      {query && (
-        <p className={styles.resultCount}>
-          {loading ? 'Searching...' : `${companies.length} result${companies.length !== 1 ? 's' : ''}`}
-        </p>
-      )}
-
-      <div className={styles.scrollArea} ref={scrollRef}>
-        {showEmptyState ? (
-          <EmptyState
-            title="No companies yet"
-            description="Companies are auto-detected from meeting attendees, or you can add one manually."
-            action={{ label: '+ New Company', onClick: openCreateForm }}
-          />
-        ) : (
-          <>
-            <div className={styles.section}>
-              <h3 className={styles.sectionHeader}>
-                {SCOPE_LABELS[scope]} ({companies.length})
-              </h3>
-              <div className={styles.list} style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
-                {virtualizer.getVirtualItems().map((vrow) => {
-                  const company = companies[vrow.index]
-                  const touchDays = daysSince(company.lastTouchpoint)
-                  const warmthClass = touchDays == null
-                    ? styles.warmthUnknown
-                    : touchDays < 14
-                        ? styles.warmthGreen
-                        : touchDays <= 30
-                            ? styles.warmthYellow
-                            : styles.warmthRed
-                  const isSelected = selectedIds.has(company.id)
-                  return (
-                    <div
-                      key={company.id}
-                      style={{ position: 'absolute', top: vrow.start, left: 0, right: 0 }}
-                      className={`${styles.cardWrapper} ${isSelected ? styles.cardWrapperSelected : ''}`}
-                    >
-                      <div
-                        className={styles.checkboxZone}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setSelectedIds((prev) => {
-                            const next = new Set(prev)
-                            if (next.has(company.id)) next.delete(company.id)
-                            else next.add(company.id)
-                            return next
-                          })
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          className={styles.companyCheckbox}
-                          checked={isSelected}
-                          onChange={() => {}}
-                          tabIndex={-1}
-                        />
-                      </div>
-                      <div
-                        className={styles.card}
-                        onClick={() => navigate(`/company/${company.id}`)}
-                      >
-                        <div className={styles.cardRow}>
-                          <div className={styles.cardNameGroup}>
-                            {company.primaryDomain && (
-                              <img
-                                src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(company.primaryDomain)}&sz=32`}
-                                alt=""
-                                className={styles.favicon}
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                              />
-                            )}
-                            <span className={styles.cardName}>{company.canonicalName}</span>
-                          </div>
-                          <span className={styles.cardDomain}>{company.primaryDomain || ''}</span>
-                        </div>
-                        <div className={styles.cardRow}>
-                          <span className={styles.cardMeta}>
-                            {[
-                              company.meetingCount > 0 && `${company.meetingCount} meeting${company.meetingCount !== 1 ? 's' : ''}`,
-                              company.emailCount > 0 && `${company.emailCount} email${company.emailCount !== 1 ? 's' : ''}`
-                            ].filter(Boolean).join(', ') || 'No activity'}
-                          </span>
-                          <div className={styles.touchMeta}>
-                            <span className={styles.cardStage}>
-                              {formatLastTouch(company.lastTouchpoint)}
-                            </span>
-                            <span className={`${styles.warmthBadge} ${warmthClass}`}>
-                              {touchDays == null ? '--' : `${touchDays}d`}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            {!loading && companies.length === 0 && query && (
-              <p className={styles.noResults}>No companies match your search.</p>
-            )}
-          </>
-        )}
-      </div>
-
-      {selectedIds.size > 0 && (
-        <div className={styles.bulkBar}>
-          <button
-            className={styles.bulkClear}
-            onClick={() => setSelectedIds(new Set())}
-            aria-label="Clear selection"
-          >
-            {selectedIds.size} selected ✕
-          </button>
-          <div className={styles.bulkMenuWrap} ref={bulkMenuRef}>
             <button
-              className={styles.bulkMenuBtn}
-              onClick={() => setBulkMenuOpen((v) => !v)}
-              disabled={bulkDeleting}
+              className={styles.createBtn}
+              onClick={() => void handleCreateCompany()}
+              disabled={!formState.name.trim()}
             >
-              {bulkDeleting ? 'Working…' : 'Actions ▾'}
+              Create
             </button>
-            {bulkMenuOpen && (
-              <div className={styles.bulkMenu}>
-                <button
-                  className={`${styles.bulkMenuItem} ${styles.bulkMenuItemDanger}`}
-                  onClick={() => void handleBulkDelete()}
-                  disabled={bulkDeleting}
-                >
-                  Delete {selectedIds.size} compan{selectedIds.size !== 1 ? 'ies' : 'y'}
-                </button>
-              </div>
-            )}
+            <button className={styles.createCancelBtn} onClick={closeCreateForm}>
+              Cancel
+            </button>
           </div>
         </div>
       )}
 
+      {/* Table — flex: 1 fills remaining height */}
+      <CompanyTable
+        companies={displayCompanies}
+        loading={loading}
+        sort={sort}
+        onSort={handleSort}
+        onPatch={handlePatch}
+        onBulkDelete={handleBulkDelete}
+        onCreateInline={handleCreateInline}
+        visibleKeys={visibleKeys}
+        onVisibleKeysChange={setVisibleKeys}
+      />
+
+      {/* Chat bar — pinned below table */}
       <div className={styles.chatSection}>
         <ChatInterface compact />
       </div>

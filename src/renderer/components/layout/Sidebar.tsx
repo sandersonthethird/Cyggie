@@ -9,6 +9,7 @@ import MiniCalendar from './MiniCalendar'
 import SearchBar from '../common/SearchBar'
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import defaultLogo from '../../assets/logo.png'
+import { api } from '../../api'
 
 export default function Sidebar() {
   const navigate = useNavigate()
@@ -16,7 +17,7 @@ export default function Sidebar() {
   const [brandingLogo, setBrandingLogo] = useState<string | null>(null)
 
   useEffect(() => {
-    window.api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'brandingLogoDataUrl')
+    api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'brandingLogoDataUrl')
       .then((val) => { if (val) setBrandingLogo(val) })
       .catch(() => { /* ignore */ })
   }, [])
@@ -28,7 +29,7 @@ export default function Sidebar() {
 
   const handleRecordEvent = useCallback(async (event: CalendarEvent) => {
     try {
-      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
+      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         event.title,
         event.id
@@ -42,7 +43,7 @@ export default function Sidebar() {
 
   const handlePrepareEvent = useCallback(async (event: CalendarEvent) => {
     try {
-      const meeting = await window.api.invoke<{ id: string }>(
+      const meeting = await api.invoke<{ id: string }>(
         IPC_CHANNELS.MEETING_PREPARE,
         event.id,
         event.title,

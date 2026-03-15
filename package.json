@@ -25,6 +25,7 @@
     "@tanstack/react-virtual": "^3.13.21",
     "@types/turndown": "^5.0.6",
     "better-sqlite3": "^12.6.0",
+    "csv-parse": "^6.1.0",
     "electron-audio-loopback": "^1.0.6",
     "googleapis": "^144.0.0",
     "ollama": "^0.5.14",

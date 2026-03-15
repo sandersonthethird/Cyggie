@@ -5,6 +5,7 @@ import type { ContactNote } from '../../../shared/types/contact'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { useDebounce } from '../../hooks/useDebounce'
 import styles from './ContactNoteDetailModal.module.css'
+import { api } from '../../api'
 
 interface ContactNoteDetailModalProps {
   noteId: string
@@ -80,7 +81,7 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
       const contentChanged = contentDraft !== saved.content
       if (titleChanged || contentChanged) {
         try {
-          const updated = await window.api.invoke<ContactNote | null>(
+          const updated = await api.invoke<ContactNote | null>(
             IPC_CHANNELS.CONTACT_NOTES_UPDATE,
             noteId,
             { title: titleDraft || null, content: contentDraft }
@@ -114,7 +115,7 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
     const newPinned = !isPinned
     setIsPinned(newPinned)
     try {
-      const updated = await window.api.invoke<ContactNote | null>(
+      const updated = await api.invoke<ContactNote | null>(
         IPC_CHANNELS.CONTACT_NOTES_UPDATE,
         noteId,
         { isPinned: newPinned }
@@ -131,7 +132,7 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
   const handleDeleteConfirm = useCallback(async () => {
     setConfirmDelete(false)
     try {
-      await window.api.invoke(IPC_CHANNELS.CONTACT_NOTES_DELETE, noteId)
+      await api.invoke(IPC_CHANNELS.CONTACT_NOTES_DELETE, noteId)
       onDeleted(noteId)
       onClose()
     } catch {

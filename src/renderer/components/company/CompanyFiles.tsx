@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanyDriveFileRef } from '../../../shared/types/company'
 import styles from './CompanyFiles.module.css'
+import { api } from '../../api'
 
 interface CompanyFilesLookupResult {
   companyRoot: string | null
@@ -37,9 +38,9 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
 
   function openFile(file: CompanyDriveFileRef) {
     if (file.webViewLink) {
-      window.api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, file.webViewLink).catch(console.error)
+      api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, file.webViewLink).catch(console.error)
     } else if (file.id) {
-      window.api.invoke(IPC_CHANNELS.APP_OPEN_PATH, file.id).catch(console.error)
+      api.invoke(IPC_CHANNELS.APP_OPEN_PATH, file.id).catch(console.error)
     }
   }
 

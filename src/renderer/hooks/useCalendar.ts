@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef } from 'react'
 import { useAppStore } from '../stores/app.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { CalendarEvent } from '../../shared/types/calendar'
+import { api } from '../api'
 
 export function useCalendar() {
   const calendarEvents = useAppStore((s) => s.calendarEvents)
@@ -12,7 +13,7 @@ export function useCalendar() {
 
   const fetchEvents = useCallback(async () => {
     try {
-      const events = await window.api.invoke<CalendarEvent[]>(IPC_CHANNELS.CALENDAR_EVENTS)
+      const events = await api.invoke<CalendarEvent[]>(IPC_CHANNELS.CALENDAR_EVENTS)
       console.log('[useCalendar] Fetched events:', events.length, events.map((e) => e.title))
       setCalendarEvents(events)
     } catch (err) {
@@ -22,7 +23,7 @@ export function useCalendar() {
 
   const connect = useCallback(
     async (clientId: string, clientSecret: string) => {
-      const result = await window.api.invoke<{ connected: boolean }>(
+      const result = await api.invoke<{ connected: boolean }>(
         IPC_CHANNELS.CALENDAR_CONNECT,
         clientId,
         clientSecret
@@ -36,7 +37,7 @@ export function useCalendar() {
   )
 
   const disconnectCalendar = useCallback(async () => {
-    await window.api.invoke(IPC_CHANNELS.CALENDAR_DISCONNECT)
+    await api.invoke(IPC_CHANNELS.CALENDAR_DISCONNECT)
     setCalendarConnected(false)
     setCalendarEvents([])
   }, [setCalendarConnected, setCalendarEvents])
@@ -45,7 +46,7 @@ export function useCalendar() {
   useEffect(() => {
     async function init() {
       try {
-        const connected = await window.api.invoke<boolean>(IPC_CHANNELS.CALENDAR_IS_CONNECTED)
+        const connected = await api.invoke<boolean>(IPC_CHANNELS.CALENDAR_IS_CONNECTED)
         console.log('[useCalendar] Connection status from main:', connected)
         if (connected) {
           setCalendarConnected(true)

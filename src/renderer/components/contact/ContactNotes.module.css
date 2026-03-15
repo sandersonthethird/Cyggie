@@ -19,18 +19,40 @@
   background: var(--color-card-bg);
   color: var(--color-text);
   font-size: 13px;
-  resize: vertical;
+  resize: none;
   font-family: inherit;
   outline: none;
   box-sizing: border-box;
+  transition: border-color 0.1s;
 }
 
 .textarea:focus {
   border-color: var(--color-primary);
 }
 
+.noteActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cancelBtn {
+  padding: 5px 12px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cancelBtn:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text-primary);
+}
+
 .saveBtn {
-  align-self: flex-end;
   padding: 5px 14px;
   background: var(--color-primary);
   color: #fff;
@@ -65,11 +87,25 @@
   background: var(--color-bg-secondary);
 }
 
-.noteContent {
+.noteTitle {
   font-size: 13px;
+  font-weight: 600;
   color: var(--color-text);
-  white-space: pre-wrap;
+  line-height: 1.4;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.noteBody {
+  font-size: 12px;
+  color: var(--color-text-secondary);
   line-height: 1.5;
+  margin-top: 2px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .noteMeta {

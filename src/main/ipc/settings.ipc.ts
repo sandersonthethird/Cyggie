@@ -1,6 +1,8 @@
 import { ipcMain, safeStorage } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as settingsRepo from '../database/repositories/settings.repo'
+import { backfillMeetingSummaryNotes } from '../services/meeting-notes-backfill.service'
+import { getCurrentUserId } from '../security/current-user'
 
 const ENCRYPTED_KEYS = new Set(['deepgramApiKey', 'claudeApiKey'])
 
@@ -38,5 +40,10 @@ export function registerSettingsHandlers(): void {
       }
     }
     return all
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MEETING_NOTES_BACKFILL, () => {
+    const userId = getCurrentUserId()
+    return backfillMeetingSummaryNotes(userId)
   })
 }

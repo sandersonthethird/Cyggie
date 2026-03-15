@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 
 import { useCalendar } from '../hooks/useCalendar'
@@ -12,6 +12,8 @@ import type {
 import type { UserProfile } from '../../shared/types/user'
 import styles from './Settings.module.css'
 import { CustomFieldsSettings } from '../components/settings/CustomFieldsSettings'
+import { ImportModal } from '../components/settings/ImportModal'
+import { api } from '../api'
 
 function splitDriveRoots(raw: string): string[] {
   const values = raw
@@ -79,7 +81,7 @@ interface SettingsState {
 }
 
 export default function Settings() {
-  const navigate = useNavigate()
+
   const [searchParams] = useSearchParams()
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     const tab = searchParams.get('tab')
@@ -102,6 +104,7 @@ export default function Settings() {
     autoSyncEmails: true
   })
   const [saved, setSaved] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const [storagePath, setStoragePath] = useState('')
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [userDisplayName, setUserDisplayName] = useState('')
@@ -122,6 +125,9 @@ export default function Settings() {
     useState<ContactEmailOnboardingResult | null>(null)
   const [contactOnboardingProgress, setContactOnboardingProgress] =
     useState<ContactEmailOnboardingProgress | null>(null)
+  const [backfillRunning, setBackfillRunning] = useState(false)
+  const [backfillResult, setBackfillResult] = useState<{ meetings: number; created: number; skipped: number } | null>(null)
+  const [backfillError, setBackfillError] = useState('')
 
   // Calendar state
   const { calendarConnected, connect, disconnect } = useCalendar()
@@ -144,9 +150,9 @@ export default function Settings() {
 
   const refreshGoogleScopes = useCallback(async () => {
     const [driveScopeResult, driveFilesScopeResult, gmailConnectedResult] = await Promise.allSettled([
-      window.api.invoke<boolean>(IPC_CHANNELS.DRIVE_HAS_SCOPE),
-      window.api.invoke<boolean>(IPC_CHANNELS.DRIVE_HAS_FILES_SCOPE),
-      window.api.invoke<boolean>(IPC_CHANNELS.GMAIL_IS_CONNECTED)
+      api.invoke<boolean>(IPC_CHANNELS.DRIVE_HAS_SCOPE),
+      api.invoke<boolean>(IPC_CHANNELS.DRIVE_HAS_FILES_SCOPE),
+      api.invoke<boolean>(IPC_CHANNELS.GMAIL_IS_CONNECTED)
     ])
     setHasDriveScope(driveScopeResult.status === 'fulfilled' ? driveScopeResult.value : false)
     setHasDriveFilesScope(
@@ -161,9 +167,9 @@ export default function Settings() {
     async function load() {
       try {
         const [allResult, currentPathResult, userResult] = await Promise.allSettled([
-          window.api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL),
-          window.api.invoke<string>(IPC_CHANNELS.APP_GET_STORAGE_PATH),
-          window.api.invoke<UserProfile>(IPC_CHANNELS.USER_GET_CURRENT)
+          api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL),
+          api.invoke<string>(IPC_CHANNELS.APP_GET_STORAGE_PATH),
+          api.invoke<UserProfile>(IPC_CHANNELS.USER_GET_CURRENT)
         ])
 
         if (allResult.status === 'fulfilled') {
@@ -229,7 +235,7 @@ export default function Settings() {
   }, [initialLoad])
 
   useEffect(() => {
-    const unsubscribe = window.api.on(
+    const unsubscribe = api.on(
       IPC_CHANNELS.CONTACT_ONBOARD_PROGRESS,
       (payload: unknown) => {
         if (!payload || typeof payload !== 'object') return
@@ -244,14 +250,14 @@ export default function Settings() {
     const nextFirstName = userFirstName.trim()
     const nextLastName = userLastName.trim()
     const fallbackDisplayName = [nextFirstName, nextLastName].filter(Boolean).join(' ').trim()
-    const nextDisplayName = userDisplayName.trim() || fallbackDisplayName
+    const nextDisplayName = fallbackDisplayName || userDisplayName.trim()
     if (!nextDisplayName) {
       setProfileError('Display name is required.')
       setActiveTab('profile')
       return false
     }
 
-    const updatedProfile = await window.api.invoke<UserProfile>(
+    const updatedProfile = await api.invoke<UserProfile>(
       IPC_CHANNELS.USER_UPDATE_CURRENT,
       {
         displayName: nextDisplayName,
@@ -299,14 +305,14 @@ export default function Settings() {
 
     const entries = Object.entries(settings) as [string, string | boolean][]
     for (const [key, value] of entries) {
-      await window.api.invoke(IPC_CHANNELS.SETTINGS_SET, key, String(value))
+      await api.invoke(IPC_CHANNELS.SETTINGS_SET, key, String(value))
     }
-    await window.api.invoke(
+    await api.invoke(
       IPC_CHANNELS.SETTINGS_SET,
       'dashboardStaleRelationshipDays',
       staleRelationshipDays.trim() || '21'
     )
-    await window.api.invoke(
+    await api.invoke(
       IPC_CHANNELS.SETTINGS_SET,
       'dashboardStalledPipelineDays',
       stalledPipelineDays.trim() || '21'
@@ -316,11 +322,11 @@ export default function Settings() {
   }, [settings, saveUserProfile, staleRelationshipDays, stalledPipelineDays])
 
   const handleOpenStorage = useCallback(async () => {
-    await window.api.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_DIR)
+    await api.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_DIR)
   }, [])
 
   const handleChangeStorage = useCallback(async () => {
-    const newPath = await window.api.invoke<string | null>(IPC_CHANNELS.APP_CHANGE_STORAGE_DIR)
+    const newPath = await api.invoke<string | null>(IPC_CHANNELS.APP_CHANGE_STORAGE_DIR)
     if (newPath) {
       setStoragePath(newPath)
     }
@@ -352,7 +358,7 @@ export default function Settings() {
     setDriveGranting(true)
     setDriveError('')
     try {
-      await window.api.invoke(IPC_CHANNELS.CALENDAR_REAUTHORIZE)
+      await api.invoke(IPC_CHANNELS.CALENDAR_REAUTHORIZE)
       await refreshGoogleScopes()
     } catch (err) {
       setDriveError(String(err))
@@ -365,7 +371,7 @@ export default function Settings() {
     setDriveFilesGranting(true)
     setDriveError('')
     try {
-      await window.api.invoke(IPC_CHANNELS.CALENDAR_REAUTHORIZE, 'drive-files')
+      await api.invoke(IPC_CHANNELS.CALENDAR_REAUTHORIZE, 'drive-files')
       await refreshGoogleScopes()
     } catch (err) {
       setDriveError(String(err))
@@ -378,7 +384,7 @@ export default function Settings() {
     setGmailConnecting(true)
     setGmailError('')
     try {
-      await window.api.invoke(
+      await api.invoke(
         IPC_CHANNELS.GMAIL_CONNECT,
         googleClientId.trim(),
         googleClientSecret.trim()
@@ -392,7 +398,7 @@ export default function Settings() {
   }, [googleClientId, googleClientSecret, refreshGoogleScopes])
 
   const handleDisconnectGmail = useCallback(async () => {
-    await window.api.invoke(IPC_CHANNELS.GMAIL_DISCONNECT)
+    await api.invoke(IPC_CHANNELS.GMAIL_DISCONNECT)
     await refreshGoogleScopes()
   }, [refreshGoogleScopes])
 
@@ -407,7 +413,7 @@ export default function Settings() {
         webLookup: contactOnboardingUseWebLookup,
         webLookupLimit: contactOnboardingUseWebLookup ? 500 : undefined
       }
-      const result = await window.api.invoke<ContactEmailOnboardingResult>(
+      const result = await api.invoke<ContactEmailOnboardingResult>(
         IPC_CHANNELS.CONTACT_ONBOARD_FROM_EMAIL,
         options
       )
@@ -606,10 +612,10 @@ export default function Settings() {
             <button
               className={styles.connectBtn}
               onClick={async () => {
-                const dataUrl = await window.api.invoke<string | null>(IPC_CHANNELS.APP_PICK_LOGO_FILE)
+                const dataUrl = await api.invoke<string | null>(IPC_CHANNELS.APP_PICK_LOGO_FILE)
                 if (dataUrl) {
                   setBrandingLogoDataUrl(dataUrl)
-                  await window.api.invoke(IPC_CHANNELS.SETTINGS_SET, 'brandingLogoDataUrl', dataUrl)
+                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'brandingLogoDataUrl', dataUrl)
                 }
               }}
             >
@@ -620,7 +626,7 @@ export default function Settings() {
                 className={styles.linkBtn}
                 onClick={async () => {
                   setBrandingLogoDataUrl('')
-                  await window.api.invoke(IPC_CHANNELS.SETTINGS_SET, 'brandingLogoDataUrl', '')
+                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'brandingLogoDataUrl', '')
                 }}
               >
                 Remove
@@ -712,6 +718,46 @@ export default function Settings() {
               )}
             </div>
           )}
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Meeting Notes Backfill</h3>
+        <div className={styles.field}>
+          <p className={styles.hint}>
+            Populates Contact and Company notes from historical meeting summaries.
+            Safe to run multiple times — already-backfilled notes are skipped.
+          </p>
+          <div className={styles.onboardingActionRow}>
+            <button
+              className={styles.connectBtn}
+              onClick={async () => {
+                setBackfillRunning(true)
+                setBackfillResult(null)
+                setBackfillError('')
+                try {
+                  const result = await api.invoke<{ meetings: number; created: number; skipped: number }>(
+                    IPC_CHANNELS.MEETING_NOTES_BACKFILL
+                  )
+                  setBackfillResult(result)
+                } catch (err) {
+                  setBackfillError(String(err))
+                } finally {
+                  setBackfillRunning(false)
+                }
+              }}
+              disabled={backfillRunning}
+            >
+              {backfillRunning ? 'Running…' : 'Backfill Meeting Notes'}
+            </button>
+          </div>
+          {backfillResult && (
+            <p className={styles.hint}>
+              Done — {backfillResult.meetings} meetings scanned, {backfillResult.created} notes created,{' '}
+              {backfillResult.skipped} skipped (already present).
+            </p>
+          )}
+          {backfillError && <p className={styles.error}>{backfillError}</p>}
         </div>
       </section>
         </>
@@ -1100,6 +1146,16 @@ export default function Settings() {
           </span>
         </div>
       </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Import Data</h3>
+        <p className={styles.hint} style={{ marginBottom: 12 }}>
+          Import contacts and companies from a CSV file. Cyggie will suggest field mappings automatically.
+        </p>
+        <button className={styles.connectBtn} onClick={() => setShowImportModal(true)}>
+          Import CSV
+        </button>
+      </section>
         </>
       )}
 
@@ -1126,7 +1182,7 @@ export default function Settings() {
             <button
               className={styles.linkBtn}
               onClick={async () => {
-                const chosen = await window.api.invoke<string | null>(
+                const chosen = await api.invoke<string | null>(
                   IPC_CHANNELS.APP_PICK_FOLDER
                 )
                 if (chosen) {
@@ -1139,7 +1195,7 @@ export default function Settings() {
             {settings.companyLocalFilesRoot && (
               <button
                 className={styles.linkBtn}
-                onClick={() => window.api.invoke(IPC_CHANNELS.APP_OPEN_PATH, settings.companyLocalFilesRoot)}
+                onClick={() => api.invoke(IPC_CHANNELS.APP_OPEN_PATH, settings.companyLocalFilesRoot)}
               >
                 Open in Finder
               </button>
@@ -1215,16 +1271,6 @@ export default function Settings() {
         </>
       )}
 
-      <section className={styles.section}>
-        <h2 className={styles.sectionTitle}>Meeting Templates</h2>
-        <p className={styles.settingDescription}>
-          Customize the prompts used to generate meeting summaries. Create templates for different meeting types like VC pitches, check-ins, or partner meetings.
-        </p>
-        <button className={styles.manageTemplatesBtn} onClick={() => navigate('/templates')}>
-          Manage Templates →
-        </button>
-      </section>
-
       <div className={styles.actions}>
         <button className={styles.saveBtn} onClick={handleSave}>
           {saved ? 'Saved' : 'Save Settings'}
@@ -1233,6 +1279,10 @@ export default function Settings() {
 
       {activeTab === 'custom-fields' && (
         <CustomFieldsSettings />
+      )}
+
+      {showImportModal && (
+        <ImportModal onClose={() => setShowImportModal(false)} />
       )}
     </div>
   )

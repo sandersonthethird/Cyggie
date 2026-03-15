@@ -19,6 +19,9 @@ import type { LlmProvider } from '../../shared/types/settings'
 import { getVcSummaryCompanyUpdateProposals } from '../services/company-summary-sync.service'
 import { extractTasksFromSummary } from '../services/task-extraction.service'
 import { listMeetingCompanies } from '../database/repositories/org-company.repo'
+import { resolveContactsByEmails } from '../database/repositories/contact.repo'
+import { createContactNote } from '../database/repositories/contact-notes.repo'
+import { createCompanyNote } from '../database/repositories/company-notes.repo'
 import { getUser } from '../database/repositories/user.repo'
 import type { SummaryGenerateResult } from '../../shared/types/summary'
 import type { TaskExtractionResult } from '../../shared/types/task'
@@ -30,7 +33,7 @@ export function abortSummary(): void {
   summaryAbortController = null
 }
 
-function getProvider(): LLMProvider {
+export function getProvider(): LLMProvider {
   const providerType = (getSetting('llmProvider') || 'claude') as LlmProvider
 
   if (providerType === 'ollama') {
@@ -106,7 +109,7 @@ export async function generateSummary(
     const userProfile = getUser(userId)
     if (userProfile) {
       userIdentity = {
-        displayName: userProfile.displayName,
+        displayName: [userProfile.firstName, userProfile.lastName].filter(Boolean).join(' ') || userProfile.displayName,
         email: userProfile.email,
         title: userProfile.title,
         jobFunction: userProfile.jobFunction
@@ -159,6 +162,32 @@ export async function generateSummary(
     } catch (err) {
       console.error('[Company AutoFill] Failed to parse VC summary fields:', err)
     }
+  }
+
+  // Cross-save summary as a note for each linked contact and company
+  const noteTitle = meeting.title?.trim() || 'Meeting'
+  const noteContent = `${noteTitle}\n${summary}`
+  try {
+    const linkedCompaniesForNotes = listMeetingCompanies(meetingId)
+    for (const company of linkedCompaniesForNotes) {
+      createCompanyNote(
+        { companyId: company.id, title: noteTitle, content: noteContent, sourceMeetingId: meetingId },
+        userId
+      )
+    }
+    const attendeeEmails = meeting.attendeeEmails || []
+    if (attendeeEmails.length > 0) {
+      const emailToContactId = resolveContactsByEmails(attendeeEmails)
+      const contactIds = [...new Set(Object.values(emailToContactId))]
+      for (const contactId of contactIds) {
+        createContactNote(
+          { contactId, title: noteTitle, content: noteContent, sourceMeetingId: meetingId },
+          userId
+        )
+      }
+    }
+  } catch (err) {
+    console.error('[Notes] Failed to cross-save summary as contact/company notes:', err)
   }
 
   // Extract tasks from summary

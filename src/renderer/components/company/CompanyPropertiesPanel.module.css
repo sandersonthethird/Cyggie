@@ -69,14 +69,79 @@
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
   cursor: pointer;
+  animation: chipIn 0.15s ease;
 }
 
-.pipelineBadge {
-  background: var(--color-primary);
-  color: #fff;
-  border-color: var(--color-primary);
-  cursor: default;
+@keyframes chipIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
 }
+
+/* ── Pinned field chip ── */
+.pinnedBadge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  animation: chipIn 0.15s ease;
+}
+
+.pinnedBadgeLabel {
+  font-weight: 600;
+  margin-right: 3px;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Chip colors ── */
+.chipProspect      { background: #dbeafe; color: #1e40af; border-color: transparent; }
+.chipPortfolio     { background: #d1fae5; color: #065f46; border-color: transparent; }
+.chipPass          { background: #e5e7eb; color: #374151; border-color: transparent; }
+.chipVcFund        { background: #ede9fe; color: #4c1d95; border-color: transparent; }
+.chipCustomer      { background: #ccfbf1; color: #134e4a; border-color: transparent; }
+.chipPartner       { background: #e0e7ff; color: #312e81; border-color: transparent; }
+.chipVendor        { background: #fef3c7; color: #92400e; border-color: transparent; }
+.chipUnknown       { background: #f3f4f6; color: #6b7280; border-color: transparent; }
+.chipOther         { background: #f3f4f6; color: #6b7280; border-color: transparent; }
+
+.chipScreening     { background: #dbeafe; color: #1e40af; border-color: transparent; }
+.chipDiligence     { background: #ede9fe; color: #4c1d95; border-color: transparent; }
+.chipDecision      { background: #ffedd5; color: #9a3412; border-color: transparent; }
+.chipDocumentation { background: #ccfbf1; color: #0f766e; border-color: transparent; }
+
+.priorityHigh        { background: #d4edda; color: #155724; border-color: transparent; }
+.priorityFurtherWork { background: #fff3cd; color: #856404; border-color: transparent; }
+.priorityMonitor     { background: #f8d7da; color: #721c24; border-color: transparent; }
+
+.chipPreSeed       { background: #fef9c3; color: #713f12; border-color: transparent; }
+.chipSeed          { background: #d1fae5; color: #065f46; border-color: transparent; }
+.chipSeedExtension { background: #a7f3d0; color: #064e3b; border-color: transparent; }
+.chipSeriesA       { background: #dbeafe; color: #1e40af; border-color: transparent; }
+.chipSeriesB       { background: #e0e7ff; color: #312e81; border-color: transparent; }
+
+/* ── Configure summary button + popover wrapper ── */
+.configureWrap {
+  position: relative;
+}
+
+.configureBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--color-text-tertiary);
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.12s, opacity 0.12s;
+  opacity: 0.6;
+}
+
+.configureBtn:hover {
+  color: var(--color-primary);
+  opacity: 1;
+}
+
 
 .healthBadge {
   font-size: 11px;
@@ -196,5 +261,50 @@
 }
 
 .showAllBtn:hover {
+  color: var(--color-text-secondary);
+}
+
+
+/* ── Current Decision Widget ─────────────────────────────────── */
+
+.decisionWidget {
+  margin: 6px 16px 4px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid transparent;
+  background: var(--color-bg-secondary, var(--color-card-hover));
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.decisionWidget:hover { opacity: 0.85; }
+
+.decisionWidgetGreen { border-left-color: var(--color-green, #38a169); }
+.decisionWidgetRed { border-left-color: var(--color-danger, #e53e3e); }
+.decisionWidgetGrey { border-left-color: var(--color-text-muted, #a0aec0); }
+
+.decisionWidgetTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.decisionWidgetType {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.decisionWidgetDate {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.decisionWidgetMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
   color: var(--color-text-secondary);
 }

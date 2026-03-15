@@ -12,6 +12,7 @@ import type {
   TaskUpdateData
 } from '../../shared/types/task'
 import styles from './Tasks.module.css'
+import { api } from '../api'
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   open: 'Open',
@@ -112,7 +113,7 @@ export default function Tasks() {
       if (categoryFilter) {
         filter.category = [categoryFilter]
       }
-      const results = await window.api.invoke<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, filter)
+      const results = await api.invoke<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, filter)
       setTasks(results)
     } catch (err) {
       setError(String(err))
@@ -147,7 +148,7 @@ export default function Tasks() {
     e.preventDefault()
     if (!newTaskTitle.trim()) return
     try {
-      await window.api.invoke(IPC_CHANNELS.TASK_CREATE, {
+      await api.invoke(IPC_CHANNELS.TASK_CREATE, {
         title: newTaskTitle.trim(),
         category: newTaskCategory,
         source: 'manual'
@@ -179,7 +180,7 @@ export default function Tasks() {
   const handleBulkStatus = useCallback(async (status: TaskStatus) => {
     if (selectedIds.size === 0) return
     try {
-      await window.api.invoke(IPC_CHANNELS.TASK_BULK_UPDATE_STATUS, Array.from(selectedIds), status)
+      await api.invoke(IPC_CHANNELS.TASK_BULK_UPDATE_STATUS, Array.from(selectedIds), status)
       setSelectedIds(new Set())
       await fetchTasks()
       if (detailTask && selectedIds.has(detailTask.id)) {
@@ -194,7 +195,7 @@ export default function Tasks() {
     if (selectedIds.size === 0) return
     try {
       for (const id of selectedIds) {
-        await window.api.invoke(IPC_CHANNELS.TASK_DELETE, id)
+        await api.invoke(IPC_CHANNELS.TASK_DELETE, id)
       }
       if (detailTask && selectedIds.has(detailTask.id)) {
         setDetailTask(null)
@@ -214,7 +215,7 @@ export default function Tasks() {
   const handleDetailedCreate = useCallback(async (data: TaskCreateData) => {
     if (!data.title.trim()) return
     try {
-      await window.api.invoke(IPC_CHANNELS.TASK_CREATE, {
+      await api.invoke(IPC_CHANNELS.TASK_CREATE, {
         ...data,
         title: data.title.trim(),
         source: 'manual'
@@ -229,7 +230,7 @@ export default function Tasks() {
   const handleDetailUpdate = useCallback(async (field: keyof TaskUpdateData, value: unknown) => {
     if (!detailTask) return
     try {
-      const updated = await window.api.invoke<TaskListItem>(
+      const updated = await api.invoke<TaskListItem>(
         IPC_CHANNELS.TASK_UPDATE,
         detailTask.id,
         { [field]: value }
@@ -246,7 +247,7 @@ export default function Tasks() {
   const handleDeleteTask = useCallback(async () => {
     if (!detailTask) return
     try {
-      await window.api.invoke(IPC_CHANNELS.TASK_DELETE, detailTask.id)
+      await api.invoke(IPC_CHANNELS.TASK_DELETE, detailTask.id)
       setDetailTask(null)
       await fetchTasks()
     } catch (err) {

@@ -8,6 +8,7 @@ import { CompanyContacts } from '../components/company/CompanyContacts'
 import { CompanyNotes } from '../components/company/CompanyNotes'
 import { CompanyMemo } from '../components/company/CompanyMemo'
 import { CompanyFiles } from '../components/company/CompanyFiles'
+import ChatInterface from '../components/chat/ChatInterface'
 import { usePanelResize } from '../hooks/usePanelResize'
 import styles from './CompanyDetail.module.css'
 
@@ -60,6 +61,13 @@ export default function CompanyDetail() {
         <CompanyPropertiesPanel company={company} onUpdate={handleUpdate} />
       </div>
 
+      <ChatInterface
+        floating
+        companyId={company.id}
+        entityName={company.canonicalName}
+        placeholder={`Ask about ${company.canonicalName}…`}
+      />
+
       {/* Resizable divider */}
       <div className={styles.divider} {...dividerProps} />
 
@@ -82,26 +90,21 @@ export default function CompanyDetail() {
 
         {/* All tabs always mounted (CSS hide/show) to preserve CompanyMemo draft state */}
         <div className={styles.tabContent}>
-          <CompanyTimeline
-            companyId={company.id}
-            className={activeTab !== 'timeline' ? styles.hidden : ''}
-          />
-          <CompanyContacts
-            companyId={company.id}
-            className={activeTab !== 'contacts' ? styles.hidden : ''}
-          />
-          <CompanyNotes
-            companyId={company.id}
-            className={activeTab !== 'notes' ? styles.hidden : ''}
-          />
-          <CompanyMemo
-            companyId={company.id}
-            className={activeTab !== 'memo' ? styles.hidden : ''}
-          />
-          <CompanyFiles
-            companyId={company.id}
-            className={activeTab !== 'files' ? styles.hidden : ''}
-          />
+          <div className={activeTab !== 'timeline' ? styles.hidden : ''}>
+            <CompanyTimeline companyId={company.id} />
+          </div>
+          <div className={activeTab !== 'contacts' ? styles.hidden : ''}>
+            <CompanyContacts companyId={company.id} />
+          </div>
+          <div className={activeTab !== 'notes' ? styles.hidden : ''}>
+            <CompanyNotes companyId={company.id} />
+          </div>
+          <div className={activeTab !== 'memo' ? styles.hidden : ''}>
+            <CompanyMemo companyId={company.id} />
+          </div>
+          <div className={activeTab !== 'files' ? styles.hidden : ''}>
+            <CompanyFiles companyId={company.id} />
+          </div>
         </div>
       </div>
     </div>

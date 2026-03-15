@@ -41,6 +41,10 @@ import { runContactExtraFieldsV2Migration } from './migrations/038-contact-extra
 import { runCustomFieldDefinitionsMigration } from './migrations/039-custom-field-definitions'
 import { runCustomFieldValuesMigration } from './migrations/040-custom-field-values'
 import { runContactNotesMigration } from './migrations/041-contact-notes'
+import { runMeetingNotesSourceMigration } from './migrations/042-meeting-notes-source'
+import { runUserPreferencesMigration } from './migrations/043-user-preferences'
+import { runCompanyDecisionLogsMigration } from './migrations/044-company-decision-logs'
+import { runPortfolioCompanyFieldsMigration } from './migrations/045-portfolio-company-fields'
 
 let db: Database.Database | null = null
 
@@ -90,6 +94,10 @@ export function getDatabase(): Database.Database {
     runCustomFieldDefinitionsMigration(db)
     runCustomFieldValuesMigration(db)
     runContactNotesMigration(db)
+    runMeetingNotesSourceMigration(db)
+    runUserPreferencesMigration(db)
+    runCompanyDecisionLogsMigration(db)
+    runPortfolioCompanyFieldsMigration(db)
   }
   return db
 }

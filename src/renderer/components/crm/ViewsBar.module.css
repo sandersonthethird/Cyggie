@@ -1,0 +1,148 @@
+/* ── Views bar container ── */
+.viewsBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 12px;
+  flex-shrink: 0;
+  min-height: 32px;
+  border-bottom: 1px solid var(--color-bg-tertiary);
+}
+
+/* ── Saved view chips ── */
+.viewChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card-bg);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.viewChip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.viewChipActive {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.viewChipActive:hover {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.viewChipDrifted {
+  border-style: dashed;
+}
+
+/* Drift indicator dot — shown when last-applied view's state has changed */
+.driftDot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+.viewChipX {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.viewChipX:hover {
+  opacity: 1;
+}
+
+/* ── Save view button + popover ── */
+.saveWrap {
+  position: relative;
+}
+
+.saveBtn {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.saveBtn:hover {
+  color: var(--color-text-secondary);
+  border-color: var(--color-text-tertiary);
+}
+
+.saveBtnActive {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.savePopover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  display: flex;
+  gap: 6px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.16);
+  padding: 8px;
+  min-width: 200px;
+}
+
+.saveInput {
+  flex: 1;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 5px 8px;
+  font-size: 12px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  outline: none;
+}
+
+.saveInput:focus {
+  border-color: var(--color-primary);
+}
+
+.saveConfirmBtn {
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 5px 12px;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.saveConfirmBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

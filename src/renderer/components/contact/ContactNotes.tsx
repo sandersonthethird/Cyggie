@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactNote } from '../../../shared/types/contact'
 import { ContactNoteDetailModal } from '../crm/ContactNoteDetailModal'
 import styles from './ContactNotes.module.css'
+import { api } from '../../api'
 
 interface ContactNotesProps {
   contactId: string
@@ -15,6 +16,7 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
   const [newContent, setNewContent] = useState('')
   const [creating, setCreating] = useState(false)
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
+  const [focused, setFocused] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -30,12 +32,13 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
     if (!newContent.trim()) return
     setCreating(true)
     try {
-      const note = await window.api.invoke<ContactNote>(IPC_CHANNELS.CONTACT_NOTES_CREATE, {
+      const note = await api.invoke<ContactNote>(IPC_CHANNELS.CONTACT_NOTES_CREATE, {
         contactId,
         content: newContent.trim()
       })
       setNotes((prev) => [note, ...prev])
       setNewContent('')
+      setFocused(false)
     } catch (e) {
       console.error('[ContactNotes] create failed:', e)
     } finally {
@@ -43,9 +46,15 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
     }
   }
 
+  function cancelNote() {
+    setNewContent('')
+    setFocused(false)
+    textareaRef.current?.blur()
+  }
+
   async function deleteNote(noteId: string) {
     try {
-      await window.api.invoke(IPC_CHANNELS.CONTACT_NOTES_DELETE, noteId)
+      await api.invoke(IPC_CHANNELS.CONTACT_NOTES_DELETE, noteId)
       setNotes((prev) => prev.filter((n) => n.id !== noteId))
     } catch (e) {
       console.error('[ContactNotes] delete failed:', e)
@@ -70,18 +79,27 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
           value={newContent}
           onChange={(e) => setNewContent(e.target.value)}
           placeholder="Add a note…"
-          rows={3}
+          rows={focused ? 5 : 1}
+          onFocus={() => setFocused(true)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) createNote()
+            if (e.key === 'Escape') cancelNote()
           }}
         />
-        <button
-          className={styles.saveBtn}
-          onClick={createNote}
-          disabled={!newContent.trim() || creating}
-        >
-          Save Note
-        </button>
+        {focused && (
+          <div className={styles.noteActions}>
+            <button className={styles.cancelBtn} onClick={cancelNote} disabled={creating}>
+              Cancel
+            </button>
+            <button
+              className={styles.saveBtn}
+              onClick={createNote}
+              disabled={!newContent.trim() || creating}
+            >
+              Save Note
+            </button>
+          </div>
+        )}
       </div>
 
       {!loaded && <div className={styles.loading}>Loading…</div>}
@@ -89,24 +107,37 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
         <div className={styles.empty}>No notes yet.</div>
       )}
 
-      {notes.map((note) => (
-        <div
-          key={note.id}
-          className={styles.note}
-          onClick={() => setSelectedNoteId(note.id)}
-        >
-          <div className={styles.noteContent}>{note.content}</div>
-          <div className={styles.noteMeta}>
-            <span>{new Date(note.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-            <button
-              className={styles.deleteBtn}
-              onClick={(e) => { e.stopPropagation(); deleteNote(note.id) }}
-            >
-              Delete
-            </button>
+      {notes.map((note) => {
+        const content = note.content || ''
+        const nl = content.indexOf('\n')
+        const firstLine = nl >= 0 ? content.slice(0, nl) : content
+        const explicitTitle = note.title?.trim()
+        const title = explicitTitle || firstLine
+        const body = explicitTitle
+          ? (nl >= 0 && firstLine.trim() === explicitTitle
+            ? content.slice(nl + 1).trim()
+            : content.trim())
+          : (nl >= 0 ? content.slice(nl + 1).trim() : '')
+        return (
+          <div
+            key={note.id}
+            className={styles.note}
+            onClick={() => setSelectedNoteId(note.id)}
+          >
+            <div className={styles.noteTitle}>{title}</div>
+            {body && <div className={styles.noteBody}>{body}</div>}
+            <div className={styles.noteMeta}>
+              <span>{new Date(note.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+              <button
+                className={styles.deleteBtn}
+                onClick={(e) => { e.stopPropagation(); deleteNote(note.id) }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
 
       {selectedNoteId && (
         <ContactNoteDetailModal

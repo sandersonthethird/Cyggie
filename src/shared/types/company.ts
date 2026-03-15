@@ -80,6 +80,11 @@ export interface CompanySummary {
   warmIntroSource: string | null
   referralContactId: string | null
   nextFollowupDate: string | null
+  // Portfolio fields (for entityType = 'portfolio')
+  investmentSize: string | null
+  ownershipPct: string | null
+  followonInvestmentSize: string | null
+  totalInvested: string | null
 }
 
 export interface CompanyDetail extends CompanySummary {
@@ -178,8 +183,8 @@ export interface CompanyEmailIngestResult {
   aborted?: boolean
 }
 
-export type CompanyTimelineItemType = 'meeting' | 'email' | 'note'
-export type CompanyTimelineReferenceType = 'meeting' | 'email' | 'company_note'
+export type CompanyTimelineItemType = 'meeting' | 'email' | 'note' | 'decision'
+export type CompanyTimelineReferenceType = 'meeting' | 'email' | 'company_note' | 'company_decision_log'
 
 export interface CompanyTimelineItem {
   id: string
@@ -228,4 +233,42 @@ export interface InvestmentMemoVersion {
 
 export interface InvestmentMemoWithLatest extends InvestmentMemo {
   latestVersion: InvestmentMemoVersion | null
+}
+
+export type DecisionLogType =
+  | 'Investment Approved'
+  | 'Pass'
+  | 'Increase Allocation'
+  | 'Follow-on'
+  | 'Write-Off'
+  | 'Other'
+
+export interface DecisionNextStep {
+  what: string
+  byWhom: string | null
+  dueDate: string | null
+}
+
+export interface DecisionLinkedArtifact {
+  type: 'memo' | 'meeting_summary' | 'other'
+  refId: string | null
+  label: string
+}
+
+export interface CompanyDecisionLog {
+  id: string
+  companyId: string
+  decisionType: string
+  decisionDate: string
+  decisionOwner: string | null
+  amountApproved: string | null
+  targetOwnership: string | null
+  moreIfPossible: boolean
+  structure: string | null
+  rationale: string[]
+  dependencies: string[]
+  nextSteps: DecisionNextStep[]
+  linkedArtifacts: DecisionLinkedArtifact[]
+  createdAt: string
+  updatedAt: string
 }

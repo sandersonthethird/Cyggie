@@ -75,6 +75,9 @@
 
 .headerBadge {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .badge {
@@ -85,6 +88,50 @@
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
   cursor: pointer;
+  animation: chipIn 0.15s ease;
+}
+
+@keyframes chipIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Pinned field chip ── */
+.pinnedBadge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  animation: chipIn 0.15s ease;
+}
+
+/* ── Chip colors ── */
+.chipInvestor { background: #ede9fe; color: #4c1d95; border-color: transparent; }
+.chipFounder  { background: #ffedd5; color: #9a3412; border-color: transparent; }
+.chipOperator { background: #dbeafe; color: #1e40af; border-color: transparent; }
+
+/* ── Configure summary button + popover wrapper ── */
+.configureWrap {
+  position: relative;
+}
+
+.configureBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--color-text-tertiary);
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.12s, opacity 0.12s;
+  opacity: 0.6;
+}
+
+.configureBtn:hover {
+  color: var(--color-primary);
+  opacity: 1;
 }
 
 .sectionHeader {
@@ -138,6 +185,48 @@
   font-size: 12px;
   color: var(--color-text-tertiary);
   padding: 4px 0 4px;
+}
+
+/* Last Touch row */
+.lastTouchRow {
+  display: grid;
+  grid-template-columns: 40% 60%;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.lastTouchLabel {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding: 5px 6px 5px 0;
+}
+
+.touchBadge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-weight: 500;
+  width: fit-content;
+}
+
+.touchGreen {
+  background: rgba(61, 122, 74, 0.12);
+  color: var(--color-success);
+}
+
+.touchYellow {
+  background: rgba(201, 148, 58, 0.12);
+  color: var(--color-warning);
+}
+
+.touchRed {
+  background: rgba(217, 69, 69, 0.12);
+  color: var(--color-danger);
+}
+
+.touchNone {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-tertiary);
 }
 
 /* Relationship strength segmented button */

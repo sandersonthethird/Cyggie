@@ -48,3 +48,21 @@
   color: var(--color-text-tertiary);
   text-transform: capitalize;
 }
+
+.calendarMeeting {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.calendarMeeting:hover {
+  background: transparent;
+}
+
+.calendarTag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: var(--color-primary, #3b82f6);
+}

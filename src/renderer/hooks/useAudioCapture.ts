@@ -1,4 +1,5 @@
 import { useRef, useCallback, useState } from 'react'
+import { api } from '../api'
 
 const TARGET_SAMPLE_RATE = 16000
 const AUDIO_WORKLET_NAME = 'gorp-pcm-resample-processor'
@@ -202,7 +203,7 @@ export function useAudioCapture() {
     const markSystemAudioUnavailable = async (reason: string): Promise<void> => {
       console.warn(`[AudioCapture] System audio unavailable (${reason}); using mic-only fallback`)
       setHasSystemAudio(false)
-      window.api.send('recording:system-audio-status', false)
+      api.send('recording:system-audio-status', false)
       await switchToRawMicMode(reason)
     }
 
@@ -211,7 +212,7 @@ export function useAudioCapture() {
     let systemSource: MediaStreamAudioSourceNode | null = null
     try {
       // Tell the main process to set up the loopback display media handler
-      await window.api.invoke('enable-loopback-audio')
+      await api.invoke('enable-loopback-audio')
 
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
@@ -219,7 +220,7 @@ export function useAudioCapture() {
       })
 
       // Restore normal getDisplayMedia behaviour
-      await window.api.invoke('disable-loopback-audio')
+      await api.invoke('disable-loopback-audio')
 
       // Log all track states before touching anything
       const videoTracks = displayStream.getVideoTracks()
@@ -248,13 +249,13 @@ export function useAudioCapture() {
           systemSource.connect(systemGain)
           systemGain.connect(merger, 0, 1)
           setHasSystemAudio(true)
-          window.api.send('recording:system-audio-status', true)
+          api.send('recording:system-audio-status', true)
 
           // Detect if the audio track is killed mid-recording (e.g. by video capture stopping shared streams)
           track.onended = () => {
             console.error('[AudioCapture] System audio track ended unexpectedly during recording')
             setHasSystemAudio(false)
-            window.api.send('recording:system-audio-status', false)
+            api.send('recording:system-audio-status', false)
             void switchToRawMicMode('loopback-track-ended-mid-recording')
           }
 
@@ -271,7 +272,7 @@ export function useAudioCapture() {
       console.warn('[AudioCapture] Loopback capture error details:', err)
       // Make sure we disable the handler even on error
       try {
-        await window.api.invoke('disable-loopback-audio')
+        await api.invoke('disable-loopback-audio')
       } catch {
         // ignore
       }
@@ -317,7 +318,7 @@ export function useAudioCapture() {
         workletNode.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
           if (pausedRef.current) return
           if (event.data instanceof ArrayBuffer) {
-            window.api.send('recording:audio-data', event.data)
+            api.send('recording:audio-data', event.data)
           }
         }
 
@@ -339,7 +340,7 @@ export function useAudioCapture() {
           ? event.inputBuffer.getChannelData(1)
           : null
         const pcmBuffer = downsampleInterleaved(ch0, ch1, ratio)
-        window.api.send('recording:audio-data', pcmBuffer)
+        api.send('recording:audio-data', pcmBuffer)
       }
 
       processorRef.current = processor

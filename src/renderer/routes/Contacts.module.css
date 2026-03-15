@@ -1,228 +1,20 @@
+/* ── Layout ── */
 .container {
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
 }
 
-.scrollArea {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.section {
-  margin-bottom: 24px;
-  padding: 16px;
-  border-radius: var(--radius-lg);
-}
-
-.sectionHeader {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--color-text-tertiary);
-  margin-bottom: 10px;
-  max-width: 640px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.toolbar {
+/* ── Toolbar row (Actions + New Contact) ── */
+.toolbarRow {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  flex-wrap: wrap;
-  padding: 0 16px;
-  margin-bottom: 10px;
-  max-width: 640px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  max-width: 640px;
-  margin: 0 auto;
-}
-
-.card {
-  display: block;
-  width: 100%;
-  border: none;
-  text-align: left;
-  cursor: pointer;
-  padding: 5px 12px;
-  background: transparent;
-  border-radius: var(--radius-md);
-  transition: background 0.15s;
-}
-
-.card:hover {
-  background: var(--color-card-hover);
-}
-
-.cardRow {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.cardRow + .cardRow {
-  margin-top: -1px;
-}
-
-.cardName {
-  font-size: 13px;
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cardEmail {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  white-space: nowrap;
+  padding: 6px 12px;
   flex-shrink: 0;
-}
-
-.cardMeta {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cardDate {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.touchMeta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.warmthBadge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  height: 16px;
-  border-radius: 999px;
-  padding: 0 6px;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.warmthGreen {
-  background: rgba(52, 199, 89, 0.16);
-  color: #187a3a;
-}
-
-.warmthYellow {
-  background: rgba(255, 159, 10, 0.16);
-  color: #a66308;
-}
-
-.warmthRed {
-  background: rgba(217, 69, 69, 0.16);
-  color: #a52828;
-}
-
-.warmthUnknown {
-  background: var(--color-card-hover);
-  color: var(--color-text-tertiary);
-}
-
-.syncBtn {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: 5px 12px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap;
-}
-
-.syncBtn:hover {
-  color: var(--color-text-primary);
-  background: var(--color-card-hover);
-}
-
-.syncBtn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.syncMeta {
-  display: block;
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  padding: 0 16px;
-  margin-bottom: 8px;
-  max-width: 640px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.controlsRow {
-  max-width: 640px;
-  margin: 0 auto 10px;
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.sortGroup {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.sortLabel {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-.sortSelect {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
-  color: var(--color-text-primary);
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.controlsRight {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.lookupToggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-bg-tertiary);
 }
 
 .actionsDropdown {
@@ -247,13 +39,18 @@
   background: var(--color-card-hover);
 }
 
+.actionsBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .actionsMenu {
   position: absolute;
   top: 100%;
-  right: 0;
+  left: 0;
   margin-top: 4px;
   min-width: 180px;
-  background: var(--color-card-bg, #fff);
+  background: var(--color-card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
@@ -275,25 +72,55 @@
   border-radius: 4px;
 }
 
-.actionsMenuItem:hover {
+.actionsMenuItem:hover { background: var(--color-card-hover); }
+.actionsMenuItem:disabled { opacity: 0.5; cursor: default; }
+
+.newBtn {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.newBtn:hover {
+  color: var(--color-text-primary);
   background: var(--color-card-hover);
 }
 
-.actionsMenuItem:disabled {
-  opacity: 0.5;
-  cursor: default;
+/* ── Status banners ── */
+.statusBanner {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  padding: 4px 12px;
+  flex-shrink: 0;
 }
 
+/* ── Error ── */
+.error {
+  color: var(--color-danger);
+  font-size: 12px;
+  padding: 8px 12px;
+  flex-shrink: 0;
+}
+
+/* ── Create form ── */
 .createCard {
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 16px;
-  margin: 0 auto 12px;
-  max-width: 640px;
+  margin: 8px 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-card-bg);
+  flex-shrink: 0;
 }
 
 .createTitle {
@@ -356,10 +183,7 @@
   cursor: pointer;
 }
 
-.createBtn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
+.createBtn:disabled { opacity: 0.4; cursor: default; }
 
 .createCancelBtn {
   border: 1px solid var(--color-border);
@@ -377,170 +201,15 @@
   color: var(--color-text-primary);
 }
 
-.resultCount {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  margin-bottom: 12px;
-  padding: 0 16px;
-  max-width: 640px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.noResults {
-  text-align: center;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  padding: 40px 0;
-}
-
+/* ── Chat ── */
 .chatSection {
   position: sticky;
   bottom: 0;
   z-index: 5;
-  margin-top: 16px;
-  margin-bottom: 8px;
-}
-
-.error {
-  color: var(--color-danger);
-  font-size: 12px;
-  padding: 8px 16px;
-}
-
-.cardWrapper {
-  position: relative;
-  display: flex;
-  align-items: stretch;
-}
-
-.checkboxZone {
-  position: absolute;
-  left: -28px;
-  top: 0;
-  bottom: 0;
-  width: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-  cursor: pointer;
-}
-
-.cardWrapper:hover .checkboxZone,
-.cardWrapperSelected .checkboxZone {
-  opacity: 1;
-}
-
-.contactCheckbox {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--color-accent);
-  pointer-events: none;
   flex-shrink: 0;
 }
 
-.bulkBar {
-  position: fixed;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  background: #1a1a1a;
-  border-radius: 999px;
-  padding: 8px 6px 8px 16px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.bulkClear {
-  background: transparent;
-  border: none;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0 10px 0 0;
-  opacity: 0.9;
-}
-
-.bulkClear:hover {
-  opacity: 1;
-}
-
-.bulkMenuWrap {
-  position: relative;
-}
-
-.bulkMenuBtn {
-  background: rgba(255, 255, 255, 0.15);
-  border: none;
-  border-radius: 999px;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 5px 14px;
-  cursor: pointer;
-  transition: background 0.12s;
-}
-
-.bulkMenuBtn:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.bulkMenuBtn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.bulkMenu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  right: 0;
-  min-width: 200px;
-  background: var(--color-card-bg, #fff);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
-  padding: 4px;
-  z-index: 201;
-}
-
-.bulkMenuItem {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 7px 12px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: 4px;
-}
-
-.bulkMenuItem:hover {
-  background: var(--color-card-hover);
-}
-
-.bulkMenuItem:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.bulkMenuItemDanger {
-  color: var(--color-danger);
-}
-
+/* ── Dedup dialog ── */
 .dedupOverlay {
   position: fixed;
   inset: 0;
@@ -555,7 +224,7 @@
 .dedupDialog {
   width: min(960px, 100%);
   max-height: min(86vh, 900px);
-  background: var(--color-card-bg, #fff);
+  background: var(--color-card-bg);
   border: 1px solid var(--color-border);
   border-radius: 12px;
   display: flex;
@@ -590,10 +259,7 @@
   cursor: pointer;
 }
 
-.dedupCloseButton:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+.dedupCloseButton:disabled { opacity: 0.5; cursor: default; }
 
 .dedupSubtitle {
   margin: 0;
@@ -618,7 +284,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--color-card-bg, #fff);
+  background: var(--color-card-bg);
   border-bottom: 1px solid var(--color-border);
   text-align: left;
   padding: 8px 10px;
@@ -636,28 +302,11 @@
   font-size: 12px;
 }
 
-.dedupReason {
-  color: var(--color-text-primary);
-  font-weight: 600;
-}
+.dedupReason { color: var(--color-text-primary); font-weight: 600; }
+.dedupReasonMeta { margin-top: 2px; color: var(--color-text-tertiary); font-size: 11px; }
 
-.dedupReasonMeta {
-  margin-top: 2px;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-}
-
-.dedupContactList {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.dedupContactItem {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
+.dedupContactList { display: flex; flex-direction: column; gap: 7px; }
+.dedupContactItem { display: flex; flex-direction: column; gap: 2px; }
 
 .dedupContactRow {
   display: flex;
@@ -690,16 +339,8 @@
   white-space: nowrap;
 }
 
-.dedupContactMeta {
-  color: var(--color-text-secondary);
-  font-size: 11px;
-}
-
-.dedupContactEditor {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
+.dedupContactMeta { color: var(--color-text-secondary); font-size: 11px; }
+.dedupContactEditor { display: flex; flex-direction: column; gap: 6px; }
 
 .dedupContactInput {
   width: 100%;
@@ -711,10 +352,7 @@
   font-size: 12px;
 }
 
-.dedupContactEditorActions {
-  display: flex;
-  gap: 6px;
-}
+.dedupContactEditorActions { display: flex; gap: 6px; }
 
 .dedupContactEditButton {
   border: 1px solid var(--color-border);
@@ -727,15 +365,8 @@
   cursor: pointer;
 }
 
-.dedupContactEditButton:hover {
-  color: var(--color-text-primary);
-  background: var(--color-card-hover);
-}
-
-.dedupContactEditButton:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+.dedupContactEditButton:hover { color: var(--color-text-primary); background: var(--color-card-hover); }
+.dedupContactEditButton:disabled { opacity: 0.5; cursor: default; }
 
 .dedupSelect {
   width: 170px;
@@ -755,16 +386,8 @@
   padding: 12px 16px;
 }
 
-.dedupSummary {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-.dedupActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+.dedupSummary { font-size: 12px; color: var(--color-text-secondary); }
+.dedupActions { display: flex; align-items: center; gap: 8px; }
 
 .dedupCancelButton {
   border: 1px solid var(--color-border);

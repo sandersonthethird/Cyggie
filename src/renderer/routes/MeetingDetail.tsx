@@ -22,6 +22,7 @@ import type { Task, ProposedTask, TaskCreateData } from '../../shared/types/task
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import styles from './MeetingDetail.module.css'
+import { api } from '../api'
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600)
@@ -460,7 +461,7 @@ export default function MeetingDetail() {
 
   const loadMeeting = useCallback(async () => {
     if (!id) return
-    const result = await window.api.invoke<MeetingData | null>(IPC_CHANNELS.MEETING_GET, id)
+    const result = await api.invoke<MeetingData | null>(IPC_CHANNELS.MEETING_GET, id)
     if (!result) {
       navigate('/meetings')
       return
@@ -474,12 +475,12 @@ export default function MeetingDetail() {
     if (result.summary) setShowNotes(false)
 
     // Load tasks linked to this meeting
-    window.api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
+    api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
       .then(setMeetingTasks)
       .catch((err) => console.error('[MeetingDetail] Failed to load tasks:', err))
 
     // Ask main process for a playable recording path (includes legacy/fallback resolution).
-    window.api.invoke<string | null>(IPC_CHANNELS.VIDEO_GET_PATH, id)
+    api.invoke<string | null>(IPC_CHANNELS.VIDEO_GET_PATH, id)
       .then(setVideoPath)
       .catch((err) => {
         console.error('[MeetingDetail] Failed to resolve recording path:', err)
@@ -487,7 +488,7 @@ export default function MeetingDetail() {
       })
 
     // Fetch company suggestions (with logos)
-    window.api.invoke<CompanySuggestion[]>(IPC_CHANNELS.COMPANY_GET_SUGGESTIONS, id)
+    api.invoke<CompanySuggestion[]>(IPC_CHANNELS.COMPANY_GET_SUGGESTIONS, id)
       .then((suggestions) => {
         setCompanySuggestions(suggestions)
         const persistedSelections = suggestions.reduce<Record<string, CompanyEntityType>>(
@@ -505,7 +506,7 @@ export default function MeetingDetail() {
 
     // Resolve attendee emails to contact IDs for clickable chips
     if (result.meeting.attendeeEmails && result.meeting.attendeeEmails.length > 0) {
-      window.api.invoke<Record<string, string>>(
+      api.invoke<Record<string, string>>(
         IPC_CHANNELS.CONTACT_RESOLVE_EMAILS,
         result.meeting.attendeeEmails
       )
@@ -529,7 +530,7 @@ export default function MeetingDetail() {
   }, [loadMeeting])
 
   useEffect(() => {
-    window.api.invoke<MeetingTemplate[]>(IPC_CHANNELS.TEMPLATE_LIST).then((result) => {
+    api.invoke<MeetingTemplate[]>(IPC_CHANNELS.TEMPLATE_LIST).then((result) => {
       setTemplates(result)
       if (result.length > 0) setSelectedTemplateId(result[0].id)
     })
@@ -538,7 +539,7 @@ export default function MeetingDetail() {
   // Listen for streaming summary progress
   useEffect(() => {
     if (!isGenerating) return
-    const unsub = window.api.on(IPC_CHANNELS.SUMMARY_PROGRESS, (chunk: unknown) => {
+    const unsub = api.on(IPC_CHANNELS.SUMMARY_PROGRESS, (chunk: unknown) => {
       if (chunk === null) {
         setStreamedSummary('')
         return
@@ -551,7 +552,7 @@ export default function MeetingDetail() {
   // Listen for summary phase changes
   useEffect(() => {
     if (!isGenerating) return
-    const unsub = window.api.on(IPC_CHANNELS.SUMMARY_PHASE, (phase: unknown) => {
+    const unsub = api.on(IPC_CHANNELS.SUMMARY_PHASE, (phase: unknown) => {
       setSummaryPhase(String(phase))
     })
     return unsub
@@ -561,7 +562,7 @@ export default function MeetingDetail() {
   const saveNotes = useCallback(async (text: string) => {
     if (!id) return
     try {
-      await window.api.invoke(IPC_CHANNELS.MEETING_SAVE_NOTES, id, text)
+      await api.invoke(IPC_CHANNELS.MEETING_SAVE_NOTES, id, text)
     } catch (err) {
       console.error('Failed to save notes:', err)
     }
@@ -572,7 +573,7 @@ export default function MeetingDetail() {
     const suggestionKey = companySuggestionKey(company)
     setSavingCompanyTagKey(suggestionKey)
     try {
-      await window.api.invoke(
+      await api.invoke(
         IPC_CHANNELS.COMPANY_TAG_FROM_MEETING,
         id,
         {
@@ -595,7 +596,7 @@ export default function MeetingDetail() {
   const handleOpenCompanyDetail = useCallback(async (company: CompanySuggestion) => {
     if (!id) return
     try {
-      const resolved = await window.api.invoke<{ id: string }>(
+      const resolved = await api.invoke<{ id: string }>(
         IPC_CHANNELS.COMPANY_TAG_FROM_MEETING,
         id,
         {
@@ -625,7 +626,7 @@ export default function MeetingDetail() {
   const saveSummary = useCallback(async (text: string) => {
     if (!id) return
     try {
-      await window.api.invoke(IPC_CHANNELS.MEETING_SAVE_SUMMARY, id, text)
+      await api.invoke(IPC_CHANNELS.MEETING_SAVE_SUMMARY, id, text)
     } catch (err) {
       console.error('Failed to save summary:', err)
     }
@@ -647,11 +648,11 @@ export default function MeetingDetail() {
     return () => {
       if (notesSaveRef.current) {
         clearTimeout(notesSaveRef.current)
-        window.api.invoke(IPC_CHANNELS.MEETING_SAVE_NOTES, id, notesDraftRef.current)
+        api.invoke(IPC_CHANNELS.MEETING_SAVE_NOTES, id, notesDraftRef.current)
       }
       if (summarySaveRef.current) {
         clearTimeout(summarySaveRef.current)
-        window.api.invoke(IPC_CHANNELS.MEETING_SAVE_SUMMARY, id, summaryDraftRef.current)
+        api.invoke(IPC_CHANNELS.MEETING_SAVE_SUMMARY, id, summaryDraftRef.current)
       }
     }
   }, [id])
@@ -664,7 +665,7 @@ export default function MeetingDetail() {
       await saveNotes(notesDraft)
     }
     try {
-      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
+      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         data.meeting.title,
         data.meeting.calendarEventId || undefined
@@ -687,7 +688,7 @@ export default function MeetingDetail() {
       await saveNotes(notesDraft)
     }
     try {
-      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
+      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         undefined,
         undefined,
@@ -720,7 +721,7 @@ export default function MeetingDetail() {
         await videoCapture.stop()
       }
       audioCapture.stop()
-      await window.api.invoke(IPC_CHANNELS.RECORDING_STOP)
+      await api.invoke(IPC_CHANNELS.RECORDING_STOP)
       stopRecording()
     } catch (err) {
       setRecordingError(String(err))
@@ -731,7 +732,7 @@ export default function MeetingDetail() {
     try {
       audioCapture.pause()
       videoCapture.pause()
-      await window.api.invoke(IPC_CHANNELS.RECORDING_PAUSE)
+      await api.invoke(IPC_CHANNELS.RECORDING_PAUSE)
       pauseRecording()
     } catch (err) {
       setRecordingError(String(err))
@@ -742,7 +743,7 @@ export default function MeetingDetail() {
     try {
       audioCapture.resume()
       videoCapture.resume()
-      await window.api.invoke(IPC_CHANNELS.RECORDING_RESUME)
+      await api.invoke(IPC_CHANNELS.RECORDING_RESUME)
       resumeRecording()
     } catch (err) {
       setRecordingError(String(err))
@@ -757,7 +758,7 @@ export default function MeetingDetail() {
   const handleConfirmDelete = useCallback(async () => {
     if (!id) return
     setDeleteDialogOpen(false)
-    await window.api.invoke(IPC_CHANNELS.MEETING_DELETE, id)
+    await api.invoke(IPC_CHANNELS.MEETING_DELETE, id)
     navigate('/meetings')
   }, [id, navigate])
 
@@ -779,7 +780,7 @@ export default function MeetingDetail() {
   }, [videoCapture, audioCapture, recordingMeetingId, loadMeeting])
 
   const handleStopEnhance = useCallback(() => {
-    window.api.invoke(IPC_CHANNELS.SUMMARY_ABORT)
+    api.invoke(IPC_CHANNELS.SUMMARY_ABORT)
   }, [])
 
   const handleApplyCompanyUpdates = useCallback(async () => {
@@ -796,10 +797,10 @@ export default function MeetingDetail() {
     try {
       for (const proposal of proposals) {
         if (Object.keys(proposal.updates).length > 0) {
-          await window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, proposal.companyId, proposal.updates)
+          await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, proposal.companyId, proposal.updates)
         }
         if (proposal.founderUpdate) {
-          await window.api.invoke(
+          await api.invoke(
             IPC_CHANNELS.CONTACT_UPDATE,
             proposal.founderUpdate.contactId,
             { contactType: proposal.founderUpdate.toType }
@@ -825,7 +826,7 @@ export default function MeetingDetail() {
     setActiveTab('notes')
 
     try {
-      const result = await window.api.invoke<SummaryGenerateResult | string>(
+      const result = await api.invoke<SummaryGenerateResult | string>(
         IPC_CHANNELS.SUMMARY_GENERATE,
         id,
         selectedTemplateId
@@ -863,7 +864,7 @@ export default function MeetingDetail() {
 
       // Refresh existing tasks
       if (id) {
-        window.api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
+        api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
           .then(setMeetingTasks)
           .catch((err2) => console.error('[MeetingDetail] Failed to refresh tasks:', err2))
       }
@@ -899,9 +900,9 @@ export default function MeetingDetail() {
         sourceSection: t.sourceSection,
         extractionHash: t.extractionHash
       }))
-      await window.api.invoke(IPC_CHANNELS.TASK_BULK_CREATE, createData)
+      await api.invoke(IPC_CHANNELS.TASK_BULK_CREATE, createData)
       if (id) {
-        const tasks = await window.api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
+        const tasks = await api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
         setMeetingTasks(tasks)
       }
     } catch (err) {
@@ -946,7 +947,7 @@ export default function MeetingDetail() {
     setIsSavingTitle(true)
 
     try {
-      await window.api.invoke(IPC_CHANNELS.MEETING_RENAME_TITLE, id, trimmed)
+      await api.invoke(IPC_CHANNELS.MEETING_RENAME_TITLE, id, trimmed)
       await loadMeeting()
     } catch (err) {
       console.error('Failed to rename meeting:', err)
@@ -983,7 +984,7 @@ export default function MeetingDetail() {
     setIsSavingSpeakers(true)
 
     try {
-      await window.api.invoke(IPC_CHANNELS.MEETING_RENAME_SPEAKERS, id, updated)
+      await api.invoke(IPC_CHANNELS.MEETING_RENAME_SPEAKERS, id, updated)
       await loadMeeting()
     } catch (err) {
       console.error('Failed to rename speaker:', err)
@@ -1005,7 +1006,7 @@ export default function MeetingDetail() {
     if (!id) return
     setShareMenuOpen(false)
     try {
-      const result = await window.api.invoke<DriveShareResponse>(
+      const result = await api.invoke<DriveShareResponse>(
         IPC_CHANNELS.DRIVE_GET_SHARE_LINK,
         id
       )
@@ -1041,7 +1042,7 @@ export default function MeetingDetail() {
     if (!id) return
     setShareMenuOpen(false)
     try {
-      const result = await window.api.invoke<WebShareResponse>(
+      const result = await api.invoke<WebShareResponse>(
         IPC_CHANNELS.WEB_SHARE_CREATE,
         id
       )
@@ -1230,7 +1231,7 @@ export default function MeetingDetail() {
                         }
                         if (!email) return
                         try {
-                          const created = await window.api.invoke<{ id: string }>(
+                          const created = await api.invoke<{ id: string }>(
                             IPC_CHANNELS.CONTACT_CREATE,
                             { fullName: attendee, email }
                           )
@@ -1483,7 +1484,7 @@ export default function MeetingDetail() {
                       onChange={async () => {
                         const newStatus = task.status === 'done' ? 'open' : 'done'
                         try {
-                          await window.api.invoke(IPC_CHANNELS.TASK_UPDATE, task.id, { status: newStatus })
+                          await api.invoke(IPC_CHANNELS.TASK_UPDATE, task.id, { status: newStatus })
                           setMeetingTasks((prev) =>
                             prev.map((t) => (t.id === task.id ? { ...t, status: newStatus } : t))
                           )

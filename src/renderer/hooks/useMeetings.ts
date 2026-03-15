@@ -2,6 +2,7 @@ import { useEffect, useCallback } from 'react'
 import { useAppStore } from '../stores/app.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { Meeting, MeetingListFilter } from '../../shared/types/meeting'
+import { api } from '../api'
 
 export function useMeetings() {
   const meetings = useAppStore((s) => s.meetings)
@@ -9,7 +10,7 @@ export function useMeetings() {
 
   const fetchMeetings = useCallback(
     async (filter?: MeetingListFilter) => {
-      const result = await window.api.invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, filter)
+      const result = await api.invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, filter)
       setMeetings(result)
     },
     [setMeetings]
@@ -17,7 +18,7 @@ export function useMeetings() {
 
   const deleteMeeting = useCallback(
     async (id: string) => {
-      await window.api.invoke(IPC_CHANNELS.MEETING_DELETE, id)
+      await api.invoke(IPC_CHANNELS.MEETING_DELETE, id)
       await fetchMeetings()
     },
     [fetchMeetings]

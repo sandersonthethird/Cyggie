@@ -10,7 +10,10 @@ import type {
 } from '../../shared/types/company'
 import ChatInterface from '../components/chat/ChatInterface'
 import MultiSelectFilter from '../components/common/MultiSelectFilter'
+import { DecisionLogModal } from '../components/crm/DecisionLogModal'
+import { shouldPromptDecisionLog, defaultDecisionType } from '../utils/decisionLogTrigger'
 import styles from './Pipeline.module.css'
+import { api } from '../api'
 
 const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
   { value: 'unknown', label: 'Unknown' },
@@ -105,12 +108,14 @@ export default function Pipeline() {
   const [filterPriorities, setFilterPriorities] = useState<Set<CompanyPriority>>(new Set())
   const [filterRounds, setFilterRounds] = useState<Set<CompanyRound>>(new Set())
   const [filterQuery, setFilterQuery] = useState('')
+  const [pendingDecisionCompany, setPendingDecisionCompany] =
+    useState<{ id: string; stage: CompanyPipelineStage; entityType: string } | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const pipelineData = await window.api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST)
+      const pipelineData = await api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST)
       setCompanies(pipelineData)
     } catch (err) {
       setError(String(err))
@@ -140,7 +145,7 @@ export default function Pipeline() {
   const createCompany = useCallback(async () => {
     if (!createName.trim()) return
     try {
-      const created = await window.api.invoke<CompanySummary>(
+      const created = await api.invoke<CompanySummary>(
         IPC_CHANNELS.COMPANY_CREATE,
         {
           canonicalName: createName.trim(),
@@ -149,7 +154,7 @@ export default function Pipeline() {
           entityType: createEntityType
         }
       )
-      await window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, created.id, {
+      await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, created.id, {
         city: createCity.trim() || null,
         state: createState.trim() || null,
         pipelineStage: (createPipelineStage || null) as CompanyPipelineStage | null,
@@ -171,26 +176,36 @@ export default function Pipeline() {
     field: string,
     value: string | number | null
   ) => {
+    const company = companies.find(c => c.id === companyId)
     try {
-      await window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, companyId, {
+      await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, companyId, {
         [field]: value || null
       })
       await loadData()
+      if (field === 'pipelineStage' && company && typeof value === 'string') {
+        if (shouldPromptDecisionLog(company.pipelineStage, value as CompanyPipelineStage, company.entityType, company.entityType)) {
+          setPendingDecisionCompany({ id: companyId, stage: value as CompanyPipelineStage, entityType: company.entityType })
+        }
+      }
     } catch (err) {
       setError(String(err))
     }
-  }, [loadData])
+  }, [companies, loadData])
 
   const moveToStage = useCallback(async (companyId: string, stage: CompanyPipelineStage) => {
+    const company = companies.find(c => c.id === companyId)
     try {
-      await window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, companyId, {
+      await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, companyId, {
         pipelineStage: stage
       })
       await loadData()
+      if (company && shouldPromptDecisionLog(company.pipelineStage, stage, company.entityType, company.entityType)) {
+        setPendingDecisionCompany({ id: companyId, stage, entityType: company.entityType })
+      }
     } catch (err) {
       setError(String(err))
     }
-  }, [loadData])
+  }, [companies, loadData])
 
   const filteredCompanies = useMemo(() => {
     let result = companies
@@ -486,6 +501,15 @@ export default function Pipeline() {
       <div className={styles.chatSection}>
         <ChatInterface compact />
       </div>
+
+      {pendingDecisionCompany && (
+        <DecisionLogModal
+          companyId={pendingDecisionCompany.id}
+          initialDecisionType={defaultDecisionType(pendingDecisionCompany.stage, pendingDecisionCompany.entityType)}
+          onClose={() => setPendingDecisionCompany(null)}
+          onSaved={() => { setPendingDecisionCompany(null); void loadData() }}
+        />
+      )}
     </div>
   )
 }

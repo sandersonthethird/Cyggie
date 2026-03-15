@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { MeetingTemplate } from '../../shared/types/template'
 import EmptyState from '../components/common/EmptyState'
 import styles from './Templates.module.css'
+import { api } from '../api'
 
 export default function Templates() {
   const [templates, setTemplates] = useState<MeetingTemplate[]>([])
@@ -11,7 +12,7 @@ export default function Templates() {
   const [editForm, setEditForm] = useState({ name: '', context: '', instructions: '' })
 
   const fetchTemplates = useCallback(async () => {
-    const result = await window.api.invoke<MeetingTemplate[]>(IPC_CHANNELS.TEMPLATE_LIST)
+    const result = await api.invoke<MeetingTemplate[]>(IPC_CHANNELS.TEMPLATE_LIST)
     setTemplates(result)
   }, [])
 
@@ -64,13 +65,13 @@ export default function Templates() {
     }
     let saved: MeetingTemplate | null = null
     if (selected) {
-      saved = await window.api.invoke<MeetingTemplate>(IPC_CHANNELS.TEMPLATE_UPDATE, selected.id, {
+      saved = await api.invoke<MeetingTemplate>(IPC_CHANNELS.TEMPLATE_UPDATE, selected.id, {
         name: payload.name,
         systemPrompt: payload.systemPrompt,
         instructions: payload.instructions
       })
     } else {
-      saved = await window.api.invoke<MeetingTemplate>(IPC_CHANNELS.TEMPLATE_CREATE, payload)
+      saved = await api.invoke<MeetingTemplate>(IPC_CHANNELS.TEMPLATE_CREATE, payload)
     }
     setIsEditing(false)
     await fetchTemplates()
@@ -78,7 +79,7 @@ export default function Templates() {
   }
 
   const handleDelete = async (id: string) => {
-    await window.api.invoke(IPC_CHANNELS.TEMPLATE_DELETE, id)
+    await api.invoke(IPC_CHANNELS.TEMPLATE_DELETE, id)
     if (selected?.id === id) setSelected(null)
     await fetchTemplates()
   }

@@ -15,23 +15,29 @@ export function ContactMeetings({ meetings, className }: ContactMeetingsProps) {
       {meetings.length === 0 && (
         <div className={styles.empty}>No meetings found.</div>
       )}
-      {meetings.map((meeting) => (
-        <div
-          key={meeting.id}
-          className={styles.meeting}
-          onClick={() => navigate(`/meeting/${meeting.id}`)}
-        >
-          <div className={styles.title}>{meeting.title || 'Untitled'}</div>
-          <div className={styles.meta}>
-            <span className={styles.date}>
-              {new Date(meeting.date).toLocaleDateString(undefined, {
-                month: 'short', day: 'numeric', year: 'numeric'
-              })}
-            </span>
-            {meeting.status && <span className={styles.status}>{meeting.status}</span>}
+      {meetings.map((meeting) => {
+        const isCalendarOnly = meeting.id.startsWith('cal:')
+        return (
+          <div
+            key={meeting.id}
+            className={`${styles.meeting} ${isCalendarOnly ? styles.calendarMeeting : ''}`}
+            onClick={() => { if (!isCalendarOnly) navigate(`/meeting/${meeting.id}`) }}
+          >
+            <div className={styles.title}>{meeting.title || 'Untitled'}</div>
+            <div className={styles.meta}>
+              <span className={styles.date}>
+                {new Date(meeting.date).toLocaleDateString(undefined, {
+                  month: 'short', day: 'numeric', year: 'numeric'
+                })}
+              </span>
+              {meeting.status && meeting.status !== 'calendar' && (
+                <span className={styles.status}>{meeting.status}</span>
+              )}
+              {isCalendarOnly && <span className={styles.calendarTag}>Calendar</span>}
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

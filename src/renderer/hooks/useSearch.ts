@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useAppStore } from '../stores/app.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult } from '../../shared/types/meeting'
+import { api } from '../api'
 
 export function useSearch() {
   const searchQuery = useAppStore((s) => s.searchQuery)
@@ -45,7 +46,7 @@ export function useSearch() {
           if (searchDateTo) params.dateTo = searchDateTo
           if (searchSpeakers.length > 0) params.speakers = searchSpeakers
 
-          const results = await window.api.invoke<AdvancedSearchResult[]>(
+          const results = await api.invoke<AdvancedSearchResult[]>(
             IPC_CHANNELS.SEARCH_ADVANCED,
             params
           )
@@ -59,7 +60,7 @@ export function useSearch() {
             }))
           )
         } else {
-          const results = await window.api.invoke<SearchResult[]>(
+          const results = await api.invoke<SearchResult[]>(
             IPC_CHANNELS.SEARCH_QUERY,
             searchQuery
           )

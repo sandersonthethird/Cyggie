@@ -1692,7 +1692,32 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
     referenceType: 'company_note'
   }))
 
-  return [...meetingItems, ...emailItems, ...noteItems].sort((a, b) =>
+  const decisionRows = db
+    .prepare(`
+      SELECT id, decision_type, decision_date, decision_owner
+      FROM company_decision_logs
+      WHERE company_id = ?
+      ORDER BY decision_date DESC
+      LIMIT 100
+    `)
+    .all(companyId) as Array<{
+    id: string
+    decision_type: string
+    decision_date: string
+    decision_owner: string | null
+  }>
+  const decisionItems: CompanyTimelineItem[] = decisionRows.map((d) => ({
+    id: `decision:${d.id}`,
+    type: 'decision',
+    title: d.decision_type,
+    // Append T12:00:00Z to date-only strings to avoid midnight UTC timezone drift
+    occurredAt: d.decision_date.includes('T') ? d.decision_date : `${d.decision_date}T12:00:00Z`,
+    subtitle: d.decision_owner ?? null,
+    referenceId: d.id,
+    referenceType: 'company_decision_log'
+  }))
+
+  return [...meetingItems, ...emailItems, ...noteItems, ...decisionItems].sort((a, b) =>
     new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()
   )
 }

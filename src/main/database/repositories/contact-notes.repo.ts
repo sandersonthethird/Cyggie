@@ -30,9 +30,18 @@ export function listContactNotes(contactId: string): ContactNote[] {
   const db = getDatabase()
   const rows = db
     .prepare(`
-      SELECT id, contact_id, theme_id, title, content, is_pinned, created_at, updated_at
-      FROM contact_notes
-      WHERE contact_id = ?
+      SELECT
+        n.id,
+        n.contact_id,
+        n.theme_id,
+        COALESCE(NULLIF(TRIM(n.title), ''), m.title) AS title,
+        n.content,
+        n.is_pinned,
+        n.created_at,
+        n.updated_at
+      FROM contact_notes n
+      LEFT JOIN meetings m ON m.id = n.source_meeting_id
+      WHERE n.contact_id = ?
       ORDER BY is_pinned DESC, datetime(updated_at) DESC
     `)
     .all(contactId) as ContactNoteRow[]
@@ -44,16 +53,19 @@ export function createContactNote(data: {
   themeId?: string | null
   title?: string | null
   content: string
-}, userId: string | null = null): ContactNote {
+  sourceMeetingId?: string | null
+}, userId: string | null = null): ContactNote | null {
   const db = getDatabase()
   const id = randomUUID()
-  db.prepare(`
-    INSERT INTO contact_notes (
-      id, contact_id, theme_id, title, content, is_pinned,
+  const result = db.prepare(`
+    INSERT OR IGNORE INTO contact_notes (
+      id, contact_id, theme_id, title, content, is_pinned, source_meeting_id,
       created_by_user_id, updated_by_user_id, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, 0, ?, ?, datetime('now'), datetime('now'))
-  `).run(id, data.contactId, data.themeId ?? null, data.title ?? null, data.content, userId, userId)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, datetime('now'), datetime('now'))
+  `).run(id, data.contactId, data.themeId ?? null, data.title ?? null, data.content,
+    data.sourceMeetingId ?? null, userId, userId)
+  if (result.changes === 0) return null // deduped by unique constraint
   return getContactNote(id)!
 }
 
@@ -61,8 +73,18 @@ export function getContactNote(noteId: string): ContactNote | null {
   const db = getDatabase()
   const row = db
     .prepare(`
-      SELECT id, contact_id, theme_id, title, content, is_pinned, created_at, updated_at
-      FROM contact_notes WHERE id = ?
+      SELECT
+        n.id,
+        n.contact_id,
+        n.theme_id,
+        COALESCE(NULLIF(TRIM(n.title), ''), m.title) AS title,
+        n.content,
+        n.is_pinned,
+        n.created_at,
+        n.updated_at
+      FROM contact_notes n
+      LEFT JOIN meetings m ON m.id = n.source_meeting_id
+      WHERE n.id = ?
     `)
     .get(noteId) as ContactNoteRow | undefined
   return row ? rowToContactNote(row) : null

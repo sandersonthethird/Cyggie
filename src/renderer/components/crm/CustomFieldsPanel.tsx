@@ -2,20 +2,26 @@ import { useEffect, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CustomFieldEntityType, CustomFieldWithValue, SetCustomFieldValueInput } from '../../../shared/types/custom-fields'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
+import { usePreferencesStore } from '../../stores/preferences.store'
 import { PropertyRow } from './PropertyRow'
 import styles from './CustomFieldsPanel.module.css'
+import { api } from '../../api'
 
 interface CustomFieldsPanelProps {
   entityType: CustomFieldEntityType
   entityId: string
+  onFieldsLoaded?: (fields: CustomFieldWithValue[]) => void
 }
 
-export function CustomFieldsPanel({ entityType, entityId }: CustomFieldsPanelProps) {
+export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded }: CustomFieldsPanelProps) {
   const { load, loaded, companyDefs, contactDefs } = useCustomFieldStore()
+  const { getJSON, setJSON } = usePreferencesStore()
   const [fields, setFields] = useState<CustomFieldWithValue[]>([])
   const [loading, setLoading] = useState(true)
 
   const defs = entityType === 'company' ? companyDefs : contactDefs
+  const prefKey = `cyggie:${entityType}-summary-fields`
+  const pinnedKeys = getJSON<string[]>(prefKey, [])
 
   useEffect(() => {
     if (!loaded) {
@@ -33,18 +39,29 @@ export function CustomFieldsPanel({ entityType, entityId }: CustomFieldsPanelPro
         entityId
       )
       .then((res) => {
-        if (res.success && res.data) setFields(res.data)
+        if (res.success && res.data) {
+          setFields(res.data)
+          onFieldsLoaded?.(res.data)
+        }
       })
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [entityType, entityId, loaded])
+  }, [entityType, entityId, loaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!loaded || loading) return null
   if (defs.length === 0) return null
 
+  function togglePin(id: string) {
+    const key = `custom:${id}`
+    const next = pinnedKeys.includes(key)
+      ? pinnedKeys.filter((k) => k !== key)
+      : [...pinnedKeys, key]
+    setJSON(prefKey, next)
+  }
+
   async function handleSave(field: CustomFieldWithValue, newValue: string | number | boolean | null) {
     if (newValue == null || newValue === '') {
-      await window.api.invoke(IPC_CHANNELS.CUSTOM_FIELD_DELETE_VALUE, field.id, entityId)
+      await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_DELETE_VALUE, field.id, entityId)
       setFields((prev) =>
         prev.map((f) => (f.id === field.id ? { ...f, value: null } : f))
       )
@@ -76,7 +93,7 @@ export function CustomFieldsPanel({ entityType, entityId }: CustomFieldsPanelPro
         input.valueText = String(newValue)
     }
 
-    await window.api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
+    await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
   }
 
   function getFieldValue(field: CustomFieldWithValue): string | number | boolean | null {
@@ -109,17 +126,28 @@ export function CustomFieldsPanel({ entityType, entityId }: CustomFieldsPanelPro
   return (
     <div className={styles.panel}>
       <div className={styles.sectionHeader}>Custom Fields</div>
-      {fields.map((field) => (
-        <PropertyRow
-          key={field.id}
-          label={field.label}
-          value={getFieldValue(field)}
-          type={field.fieldType}
-          options={getOptions(field)}
-          resolvedLabel={field.value?.resolvedLabel ?? null}
-          onSave={(val) => handleSave(field, val)}
-        />
-      ))}
+      {fields.map((field) => {
+        const isPinned = pinnedKeys.includes(`custom:${field.id}`)
+        return (
+          <div key={field.id} className={styles.fieldRow}>
+            <PropertyRow
+              label={field.label}
+              value={getFieldValue(field)}
+              type={field.fieldType}
+              options={getOptions(field)}
+              resolvedLabel={field.value?.resolvedLabel ?? null}
+              onSave={(val) => handleSave(field, val)}
+            />
+            <button
+              className={`${styles.pinBtn} ${isPinned ? styles.pinned : ''}`}
+              title={isPinned ? 'Remove from summary' : 'Pin to summary'}
+              onClick={() => togglePin(field.id)}
+            >
+              📌
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }

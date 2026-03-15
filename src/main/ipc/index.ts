@@ -22,6 +22,10 @@ import { registerUnifiedSearchHandlers } from './unified-search.ipc'
 import { registerTaskHandlers } from './task.ipc'
 import { registerCustomFieldsIpc } from './custom-fields.ipc'
 import { registerContactNotesHandlers } from './contact-notes.ipc'
+import { registerCsvImportHandlers } from './csv-import.ipc'
+import { registerUserPreferencesHandlers } from './user-preferences.ipc'
+import { registerContactChatHandlers } from './contact-chat.ipc'
+import { registerCompanyDecisionHandlers } from './company-decision.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -48,4 +52,8 @@ export function registerAllHandlers(): void {
   registerTaskHandlers()
   registerCustomFieldsIpc()
   registerContactNotesHandlers()
+  registerCsvImportHandlers()
+  registerUserPreferencesHandlers()
+  registerContactChatHandlers()
+  registerCompanyDecisionHandlers()
 }

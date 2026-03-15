@@ -6,6 +6,7 @@ import type { CategorizedSuggestions } from '../../../shared/types/meeting'
 import type { CompanySummary } from '../../../shared/types/company'
 import type { ContactSummary } from '../../../shared/types/contact'
 import styles from './SearchBar.module.css'
+import { api } from '../../api'
 
 interface SearchBarProps {
   placeholder?: string
@@ -77,7 +78,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
 
   // Load all speakers on mount
   useEffect(() => {
-    window.api.invoke<string[]>(IPC_CHANNELS.SEARCH_ALL_SPEAKERS).then(setAllSpeakers)
+    api.invoke<string[]>(IPC_CHANNELS.SEARCH_ALL_SPEAKERS).then(setAllSpeakers)
   }, [setAllSpeakers])
 
   // Fetch categorized suggestions as user types
@@ -90,7 +91,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
     }
     suggestRef.current = setTimeout(async () => {
       try {
-        const results = await window.api.invoke<CategorizedSuggestions>(IPC_CHANNELS.SEARCH_CATEGORIZED, value)
+        const results = await api.invoke<CategorizedSuggestions>(IPC_CHANNELS.SEARCH_CATEGORIZED, value)
         setCategorized(results)
         const hasResults = results.people.length > 0 || results.companies.length > 0 || results.meetings.length > 0
         setShowSuggestions(hasResults)
@@ -134,12 +135,12 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
       if (item.type === 'company') {
         const primary = item.label.trim()
         const fallback = (item.domain || '').trim()
-        let companies = await window.api.invoke<CompanySummary[]>(
+        let companies = await api.invoke<CompanySummary[]>(
           IPC_CHANNELS.COMPANY_LIST,
           { query: primary, view: 'all', limit: 50 }
         )
         if (companies.length === 0 && fallback) {
-          companies = await window.api.invoke<CompanySummary[]>(
+          companies = await api.invoke<CompanySummary[]>(
             IPC_CHANNELS.COMPANY_LIST,
             { query: fallback, view: 'all', limit: 50 }
           )
@@ -164,7 +165,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
       }
 
       if (item.type === 'person') {
-        const contacts = await window.api.invoke<ContactSummary[]>(
+        const contacts = await api.invoke<ContactSummary[]>(
           IPC_CHANNELS.CONTACT_LIST,
           { query: item.label.trim(), limit: 50 }
         )

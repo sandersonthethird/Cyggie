@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { CompanyNote, CompanyTimelineItem } from '../../../shared/types/company'
+import type { CompanyDecisionLog, CompanyNote, CompanyTimelineItem } from '../../../shared/types/company'
 import { useEmailSync } from '../../hooks/useEmailSync'
 import { EmailDetailModal } from '../crm/EmailDetailModal'
 import { NoteDetailModal } from '../crm/NoteDetailModal'
+import { DecisionLogModal } from '../crm/DecisionLogModal'
 import styles from './CompanyTimeline.module.css'
 
 interface CompanyTimelineProps {
@@ -15,16 +16,18 @@ interface CompanyTimelineProps {
 const TYPE_LABEL: Record<string, string> = {
   meeting: 'Meeting',
   email: 'Email',
-  note: 'Note'
+  note: 'Note',
+  decision: 'Decision'
 }
 
-type TimelineFilter = 'all' | 'meeting' | 'email' | 'note'
+type TimelineFilter = 'all' | 'meeting' | 'email' | 'note' | 'decision'
 
 const FILTERS: Array<{ key: TimelineFilter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'meeting', label: 'Meetings' },
   { key: 'email', label: 'Emails' },
-  { key: 'note', label: 'Notes' }
+  { key: 'note', label: 'Notes' },
+  { key: 'decision', label: 'Decisions' }
 ]
 
 export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) {
@@ -60,6 +63,22 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
       setSelectedItem(item)
     }
   }
+
+  const handleDecisionSaved = useCallback((_log: CompanyDecisionLog) => {
+    setItems((prev) =>
+      prev.map((i) =>
+        i.referenceId === _log.id
+          ? { ...i, title: _log.decisionType, subtitle: _log.decisionOwner ?? null }
+          : i
+      )
+    )
+    setSelectedItem(null)
+  }, [])
+
+  const handleDecisionDeleted = useCallback((deletedId: string) => {
+    setItems((prev) => prev.filter((i) => i.referenceId !== deletedId))
+    setSelectedItem(null)
+  }, [])
 
   const handleNoteUpdated = useCallback((note: CompanyNote) => {
     setItems((prev) =>
@@ -171,6 +190,15 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
           onClose={() => setSelectedItem(null)}
           onUpdated={handleNoteUpdated}
           onDeleted={handleNoteDeleted}
+        />
+      )}
+      {selectedItem?.type === 'decision' && (
+        <DecisionLogModal
+          companyId={companyId}
+          logId={selectedItem.referenceId}
+          onClose={() => setSelectedItem(null)}
+          onSaved={handleDecisionSaved}
+          onDeleted={handleDecisionDeleted}
         />
       )}
     </div>

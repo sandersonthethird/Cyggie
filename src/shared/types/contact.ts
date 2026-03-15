@@ -111,6 +111,17 @@ export interface ContactNote {
   updatedAt: string
 }
 
+export type ContactTimelineItemType = 'meeting' | 'email' | 'note'
+
+export interface ContactTimelineItem {
+  id: string
+  type: ContactTimelineItemType
+  title: string
+  occurredAt: string
+  subtitle: string | null
+  referenceId: string
+}
+
 export interface ContactEmailIngestResult {
   contactId: string
   contactEmail: string

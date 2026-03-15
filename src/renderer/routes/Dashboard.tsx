@@ -23,6 +23,7 @@ import CalendarBadge from '../components/meetings/CalendarBadge'
 import ChatInterface from '../components/chat/ChatInterface'
 import MultiSelectFilter from '../components/common/MultiSelectFilter'
 import styles from './Dashboard.module.css'
+import { api } from '../api'
 
 function isWithinWeek(value: string, base: Date): boolean {
   const date = new Date(value)
@@ -226,10 +227,10 @@ export default function Dashboard() {
     setError(null)
     try {
       const [result, pipelineData, stats, tasks] = await Promise.all([
-        window.api.invoke<DashboardData>(IPC_CHANNELS.DASHBOARD_GET),
-        window.api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST),
-        window.api.invoke<TaskSummaryStats>(IPC_CHANNELS.TASK_SUMMARY_STATS),
-        window.api.invoke<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, {
+        api.invoke<DashboardData>(IPC_CHANNELS.DASHBOARD_GET),
+        api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST),
+        api.invoke<TaskSummaryStats>(IPC_CHANNELS.TASK_SUMMARY_STATS),
+        api.invoke<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, {
           status: ['open', 'in_progress'],
           limit: 5
         })
@@ -242,7 +243,7 @@ export default function Dashboard() {
         setActivityFilter(result.activityFilter)
       }
       try {
-        const raw = await window.api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'dashboardDismissedStale')
+        const raw = await api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'dashboardDismissedStale')
         if (raw) setDismissedStaleIds(new Set(JSON.parse(raw) as string[]))
       } catch { /* ignore */ }
     } catch (err) {
@@ -255,7 +256,7 @@ export default function Dashboard() {
   const saveActivityFilter = useCallback(async (next: DashboardActivityFilter) => {
     setActivityFilter(next)
     try {
-      await window.api.invoke(IPC_CHANNELS.SETTINGS_SET, 'dashboardActivityFilter', JSON.stringify(next))
+      await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'dashboardActivityFilter', JSON.stringify(next))
       void loadDashboard()
     } catch (err) {
       setError(String(err))
@@ -288,7 +289,7 @@ export default function Dashboard() {
 
   const handleRecord = useCallback(async (event?: CalendarEvent) => {
     try {
-      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
+      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         event?.title,
         event?.id
@@ -302,7 +303,7 @@ export default function Dashboard() {
 
   const handleQuickNote = useCallback(async () => {
     try {
-      const meeting = await window.api.invoke<Meeting>(IPC_CHANNELS.MEETING_CREATE)
+      const meeting = await api.invoke<Meeting>(IPC_CHANNELS.MEETING_CREATE)
       navigate(`/meeting/${meeting.id}`)
     } catch (err) {
       setError(String(err))
@@ -313,7 +314,7 @@ export default function Dashboard() {
 
   const handlePrepareFromCalendar = useCallback(async (event: CalendarEvent) => {
     try {
-      const meeting = await window.api.invoke<Meeting>(
+      const meeting = await api.invoke<Meeting>(
         IPC_CHANNELS.MEETING_PREPARE,
         event.id,
         event.title,
@@ -357,7 +358,7 @@ export default function Dashboard() {
     setDismissedStaleIds((prev) => {
       const next = new Set(prev)
       next.add(companyId)
-      void window.api.invoke(IPC_CHANNELS.SETTINGS_SET, 'dashboardDismissedStale', JSON.stringify([...next]))
+      void api.invoke(IPC_CHANNELS.SETTINGS_SET, 'dashboardDismissedStale', JSON.stringify([...next]))
       return next
     })
   }, [])

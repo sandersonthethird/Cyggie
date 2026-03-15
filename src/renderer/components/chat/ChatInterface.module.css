@@ -265,11 +265,26 @@
   flex-shrink: 0;
 }
 
+.floatingPanelTitleWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .floatingPanelTitle {
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text-secondary);
   letter-spacing: 0.3px;
+}
+
+.contextLabel {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .floatingPanelClose {

@@ -4,6 +4,7 @@ import { useVideoCapture } from '../hooks/useVideoCapture'
 import { useRecordingStore } from '../stores/recording.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { TranscriptSegment, RecordingStatus } from '../../shared/types/recording'
+import { api } from '../api'
 
 interface CaptureContextValue {
   audioCapture: ReturnType<typeof useAudioCapture>
@@ -38,7 +39,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
 
   // IPC listeners for transcript, status, and error updates
   useEffect(() => {
-    const unsubTranscript = window.api.on(
+    const unsubTranscript = api.on(
       IPC_CHANNELS.RECORDING_TRANSCRIPT_UPDATE,
       (segment: unknown) => {
         const seg = segment as TranscriptSegment
@@ -51,7 +52,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       }
     )
 
-    const unsubStatus = window.api.on(
+    const unsubStatus = api.on(
       IPC_CHANNELS.RECORDING_STATUS,
       (status: unknown) => {
         const s = status as RecordingStatus
@@ -61,11 +62,11 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       }
     )
 
-    const unsubError = window.api.on(IPC_CHANNELS.RECORDING_ERROR, (err: unknown) => {
+    const unsubError = api.on(IPC_CHANNELS.RECORDING_ERROR, (err: unknown) => {
       setError(String(err))
     })
 
-    const unsubAutoStop = window.api.on(IPC_CHANNELS.RECORDING_AUTO_STOP, async () => {
+    const unsubAutoStop = api.on(IPC_CHANNELS.RECORDING_AUTO_STOP, async () => {
       if (!useRecordingStore.getState().isRecording) return
       console.log('[AutoStop] Received auto-stop signal, stopping recording')
       try {
@@ -73,7 +74,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
           await videoCapture.stop()
         }
         audioCapture.stop()
-        await window.api.invoke(IPC_CHANNELS.RECORDING_STOP)
+        await api.invoke(IPC_CHANNELS.RECORDING_STOP)
         useRecordingStore.getState().stopRecording()
       } catch (err) {
         console.error('[AutoStop] Failed to stop recording:', err)

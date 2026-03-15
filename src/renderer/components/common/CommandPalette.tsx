@@ -7,6 +7,7 @@ import type {
   UnifiedSearchResult
 } from '../../../shared/types/unified-search'
 import styles from './CommandPalette.module.css'
+import { api } from '../../api'
 
 interface CommandPaletteProps {
   open: boolean
@@ -67,7 +68,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
     setError(null)
     const timeout = setTimeout(async () => {
       try {
-        const response = await window.api.invoke<UnifiedSearchResponse>(
+        const response = await api.invoke<UnifiedSearchResponse>(
           IPC_CHANNELS.UNIFIED_SEARCH_QUERY,
           query,
           48
@@ -92,7 +93,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   useEffect(() => {
     if (!asking) return
-    const unsub = window.api.on(IPC_CHANNELS.CHAT_PROGRESS, (chunk: unknown) => {
+    const unsub = api.on(IPC_CHANNELS.CHAT_PROGRESS, (chunk: unknown) => {
       if (chunk == null) {
         setStreamingAnswer('')
         return
@@ -125,7 +126,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
     setAnswer(null)
     setError(null)
     try {
-      const response = await window.api.invoke<UnifiedSearchAnswerResponse>(
+      const response = await api.invoke<UnifiedSearchAnswerResponse>(
         IPC_CHANNELS.UNIFIED_SEARCH_ANSWER,
         query,
         48

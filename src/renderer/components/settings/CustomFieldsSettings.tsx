@@ -8,6 +8,7 @@ import type {
 } from '../../../shared/types/custom-fields'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
 import styles from './CustomFieldsSettings.module.css'
+import { api } from '../../api'
 
 const FIELD_TYPES: Array<{ value: CustomFieldType; label: string }> = [
   { value: 'text', label: 'Text' },
@@ -109,7 +110,7 @@ export function CustomFieldsSettings() {
     setSaving(true)
     setFormError(null)
     try {
-      const result = await window.api.invoke<{ success: boolean; message?: string }>(
+      const result = await api.invoke<{ success: boolean; message?: string }>(
         IPC_CHANNELS.CUSTOM_FIELD_CREATE_DEFINITION,
         input
       )
@@ -128,7 +129,7 @@ export function CustomFieldsSettings() {
   }
 
   async function handleDeleteClick(def: CustomFieldDefinition) {
-    const countResult = await window.api.invoke<{ success: boolean; count?: number }>(
+    const countResult = await api.invoke<{ success: boolean; count?: number }>(
       IPC_CHANNELS.CUSTOM_FIELD_COUNT_VALUES,
       def.id
     )
@@ -143,7 +144,7 @@ export function CustomFieldsSettings() {
   async function doDelete(def: CustomFieldDefinition) {
     setDeleting(true)
     try {
-      await window.api.invoke(IPC_CHANNELS.CUSTOM_FIELD_DELETE_DEFINITION, def.id)
+      await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_DELETE_DEFINITION, def.id)
       await refresh()
       setDeleteConfirm(null)
     } catch (e) {
@@ -158,7 +159,7 @@ export function CustomFieldsSettings() {
     const reordered = [...defs]
     reordered.splice(index, 1)
     reordered.splice(index - 1, 0, def)
-    await window.api.invoke(IPC_CHANNELS.CUSTOM_FIELD_REORDER_DEFINITIONS, reordered.map((d) => d.id))
+    await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_REORDER_DEFINITIONS, reordered.map((d) => d.id))
     await refresh()
   }
 
@@ -167,7 +168,7 @@ export function CustomFieldsSettings() {
     const reordered = [...defs]
     reordered.splice(index, 1)
     reordered.splice(index + 1, 0, def)
-    await window.api.invoke(IPC_CHANNELS.CUSTOM_FIELD_REORDER_DEFINITIONS, reordered.map((d) => d.id))
+    await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_REORDER_DEFINITIONS, reordered.map((d) => d.id))
     await refresh()
   }
 

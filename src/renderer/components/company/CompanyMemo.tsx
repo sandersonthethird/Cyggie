@@ -4,6 +4,7 @@ import rehypeRaw from 'rehype-raw'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { InvestmentMemoWithLatest, InvestmentMemoVersion } from '../../../shared/types/company'
 import styles from './CompanyMemo.module.css'
+import { api } from '../../api'
 
 interface CompanyMemoProps {
   companyId: string
@@ -35,7 +36,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     if (!memo) return
     setSaving(true)
     try {
-      const version = await window.api.invoke<InvestmentMemoVersion>(
+      const version = await api.invoke<InvestmentMemoVersion>(
         IPC_CHANNELS.INVESTMENT_MEMO_SAVE_VERSION,
         memo.id,
         { contentMarkdown: editContent, changeNote: null }
@@ -53,7 +54,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     if (!memo) return
     setGenerating(true)
     try {
-      const result = await window.api.invoke<{ contentMarkdown: string }>(
+      const result = await api.invoke<{ contentMarkdown: string }>(
         IPC_CHANNELS.INVESTMENT_MEMO_GENERATE,
         companyId
       )

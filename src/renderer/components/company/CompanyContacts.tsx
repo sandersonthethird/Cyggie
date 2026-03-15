@@ -5,6 +5,7 @@ import type { CompanyContactRef } from '../../../shared/types/company'
 import { ContactAvatar } from '../crm/ContactAvatar'
 import { EntitySearch } from '../crm/EntitySearch'
 import styles from './CompanyContacts.module.css'
+import { api } from '../../api'
 
 interface CompanyContactsProps {
   companyId: string
@@ -29,7 +30,7 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
   }, [companyId, loaded])
 
   async function handleLinkContact(contactId: string) {
-    await window.api.invoke(IPC_CHANNELS.COMPANY_LINK_CONTACT, companyId, contactId)
+    await api.invoke(IPC_CHANNELS.COMPANY_LINK_CONTACT, companyId, contactId)
     setLoaded(false)
   }
 

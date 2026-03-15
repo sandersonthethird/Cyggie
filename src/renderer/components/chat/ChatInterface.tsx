@@ -4,10 +4,14 @@ import ReactMarkdown from 'react-markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatStore } from '../../stores/chat.store'
 import styles from './ChatInterface.module.css'
+import { api } from '../../api'
 
 interface ChatInterfaceProps {
   meetingId?: string // If provided, queries single meeting. Otherwise queries all meetings.
   meetingIds?: string[] // If provided, queries these specific meetings (search results).
+  companyId?: string // If provided, queries company context (meetings, emails, files).
+  contactId?: string // If provided, queries contact context (meetings, emails, notes).
+  entityName?: string // Display name shown in context label (company/contact name).
   placeholder?: string
   fillHeight?: boolean // If true, container expands to fill available space
   compact?: boolean // If true, hides empty state text — just shows the input bar
@@ -61,8 +65,8 @@ async function processFile(file: File): Promise<PendingAttachment | null> {
   }
 }
 
-export default function ChatInterface({ meetingId, meetingIds, placeholder, fillHeight = false, compact = false, floating = false }: ChatInterfaceProps) {
-  const contextId = meetingIds ? 'search-results' : (meetingId ?? 'global')
+export default function ChatInterface({ meetingId, meetingIds, companyId, contactId, entityName, placeholder, fillHeight = false, compact = false, floating = false }: ChatInterfaceProps) {
+  const contextId = companyId ? `company:${companyId}` : contactId ? `contact:${contactId}` : meetingIds ? 'search-results' : (meetingId ?? 'global')
 
   const storedMessages = useChatStore((s) => s.conversations[contextId]?.messages)
   const messages = useMemo(() => storedMessages ?? EMPTY_MESSAGES, [storedMessages])
@@ -95,7 +99,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
   useEffect(() => {
     if (!isLoading) return
 
-    const unsub = window.api.on(IPC_CHANNELS.CHAT_PROGRESS, (chunk: unknown) => {
+    const unsub = api.on(IPC_CHANNELS.CHAT_PROGRESS, (chunk: unknown) => {
       if (chunk === null) {
         setStreamedContent('')
         return
@@ -173,8 +177,14 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
   }, [addAttachments])
 
   const handleStop = useCallback(() => {
-    window.api.invoke(IPC_CHANNELS.CHAT_ABORT)
-  }, [])
+    if (companyId) {
+      api.invoke(IPC_CHANNELS.COMPANY_CHAT_ABORT)
+    } else if (contactId) {
+      api.invoke(IPC_CHANNELS.CONTACT_CHAT_ABORT)
+    } else {
+      api.invoke(IPC_CHANNELS.CHAT_ABORT)
+    }
+  }, [companyId, contactId])
 
   const handleSubmit = useCallback(async () => {
     if ((!input.trim() && attachments.length === 0) || isLoading) return
@@ -210,22 +220,32 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
 
     try {
       let response: string
-      if (meetingIds) {
-        response = await window.api.invoke<string>(
+      if (companyId) {
+        response = await api.invoke<string>(
+          IPC_CHANNELS.COMPANY_CHAT_QUERY,
+          { companyId, question }
+        )
+      } else if (contactId) {
+        response = await api.invoke<string>(
+          IPC_CHANNELS.CONTACT_CHAT_QUERY,
+          { contactId, question }
+        )
+      } else if (meetingIds) {
+        response = await api.invoke<string>(
           IPC_CHANNELS.CHAT_QUERY_SEARCH_RESULTS,
           meetingIds,
           question,
           ipcAttachments
         )
       } else if (meetingId) {
-        response = await window.api.invoke<string>(
+        response = await api.invoke<string>(
           IPC_CHANNELS.CHAT_QUERY_MEETING,
           meetingId,
           question,
           ipcAttachments
         )
       } else {
-        response = await window.api.invoke<string>(IPC_CHANNELS.CHAT_QUERY_GLOBAL, question, ipcAttachments)
+        response = await api.invoke<string>(IPC_CHANNELS.CHAT_QUERY_GLOBAL, question, ipcAttachments)
       }
 
       addMessage(contextId, { role: 'assistant', content: response })
@@ -233,7 +253,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
       if (meetingId) {
         const allMessages = useChatStore.getState().conversations[contextId]?.messages
         if (allMessages) {
-          window.api.invoke(IPC_CHANNELS.MEETING_SAVE_CHAT, meetingId, allMessages)
+          api.invoke(IPC_CHANNELS.MEETING_SAVE_CHAT, meetingId, allMessages)
         }
       }
     } catch (err) {
@@ -250,7 +270,7 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
       setIsLoading(false)
       setStreamedContent('')
     }
-  }, [input, attachments, isLoading, meetingId, meetingIds, contextId, addMessage, floating])
+  }, [input, attachments, isLoading, meetingId, meetingIds, companyId, contactId, contextId, addMessage, floating])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -355,7 +375,16 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
         {showPanel && (
           <div className={styles.floatingPanel}>
             <div className={styles.floatingPanelHeader}>
-              <span className={styles.floatingPanelTitle}>Ask AI</span>
+              <div className={styles.floatingPanelTitleWrap}>
+                <span className={styles.floatingPanelTitle}>Ask AI</span>
+                {(companyId || contactId) && entityName ? (
+                  <span className={styles.contextLabel}>
+                    {entityName} · {companyId ? 'meetings, emails & files' : 'meetings, emails & notes'}
+                  </span>
+                ) : (!companyId && !contactId && !meetingId && !meetingIds) ? (
+                  <span className={styles.contextLabel}>All meetings</span>
+                ) : null}
+              </div>
               <button
                 className={styles.floatingPanelClose}
                 onClick={() => setFloatingPanelOpen(false)}
@@ -386,11 +415,15 @@ export default function ChatInterface({ meetingId, meetingIds, placeholder, fill
 
       {!compact && messages.length === 0 && !isLoading && (
         <div className={styles.emptyState}>
-          {meetingIds
-            ? 'Ask questions across the meetings in your search results.'
-            : meetingId
-              ? 'Ask questions about this meeting\'s transcript and notes.'
-              : 'Ask questions across all your meeting transcripts.'}
+          {companyId
+            ? `Ask questions about ${entityName ?? 'this company'} — meetings, emails & files.`
+            : contactId
+              ? `Ask questions about ${entityName ?? 'this contact'} — meetings, emails & notes.`
+              : meetingIds
+                ? 'Ask questions across the meetings in your search results.'
+                : meetingId
+                  ? 'Ask questions about this meeting\'s transcript and notes.'
+                  : 'Ask questions across all your meeting transcripts.'}
         </div>
       )}
 

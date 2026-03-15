@@ -3,6 +3,7 @@ import { useRecordingStore } from '../stores/recording.store'
 import { useSharedAudioCapture } from '../contexts/AudioCaptureContext'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import styles from './LiveRecording.module.css'
+import { api } from '../api'
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600)
@@ -42,7 +43,7 @@ export default function LiveRecording() {
 
   const handleStart = useCallback(async () => {
     try {
-      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(IPC_CHANNELS.RECORDING_START)
+      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(IPC_CHANNELS.RECORDING_START)
       startRecording(result.meetingId, result.meetingPlatform)
     } catch (err) {
       setError(String(err))
@@ -52,7 +53,7 @@ export default function LiveRecording() {
   const handleStop = useCallback(async () => {
     try {
       audioCapture.stop()
-      await window.api.invoke(IPC_CHANNELS.RECORDING_STOP)
+      await api.invoke(IPC_CHANNELS.RECORDING_STOP)
       stopRecording()
     } catch (err) {
       setError(String(err))
@@ -62,7 +63,7 @@ export default function LiveRecording() {
   const handlePause = useCallback(async () => {
     try {
       audioCapture.pause()
-      await window.api.invoke(IPC_CHANNELS.RECORDING_PAUSE)
+      await api.invoke(IPC_CHANNELS.RECORDING_PAUSE)
       pauseRecording()
     } catch (err) {
       setError(String(err))
@@ -72,7 +73,7 @@ export default function LiveRecording() {
   const handleResume = useCallback(async () => {
     try {
       audioCapture.resume()
-      await window.api.invoke(IPC_CHANNELS.RECORDING_RESUME)
+      await api.invoke(IPC_CHANNELS.RECORDING_RESUME)
       resumeRecording()
     } catch (err) {
       setError(String(err))

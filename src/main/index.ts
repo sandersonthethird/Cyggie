@@ -188,7 +188,7 @@ app.whenReady().then(() => {
   }
 
   // Ensure a local current-user identity exists so new writes are attributable.
-  getCurrentUserId()
+  const startupUserId = getCurrentUserId()
 
   // System audio loopback is handled by electron-audio-loopback's IPC
   // handlers (enable-loopback-audio / disable-loopback-audio) registered

@@ -4,6 +4,7 @@ import { formatCurrency, formatDate } from '../../utils/format'
 import { useDebounce } from '../../hooks/useDebounce'
 import { EntitySearch } from './EntitySearch'
 import styles from './PropertyRow.module.css'
+import { api } from '../../api'
 
 export type PropertyRowType =
   | 'text'
@@ -19,11 +20,21 @@ export type PropertyRowType =
   | 'contact_ref'
   | 'company_ref'
 
+export type PropertyRowOption = string | { value: string; label: string }
+
+function optionValue(o: PropertyRowOption): string {
+  return typeof o === 'string' ? o : o.value
+}
+
+function optionLabel(o: PropertyRowOption): string {
+  return typeof o === 'string' ? o : o.label
+}
+
 interface PropertyRowProps {
   label: string
   value: string | number | boolean | null
   type: PropertyRowType
-  options?: string[]
+  options?: PropertyRowOption[]
   placeholder?: string
   resolvedLabel?: string | null
   onSave: (newValue: string | number | boolean | null) => Promise<void>
@@ -39,9 +50,9 @@ function safeParseTags(value: string | number | boolean | null): string[] {
     .filter(Boolean)
 }
 
-function safeParseOptions(optionsJson: string[] | undefined): string[] {
-  if (!optionsJson) return []
-  return optionsJson
+function safeParseOptions(opts: PropertyRowOption[] | undefined): PropertyRowOption[] {
+  if (!opts) return []
+  return opts
 }
 
 function formatValue(
@@ -167,7 +178,7 @@ export function PropertyRow({
 
   function openExternalUrl(url: string) {
     if (!url) return
-    window.api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, url).catch(console.error)
+    api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, url).catch(console.error)
   }
 
   // ── Render edit controls ──
@@ -187,7 +198,9 @@ export function PropertyRow({
           />
         )
 
-      case 'select':
+      case 'select': {
+        const parsedOpts = safeParseOptions(options)
+        const optValues = parsedOpts.map(optionValue)
         return (
           <select
             ref={inputRef as React.RefObject<HTMLSelectElement>}
@@ -200,19 +213,20 @@ export function PropertyRow({
             onBlur={() => setEditing(false)}
           >
             <option value="">—</option>
-            {safeParseOptions(options).map((opt) => (
-              <option key={opt} value={opt}>
-                {opt}
+            {parsedOpts.map((opt) => (
+              <option key={optionValue(opt)} value={optionValue(opt)}>
+                {optionLabel(opt)}
               </option>
             ))}
             {/* Stale value not in options */}
-            {editValue && !safeParseOptions(options).includes(String(editValue)) && (
+            {editValue && !optValues.includes(String(editValue)) && (
               <option value={String(editValue)} style={{ fontStyle: 'italic' }}>
                 {String(editValue)} (unknown)
               </option>
             )}
           </select>
         )
+      }
 
       case 'boolean':
         return (

@@ -14,6 +14,7 @@ import type {
   ContactDetail,
   ContactMeetingRef,
   ContactEmailRef,
+  ContactTimelineItem,
   ContactType,
   ContactDuplicateGroup,
   ContactDuplicateSummary,
@@ -3343,4 +3344,83 @@ export function deleteContact(contactId: string): void {
     throw new Error('Contact not found')
   }
   db.prepare(`DELETE FROM contacts WHERE id = ?`).run(contactId)
+}
+
+export function listContactTimeline(contactId: string): ContactTimelineItem[] {
+  const db = getDatabase()
+
+  // Get contact emails for meeting matching
+  const emailRows = db
+    .prepare(`SELECT email FROM contact_emails WHERE contact_id = ?`)
+    .all(contactId) as { email: string }[]
+  const contactEmails = new Set(emailRows.map((r) => r.email.toLowerCase().trim()))
+
+  // Meeting items: all meetings where contact is an attendee (single query, filter in memory)
+  const allMeetingRows = db
+    .prepare(`
+      SELECT id, title, date, status, attendee_emails
+      FROM meetings
+      WHERE attendee_emails IS NOT NULL
+      ORDER BY datetime(date) DESC
+      LIMIT 500
+    `)
+    .all() as { id: string; title: string; date: string; status: string; attendee_emails: string }[]
+
+  const meetingItems: ContactTimelineItem[] = allMeetingRows
+    .filter((m) => {
+      try {
+        const ae: string[] = JSON.parse(m.attendee_emails || '[]')
+        return ae.some((e) => contactEmails.has(e.toLowerCase().trim()))
+      } catch {
+        return false
+      }
+    })
+    .map((m) => ({
+      id: `meeting:${m.id}`,
+      type: 'meeting' as const,
+      title: m.title || 'Untitled meeting',
+      occurredAt: m.date,
+      subtitle: m.status || null,
+      referenceId: m.id
+    }))
+
+  // Email items: emails where contact is a participant
+  const emails = listContactEmails(contactId)
+  const emailItems: ContactTimelineItem[] = emails.map((email) => ({
+    id: `email:${email.id}`,
+    type: 'email' as const,
+    title: email.subject?.trim() || '(no subject)',
+    occurredAt: email.receivedAt || email.sentAt || new Date().toISOString(),
+    subtitle: email.fromName ? `${email.fromName} <${email.fromEmail}>` : email.fromEmail,
+    referenceId: email.id
+  }))
+
+  // Note items
+  const noteRows = db
+    .prepare(`
+      SELECT id, title, content, created_at, updated_at
+      FROM contact_notes
+      WHERE contact_id = ?
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 300
+    `)
+    .all(contactId) as Array<{
+    id: string
+    title: string | null
+    content: string
+    created_at: string
+    updated_at: string
+  }>
+  const noteItems: ContactTimelineItem[] = noteRows.map((note) => ({
+    id: `note:${note.id}`,
+    type: 'note' as const,
+    title: note.title?.trim() || 'Note',
+    occurredAt: note.updated_at || note.created_at,
+    subtitle: note.content.trim().slice(0, 220) || null,
+    referenceId: note.id
+  }))
+
+  return [...meetingItems, ...emailItems, ...noteItems].sort(
+    (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()
+  )
 }

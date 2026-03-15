@@ -3,6 +3,7 @@ export interface ElectronAPI {
   send: (channel: string, ...args: unknown[]) => void
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void
   once: (channel: string, callback: (...args: unknown[]) => void) => void
+  getPathForFile?: (file: File) => string | null
 }
 
 declare global {

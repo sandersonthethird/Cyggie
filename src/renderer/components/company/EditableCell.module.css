@@ -1,0 +1,118 @@
+.cell {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  height: 100%;
+  min-width: 0;
+  position: relative;
+  cursor: pointer;
+}
+
+.cell:hover {
+  background: var(--color-bg-secondary);
+}
+
+.cellText {
+  font-size: 13px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.cellEmpty {
+  color: var(--color-text-tertiary);
+}
+
+.editInput,
+.editSelect {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-radius: 0;
+}
+
+.editSelect {
+  cursor: pointer;
+}
+
+.errorMsg {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 0;
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* ── Badge styles for stage / type cells ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Stage badges */
+.stage-screening   { background: rgba(150,150,150,0.15); color: #666; }
+.stage-diligence   { background: rgba(var(--color-primary-rgb, 59,130,246),0.15); color: var(--color-primary); }
+.stage-decision    { background: rgba(232,160,32,0.15); color: #b37a00; }
+.stage-documentation { background: rgba(20,180,160,0.15); color: #0a8a7a; }
+.stage-pass        { background: rgba(220,60,60,0.15); color: #b02020; }
+
+/* Type badges */
+.type-prospect     { background: rgba(var(--color-primary-rgb, 59,130,246),0.15); color: var(--color-primary); }
+.type-portfolio    { background: rgba(52,199,89,0.15); color: #187a3a; }
+.type-vc_fund      { background: rgba(140,82,220,0.15); color: #7040a0; }
+.type-pass         { background: rgba(220,60,60,0.15); color: #b02020; }
+.type-customer     { background: rgba(20,180,160,0.15); color: #0a8a7a; }
+.type-partner      { background: rgba(150,150,150,0.15); color: #555; }
+.type-vendor       { background: rgba(150,150,150,0.15); color: #555; }
+.type-other        { background: rgba(150,150,150,0.15); color: #555; }
+.type-unknown      { background: rgba(150,150,150,0.1); color: var(--color-text-tertiary); }
+
+/* Priority badges */
+.priority-high         { background: rgba(220,60,60,0.15); color: #b02020; }
+.priority-further_work { background: rgba(var(--color-primary-rgb, 59,130,246),0.15); color: var(--color-primary); }
+.priority-monitor      { background: rgba(150,150,150,0.15); color: #666; }
+
+/* Contact type badges */
+.contactType-investor  { background: rgba(140,82,220,0.15); color: #7040a0; }
+.contactType-founder   { background: rgba(var(--color-primary-rgb, 59,130,246),0.15); color: var(--color-primary); }
+.contactType-operator  { background: rgba(20,180,160,0.15); color: #0a8a7a; }
+
+/* Warmth dot */
+.warmthCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.warmthDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.warmthGreen  { background: #34c759; }
+.warmthYellow { background: #ff9f0a; }
+.warmthRed    { background: #d94545; }
+.warmthGray   { background: var(--color-text-tertiary); opacity: 0.5; }

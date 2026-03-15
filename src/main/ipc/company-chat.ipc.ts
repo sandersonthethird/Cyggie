@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyChatRepo from '../database/repositories/company-chat.repo'
 import { getFlaggedFileIds, toggleFileFlag } from '../database/repositories/company-file-flags.repo'
-import { queryCompany } from '../llm/company-chat'
+import { queryCompany, abortCompanyChat } from '../llm/company-chat'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 
@@ -82,4 +82,8 @@ export function registerCompanyChatHandlers(): void {
       return queryCompany(data.companyId, data.question.trim())
     }
   )
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_CHAT_ABORT, () => {
+    abortCompanyChat()
+  })
 }

@@ -4,6 +4,7 @@ import type { CompanyEmailIngestResult } from '../../shared/types/company'
 import type { ContactEmailIngestResult } from '../../shared/types/contact'
 import type { AppSettings } from '../../shared/types/settings'
 import { getLastSyncedLabel } from '../utils/sync'
+import { api } from '../api'
 
 type EntityType = 'company' | 'contact'
 type IngestResult = CompanyEmailIngestResult | ContactEmailIngestResult
@@ -82,7 +83,7 @@ export function useEmailSync(
     setSyncResult(null)
     setProgressMsg('Discovering emails…')
 
-    const unsubscribe = window.api.on(
+    const unsubscribe = api.on(
       channels.progress,
       (...args: unknown[]) => {
         try {
@@ -100,7 +101,7 @@ export function useEmailSync(
     )
 
     try {
-      const result = await window.api.invoke<IngestResult>(channels.ingest, entityId)
+      const result = await api.invoke<IngestResult>(channels.ingest, entityId)
       if (!isMountedRef.current) return
       setSyncResult(result)
       localStorage.setItem(storageKey, new Date().toISOString())
@@ -117,7 +118,7 @@ export function useEmailSync(
   }
 
   const handleCancel = () => {
-    window.api.invoke(channels.cancel, entityId).catch(() => {})
+    api.invoke(channels.cancel, entityId).catch(() => {})
   }
 
   // Auto-sync on mount if last-synced > 24h and autoSyncEmails is enabled

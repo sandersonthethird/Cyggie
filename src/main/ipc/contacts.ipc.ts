@@ -52,6 +52,11 @@ export function registerContactHandlers(): void {
     return contactRepo.listContactEmails(contactId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.CONTACT_TIMELINE, (_event, contactId: string) => {
+    if (!contactId) throw new Error('contactId is required')
+    return contactRepo.listContactTimeline(contactId)
+  })
+
   ipcMain.handle(IPC_CHANNELS.CONTACT_EMAIL_INGEST, (_event, contactId: string) => {
     if (!contactId) throw new Error('contactId is required')
     return ingestContactEmails(contactId)

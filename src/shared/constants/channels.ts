@@ -80,6 +80,7 @@ export const IPC_CHANNELS = {
   CONTACT_RESOLVE_EMAILS: 'contact:resolve-emails',
   CONTACT_DEDUP_SUSPECTED: 'contact:dedup-suspected',
   CONTACT_DEDUP_APPLY: 'contact:dedup-apply',
+  CONTACT_TIMELINE: 'contact:timeline',
 
   // Dashboard
   DASHBOARD_GET: 'dashboard:get',
@@ -106,6 +107,14 @@ export const IPC_CHANNELS = {
   CONTACT_NOTES_UPDATE: 'contact-notes:update',
   CONTACT_NOTES_DELETE: 'contact-notes:delete',
 
+  // Company decision log
+  COMPANY_DECISION_LOG_LIST: 'company-decision-log:list',
+  COMPANY_DECISION_LOG_GET: 'company-decision-log:get',
+  COMPANY_DECISION_LOG_GET_LATEST: 'company-decision-log:get-latest',
+  COMPANY_DECISION_LOG_CREATE: 'company-decision-log:create',
+  COMPANY_DECISION_LOG_UPDATE: 'company-decision-log:update',
+  COMPANY_DECISION_LOG_DELETE: 'company-decision-log:delete',
+
   // Email detail
   EMAIL_GET: 'email:get',
 
@@ -115,6 +124,11 @@ export const IPC_CHANNELS = {
   COMPANY_CHAT_MESSAGES: 'company-chat:messages',
   COMPANY_CHAT_APPEND: 'company-chat:append',
   COMPANY_CHAT_QUERY: 'company:chat-query',
+  COMPANY_CHAT_ABORT: 'company-chat:abort',
+
+  // Contact chat
+  CONTACT_CHAT_QUERY: 'contact-chat:query',
+  CONTACT_CHAT_ABORT: 'contact-chat:abort',
 
   // Company file flags (for chat context)
   COMPANY_FILE_FLAG_GET: 'company:file-flag-get',
@@ -212,6 +226,22 @@ export const IPC_CHANNELS = {
   CUSTOM_FIELD_SET_VALUE: 'custom-field:set-value',
   CUSTOM_FIELD_DELETE_VALUE: 'custom-field:delete-value',
   CUSTOM_FIELD_COUNT_VALUES: 'custom-field:count-values',
+
+  // CSV Import
+  CSV_OPEN_FILE_DIALOG: 'csv:open-file-dialog',
+  CSV_PARSE_FILE: 'csv:parse-file',
+  CSV_SUGGEST_MAPPINGS: 'csv:suggest-mappings',
+  CSV_PREVIEW: 'csv:preview',
+  CSV_IMPORT: 'csv:import',
+  CSV_IMPORT_PROGRESS: 'csv:import:progress',
+  CSV_IMPORT_CANCEL: 'csv:import:cancel',
+
+  // User preferences
+  USER_PREF_GET_ALL: 'user-pref:get-all',
+  USER_PREF_SET: 'user-pref:set',
+
+  // Maintenance
+  MEETING_NOTES_BACKFILL: 'maintenance:meeting-notes-backfill',
 
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',

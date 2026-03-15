@@ -15,6 +15,7 @@ import type { CalendarEvent } from '../../shared/types/calendar'
 import type { Meeting } from '../../shared/types/meeting'
 import type { DriveShareResponse } from '../../shared/types/drive'
 import styles from './MeetingList.module.css'
+import { api } from '../api'
 
 function formatDateHeading(dateStr: string): string {
   const date = new Date(dateStr)
@@ -134,7 +135,7 @@ export default function MeetingList() {
 
   const handleRecordFromCalendar = async (event: CalendarEvent) => {
     try {
-      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
+      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         event.title,
         event.id
@@ -148,7 +149,7 @@ export default function MeetingList() {
 
   const handlePrepareFromCalendar = async (event: CalendarEvent) => {
     try {
-      const meeting = await window.api.invoke<Meeting>(
+      const meeting = await api.invoke<Meeting>(
         IPC_CHANNELS.MEETING_PREPARE,
         event.id,
         event.title,
@@ -324,7 +325,7 @@ export default function MeetingList() {
                     onDelete={() => deleteMeeting(id)}
                     onCopyLink={async () => {
                       try {
-                        const result = await window.api.invoke<DriveShareResponse>(
+                        const result = await api.invoke<DriveShareResponse>(
                           IPC_CHANNELS.DRIVE_GET_SHARE_LINK,
                           meeting.id
                         )

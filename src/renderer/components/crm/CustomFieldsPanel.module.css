@@ -13,3 +13,36 @@
   padding: 12px 0 6px;
   margin-bottom: 2px;
 }
+
+.fieldRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.fieldRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.pinBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  opacity: 0;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  filter: grayscale(1);
+}
+
+.fieldRow:hover .pinBtn {
+  opacity: 0.6;
+}
+
+.pinBtn.pinned {
+  opacity: 1;
+  filter: none;
+}

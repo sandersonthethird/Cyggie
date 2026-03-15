@@ -7,6 +7,7 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import type { Meeting } from '../../../shared/types/meeting'
 import styles from './Layout.module.css'
+import { api } from '../../api'
 
 const NOTIFY_BEFORE_MS = 2 * 60 * 1000 // 2 minutes
 
@@ -46,7 +47,7 @@ export default function Layout() {
     setBannerDismissed((prev) => new Set([...prev, event.id]))
     setRecordingError(null)
     try {
-      const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
+      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         event.title,
         event.id
@@ -60,7 +61,7 @@ export default function Layout() {
 
   const handleBannerJoin = useCallback((event: CalendarEvent) => {
     if (event.meetingUrl) {
-      window.api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, event.meetingUrl).catch(console.error)
+      api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, event.meetingUrl).catch(console.error)
     }
   }, [])
 
@@ -110,7 +111,7 @@ export default function Layout() {
   const handleNewNote = async () => {
     setNewMenuOpen(false)
     try {
-      const meeting = await window.api.invoke<Meeting>(IPC_CHANNELS.MEETING_CREATE)
+      const meeting = await api.invoke<Meeting>(IPC_CHANNELS.MEETING_CREATE)
       navigate(`/meeting/${meeting.id}`)
     } catch (err) {
       console.error('Failed to create note:', err)

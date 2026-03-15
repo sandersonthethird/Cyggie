@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
 import { createPortal } from 'react-dom'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
 import ChatInterface from '../components/chat/ChatInterface'
+import { ContactTable } from '../components/contact/ContactTable'
+import { ViewsBar } from '../components/crm/ViewsBar'
+import {
+  CONTACT_COLUMN_DEFS,
+  loadContactColumnConfig,
+  filterContacts,
+  sortContacts
+} from '../components/contact/contactColumns'
 import type {
-  ContactSortBy,
   ContactSummary,
   ContactSyncResult,
   ContactEnrichmentResult,
@@ -15,36 +21,25 @@ import type {
   ContactDedupAction,
   ContactDedupApplyResult,
   ContactDedupDecision,
-  ContactDuplicateGroup
+  ContactDuplicateGroup,
+  ContactType
 } from '../../shared/types/contact'
+import type { SortState } from '../components/crm/tableUtils'
 import styles from './Contacts.module.css'
+import { api } from '../api'
 
-const DAY_MS = 1000 * 60 * 60 * 24
+// ─── Helpers (dedup dialog only) ──────────────────────────────────────────────
+
 const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
 
 function parseTimestamp(value: string | null | undefined): number {
   if (!value) return Number.NaN
   const trimmed = value.trim()
   if (!trimmed) return Number.NaN
-
-  // SQLite DATETIME values are stored in UTC without a timezone marker.
   const normalized = SQLITE_DATETIME_RE.test(trimmed)
     ? `${trimmed.replace(' ', 'T')}Z`
     : trimmed
   return Date.parse(normalized)
-}
-
-function formatDate(value: string): string {
-  const timestamp = parseTimestamp(value)
-  if (Number.isNaN(timestamp)) return ''
-  const date = new Date(timestamp)
-  const diffMs = Date.now() - timestamp
-  const diffDays = Math.max(0, Math.floor(diffMs / DAY_MS))
-  if (diffDays === 0) return 'Today'
-  if (diffDays === 1) return 'Yesterday'
-  if (diffDays < 7) return `${diffDays}d ago`
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
 function formatDateTime(value: string | null | undefined): string {
@@ -78,85 +73,39 @@ function splitNameForEditing(fullName: string): { firstName: string; lastName: s
     .map((part) => part.trim())
     .filter(Boolean)
 
-  if (tokens.length === 0) {
-    return { firstName: '', lastName: '' }
-  }
-  if (tokens.length === 1) {
-    return { firstName: tokens[0], lastName: '' }
-  }
+  if (tokens.length === 0) return { firstName: '', lastName: '' }
+  if (tokens.length === 1) return { firstName: tokens[0], lastName: '' }
   return {
     firstName: tokens.slice(0, -1).join(' '),
     lastName: tokens[tokens.length - 1]
   }
 }
 
-function daysSince(value: string | null): number | null {
-  if (!value) return null
-  const timestamp = parseTimestamp(value)
-  if (Number.isNaN(timestamp)) return null
-  return Math.max(0, Math.floor((Date.now() - timestamp) / DAY_MS))
-}
-
 function normalizeSortKey(value: string | null | undefined): string {
   return (value || '').trim().toLowerCase()
 }
 
-function sortContacts(contacts: ContactSummary[], sortBy: ContactSortBy): ContactSummary[] {
-  if (contacts.length <= 1) return contacts
-  const sorted = [...contacts]
-  sorted.sort((a, b) => {
-    if (sortBy === 'first_name') {
-      const aFirst = normalizeSortKey(a.firstName || a.fullName)
-      const bFirst = normalizeSortKey(b.firstName || b.fullName)
-      if (aFirst !== bFirst) return aFirst.localeCompare(bFirst)
-
-      const aLast = normalizeSortKey(a.lastName || a.fullName)
-      const bLast = normalizeSortKey(b.lastName || b.fullName)
-      if (aLast !== bLast) return aLast.localeCompare(bLast)
-    } else if (sortBy === 'last_name') {
-      const aLast = normalizeSortKey(a.lastName || a.fullName)
-      const bLast = normalizeSortKey(b.lastName || b.fullName)
-      if (aLast !== bLast) return aLast.localeCompare(bLast)
-
-      const aFirst = normalizeSortKey(a.firstName || a.fullName)
-      const bFirst = normalizeSortKey(b.firstName || b.fullName)
-      if (aFirst !== bFirst) return aFirst.localeCompare(bFirst)
-    } else if (sortBy === 'company') {
-      const aCompany = normalizeSortKey(a.primaryCompanyName)
-      const bCompany = normalizeSortKey(b.primaryCompanyName)
-      if (aCompany !== bCompany) {
-        if (!aCompany) return 1
-        if (!bCompany) return -1
-        return aCompany.localeCompare(bCompany)
-      }
-    } else {
-      const aTouch = parseTimestamp(a.lastTouchpoint || a.updatedAt || a.createdAt)
-      const bTouch = parseTimestamp(b.lastTouchpoint || b.updatedAt || b.createdAt)
-      if (Number.isNaN(aTouch) && !Number.isNaN(bTouch)) return 1
-      if (!Number.isNaN(aTouch) && Number.isNaN(bTouch)) return -1
-      if (aTouch !== bTouch) return bTouch - aTouch
-    }
-
-    const aName = normalizeSortKey(a.fullName)
-    const bName = normalizeSortKey(b.fullName)
-    if (aName !== bName) return aName.localeCompare(bName)
-    return normalizeSortKey(a.email).localeCompare(normalizeSortKey(b.email))
-  })
-  return sorted
-}
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Contacts() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { enabled: contactsEnabled, loading: flagsLoading } = useFeatureFlag('ff_companies_ui_v1')
+
+  // ── Data ──────────────────────────────────────────────────────────────────
   const [contacts, setContacts] = useState<ContactSummary[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // ── Sync / enrich ─────────────────────────────────────────────────────────
   const [syncing, setSyncing] = useState(false)
   const [enriching, setEnriching] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<ContactSyncResult | null>(null)
   const [enrichmentResult, setEnrichmentResult] = useState<ContactEnrichmentResult | null>(null)
-  const [dedupResult, setDedupResult] = useState<ContactDedupApplyResult | null>(null)
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const actionsRef = useRef<HTMLDivElement>(null)
+
+  // ── Create form ───────────────────────────────────────────────────────────
   const [newFirstName, setNewFirstName] = useState('')
   const [newLastName, setNewLastName] = useState('')
   const [newEmail, setNewEmail] = useState('')
@@ -164,7 +113,9 @@ export default function Contacts() {
   const [newContactType, setNewContactType] = useState('')
   const [newLinkedinUrl, setNewLinkedinUrl] = useState('')
   const [newCompanyName, setNewCompanyName] = useState('')
-  const [actionsOpen, setActionsOpen] = useState(false)
+  const createCardRef = useRef<HTMLDivElement>(null)
+
+  // ── Dedup ─────────────────────────────────────────────────────────────────
   const [checkingDuplicates, setCheckingDuplicates] = useState(false)
   const [applyingDedup, setApplyingDedup] = useState(false)
   const [dedupGroups, setDedupGroups] = useState<ContactDuplicateGroup[] | null>(null)
@@ -177,22 +128,21 @@ export default function Contacts() {
   const [dedupEditEmail, setDedupEditEmail] = useState('')
   const [dedupEditCompany, setDedupEditCompany] = useState('')
   const [savingDedupContact, setSavingDedupContact] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [bulkMenuOpen, setBulkMenuOpen] = useState(false)
-  const [bulkDeleting, setBulkDeleting] = useState(false)
-  const bulkMenuRef = useRef<HTMLDivElement>(null)
-  const actionsRef = useRef<HTMLDivElement>(null)
-  const createCardRef = useRef<HTMLDivElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const [dedupResult, setDedupResult] = useState<ContactDedupApplyResult | null>(null)
+
+  // ── Columns + sort + filter (lifted for ViewsBar) ─────────────────────────
+  const [visibleKeys, setVisibleKeys] = useState<string[]>(() => loadContactColumnConfig())
+  const rawSortKey = searchParams.get('sortKey') ?? ''
+  const rawSortDir = searchParams.get('sortDir') ?? ''
+  const sort: SortState = {
+    key: CONTACT_COLUMN_DEFS.some((c) => c.key === rawSortKey) ? rawSortKey : 'name',
+    dir: rawSortDir === 'desc' ? 'desc' : 'asc'
+  }
+  const typeFilter = searchParams.getAll('type') as ContactType[]
+
+  // ── URL param helpers ─────────────────────────────────────────────────────
   const query = (searchParams.get('q') || '').trim()
   const showCreate = searchParams.get('new') === '1'
-  const rawSort = (searchParams.get('sort') || '').trim()
-  const sortBy: ContactSortBy = rawSort === 'first_name'
-    || rawSort === 'last_name'
-    || rawSort === 'company'
-    || rawSort === 'recent_touch'
-    ? rawSort
-    : 'recent_touch'
 
   const openCreateForm = useCallback(() => {
     const next = new URLSearchParams(searchParams)
@@ -206,22 +156,20 @@ export default function Contacts() {
     setSearchParams(next)
   }, [searchParams, setSearchParams])
 
-  const setSort = useCallback((nextSort: ContactSortBy) => {
+  const handleSort = useCallback((key: string, dir: 'asc' | 'desc') => {
     const next = new URLSearchParams(searchParams)
-    if (nextSort === 'recent_touch') {
-      next.delete('sort')
-    } else {
-      next.set('sort', nextSort)
-    }
+    next.set('sortKey', key)
+    next.set('sortDir', dir)
     setSearchParams(next)
   }, [searchParams, setSearchParams])
 
+  // ── Data load ─────────────────────────────────────────────────────────────
   const loadContacts = useCallback(async (searchQuery: string) => {
     if (!contactsEnabled) return
     setLoading(true)
     setError(null)
     try {
-      const results = await window.api.invoke<ContactSummary[]>(
+      const results = await api.invoke<ContactSummary[]>(
         IPC_CHANNELS.CONTACT_LIST,
         {
           query: searchQuery.trim(),
@@ -238,11 +186,12 @@ export default function Contacts() {
     }
   }, [contactsEnabled])
 
+  // ── Dedup callbacks ───────────────────────────────────────────────────────
   const reviewDuplicates = useCallback(async (triggeredByRun = false) => {
     if (!contactsEnabled) return
     setCheckingDuplicates(true)
     try {
-      const groups = await window.api.invoke<ContactDuplicateGroup[]>(
+      const groups = await api.invoke<ContactDuplicateGroup[]>(
         IPC_CHANNELS.CONTACT_DEDUP_SUSPECTED,
         40
       )
@@ -274,16 +223,14 @@ export default function Contacts() {
       setDedupGroups(sortedGroups)
       setDedupActionsByGroup((prev) => {
         const next: Record<string, ContactDedupAction> = {}
-        for (const group of sortedGroups) {
-          next[group.key] = prev[group.key] || 'skip'
-        }
+        for (const group of sortedGroups) next[group.key] = prev[group.key] || 'skip'
         return next
       })
       setDedupKeepByGroup((prev) => {
         const next: Record<string, string> = {}
         for (const group of sortedGroups) {
           const preferred = prev[group.key] || group.suggestedKeepContactId
-          const valid = group.contacts.some((contact) => contact.id === preferred)
+          const valid = group.contacts.some((c) => c.id === preferred)
           next[group.key] = valid ? preferred : group.suggestedKeepContactId
         }
         return next
@@ -291,10 +238,8 @@ export default function Contacts() {
       setDedupSelectedByGroup((prev) => {
         const next: Record<string, string[]> = {}
         for (const group of sortedGroups) {
-          const validIds = new Set(group.contacts.map((contact) => contact.id))
-          const current = (prev[group.key] || [])
-            .filter((id) => validIds.has(id))
-          next[group.key] = current
+          const validIds = new Set(group.contacts.map((c) => c.id))
+          next[group.key] = (prev[group.key] || []).filter((id) => validIds.has(id))
         }
         return next
       })
@@ -346,7 +291,6 @@ export default function Contacts() {
       setError('First name or last name is required')
       return
     }
-
     const rawEmail = dedupEditEmail.trim()
     const normalizedEmail = rawEmail ? normalizeEmailInput(rawEmail) : null
     if (rawEmail && !normalizedEmail) {
@@ -357,7 +301,7 @@ export default function Contacts() {
     setSavingDedupContact(true)
     setError(null)
     try {
-      await window.api.invoke(
+      await api.invoke(
         IPC_CHANNELS.CONTACT_UPDATE,
         editingDedupContactId,
         {
@@ -366,22 +310,19 @@ export default function Contacts() {
           email: normalizedEmail
         }
       )
-
       const nextCompany = dedupEditCompany.trim()
       if (nextCompany) {
-        await window.api.invoke(
+        await api.invoke(
           IPC_CHANNELS.CONTACT_SET_COMPANY,
           editingDedupContactId,
           nextCompany
         )
       }
-
       setEditingDedupContactId(null)
       setDedupEditFirstName('')
       setDedupEditLastName('')
       setDedupEditEmail('')
       setDedupEditCompany('')
-
       await loadContacts(query)
       await reviewDuplicates(false)
     } catch (err) {
@@ -407,7 +348,7 @@ export default function Contacts() {
     setError(null)
     try {
       const decisions: ContactDedupDecision[] = dedupGroups.map((group) => {
-        const validContactIds = new Set(group.contacts.map((contact) => contact.id))
+        const validContactIds = new Set(group.contacts.map((c) => c.id))
         const selectedContactIds = (dedupSelectedByGroup[group.key] || [])
           .filter((id) => validContactIds.has(id))
         const action = dedupActionsByGroup[group.key] || 'skip'
@@ -421,15 +362,10 @@ export default function Contacts() {
         if (action !== 'skip' && contactIds.length < 2) {
           throw new Error(`Select at least two contacts for "${group.reason}" or set action to Skip`)
         }
-        return {
-          groupKey: group.key,
-          action,
-          keepContactId,
-          contactIds
-        }
+        return { groupKey: group.key, action, keepContactId, contactIds }
       })
 
-      const result = await window.api.invoke<ContactDedupApplyResult>(
+      const result = await api.invoke<ContactDedupApplyResult>(
         IPC_CHANNELS.CONTACT_DEDUP_APPLY,
         decisions
       )
@@ -444,6 +380,7 @@ export default function Contacts() {
     }
   }, [dedupActionsByGroup, dedupGroups, dedupKeepByGroup, dedupSelectedByGroup, loadContacts, query])
 
+  // ── Sync / enrich callbacks ───────────────────────────────────────────────
   const syncContacts = useCallback(async () => {
     if (!contactsEnabled) return
     setSyncing(true)
@@ -451,7 +388,7 @@ export default function Contacts() {
     setEnrichmentResult(null)
     setDedupResult(null)
     try {
-      const result = await window.api.invoke<ContactSyncResult>(
+      const result = await api.invoke<ContactSyncResult>(
         IPC_CHANNELS.CONTACT_SYNC_FROM_MEETINGS
       )
       setSyncResult(result)
@@ -470,10 +407,8 @@ export default function Contacts() {
     setError(null)
     setDedupResult(null)
     try {
-      const options: ContactEnrichmentOptions | undefined = webLookup
-        ? { webLookup: true }
-        : undefined
-      const result = await window.api.invoke<ContactEnrichmentResult>(
+      const options: ContactEnrichmentOptions | undefined = webLookup ? { webLookup: true } : undefined
+      const result = await api.invoke<ContactEnrichmentResult>(
         IPC_CHANNELS.CONTACT_ENRICH_EXISTING,
         options
       )
@@ -487,11 +422,12 @@ export default function Contacts() {
     }
   }, [contactsEnabled, loadContacts, query, reviewDuplicates])
 
+  // ── Create contact ────────────────────────────────────────────────────────
   const handleCreateContact = async () => {
     if (!newFirstName.trim() || !newLastName.trim()) return
     const fullName = `${newFirstName.trim()} ${newLastName.trim()}`
     try {
-      const created = await window.api.invoke<ContactSummary>(
+      const created = await api.invoke<ContactSummary>(
         IPC_CHANNELS.CONTACT_CREATE,
         {
           fullName,
@@ -518,15 +454,34 @@ export default function Contacts() {
     }
   }
 
+  // ── Patch + bulk delete (passed to ContactTable) ──────────────────────────
+  const handlePatch = useCallback((id: string, patch: Record<string, unknown>) => {
+    setContacts((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...patch } as ContactSummary : c))
+    )
+    void api.invoke(IPC_CHANNELS.CONTACT_UPDATE, id, patch)
+  }, [])
+
+  const handleBulkDelete = useCallback(async (ids: string[]) => {
+    setError(null)
+    try {
+      await Promise.all(ids.map((id) => api.invoke(IPC_CHANNELS.CONTACT_DELETE, id)))
+      await loadContacts(query)
+    } catch (err) {
+      setError(String(err))
+    }
+  }, [loadContacts, query])
+
+  // ── Effects ───────────────────────────────────────────────────────────────
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
     if (!query) {
-      loadContacts('')
+      void loadContacts('')
       return
     }
     searchDebounceRef.current = setTimeout(() => {
-      loadContacts(query)
+      void loadContacts(query)
     }, 300)
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
@@ -540,45 +495,43 @@ export default function Contacts() {
 
   useEffect(() => {
     if (!actionsOpen) return
-    const handleClickOutside = (e: MouseEvent) => {
+    const handler = (e: MouseEvent) => {
       if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
         setActionsOpen(false)
       }
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
   }, [actionsOpen])
 
-  useEffect(() => {
-    if (!bulkMenuOpen) return
-    const handleClickOutside = (e: MouseEvent) => {
-      if (bulkMenuRef.current && !bulkMenuRef.current.contains(e.target as Node)) {
-        setBulkMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [bulkMenuOpen])
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const filteredContacts = useMemo(
+    () => sortContacts(filterContacts(contacts, typeFilter), sort, CONTACT_COLUMN_DEFS),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [contacts, typeFilter, sort.key, sort.dir]
+  )
 
-  const handleBulkDelete = useCallback(async () => {
-    if (selectedIds.size === 0 || bulkDeleting) return
-    setBulkMenuOpen(false)
-    setBulkDeleting(true)
-    setError(null)
-    try {
-      await Promise.all(
-        Array.from(selectedIds).map((id) =>
-          window.api.invoke(IPC_CHANNELS.CONTACT_DELETE, id)
-        )
-      )
-      setSelectedIds(new Set())
-      await loadContacts(query)
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setBulkDeleting(false)
-    }
-  }, [selectedIds, bulkDeleting, loadContacts, query])
+  const dedupEditActive = Boolean(editingDedupContactId) || savingDedupContact
+
+  const dedupActionableGroups = dedupGroups
+    ? dedupGroups.filter((group) => {
+        const action = dedupActionsByGroup[group.key] || 'skip'
+        if (action === 'skip') return false
+        const validIds = new Set(group.contacts.map((c) => c.id))
+        return ((dedupSelectedByGroup[group.key] || []).filter((id) => validIds.has(id))).length >= 2
+      }).length
+    : 0
+
+  const dedupIncompleteGroups = dedupGroups
+    ? dedupGroups.filter((group) => {
+        const action = dedupActionsByGroup[group.key] || 'skip'
+        if (action === 'skip') return false
+        const validIds = new Set(group.contacts.map((c) => c.id))
+        return ((dedupSelectedByGroup[group.key] || []).filter((id) => validIds.has(id))).length < 2
+      }).length
+    : 0
+
+  const busy = syncing || enriching || checkingDuplicates || applyingDedup
 
   if (!flagsLoading && !contactsEnabled) {
     return (
@@ -589,117 +542,93 @@ export default function Contacts() {
     )
   }
 
-  const sortedContacts = useMemo(() => sortContacts(contacts, sortBy), [contacts, sortBy])
-  const showEmptyState = !loading && sortedContacts.length === 0 && !query && !showCreate
-
-  const virtualizer = useVirtualizer({
-    count: sortedContacts.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 48,
-    overscan: 5
-  })
-  const dedupActionableGroups = dedupGroups
-    ? dedupGroups.filter((group) => {
-      const action = dedupActionsByGroup[group.key] || 'skip'
-      if (action === 'skip') return false
-      const validContactIds = new Set(group.contacts.map((contact) => contact.id))
-      const selectedContactIds = (dedupSelectedByGroup[group.key] || [])
-        .filter((id) => validContactIds.has(id))
-      return selectedContactIds.length >= 2
-    }).length
-    : 0
-  const dedupIncompleteGroups = dedupGroups
-    ? dedupGroups.filter((group) => {
-      const action = dedupActionsByGroup[group.key] || 'skip'
-      if (action === 'skip') return false
-      const validContactIds = new Set(group.contacts.map((contact) => contact.id))
-      const selectedContactIds = (dedupSelectedByGroup[group.key] || [])
-        .filter((id) => validContactIds.has(id))
-      return selectedContactIds.length < 2
-    }).length
-    : 0
-  const dedupEditActive = Boolean(editingDedupContactId) || savingDedupContact
-
   return (
     <div className={styles.container}>
+      {/* ── Status banners ── */}
       {syncResult && (
-        <span className={styles.syncMeta}>
+        <span className={styles.statusBanner}>
           {syncResult.inserted} new, {syncResult.updated} updated
         </span>
       )}
       {enrichmentResult && (
-        <span className={styles.syncMeta}>
-          Names: {enrichmentResult.updatedNames}, LinkedIn: {enrichmentResult.updatedLinkedinUrls}, Titles: {enrichmentResult.updatedTitles}, Companies: {enrichmentResult.linkedCompanies}
+        <span className={styles.statusBanner}>
+          Names: {enrichmentResult.updatedNames}, LinkedIn: {enrichmentResult.updatedLinkedinUrls},
+          Titles: {enrichmentResult.updatedTitles}, Companies: {enrichmentResult.linkedCompanies}
           {enrichmentResult.webLookups > 0 ? `, Web lookups: ${enrichmentResult.webLookups}` : ''}
         </span>
       )}
       {dedupResult && (
-        <span className={styles.syncMeta}>
-          De-dup reviewed: {dedupResult.reviewedGroups} groups, merged: {dedupResult.mergedGroups} ({dedupResult.mergedContacts} contacts), deleted: {dedupResult.deletedGroups} ({dedupResult.deletedContacts} contacts), skipped: {dedupResult.skippedGroups}
+        <span className={styles.statusBanner}>
+          De-dup reviewed: {dedupResult.reviewedGroups} groups, merged: {dedupResult.mergedGroups}{' '}
+          ({dedupResult.mergedContacts} contacts), deleted: {dedupResult.deletedGroups}{' '}
+          ({dedupResult.deletedContacts} contacts), skipped: {dedupResult.skippedGroups}
           {dedupResult.failures.length > 0 ? `, failures: ${dedupResult.failures.length}` : ''}
         </span>
       )}
 
-      <div className={styles.controlsRow}>
-        <div className={styles.sortGroup}>
-          <label htmlFor="contact-sort" className={styles.sortLabel}>Sort</label>
-          <select
-            id="contact-sort"
-            className={styles.sortSelect}
-            value={sortBy}
-            onChange={(e) => setSort(e.target.value as ContactSortBy)}
+      {/* ── Toolbar ── */}
+      <div className={styles.toolbarRow}>
+        <div className={styles.actionsDropdown} ref={actionsRef}>
+          <button
+            className={styles.actionsBtn}
+            onClick={() => setActionsOpen((v) => !v)}
+            disabled={busy}
           >
-            <option value="recent_touch">Recent touch</option>
-            <option value="first_name">First name (A-Z)</option>
-            <option value="last_name">Last name (A-Z)</option>
-            <option value="company">Company (A-Z)</option>
-          </select>
+            Actions &#9662;
+          </button>
+          {actionsOpen && (
+            <div className={styles.actionsMenu}>
+              <button
+                className={styles.actionsMenuItem}
+                onClick={() => { void syncContacts(); setActionsOpen(false) }}
+                disabled={busy}
+              >
+                {syncing ? 'Syncing...' : 'Sync from Meetings'}
+              </button>
+              <button
+                className={styles.actionsMenuItem}
+                onClick={() => { void enrichContacts(); setActionsOpen(false) }}
+                disabled={busy}
+              >
+                {enriching ? 'Enriching...' : 'Enrich Contacts'}
+              </button>
+              <button
+                className={styles.actionsMenuItem}
+                onClick={() => { void enrichContacts(true); setActionsOpen(false) }}
+                disabled={busy}
+              >
+                Enrich with Web Lookup
+              </button>
+              <button
+                className={styles.actionsMenuItem}
+                onClick={() => { void reviewDuplicates(false); setActionsOpen(false) }}
+                disabled={busy}
+              >
+                {checkingDuplicates ? 'Checking...' : 'Review Duplicates'}
+              </button>
+            </div>
+          )}
         </div>
-        <div className={styles.controlsRight}>
-          <div className={styles.actionsDropdown} ref={actionsRef}>
-            <button
-              className={styles.actionsBtn}
-              onClick={() => setActionsOpen((v) => !v)}
-              disabled={checkingDuplicates || applyingDedup}
-            >
-              Actions &#9662;
-            </button>
-            {actionsOpen && (
-              <div className={styles.actionsMenu}>
-                <button
-                  className={styles.actionsMenuItem}
-                  onClick={() => { syncContacts(); setActionsOpen(false) }}
-                  disabled={syncing || enriching || checkingDuplicates || applyingDedup}
-                >
-                  {syncing ? 'Syncing...' : 'Sync from Meetings'}
-                </button>
-                <button
-                  className={styles.actionsMenuItem}
-                  onClick={() => { void enrichContacts(); setActionsOpen(false) }}
-                  disabled={syncing || enriching || checkingDuplicates || applyingDedup}
-                >
-                  {enriching ? 'Enriching...' : 'Enrich Contacts'}
-                </button>
-                <button
-                  className={styles.actionsMenuItem}
-                  onClick={() => { void enrichContacts(true); setActionsOpen(false) }}
-                  disabled={syncing || enriching || checkingDuplicates || applyingDedup}
-                >
-                  Enrich with Web Lookup
-                </button>
-                <button
-                  className={styles.actionsMenuItem}
-                  onClick={() => { void reviewDuplicates(false); setActionsOpen(false) }}
-                  disabled={syncing || enriching || checkingDuplicates || applyingDedup}
-                >
-                  {checkingDuplicates ? 'Checking...' : 'Review Duplicates'}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+        <button className={styles.newBtn} onClick={openCreateForm}>
+          + Contact
+        </button>
       </div>
 
+      {/* ── Saved views bar ── */}
+      <ViewsBar
+        storageKey="cyggie:contact-views"
+        currentParams={searchParams}
+        currentColumns={visibleKeys}
+        onApply={(params, columns) => {
+          setSearchParams(params)
+          setVisibleKeys(columns)
+        }}
+      />
+
+      {/* ── Error ── */}
+      {error && <div className={styles.error}>{error}</div>}
+
+      {/* ── Create form ── */}
       {showCreate && (
         <div ref={createCardRef} className={styles.createCard}>
           <h3 className={styles.createTitle}>New Contact</h3>
@@ -776,7 +705,7 @@ export default function Contacts() {
           <div className={styles.createActions}>
             <button
               className={styles.createBtn}
-              onClick={handleCreateContact}
+              onClick={() => void handleCreateContact()}
               disabled={!newFirstName.trim() || !newLastName.trim()}
             >
               Create Contact
@@ -788,132 +717,27 @@ export default function Contacts() {
         </div>
       )}
 
-      {error && <div className={styles.error}>{error}</div>}
-
-      {query && (
-        <p className={styles.resultCount}>
-          {loading ? 'Searching...' : `${sortedContacts.length} contact${sortedContacts.length !== 1 ? 's' : ''}`}
-        </p>
+      {/* ── Table ── */}
+      {!flagsLoading && !loading && contacts.length === 0 && !query && !showCreate ? (
+        <EmptyState
+          title="No contacts yet"
+          description="Contacts are synced from meeting attendees. Click 'Sync from Meetings' to populate."
+          action={{ label: '+ New Contact', onClick: openCreateForm }}
+        />
+      ) : (
+        <ContactTable
+          contacts={filteredContacts}
+          loading={loading}
+          sort={sort}
+          onSort={handleSort}
+          onPatch={handlePatch}
+          onBulkDelete={handleBulkDelete}
+          visibleKeys={visibleKeys}
+          onVisibleKeysChange={setVisibleKeys}
+        />
       )}
 
-      <div className={styles.scrollArea} ref={scrollRef}>
-        {showEmptyState ? (
-          <EmptyState
-            title="No contacts yet"
-            description="Contacts are synced from meeting attendees. Click 'Sync from meetings' to populate."
-            action={{ label: '+ New Contact', onClick: openCreateForm }}
-          />
-        ) : (
-          <div className={styles.section}>
-            <h3 className={styles.sectionHeader}>Contacts ({sortedContacts.length})</h3>
-            <div className={styles.list} style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
-              {virtualizer.getVirtualItems().map((vrow) => {
-                const contact = sortedContacts[vrow.index]
-                const touchDays = daysSince(contact.lastTouchpoint)
-                const warmthClass = touchDays == null
-                  ? styles.warmthUnknown
-                  : touchDays < 14
-                      ? styles.warmthGreen
-                      : touchDays <= 30
-                          ? styles.warmthYellow
-                          : styles.warmthRed
-                const isSelected = selectedIds.has(contact.id)
-                return (
-                  <div
-                    key={contact.id}
-                    style={{ position: 'absolute', top: vrow.start, left: 0, right: 0 }}
-                    className={`${styles.cardWrapper} ${isSelected ? styles.cardWrapperSelected : ''}`}
-                  >
-                    <div
-                      className={styles.checkboxZone}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setSelectedIds((prev) => {
-                          const next = new Set(prev)
-                          if (next.has(contact.id)) next.delete(contact.id)
-                          else next.add(contact.id)
-                          return next
-                        })
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        className={styles.contactCheckbox}
-                        checked={isSelected}
-                        onChange={() => {}}
-                        tabIndex={-1}
-                      />
-                    </div>
-                    <button
-                      className={styles.card}
-                      onClick={() => navigate(`/contact/${contact.id}`)}
-                    >
-                      <div className={styles.cardRow}>
-                        <span className={styles.cardName}>{contact.fullName}</span>
-                        <span className={styles.cardEmail}>{contact.email || ''}</span>
-                      </div>
-                      <div className={styles.cardRow}>
-                        <span className={styles.cardMeta}>
-                          {[
-                            contact.title || null,
-                            contact.meetingCount > 0 ? `${contact.meetingCount} meeting${contact.meetingCount === 1 ? '' : 's'}` : null,
-                            contact.emailCount > 0 ? `${contact.emailCount} email${contact.emailCount === 1 ? '' : 's'}` : null
-                          ].filter(Boolean).join(' · ') || 'No activity'}
-                        </span>
-                        <div className={styles.touchMeta}>
-                          <span className={styles.cardDate}>
-                            {formatDate(contact.lastTouchpoint || contact.updatedAt)}
-                          </span>
-                          <span className={`${styles.warmthBadge} ${warmthClass}`}>
-                            {touchDays == null ? '--' : `${touchDays}d`}
-                          </span>
-                        </div>
-                      </div>
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {!loading && sortedContacts.length === 0 && query && (
-          <p className={styles.noResults}>No contacts match your search.</p>
-        )}
-      </div>
-
-      {selectedIds.size > 0 && (
-        <div className={styles.bulkBar}>
-          <button
-            className={styles.bulkClear}
-            onClick={() => setSelectedIds(new Set())}
-            aria-label="Clear selection"
-          >
-            {selectedIds.size} selected ✕
-          </button>
-          <div className={styles.bulkMenuWrap} ref={bulkMenuRef}>
-            <button
-              className={styles.bulkMenuBtn}
-              onClick={() => setBulkMenuOpen((v) => !v)}
-              disabled={bulkDeleting}
-            >
-              {bulkDeleting ? 'Working…' : 'Actions ▾'}
-            </button>
-            {bulkMenuOpen && (
-              <div className={styles.bulkMenu}>
-                <button
-                  className={`${styles.bulkMenuItem} ${styles.bulkMenuItemDanger}`}
-                  onClick={() => void handleBulkDelete()}
-                  disabled={bulkDeleting}
-                >
-                  Delete {selectedIds.size} contact{selectedIds.size !== 1 ? 's' : ''}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
+      {/* ── Dedup dialog ── */}
       {dedupGroups && createPortal(
         <div className={styles.dedupOverlay} onClick={closeDedupDialog}>
           <div className={styles.dedupDialog} onClick={(e) => e.stopPropagation()}>
@@ -944,16 +768,15 @@ export default function Contacts() {
                 <tbody>
                   {dedupGroups.map((group) => {
                     const selectedAction = dedupActionsByGroup[group.key] || 'skip'
-                    const validContactIds = new Set(group.contacts.map((contact) => contact.id))
+                    const validContactIds = new Set(group.contacts.map((c) => c.id))
                     const selectedContactIds = (dedupSelectedByGroup[group.key] || [])
                       .filter((id) => validContactIds.has(id))
-                    const normalizedSelectedContactIds = selectedContactIds
                     const keepPreference = dedupKeepByGroup[group.key] || group.suggestedKeepContactId
-                    const selectedKeep = normalizedSelectedContactIds.includes(keepPreference)
+                    const selectedKeep = selectedContactIds.includes(keepPreference)
                       ? keepPreference
-                      : (normalizedSelectedContactIds[0] || group.suggestedKeepContactId)
-                    const keepOptions = group.contacts.filter((contact) =>
-                      normalizedSelectedContactIds.includes(contact.id)
+                      : (selectedContactIds[0] || group.suggestedKeepContactId)
+                    const keepOptions = group.contacts.filter((c) =>
+                      selectedContactIds.includes(c.id)
                     )
 
                     return (
@@ -961,7 +784,7 @@ export default function Contacts() {
                         <td>
                           <div className={styles.dedupReason}>{group.reason}</div>
                           <div className={styles.dedupReasonMeta}>
-                            {group.contacts.length} contacts · {normalizedSelectedContactIds.length} selected
+                            {group.contacts.length} contacts · {selectedContactIds.length} selected
                           </div>
                         </td>
                         <td>
@@ -975,29 +798,18 @@ export default function Contacts() {
                                         <input
                                           type="checkbox"
                                           className={styles.dedupContactCheckbox}
-                                          checked={normalizedSelectedContactIds.includes(contact.id)}
+                                          checked={selectedContactIds.includes(contact.id)}
                                           onChange={(e) => {
                                             const checked = e.target.checked
                                             setDedupSelectedByGroup((prev) => {
-                                              const groupContactIds = group.contacts.map((entry) => entry.id)
-                                              const current = (prev[group.key] || [])
-                                                .filter((id) => groupContactIds.includes(id))
+                                              const groupIds = group.contacts.map((c) => c.id)
+                                              const current = (prev[group.key] || []).filter((id) => groupIds.includes(id))
                                               if (checked) {
-                                                if (current.includes(contact.id)) {
-                                                  return {
-                                                    ...prev,
-                                                    [group.key]: current
-                                                  }
-                                                }
-                                                return {
-                                                  ...prev,
-                                                  [group.key]: [...current, contact.id]
-                                                }
+                                                return current.includes(contact.id)
+                                                  ? { ...prev, [group.key]: current }
+                                                  : { ...prev, [group.key]: [...current, contact.id] }
                                               }
-                                              return {
-                                                ...prev,
-                                                [group.key]: current.filter((id) => id !== contact.id)
-                                              }
+                                              return { ...prev, [group.key]: current.filter((id) => id !== contact.id) }
                                             })
                                           }}
                                           disabled={applyingDedup || savingDedupContact}
@@ -1061,29 +873,18 @@ export default function Contacts() {
                                         <input
                                           type="checkbox"
                                           className={styles.dedupContactCheckbox}
-                                          checked={normalizedSelectedContactIds.includes(contact.id)}
+                                          checked={selectedContactIds.includes(contact.id)}
                                           onChange={(e) => {
                                             const checked = e.target.checked
                                             setDedupSelectedByGroup((prev) => {
-                                              const groupContactIds = group.contacts.map((entry) => entry.id)
-                                              const current = (prev[group.key] || [])
-                                                .filter((id) => groupContactIds.includes(id))
+                                              const groupIds = group.contacts.map((c) => c.id)
+                                              const current = (prev[group.key] || []).filter((id) => groupIds.includes(id))
                                               if (checked) {
-                                                if (current.includes(contact.id)) {
-                                                  return {
-                                                    ...prev,
-                                                    [group.key]: current
-                                                  }
-                                                }
-                                                return {
-                                                  ...prev,
-                                                  [group.key]: [...current, contact.id]
-                                                }
+                                                return current.includes(contact.id)
+                                                  ? { ...prev, [group.key]: current }
+                                                  : { ...prev, [group.key]: [...current, contact.id] }
                                               }
-                                              return {
-                                                ...prev,
-                                                [group.key]: current.filter((id) => id !== contact.id)
-                                              }
+                                              return { ...prev, [group.key]: current.filter((id) => id !== contact.id) }
                                             })
                                           }}
                                           disabled={applyingDedup || savingDedupContact}
@@ -1120,10 +921,7 @@ export default function Contacts() {
                             value={selectedAction}
                             onChange={(e) => {
                               const action = e.target.value as ContactDedupAction
-                              setDedupActionsByGroup((prev) => ({
-                                ...prev,
-                                [group.key]: action
-                              }))
+                              setDedupActionsByGroup((prev) => ({ ...prev, [group.key]: action }))
                             }}
                             disabled={applyingDedup || dedupEditActive}
                           >
@@ -1137,16 +935,13 @@ export default function Contacts() {
                             className={styles.dedupSelect}
                             value={selectedKeep}
                             onChange={(e) => {
-                              setDedupKeepByGroup((prev) => ({
-                                ...prev,
-                                [group.key]: e.target.value
-                              }))
+                              setDedupKeepByGroup((prev) => ({ ...prev, [group.key]: e.target.value }))
                             }}
                             disabled={applyingDedup || dedupEditActive || selectedAction === 'skip' || keepOptions.length === 0}
                           >
-                            {keepOptions.map((contact) => (
-                              <option key={contact.id} value={contact.id}>
-                                {contact.fullName}{contact.email ? ` (${contact.email})` : ''}
+                            {keepOptions.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.fullName}{c.email ? ` (${c.email})` : ''}
                               </option>
                             ))}
                           </select>

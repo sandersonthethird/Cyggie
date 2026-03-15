@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { CustomFieldDefinition, CustomFieldEntityType } from '../../shared/types/custom-fields'
+import { api } from '../api'
 
 interface CustomFieldStoreState {
   companyDefs: CustomFieldDefinition[]
@@ -11,7 +12,7 @@ interface CustomFieldStoreState {
 }
 
 async function fetchDefs(entityType: CustomFieldEntityType): Promise<CustomFieldDefinition[]> {
-  const result = await window.api.invoke<{ success: boolean; data?: CustomFieldDefinition[] }>(
+  const result = await api.invoke<{ success: boolean; data?: CustomFieldDefinition[] }>(
     IPC_CHANNELS.CUSTOM_FIELD_LIST_DEFINITIONS,
     entityType
   )

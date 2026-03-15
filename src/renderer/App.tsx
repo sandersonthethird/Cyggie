@@ -15,11 +15,19 @@ import Templates from './routes/Templates'
 import Settings from './routes/Settings'
 import { useCalendar } from './hooks/useCalendar'
 import { useRecordingStore } from './stores/recording.store'
+import { usePreferencesStore } from './stores/preferences.store'
 import { AudioCaptureProvider } from './contexts/AudioCaptureContext'
 import { IPC_CHANNELS } from '../shared/constants/channels'
+import { api } from './api'
 
 function CalendarInit() {
   useCalendar()
+  return null
+}
+
+function PreferencesInit() {
+  const load = usePreferencesStore((s) => s.load)
+  useEffect(() => { void load() }, [load])
   return null
 }
 
@@ -36,13 +44,13 @@ function NotificationListener() {
   }, [])
 
   useEffect(() => {
-    const unsub = window.api.on('notification:start-recording', async (payload: unknown) => {
+    const unsub = api.on('notification:start-recording', async (payload: unknown) => {
       if (isRecordingRef.current) return
 
       const { title, calendarEventId } = (payload as { title: string; calendarEventId?: string; meetingUrl?: string }) ?? {}
 
       try {
-        const result = await window.api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
+        const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
           IPC_CHANNELS.RECORDING_START,
           title,
           calendarEventId
@@ -66,6 +74,7 @@ export default function App() {
     <HashRouter>
       <AudioCaptureProvider>
         <CalendarInit />
+        <PreferencesInit />
         <NotificationListener />
         <Routes>
           <Route element={<Layout />}>

@@ -1,5 +1,6 @@
 import { useRef, useCallback, useState } from 'react'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
+import { api } from '../api'
 
 const PREFERRED_MIME_TYPES = [
   'video/webm;codecs=vp9',
@@ -38,7 +39,7 @@ export function useVideoCapture() {
       }
     }
     console.log('[VideoCapture] Requesting new display stream via loopback')
-    await window.api.invoke('enable-loopback-audio')
+    await api.invoke('enable-loopback-audio')
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 15, max: 30 } },
@@ -47,7 +48,7 @@ export function useVideoCapture() {
       ownStreamRef.current = stream
       return stream
     } finally {
-      await window.api.invoke('disable-loopback-audio')
+      await api.invoke('disable-loopback-audio')
     }
   }
 
@@ -58,7 +59,7 @@ export function useVideoCapture() {
       })
       .then(async () => {
         const buffer = await chunk.arrayBuffer()
-        await window.api.invoke(IPC_CHANNELS.VIDEO_CHUNK, meetingId, buffer)
+        await api.invoke(IPC_CHANNELS.VIDEO_CHUNK, meetingId, buffer)
       })
 
     return chunkQueueRef.current
@@ -80,13 +81,13 @@ export function useVideoCapture() {
       if (meetingPlatform && meetingPlatform !== 'other') {
         let captured = false
         try {
-          const windowInfo = await window.api.invoke<{ sourceId: string; name: string } | null>(
+          const windowInfo = await api.invoke<{ sourceId: string; name: string } | null>(
             IPC_CHANNELS.VIDEO_FIND_WINDOW,
             meetingPlatform
           )
           if (windowInfo) {
             console.log(`[VideoCapture] Found ${meetingPlatform} window: "${windowInfo.name}"`)
-            await window.api.invoke(IPC_CHANNELS.VIDEO_SET_WINDOW_SOURCE, windowInfo.sourceId)
+            await api.invoke(IPC_CHANNELS.VIDEO_SET_WINDOW_SOURCE, windowInfo.sourceId)
             try {
               const windowStream = await navigator.mediaDevices.getDisplayMedia({
                 video: { frameRate: { ideal: 15, max: 30 } },
@@ -99,7 +100,7 @@ export function useVideoCapture() {
               ownStreamRef.current = windowStream
               captured = true
             } finally {
-              await window.api.invoke(IPC_CHANNELS.VIDEO_CLEAR_WINDOW_SOURCE)
+              await api.invoke(IPC_CHANNELS.VIDEO_CLEAR_WINDOW_SOURCE)
             }
           }
         } catch (err) {
@@ -115,7 +116,7 @@ export function useVideoCapture() {
       }
 
       // Tell main process to prepare the file
-      await window.api.invoke(IPC_CHANNELS.VIDEO_START, meetingId)
+      await api.invoke(IPC_CHANNELS.VIDEO_START, meetingId)
 
       const mimeType = getSupportedMimeType()
       const recorder = new MediaRecorder(stream, {
@@ -170,7 +171,7 @@ export function useVideoCapture() {
     try {
       await chunkQueueRef.current
       if (meetingId) {
-        await window.api.invoke(IPC_CHANNELS.VIDEO_STOP, meetingId)
+        await api.invoke(IPC_CHANNELS.VIDEO_STOP, meetingId)
       }
     } catch (err) {
       console.error('[VideoCapture] Failed to finalize:', err)

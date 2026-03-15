@@ -27,6 +27,7 @@ export function registerContactNotesHandlers(): void {
         content: data.content,
         themeId: data.themeId ?? null
       }, userId)
+      if (!note) throw new Error('Failed to create note')
       logAudit(userId, 'contact_note', note.id, 'create', data)
       return note
     }

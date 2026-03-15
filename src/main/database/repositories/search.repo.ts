@@ -115,7 +115,7 @@ export function searchMeetings(query: string, limit = 20, rawFts = false): Searc
   const db = getDatabase()
   const ftsQuery = rawFts ? query : sanitizeFts5Query(query)
 
-  const rows = db
+  const ftsRows = db
     .prepare(
       `SELECT
         meeting_id,
@@ -128,30 +128,38 @@ export function searchMeetings(query: string, limit = 20, rawFts = false): Searc
     )
     .all(ftsQuery, limit) as { meeting_id: string; snippet: string; rank: number }[]
 
-  // Join with meetings table for title and date
-  if (rows.length === 0) return []
+  // Also search by title for meetings not in the FTS index (e.g. no transcript yet)
+  const keywords = query.trim().split(/\s+/).filter(Boolean)
+  const titleMatches = searchByTitle(keywords, limit)
+  const ftsIdSet = new Set(ftsRows.map((r) => r.meeting_id))
+  const titleOnlyIds = titleMatches.filter((m) => !ftsIdSet.has(m.id)).map((m) => m.id)
 
-  const placeholders = rows.map(() => '?').join(',')
-  const meetingIds = rows.map((r) => r.meeting_id)
-  const meetings = db
+  // Collect all meeting IDs to fetch metadata
+  const allIds = [...ftsRows.map((r) => r.meeting_id), ...titleOnlyIds]
+  if (allIds.length === 0) return []
+
+  const placeholders = allIds.map(() => '?').join(',')
+  const meetingRows = db
     .prepare(`SELECT id, title, date FROM meetings WHERE id IN (${placeholders})`)
-    .all(...meetingIds) as { id: string; title: string; date: string }[]
+    .all(...allIds) as { id: string; title: string; date: string }[]
+  const meetingMap = new Map(meetingRows.map((m) => [m.id, m]))
 
-  const meetingMap = new Map(meetings.map((m) => [m.id, m]))
+  const results: SearchResult[] = []
 
-  return rows
-    .map((row) => {
-      const meeting = meetingMap.get(row.meeting_id)
-      if (!meeting) return null
-      return {
-        meetingId: row.meeting_id,
-        title: meeting.title,
-        date: meeting.date,
-        snippet: row.snippet,
-        rank: row.rank
-      }
-    })
-    .filter((r): r is SearchResult => r !== null)
+  for (const row of ftsRows) {
+    const meeting = meetingMap.get(row.meeting_id)
+    if (!meeting) continue
+    results.push({ meetingId: row.meeting_id, title: meeting.title, date: meeting.date, snippet: row.snippet, rank: row.rank })
+  }
+
+  // Append title-only matches at the end (lower rank than FTS hits)
+  for (const id of titleOnlyIds) {
+    const meeting = meetingMap.get(id)
+    if (!meeting) continue
+    results.push({ meetingId: id, title: meeting.title, date: meeting.date, snippet: '', rank: 999 })
+  }
+
+  return results
 }
 
 export function removeFromIndex(meetingId: string): void {
