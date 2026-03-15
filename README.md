@@ -1,175 +1,166 @@
 # Cyggie
 
-A desktop meeting intelligence system — capture, transcribe, summarize, and search your meetings with AI.
+A private, local-first CRM and meeting intelligence tool for early-stage investors. Runs as a native macOS desktop app — all data stays on your machine.
+
+---
 
 ## Features
 
-### Real-Time Transcription
-- Live speech-to-text powered by [Deepgram](https://deepgram.com/) via WebSocket streaming
-- Automatic speaker diarization — identifies and labels different speakers
-- Pause and resume recording mid-meeting
-- Auto-stop detection based on silence or calendar event end time
+### Meetings & Recording
+- Live meeting recording with real-time transcription (Deepgram WebSocket streaming)
+- Automatic speaker diarization
+- AI summaries via Claude or local Ollama — fully customizable templates
+- Per-meeting chat: ask questions grounded in the transcript
+- Google Calendar integration: auto-detect current meeting, pre-populate attendees
+- Google Drive upload for transcripts and summaries
+- Import meeting notes from Granola
 
-### AI-Powered Summaries
-- Generate meeting summaries using **Claude** (Anthropic) or **Ollama** (local LLMs)
-- Customizable summary templates with variable substitution (transcript, speakers, notes, etc.)
-- Pre-built templates for common meeting types: VC Pitch, Founder Check-in, Partners Meeting, and more
-- Create and manage your own templates
+### CRM — Companies
+- Sortable, resizable table view with column picker and saved views
+- Pipeline board: Screening → Diligence → Decision → Documentation → Pass
+- Per-company timeline: meetings, emails, notes, and decision log entries in one feed
+- Type filter pills (meetings / emails / notes / decisions)
+- AI company chat grounded in notes, emails, and memos
+- Investment memo parsing and storage (PDF / Google Docs)
+- Custom fields, portfolio tracking (investment size, ownership %, follow-on)
 
-### Meeting Chat & Query
-- Ask questions about any individual meeting with full transcript context
-- Global query across all meetings with cited sources
-- Streaming AI responses
+### CRM — Contacts
+- Sortable table view with column picker
+- Per-contact timeline: meetings, emails, notes
+- AI contact chat grounded in relationship history
+- Custom fields, contact type (Investor / Founder / Operator)
 
-### Google Calendar Integration
-- Connect your Google Calendar via OAuth
-- Auto-detect the current meeting from your calendar
-- Pre-populate meeting titles and attendees
-- Meeting notifications one minute before start
+### Decision Log
+- Structured investment decisions per company (Approved, Pass, Follow-on, Increase Allocation, etc.)
+- Auto-prompts when a company moves to documentation or pass stage
+- Auto-syncs deal terms (amount, ownership %) back to company portfolio fields
 
-### Google Drive Upload
-- Automatically upload transcripts and summaries to Google Drive
-- Generate shareable links
+### Email
+- Gmail sync per company or contact — pulls thread history into the timeline
+- Incremental sync with live progress and cancel
 
-### Full-Text Search
-- Search across all transcripts and summaries using SQLite FTS5
-- Advanced filters by speaker, date range, and more
-- Ranked search results
+### CSV Import
+- Import contacts and/or companies from any CSV
+- LLM-powered field mapping with alias-table fallback
+- **Field defaults**: set contact type, title, city, state, entity type, or pipeline stage for all imported rows before the import runs
+- Duplicate preview before committing
+- "View N imported contacts →" shortcut after import, sorted by date added
 
-### Meeting Management
-- Browse, rename, and organize meetings
-- Add preparation notes and attendee info
-- Track meeting status: scheduled, recording, transcribed, summarized
+### Search & Productivity
+- Full-text search across meetings, companies, contacts, and notes (SQLite FTS5)
+- Task list tied to companies and contacts
+- Reusable meeting note templates
+
+---
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Framework | Electron 40 |
+| Layer | Tech |
+|-------|------|
+| App shell | Electron |
 | Frontend | React 19, React Router 7, Zustand |
 | Language | TypeScript 5.7 |
-| Build | Vite 6, electron-vite, electron-builder |
-| Database | SQLite (better-sqlite3) with FTS5 |
+| Build | electron-vite, Vite 6, electron-builder |
+| Database | SQLite (better-sqlite3), 45 migrations |
 | Transcription | Deepgram SDK |
-| AI/LLM | Anthropic SDK (Claude), Ollama |
-| Calendar & Drive | Google APIs |
-| Audio Capture | electron-audio-loopback |
-| Testing | Vitest, Testing Library |
+| AI / LLM | Anthropic Claude API, Ollama (local) |
+| Google | Calendar API, Gmail API, Drive API |
+| Audio | electron-audio-loopback |
+| Tests | Vitest |
 
-## Prerequisites
-
-- **Node.js** (v18 or later recommended)
-- **npm**
-- **FFmpeg** *(required for video recording)* — install and ensure `ffmpeg` is on your `PATH`, or set `CYGGIE_FFMPEG_PATH`
-- **Deepgram API key** — for real-time transcription ([get one here](https://console.deepgram.com/))
-- **Anthropic API key** — for AI summaries and chat ([get one here](https://console.anthropic.com/))
-- **Google OAuth credentials** — for Calendar and Drive integration
-- **Ollama** *(optional)* — for local LLM support ([install Ollama](https://ollama.com/))
+---
 
 ## Getting Started
 
+**Prerequisites:** Node.js 18+, npm, FFmpeg on `$PATH` (for video recording)
+
 ```bash
-# Clone the repository
 git clone https://github.com/sandersonthethird/Cyggie
 cd Cyggie
-
-# Install dependencies
 npm install
-
-# Start the development server
 npm run dev
 ```
 
-Once the app launches, open **Settings** to configure your API keys (see below).
+On first launch, open **Settings** to configure API keys. The SQLite database is created automatically at `~/Library/Application Support/cyggie/`.
 
-## API Key Setup
+### API Keys
 
-Cyggie requires your own API keys — no keys are included with the app. All keys are encrypted and stored locally on your machine using Electron's safe storage.
+All keys are stored locally using Electron's encrypted safe storage — nothing is sent to Cyggie servers.
 
-### 1. Deepgram (required for transcription)
+**Deepgram** (required for transcription)
+Sign up at [console.deepgram.com](https://console.deepgram.com/signup) → API Keys → paste in **Settings > Transcription**. Free tier includes $200 credit.
 
-1. Sign up for a free account at [console.deepgram.com](https://console.deepgram.com/signup)
-2. Go to **API Keys** in the Deepgram dashboard and create a new key
-3. In Cyggie, open **Settings > Transcription** and paste your key
+**Anthropic** (required for AI summaries and chat)
+Sign up at [console.anthropic.com](https://console.anthropic.com/) → API Keys → paste in **Settings > Summarization**. Alternatively, select **Ollama** to run a model locally for free.
 
-Deepgram's free tier includes $200 in credit, which covers many hours of transcription.
+**Google** (optional — Calendar, Gmail, Drive)
+Connect your Google account in **Settings > Google Calendar**. The app walks through OAuth setup.
 
-### 2. Anthropic (required for AI summaries and chat)
-
-1. Sign up at [console.anthropic.com](https://console.anthropic.com/)
-2. Go to **Settings > API Keys** and create a new key
-3. In Cyggie, open **Settings > Summarization**, select **Claude**, and paste your key
-
-> **Free alternative:** If you'd prefer not to use a paid API, select **Ollama** as your LLM provider in Settings. [Install Ollama](https://ollama.com/) and run a model locally at no cost.
-
-### 3. Google Calendar & Drive (optional)
-
-To auto-detect meetings and upload files to Drive, connect your Google account in **Settings > Google Calendar**. The app will walk you through creating OAuth credentials.
+---
 
 ## Scripts
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start the app in development mode with hot reload |
-| `npm run build` | Compile the main, preload, and renderer processes |
-| `npm run preview` | Preview the production build |
-| `npm run package` | Build and package for macOS |
-| `npm run package:win` | Build and package for Windows |
+| `npm run dev` | Start in development mode with hot reload |
+| `npm run build` | Compile all processes |
+| `npm run package` | Build + package for macOS |
+| `npm run package:win` | Build + package for Windows |
 | `npm run test` | Run tests with Vitest |
 | `npm run test:watch` | Run tests in watch mode |
-| `npm run lint` | Lint with ESLint |
-| `npm run format` | Format code with Prettier |
-| `npm run import:memos -- <csv_path> [options]` | Import Google Docs investment memos from CSV into company memo versions |
+| `npm run lint` | ESLint |
+| `npm run format` | Prettier |
+| `npm run import:granola` | Import meeting notes from Granola |
+| `npm run import:memos` | Import investment memos from Google Docs or local folder |
 
-### Import Existing Investment Memos
+### Importing investment memos
 
-Two supported input modes:
-
-1. Local folder/file mode (no Google access required)
-
+Local folder mode:
 ```bash
 npm run import:memos -- import/memos/raw --dry-run
 npm run import:memos -- import/memos/raw
 ```
 
-2. CSV + Google Docs URL mode
-
+CSV + Google Docs mode:
 ```bash
-npm run import:memos -- import/memos/raw/investment_memos.csv \\
-  --source csv-google-docs \\
-  --oauth-client /path/to/google-oauth-client.json \\
+npm run import:memos -- import/memos/raw/investment_memos.csv \
+  --source csv-google-docs \
+  --oauth-client /path/to/google-oauth-client.json \
   --token-file import/memos/.google-docs-token.json
 ```
 
-Useful flags:
-- `--dry-run` to validate matches/extraction without writing to the DB
-- `--create-missing-companies` to auto-create unmatched companies as `unknown`
-- `--no-template-update` to skip updating the default memo template from imported memo structure
+Flags: `--dry-run`, `--create-missing-companies`, `--no-template-update`
+
+---
 
 ## Project Structure
 
 ```
 src/
-├── main/                   # Electron main process
-│   ├── audio/              # System audio capture
-│   ├── calendar/           # Google Calendar OAuth & sync
-│   ├── database/           # SQLite connection, migrations, repositories
-│   ├── deepgram/           # Deepgram WebSocket client & transcript assembly
-│   ├── drive/              # Google Drive upload
-│   ├── ipc/                # IPC handlers (recording, summary, chat, etc.)
-│   ├── llm/                # LLM providers (Claude, Ollama), summarizer, chat
-│   ├── recording/          # Auto-stop logic
-│   ├── security/           # Credential encryption
-│   └── storage/            # File & path management
-├── renderer/               # React frontend
-│   ├── components/         # UI components (layout, meetings, chat, common)
-│   ├── contexts/           # React contexts
-│   ├── hooks/              # Custom hooks (IPC, meetings, search, calendar)
-│   ├── routes/             # Pages (MeetingList, MeetingDetail, LiveRecording, etc.)
-│   └── stores/             # Zustand state stores
-├── preload/                # Electron preload scripts (IPC bridge)
-└── shared/                 # Shared types, constants, and channel definitions
+  main/                    # Electron main process
+    database/
+      migrations/          # 45 SQL migrations (run on startup)
+      repositories/        # SQLite query functions per entity
+    ipc/                   # IPC handlers (one file per feature domain)
+    llm/                   # Claude + Ollama providers, summarizer, chat
+    services/              # csv-import, meeting-notes-backfill
+    security/              # Credential encryption, current-user context
+  preload/                 # Electron preload — exposes window.api to renderer
+  renderer/                # React frontend
+    api/                   # window.api wrapper
+    components/            # UI components (company/, contact/, crm/, chat/, …)
+    contexts/              # AudioCaptureContext
+    hooks/                 # useEmailSync, useCalendar, useMeetings, useSearch, …
+    routes/                # Page components
+    stores/                # Zustand stores
+    utils/                 # decisionLogTrigger, format helpers
+  shared/
+    constants/             # IPC channel names
+    types/                 # Shared TypeScript types (company, contact, csv-import, …)
+  tests/                   # Vitest test suites
 ```
+
+---
 
 ## License
 
