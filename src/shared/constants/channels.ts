@@ -45,6 +45,8 @@ export const IPC_CHANNELS = {
   COMPANY_CREATE: 'company:create',
   COMPANY_UPDATE: 'company:update',
   COMPANY_MERGE: 'company:merge',
+  COMPANY_DEDUP_SUSPECTED: 'company:dedup-suspected',
+  COMPANY_DEDUP_APPLY: 'company:dedup-apply',
   COMPANY_DELETE: 'company:delete',
   COMPANY_TAG_FROM_MEETING: 'company:tag-from-meeting',
   COMPANY_MEETINGS: 'company:meetings',
@@ -59,6 +61,7 @@ export const IPC_CHANNELS = {
   COMPANY_MEETING_SUMMARIES: 'company:meeting-summaries',
   COMPANY_SET_PRIMARY_CONTACT: 'company:set-primary-contact',
   COMPANY_LINK_CONTACT: 'company:link-contact',
+  COMPANY_UNLINK_CONTACT: 'company:unlink-contact',
 
   // Contacts
   CONTACT_LIST: 'contact:list',
@@ -226,6 +229,9 @@ export const IPC_CHANNELS = {
   CUSTOM_FIELD_SET_VALUE: 'custom-field:set-value',
   CUSTOM_FIELD_DELETE_VALUE: 'custom-field:delete-value',
   CUSTOM_FIELD_COUNT_VALUES: 'custom-field:count-values',
+  CUSTOM_FIELD_GET_BULK_VALUES: 'custom-field:get-bulk-values',
+  CUSTOM_FIELD_RENAME_BUILTIN_OPTION: 'custom-field:rename-builtin-option',
+  CUSTOM_FIELD_COUNT_BUILTIN_OPTION: 'custom-field:count-builtin-option',
 
   // CSV Import
   CSV_OPEN_FILE_DIALOG: 'csv:open-file-dialog',

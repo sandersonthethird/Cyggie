@@ -46,3 +46,18 @@
   opacity: 1;
   filter: none;
 }
+
+.newFieldBtn {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 0 2px;
+  text-align: left;
+  font-family: inherit;
+}
+
+.newFieldBtn:hover {
+  opacity: 0.8;
+}

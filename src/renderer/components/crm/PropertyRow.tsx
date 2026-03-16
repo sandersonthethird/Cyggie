@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { AddOptionInlineInput } from './AddOptionInlineInput'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { formatCurrency, formatDate } from '../../utils/format'
 import { useDebounce } from '../../hooks/useDebounce'
 import { EntitySearch } from './EntitySearch'
+import { chipStyle } from '../../utils/colorChip'
 import styles from './PropertyRow.module.css'
 import { api } from '../../api'
 
@@ -38,6 +40,7 @@ interface PropertyRowProps {
   placeholder?: string
   resolvedLabel?: string | null
   onSave: (newValue: string | number | boolean | null) => Promise<void>
+  onAddOption?: (newOption: string) => Promise<void>
   readOnly?: boolean
   editMode?: boolean // When true, always renders in edit state (driven by parent)
 }
@@ -84,10 +87,12 @@ export function PropertyRow({
   placeholder,
   resolvedLabel,
   onSave,
+  onAddOption,
   readOnly = false,
   editMode = false
 }: PropertyRowProps) {
   const [editing, setEditing] = useState(false)
+  const [addingOption, setAddingOption] = useState(false)
   const isActive = editing || editMode
   const [editValue, setEditValue] = useState<string | number | boolean | null>(value)
   const [displayValue, setDisplayValue] = useState<string | number | boolean | null>(value)
@@ -201,12 +206,35 @@ export function PropertyRow({
       case 'select': {
         const parsedOpts = safeParseOptions(options)
         const optValues = parsedOpts.map(optionValue)
+
+        if (addingOption) {
+          return (
+            <AddOptionInlineInput
+              className={styles.input}
+              onConfirm={async (opt) => {
+                setAddingOption(false)
+                try {
+                  await onAddOption?.(opt)
+                  handleSave(opt)
+                } catch (e) {
+                  console.error('[PropertyRow] addOption failed:', e)
+                }
+              }}
+              onCancel={() => setAddingOption(false)}
+            />
+          )
+        }
+
         return (
           <select
             ref={inputRef as React.RefObject<HTMLSelectElement>}
             className={styles.select}
             value={String(editValue ?? '')}
             onChange={(e) => {
+              if (e.target.value === '__add_option__') {
+                setAddingOption(true)
+                return
+              }
               setEditValue(e.target.value)
               handleSave(e.target.value || null)
             }}
@@ -224,7 +252,51 @@ export function PropertyRow({
                 {String(editValue)} (unknown)
               </option>
             )}
+            {onAddOption && (
+              <option value="__add_option__">+ Add option...</option>
+            )}
           </select>
+        )
+      }
+
+      case 'multiselect': {
+        if (addingOption) {
+          return (
+            <AddOptionInlineInput
+              className={styles.input}
+              onConfirm={async (opt) => {
+                setAddingOption(false)
+                try {
+                  await onAddOption?.(opt)
+                } catch (e) {
+                  console.error('[PropertyRow] addOption failed:', e)
+                }
+              }}
+              onCancel={() => setAddingOption(false)}
+            />
+          )
+        }
+        return (
+          <div>
+            <input
+              ref={inputRef as React.RefObject<HTMLInputElement>}
+              className={styles.input}
+              value={String(editValue ?? '')}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={() => handleSave(editValue)}
+              onKeyDown={handleKeyDown}
+              placeholder="comma-separated values"
+            />
+            {onAddOption && (
+              <button
+                type="button"
+                className={styles.addOptionLink}
+                onMouseDown={(e) => { e.preventDefault(); setAddingOption(true) }}
+              >
+                + Add option
+              </button>
+            )}
+          </div>
         )
       }
 
@@ -373,6 +445,11 @@ export function PropertyRow({
     if (type === 'contact_ref' || type === 'company_ref') {
       if (!displayValue) return <span className={styles.empty}>—</span>
       return <span>{displayLabel || String(displayValue)}</span>
+    }
+
+    if ((type === 'select' || type === 'multiselect') && displayValue) {
+      const strVal = String(displayValue)
+      return <span className={styles.chip} style={chipStyle(strVal)}>{strVal}</span>
     }
 
     const formatted = formatValue(displayValue, type, displayLabel)

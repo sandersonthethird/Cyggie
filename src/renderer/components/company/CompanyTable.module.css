@@ -111,6 +111,18 @@
   opacity: 0.6;
 }
 
+/* ── Column drag reorder ── */
+.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+/* Left-edge insertion indicator: shows where the dragged column will land */
+.dragOver {
+  box-shadow: inset 3px 0 0 var(--color-primary, #4f8ef7);
+  background-color: rgba(79, 142, 247, 0.06);
+}
+
 /* ── Checkbox header cell ── */
 .checkboxCell {
   display: flex;
@@ -207,6 +219,10 @@
 }
 
 /* ── Picker header cell ── */
+.filterableCell {
+  overflow: visible; /* allows HeaderFilter dropdown to escape headerCell overflow:hidden */
+}
+
 .pickerCell {
   display: flex;
   align-items: center;
@@ -442,3 +458,40 @@
 }
 
 .bulkEditApplyBtn:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Column rename input ── */
+.renameInput {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--color-primary);
+  font: inherit;
+  color: inherit;
+  outline: none;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── Custom field chip cell ── */
+.chipCell {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  height: 100%;
+  cursor: default;
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}

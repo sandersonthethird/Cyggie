@@ -225,7 +225,7 @@ export function updateCompanyDecisionLog(
   const params: unknown[] = []
 
   for (const [key, value] of Object.entries(data)) {
-    if (!ALLOWED_UPDATE_KEYS.has(key)) continue
+    if (!ALLOWED_UPDATE_KEYS.has(key)) throw new Error(`Unknown update key: ${key}`)
     const col = CAMEL_TO_COLUMN[key]
     if (!col) continue
 

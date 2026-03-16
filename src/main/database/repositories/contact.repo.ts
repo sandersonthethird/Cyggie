@@ -1250,7 +1250,7 @@ export function listContactsLight(filter?: {
   const db = getDatabase()
   const query = filter?.query?.trim()
   const params: unknown[] = []
-  const conditions: string[] = ['c.email IS NOT NULL']
+  const conditions: string[] = []
 
   if (query) {
     conditions.push('(c.full_name LIKE ? OR c.email LIKE ?)')
@@ -2810,6 +2810,56 @@ export function resolveContactsByEmails(emails: string[]): Record<string, string
   return result
 }
 
+/** Batch fetch contacts by IDs. Chunked at 500 to stay under SQLite's 999-variable limit. */
+export function getContactsByIds(ids: string[]): Record<string, ContactRow> {
+  if (ids.length === 0) return {}
+  const db = getDatabase()
+  const CHUNK = 500
+  const result: Record<string, ContactRow> = {}
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK)
+    const placeholders = chunk.map(() => '?').join(', ')
+    const rows = db
+      .prepare(
+        `SELECT id, full_name, first_name, last_name, title, contact_type,
+                linkedin_url, email, city, state, phone
+         FROM contacts WHERE id IN (${placeholders})`
+      )
+      .all(...chunk) as ContactRow[]
+    for (const r of rows) result[r.id] = r
+  }
+  return result
+}
+
+/**
+ * Batch-resolve normalized names → contact ID.
+ * Only returns entries where exactly one contact matches the normalized name —
+ * ambiguous names (multiple contacts) are excluded to avoid wrong merges.
+ * Chunked at 500 to stay under SQLite's 999-variable limit.
+ */
+export function resolveContactsByNormalizedNames(names: string[]): Record<string, string> {
+  if (names.length === 0) return {}
+  const db = getDatabase()
+  const CHUNK = 500
+  // normalizedName → contactId (only unique matches)
+  const result: Record<string, string> = {}
+  for (let i = 0; i < names.length; i += CHUNK) {
+    const chunk = names.slice(i, i + CHUNK)
+    const placeholders = chunk.map(() => '?').join(', ')
+    const rows = db
+      .prepare(
+        `SELECT normalized_name, id, COUNT(*) OVER (PARTITION BY normalized_name) AS name_count
+         FROM contacts
+         WHERE normalized_name IN (${placeholders})`
+      )
+      .all(...chunk) as { normalized_name: string; id: string; name_count: number }[]
+    for (const r of rows) {
+      if (r.name_count === 1) result[r.normalized_name] = r.id
+    }
+  }
+  return result
+}
+
 function mergeContactsIntoOne(
   db: ReturnType<typeof getDatabase>,
   keepContactId: string,
@@ -3341,7 +3391,7 @@ export function deleteContact(contactId: string): void {
     .prepare(`SELECT id FROM contacts WHERE id = ? LIMIT 1`)
     .get(contactId)
   if (!existing) {
-    throw new Error('Contact not found')
+    return
   }
   db.prepare(`DELETE FROM contacts WHERE id = ?`).run(contactId)
 }

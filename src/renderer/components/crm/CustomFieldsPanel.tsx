@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CustomFieldEntityType, CustomFieldWithValue, SetCustomFieldValueInput } from '../../../shared/types/custom-fields'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
 import { usePreferencesStore } from '../../stores/preferences.store'
+import { addCustomFieldOption } from '../../utils/customFieldUtils'
 import { PropertyRow } from './PropertyRow'
 import styles from './CustomFieldsPanel.module.css'
 import { api } from '../../api'
@@ -11,15 +12,16 @@ interface CustomFieldsPanelProps {
   entityType: CustomFieldEntityType
   entityId: string
   onFieldsLoaded?: (fields: CustomFieldWithValue[]) => void
+  onCreateField?: () => void
 }
 
-export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded }: CustomFieldsPanelProps) {
+export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded, onCreateField }: CustomFieldsPanelProps) {
   const { load, loaded, companyDefs, contactDefs } = useCustomFieldStore()
   const { getJSON, setJSON } = usePreferencesStore()
   const [fields, setFields] = useState<CustomFieldWithValue[]>([])
   const [loading, setLoading] = useState(true)
 
-  const defs = entityType === 'company' ? companyDefs : contactDefs
+  const defs = (entityType === 'company' ? companyDefs : contactDefs).filter((d) => !d.isBuiltin)
   const prefKey = `cyggie:${entityType}-summary-fields`
   const pinnedKeys = getJSON<string[]>(prefKey, [])
 
@@ -137,6 +139,25 @@ export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded }: Cust
               options={getOptions(field)}
               resolvedLabel={field.value?.resolvedLabel ?? null}
               onSave={(val) => handleSave(field, val)}
+              onAddOption={
+                (field.fieldType === 'select' || field.fieldType === 'multiselect')
+                  ? async (newOption) => {
+                      const opt = newOption.trim().slice(0, 200)
+                      await addCustomFieldOption(field.id, field.optionsJson, opt)
+                      // Optimistic local update: use functional form to read latest
+                      // state, not the stale `field` closure.
+                      setFields((prev) =>
+                        prev.map((f) => {
+                          if (f.id !== field.id) return f
+                          const current: string[] = (() => {
+                            try { return JSON.parse(f.optionsJson ?? '[]') } catch { return [] }
+                          })()
+                          return { ...f, optionsJson: JSON.stringify([...current, opt]) }
+                        })
+                      )
+                    }
+                  : undefined
+              }
             />
             <button
               className={`${styles.pinBtn} ${isPinned ? styles.pinned : ''}`}
@@ -148,6 +169,11 @@ export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded }: Cust
           </div>
         )
       })}
+      {onCreateField && (
+        <button className={styles.newFieldBtn} onClick={onCreateField}>
+          + New custom field
+        </button>
+      )}
     </div>
   )
 }

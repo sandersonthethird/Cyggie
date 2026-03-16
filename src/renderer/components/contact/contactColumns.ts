@@ -1,18 +1,21 @@
 import type {
   ContactSortBy,
-  ContactSummary,
-  ContactType
+  ContactSummary
 } from '../../../shared/types/contact'
 import {
   createColumnConfigLoader,
   saveColumnConfig as saveColumnConfigBase,
-  sortRows as sortRowsBase,
+  createColumnWidthsHelper,
+  applySelectFilter,
+  applyRangeFilter,
+  applyTextFilter,
   type ColumnDef,
+  type RangeValue,
   type SortState
 } from '../crm/tableUtils'
 
 // Re-export shared types
-export type { ColumnDef, SortState }
+export type { ColumnDef, RangeValue, SortState }
 
 // ─── Option arrays ────────────────────────────────────────────────────────────
 
@@ -69,8 +72,8 @@ export const CONTACT_COLUMN_DEFS: ColumnDef[] = [
     width: 160,
     minWidth: 80,
     sortable: true,
-    editable: false,  // click navigates to company
-    type: 'computed'
+    editable: true,
+    type: 'text'
   },
   {
     key: 'contactType',
@@ -139,6 +142,28 @@ export const CONTACT_COLUMN_DEFS: ColumnDef[] = [
     sortable: true,
     editable: false,
     type: 'date'
+  },
+  {
+    key: 'firstName',
+    label: 'First Name',
+    field: 'firstName',
+    defaultVisible: false,
+    width: 130,
+    minWidth: 80,
+    sortable: true,
+    editable: true,
+    type: 'text'
+  },
+  {
+    key: 'lastName',
+    label: 'Last Name',
+    field: 'lastName',
+    defaultVisible: false,
+    width: 130,
+    minWidth: 80,
+    sortable: true,
+    editable: true,
+    type: 'text'
   }
 ]
 
@@ -157,44 +182,36 @@ export function saveContactColumnConfig(visibleKeys: string[]): void {
   saveColumnConfigBase(COLUMNS_KEY, visibleKeys)
 }
 
-export function loadContactColumnWidths(): Record<string, number> {
-  try {
-    const raw = localStorage.getItem(WIDTHS_KEY)
-    if (!raw) return {}
-    return JSON.parse(raw) as Record<string, number>
-  } catch {
-    return {}
-  }
-}
-
-export function saveContactColumnWidths(widths: Record<string, number>): void {
-  try {
-    localStorage.setItem(WIDTHS_KEY, JSON.stringify(widths))
-  } catch {
-    console.warn('[ContactTable] Failed to save column widths')
-  }
-}
-
-// ─── Sort (delegate to tableUtils) ────────────────────────────────────────────
-
-export function sortContacts(
-  contacts: ContactSummary[],
-  sort: SortState,
-  defs: ColumnDef[]
-): ContactSummary[] {
-  return sortRowsBase(contacts as Record<string, unknown>[], sort, defs) as ContactSummary[]
-}
+const widthsHelper = createColumnWidthsHelper(WIDTHS_KEY)
+export const loadContactColumnWidths = widthsHelper.load
+export const saveContactColumnWidths = widthsHelper.save
 
 // ─── Filter ───────────────────────────────────────────────────────────────────
 
+/**
+ * Client-side filter for ContactSummary[].
+ *
+ * Three-pass chain (all filters AND together):
+ *   Pass 1: Select filters — exact match against option values
+ *   Pass 2: Range filters — numeric or date inclusive bounds (applyRangeFilter from tableUtils)
+ *   Pass 3: Text filters  — case-insensitive contains (applyTextFilter from tableUtils)
+ *
+ * Forward-compatible: adding new filterable columns to CONTACT_COLUMN_DEFS requires no changes here.
+ */
 export function filterContacts(
   contacts: ContactSummary[],
-  typeFilter: ContactType[]
+  filters: Record<string, string[]>,
+  rangeFilters?: Record<string, RangeValue>,
+  textFilters?: Record<string, string>
 ): ContactSummary[] {
-  if (typeFilter.length === 0) return contacts
-  return contacts.filter(
-    (c) => c.contactType != null && typeFilter.includes(c.contactType)
-  )
+  // Three-pass chain (all filters AND together):
+  //   Pass 1: Select filters  — exact match against option values (applySelectFilter)
+  //   Pass 2: Range filters   — numeric or date inclusive bounds (applyRangeFilter)
+  //   Pass 3: Text filters    — case-insensitive contains (applyTextFilter)
+  let result = applySelectFilter(contacts as Record<string, unknown>[], filters) as ContactSummary[]
+  result = applyRangeFilter(result as Record<string, unknown>[], rangeFilters ?? {}) as ContactSummary[]
+  result = applyTextFilter(result as Record<string, unknown>[], textFilters ?? {}) as ContactSummary[]
+  return result
 }
 
 // ─── URL → IPC filter builder ─────────────────────────────────────────────────

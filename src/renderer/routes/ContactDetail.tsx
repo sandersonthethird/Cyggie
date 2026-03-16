@@ -145,6 +145,7 @@ export default function ContactDetail() {
         <div className={styles.tabContent}>
           <ContactTimeline
             contactId={contact.id}
+            hasEmail={!!contact.email}
             className={activeTab !== 'timeline' ? styles.hidden : ''}
           />
           <ContactMeetings
@@ -153,6 +154,7 @@ export default function ContactDetail() {
           />
           <ContactEmails
             contactId={contact.id}
+            hasEmail={!!contact.email}
             className={activeTab !== 'emails' ? styles.hidden : ''}
           />
           <ContactNotes

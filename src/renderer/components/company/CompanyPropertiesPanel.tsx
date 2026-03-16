@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
 import type { CompanyDecisionLog, CompanyDetail } from '../../../shared/types/company'
 import { DecisionLogModal } from '../crm/DecisionLogModal'
+import ConfirmDialog from '../common/ConfirmDialog'
 import { shouldPromptDecisionLog, defaultDecisionType } from '../../utils/decisionLogTrigger'
 import type { CustomFieldWithValue } from '../../../shared/types/custom-fields'
 import { daysSince, formatCurrency, formatDate } from '../../utils/format'
 import { usePreferencesStore } from '../../stores/preferences.store'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
+import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
 import { PropertyRow } from '../crm/PropertyRow'
 import { CustomFieldsPanel } from '../crm/CustomFieldsPanel'
 import { ChipSelect } from '../crm/ChipSelect'
@@ -18,7 +22,10 @@ import {
   STAGES,
   PRIORITIES,
   ROUNDS,
-  EMPLOYEE_RANGES
+  EMPLOYEE_RANGES,
+  TARGET_CUSTOMERS,
+  BUSINESS_MODELS,
+  PRODUCT_STAGES,
 } from './companyColumns'
 import styles from './CompanyPropertiesPanel.module.css'
 import { api } from '../../api'
@@ -93,6 +100,7 @@ function formatPinnedValue(value: unknown, type: string, options?: { value: stri
 }
 
 export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesPanelProps) {
+  const navigate = useNavigate()
   const [isEditing, setIsEditing] = useState(false)
   const [showAllFields, setShowAllFields] = useState(false)
   const [nameDraft, setNameDraft] = useState(company.canonicalName)
@@ -102,12 +110,36 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
   const [showDecisionModal, setShowDecisionModal] = useState(false)
   const [decisionTriggerType, setDecisionTriggerType] = useState<string | undefined>(undefined)
   const [editDecisionId, setEditDecisionId] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [createFieldOpen, setCreateFieldOpen] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const headerBadgesRef = useRef<HTMLDivElement>(null)
 
   const { getJSON, setJSON } = usePreferencesStore()
   const { companyDefs } = useCustomFieldStore()
   const pinnedKeys = getJSON<string[]>('cyggie:company-summary-fields', [])
+
+  const entityTypeDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'entityType')
+  const stageDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'pipelineStage')
+  const priorityDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'priority')
+  const roundDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'round')
+  const targetCustomerDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'targetCustomer')
+  const businessModelDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'businessModel')
+  const productStageDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'productStage')
+  const employeeCountDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'employeeCountRange')
+
+  const entityTypeOptions = mergeBuiltinOptions(ENTITY_TYPES, entityTypeDef?.optionsJson ?? null)
+  const stageOptions = mergeBuiltinOptions(STAGES, stageDef?.optionsJson ?? null)
+  const priorityOptions = mergeBuiltinOptions(PRIORITIES, priorityDef?.optionsJson ?? null)
+  const roundOptions = mergeBuiltinOptions(ROUNDS, roundDef?.optionsJson ?? null)
+  const targetCustomerOptions = mergeBuiltinOptions(TARGET_CUSTOMERS, targetCustomerDef?.optionsJson ?? null)
+  const businessModelOptions = mergeBuiltinOptions(BUSINESS_MODELS, businessModelDef?.optionsJson ?? null)
+  const productStageOptions = mergeBuiltinOptions(PRODUCT_STAGES, productStageDef?.optionsJson ?? null)
+  const employeeRangeOptions = mergeBuiltinOptions(
+    EMPLOYEE_RANGES.map(v => ({ value: v, label: v })),
+    employeeCountDef?.optionsJson ?? null
+  )
 
   function togglePinnedKey(key: string) {
     const next = pinnedKeys.includes(key)
@@ -156,6 +188,20 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
       save('canonicalName', trimmed).catch(console.error)
     }
     setIsEditing(false)
+  }
+
+  async function handleDeleteCompany() {
+    if (deleting) return
+    setDeleting(true)
+    try {
+      await api.invoke(IPC_CHANNELS.COMPANY_DELETE, company.id)
+      navigate('/companies')
+    } catch (err) {
+      console.error('[CompanyPropertiesPanel] delete failed:', err)
+    } finally {
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
   }
 
   function handleNameKeyDown(e: React.KeyboardEvent) {
@@ -247,35 +293,92 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
             <div className={styles.companyName}>{company.canonicalName}</div>
           )}
           <div className={styles.headerBadges} ref={headerBadgesRef}>
-            <ChipSelect
-              value={company.entityType}
-              options={ENTITY_TYPES}
-              isEditing={isEditing}
-              onSave={(v) => saveWithDecisionPrompt('entityType', v ?? 'unknown')}
-              className={`${styles.badge} ${ENTITY_TYPE_STYLE[company.entityType] ?? ''}`}
-              allowEmpty={false}
-            />
-            <ChipSelect
-              value={company.pipelineStage ?? ''}
-              options={[{ value: '', label: '—' }, ...STAGES]}
-              isEditing={isEditing}
-              onSave={(v) => saveWithDecisionPrompt('pipelineStage', v || null)}
-              className={`${styles.badge} ${company.pipelineStage ? (STAGE_STYLE[company.pipelineStage] ?? '') : ''}`}
-            />
-            <ChipSelect
-              value={company.priority ?? ''}
-              options={[{ value: '', label: '—' }, ...PRIORITIES]}
-              isEditing={isEditing}
-              onSave={(v) => save('priority', v || null)}
-              className={`${styles.badge} ${company.priority ? (PRIORITY_STYLE[company.priority] ?? '') : ''}`}
-            />
-            <ChipSelect
-              value={company.round ?? ''}
-              options={[{ value: '', label: '—' }, ...ROUNDS]}
-              isEditing={isEditing}
-              onSave={(v) => save('round', v || null)}
-              className={`${styles.badge} ${company.round ? (ROUND_STYLE[company.round] ?? '') : ''}`}
-            />
+            {isEditing ? (
+              <div className={styles.editChipField}>
+                <span className={styles.editChipLabel}>Type</span>
+                <ChipSelect
+                  value={company.entityType}
+                  options={entityTypeOptions}
+                  isEditing={isEditing}
+                  onSave={(v) => saveWithDecisionPrompt('entityType', v ?? 'unknown')}
+                  className={`${styles.badge} ${ENTITY_TYPE_STYLE[company.entityType] ?? ''}`}
+                  allowEmpty={false}
+                  onAddOption={entityTypeDef ? async (opt) => addCustomFieldOption(entityTypeDef.id, entityTypeDef.optionsJson, opt) : undefined}
+                />
+              </div>
+            ) : (
+              <ChipSelect
+                value={company.entityType}
+                options={entityTypeOptions}
+                isEditing={isEditing}
+                onSave={(v) => saveWithDecisionPrompt('entityType', v ?? 'unknown')}
+                className={`${styles.badge} ${ENTITY_TYPE_STYLE[company.entityType] ?? ''}`}
+                allowEmpty={false}
+              />
+            )}
+            {isEditing ? (
+              <div className={styles.editChipField}>
+                <span className={styles.editChipLabel}>Stage</span>
+                <ChipSelect
+                  value={company.pipelineStage ?? ''}
+                  options={[{ value: '', label: '—' }, ...stageOptions]}
+                  isEditing={isEditing}
+                  onSave={(v) => saveWithDecisionPrompt('pipelineStage', v || null)}
+                  className={`${styles.badge} ${company.pipelineStage ? (STAGE_STYLE[company.pipelineStage] ?? '') : ''}`}
+                  onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
+                />
+              </div>
+            ) : (
+              <ChipSelect
+                value={company.pipelineStage ?? ''}
+                options={[{ value: '', label: '—' }, ...stageOptions]}
+                isEditing={isEditing}
+                onSave={(v) => saveWithDecisionPrompt('pipelineStage', v || null)}
+                className={`${styles.badge} ${company.pipelineStage ? (STAGE_STYLE[company.pipelineStage] ?? '') : ''}`}
+              />
+            )}
+            {isEditing ? (
+              <div className={styles.editChipField}>
+                <span className={styles.editChipLabel}>Priority</span>
+                <ChipSelect
+                  value={company.priority ?? ''}
+                  options={[{ value: '', label: '—' }, ...priorityOptions]}
+                  isEditing={isEditing}
+                  onSave={(v) => save('priority', v || null)}
+                  className={`${styles.badge} ${company.priority ? (PRIORITY_STYLE[company.priority] ?? '') : ''}`}
+                  onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
+                />
+              </div>
+            ) : (
+              <ChipSelect
+                value={company.priority ?? ''}
+                options={[{ value: '', label: '—' }, ...priorityOptions]}
+                isEditing={isEditing}
+                onSave={(v) => save('priority', v || null)}
+                className={`${styles.badge} ${company.priority ? (PRIORITY_STYLE[company.priority] ?? '') : ''}`}
+              />
+            )}
+            {isEditing ? (
+              <div className={styles.editChipField}>
+                <span className={styles.editChipLabel}>Round</span>
+                <ChipSelect
+                  value={company.round ?? ''}
+                  options={[{ value: '', label: '—' }, ...roundOptions]}
+                  isEditing={isEditing}
+                  onSave={(v) => save('round', v || null)}
+                  className={`${styles.badge} ${company.round ? (ROUND_STYLE[company.round] ?? '') : ''}`}
+                  onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
+                />
+              </div>
+            ) : (
+              <ChipSelect
+                value={company.round ?? ''}
+                options={[{ value: '', label: '—' }, ...roundOptions]}
+                isEditing={isEditing}
+                onSave={(v) => save('round', v || null)}
+                className={`${styles.badge} ${company.round ? (ROUND_STYLE[company.round] ?? '') : ''}`}
+              />
+            )}
             {pinnedKeys.map((key) => renderPinnedChip(key))}
             <div className={styles.configureWrap}>
               <button
@@ -302,7 +405,9 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
           </div>
         </div>
         {isEditing ? (
-          <button className={styles.doneBtn} onClick={handleDone}>Done</button>
+          <button className={styles.doneBtn} onClick={handleDone} disabled={deleting}>
+            Done
+          </button>
         ) : (
           <button className={styles.editBtn} onClick={() => setIsEditing(true)}>Edit</button>
         )}
@@ -369,9 +474,10 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
           label="Target Customer"
           value={company.targetCustomer}
           type="select"
-          options={['b2b', 'b2c', 'b2b2c', 'government', 'other']}
+          options={targetCustomerOptions}
           editMode={isEditing}
           onSave={(v) => save('targetCustomer', v)}
+          onAddOption={targetCustomerDef ? async (opt) => addCustomFieldOption(targetCustomerDef.id, targetCustomerDef.optionsJson, opt) : undefined}
         />
       )}
       {show(company.businessModel) && (
@@ -379,9 +485,10 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
           label="Business Model"
           value={company.businessModel}
           type="select"
-          options={['saas', 'marketplace', 'transactional', 'hardware', 'services', 'other']}
+          options={businessModelOptions}
           editMode={isEditing}
           onSave={(v) => save('businessModel', v)}
+          onAddOption={businessModelDef ? async (opt) => addCustomFieldOption(businessModelDef.id, businessModelDef.optionsJson, opt) : undefined}
         />
       )}
       {show(company.productStage) && (
@@ -389,9 +496,10 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
           label="Product Stage"
           value={company.productStage}
           type="select"
-          options={['pre_product', 'mvp', 'beta', 'ga', 'scaling']}
+          options={productStageOptions}
           editMode={isEditing}
           onSave={(v) => save('productStage', v)}
+          onAddOption={productStageDef ? async (opt) => addCustomFieldOption(productStageDef.id, productStageDef.optionsJson, opt) : undefined}
         />
       )}
       {show(company.foundingYear) && <PropertyRow label="Founded" value={company.foundingYear} type="number" editMode={isEditing} onSave={(v) => save('foundingYear', v)} />}
@@ -400,9 +508,10 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
           label="Employees"
           value={company.employeeCountRange}
           type="select"
-          options={EMPLOYEE_RANGES}
+          options={employeeRangeOptions}
           editMode={isEditing}
           onSave={(v) => save('employeeCountRange', v)}
+          onAddOption={employeeCountDef ? async (opt) => addCustomFieldOption(employeeCountDef.id, employeeCountDef.optionsJson, opt) : undefined}
         />
       )}
       {show(company.hqAddress) && <PropertyRow label="HQ" value={company.hqAddress} type="text" editMode={isEditing} onSave={(v) => save('hqAddress', v)} />}
@@ -413,17 +522,19 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
         label="Stage"
         value={company.pipelineStage}
         type="select"
-        options={[{ value: '', label: '—' }, ...STAGES]}
+        options={[{ value: '', label: '—' }, ...stageOptions]}
         editMode={isEditing}
         onSave={(v) => saveWithDecisionPrompt('pipelineStage', v || null)}
+        onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
       />
       <PropertyRow
         label="Priority"
         value={company.priority}
         type="select"
-        options={[{ value: '', label: '—' }, ...PRIORITIES]}
+        options={[{ value: '', label: '—' }, ...priorityOptions]}
         editMode={isEditing}
         onSave={(v) => save('priority', v)}
+        onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
       />
       {show(company.dealSource) && <PropertyRow label="Deal Source" value={company.dealSource} type="text" editMode={isEditing} onSave={(v) => save('dealSource', v)} />}
       {show(company.warmIntroSource) && <PropertyRow label="Warm Intro Source" value={company.warmIntroSource} type="text" editMode={isEditing} onSave={(v) => save('warmIntroSource', v)} />}
@@ -445,9 +556,10 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
           label="Round"
           value={company.round}
           type="select"
-          options={[{ value: '', label: '—' }, ...ROUNDS]}
+          options={[{ value: '', label: '—' }, ...roundOptions]}
           editMode={isEditing}
           onSave={(v) => save('round', v)}
+          onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
         />
       )}
       {show(company.raiseSize) && <PropertyRow label="Raise Size" value={company.raiseSize} type="currency" editMode={isEditing} onSave={(v) => save('raiseSize', v)} />}
@@ -501,7 +613,28 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
         entityType="company"
         entityId={company.id}
         onFieldsLoaded={setCustomFields}
+        onCreateField={() => setCreateFieldOpen(true)}
       />
+
+      {createFieldOpen && (
+        <CreateCustomFieldModal
+          entityType="company"
+          onSaved={() => setCreateFieldOpen(false)}
+          onClose={() => setCreateFieldOpen(false)}
+        />
+      )}
+
+      {isEditing && (
+        <div className={styles.deleteSection}>
+          <button
+            className={styles.deleteBtn}
+            onClick={() => setConfirmDelete(true)}
+            disabled={deleting}
+          >
+            Delete Company
+          </button>
+        </div>
+      )}
 
       {/* Stage-change decision prompt */}
       {showDecisionModal && (
@@ -532,6 +665,16 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete company?"
+        message={`Delete "${company.canonicalName}" and all associated data? This cannot be undone.`}
+        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
+        variant="danger"
+        onConfirm={handleDeleteCompany}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   )
 }

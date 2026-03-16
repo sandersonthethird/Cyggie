@@ -29,7 +29,18 @@ import {
   type ColumnDef,
   type SortState
 } from './contactColumns'
+import { useColumnResize } from '../../hooks/useColumnResize'
+import { useColumnDrag } from '../../hooks/useColumnDrag'
+import { useEditCellNav } from '../../hooks/useEditCellNav'
+import { useRowSelection } from '../../hooks/useRowSelection'
 import { executeBulkEdit } from '../crm/tableUtils'
+import type { RangeValue } from '../crm/tableUtils'
+import { chipStyle } from '../../utils/colorChip'
+import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
+import { useCustomFieldStore } from '../../stores/custom-fields.store'
+import { HeaderFilter } from '../crm/HeaderFilter'
+import { RangeFilter } from '../crm/RangeFilter'
+import { TextFilter } from '../crm/TextFilter'
 import { usePreferencesStore } from '../../stores/preferences.store'
 import styles from './ContactTable.module.css'
 import { api } from '../../api'
@@ -48,6 +59,22 @@ interface ContactTableProps {
   /** Lifted from internal state — parent (Contacts.tsx) owns this for saved views. */
   visibleKeys: string[]
   onVisibleKeysChange: (keys: string[]) => void
+  /** Active filter values per field — drives HeaderFilter badge + checked state. */
+  columnFilters: Record<string, string[]>
+  onColumnFilter: (field: string, values: string[]) => void
+  /** Active range filters per field (number + date columns). */
+  rangeFilters?: Record<string, RangeValue>
+  onRangeFilter?: (field: string, range: RangeValue) => void
+  /** Active text filters per field (text columns). */
+  textFilters?: Record<string, string>
+  onTextFilter?: (field: string, value: string) => void
+  /** All column defs including custom fields. Falls back to CONTACT_COLUMN_DEFS if absent. */
+  allDefs?: ColumnDef[]
+  /** Custom field values keyed by [entityId][fieldDefinitionId]. */
+  customFieldValues?: Record<string, Record<string, string>>
+  onRenameColumn?: (key: string, label: string) => void
+  onCreateField?: () => void
+  onPatchCustomField?: (entityId: string, defId: string, value: string | null) => void
 }
 
 export function ContactTable({
@@ -58,10 +85,22 @@ export function ContactTable({
   onPatch,
   onBulkDelete,
   visibleKeys,
-  onVisibleKeysChange
+  onVisibleKeysChange,
+  columnFilters,
+  onColumnFilter,
+  rangeFilters,
+  onRangeFilter,
+  textFilters,
+  onTextFilter,
+  allDefs,
+  customFieldValues,
+  onRenameColumn,
+  onCreateField,
+  onPatchCustomField
 }: ContactTableProps) {
   const navigate = useNavigate()
   const { getJSON, setJSON } = usePreferencesStore()
+  const { contactDefs } = useCustomFieldStore()
   const summaryKeys = getJSON<string[]>('cyggie:contact-summary-fields', [])
 
   function toggleSummaryField(key: string) {
@@ -76,11 +115,29 @@ export function ContactTable({
   }
 
   // ── Column widths ──────────────────────────────────────────────────────────
-  const [colWidths, setColWidths] = useState<Record<string, number>>(() => loadContactColumnWidths())
+  const { colWidths, onResizeMouseDown } = useColumnResize(loadContactColumnWidths(), saveContactColumnWidths)
 
+  // ── Column drag reorder ─────────────────────────────────────────────────────
+  // saveContactColumnConfig is a stable module-level export — safe to pass directly.
+  const { draggingKey, dragOverKey, getDragProps } = useColumnDrag(
+    visibleKeys, onVisibleKeysChange, saveContactColumnConfig, 'name'
+  )
+
+  const effectiveDefs = allDefs ?? CONTACT_COLUMN_DEFS
   const visibleCols = useMemo<ColumnDef[]>(
-    () => visibleKeys.flatMap((k) => CONTACT_COLUMN_DEFS.find((c) => c.key === k) ?? []),
-    [visibleKeys]
+    () => visibleKeys.flatMap((k) => effectiveDefs.find((c) => c.key === k) ?? []),
+    [visibleKeys, effectiveDefs]
+  )
+
+  // Merge user-added options from DB into builtin select columns so they appear in dropdowns
+  const mergedVisibleCols = useMemo<ColumnDef[]>(
+    () => visibleCols.map((col) => {
+      if (col.type !== 'select' || col.key.startsWith('custom:')) return col
+      const builtinDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === col.key)
+      if (!builtinDef?.optionsJson) return col
+      return { ...col, options: mergeBuiltinOptions(col.options ?? [], builtinDef.optionsJson) }
+    }),
+    [visibleCols, contactDefs]
   )
 
   const gridCols = useMemo(() => {
@@ -89,7 +146,6 @@ export function ContactTable({
   }, [visibleCols, colWidths])
 
   // ── Selection ──────────────────────────────────────────────────────────────
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [bulkEditing, setBulkEditing] = useState(false)
@@ -97,7 +153,23 @@ export function ContactTable({
   const [bulkEditField, setBulkEditField] = useState<'contactType' | 'company'>('contactType')
   const [bulkEditValue, setBulkEditValue] = useState<string | null>(null)
   const bulkEditRef = useRef<HTMLDivElement>(null)
-  const lastSelectedIdxRef = useRef<number | null>(null)
+
+  // ── Undo ───────────────────────────────────────────────────────────────────
+  interface UndoAction {
+    field: string
+    originals: Array<{ id: string; value: unknown }>
+    count: number
+  }
+  const [undoAction, setUndoAction] = useState<UndoAction | null>(null)
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout>>()
+
+  // ── Column header filters ──────────────────────────────────────────────────
+  const [filterOpenCol, setFilterOpenCol] = useState<string | null>(null)
+  const handleFilterClose = useCallback(() => setFilterOpenCol(null), [])
+
+  // ── Column rename ──────────────────────────────────────────────────────────
+  const [renamingCol, setRenamingCol] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   useEffect(() => {
     if (!bulkEditOpen) return
@@ -110,27 +182,50 @@ export function ContactTable({
     return () => document.removeEventListener('mousedown', handle)
   }, [bulkEditOpen])
 
-  function toggleSelect(id: string, rowIdx: number, shiftKey: boolean) {
-    if (shiftKey && lastSelectedIdxRef.current !== null) {
-      const lo = Math.min(lastSelectedIdxRef.current, rowIdx)
-      const hi = Math.max(lastSelectedIdxRef.current, rowIdx)
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        for (let i = lo; i <= hi; i++) {
-          const item = contacts[i]
-          if (item) next.add(item.id)
-        }
-        return next
-      })
-    } else {
-      lastSelectedIdxRef.current = rowIdx
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        return next
-      })
+  // Cleanup undo timer on unmount
+  useEffect(() => () => clearTimeout(undoTimerRef.current), [])
+
+  // ── Edit cell nav ──────────────────────────────────────────────────────────
+  // (scrollToRow is defined below after rowVirtualizer — forward-ref via closure)
+  const scrollToRowRef = useRef<(idx: number) => void>(() => {})
+
+  const { editCell, setEditCell, handleStartEdit, handleEndEdit } = useEditCellNav(
+    contacts.length,
+    visibleCols,
+    (idx) => scrollToRowRef.current(idx)
+  )
+
+  const getEditCell = useCallback(() => editCell, [editCell])
+
+  // ── Row selection ──────────────────────────────────────────────────────────
+  const { selectedIds, setSelectedIds, toggleSelect, handleTableKeyDown, lastSelectedIdxRef } = useRowSelection(
+    contacts,
+    (idx) => scrollToRowRef.current(idx),
+    getEditCell
+  )
+
+  function setUndoWithTimer(action: UndoAction) {
+    clearTimeout(undoTimerRef.current)
+    setUndoAction(action)
+    undoTimerRef.current = setTimeout(() => setUndoAction(null), 7000)
+  }
+
+  async function handleUndo() {
+    if (!undoAction) return
+    const action = undoAction
+    clearTimeout(undoTimerRef.current)
+    setUndoAction(null)
+    for (const { id, value } of action.originals) {
+      onPatch(id, { [action.field]: value })
     }
+    const origMap = new Map(action.originals.map((o) => [o.id, o.value]))
+    await executeBulkEdit({
+      ids: action.originals.map((o) => o.id),
+      getOriginalValue: () => null,
+      updateFn: (id) =>
+        api.invoke(IPC_CHANNELS.CONTACT_UPDATE, id, { [action.field]: origMap.get(id) ?? null }),
+      onPatch: () => {}
+    })
   }
 
   async function handleBulkDelete() {
@@ -167,6 +262,14 @@ export function ContactTable({
           updateFn: (id) => api.invoke(IPC_CHANNELS.CONTACT_UPDATE, id, { contactType: value }),
           onPatch: (id, val) => onPatch(id, { contactType: val })
         })
+        const succeededContactType = ids.filter((id) => !failedIds.includes(id))
+        if (succeededContactType.length > 0) {
+          setUndoWithTimer({
+            field: 'contactType',
+            originals: succeededContactType.map((id) => ({ id, value: originals.get(id) ?? null })),
+            count: succeededContactType.length
+          })
+        }
         if (failedIds.length > 0) {
           setBulkEditError(`${failedIds.length} of ${ids.length} updates failed`)
         } else {
@@ -189,6 +292,14 @@ export function ContactTable({
           updateFn: (id) => api.invoke(IPC_CHANNELS.CONTACT_SET_COMPANY, id, companyName),
           onPatch: (id, val) => onPatch(id, { primaryCompanyName: val })
         })
+        const succeededCompany = ids.filter((id) => !failedIds.includes(id))
+        if (succeededCompany.length > 0) {
+          setUndoWithTimer({
+            field: 'primaryCompanyName',
+            originals: succeededCompany.map((id) => ({ id, value: originals.get(id) ?? null })),
+            count: succeededCompany.length
+          })
+        }
         if (failedIds.length > 0) {
           setBulkEditError(`${failedIds.length} of ${ids.length} updates failed`)
         } else {
@@ -200,74 +311,6 @@ export function ContactTable({
     }
   }
 
-  // ── Inline edit keyboard nav ───────────────────────────────────────────────
-  const [editCell, setEditCell] = useState<{ rowIdx: number; colIdx: number } | null>(null)
-
-  function handleStartEdit(rowIdx: number, colIdx: number) {
-    setEditCell({ rowIdx, colIdx })
-  }
-
-  function handleEndEdit(rowIdx: number, colIdx: number, advanceDir: 'down' | 'right' | null) {
-    setEditCell(null)
-    if (!advanceDir) return
-
-    const editableCols = visibleCols
-      .map((c, i) => ({ col: c, i }))
-      .filter(({ col }) => col.editable)
-
-    if (advanceDir === 'down') {
-      const nextRow = rowIdx + 1
-      if (nextRow < contacts.length) {
-        setEditCell({ rowIdx: nextRow, colIdx })
-        scrollToRow(nextRow)
-      }
-    } else if (advanceDir === 'right') {
-      const currentEditIdx = editableCols.findIndex(({ i }) => i === colIdx)
-      const nextEditable = editableCols[currentEditIdx + 1]
-      if (nextEditable) {
-        setEditCell({ rowIdx, colIdx: nextEditable.i })
-      }
-    }
-  }
-
-  // ── Column resize ──────────────────────────────────────────────────────────
-  const resizeDragging = useRef(false)
-  const resizeStartX = useRef(0)
-  const resizeStartW = useRef(0)
-  const resizeKey = useRef('')
-
-  const onResizeMouseDown = useCallback((e: React.MouseEvent, colKey: string, currentW: number) => {
-    e.preventDefault()
-    e.stopPropagation()
-    resizeDragging.current = true
-    resizeStartX.current = e.clientX
-    resizeStartW.current = currentW
-    resizeKey.current = colKey
-  }, [])
-
-  useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (!resizeDragging.current) return
-      const delta = e.clientX - resizeStartX.current
-      const newW = Math.max(60, resizeStartW.current + delta)
-      setColWidths((prev) => ({ ...prev, [resizeKey.current]: newW }))
-    }
-    function onMouseUp() {
-      if (!resizeDragging.current) return
-      resizeDragging.current = false
-      setColWidths((prev) => {
-        saveContactColumnWidths(prev)
-        return prev
-      })
-    }
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [])
-
   // ── Sort ───────────────────────────────────────────────────────────────────
   function handleHeaderClick(col: ColumnDef) {
     if (!col.sortable) return
@@ -278,11 +321,61 @@ export function ContactTable({
   // ── Inline save ────────────────────────────────────────────────────────────
   const handleCellSave = useCallback(
     async (contact: ContactSummary, field: string, newValue: string | null) => {
-      const patch: Record<string, unknown> = { [field]: newValue === '' ? null : newValue }
-      await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, patch)
-      onPatch(contact.id, patch)
+      const isCompanyField = field === 'primaryCompanyName'
+      const patchValue = newValue === '' ? null : newValue
+
+      // Company field requires non-empty value — silently revert if cleared
+      if (isCompanyField && !patchValue) return
+
+      const idsToUpdate =
+        selectedIds.has(contact.id) && selectedIds.size > 1
+          ? [...selectedIds]
+          : [contact.id]
+
+      // Capture originals BEFORE optimistic patch
+      const originals = idsToUpdate.map((id) => {
+        const c = contacts.find((ct) => ct.id === id)
+        return { id, value: c ? c[field as keyof ContactSummary] : null }
+      })
+
+      // Optimistic patch — all affected rows immediately
+      for (const { id } of originals) {
+        onPatch(id, { [field]: patchValue })
+      }
+
+      const ipcCall = (id: string) =>
+        isCompanyField
+          ? api.invoke(IPC_CHANNELS.CONTACT_SET_COMPANY, id, patchValue as string)
+          : api.invoke(IPC_CHANNELS.CONTACT_UPDATE, id, { [field]: patchValue })
+
+      if (idsToUpdate.length === 1) {
+        try {
+          await ipcCall(contact.id)
+        } catch {
+          onPatch(contact.id, { [field]: originals[0].value })
+        }
+      } else {
+        const originalsMap = new Map(originals.map((o) => [o.id, o.value]))
+        const { failedIds } = await executeBulkEdit({
+          ids: idsToUpdate,
+          getOriginalValue: (id) => originalsMap.get(id) ?? null,
+          updateFn: (id) => ipcCall(id),
+          onPatch: (id, val) => onPatch(id, { [field]: val })
+        })
+        const succeededIds = idsToUpdate.filter((id) => !failedIds.includes(id))
+        if (succeededIds.length > 0) {
+          setUndoWithTimer({
+            field,
+            originals: originals.filter((o) => succeededIds.includes(o.id)),
+            count: succeededIds.length
+          })
+        }
+        if (failedIds.length > 0) {
+          setBulkEditError(`${failedIds.length} of ${idsToUpdate.length} updates failed`)
+        }
+      }
     },
-    [onPatch]
+    [contacts, selectedIds, onPatch]
   )
 
   // ── TanStack Virtual ───────────────────────────────────────────────────────
@@ -298,6 +391,8 @@ export function ContactTable({
   function scrollToRow(idx: number) {
     rowVirtualizer.scrollToIndex(idx, { align: 'auto' })
   }
+  // Wire scrollToRowRef so hooks defined above can call scrollToRow
+  scrollToRowRef.current = scrollToRow
 
   const virtualRows = rowVirtualizer.getVirtualItems()
 
@@ -305,6 +400,12 @@ export function ContactTable({
   const applyDisabled =
     bulkEditValue === null ||
     (bulkEditField === 'company' && bulkEditValue.trim() === '')
+
+  // Whether the currently-editing cell will trigger a bulk fill
+  const bulkFillActive =
+    editCell !== null &&
+    selectedIds.size > 1 &&
+    selectedIds.has(contacts[editCell.rowIdx]?.id ?? '')
 
   return (
     <>
@@ -314,7 +415,26 @@ export function ContactTable({
           <button onClick={() => setBulkEditError(null)}>✕</button>
         </div>
       )}
-      <div className={styles.tableWrapper} ref={scrollRef}>
+      {undoAction && (
+        <div className={styles.undoToast}>
+          Updated {undoAction.count} contact{undoAction.count !== 1 ? 's' : ''}
+          <button className={styles.undoBtn} onClick={() => void handleUndo()}>
+            Undo
+          </button>
+          <button
+            className={styles.undoDismiss}
+            onClick={() => { clearTimeout(undoTimerRef.current); setUndoAction(null) }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      {bulkFillActive && (
+        <div className={styles.bulkFillHint}>
+          Editing will update {selectedIds.size} selected contacts
+        </div>
+      )}
+      <div className={styles.tableWrapper} ref={scrollRef} tabIndex={0} onKeyDown={handleTableKeyDown}>
         {/* Header row */}
         <div className={styles.headerRow} style={{ gridTemplateColumns: gridCols }}>
           {/* Checkbox */}
@@ -331,7 +451,7 @@ export function ContactTable({
           </div>
 
           {/* Column headers */}
-          {visibleCols.map((col) => {
+          {mergedVisibleCols.map((col) => {
             const isName = col.key === 'name'
             const effectiveW = colWidths[col.key] ?? col.width
             const isSorted = sort.key === col.key
@@ -340,10 +460,33 @@ export function ContactTable({
             return (
               <div
                 key={col.key}
-                className={`${styles.headerCell} ${isName ? styles.nameCol : ''} ${col.sortable ? styles.sortable : ''}`}
-                onClick={() => handleHeaderClick(col)}
+                className={`${styles.headerCell} ${isName ? styles.nameCol : ''} ${col.sortable ? styles.sortable : ''} ${(col.options?.length || col.type === 'number' || col.type === 'date' || col.type === 'text') ? styles.filterableCell : ''} ${draggingKey === col.key ? styles.dragging : ''} ${dragOverKey === col.key ? styles.dragOver : ''}`}
+                onClick={() => { if (renamingCol !== col.key) handleHeaderClick(col) }}
+                onContextMenu={(e) => {
+                  if (!onRenameColumn) return
+                  e.preventDefault()
+                  setRenamingCol(col.key)
+                  setRenameValue(col.label)
+                }}
+                {...getDragProps(col.key)}
               >
-                {col.label}
+                {renamingCol === col.key ? (
+                  <input
+                    className={styles.renameInput}
+                    value={renameValue}
+                    autoFocus
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        onRenameColumn?.(col.key, renameValue)
+                        setRenamingCol(null)
+                      }
+                      if (e.key === 'Escape') setRenamingCol(null)
+                    }}
+                    onBlur={() => setRenamingCol(null)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : col.label}
                 {col.sortable && (
                   isSorted
                     ? <span className={styles.sortArrow}>{sort.dir === 'asc' ? ' ▲' : ' ▼'}</span>
@@ -358,6 +501,47 @@ export function ContactTable({
                     📌
                   </button>
                 )}
+                {col.options && col.options.filter((o) => o.value !== '').length > 0 && (
+                  <HeaderFilter
+                    label={col.label}
+                    options={col.options.filter((o) => o.value !== '')}
+                    activeValues={columnFilters[col.field ?? col.key] ?? []}
+                    isOpen={filterOpenCol === col.key}
+                    onOpen={() => setFilterOpenCol((prev) => prev === col.key ? null : col.key)}
+                    onClose={handleFilterClose}
+                    onToggle={(value) => {
+                      const field = col.field ?? col.key
+                      const current = columnFilters[field] ?? []
+                      const next = current.includes(value)
+                        ? current.filter((v) => v !== value)
+                        : [...current, value]
+                      onColumnFilter(field, next)
+                    }}
+                  />
+                )}
+                {(col.type === 'number' || col.type === 'date') && (
+                  <RangeFilter
+                    colType={col.type}
+                    label={col.label}
+                    range={rangeFilters?.[col.field ?? col.key] ?? {}}
+                    isOpen={filterOpenCol === `range_${col.key}`}
+                    onOpen={() => setFilterOpenCol((prev) => prev === `range_${col.key}` ? null : `range_${col.key}`)}
+                    onClose={handleFilterClose}
+                    onChange={(range) => onRangeFilter?.(col.field ?? col.key, range)}
+                    prefix={col.prefix ?? ''}
+                    suffix={col.suffix ?? ''}
+                  />
+                )}
+                {col.type === 'text' && (
+                  <TextFilter
+                    label={col.label}
+                    value={textFilters?.[col.field ?? col.key] ?? ''}
+                    isOpen={filterOpenCol === `text_${col.key}`}
+                    onOpen={() => setFilterOpenCol((prev) => prev === `text_${col.key}` ? null : `text_${col.key}`)}
+                    onClose={handleFilterClose}
+                    onChange={(v) => onTextFilter?.(col.field ?? col.key, v)}
+                  />
+                )}
                 <div
                   className={styles.resizeHandle}
                   onMouseDown={(e) => onResizeMouseDown(e, col.key, effectiveW)}
@@ -371,9 +555,10 @@ export function ContactTable({
           <div className={`${styles.headerCell} ${styles.pickerCell}`}>
             <ColumnPicker
               visibleKeys={visibleKeys}
-              allDefs={CONTACT_COLUMN_DEFS}
+              allDefs={effectiveDefs}
               onChange={onVisibleKeysChange}
               onSave={saveContactColumnConfig}
+              onCreateField={onCreateField}
             />
           </div>
         </div>
@@ -392,12 +577,14 @@ export function ContactTable({
 
           {virtualRows.map((vrow) => {
             const contact = contacts[vrow.index]
+            if (!contact) return null
             const isSelected = selectedIds.has(contact.id)
+            const isBulkFillTarget = bulkFillActive && isSelected
 
             return (
               <div
                 key={contact.id}
-                className={`${styles.dataRow} ${isSelected ? styles.selected : ''}`}
+                className={`${styles.dataRow} ${isSelected ? styles.selected : ''} ${isBulkFillTarget ? styles.pendingBulkFill : ''}`}
                 style={{
                   gridTemplateColumns: gridCols,
                   position: 'absolute',
@@ -431,43 +618,68 @@ export function ContactTable({
                   </div>
                 )}
 
-                {/* Remaining columns — company name navigates, others are editable */}
-                {visibleCols.slice(1).map((col, relIdx) => {
+                {/* Remaining columns */}
+                {mergedVisibleCols.slice(1).map((col, relIdx) => {
                   const colIdx = relIdx + 1
                   const isCellFocused = editCell?.rowIdx === vrow.index && editCell?.colIdx === colIdx
+                  const fieldKey = col.field as keyof ContactSummary
+                  const customFieldId = col.key.startsWith('custom:') ? col.key.slice(7) : null
+                  const cellValue = customFieldId
+                    ? (customFieldValues?.[contact.id]?.[customFieldId] ?? null)
+                    : col.field ? (contact[fieldKey] as string | null) : null
+                  const isCustomSelect = !!customFieldId && col.type === 'select'
 
-                  // Company column: click navigates to company detail
-                  if (col.key === 'primaryCompanyName') {
+                  if (isCustomSelect && !isCellFocused) {
                     return (
                       <div
                         key={col.key}
-                        className={styles.companyCell}
-                        onClick={() => {
-                          if (contact.primaryCompanyId) {
-                            navigate(`/company/${contact.primaryCompanyId}`)
-                          }
-                        }}
+                        className={styles.chipCell}
+                        onClick={() => handleStartEdit(vrow.index, colIdx)}
                       >
-                        {contact.primaryCompanyName
-                          ? <span className={`${styles.companyCellText} ${contact.primaryCompanyId ? styles.companyCellLink : ''}`}>{contact.primaryCompanyName}</span>
-                          : <span className={styles.cellEmpty}>—</span>
-                        }
+                        {cellValue ? (
+                          <span className={styles.chip} style={chipStyle(cellValue)}>
+                            {cellValue}
+                          </span>
+                        ) : null}
                       </div>
                     )
                   }
 
-                  const fieldKey = col.field as keyof ContactSummary
                   return (
                     <EditableCell
                       key={col.key}
-                      value={col.field ? contact[fieldKey] : null}
+                      value={cellValue}
                       col={col}
                       isFocused={isCellFocused}
                       onStartEdit={() => handleStartEdit(vrow.index, colIdx)}
                       onEndEdit={(dir) => handleEndEdit(vrow.index, colIdx, dir ?? null)}
+                      onAddOption={
+                        col.type === 'select'
+                          ? async (newOption) => {
+                              if (customFieldId) {
+                                const def = useCustomFieldStore.getState().contactDefs.find(d => d.id === customFieldId)
+                                await addCustomFieldOption(customFieldId, def?.optionsJson ?? null, newOption)
+                              } else {
+                                const builtinDef = useCustomFieldStore.getState().contactDefs.find(d => d.isBuiltin && d.fieldKey === col.key)
+                                if (builtinDef) await addCustomFieldOption(builtinDef.id, builtinDef.optionsJson, newOption)
+                              }
+                            }
+                          : undefined
+                      }
                       onSave={async (newVal) => {
-                        if (!col.field) return
-                        await handleCellSave(contact, col.field, newVal)
+                        if (customFieldId) {
+                          await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, {
+                            fieldDefinitionId: customFieldId,
+                            entityType: 'contact',
+                            entityId: contact.id,
+                            valueText: col.type === 'number' ? null : (newVal || null),
+                            valueNumber: col.type === 'number' ? (newVal ? parseFloat(newVal) : null) : null,
+                          })
+                          onPatchCustomField?.(contact.id, customFieldId, newVal)
+                        } else {
+                          if (!col.field) return
+                          await handleCellSave(contact, col.field, newVal)
+                        }
                       }}
                     />
                   )

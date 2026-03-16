@@ -9,9 +9,10 @@ interface ColumnPickerProps {
   onChange: (visibleKeys: string[]) => void
   /** Called after each toggle to persist the new key list (entity-specific save). */
   onSave: (visibleKeys: string[]) => void
+  onCreateField?: () => void
 }
 
-export function ColumnPicker({ visibleKeys, allDefs, onChange, onSave }: ColumnPickerProps) {
+export function ColumnPicker({ visibleKeys, allDefs, onChange, onSave, onCreateField }: ColumnPickerProps) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -62,6 +63,15 @@ export function ColumnPicker({ visibleKeys, allDefs, onChange, onSave }: ColumnP
               </div>
             )
           })}
+          {onCreateField && (
+            <>
+              <div className={styles.divider} />
+              <div className={styles.item} onClick={() => { setOpen(false); onCreateField() }}>
+                <span className={styles.itemCheck} />
+                New field…
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

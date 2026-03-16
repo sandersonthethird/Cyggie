@@ -13,7 +13,8 @@ import type {
   CompanyDriveFileRef,
   CompanyPriority,
   CompanyRound,
-  CompanyPipelineStage
+  CompanyPipelineStage,
+  CompanyDedupDecision
 } from '../../shared/types/company'
 import { ingestCompanyEmails, cancelCompanyEmailIngest } from '../services/company-email-ingest.service'
 import { hasDriveFilesScope } from '../calendar/google-auth'
@@ -351,6 +352,34 @@ export function registerCompanyHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_DEDUP_SUSPECTED,
+    (_event, limit?: number) => {
+      return companyRepo.listSuspectedDuplicateCompanies(limit)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_DEDUP_APPLY,
+    (_event, decisions: CompanyDedupDecision[]) => {
+      if (!Array.isArray(decisions)) {
+        throw new Error('decisions must be an array')
+      }
+      const userId = getCurrentUserId()
+      const result = companyRepo.applyCompanyDedupDecisions(decisions, userId)
+      logAudit(userId, 'company', 'dedup-bulk', 'update', {
+        reviewedGroups: result.reviewedGroups,
+        mergedGroups: result.mergedGroups,
+        deletedGroups: result.deletedGroups,
+        skippedGroups: result.skippedGroups,
+        mergedCompanies: result.mergedCompanies,
+        deletedCompanies: result.deletedCompanies,
+        failures: result.failures.slice(0, 20)
+      })
+      return result
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.COMPANY_DELETE, (_event, companyId: string) => {
     if (!companyId?.trim()) throw new Error('companyId is required')
     const userId = getCurrentUserId()
@@ -441,6 +470,16 @@ export function registerCompanyHandlers(): void {
       if (!companyId) throw new Error('companyId is required')
       if (!contactId) throw new Error('contactId is required')
       companyRepo.linkContactToCompany(companyId, contactId)
+      return { success: true }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_UNLINK_CONTACT,
+    (_event, companyId: string, contactId: string) => {
+      if (!companyId) throw new Error('companyId is required')
+      if (!contactId) throw new Error('contactId is required')
+      companyRepo.unlinkContactFromCompany(companyId, contactId)
       return { success: true }
     }
   )

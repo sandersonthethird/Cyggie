@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanyContactRef } from '../../../shared/types/company'
@@ -34,6 +34,12 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
     setLoaded(false)
   }
 
+  async function handleUnlinkContact(e: React.MouseEvent, contactId: string) {
+    e.stopPropagation()
+    await api.invoke(IPC_CHANNELS.COMPANY_UNLINK_CONTACT, companyId, contactId)
+    setLoaded(false)
+  }
+
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
       <div className={styles.searchRow}>
@@ -51,7 +57,7 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
         <div
           key={contact.id}
           className={styles.contact}
-          onClick={() => navigate(`/contacts/${contact.id}`)}
+          onClick={() => navigate(`/contact/${contact.id}`)}
         >
           <ContactAvatar name={contact.fullName} size="md" />
           <div className={styles.info}>
@@ -66,6 +72,13 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
             {contact.meetingCount > 0 && (
               <span className={styles.badge}>{contact.meetingCount} mtg</span>
             )}
+            <button
+              className={styles.removeBtn}
+              onClick={(e) => handleUnlinkContact(e, contact.id)}
+              title="Remove contact"
+            >
+              ×
+            </button>
           </div>
         </div>
       ))}

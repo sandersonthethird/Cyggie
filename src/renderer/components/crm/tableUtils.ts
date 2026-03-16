@@ -5,6 +5,8 @@
  * (no React, no IPC, no DOM dependencies).
  */
 
+import type { CustomFieldDefinition } from '../../../shared/types/custom-fields'
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Minimal column definition used by sort/config utilities. */
@@ -19,6 +21,92 @@ export interface ColumnDef {
   editable: boolean
   type: 'text' | 'select' | 'number' | 'date' | 'computed'
   options?: { value: string; label: string }[]
+  /** Display prefix for values (e.g. '$' for currency columns). Used by RangeFilter. */
+  prefix?: string
+  /** Display suffix for values (e.g. 'M' for $M columns). Used by RangeFilter. */
+  suffix?: string
+}
+
+// ─── Range & text filter types ────────────────────────────────────────────────
+
+/** Inclusive range bounds for number and date columns. Both ends are optional. */
+export type RangeValue = { min?: string; max?: string }
+
+/**
+ * Generic range filter (Pass 2) — shared by filterCompanies and filterContacts.
+ *
+ * IMPORTANT: Date fields from SQLite arrive as 'YYYY-MM-DD HH:MM:SS'.
+ * Slice to 10 chars before comparing against <input type="date"> values ('YYYY-MM-DD'),
+ * otherwise boundary records (e.g. createdAt='2024-01-15 10:30:00' with max='2024-01-15')
+ * would be incorrectly excluded because '2024-01-15 10:30:00' > '2024-01-15' lexicographically.
+ *
+ * Empty-string guard: URL params can arrive as '' when cleared; Number('') === 0, which would
+ * silently filter by 0 for numeric columns. The `min !== ''` / `max !== ''` guards prevent this.
+ */
+export function applyRangeFilter<T extends Record<string, unknown>>(
+  rows: T[],
+  rangeFilters: Record<string, RangeValue>
+): T[] {
+  const active = Object.entries(rangeFilters).filter(
+    ([, r]) => (r.min != null && r.min !== '') || (r.max != null && r.max !== '')
+  )
+  if (active.length === 0) return rows
+  return rows.filter((row) =>
+    active.every(([field, { min, max }]) => {
+      const raw = row[field]
+      if (raw == null) return false
+      if (typeof raw === 'number') {
+        if (min != null && min !== '' && raw < Number(min)) return false
+        if (max != null && max !== '' && raw > Number(max)) return false
+      } else {
+        // Normalize SQLite 'YYYY-MM-DD HH:MM:SS' → 'YYYY-MM-DD' for string comparison
+        const dateVal = String(raw).slice(0, 10)
+        if (min != null && min !== '' && dateVal < min) return false
+        if (max != null && max !== '' && dateVal > max) return false
+      }
+      return true
+    })
+  )
+}
+
+/**
+ * Generic select filter (Pass 1) — exact string match against option values.
+ * Shared by filterCompanies and filterContacts.
+ *
+ * Each entry in selectFilters is an OR list for that field; fields are ANDed together.
+ */
+export function applySelectFilter<T extends Record<string, unknown>>(
+  rows: T[],
+  selectFilters: Record<string, string[]>
+): T[] {
+  const active = Object.entries(selectFilters).filter(([, v]) => v.length > 0)
+  if (active.length === 0) return rows
+  return rows.filter((row) =>
+    active.every(([field, values]) => {
+      const cellVal = row[field]
+      if (cellVal == null) return false
+      return values.includes(String(cellVal))
+    })
+  )
+}
+
+/**
+ * Generic text filter (Pass 3) — case-insensitive contains match.
+ * Shared by filterCompanies and filterContacts.
+ */
+export function applyTextFilter<T extends Record<string, unknown>>(
+  rows: T[],
+  textFilters: Record<string, string>
+): T[] {
+  const active = Object.entries(textFilters).filter(([, v]) => v.trim().length > 0)
+  if (active.length === 0) return rows
+  return rows.filter((row) =>
+    active.every(([field, query]) => {
+      const raw = row[field]
+      if (raw == null) return false
+      return String(raw).toLowerCase().includes(query.toLowerCase())
+    })
+  )
 }
 
 export interface SortState {
@@ -73,6 +161,38 @@ export function saveColumnConfig(storageKey: string, keys: string[]): void {
     localStorage.setItem(storageKey, JSON.stringify(keys))
   } catch {
     console.warn(`[tableUtils] Failed to save column config (${storageKey})`)
+  }
+}
+
+/**
+ * Returns a { load, save } helper pair for persisting column widths.
+ *
+ * Usage:
+ *   const { load: loadColumnWidths, save: saveColumnWidths } =
+ *     createColumnWidthsHelper('cyggie:company-table-widths')
+ */
+export function createColumnWidthsHelper(storageKey: string): {
+  load: () => Record<string, number>
+  save: (widths: Record<string, number>) => void
+} {
+  return {
+    load(): Record<string, number> {
+      try {
+        const raw = localStorage.getItem(storageKey)
+        if (!raw) return {}
+        return JSON.parse(raw) as Record<string, number>
+      } catch {
+        console.warn(`[tableUtils] Column widths parse failed (${storageKey}), using defaults`)
+        return {}
+      }
+    },
+    save(widths: Record<string, number>): void {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(widths))
+      } catch {
+        console.warn(`[tableUtils] Failed to save column widths (${storageKey})`)
+      }
+    }
   }
 }
 
@@ -164,4 +284,49 @@ export async function executeBulkEdit(opts: BulkEditOpts): Promise<BulkEditResul
   }
 
   return { failedIds }
+}
+
+// ─── Custom field columns ─────────────────────────────────────────────────────
+
+/**
+ * Converts custom field definitions from the store into ColumnDef objects
+ * that can be merged with built-in COLUMN_DEFS and passed to the table.
+ *
+ * Keys are prefixed with 'custom:' to distinguish from built-in columns.
+ * field is null so that pass-1 filters (applySelectFilter etc.) skip these
+ * columns; a second pass against customFieldValues handles their filtering.
+ */
+export function buildCustomFieldColumnDefs(defs: CustomFieldDefinition[]): ColumnDef[] {
+  return defs.map((def) => ({
+    key: `custom:${def.id}`,
+    label: def.label,
+    field: null,
+    defaultVisible: false,
+    width: 140,
+    minWidth: 80,
+    sortable: false,
+    editable: true,
+    type:
+      def.fieldType === 'number' || def.fieldType === 'currency'
+        ? 'number'
+        : def.fieldType === 'date'
+          ? 'date'
+          : def.fieldType === 'select' || def.fieldType === 'multiselect'
+            ? 'select'
+            : 'text',
+    options:
+      def.fieldType === 'select' || def.fieldType === 'multiselect'
+        ? parseCustomOptions(def.optionsJson)
+        : undefined,
+  }))
+}
+
+function parseCustomOptions(json: string | null): { value: string; label: string }[] | undefined {
+  if (!json) return undefined
+  try {
+    const arr = JSON.parse(json) as string[]
+    return arr.map((v) => ({ value: v, label: v }))
+  } catch {
+    return undefined
+  }
 }

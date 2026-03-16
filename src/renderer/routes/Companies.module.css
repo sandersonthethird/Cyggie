@@ -16,6 +16,12 @@
   border-bottom: 1px solid var(--color-border);
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .scopeRow {
   display: flex;
   gap: 4px;
@@ -65,6 +71,65 @@
   color: var(--color-text-primary);
   background: var(--color-card-hover);
 }
+
+/* ── Actions dropdown ── */
+.actionsDropdown {
+  position: relative;
+}
+
+.actionsBtn {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.actionsBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-card-hover);
+}
+
+.actionsBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actionsMenu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 4px;
+  z-index: 50;
+}
+
+.actionsMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.actionsMenuItem:hover { background: var(--color-card-hover); }
+.actionsMenuItem:disabled { opacity: 0.5; cursor: default; }
 
 /* ── Filter chips row ── */
 .filterRow {
@@ -184,21 +249,26 @@
 }
 
 .filterClearAll {
-  padding: 6px 12px 2px;
-  border-top: 1px solid var(--color-bg-tertiary);
-}
-
-.filterClearAll button {
   background: none;
   border: none;
-  padding: 0;
+  padding: 2px 6px;
   font-size: 11px;
   color: var(--color-text-tertiary);
   cursor: pointer;
+  margin-left: 2px;
 }
 
-.filterClearAll button:hover {
+.filterClearAll:hover {
   color: var(--color-danger);
+}
+
+/* ── Status banners ── */
+.statusBanner {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  padding: 4px 12px;
+  flex-shrink: 0;
 }
 
 /* ── Error ── */
@@ -300,4 +370,185 @@
 .chatSection {
   flex-shrink: 0;
   border-top: 1px solid var(--color-border);
+}
+
+/* ── Dedup dialog ── */
+.dedupOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(10, 18, 31, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.dedupDialog {
+  width: min(960px, 100%);
+  max-height: min(86vh, 900px);
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
+}
+
+.dedupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dedupTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.dedupCloseButton {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.dedupCloseButton:disabled { opacity: 0.5; cursor: default; }
+
+.dedupSubtitle {
+  margin: 0;
+  padding: 10px 16px 12px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.dedupTableWrap {
+  overflow: auto;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dedupTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.dedupTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-card-bg);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.dedupTable td {
+  vertical-align: top;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+}
+
+.dedupReason { color: var(--color-text-primary); font-weight: 600; }
+.dedupReasonMeta { margin-top: 2px; color: var(--color-text-tertiary); font-size: 11px; }
+
+.dedupContactList { display: flex; flex-direction: column; gap: 7px; }
+.dedupContactItem { display: flex; flex-direction: column; gap: 2px; }
+
+.dedupContactRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dedupContactSelect {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.dedupContactCheckbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.dedupContactName {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dedupContactMeta { color: var(--color-text-secondary); font-size: 11px; }
+
+.dedupSelect {
+  width: 170px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.dedupFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.dedupSummary { font-size: 12px; color: var(--color-text-secondary); }
+.dedupActions { display: flex; align-items: center; gap: 8px; }
+
+.dedupCancelButton {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.dedupApplyButton {
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.dedupCancelButton:disabled,
+.dedupApplyButton:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

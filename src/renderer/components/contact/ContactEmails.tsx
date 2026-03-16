@@ -7,10 +7,11 @@ import styles from './ContactEmails.module.css'
 
 interface ContactEmailsProps {
   contactId: string
+  hasEmail?: boolean
   className?: string
 }
 
-export function ContactEmails({ contactId, className }: ContactEmailsProps) {
+export function ContactEmails({ contactId, hasEmail = true, className }: ContactEmailsProps) {
   const [emails, setEmails] = useState<ContactEmailRef[]>([])
   const [loaded, setLoaded] = useState(false)
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null)
@@ -23,7 +24,7 @@ export function ContactEmails({ contactId, className }: ContactEmailsProps) {
     progressMsg,
     handleSync,
     handleCancel
-  } = useEmailSync('contact', contactId, () => setLoaded(false))
+  } = useEmailSync('contact', contactId, () => setLoaded(false), { disabled: !hasEmail })
 
   useEffect(() => {
     if (loaded) return

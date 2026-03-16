@@ -31,17 +31,16 @@ export function listContactNotes(contactId: string): ContactNote[] {
   const rows = db
     .prepare(`
       SELECT
-        n.id,
-        n.contact_id,
-        n.theme_id,
-        COALESCE(NULLIF(TRIM(n.title), ''), m.title) AS title,
-        n.content,
-        n.is_pinned,
-        n.created_at,
-        n.updated_at
-      FROM contact_notes n
-      LEFT JOIN meetings m ON m.id = n.source_meeting_id
-      WHERE n.contact_id = ?
+        id,
+        contact_id,
+        theme_id,
+        title,
+        content,
+        is_pinned,
+        created_at,
+        updated_at
+      FROM contact_notes
+      WHERE contact_id = ?
       ORDER BY is_pinned DESC, datetime(updated_at) DESC
     `)
     .all(contactId) as ContactNoteRow[]
@@ -73,18 +72,9 @@ export function getContactNote(noteId: string): ContactNote | null {
   const db = getDatabase()
   const row = db
     .prepare(`
-      SELECT
-        n.id,
-        n.contact_id,
-        n.theme_id,
-        COALESCE(NULLIF(TRIM(n.title), ''), m.title) AS title,
-        n.content,
-        n.is_pinned,
-        n.created_at,
-        n.updated_at
-      FROM contact_notes n
-      LEFT JOIN meetings m ON m.id = n.source_meeting_id
-      WHERE n.id = ?
+      SELECT id, contact_id, theme_id, title, content, is_pinned, created_at, updated_at
+      FROM contact_notes
+      WHERE id = ?
     `)
     .get(noteId) as ContactNoteRow | undefined
   return row ? rowToContactNote(row) : null

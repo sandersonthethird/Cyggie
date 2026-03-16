@@ -56,7 +56,8 @@ function getProgressFilter(entityType: EntityType, entityId: string) {
 export function useEmailSync(
   entityType: EntityType,
   entityId: string,
-  onSyncSuccess?: () => void
+  onSyncSuccess?: () => void,
+  options?: { disabled?: boolean }
 ): UseEmailSyncReturn {
   const channels = getChannels(entityType)
   const storageKey = getStorageKey(entityType, entityId)
@@ -124,6 +125,7 @@ export function useEmailSync(
   // Auto-sync on mount if last-synced > 24h and autoSyncEmails is enabled
   const didAutoSync = useRef(false)
   useEffect(() => {
+    if (options?.disabled) return
     if (didAutoSync.current) return
     didAutoSync.current = true
 

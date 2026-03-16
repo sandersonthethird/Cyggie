@@ -79,3 +79,8 @@
   border-color: var(--color-primary);
   color: #fff;
 }
+
+.divider {
+  border-top: 1px solid var(--color-border);
+  margin: 4px 0;
+}

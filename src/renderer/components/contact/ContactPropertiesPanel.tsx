@@ -3,11 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactDetail } from '../../../shared/types/contact'
 import type { CustomFieldWithValue } from '../../../shared/types/custom-fields'
+import ConfirmDialog from '../common/ConfirmDialog'
 import { daysSince, formatCurrency, formatDate } from '../../utils/format'
 import { usePreferencesStore } from '../../stores/preferences.store'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
+import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
 import { PropertyRow } from '../crm/PropertyRow'
 import { CustomFieldsPanel } from '../crm/CustomFieldsPanel'
+import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
 import { ChipSelect } from '../crm/ChipSelect'
 import { SummaryConfigPopover } from '../crm/SummaryConfigPopover'
 import { SocialsEditor } from '../crm/SocialsEditor'
@@ -18,6 +21,7 @@ import {
   CONTACT_HEADER_KEYS
 } from './contactColumns'
 import styles from './ContactPropertiesPanel.module.css'
+import { api } from '../../api'
 
 const CONTACT_TYPE_STYLE: Record<string, string> = {
   investor: styles.chipInvestor,
@@ -60,14 +64,21 @@ export function ContactPropertiesPanel({ contact, lastTouchpoint, onUpdate }: Co
   const navigate = useNavigate()
   const [isEditing, setIsEditing] = useState(false)
   const [showAllFields, setShowAllFields] = useState(false)
-  const [nameDraft, setNameDraft] = useState(contact.fullName)
+  const [firstNameDraft, setFirstNameDraft] = useState(contact.firstName ?? '')
+  const [lastNameDraft, setLastNameDraft] = useState(contact.lastName ?? '')
   const [showConfig, setShowConfig] = useState(false)
   const [customFields, setCustomFields] = useState<CustomFieldWithValue[]>([])
-  const nameInputRef = useRef<HTMLInputElement>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [createFieldOpen, setCreateFieldOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const firstNameInputRef = useRef<HTMLInputElement>(null)
 
   const { getJSON, setJSON } = usePreferencesStore()
   const { contactDefs } = useCustomFieldStore()
   const pinnedKeys = getJSON<string[]>('cyggie:contact-summary-fields', [])
+
+  const contactTypeDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'contactType')
+  const contactTypeOptions = mergeBuiltinOptions(CONTACT_TYPES, contactTypeDef?.optionsJson ?? null)
 
   function togglePinnedKey(key: string) {
     const next = pinnedKeys.includes(key)
@@ -76,13 +87,14 @@ export function ContactPropertiesPanel({ contact, lastTouchpoint, onUpdate }: Co
     setJSON('cyggie:contact-summary-fields', next)
   }
 
-  // Sync name draft when entering edit mode
+  // Sync name drafts when entering edit mode
   useEffect(() => {
     if (isEditing) {
-      setNameDraft(contact.fullName)
-      setTimeout(() => nameInputRef.current?.focus(), 0)
+      setFirstNameDraft(contact.firstName ?? '')
+      setLastNameDraft(contact.lastName ?? '')
+      setTimeout(() => firstNameInputRef.current?.focus(), 0)
     }
-  }, [isEditing, contact.fullName])
+  }, [isEditing, contact.firstName, contact.lastName])
 
   function save(field: string, value: unknown) {
     return window.api
@@ -95,17 +107,30 @@ export function ContactPropertiesPanel({ contact, lastTouchpoint, onUpdate }: Co
   }
 
   function handleDone() {
-    const trimmed = nameDraft.trim()
-    if (trimmed && trimmed !== contact.fullName) {
-      const spaceIdx = trimmed.indexOf(' ')
-      const firstName = spaceIdx >= 0 ? trimmed.slice(0, spaceIdx) : trimmed
-      const lastName = spaceIdx >= 0 ? trimmed.slice(spaceIdx + 1) : ''
+    const firstName = firstNameDraft.trim()
+    const lastName = lastNameDraft.trim()
+    const fullName = [firstName, lastName].filter(Boolean).join(' ')
+    if (fullName && fullName !== contact.fullName) {
       window.api
-        .invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { firstName, lastName })
-        .then(() => { onUpdate({ firstName, lastName, fullName: trimmed }) })
+        .invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { firstName: firstName || null, lastName: lastName || null })
+        .then(() => { onUpdate({ firstName: firstName || null, lastName: lastName || null, fullName }) })
         .catch(console.error)
     }
     setIsEditing(false)
+  }
+
+  async function handleDeleteContact() {
+    if (deleting) return
+    setDeleting(true)
+    try {
+      await api.invoke(IPC_CHANNELS.CONTACT_DELETE, contact.id)
+      navigate('/contacts')
+    } catch (err) {
+      console.error('[ContactPropertiesPanel] delete failed:', err)
+    } finally {
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
   }
 
   function handleNameKeyDown(e: React.KeyboardEvent) {
@@ -164,18 +189,37 @@ export function ContactPropertiesPanel({ contact, lastTouchpoint, onUpdate }: Co
 
   return (
     <div className={styles.panel}>
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete contact?"
+        message={`This will permanently delete ${contact.fullName}.`}
+        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
+        variant="danger"
+        onConfirm={handleDeleteContact}
+        onCancel={() => setConfirmDelete(false)}
+      />
       {/* Header */}
       <div className={styles.header}>
         <ContactAvatar name={contact.fullName} size="lg" />
         <div className={styles.headerMeta}>
           {isEditing ? (
-            <input
-              ref={nameInputRef}
-              className={styles.nameInput}
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-              onKeyDown={handleNameKeyDown}
-            />
+            <div className={styles.nameInputRow}>
+              <input
+                ref={firstNameInputRef}
+                className={styles.nameInput}
+                placeholder="First name"
+                value={firstNameDraft}
+                onChange={(e) => setFirstNameDraft(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+              />
+              <input
+                className={styles.nameInput}
+                placeholder="Last name"
+                value={lastNameDraft}
+                onChange={(e) => setLastNameDraft(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+              />
+            </div>
           ) : (
             <div className={styles.name}>{contact.fullName}</div>
           )}
@@ -194,11 +238,12 @@ export function ContactPropertiesPanel({ contact, lastTouchpoint, onUpdate }: Co
           <div className={styles.headerBadge}>
             <ChipSelect
               value={contact.contactType ?? ''}
-              options={[{ value: '', label: '—' }, ...CONTACT_TYPES]}
+              options={[{ value: '', label: '—' }, ...contactTypeOptions]}
               isEditing={isEditing}
               onSave={(v) => save('contactType', v || null)}
               className={`${styles.badge} ${contact.contactType ? (CONTACT_TYPE_STYLE[contact.contactType] ?? '') : ''}`}
               allowEmpty={true}
+              onAddOption={contactTypeDef ? async (opt) => addCustomFieldOption(contactTypeDef.id, contactTypeDef.optionsJson, opt) : undefined}
             />
             {pinnedKeys.map((key) => renderPinnedChip(key))}
             <div className={styles.configureWrap}>
@@ -305,7 +350,32 @@ export function ContactPropertiesPanel({ contact, lastTouchpoint, onUpdate }: Co
         </button>
       )}
 
-      <CustomFieldsPanel entityType="contact" entityId={contact.id} onFieldsLoaded={setCustomFields} />
+      <CustomFieldsPanel
+        entityType="contact"
+        entityId={contact.id}
+        onFieldsLoaded={setCustomFields}
+        onCreateField={() => setCreateFieldOpen(true)}
+      />
+
+      {createFieldOpen && (
+        <CreateCustomFieldModal
+          entityType="contact"
+          onSaved={() => setCreateFieldOpen(false)}
+          onClose={() => setCreateFieldOpen(false)}
+        />
+      )}
+
+      {isEditing && (
+        <div className={styles.deleteSection}>
+          <button
+            className={styles.deleteBtn}
+            onClick={() => setConfirmDelete(true)}
+            disabled={deleting}
+          >
+            Delete Contact
+          </button>
+        </div>
+      )}
     </div>
   )
 }

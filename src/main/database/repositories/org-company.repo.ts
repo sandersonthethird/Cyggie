@@ -13,7 +13,12 @@ import type {
   CompanyContactRef,
   CompanyEmailRef,
   CompanyFileRef,
-  CompanyTimelineItem
+  CompanyTimelineItem,
+  CompanyDedupAction,
+  CompanyDedupApplyResult,
+  CompanyDedupDecision,
+  CompanyDuplicateGroup,
+  CompanyDuplicateSummary
 } from '../../../shared/types/company'
 
 interface CompanyRow {
@@ -116,8 +121,32 @@ function getRegistrableDomain(domain: string): string {
   const tld = labels[labels.length - 1]
   const secondLevel = labels[labels.length - 2]
   if (tld.length === 2 && COMMON_SECOND_LEVEL_TLDS.has(secondLevel) && labels.length >= 3) {
-    return labels.slice(-3).join('.')
+  return labels.slice(-3).join('.')
+}
+
+const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
+
+function parseTimestamp(value: string | null | undefined): number {
+  if (!value) return Number.NaN
+  const trimmed = value.trim()
+  if (!trimmed) return Number.NaN
+  const normalized = SQLITE_DATETIME_RE.test(trimmed)
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed
+  return Date.parse(normalized)
+}
+
+function compareDuplicateCompanies(a: CompanyDuplicateSummary, b: CompanyDuplicateSummary): number {
+  const aUpdated = parseTimestamp(a.updatedAt)
+  const bUpdated = parseTimestamp(b.updatedAt)
+  if (!Number.isNaN(aUpdated) && !Number.isNaN(bUpdated) && aUpdated !== bUpdated) {
+    return bUpdated - aUpdated
   }
+  const aName = (a.canonicalName || '').trim().toLowerCase()
+  const bName = (b.canonicalName || '').trim().toLowerCase()
+  if (aName !== bName) return aName.localeCompare(bName)
+  return a.id.localeCompare(b.id)
+}
   return labels.slice(-2).join('.')
 }
 
@@ -483,6 +512,7 @@ export function listPipelineCompanies(filter?: {
   priority?: CompanyPriority | null
   round?: CompanyRound | null
   query?: string
+  passExpiryBefore?: string | null
 }): CompanySummary[] {
   const db = getDatabase()
   const conditions: string[] = ['c.pipeline_stage IS NOT NULL']
@@ -504,6 +534,19 @@ export function listPipelineCompanies(filter?: {
     conditions.push('(c.canonical_name LIKE ? OR c.description LIKE ?)')
     const like = `%${filter.query.trim()}%`
     params.push(like, like)
+  }
+  if (filter?.passExpiryBefore) {
+    // Exclude pass-stage companies whose most recent Pass decision is older than the cutoff.
+    // Companies with no Pass decision log are kept (MAX returns NULL, NULL < x is false).
+    conditions.push(`NOT (
+      c.pipeline_stage = 'pass'
+      AND (
+        SELECT MAX(cdl.decision_date)
+        FROM company_decision_logs cdl
+        WHERE cdl.company_id = c.id AND cdl.decision_type = 'Pass'
+      ) < ?
+    )`)
+    params.push(filter.passExpiryBefore)
   }
 
   const where = `WHERE ${conditions.join(' AND ')}`
@@ -531,6 +574,82 @@ export function listPipelineCompanies(filter?: {
     .all(...params) as CompanyRow[]
 
   return rows.map(rowToCompanySummary)
+}
+
+/**
+ * Read-only batch fetch by normalized name.
+ * Safe to call during previewImport — has NO CREATE side effects.
+ * (Never use getOrCreateCompanyByName in preview — it creates companies.)
+ * Chunked at 500 to stay under SQLite's 999-variable limit.
+ */
+export function getCompaniesByNormalizedNames(names: string[]): Record<string, CompanyDetail> {
+  if (names.length === 0) return {}
+  const db = getDatabase()
+  const CHUNK = 500
+  const result: Record<string, CompanyDetail> = {}
+  for (let i = 0; i < names.length; i += CHUNK) {
+    const chunk = names.slice(i, i + CHUNK)
+    const placeholders = chunk.map(() => '?').join(', ')
+    const rows = db
+      .prepare(
+        `SELECT id, canonical_name, normalized_name, entity_type, pipeline_stage,
+                primary_domain, sector, city, state, arr, raise_size, round
+         FROM org_companies WHERE lower(normalized_name) IN (${placeholders})`
+      )
+      .all(...chunk.map((n) => n.toLowerCase())) as Array<{
+        id: string
+        canonical_name: string
+        normalized_name: string
+        entity_type: string | null
+        pipeline_stage: string | null
+        primary_domain: string | null
+        sector: string | null
+        city: string | null
+        state: string | null
+        arr: number | null
+        raise_size: number | null
+        round: string | null
+      }>
+    for (const r of rows) {
+      // Build a minimal CompanyDetail (only comparison fields are populated from DB;
+      // other required fields use null/empty defaults — not used for display)
+      const nullStr = null as string | null
+      const nullNum = null as number | null
+      result[r.normalized_name] = {
+        id: r.id,
+        canonicalName: r.canonical_name,
+        normalizedName: r.normalized_name,
+        entityType: (r.entity_type as CompanyDetail['entityType']) ?? 'unknown',
+        pipelineStage: (r.pipeline_stage as CompanyDetail['pipelineStage']) ?? null,
+        primaryDomain: r.primary_domain,
+        sector: r.sector,
+        city: r.city,
+        state: r.state,
+        arr: r.arr,
+        raiseSize: r.raise_size,
+        round: (r.round as CompanyDetail['round']) ?? null,
+        // Required summary fields — populated with defaults
+        description: nullStr, websiteUrl: nullStr, stage: nullStr, status: 'active',
+        crmProvider: nullStr, crmCompanyId: nullStr, hqAddress: nullStr,
+        linkedinCompanyUrl: nullStr, twitterHandle: nullStr, crunchbaseUrl: nullStr,
+        angellistUrl: nullStr, targetCustomer: nullStr, businessModel: nullStr,
+        productStage: nullStr, revenueModel: nullStr, foundingYear: nullNum,
+        employeeCountRange: nullStr, burnRate: nullNum, runwayMonths: nullNum,
+        totalFundingRaised: nullNum, lastFundingDate: nullStr, leadInvestor: nullStr,
+        coInvestors: nullStr, relationshipOwner: nullStr, dealSource: nullStr,
+        warmIntroSource: nullStr, referralContactId: nullStr, nextFollowupDate: nullStr,
+        investmentSize: nullStr, ownershipPct: nullStr,
+        followonInvestmentSize: nullStr, totalInvested: nullStr,
+        postMoneyValuation: nullNum, priority: null,
+        includeInCompaniesView: false, classificationSource: 'manual',
+        classificationConfidence: nullNum, contactCount: 0, lastTouchpoint: nullStr,
+        meetingCount: 0, noteCount: 0, emailCount: 0,
+        createdAt: '', updatedAt: '',
+        industries: [], themes: []
+      } satisfies CompanyDetail
+    }
+  }
+  return result
 }
 
 export function getCompany(companyId: string): CompanyDetail | null {
@@ -1146,6 +1265,175 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
   }
 }
 
+export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplicateGroup[] {
+  const db = getDatabase()
+  const normalizedLimit = Number.isFinite(limitGroups)
+    ? Math.max(1, Math.min(Math.floor(limitGroups), 200))
+    : 30
+  const rows = db
+    .prepare(`
+      SELECT
+        id,
+        canonical_name,
+        primary_domain,
+        website_url,
+        entity_type,
+        pipeline_stage,
+        updated_at
+      FROM org_companies
+      WHERE (primary_domain IS NOT NULL AND TRIM(primary_domain) <> '')
+         OR (website_url IS NOT NULL AND TRIM(website_url) <> '')
+      ORDER BY datetime(updated_at) DESC
+    `)
+    .all() as Array<{
+    id: string
+    canonical_name: string
+    primary_domain: string | null
+    website_url: string | null
+    entity_type: CompanyEntityType
+    pipeline_stage: CompanyPipelineStage | null
+    updated_at: string
+  }>
+
+  const groupsByDomain = new Map<string, CompanyDuplicateSummary[]>()
+  for (const row of rows) {
+    const domainKey = normalizeDomain(row.primary_domain) || normalizeDomain(row.website_url)
+    if (!domainKey) continue
+    const summary: CompanyDuplicateSummary = {
+      id: row.id,
+      canonicalName: row.canonical_name,
+      primaryDomain: row.primary_domain,
+      websiteUrl: row.website_url,
+      entityType: row.entity_type,
+      pipelineStage: row.pipeline_stage,
+      updatedAt: row.updated_at
+    }
+    const existing = groupsByDomain.get(domainKey)
+    if (existing) {
+      existing.push(summary)
+    } else {
+      groupsByDomain.set(domainKey, [summary])
+    }
+  }
+
+  const groups: CompanyDuplicateGroup[] = []
+  for (const [domainKey, companies] of groupsByDomain.entries()) {
+    if (companies.length < 2) continue
+    const sortedCompanies = [...companies].sort(compareDuplicateCompanies)
+    const suggestedKeep = sortedCompanies[0]
+    if (!suggestedKeep) continue
+
+    groups.push({
+      key: `domain:${domainKey}`,
+      domain: domainKey,
+      reason: `Same domain: ${domainKey}`,
+      suggestedKeepCompanyId: suggestedKeep.id,
+      companies: sortedCompanies
+    })
+  }
+
+  groups.sort((a, b) => {
+    if (a.companies.length !== b.companies.length) {
+      return b.companies.length - a.companies.length
+    }
+    return a.key.localeCompare(b.key)
+  })
+
+  return groups.slice(0, normalizedLimit)
+}
+
+export function applyCompanyDedupDecisions(
+  decisions: CompanyDedupDecision[],
+  userId: string | null = null
+): CompanyDedupApplyResult {
+  const db = getDatabase()
+  const result: CompanyDedupApplyResult = {
+    reviewedGroups: 0,
+    mergedGroups: 0,
+    deletedGroups: 0,
+    skippedGroups: 0,
+    mergedCompanies: 0,
+    deletedCompanies: 0,
+    failures: []
+  }
+
+  if (!Array.isArray(decisions) || decisions.length === 0) {
+    return result
+  }
+
+  for (const decision of decisions) {
+    const groupKey = (decision.groupKey || '').trim() || 'unknown-group'
+    const action: CompanyDedupAction = decision.action
+    result.reviewedGroups += 1
+
+    if (action === 'skip') {
+      result.skippedGroups += 1
+      continue
+    }
+
+    try {
+      if (action !== 'delete' && action !== 'merge') {
+        throw new Error(`Unsupported action: ${action}`)
+      }
+
+      const keepCompanyId = (decision.keepCompanyId || '').trim()
+      if (!keepCompanyId) throw new Error('keepCompanyId is required')
+
+      const normalizedCompanyIds = [...new Set(
+        (decision.companyIds || [])
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0)
+      )]
+
+      if (normalizedCompanyIds.length < 2) {
+        throw new Error('At least two companies are required for de-duplication')
+      }
+      if (!normalizedCompanyIds.includes(keepCompanyId)) {
+        throw new Error('keepCompanyId must be included in companyIds')
+      }
+
+      const placeholders = normalizedCompanyIds.map(() => '?').join(', ')
+      const existing = db
+        .prepare(`
+          SELECT id
+          FROM org_companies
+          WHERE id IN (${placeholders})
+        `)
+        .all(...normalizedCompanyIds) as Array<{ id: string }>
+      if (existing.length !== normalizedCompanyIds.length) {
+        throw new Error('One or more companies no longer exist')
+      }
+
+      const sourceIds = normalizedCompanyIds.filter((id) => id !== keepCompanyId)
+      if (sourceIds.length === 0) {
+        result.skippedGroups += 1
+        continue
+      }
+
+      if (action === 'delete') {
+        for (const id of sourceIds) deleteCompany(id)
+        result.deletedGroups += 1
+        result.deletedCompanies += sourceIds.length
+        continue
+      }
+
+      for (const id of sourceIds) {
+        mergeCompanies(keepCompanyId, id)
+        result.mergedCompanies += 1
+      }
+      result.mergedGroups += 1
+    } catch (err) {
+      result.failures.push({
+        groupKey,
+        action,
+        reason: err instanceof Error ? err.message : String(err)
+      })
+    }
+  }
+
+  return result
+}
+
 export function deleteCompany(companyId: string): void {
   if (!companyId) throw new Error('companyId is required')
 
@@ -1391,6 +1679,18 @@ export function linkContactToCompany(companyId: string, contactId: string): void
     VALUES (?, ?, 0, datetime('now'))
     ON CONFLICT(company_id, contact_id) DO NOTHING
   `).run(companyId, contactId)
+}
+
+export function unlinkContactFromCompany(companyId: string, contactId: string): void {
+  const db = getDatabase()
+  db.prepare(`
+    DELETE FROM org_company_contacts WHERE company_id = ? AND contact_id = ?
+  `).run(companyId, contactId)
+  // If this was the contact's primary company, clear it
+  db.prepare(`
+    UPDATE contacts SET primary_company_id = NULL, updated_at = datetime('now')
+    WHERE id = ? AND primary_company_id = ?
+  `).run(contactId, companyId)
 }
 
 export function listCompanyEmails(companyId: string): CompanyEmailRef[] {

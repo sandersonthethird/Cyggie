@@ -2,11 +2,14 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
   filterContacts,
-  sortContacts,
   CONTACT_COLUMN_DEFS
 } from '../renderer/components/contact/contactColumns'
+import { sortRows } from '../renderer/components/crm/tableUtils'
 import type { SortState } from '../renderer/components/crm/tableUtils'
 import type { ContactSummary } from '../shared/types/contact'
+
+const sortContacts = (contacts: ContactSummary[], sort: SortState, defs: typeof CONTACT_COLUMN_DEFS) =>
+  sortRows(contacts as Record<string, unknown>[], sort, defs) as ContactSummary[]
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -42,23 +45,23 @@ describe('filterContacts', () => {
   ]
 
   it('returns all contacts when typeFilter is empty', () => {
-    expect(filterContacts(contacts, [])).toHaveLength(4)
+    expect(filterContacts(contacts, {})).toHaveLength(4)
   })
 
   it('filters to a single type', () => {
-    const result = filterContacts(contacts, ['investor'])
+    const result = filterContacts(contacts, { contactType: ['investor'] })
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('1')
   })
 
   it('filters to multiple types', () => {
-    const result = filterContacts(contacts, ['investor', 'founder'])
+    const result = filterContacts(contacts, { contactType: ['investor', 'founder'] })
     expect(result).toHaveLength(2)
     expect(result.map((c) => c.id)).toEqual(['1', '2'])
   })
 
   it('excludes contacts with null contactType even when filter is non-empty', () => {
-    const result = filterContacts(contacts, ['investor', 'founder', 'operator'])
+    const result = filterContacts(contacts, { contactType: ['investor', 'founder', 'operator'] })
     expect(result).toHaveLength(3)
     expect(result.map((c) => c.id)).not.toContain('4')
   })

@@ -36,18 +36,52 @@ interface ViewsBarProps {
  * Normalize URLSearchParams to a stable string for drift comparison.
  * Sorts keys alphabetically, sorts multi-values within each key.
  */
-export function normalizeParams(params: { keys(): IterableIterator<string>; getAll(key: string): string[] }): string {
-  const keys = [...new Set(params.keys())].sort()
+export function normalizeParams(params: {
+  keys?: () => IterableIterator<string>
+  getAll(key: string): string[]
+  forEach?: (cb: (value: string, key: string) => void) => void
+}): string {
+  const keys = (() => {
+    if (typeof params.keys === 'function') {
+      return [...new Set(params.keys())]
+    }
+    if (typeof params.forEach === 'function') {
+      const set = new Set<string>()
+      params.forEach((_value, key) => set.add(key))
+      return [...set]
+    }
+    return []
+  })().sort()
   return keys
     .flatMap((k) => params.getAll(k).sort().map((v) => `${k}=${v}`))
     .join('&')
 }
 
+function normalizeViews(raw: unknown): SavedView[] {
+  if (!Array.isArray(raw)) return []
+  const views: SavedView[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const record = entry as Record<string, unknown>
+    const id = typeof record.id === 'string' ? record.id : null
+    const name = typeof record.name === 'string' ? record.name : null
+    const urlParams = typeof record.urlParams === 'string' ? record.urlParams : null
+    if (!id || !name || urlParams == null) continue
+    const columnsRaw = record.columns
+    const columns = Array.isArray(columnsRaw)
+      ? columnsRaw.filter((col) => typeof col === 'string')
+      : []
+    views.push({ id, name, urlParams, columns })
+  }
+  return views
+}
+
 function loadViews(storageKey: string): SavedView[] {
   try {
+    if (typeof localStorage === 'undefined') return []
     const raw = localStorage.getItem(storageKey)
     if (!raw) return []
-    return JSON.parse(raw) as SavedView[]
+    return normalizeViews(JSON.parse(raw))
   } catch {
     console.warn(`[ViewsBar] Failed to parse saved views (${storageKey})`)
     return []
@@ -56,6 +90,7 @@ function loadViews(storageKey: string): SavedView[] {
 
 function persistViews(storageKey: string, views: SavedView[]): void {
   try {
+    if (typeof localStorage === 'undefined') return
     localStorage.setItem(storageKey, JSON.stringify(views))
   } catch {
     console.warn(`[ViewsBar] Failed to save views (${storageKey}) — storage quota exceeded?`)
@@ -108,7 +143,8 @@ export function ViewsBar({ storageKey, currentParams, currentColumns, onApply }:
 
   function applyView(view: SavedView) {
     const params = new URLSearchParams()
-    for (const pair of view.urlParams.split('&')) {
+    const pairs = (view.urlParams || '').split('&')
+    for (const pair of pairs) {
       if (!pair) continue
       const eq = pair.indexOf('=')
       if (eq === -1) continue
@@ -128,8 +164,12 @@ export function ViewsBar({ storageKey, currentParams, currentColumns, onApply }:
   function saveCurrentView() {
     const name = saveName.trim()
     if (!name) return
+    const id =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `view-${Date.now()}-${Math.random().toString(16).slice(2)}`
     const view: SavedView = {
-      id: crypto.randomUUID(),
+      id,
       name,
       urlParams: normalizedCurrent,
       columns: [...currentColumns]

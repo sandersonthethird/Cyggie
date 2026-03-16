@@ -11,6 +11,7 @@ export function registerPipelineHandlers(): void {
       priority?: CompanyPriority | null
       round?: CompanyRound | null
       query?: string
+      passExpiryBefore?: string | null
     }) => {
       return companyRepo.listPipelineCompanies(filter)
     }

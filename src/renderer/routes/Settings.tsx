@@ -55,14 +55,14 @@ const CLAUDE_MODEL_OPTIONS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ]
 
-type SettingsTab = 'profile' | 'ai' | 'integrations' | 'storage' | 'custom-fields'
+type SettingsTab = 'profile' | 'ai' | 'integrations' | 'import' | 'custom-fields'
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   profile: 'Profile',
   ai: 'AI & Transcription',
   integrations: 'Integrations',
-  'custom-fields': 'Custom Fields',
-  storage: 'Storage'
+  import: 'Import',
+  'custom-fields': 'Custom Fields'
 }
 
 interface SettingsState {
@@ -85,7 +85,7 @@ export default function Settings() {
   const [searchParams] = useSearchParams()
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     const tab = searchParams.get('tab')
-    if (tab === 'ai' || tab === 'integrations' || tab === 'storage' || tab === 'profile') return tab
+    if (tab === 'ai' || tab === 'integrations' || tab === 'import' || tab === 'profile') return tab
     return 'profile'
   })
   const [initialLoad, setInitialLoad] = useState(true)
@@ -118,6 +118,7 @@ export default function Settings() {
   const [brandingLogoDataUrl, setBrandingLogoDataUrl] = useState('')
   const [staleRelationshipDays, setStaleRelationshipDays] = useState('21')
   const [stalledPipelineDays, setStalledPipelineDays] = useState('21')
+  const [passExpiryDays, setPassExpiryDays] = useState('30')
   const [contactOnboardingRunning, setContactOnboardingRunning] = useState(false)
   const [contactOnboardingUseWebLookup, setContactOnboardingUseWebLookup] = useState(false)
   const [contactOnboardingError, setContactOnboardingError] = useState('')
@@ -188,6 +189,7 @@ export default function Settings() {
           })
           setStaleRelationshipDays(all.dashboardStaleRelationshipDays || '21')
           setStalledPipelineDays(all.dashboardStalledPipelineDays || '21')
+          setPassExpiryDays(all.pipelinePassExpiryDays || '30')
           setBrandingLogoDataUrl(all.brandingLogoDataUrl || '')
         }
 
@@ -317,9 +319,14 @@ export default function Settings() {
       'dashboardStalledPipelineDays',
       stalledPipelineDays.trim() || '21'
     )
+    await api.invoke(
+      IPC_CHANNELS.SETTINGS_SET,
+      'pipelinePassExpiryDays',
+      passExpiryDays.trim() || '30'
+    )
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }, [settings, saveUserProfile, staleRelationshipDays, stalledPipelineDays])
+  }, [settings, saveUserProfile, staleRelationshipDays, stalledPipelineDays, passExpiryDays])
 
   const handleOpenStorage = useCallback(async () => {
     await api.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_DIR)
@@ -438,7 +445,7 @@ export default function Settings() {
   return (
     <div className={styles.container}>
       <div className={styles.tabRow}>
-        {(['profile', 'ai', 'integrations', 'storage', 'custom-fields'] as SettingsTab[]).map((tab) => (
+        {(['profile', 'ai', 'integrations', 'import', 'custom-fields'] as SettingsTab[]).map((tab) => (
           <button
             key={tab}
             className={`${styles.tab} ${activeTab === tab ? styles.activeTab : ''}`}
@@ -583,6 +590,16 @@ export default function Settings() {
                 min="1"
               />
             </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Remove Pass items from pipeline after (days)</label>
+              <input
+                type="number"
+                className={styles.input}
+                value={passExpiryDays}
+                onChange={(event) => setPassExpiryDays(event.target.value)}
+                min="1"
+              />
+            </div>
             <div className={styles.profileEditActions}>
               <button className={styles.connectBtn} onClick={() => setEditingThresholds(false)}>
                 Done
@@ -593,6 +610,7 @@ export default function Settings() {
           <>
             <p className={styles.profileMeta}>Stale relationship after: {staleRelationshipDays} days</p>
             <p className={styles.profileMeta}>Stalled pipeline after: {stalledPipelineDays} days</p>
+            <p className={styles.profileMeta}>Pass items expire after: {passExpiryDays} days</p>
           </>
         )}
       </section>
@@ -636,130 +654,6 @@ export default function Settings() {
         </div>
       </section>
 
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Contact Onboarding</h3>
-        <div className={styles.field}>
-          <p className={styles.hint}>
-            One-time pass: ingest Gmail threads for all contacts, enrich name/company details, and
-            backfill Contact &gt; Emails for contacts missing email history.
-          </p>
-          <label className={styles.checkboxLabel} style={{ marginTop: 8 }}>
-            <input
-              type="checkbox"
-              checked={contactOnboardingUseWebLookup}
-              onChange={(event) => setContactOnboardingUseWebLookup(event.target.checked)}
-            />
-            Use web lookup for missing title/company/LinkedIn
-          </label>
-          <div className={styles.onboardingActionRow}>
-            <button
-              className={styles.connectBtn}
-              onClick={handleRunContactOnboarding}
-              disabled={contactOnboardingRunning}
-            >
-              {contactOnboardingRunning
-                ? 'Running contact onboarding...'
-                : 'Ingest + Enrich Contacts from Gmail'}
-            </button>
-          </div>
-          {contactOnboardingRunning && (
-            <div className={styles.onboardingProgress}>
-              {contactOnboardingProgress ? (
-                <>
-                  <p className={styles.hint}>
-                    {formatOnboardingStage(contactOnboardingProgress.stage)}: {' '}
-                    {contactOnboardingProgress.completedContacts}/
-                    {contactOnboardingProgress.totalContacts}
-                    {contactOnboardingProgress.currentContactName
-                      ? ` (${contactOnboardingProgress.currentContactName})`
-                      : ''}
-                  </p>
-                  <p className={styles.hint}>
-                    Ingested {contactOnboardingProgress.ingestedContacts}, skipped already ingested{' '}
-                    {contactOnboardingProgress.skippedAlreadyIngested}, ingest failures{' '}
-                    {contactOnboardingProgress.ingestFailures}, enrichment failures{' '}
-                    {contactOnboardingProgress.enrichmentFailures}.
-                  </p>
-                </>
-              ) : (
-                <p className={styles.hint}>Starting contact onboarding...</p>
-              )}
-            </div>
-          )}
-          {contactOnboardingError && (
-            <p className={styles.error}>{contactOnboardingError}</p>
-          )}
-          {contactOnboardingResult && (
-            <div className={styles.onboardingResult}>
-              <p className={styles.hint}>
-                Scanned {contactOnboardingResult.scannedContacts} contacts. Ingested{' '}
-                {contactOnboardingResult.ingestedContacts}, skipped as already ingested{' '}
-                {contactOnboardingResult.skippedAlreadyIngested}, enriched{' '}
-                {contactOnboardingResult.enrichedContacts}.
-              </p>
-              <p className={styles.hint}>
-                Messages inserted/updated: {contactOnboardingResult.insertedMessageCount}/
-                {contactOnboardingResult.updatedMessageCount}, linked messages:{' '}
-                {contactOnboardingResult.linkedMessageCount}, linked contacts:{' '}
-                {contactOnboardingResult.linkedContactCount}.
-              </p>
-              <p className={styles.hint}>
-                Updates: names {contactOnboardingResult.updatedNames}, companies{' '}
-                {contactOnboardingResult.linkedCompanies}, titles{' '}
-                {contactOnboardingResult.updatedTitles}, LinkedIn{' '}
-                {contactOnboardingResult.updatedLinkedinUrls}.
-              </p>
-              {(contactOnboardingResult.ingestFailures > 0
-                || contactOnboardingResult.enrichmentFailures > 0) && (
-                <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
-                  Failures: ingest {contactOnboardingResult.ingestFailures}, enrich{' '}
-                  {contactOnboardingResult.enrichmentFailures}.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Meeting Notes Backfill</h3>
-        <div className={styles.field}>
-          <p className={styles.hint}>
-            Populates Contact and Company notes from historical meeting summaries.
-            Safe to run multiple times — already-backfilled notes are skipped.
-          </p>
-          <div className={styles.onboardingActionRow}>
-            <button
-              className={styles.connectBtn}
-              onClick={async () => {
-                setBackfillRunning(true)
-                setBackfillResult(null)
-                setBackfillError('')
-                try {
-                  const result = await api.invoke<{ meetings: number; created: number; skipped: number }>(
-                    IPC_CHANNELS.MEETING_NOTES_BACKFILL
-                  )
-                  setBackfillResult(result)
-                } catch (err) {
-                  setBackfillError(String(err))
-                } finally {
-                  setBackfillRunning(false)
-                }
-              }}
-              disabled={backfillRunning}
-            >
-              {backfillRunning ? 'Running…' : 'Backfill Meeting Notes'}
-            </button>
-          </div>
-          {backfillResult && (
-            <p className={styles.hint}>
-              Done — {backfillResult.meetings} meetings scanned, {backfillResult.created} notes created,{' '}
-              {backfillResult.skipped} skipped (already present).
-            </p>
-          )}
-          {backfillError && <p className={styles.error}>{backfillError}</p>}
-        </div>
-      </section>
         </>
       )}
 
@@ -1147,20 +1041,6 @@ export default function Settings() {
         </div>
       </section>
 
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Import Data</h3>
-        <p className={styles.hint} style={{ marginBottom: 12 }}>
-          Import contacts and companies from a CSV file. Cyggie will suggest field mappings automatically.
-        </p>
-        <button className={styles.connectBtn} onClick={() => setShowImportModal(true)}>
-          Import CSV
-        </button>
-      </section>
-        </>
-      )}
-
-      {activeTab === 'storage' && (
-        <>
       {/* Transcripts & Summaries */}
       <section className={styles.section}>
         <div className={styles.sectionTitleRow}>
@@ -1267,6 +1147,145 @@ export default function Settings() {
             )}
           </div>
         )}
+      </section>
+        </>
+      )}
+
+      {activeTab === 'import' && (
+        <>
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Contact Onboarding</h3>
+        <div className={styles.field}>
+          <p className={styles.hint}>
+            One-time pass: ingest Gmail threads for all contacts, enrich name/company details, and
+            backfill Contact &gt; Emails for contacts missing email history.
+          </p>
+          <label className={styles.checkboxLabel} style={{ marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={contactOnboardingUseWebLookup}
+              onChange={(event) => setContactOnboardingUseWebLookup(event.target.checked)}
+            />
+            Use web lookup for missing title/company/LinkedIn
+          </label>
+          <div className={styles.onboardingActionRow}>
+            <button
+              className={styles.connectBtn}
+              onClick={handleRunContactOnboarding}
+              disabled={contactOnboardingRunning}
+            >
+              {contactOnboardingRunning
+                ? 'Running contact onboarding...'
+                : 'Ingest + Enrich Contacts from Gmail'}
+            </button>
+          </div>
+          {contactOnboardingRunning && (
+            <div className={styles.onboardingProgress}>
+              {contactOnboardingProgress ? (
+                <>
+                  <p className={styles.hint}>
+                    {formatOnboardingStage(contactOnboardingProgress.stage)}: {' '}
+                    {contactOnboardingProgress.completedContacts}/
+                    {contactOnboardingProgress.totalContacts}
+                    {contactOnboardingProgress.currentContactName
+                      ? ` (${contactOnboardingProgress.currentContactName})`
+                      : ''}
+                  </p>
+                  <p className={styles.hint}>
+                    Ingested {contactOnboardingProgress.ingestedContacts}, skipped already ingested{' '}
+                    {contactOnboardingProgress.skippedAlreadyIngested}, ingest failures{' '}
+                    {contactOnboardingProgress.ingestFailures}, enrichment failures{' '}
+                    {contactOnboardingProgress.enrichmentFailures}.
+                  </p>
+                </>
+              ) : (
+                <p className={styles.hint}>Starting contact onboarding...</p>
+              )}
+            </div>
+          )}
+          {contactOnboardingError && (
+            <p className={styles.error}>{contactOnboardingError}</p>
+          )}
+          {contactOnboardingResult && (
+            <div className={styles.onboardingResult}>
+              <p className={styles.hint}>
+                Scanned {contactOnboardingResult.scannedContacts} contacts. Ingested{' '}
+                {contactOnboardingResult.ingestedContacts}, skipped as already ingested{' '}
+                {contactOnboardingResult.skippedAlreadyIngested}, enriched{' '}
+                {contactOnboardingResult.enrichedContacts}.
+              </p>
+              <p className={styles.hint}>
+                Messages inserted/updated: {contactOnboardingResult.insertedMessageCount}/
+                {contactOnboardingResult.updatedMessageCount}, linked messages:{' '}
+                {contactOnboardingResult.linkedMessageCount}, linked contacts:{' '}
+                {contactOnboardingResult.linkedContactCount}.
+              </p>
+              <p className={styles.hint}>
+                Updates: names {contactOnboardingResult.updatedNames}, companies{' '}
+                {contactOnboardingResult.linkedCompanies}, titles{' '}
+                {contactOnboardingResult.updatedTitles}, LinkedIn{' '}
+                {contactOnboardingResult.updatedLinkedinUrls}.
+              </p>
+              {(contactOnboardingResult.ingestFailures > 0
+                || contactOnboardingResult.enrichmentFailures > 0) && (
+                <p className={styles.hint} style={{ color: 'var(--color-warning)' }}>
+                  Failures: ingest {contactOnboardingResult.ingestFailures}, enrich{' '}
+                  {contactOnboardingResult.enrichmentFailures}.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Import Data</h3>
+        <p className={styles.hint} style={{ marginBottom: 12 }}>
+          Import contacts and companies from a CSV file. Cyggie will suggest field mappings automatically.
+        </p>
+        <button className={styles.connectBtn} onClick={() => setShowImportModal(true)}>
+          Import CSV
+        </button>
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Meeting Notes Backfill</h3>
+        <div className={styles.field}>
+          <p className={styles.hint}>
+            Populates Contact and Company notes from historical meeting summaries.
+            Safe to run multiple times — already-backfilled notes are skipped.
+          </p>
+          <div className={styles.onboardingActionRow}>
+            <button
+              className={styles.connectBtn}
+              onClick={async () => {
+                setBackfillRunning(true)
+                setBackfillResult(null)
+                setBackfillError('')
+                try {
+                  const result = await api.invoke<{ meetings: number; created: number; skipped: number }>(
+                    IPC_CHANNELS.MEETING_NOTES_BACKFILL
+                  )
+                  setBackfillResult(result)
+                } catch (err) {
+                  setBackfillError(String(err))
+                } finally {
+                  setBackfillRunning(false)
+                }
+              }}
+              disabled={backfillRunning}
+            >
+              {backfillRunning ? 'Running…' : 'Backfill Meeting Notes'}
+            </button>
+          </div>
+          {backfillResult && (
+            <p className={styles.hint}>
+              Done — {backfillResult.meetings} meetings scanned, {backfillResult.created} notes created,{' '}
+              {backfillResult.skipped} skipped (already present).
+            </p>
+          )}
+          {backfillError && <p className={styles.error}>{backfillError}</p>}
+        </div>
       </section>
         </>
       )}

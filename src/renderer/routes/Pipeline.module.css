@@ -409,16 +409,6 @@
   margin-bottom: 8px;
 }
 
-.cellSelect {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-card-bg);
-  color: var(--color-text);
-  padding: 3px 6px;
-  font-size: 12px;
-  width: 100%;
-}
-
 .cellInput {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -471,6 +461,67 @@
   white-space: nowrap;
 }
 
+/* Stage chip colors (match CompanyPropertiesPanel.module.css exactly) */
+.chipScreening     { background: #dbeafe; color: #1e40af; }
+.chipDiligence     { background: #ede9fe; color: #4c1d95; }
+.chipDecision      { background: #ffedd5; color: #9a3412; }
+.chipDocumentation { background: #ccfbf1; color: #0f766e; }
+.chipPass          { background: #e5e7eb; color: #374151; }
+
+/* Round chip colors */
+.chipPreSeed       { background: #fef9c3; color: #713f12; }
+.chipSeed          { background: #d1fae5; color: #065f46; }
+.chipSeedExtension { background: #a7f3d0; color: #064e3b; }
+.chipSeriesA       { background: #dbeafe; color: #1e40af; }
+.chipSeriesB       { background: #e0e7ff; color: #312e81; }
+
+/* Chip-style dropdown cell */
+.chipCell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  width: max-content;
+}
+
+.chipCell:hover {
+  opacity: 0.85;
+}
+
+.chipCellCaret {
+  font-size: 9px;
+  opacity: 0.65;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* Invisible select overlays chip — captures clicks, shows native dropdown */
+.chipCellSelect {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+.chipCellInput {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  width: 120px;
+}
+
 .empty {
   color: var(--color-text-secondary);
   font-size: 13px;
@@ -487,3 +538,18 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Color overrides for ChipDropdownCell — must come after .chipCell to win the cascade */
+.chipCell.priorityHigh         { background: #d4edda; color: #155724; }
+.chipCell.priorityFurtherWork  { background: #fff3cd; color: #856404; }
+.chipCell.priorityMonitor      { background: #f8d7da; color: #721c24; }
+.chipCell.chipScreening        { background: #dbeafe; color: #1e40af; }
+.chipCell.chipDiligence        { background: #ede9fe; color: #4c1d95; }
+.chipCell.chipDecision         { background: #ffedd5; color: #9a3412; }
+.chipCell.chipDocumentation    { background: #ccfbf1; color: #0f766e; }
+.chipCell.chipPass             { background: #e5e7eb; color: #374151; }
+.chipCell.chipPreSeed          { background: #fef9c3; color: #713f12; }
+.chipCell.chipSeed             { background: #d1fae5; color: #065f46; }
+.chipCell.chipSeedExtension    { background: #a7f3d0; color: #064e3b; }
+.chipCell.chipSeriesA          { background: #dbeafe; color: #1e40af; }
+.chipCell.chipSeriesB          { background: #e0e7ff; color: #312e81; }

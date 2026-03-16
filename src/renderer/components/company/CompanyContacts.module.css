@@ -80,3 +80,29 @@
   border-radius: 8px;
   padding: 1px 6px;
 }
+
+.removeBtn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.removeBtn:hover {
+  background: var(--color-danger-bg, #fee2e2);
+  color: var(--color-danger, #dc2626);
+}
+
+.contact:hover .removeBtn {
+  display: flex;
+}

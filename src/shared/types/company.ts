@@ -92,6 +92,49 @@ export interface CompanyDetail extends CompanySummary {
   themes: string[]
 }
 
+export type CompanyDedupAction = 'skip' | 'delete' | 'merge'
+
+export interface CompanyDuplicateSummary {
+  id: string
+  canonicalName: string
+  primaryDomain: string | null
+  websiteUrl: string | null
+  entityType: CompanyEntityType
+  pipelineStage: CompanyPipelineStage | null
+  updatedAt: string
+}
+
+export interface CompanyDuplicateGroup {
+  key: string
+  domain: string | null
+  reason: string
+  suggestedKeepCompanyId: string
+  companies: CompanyDuplicateSummary[]
+}
+
+export interface CompanyDedupDecision {
+  groupKey: string
+  action: CompanyDedupAction
+  keepCompanyId: string
+  companyIds: string[]
+}
+
+export interface CompanyDedupFailure {
+  groupKey: string
+  action: CompanyDedupAction
+  reason: string
+}
+
+export interface CompanyDedupApplyResult {
+  reviewedGroups: number
+  mergedGroups: number
+  deletedGroups: number
+  skippedGroups: number
+  mergedCompanies: number
+  deletedCompanies: number
+  failures: CompanyDedupFailure[]
+}
+
 export interface CompanyMeetingRef {
   id: string
   title: string

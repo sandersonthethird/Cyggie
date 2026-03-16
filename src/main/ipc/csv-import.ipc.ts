@@ -1,6 +1,6 @@
 import { ipcMain, dialog } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import type { FieldMapping, FieldDefaultsMap, ImportType } from '../../shared/types/csv-import'
+import type { FieldMapping, ImportType, RunImportOptions } from '../../shared/types/csv-import'
 import {
   parseCSVHeaders,
   suggestMappings,
@@ -59,8 +59,7 @@ export function registerCsvImportHandlers(): void {
       filePath: string,
       mappings: FieldMapping[],
       importType: ImportType,
-      contactDefaults?: FieldDefaultsMap,
-      companyDefaults?: FieldDefaultsMap
+      options: RunImportOptions = {}
     ) => {
       importAbortController = new AbortController()
 
@@ -74,8 +73,7 @@ export function registerCsvImportHandlers(): void {
           }
         },
         importAbortController.signal,
-        contactDefaults,
-        companyDefaults
+        options
       ).finally(() => {
         importAbortController = null
       })

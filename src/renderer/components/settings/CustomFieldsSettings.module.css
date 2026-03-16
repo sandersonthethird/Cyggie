@@ -1,29 +1,33 @@
-.root {
+.container {
   padding: 20px 0;
   max-width: 600px;
 }
 
-.title {
+.heading {
   font-size: 16px;
   font-weight: 700;
   color: var(--color-text);
   margin: 0 0 8px;
 }
 
-.description {
+.redirectNote {
   font-size: 13px;
   color: var(--color-text-secondary);
-  margin: 0 0 16px;
+  margin: 0 0 20px;
+  padding: 10px 14px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--color-border);
 }
 
-.entityTabs {
+.tabs {
   display: flex;
   gap: 4px;
   border-bottom: 1px solid var(--color-border);
   margin-bottom: 16px;
 }
 
-.entityTab {
+.tab {
   padding: 7px 16px;
   background: none;
   border: none;
@@ -32,34 +36,33 @@
   font-size: 13px;
   color: var(--color-text-secondary);
   cursor: pointer;
+  font-family: inherit;
 }
 
-.entityTabActive {
+.tabActive {
   color: var(--color-text);
   font-weight: 600;
   border-bottom-color: var(--color-primary);
 }
 
-.fieldList {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  margin-bottom: 12px;
-}
-
-.empty {
-  color: var(--color-text-tertiary);
+.emptyNote {
   font-size: 13px;
+  color: var(--color-text-tertiary);
   padding: 8px 0;
 }
 
-.fieldRow {
+.fieldList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldItem {
   display: flex;
   align-items: center;
   padding: 8px 10px;
   border-radius: var(--radius-sm, 4px);
   border: 1px solid var(--color-border);
-  margin-bottom: 4px;
   background: var(--color-card-bg);
   gap: 8px;
 }
@@ -67,8 +70,8 @@
 .fieldInfo {
   flex: 1;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -78,40 +81,10 @@
   color: var(--color-text);
 }
 
-.fieldType {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 1px 6px;
-}
-
-.fieldKey {
+.fieldMeta {
   font-size: 11px;
   color: var(--color-text-tertiary);
   font-family: monospace;
-}
-
-.fieldActions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.iconBtn {
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm, 4px);
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  padding: 2px 6px;
-  cursor: pointer;
-}
-
-.iconBtn:disabled {
-  opacity: 0.35;
-  cursor: default;
 }
 
 .deleteBtn {
@@ -120,26 +93,61 @@
   color: var(--color-danger);
   font-size: 12px;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+  font-family: inherit;
 }
 
-.deleteConfirm {
-  padding: 12px;
-  background: rgba(217, 69, 69, 0.08);
-  border: 1px solid var(--color-danger);
-  border-radius: var(--radius-sm, 4px);
+.deleteBtn:hover {
+  opacity: 0.8;
+}
+
+/* ── Delete confirmation overlay ── */
+.confirmOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.confirmDialog {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  padding: 20px;
+  max-width: 360px;
+  width: calc(100% - 40px);
+}
+
+.confirmText {
   font-size: 13px;
   color: var(--color-text);
-  margin-top: 8px;
+  margin: 0 0 16px;
+  line-height: 1.5;
 }
 
-.deleteConfirmActions {
+.confirmActions {
   display: flex;
   gap: 8px;
-  margin-top: 10px;
+  justify-content: flex-end;
 }
 
-.confirmDeleteBtn {
+.confirmCancel {
+  padding: 5px 14px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.confirmDelete {
   padding: 5px 14px;
   background: var(--color-danger);
   color: #fff;
@@ -148,124 +156,111 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  font-family: inherit;
 }
 
-.confirmDeleteBtn:disabled {
+.confirmDelete:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.cancelBtn {
-  padding: 5px 14px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm, 4px);
-  font-size: 12px;
+/* ── Built-in Field Extensions ── */
+.sectionDivider {
+  margin: 24px 0 16px;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+.subheading {
+  font-size: 14px;
+  font-weight: 600;
   color: var(--color-text);
-  cursor: pointer;
+  margin: 0 0 6px;
 }
 
-.addBtn {
-  padding: 6px 16px;
-  background: none;
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-sm, 4px);
-  color: var(--color-primary);
-  font-size: 13px;
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
+.extensionsNote {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: 0 0 14px;
 }
 
-.addBtn:hover {
-  background: var(--color-bg-secondary);
-}
-
-.form {
+.builtinGroup {
+  margin-bottom: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 4px);
-  padding: 16px;
+  overflow: hidden;
+}
+
+.builtinGroupLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 6px 10px;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.optionList {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+}
+
+.optionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--color-card-bg);
+  border-bottom: 1px solid var(--color-border);
+  cursor: grab;
+}
+
+.optionRow:last-child {
+  border-bottom: none;
+}
+
+.optionRow.dragging {
+  opacity: 0.4;
+}
+
+.dragHandle {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.optionLabel {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: text;
+  user-select: none;
+}
+
+.renameInput {
+  flex: 1;
+  font-size: 13px;
+  padding: 1px 4px;
+  border: 1px solid var(--color-primary);
+  border-radius: 3px;
+  font-family: inherit;
+  color: var(--color-text);
   background: var(--color-card-bg);
 }
 
-.formRow {
-  display: grid;
-  grid-template-columns: 100px 1fr;
-  align-items: center;
-  gap: 8px;
-}
-
-.formLabel {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-.formInput {
-  padding: 5px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm, 4px);
-  font-size: 13px;
-  color: var(--color-text);
-  background: var(--color-bg);
-  outline: none;
-}
-
-.formInput:focus {
-  border-color: var(--color-primary);
-}
-
-.formSelect {
-  padding: 5px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm, 4px);
-  font-size: 13px;
-  color: var(--color-text);
-  background: var(--color-bg);
-  outline: none;
-}
-
-.formCheckboxRow {
-  display: flex;
-  gap: 16px;
-  padding-left: 108px;
-}
-
-.checkboxLabel {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.formError {
-  font-size: 12px;
-  color: var(--color-danger);
-  padding-left: 108px;
-}
-
-.formActions {
-  display: flex;
-  gap: 8px;
-  padding-left: 108px;
-}
-
-.saveBtn {
-  padding: 6px 16px;
-  background: var(--color-primary);
-  color: #fff;
+.optionDeleteBtn {
+  background: none;
   border: none;
-  border-radius: var(--radius-sm, 4px);
-  font-size: 13px;
-  font-weight: 600;
+  color: var(--color-text-tertiary);
+  font-size: 16px;
+  line-height: 1;
   cursor: pointer;
+  padding: 0 2px;
+  flex-shrink: 0;
+  font-family: inherit;
 }
 
-.saveBtn:disabled {
-  opacity: 0.5;
-  cursor: default;
+.optionDeleteBtn:hover {
+  color: var(--color-danger);
 }

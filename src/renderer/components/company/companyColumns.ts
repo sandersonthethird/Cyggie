@@ -10,13 +10,17 @@ import type {
 import {
   createColumnConfigLoader,
   saveColumnConfig as saveColumnConfigBase,
-  sortRows as sortRowsBase,
+  createColumnWidthsHelper,
+  applySelectFilter,
+  applyRangeFilter,
+  applyTextFilter,
   type ColumnDef,
+  type RangeValue,
   type SortState
 } from '../crm/tableUtils'
 
 // Re-export shared types so existing imports keep working
-export type { ColumnDef, SortState }
+export type { ColumnDef, RangeValue, SortState }
 
 // ─── Option arrays ────────────────────────────────────────────────────────────
 
@@ -56,6 +60,31 @@ export const ROUNDS: { value: CompanyRound; label: string }[] = [
 
 export const EMPLOYEE_RANGES = [
   '1-10', '11-50', '51-200', '201-500', '501-1000', '1000+'
+]
+
+export const TARGET_CUSTOMERS: { value: string; label: string }[] = [
+  { value: 'b2b', label: 'B2B' },
+  { value: 'b2c', label: 'B2C' },
+  { value: 'b2b2c', label: 'B2B2C' },
+  { value: 'government', label: 'Government' },
+  { value: 'other', label: 'Other' },
+]
+
+export const BUSINESS_MODELS: { value: string; label: string }[] = [
+  { value: 'saas', label: 'SaaS' },
+  { value: 'marketplace', label: 'Marketplace' },
+  { value: 'transactional', label: 'Transactional' },
+  { value: 'hardware', label: 'Hardware' },
+  { value: 'services', label: 'Services' },
+  { value: 'other', label: 'Other' },
+]
+
+export const PRODUCT_STAGES: { value: string; label: string }[] = [
+  { value: 'pre_product', label: 'Pre-product' },
+  { value: 'mvp', label: 'MVP' },
+  { value: 'beta', label: 'Beta' },
+  { value: 'ga', label: 'GA' },
+  { value: 'scaling', label: 'Scaling' },
 ]
 
 // Keys that are hardcoded in the company header — excluded from the pin mechanism
@@ -100,7 +129,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
   },
   {
     key: 'pipelineStage',
-    label: 'Stage',
+    label: 'Process',
     field: 'pipelineStage',
     defaultVisible: true,
     width: 120,
@@ -166,7 +195,9 @@ export const COLUMN_DEFS: ColumnDef[] = [
     minWidth: 70,
     sortable: true,
     editable: true,
-    type: 'number'
+    type: 'number',
+    prefix: '$',
+    suffix: 'M'
   },
   {
     key: 'postMoneyValuation',
@@ -177,7 +208,9 @@ export const COLUMN_DEFS: ColumnDef[] = [
     minWidth: 100,
     sortable: true,
     editable: true,
-    type: 'number'
+    type: 'number',
+    prefix: '$',
+    suffix: 'M'
   },
   {
     key: 'arr',
@@ -188,7 +221,9 @@ export const COLUMN_DEFS: ColumnDef[] = [
     minWidth: 70,
     sortable: true,
     editable: true,
-    type: 'number'
+    type: 'number',
+    prefix: '$',
+    suffix: 'M'
   },
   {
     key: 'sector',
@@ -295,52 +330,36 @@ export function saveColumnConfig(visibleKeys: string[]): void {
   saveColumnConfigBase(COLUMNS_KEY, visibleKeys)
 }
 
-export function loadColumnWidths(): Record<string, number> {
-  try {
-    const raw = localStorage.getItem(WIDTHS_KEY)
-    if (!raw) return {}
-    return JSON.parse(raw) as Record<string, number>
-  } catch {
-    console.warn('[CompanyTable] Column widths parse failed, using defaults')
-    return {}
-  }
-}
-
-export function saveColumnWidths(widths: Record<string, number>): void {
-  try {
-    localStorage.setItem(WIDTHS_KEY, JSON.stringify(widths))
-  } catch {
-    console.warn('[CompanyTable] Failed to save column widths')
-  }
-}
-
-// ─── Sort (delegate to tableUtils) ────────────────────────────────────────────
-
-/** Client-side sort for CompanySummary[]. Nulls always sort last. */
-export function sortRows(
-  companies: CompanySummary[],
-  sort: SortState,
-  columnDefs: ColumnDef[]
-): CompanySummary[] {
-  return sortRowsBase(companies as Record<string, unknown>[], sort, columnDefs) as CompanySummary[]
-}
+const widthsHelper = createColumnWidthsHelper(WIDTHS_KEY)
+export const loadColumnWidths = widthsHelper.load
+export const saveColumnWidths = widthsHelper.save
 
 // ─── Filter ───────────────────────────────────────────────────────────────────
 
+/**
+ * Client-side filter for CompanySummary[].
+ *
+ * Three-pass chain (all filters AND together):
+ *   Pass 1: Select filters — exact match against option values
+ *   Pass 2: Range filters — numeric or date inclusive bounds (applyRangeFilter from tableUtils)
+ *   Pass 3: Text filters  — case-insensitive contains (applyTextFilter from tableUtils)
+ *
+ * Forward-compatible: adding new filterable columns to COLUMN_DEFS requires no changes here.
+ */
 export function filterCompanies(
   companies: CompanySummary[],
-  typeFilter: CompanyEntityType[],
-  stageFilter: CompanyPipelineStage[],
-  priorityFilter: CompanyPriority[]
+  filters: Record<string, string[]>,
+  rangeFilters?: Record<string, RangeValue>,
+  textFilters?: Record<string, string>
 ): CompanySummary[] {
-  return companies.filter(
-    (c) =>
-      (typeFilter.length === 0 || typeFilter.includes(c.entityType)) &&
-      (stageFilter.length === 0 ||
-        (c.pipelineStage != null && stageFilter.includes(c.pipelineStage))) &&
-      (priorityFilter.length === 0 ||
-        (c.priority != null && priorityFilter.includes(c.priority)))
-  )
+  // Three-pass chain (all filters AND together):
+  //   Pass 1: Select filters  — exact match against option values (applySelectFilter)
+  //   Pass 2: Range filters   — numeric or date inclusive bounds (applyRangeFilter)
+  //   Pass 3: Text filters    — case-insensitive contains (applyTextFilter)
+  let result = applySelectFilter(companies as Record<string, unknown>[], filters) as CompanySummary[]
+  result = applyRangeFilter(result as Record<string, unknown>[], rangeFilters ?? {}) as CompanySummary[]
+  result = applyTextFilter(result as Record<string, unknown>[], textFilters ?? {}) as CompanySummary[]
+  return result
 }
 
 // ─── URL → IPC filter builder ─────────────────────────────────────────────────

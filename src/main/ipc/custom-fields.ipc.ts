@@ -15,7 +15,10 @@ import {
   getFieldValuesForEntity,
   setFieldValue,
   deleteFieldValue,
-  countFieldValues
+  countFieldValues,
+  getBulkFieldValues,
+  countBuiltinOptionUsage,
+  renameBuiltinOption
 } from '../database/repositories/custom-fields.repo'
 
 function err(message: string, detail?: unknown) {
@@ -110,4 +113,39 @@ export function registerCustomFieldsIpc(): void {
       return err('Failed to count field values', e)
     }
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.CUSTOM_FIELD_GET_BULK_VALUES,
+    (_event, entityType: CustomFieldEntityType, fieldDefinitionIds: string[]) => {
+      try {
+        return { success: true, data: getBulkFieldValues(entityType, fieldDefinitionIds) }
+      } catch (e) {
+        return err('Failed to get bulk field values', e)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CUSTOM_FIELD_COUNT_BUILTIN_OPTION,
+    (_event, fieldKey: string, value: string) => {
+      try {
+        return { success: true, count: countBuiltinOptionUsage(fieldKey, value) }
+      } catch (e) {
+        return err('Failed to count builtin option usage', e)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CUSTOM_FIELD_RENAME_BUILTIN_OPTION,
+    (_event, defId: string, fieldKey: string, oldValue: string, newValue: string) => {
+      try {
+        renameBuiltinOption(defId, fieldKey, oldValue, newValue)
+        return { success: true }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Failed to rename builtin option'
+        return err(message, e)
+      }
+    }
+  )
 }

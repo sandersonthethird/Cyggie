@@ -7,11 +7,12 @@ import EmptyState from '../components/common/EmptyState'
 import ChatInterface from '../components/chat/ChatInterface'
 import { ContactTable } from '../components/contact/ContactTable'
 import { ViewsBar } from '../components/crm/ViewsBar'
+import { CreateCustomFieldModal } from '../components/crm/CreateCustomFieldModal'
 import {
   CONTACT_COLUMN_DEFS,
   loadContactColumnConfig,
-  filterContacts,
-  sortContacts
+  saveContactColumnConfig,
+  filterContacts
 } from '../components/contact/contactColumns'
 import type {
   ContactSummary,
@@ -21,10 +22,14 @@ import type {
   ContactDedupAction,
   ContactDedupApplyResult,
   ContactDedupDecision,
-  ContactDuplicateGroup,
-  ContactType
+  ContactDuplicateGroup
 } from '../../shared/types/contact'
+import { sortRows, buildCustomFieldColumnDefs } from '../components/crm/tableUtils'
 import type { SortState } from '../components/crm/tableUtils'
+import { useTableFilters } from '../hooks/useTableFilters'
+import { useCustomFieldValues } from '../hooks/useCustomFieldValues'
+import { useCustomFieldStore } from '../stores/custom-fields.store'
+import type { CustomFieldDefinition } from '../../shared/types/custom-fields'
 import styles from './Contacts.module.css'
 import { api } from '../api'
 
@@ -85,6 +90,10 @@ function normalizeSortKey(value: string | null | undefined): string {
   return (value || '').trim().toLowerCase()
 }
 
+// Maps ColumnDef.field → URL param name for backwards-compat with existing saved views.
+// Must be a stable module-level const (passed to useTableFilters as fieldToParamMap).
+const CONTACT_FIELD_TO_PARAM: Record<string, string> = { contactType: 'type' }
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Contacts() {
@@ -132,13 +141,65 @@ export default function Contacts() {
 
   // ── Columns + sort + filter (lifted for ViewsBar) ─────────────────────────
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => loadContactColumnConfig())
+
+  // ── Custom fields ───────────────────────────────────────────────────────────
+  const { contactDefs, refresh: refreshCustomFields } = useCustomFieldStore()
+  const [labelOverrides, setLabelOverrides] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('cyggie:column-label-overrides:contact') ?? '{}') }
+    catch { return {} }
+  })
+  const allDefs = useMemo(() => {
+    const customDefs = buildCustomFieldColumnDefs(contactDefs)
+    return [...CONTACT_COLUMN_DEFS, ...customDefs].map((d) => ({
+      ...d,
+      label: labelOverrides[d.key] ?? d.label
+    }))
+  }, [contactDefs, labelOverrides])
+
+  const { values: customFieldValues, patch: patchCustomField } = useCustomFieldValues(
+    'contact', visibleKeys, contacts.length
+  )
+
+  const [createFieldOpen, setCreateFieldOpen] = useState(false)
+
+  async function handleRenameColumn(key: string, label: string) {
+    if (key.startsWith('custom:')) {
+      const r = await api.invoke<{ success: boolean; message?: string }>(
+        IPC_CHANNELS.CUSTOM_FIELD_UPDATE_DEFINITION, key.slice(7), { label }
+      )
+      if (!r.success) {
+        console.warn('[rename] CUSTOM_FIELD_UPDATE_DEFINITION failed', r.message)
+        return
+      }
+      await refreshCustomFields()
+    } else {
+      const next = { ...labelOverrides, [key]: label }
+      setLabelOverrides(next)
+      localStorage.setItem('cyggie:column-label-overrides:contact', JSON.stringify(next))
+    }
+  }
+
+  async function handleFieldCreated(def: CustomFieldDefinition) {
+    await refreshCustomFields()
+    const newKey = `custom:${def.id}`
+    const next = [...visibleKeys, newKey]
+    setVisibleKeys(next)
+    saveContactColumnConfig(next)
+    setCreateFieldOpen(false)
+  }
+
   const rawSortKey = searchParams.get('sortKey') ?? ''
   const rawSortDir = searchParams.get('sortDir') ?? ''
   const sort: SortState = {
     key: CONTACT_COLUMN_DEFS.some((c) => c.key === rawSortKey) ? rawSortKey : 'name',
     dir: rawSortDir === 'desc' ? 'desc' : 'asc'
   }
-  const typeFilter = searchParams.getAll('type') as ContactType[]
+
+  // ── Column / range / text filters — URL-driven via shared hook ──────────────
+  const {
+    columnFilters, rangeFilters, textFilters, activeFilterCount,
+    handleColumnFilter, handleRangeFilter, handleTextFilter, clearAllFilters
+  } = useTableFilters({ columnDefs: CONTACT_COLUMN_DEFS, searchParams, setSearchParams, fieldToParamMap: CONTACT_FIELD_TO_PARAM })
 
   // ── URL param helpers ─────────────────────────────────────────────────────
   const query = (searchParams.get('q') || '').trim()
@@ -462,10 +523,9 @@ export default function Contacts() {
     void api.invoke(IPC_CHANNELS.CONTACT_UPDATE, id, patch)
   }, [])
 
-  const handleBulkDelete = useCallback(async (ids: string[]) => {
+  const handleBulkDelete = useCallback(async (_ids: string[]) => {
     setError(null)
     try {
-      await Promise.all(ids.map((id) => api.invoke(IPC_CHANNELS.CONTACT_DELETE, id)))
       await loadContacts(query)
     } catch (err) {
       setError(String(err))
@@ -506,9 +566,9 @@ export default function Contacts() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const filteredContacts = useMemo(
-    () => sortContacts(filterContacts(contacts, typeFilter), sort, CONTACT_COLUMN_DEFS),
+    () => sortRows(filterContacts(contacts, columnFilters, rangeFilters, textFilters) as Record<string, unknown>[], sort, CONTACT_COLUMN_DEFS) as ContactSummary[],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [contacts, typeFilter, sort.key, sort.dir]
+    [contacts, columnFilters, rangeFilters, textFilters, sort.key, sort.dir]
   )
 
   const dedupEditActive = Boolean(editingDedupContactId) || savingDedupContact
@@ -717,6 +777,66 @@ export default function Contacts() {
         </div>
       )}
 
+      {/* ── Filter chips ── */}
+      {activeFilterCount > 0 && (
+        <div className={styles.filterRow}>
+          {/* Select filter chips */}
+          {Object.entries(columnFilters).flatMap(([field, values]) => {
+            const col = CONTACT_COLUMN_DEFS.find((c) => c.field === field)
+            return values.map((v) => {
+              const label = col?.options?.find((o) => o.value === v)?.label ?? v
+              return (
+                <span key={`${field}:${v}`} className={styles.filterChip}>
+                  {col?.label ?? field}: {label}
+                  <button
+                    className={styles.filterChipX}
+                    onClick={() => handleColumnFilter(field, (columnFilters[field] ?? []).filter((p) => p !== v))}
+                  >
+                    ×
+                  </button>
+                </span>
+              )
+            })
+          })}
+          {/* Range filter chips */}
+          {Object.entries(rangeFilters).map(([field, { min, max }]) => {
+            const col = CONTACT_COLUMN_DEFS.find((c) => c.field === field)
+            const fmt = (v: string) =>
+              col?.type === 'date'
+                ? new Date(v + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                : `${col?.prefix ?? ''}${v}${col?.suffix ?? ''}`
+            const rangeLabel =
+              min && max && min === max ? `= ${fmt(min)}`
+              : min && max ? `${fmt(min)} – ${fmt(max)}`
+              : min ? `≥ ${fmt(min)}`
+              : `≤ ${fmt(max!)}`
+            return (
+              <span key={`range:${field}`} className={styles.filterChip}>
+                {col?.label ?? field}: {rangeLabel}
+                <button className={styles.filterChipX} onClick={() => handleRangeFilter(field, {})}>
+                  ×
+                </button>
+              </span>
+            )
+          })}
+          {/* Text filter chips */}
+          {Object.entries(textFilters).map(([field, value]) => {
+            const col = CONTACT_COLUMN_DEFS.find((c) => c.field === field)
+            return (
+              <span key={`text:${field}`} className={styles.filterChip}>
+                {col?.label ?? field}: &ldquo;{value}&rdquo;
+                <button className={styles.filterChipX} onClick={() => handleTextFilter(field, '')}>
+                  ×
+                </button>
+              </span>
+            )
+          })}
+          <button className={styles.filterClearAll} onClick={clearAllFilters}>
+            Clear all
+          </button>
+        </div>
+      )}
+
       {/* ── Table ── */}
       {!flagsLoading && !loading && contacts.length === 0 && !query && !showCreate ? (
         <EmptyState
@@ -734,6 +854,25 @@ export default function Contacts() {
           onBulkDelete={handleBulkDelete}
           visibleKeys={visibleKeys}
           onVisibleKeysChange={setVisibleKeys}
+          columnFilters={columnFilters}
+          onColumnFilter={handleColumnFilter}
+          rangeFilters={rangeFilters}
+          onRangeFilter={handleRangeFilter}
+          textFilters={textFilters}
+          onTextFilter={handleTextFilter}
+          allDefs={allDefs}
+          customFieldValues={customFieldValues}
+          onRenameColumn={handleRenameColumn}
+          onCreateField={() => setCreateFieldOpen(true)}
+          onPatchCustomField={patchCustomField}
+        />
+      )}
+
+      {createFieldOpen && (
+        <CreateCustomFieldModal
+          entityType="contact"
+          onSaved={(def) => void handleFieldCreated(def)}
+          onClose={() => setCreateFieldOpen(false)}
         />
       )}
 

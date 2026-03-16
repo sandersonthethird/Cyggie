@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type {
@@ -9,12 +9,16 @@ import type {
   CSVFileInfo,
   ImportProgress,
   ImportResult,
-  PreviewResult
+  PreviewResult,
+  RunImportOptions,
+  ContactDiff,
+  CompanyDiff
 } from '../../../shared/types/csv-import'
 import styles from './ImportModal.module.css'
 import { api } from '../../api'
 import { CONTACT_TYPES } from '../contact/contactColumns'
 import { ENTITY_TYPES, STAGES } from '../company/companyColumns'
+import { useCustomFieldStore } from '../../stores/custom-fields.store'
 
 // ─── UI-only type (extends wire format with display fields) ─────────────────
 
@@ -144,6 +148,7 @@ interface Props {
 
 export function ImportModal({ onClose }: Props) {
   const navigate = useNavigate()
+  const { companyDefs, contactDefs } = useCustomFieldStore()
   const [step, setStep] = useState<Step>(1)
 
   // Step 1 state
@@ -168,10 +173,31 @@ export function ImportModal({ onClose }: Props) {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
 
+  // Duplicate merge options (initialized from preview in useEffect below)
+  const [contactOverwriteFields, setContactOverwriteFields] = useState<string[]>([])
+  const [companyOverwriteFields, setCompanyOverwriteFields] = useState<string[]>([])
+  const [contactSkipIds, setContactSkipIds] = useState<Set<string>>(new Set())
+  const [companySkipIds, setCompanySkipIds] = useState<Set<string>>(new Set())
+
   // Step 4 state
   const [progress, setProgress] = useState<ImportProgress | null>(null)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [importing, setImporting] = useState(false)
+
+  // Initialize merge options from preview — all conflicts checked (CSV wins) by default
+  useEffect(() => {
+    if (!preview) return
+    const allContactFields = [...new Set(
+      preview.contactDiffs.flatMap((d) => d.fieldChanges.map((f) => f.field))
+    )]
+    const allCompanyFields = [...new Set(
+      preview.companyDiffs.flatMap((d) => d.fieldChanges.map((f) => f.field))
+    )]
+    setContactOverwriteFields(allContactFields)
+    setCompanyOverwriteFields(allCompanyFields)
+    setContactSkipIds(new Set())
+    setCompanySkipIds(new Set())
+  }, [preview])
 
   // ── Load file by path (shared by dialog and drag-and-drop) ──────
 
@@ -329,21 +355,31 @@ export function ImportModal({ onClose }: Props) {
       setProgress(raw as ImportProgress)
     })
 
+    const options: RunImportOptions = {
+      ...(Object.keys(contactDefaults).length > 0 && { contactDefaults }),
+      ...(Object.keys(companyDefaults).length > 0 && { companyDefaults }),
+      ...(contactOverwriteFields.length > 0 && { contactOverwriteFields }),
+      ...(companyOverwriteFields.length > 0 && { companyOverwriteFields }),
+      ...(contactSkipIds.size > 0 && { contactSkipIds: [...contactSkipIds] }),
+      ...(companySkipIds.size > 0 && { companySkipIds: [...companySkipIds] }),
+    }
+
     try {
       const importResult = await api.invoke<ImportResult>(
         IPC_CHANNELS.CSV_IMPORT,
         fileInfo.filePath,
         wireMappings,
         importType,
-        Object.keys(contactDefaults).length > 0 ? contactDefaults : undefined,
-        Object.keys(companyDefaults).length > 0 ? companyDefaults : undefined
+        options
       )
       setResult(importResult)
     } catch (err) {
       setResult({
         contactsCreated: 0,
         companiesCreated: 0,
-        skipped: 0,
+        contactsUpdated: 0,
+        contactFieldsFilled: 0,
+        contactFieldsOverwritten: 0,
         errors: [{ row: 0, message: String(err) }],
         durationMs: 0
       })
@@ -351,7 +387,8 @@ export function ImportModal({ onClose }: Props) {
       setImporting(false)
       unsubscribe()
     }
-  }, [fileInfo, mappings, importType, contactDefaults, companyDefaults])
+  }, [fileInfo, mappings, importType, contactDefaults, companyDefaults,
+      contactOverwriteFields, companyOverwriteFields, contactSkipIds, companySkipIds])
 
   const cancelImport = useCallback(() => {
     api.send(IPC_CHANNELS.CSV_IMPORT_CANCEL)
@@ -382,10 +419,17 @@ export function ImportModal({ onClose }: Props) {
 
   // ── Step labels ──────────────────────────────────────────────────
 
+  const conflictCount = preview
+    ? preview.contactDiffs.length + preview.companyDiffs.length
+    : 0
+  const conflictBadge = conflictCount > 0
+    ? ` · ${conflictCount} conflict${conflictCount > 1 ? 's' : ''}`
+    : ''
+
   const STEP_LABELS: Record<Step, string> = {
     1: 'Step 1 of 4 — Select File',
     2: 'Step 2 of 4 — Map Fields',
-    3: 'Step 3 of 4 — Preview',
+    3: `Step 3 of 4 — Preview${conflictBadge}`,
     4: 'Step 4 of 4 — Import',
   }
 
@@ -563,7 +607,9 @@ export function ImportModal({ onClose }: Props) {
                                 } else if (val === 'custom') {
                                   updateMapping(idx, { targetEntity: m.targetEntity ?? 'contact', targetField: null, customFieldLabel: m.csvHeader, isMultiSelect: m.isMultiValue ?? false, confidence: 'low' })
                                 } else {
-                                  const [entity, field] = val.split(':') as ['contact' | 'company', string]
+                                  const colonIdx = val.indexOf(':')
+                                  const entity = val.slice(0, colonIdx) as 'contact' | 'company'
+                                  const field = val.slice(colonIdx + 1)  // e.g. 'custom:{defId}' or 'fullName'
                                   updateMapping(idx, { targetEntity: entity, targetField: field, customFieldLabel: undefined, isMultiSelect: false, confidence: 'medium' })
                                 }
                               }}
@@ -593,6 +639,24 @@ export function ImportModal({ onClose }: Props) {
                                 <optgroup label="Company Fields">
                                   {companyOptions.map((f) => (
                                     <option key={f.value} value={`company:${f.value}`}>{f.label}</option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              {importType !== 'companies' && contactDefs.length > 0 && (
+                                <optgroup label="Contact Custom Fields">
+                                  {contactDefs.map((def) => (
+                                    <option key={def.id} value={`contact:custom:${def.id}`}>
+                                      {def.label}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              {importType !== 'contacts' && companyDefs.length > 0 && (
+                                <optgroup label="Company Custom Fields">
+                                  {companyDefs.map((def) => (
+                                    <option key={def.id} value={`company:custom:${def.id}`}>
+                                      {def.label}
+                                    </option>
                                   ))}
                                 </optgroup>
                               )}
@@ -682,38 +746,82 @@ export function ImportModal({ onClose }: Props) {
               )}
 
               {preview && !previewLoading && (
-                <div className={styles.previewStats}>
-                  <div className={styles.statCard}>
-                    <span className={styles.statNumber}>{preview.totalRows}</span>
-                    <span className={styles.statLabel}>Total rows</span>
+                <>
+                  <div className={styles.previewStats}>
+                    <div className={styles.statCard}>
+                      <span className={styles.statNumber}>{preview.totalRows}</span>
+                      <span className={styles.statLabel}>Total rows</span>
+                    </div>
+                    {importType !== 'companies' && (
+                      <div className={styles.statCard}>
+                        <span className={`${styles.statNumber} ${preview.duplicateContactCount > 0 ? styles.statWarning : ''}`}>
+                          {preview.duplicateContactCount}
+                        </span>
+                        <span className={styles.statLabel}>
+                          {preview.duplicateContactCount === 0
+                            ? 'No duplicate contacts'
+                            : `Contact${preview.duplicateContactCount > 1 ? 's' : ''} already exist (will be updated)`
+                          }
+                        </span>
+                      </div>
+                    )}
+                    {importType !== 'contacts' && (
+                      <div className={styles.statCard}>
+                        <span className={`${styles.statNumber} ${preview.duplicateCompanyCount > 0 ? styles.statWarning : ''}`}>
+                          {preview.duplicateCompanyCount}
+                        </span>
+                        <span className={styles.statLabel}>
+                          {preview.duplicateCompanyCount === 0
+                            ? 'No duplicate companies'
+                            : `Compan${preview.duplicateCompanyCount > 1 ? 'ies' : 'y'} already exist (will be updated)`
+                          }
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  {importType !== 'companies' && (
-                    <div className={styles.statCard}>
-                      <span className={`${styles.statNumber} ${preview.duplicateContactCount > 0 ? styles.statWarning : ''}`}>
-                        {preview.duplicateContactCount}
-                      </span>
-                      <span className={styles.statLabel}>
-                        {preview.duplicateContactCount === 0
-                          ? 'No duplicate contacts'
-                          : `Contact${preview.duplicateContactCount > 1 ? 's' : ''} already exist (will be skipped)`
-                        }
+
+                  {/* Clean merge callout: duplicates exist but no conflicts */}
+                  {preview.duplicateContactCount > 0 && preview.contactDiffs.length === 0 && (
+                    <div className={styles.cleanMergeCallout}>
+                      <span className={styles.cleanMergeIcon}>✓</span>
+                      <span>
+                        {preview.duplicateContactCount} contact{preview.duplicateContactCount > 1 ? 's' : ''} will be enriched — no conflicts.
+                        All changes fill currently blank fields only.
                       </span>
                     </div>
                   )}
-                  {importType !== 'contacts' && (
-                    <div className={styles.statCard}>
-                      <span className={`${styles.statNumber} ${preview.duplicateCompanyCount > 0 ? styles.statWarning : ''}`}>
-                        {preview.duplicateCompanyCount}
-                      </span>
-                      <span className={styles.statLabel}>
-                        {preview.duplicateCompanyCount === 0
-                          ? 'No duplicate companies'
-                          : `Compan${preview.duplicateCompanyCount > 1 ? 'ies' : 'y'} already exist (will be updated)`
-                        }
+                  {preview.duplicateCompanyCount > 0 && preview.companyDiffs.length === 0 && (
+                    <div className={styles.cleanMergeCallout}>
+                      <span className={styles.cleanMergeIcon}>✓</span>
+                      <span>
+                        {preview.duplicateCompanyCount} compan{preview.duplicateCompanyCount > 1 ? 'ies' : 'y'} will be enriched — no conflicts.
+                        All changes fill currently blank fields only.
                       </span>
                     </div>
                   )}
-                </div>
+
+                  {/* Conflict diff tables */}
+                  {preview.contactDiffs.length > 0 && (
+                    <DiffTable
+                      label="contact"
+                      diffs={preview.contactDiffs}
+                      overwriteFields={contactOverwriteFields}
+                      skipIds={contactSkipIds}
+                      onOverwriteFieldsChange={setContactOverwriteFields}
+                      onSkipIdsChange={setContactSkipIds}
+                    />
+                  )}
+                  {preview.companyDiffs.length > 0 && (
+                    <DiffTable
+                      label="company"
+                      diffs={preview.companyDiffs}
+                      overwriteFields={companyOverwriteFields}
+                      skipIds={companySkipIds}
+                      onOverwriteFieldsChange={setCompanyOverwriteFields}
+                      onSkipIdsChange={setCompanySkipIds}
+                    />
+                  )}
+                </>
               )}
             </>
           )}
@@ -754,11 +862,25 @@ export function ImportModal({ onClose }: Props) {
                       <span className={styles.resultVal}>{result.companiesCreated}</span>
                     </div>
                   )}
-                  {result.skipped > 0 && (
-                    <div className={styles.resultRow}>
-                      <span>Skipped (already exist)</span>
-                      <span className={styles.resultVal}>{result.skipped}</span>
-                    </div>
+                  {result.contactsUpdated > 0 && (
+                    <>
+                      <div className={styles.resultRow}>
+                        <span>Contacts updated</span>
+                        <span className={styles.resultVal}>{result.contactsUpdated}</span>
+                      </div>
+                      {result.contactFieldsFilled > 0 && (
+                        <div className={`${styles.resultRow} ${styles.resultRowIndent}`}>
+                          <span>Fields filled in</span>
+                          <span className={styles.resultVal}>{result.contactFieldsFilled}</span>
+                        </div>
+                      )}
+                      {result.contactFieldsOverwritten > 0 && (
+                        <div className={`${styles.resultRow} ${styles.resultRowIndent}`}>
+                          <span>Fields overwritten</span>
+                          <span className={styles.resultVal}>{result.contactFieldsOverwritten}</span>
+                        </div>
+                      )}
+                    </>
                   )}
                   <div className={styles.resultRow}>
                     <span>Duration</span>
@@ -1026,6 +1148,143 @@ function DefaultsSection({
             + {f.label}
           </button>
         ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── DiffTable ─────────────────────────────────────────────────────────────────
+// Per-column checkboxes control which fields are overwritten (CSV wins).
+// Per-row checkboxes exclude a specific record from any update (fill-blanks or overwrite).
+// ⚠️ name-field columns get a visual warning icon.
+
+const NAME_FIELDS = new Set(['full_name', 'first_name', 'last_name'])
+
+interface DiffTableProps {
+  label: 'contact' | 'company'
+  diffs: ContactDiff[] | CompanyDiff[]
+  overwriteFields: string[]
+  skipIds: Set<string>
+  onOverwriteFieldsChange: (fields: string[]) => void
+  onSkipIdsChange: (ids: Set<string>) => void
+}
+
+function DiffTable({
+  label,
+  diffs,
+  overwriteFields,
+  skipIds,
+  onOverwriteFieldsChange,
+  onSkipIdsChange,
+}: DiffTableProps) {
+  // Collect all conflicting field names across all records (for column headers)
+  const allFields = [...new Set(diffs.flatMap((d) => d.fieldChanges.map((f) => f.field)))]
+  const overwriteSet = new Set(overwriteFields)
+
+  const toggleField = (field: string) => {
+    if (overwriteSet.has(field)) {
+      onOverwriteFieldsChange(overwriteFields.filter((f) => f !== field))
+    } else {
+      onOverwriteFieldsChange([...overwriteFields, field])
+    }
+  }
+
+  const toggleSkip = (id: string) => {
+    const next = new Set(skipIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    onSkipIdsChange(next)
+  }
+
+  const acceptAll = () => {
+    onOverwriteFieldsChange(allFields)
+    onSkipIdsChange(new Set())
+  }
+
+  const declineAll = () => {
+    // Decline = clear overwrite columns. Rows stay checked (contacts still get fill-blanks).
+    onOverwriteFieldsChange([])
+  }
+
+  const getId = (d: ContactDiff | CompanyDiff) =>
+    'contactId' in d ? d.contactId : d.companyId
+
+  return (
+    <div className={styles.diffSection}>
+      <div className={styles.diffHeader}>
+        <span className={styles.diffTitle}>
+          {diffs.length} {label}{diffs.length > 1 ? 's' : ''} have conflicting data
+        </span>
+        <span className={styles.diffSubtitle}>
+          All CSV values are applied by default. Uncheck a column to preserve existing data.
+        </span>
+        <div className={styles.diffBulkBtns}>
+          <button className={styles.diffAcceptBtn} onClick={acceptAll}>Accept all</button>
+          <button className={styles.diffDeclineBtn} onClick={declineAll}>Decline all</button>
+        </div>
+      </div>
+
+      <div className={styles.diffTableWrapper}>
+        <table className={styles.diffTable}>
+          <thead>
+            <tr>
+              <th className={styles.diffContactCol}>
+                {label === 'contact' ? 'Contact' : 'Company'}
+              </th>
+              {allFields.map((field) => {
+                const label_ = diffs[0]?.fieldChanges.find((f) => f.field === field)?.label ?? field
+                return (
+                  <th key={field} className={styles.diffFieldCol}>
+                    <label className={styles.diffColLabel}>
+                      <input
+                        type="checkbox"
+                        checked={overwriteSet.has(field)}
+                        onChange={() => toggleField(field)}
+                      />
+                      {NAME_FIELDS.has(field) && <span className={styles.diffWarnIcon}>⚠</span>}
+                      {label_}
+                    </label>
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {diffs.map((d) => {
+              const id = getId(d)
+              const skipped = skipIds.has(id)
+              const changeMap = new Map(d.fieldChanges.map((f) => [f.field, f]))
+              return (
+                <tr key={id} className={skipped ? styles.diffRowSkipped : ''}>
+                  <td className={styles.diffContactCol}>
+                    <label className={styles.diffRowLabel}>
+                      <input
+                        type="checkbox"
+                        checked={!skipped}
+                        onChange={() => toggleSkip(id)}
+                        title={skipped ? 'Include this record' : 'Skip this record — no changes at all'}
+                      />
+                      {d.displayName}
+                    </label>
+                  </td>
+                  {allFields.map((field) => {
+                    const change = changeMap.get(field)
+                    if (!change) {
+                      return <td key={field} className={styles.diffCellEmpty}>—</td>
+                    }
+                    return (
+                      <td key={field} className={styles.diffCell}>
+                        <span className={styles.diffCellOld}>{change.existingValue}</span>
+                        <span className={styles.diffCellArrow}>→</span>
+                        <span className={styles.diffCellNew}>{change.csvValue}</span>
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   )

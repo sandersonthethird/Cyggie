@@ -9,6 +9,7 @@ import styles from './ContactTimeline.module.css'
 
 interface ContactTimelineProps {
   contactId: string
+  hasEmail?: boolean
   className?: string
 }
 
@@ -27,7 +28,7 @@ const FILTERS: Array<{ key: TimelineFilter; label: string }> = [
   { key: 'note', label: 'Notes' }
 ]
 
-export function ContactTimeline({ contactId, className }: ContactTimelineProps) {
+export function ContactTimeline({ contactId, hasEmail = true, className }: ContactTimelineProps) {
   const navigate = useNavigate()
   const [items, setItems] = useState<ContactTimelineItem[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -42,7 +43,7 @@ export function ContactTimeline({ contactId, className }: ContactTimelineProps) 
     progressMsg,
     handleSync,
     handleCancel
-  } = useEmailSync('contact', contactId, () => setLoaded(false))
+  } = useEmailSync('contact', contactId, () => setLoaded(false), { disabled: !hasEmail })
 
   useEffect(() => {
     if (loaded) return

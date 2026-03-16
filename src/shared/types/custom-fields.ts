@@ -23,6 +23,7 @@ export interface CustomFieldDefinition {
   isRequired: boolean
   sortOrder: number
   showInList: boolean
+  isBuiltin: boolean
   createdAt: string
   updatedAt: string
 }

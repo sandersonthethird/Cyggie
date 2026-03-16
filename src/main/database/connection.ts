@@ -45,6 +45,7 @@ import { runMeetingNotesSourceMigration } from './migrations/042-meeting-notes-s
 import { runUserPreferencesMigration } from './migrations/043-user-preferences'
 import { runCompanyDecisionLogsMigration } from './migrations/044-company-decision-logs'
 import { runPortfolioCompanyFieldsMigration } from './migrations/045-portfolio-company-fields'
+import { runBuiltinFieldDefsMigration } from './migrations/046-builtin-field-defs'
 
 let db: Database.Database | null = null
 
@@ -98,6 +99,7 @@ export function getDatabase(): Database.Database {
     runUserPreferencesMigration(db)
     runCompanyDecisionLogsMigration(db)
     runPortfolioCompanyFieldsMigration(db)
+    runBuiltinFieldDefsMigration(db)
   }
   return db
 }

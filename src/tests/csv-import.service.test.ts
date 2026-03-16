@@ -43,21 +43,25 @@ vi.mock('../main/database/connection', () => ({
 const mockCreateContact = vi.fn()
 const mockUpdateContact = vi.fn()
 const mockResolveContactsByEmails = vi.fn().mockReturnValue({})
+const mockGetContactsByIds = vi.fn().mockReturnValue({})
 const mockSetContactPrimaryCompany = vi.fn()
 
 vi.mock('../main/database/repositories/contact.repo', () => ({
   createContact: (...args: unknown[]) => mockCreateContact(...args),
   updateContact: (...args: unknown[]) => mockUpdateContact(...args),
   resolveContactsByEmails: (...args: unknown[]) => mockResolveContactsByEmails(...args),
+  getContactsByIds: (...args: unknown[]) => mockGetContactsByIds(...args),
   setContactPrimaryCompany: (...args: unknown[]) => mockSetContactPrimaryCompany(...args)
 }))
 
 const mockGetOrCreateCompanyByName = vi.fn()
 const mockUpdateCompany = vi.fn()
+const mockGetCompaniesByNormalizedNames = vi.fn().mockReturnValue({})
 
 vi.mock('../main/database/repositories/org-company.repo', () => ({
   getOrCreateCompanyByName: (...args: unknown[]) => mockGetOrCreateCompanyByName(...args),
-  updateCompany: (...args: unknown[]) => mockUpdateCompany(...args)
+  updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
+  getCompaniesByNormalizedNames: (...args: unknown[]) => mockGetCompaniesByNormalizedNames(...args)
 }))
 
 const mockCreateFieldDefinition = vi.fn()
@@ -129,6 +133,8 @@ beforeEach(() => {
   testDb = makeTestDb()
   vi.clearAllMocks()
   mockResolveContactsByEmails.mockReturnValue({})
+  mockGetContactsByIds.mockReturnValue({})
+  mockGetCompaniesByNormalizedNames.mockReturnValue({})
 })
 
 afterEach(() => {
@@ -342,29 +348,31 @@ describe('runImport — contacts only', () => {
     expect(result.errors).toHaveLength(0)
   })
 
-  it('skips rows with no name field and increments skipped count', async () => {
+  it('skips rows with no name field silently', async () => {
     const csv = 'Name,Email\n,missing@example.com\nAlice,alice@example.com\n'
     const filePath = writeTempCsv('no-name.csv', csv)
 
     const result = await runImport(filePath, mappings, 'contacts', vi.fn())
 
-    expect(result.skipped).toBe(1)
     expect(result.contactsCreated).toBe(1)
   })
 
-  it('skips duplicate contacts (email already exists) and adds to skipped count', async () => {
+  it('updates duplicate contacts (email already exists) and increments contactsUpdated', async () => {
     mockResolveContactsByEmails.mockReturnValue({
       'existing@example.com': 'existing-contact-id'
     })
-    mockCreateContact.mockReturnValue({ id: 'new-or-existing' })
+    mockGetContactsByIds.mockReturnValue({
+      'existing-contact-id': { id: 'existing-contact-id', full_name: 'Alice', email: 'existing@example.com' }
+    })
+    mockCreateContact.mockReturnValue({ id: 'existing-contact-id' })
 
     const csv = 'Name,Email\nAlice,existing@example.com\n'
     const filePath = writeTempCsv('dup.csv', csv)
 
     const result = await runImport(filePath, mappings, 'contacts', vi.fn())
 
-    // createContact is still called (upsert behavior), but wasNew = false → skipped
-    expect(result.skipped).toBe(1)
+    // wasNew = false → contactsUpdated (fill-blanks-only by default)
+    expect(result.contactsUpdated).toBe(1)
     expect(result.contactsCreated).toBe(0)
   })
 
@@ -527,6 +535,101 @@ describe('runImport — contacts_and_companies', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// runImport — existing custom field mappings (targetField = 'custom:{defId}')
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('runImport — existing custom field mappings', () => {
+  const baseMappings = [
+    { csvHeader: 'Name', targetEntity: 'contact' as const, targetField: 'full_name' },
+    { csvHeader: 'Email', targetEntity: 'contact' as const, targetField: 'email' },
+    { csvHeader: 'Company', targetEntity: 'company' as const, targetField: 'canonical_name' }
+  ]
+
+  beforeEach(() => {
+    mockCreateContact.mockImplementation(() => ({ id: `contact-${Date.now()}-${Math.random()}` }))
+    mockGetOrCreateCompanyByName.mockImplementation((name: string) => ({ id: `company-${name}`, isNew: true }))
+  })
+
+  it('calls setFieldValue with the defId extracted from targetField, not createFieldDefinition', async () => {
+    const mappings = [
+      ...baseMappings,
+      { csvHeader: 'Focus', targetEntity: 'contact' as const, targetField: 'custom:def-focus-123' }
+    ]
+    const csv = 'Name,Email,Company,Focus\nAlice,alice@acme.com,Acme,B2B\n'
+    const filePath = writeTempCsv('existing-custom-contact.csv', csv)
+
+    await runImport(filePath, mappings, 'contacts_and_companies', vi.fn())
+
+    expect(mockCreateFieldDefinition).not.toHaveBeenCalled()
+    expect(mockSetFieldValue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fieldDefinitionId: 'def-focus-123',
+        entityType: 'contact',
+        valueText: 'B2B'
+      })
+    )
+  })
+
+  it('calls setFieldValue with the defId for company existing custom mappings', async () => {
+    const mappings = [
+      ...baseMappings,
+      { csvHeader: 'Stage', targetEntity: 'company' as const, targetField: 'custom:def-stage-456' }
+    ]
+    const csv = 'Name,Email,Company,Stage\nBob,bob@beta.com,Beta,Seed\n'
+    const filePath = writeTempCsv('existing-custom-company.csv', csv)
+
+    await runImport(filePath, mappings, 'contacts_and_companies', vi.fn())
+
+    expect(mockCreateFieldDefinition).not.toHaveBeenCalled()
+    expect(mockSetFieldValue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fieldDefinitionId: 'def-stage-456',
+        entityType: 'company',
+        valueText: 'Seed'
+      })
+    )
+  })
+
+  it('skips setFieldValue when CSV value for existing custom mapping is empty', async () => {
+    const mappings = [
+      ...baseMappings,
+      { csvHeader: 'Focus', targetEntity: 'contact' as const, targetField: 'custom:def-focus-789' }
+    ]
+    const csv = 'Name,Email,Company,Focus\nAlice,alice@acme.com,Acme,\n'
+    const filePath = writeTempCsv('existing-custom-empty.csv', csv)
+
+    await runImport(filePath, mappings, 'contacts_and_companies', vi.fn())
+
+    expect(mockSetFieldValue).not.toHaveBeenCalled()
+  })
+
+  it('existing custom field mapping coexists with new custom field mapping in same import', async () => {
+    const mappings = [
+      ...baseMappings,
+      { csvHeader: 'Focus', targetEntity: 'contact' as const, targetField: 'custom:def-focus-existing' },
+      { csvHeader: 'Tier', targetEntity: 'contact' as const, targetField: null, customFieldLabel: 'Tier' }
+    ]
+    mockCreateFieldDefinition.mockReturnValue({ id: 'def-tier-new' })
+
+    const csv = 'Name,Email,Company,Focus,Tier\nAlice,alice@acme.com,Acme,B2B,Gold\n'
+    const filePath = writeTempCsv('mixed-custom.csv', csv)
+
+    await runImport(filePath, mappings, 'contacts_and_companies', vi.fn())
+
+    // new field created for Tier
+    expect(mockCreateFieldDefinition).toHaveBeenCalledTimes(1)
+    // setFieldValue called twice: once for existing def, once for new def
+    expect(mockSetFieldValue).toHaveBeenCalledTimes(2)
+    expect(mockSetFieldValue).toHaveBeenCalledWith(
+      expect.objectContaining({ fieldDefinitionId: 'def-focus-existing', valueText: 'B2B' })
+    )
+    expect(mockSetFieldValue).toHaveBeenCalledWith(
+      expect.objectContaining({ fieldDefinitionId: 'def-tier-new', valueText: 'Gold' })
+    )
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // previewImport
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -597,7 +700,7 @@ describe('runImport — field defaults', () => {
     const csv = 'Name\nAlice\n'
     const filePath = writeTempCsv('defaults-contact-type.csv', csv)
 
-    await runImport(filePath, nameMappings, 'contacts', vi.fn(), undefined, { contact_type: 'investor' })
+    await runImport(filePath, nameMappings, 'contacts', vi.fn(), undefined, { contactDefaults: { contact_type: 'investor' } })
 
     expect(mockCreateContact).toHaveBeenCalledWith(
       expect.objectContaining({ contactType: 'investor' }),
@@ -613,7 +716,7 @@ describe('runImport — field defaults', () => {
       { csvHeader: 'Type', targetEntity: 'contact' as const, targetField: 'contact_type' }
     ]
 
-    await runImport(filePath, mappingsWithType, 'contacts', vi.fn(), undefined, { contact_type: 'investor' })
+    await runImport(filePath, mappingsWithType, 'contacts', vi.fn(), undefined, { contactDefaults: { contact_type: 'investor' } })
 
     expect(mockCreateContact).toHaveBeenCalledWith(
       expect.objectContaining({ contactType: 'founder' }),
@@ -625,7 +728,7 @@ describe('runImport — field defaults', () => {
     const csv = 'Name\nAlice\n'
     const filePath = writeTempCsv('defaults-city.csv', csv)
 
-    await runImport(filePath, nameMappings, 'contacts', vi.fn(), undefined, { city: 'New York' })
+    await runImport(filePath, nameMappings, 'contacts', vi.fn(), undefined, { contactDefaults: { city: 'New York' } })
 
     expect(mockUpdateContact).toHaveBeenCalledWith(
       expect.any(String),
@@ -641,7 +744,7 @@ describe('runImport — field defaults', () => {
     const csv = 'Company\nAcme\n'
     const filePath = writeTempCsv('defaults-company.csv', csv)
 
-    await runImport(filePath, companyMappings, 'companies', vi.fn(), undefined, undefined, { entity_type: 'vc_fund' })
+    await runImport(filePath, companyMappings, 'companies', vi.fn(), undefined, { companyDefaults: { entity_type: 'vc_fund' } })
 
     expect(mockUpdateCompany).toHaveBeenCalledWith(
       'co-Acme',
@@ -654,7 +757,7 @@ describe('runImport — field defaults', () => {
     const csv = 'Name\nAlice\n'
     const filePath = writeTempCsv('defaults-empty.csv', csv)
 
-    await runImport(filePath, nameMappings, 'contacts', vi.fn(), undefined, { contact_type: '' })
+    await runImport(filePath, nameMappings, 'contacts', vi.fn(), undefined, { contactDefaults: { contact_type: '' } })
 
     expect(mockCreateContact).toHaveBeenCalledWith(
       expect.objectContaining({ contactType: null }),

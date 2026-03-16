@@ -3,8 +3,13 @@
  *
  * State machine:
  *   DISPLAY ──click──▶ EDIT ──blur/Enter──▶ SAVING ──success──▶ DISPLAY
- *                        │                      │
- *                     Escape                  error──▶ ERROR (revert + 3s) ──▶ DISPLAY
+ *                        │   │                 │
+ *                      Esc   picks sentinel   error──▶ ERROR (revert + 3s) ──▶ DISPLAY
+ *                        │   │
+ *                        │   ▼
+ *                        │  ADDING_OPTION ──Enter (non-empty)──▶ [addCustomFieldOption + onSave] ──▶ DISPLAY
+ *                        │        │
+ *                        └─ Esc/blur ──▶ DISPLAY
  *
  * Props:
  *   value       — current display value (string, number, null)
@@ -18,6 +23,7 @@
  */
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { daysSince, formatLastTouch } from '../../utils/format'
+import { AddOptionInlineInput } from '../crm/AddOptionInlineInput'
 import type { ColumnDef } from './companyColumns'
 import styles from './EditableCell.module.css'
 
@@ -27,6 +33,7 @@ interface EditableCellProps {
   value: unknown
   col: ColumnDef
   onSave: (newValue: string | null) => Promise<void>
+  onAddOption?: (newOption: string) => Promise<void>
   isFocused: boolean
   onStartEdit: () => void
   onEndEdit: (advanceDir?: 'down' | 'right' | null) => void
@@ -92,12 +99,14 @@ function EditableCellInner({
   value,
   col,
   onSave,
+  onAddOption,
   isFocused,
   onStartEdit,
   onEndEdit
 }: EditableCellProps) {
   const [cellState, setCellState] = useState<CellState>('display')
   const [draft, setDraft] = useState('')
+  const [addingOption, setAddingOption] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement>(null)
   const errorTimerRef = useRef<ReturnType<typeof setTimeout>>()
@@ -202,18 +211,42 @@ function EditableCellInner({
     >
       {errorMsg && <span className={styles.errorMsg}>{errorMsg}</span>}
 
-      {cellState === 'edit' && col.type === 'select' ? (
+      {cellState === 'edit' && col.type === 'select' && addingOption ? (
+        <AddOptionInlineInput
+          className={styles.editInput}
+          onConfirm={async (opt) => {
+            setAddingOption(false)
+            try {
+              await onAddOption?.(opt)
+              await onSave(opt)
+            } catch (e) {
+              console.error('[EditableCell] addOption failed:', e)
+            }
+            cancelEdit()
+          }}
+          onCancel={() => { setAddingOption(false); cancelEdit() }}
+        />
+      ) : cellState === 'edit' && col.type === 'select' ? (
         <select
           ref={inputRef as React.RefObject<HTMLSelectElement>}
           className={styles.editSelect}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            if (e.target.value === '__add_option__') {
+              setAddingOption(true)
+              return
+            }
+            setDraft(e.target.value)
+          }}
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
         >
           {col.options?.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
+          {onAddOption && (
+            <option value="__add_option__">+ Add option...</option>
+          )}
         </select>
       ) : cellState === 'edit' ? (
         <input

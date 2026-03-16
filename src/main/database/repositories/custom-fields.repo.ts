@@ -11,6 +11,20 @@ import type {
 
 const FIELD_KEY_REGEX = /^[a-z0-9_]+$/
 
+// Maps built-in camelCase field keys to their DB table and column names.
+// Column names come from this hardcoded map only — NOT from user input (no SQL injection risk).
+const FIELD_KEY_MAP: Record<string, { table: string; column: string }> = {
+  entityType:         { table: 'org_companies', column: 'entity_type' },
+  pipelineStage:      { table: 'org_companies', column: 'pipeline_stage' },
+  priority:           { table: 'org_companies', column: 'priority' },
+  round:              { table: 'org_companies', column: 'round' },
+  targetCustomer:     { table: 'org_companies', column: 'target_customer' },
+  businessModel:      { table: 'org_companies', column: 'business_model' },
+  productStage:       { table: 'org_companies', column: 'product_stage' },
+  employeeCountRange: { table: 'org_companies', column: 'employee_count_range' },
+  contactType:        { table: 'contacts',      column: 'contact_type' },
+}
+
 function rowToDefinition(row: Record<string, unknown>): CustomFieldDefinition {
   return {
     id: row.id as string,
@@ -22,9 +36,66 @@ function rowToDefinition(row: Record<string, unknown>): CustomFieldDefinition {
     isRequired: Boolean(row.is_required),
     sortOrder: row.sort_order as number,
     showInList: Boolean(row.show_in_list),
+    isBuiltin: Boolean(row.is_builtin),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string
   }
+}
+
+export function getFieldDefinitionById(id: string): CustomFieldDefinition | null {
+  const db = getDatabase()
+  const row = db
+    .prepare(`SELECT * FROM custom_field_definitions WHERE id = ?`)
+    .get(id) as Record<string, unknown> | undefined
+  return row ? rowToDefinition(row) : null
+}
+
+export function countBuiltinOptionUsage(fieldKey: string, value: string): number {
+  const mapping = FIELD_KEY_MAP[fieldKey]
+  if (!mapping) return 0
+  const db = getDatabase()
+  const row = db
+    .prepare(`SELECT COUNT(*) as n FROM ${mapping.table} WHERE ${mapping.column} = ?`)
+    .get(value) as { n: number }
+  return row.n
+}
+
+export function renameBuiltinOption(
+  defId: string,
+  fieldKey: string,
+  oldValue: string,
+  newValue: string
+): void {
+  const db = getDatabase()
+  const def = getFieldDefinitionById(defId)
+  if (!def) throw new Error(`[custom-fields.repo] renameBuiltinOption: def not found: ${defId}`)
+
+  let arr: string[] = []
+  if (def.optionsJson) {
+    try { arr = JSON.parse(def.optionsJson) } catch { arr = [] }
+  }
+  const idx = arr.indexOf(oldValue)
+  if (idx === -1) return // idempotent: value already renamed or doesn't exist
+
+  const updated = [...arr]
+  updated[idx] = newValue
+  const newJson = JSON.stringify(updated)
+  const now = new Date().toISOString()
+
+  const mapping = FIELD_KEY_MAP[fieldKey]
+
+  const doRename = db.transaction(() => {
+    db.prepare(
+      `UPDATE custom_field_definitions SET options_json = ?, updated_at = ? WHERE id = ?`
+    ).run(newJson, now, defId)
+
+    if (mapping) {
+      db.prepare(
+        `UPDATE ${mapping.table} SET ${mapping.column} = ? WHERE ${mapping.column} = ?`
+      ).run(newValue, oldValue)
+    }
+  })
+  doRename()
 }
 
 export function listFieldDefinitions(entityType: CustomFieldEntityType): CustomFieldDefinition[] {
@@ -225,4 +296,47 @@ export function countFieldValues(fieldDefinitionId: string): number {
     .prepare(`SELECT COUNT(*) as count FROM custom_field_values WHERE field_definition_id = ?`)
     .get(fieldDefinitionId) as { count: number }
   return row.count
+}
+
+/**
+ * Returns field values for multiple field definitions across all entities of the given type.
+ * Used to populate custom field columns in the table list view.
+ *
+ * Returns: { [entityId]: { [fieldDefinitionId]: displayString } }
+ */
+export function getBulkFieldValues(
+  entityType: CustomFieldEntityType,
+  fieldDefinitionIds: string[]
+): Record<string, Record<string, string>> {
+  if (fieldDefinitionIds.length === 0) return {}
+  const db = getDatabase()
+  const placeholders = fieldDefinitionIds.map(() => '?').join(',')
+  const rows = db
+    .prepare(
+      `SELECT cfv.entity_id, cfv.field_definition_id,
+              cfv.value_text, cfv.value_number, cfv.value_boolean, cfv.value_date,
+              cfd.field_type
+       FROM custom_field_values cfv
+       JOIN custom_field_definitions cfd ON cfv.field_definition_id = cfd.id
+       WHERE cfv.entity_type = ? AND cfv.field_definition_id IN (${placeholders})`
+    )
+    .all(entityType, ...fieldDefinitionIds) as Record<string, unknown>[]
+
+  const result: Record<string, Record<string, string>> = {}
+  for (const row of rows) {
+    const eid = row.entity_id as string
+    const did = row.field_definition_id as string
+    if (!result[eid]) result[eid] = {}
+    const ft = row.field_type as string
+    if (ft === 'boolean') {
+      result[eid][did] = row.value_boolean ? 'Yes' : 'No'
+    } else if (ft === 'number' || ft === 'currency') {
+      result[eid][did] = row.value_number != null ? String(row.value_number) : ''
+    } else if (ft === 'date') {
+      result[eid][did] = (row.value_date as string | null) ?? ''
+    } else {
+      result[eid][did] = (row.value_text as string | null) ?? ''
+    }
+  }
+  return result
 }

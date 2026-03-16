@@ -42,6 +42,17 @@ import {
   type SortState
 } from './companyColumns'
 import { executeBulkEdit } from '../crm/tableUtils'
+import type { RangeValue } from '../crm/tableUtils'
+import { chipStyle } from '../../utils/colorChip'
+import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
+import { useCustomFieldStore } from '../../stores/custom-fields.store'
+import { useColumnResize } from '../../hooks/useColumnResize'
+import { useColumnDrag } from '../../hooks/useColumnDrag'
+import { useEditCellNav } from '../../hooks/useEditCellNav'
+import { useRowSelection } from '../../hooks/useRowSelection'
+import { HeaderFilter } from '../crm/HeaderFilter'
+import { RangeFilter } from '../crm/RangeFilter'
+import { TextFilter } from '../crm/TextFilter'
 import { usePreferencesStore } from '../../stores/preferences.store'
 import styles from './CompanyTable.module.css'
 import { api } from '../../api'
@@ -71,6 +82,22 @@ interface CompanyTableProps {
   /** Lifted from internal state — parent (Companies.tsx) owns this for saved views. */
   visibleKeys: string[]
   onVisibleKeysChange: (keys: string[]) => void
+  /** Active filter values per field — drives HeaderFilter badge + checked state. */
+  columnFilters: Record<string, string[]>
+  onColumnFilter: (field: string, values: string[]) => void
+  /** Active range filters per field (number + date columns). */
+  rangeFilters?: Record<string, RangeValue>
+  onRangeFilter?: (field: string, range: RangeValue) => void
+  /** Active text filters per field (text columns). */
+  textFilters?: Record<string, string>
+  onTextFilter?: (field: string, value: string) => void
+  /** All column defs including custom fields. Falls back to COLUMN_DEFS if absent. */
+  allDefs?: ColumnDef[]
+  /** Custom field values keyed by [entityId][fieldDefinitionId]. */
+  customFieldValues?: Record<string, Record<string, string>>
+  onRenameColumn?: (key: string, label: string) => void
+  onCreateField?: () => void
+  onPatchCustomField?: (entityId: string, defId: string, value: string | null) => void
 }
 
 export function CompanyTable({
@@ -82,10 +109,22 @@ export function CompanyTable({
   onBulkDelete,
   onCreateInline,
   visibleKeys,
-  onVisibleKeysChange
+  onVisibleKeysChange,
+  columnFilters,
+  onColumnFilter,
+  rangeFilters,
+  onRangeFilter,
+  textFilters,
+  onTextFilter,
+  allDefs,
+  customFieldValues,
+  onRenameColumn,
+  onCreateField,
+  onPatchCustomField
 }: CompanyTableProps) {
   const navigate = useNavigate()
   const { getJSON, setJSON } = usePreferencesStore()
+  const { companyDefs } = useCustomFieldStore()
   const summaryKeys = getJSON<string[]>('cyggie:company-summary-fields', [])
 
   function toggleSummaryField(key: string) {
@@ -100,11 +139,29 @@ export function CompanyTable({
   }
 
   // ── Column widths ──────────────────────────────────────────────────────────
-  const [colWidths, setColWidths] = useState<Record<string, number>>(() => loadColumnWidths())
+  const { colWidths, onResizeMouseDown } = useColumnResize(loadColumnWidths(), saveColumnWidths)
 
+  // ── Column drag reorder ─────────────────────────────────────────────────────
+  // saveColumnConfig is a stable module-level export — safe to pass directly.
+  const { draggingKey, dragOverKey, getDragProps } = useColumnDrag(
+    visibleKeys, onVisibleKeysChange, saveColumnConfig, 'name'
+  )
+
+  const effectiveDefs = allDefs ?? COLUMN_DEFS
   const visibleCols = useMemo<ColumnDef[]>(
-    () => visibleKeys.flatMap((k) => COLUMN_DEFS.find((c) => c.key === k) ?? []),
-    [visibleKeys]
+    () => visibleKeys.flatMap((k) => effectiveDefs.find((c) => c.key === k) ?? []),
+    [visibleKeys, effectiveDefs]
+  )
+
+  // Merge user-added options from DB into builtin select columns so they appear in dropdowns
+  const mergedVisibleCols = useMemo<ColumnDef[]>(
+    () => visibleCols.map((col) => {
+      if (col.type !== 'select' || col.key.startsWith('custom:')) return col
+      const builtinDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === col.key)
+      if (!builtinDef?.optionsJson) return col
+      return { ...col, options: mergeBuiltinOptions(col.options ?? [], builtinDef.optionsJson) }
+    }),
+    [visibleCols, companyDefs]
   )
 
   // grid-template-columns: checkbox | name | ...rest | picker
@@ -113,8 +170,15 @@ export function CompanyTable({
     return `${CHECKBOX_WIDTH}px ${cols.join(' ')} ${PICKER_WIDTH}px`
   }, [visibleCols, colWidths])
 
+  // ── Column header filters ──────────────────────────────────────────────────
+  const [filterOpenCol, setFilterOpenCol] = useState<string | null>(null)
+  const handleFilterClose = useCallback(() => setFilterOpenCol(null), [])
+
+  // ── Column rename ──────────────────────────────────────────────────────────
+  const [renamingCol, setRenamingCol] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
   // ── Selection ──────────────────────────────────────────────────────────────
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [bulkEditing, setBulkEditing] = useState(false)
@@ -122,7 +186,6 @@ export function CompanyTable({
   const [bulkEditField, setBulkEditField] = useState<BulkFieldKey>('entityType')
   const [bulkEditValue, setBulkEditValue] = useState<string>('')
   const bulkEditRef = useRef<HTMLDivElement>(null)
-  const lastSelectedIdxRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!bulkEditOpen) return
@@ -135,28 +198,24 @@ export function CompanyTable({
     return () => document.removeEventListener('mousedown', handle)
   }, [bulkEditOpen])
 
-  function toggleSelect(id: string, rowIdx: number, shiftKey: boolean) {
-    if (shiftKey && lastSelectedIdxRef.current !== null) {
-      const lo = Math.min(lastSelectedIdxRef.current, rowIdx)
-      const hi = Math.max(lastSelectedIdxRef.current, rowIdx)
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        for (let i = lo; i <= hi; i++) {
-          const item = companies[i]
-          if (item) next.add(item.id)
-        }
-        return next
-      })
-    } else {
-      lastSelectedIdxRef.current = rowIdx
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        return next
-      })
-    }
-  }
+  // ── Edit cell nav ──────────────────────────────────────────────────────────
+  // (scrollToRow is defined below after rowVirtualizer — forward-ref via closure)
+  const scrollToRowRef = useRef<(idx: number) => void>(() => {})
+
+  const { editCell, setEditCell, handleStartEdit, handleEndEdit } = useEditCellNav(
+    companies.length,
+    visibleCols,
+    (idx) => scrollToRowRef.current(idx)
+  )
+
+  const getEditCell = useCallback(() => editCell, [editCell])
+
+  // ── Row selection ──────────────────────────────────────────────────────────
+  const { selectedIds, setSelectedIds, toggleSelect, lastSelectedIdxRef } = useRowSelection(
+    companies,
+    (idx) => scrollToRowRef.current(idx),
+    getEditCell
+  )
 
   async function handleBulkDelete() {
     if (selectedIds.size === 0 || bulkDeleting) return
@@ -207,74 +266,6 @@ export function CompanyTable({
     setBulkEditing(false)
   }
 
-  // ── Inline edit keyboard nav ───────────────────────────────────────────────
-  const [editCell, setEditCell] = useState<{ rowIdx: number; colIdx: number } | null>(null)
-
-  function handleStartEdit(rowIdx: number, colIdx: number) {
-    setEditCell({ rowIdx, colIdx })
-  }
-
-  function handleEndEdit(rowIdx: number, colIdx: number, advanceDir: 'down' | 'right' | null) {
-    setEditCell(null)
-    if (!advanceDir) return
-
-    const editableCols = visibleCols
-      .map((c, i) => ({ col: c, i }))
-      .filter(({ col }) => col.editable)
-
-    if (advanceDir === 'down') {
-      const nextRow = rowIdx + 1
-      if (nextRow < companies.length) {
-        setEditCell({ rowIdx: nextRow, colIdx })
-        scrollToRow(nextRow)
-      }
-    } else if (advanceDir === 'right') {
-      const currentEditIdx = editableCols.findIndex(({ i }) => i === colIdx)
-      const nextEditable = editableCols[currentEditIdx + 1]
-      if (nextEditable) {
-        setEditCell({ rowIdx, colIdx: nextEditable.i })
-      }
-    }
-  }
-
-  // ── Column resize ──────────────────────────────────────────────────────────
-  const resizeDragging = useRef(false)
-  const resizeStartX = useRef(0)
-  const resizeStartW = useRef(0)
-  const resizeKey = useRef('')
-
-  const onResizeMouseDown = useCallback((e: React.MouseEvent, colKey: string, currentW: number) => {
-    e.preventDefault()
-    e.stopPropagation()
-    resizeDragging.current = true
-    resizeStartX.current = e.clientX
-    resizeStartW.current = currentW
-    resizeKey.current = colKey
-  }, [])
-
-  useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (!resizeDragging.current) return
-      const delta = e.clientX - resizeStartX.current
-      const newW = Math.max(60, resizeStartW.current + delta)
-      setColWidths((prev) => ({ ...prev, [resizeKey.current]: newW }))
-    }
-    function onMouseUp() {
-      if (!resizeDragging.current) return
-      resizeDragging.current = false
-      setColWidths((prev) => {
-        saveColumnWidths(prev)
-        return prev
-      })
-    }
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [])
-
   // ── Sort ───────────────────────────────────────────────────────────────────
   function handleHeaderClick(col: ColumnDef) {
     if (!col.sortable) return
@@ -322,6 +313,8 @@ export function CompanyTable({
   function scrollToRow(idx: number) {
     rowVirtualizer.scrollToIndex(idx, { align: 'auto' })
   }
+  // Wire scrollToRowRef so hooks defined above can call scrollToRow
+  scrollToRowRef.current = scrollToRow
 
   const virtualRows = rowVirtualizer.getVirtualItems()
 
@@ -355,7 +348,7 @@ export function CompanyTable({
           </div>
 
           {/* Column headers */}
-          {visibleCols.map((col) => {
+          {mergedVisibleCols.map((col) => {
             const isName = col.key === 'name'
             const effectiveW = colWidths[col.key] ?? col.width
             const isSorted = sort.key === col.key
@@ -364,10 +357,33 @@ export function CompanyTable({
             return (
               <div
                 key={col.key}
-                className={`${styles.headerCell} ${isName ? styles.nameCol : ''} ${col.sortable ? styles.sortable : ''}`}
-                onClick={() => handleHeaderClick(col)}
+                className={`${styles.headerCell} ${isName ? styles.nameCol : ''} ${col.sortable ? styles.sortable : ''} ${(col.options?.length || col.type === 'number' || col.type === 'date' || col.type === 'text') ? styles.filterableCell : ''} ${draggingKey === col.key ? styles.dragging : ''} ${dragOverKey === col.key ? styles.dragOver : ''}`}
+                onClick={() => { if (renamingCol !== col.key) handleHeaderClick(col) }}
+                onContextMenu={(e) => {
+                  if (!onRenameColumn) return
+                  e.preventDefault()
+                  setRenamingCol(col.key)
+                  setRenameValue(col.label)
+                }}
+                {...getDragProps(col.key)}
               >
-                {col.label}
+                {renamingCol === col.key ? (
+                  <input
+                    className={styles.renameInput}
+                    value={renameValue}
+                    autoFocus
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        onRenameColumn?.(col.key, renameValue)
+                        setRenamingCol(null)
+                      }
+                      if (e.key === 'Escape') setRenamingCol(null)
+                    }}
+                    onBlur={() => setRenamingCol(null)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : col.label}
                 {col.sortable && (
                   isSorted
                     ? <span className={styles.sortArrow}>{sort.dir === 'asc' ? ' ▲' : ' ▼'}</span>
@@ -382,6 +398,47 @@ export function CompanyTable({
                     📌
                   </button>
                 )}
+                {col.options && col.options.filter((o) => o.value !== '').length > 0 && (
+                  <HeaderFilter
+                    label={col.label}
+                    options={col.options.filter((o) => o.value !== '')}
+                    activeValues={columnFilters[col.field ?? col.key] ?? []}
+                    isOpen={filterOpenCol === col.key}
+                    onOpen={() => setFilterOpenCol((prev) => prev === col.key ? null : col.key)}
+                    onClose={handleFilterClose}
+                    onToggle={(value) => {
+                      const field = col.field ?? col.key
+                      const current = columnFilters[field] ?? []
+                      const next = current.includes(value)
+                        ? current.filter((v) => v !== value)
+                        : [...current, value]
+                      onColumnFilter(field, next)
+                    }}
+                  />
+                )}
+                {(col.type === 'number' || col.type === 'date') && (
+                  <RangeFilter
+                    colType={col.type}
+                    label={col.label}
+                    range={rangeFilters?.[col.field ?? col.key] ?? {}}
+                    isOpen={filterOpenCol === `range_${col.key}`}
+                    onOpen={() => setFilterOpenCol((prev) => prev === `range_${col.key}` ? null : `range_${col.key}`)}
+                    onClose={handleFilterClose}
+                    onChange={(range) => onRangeFilter?.(col.field ?? col.key, range)}
+                    prefix={col.prefix ?? ''}
+                    suffix={col.suffix ?? ''}
+                  />
+                )}
+                {col.type === 'text' && (
+                  <TextFilter
+                    label={col.label}
+                    value={textFilters?.[col.field ?? col.key] ?? ''}
+                    isOpen={filterOpenCol === `text_${col.key}`}
+                    onOpen={() => setFilterOpenCol((prev) => prev === `text_${col.key}` ? null : `text_${col.key}`)}
+                    onClose={handleFilterClose}
+                    onChange={(v) => onTextFilter?.(col.field ?? col.key, v)}
+                  />
+                )}
                 <div
                   className={styles.resizeHandle}
                   onMouseDown={(e) => onResizeMouseDown(e, col.key, effectiveW)}
@@ -395,9 +452,10 @@ export function CompanyTable({
           <div className={`${styles.headerCell} ${styles.pickerCell}`}>
             <ColumnPicker
               visibleKeys={visibleKeys}
-              allDefs={COLUMN_DEFS}
+              allDefs={effectiveDefs}
               onChange={onVisibleKeysChange}
               onSave={saveColumnConfig}
+              onCreateField={onCreateField}
             />
           </div>
         </div>
@@ -416,6 +474,7 @@ export function CompanyTable({
 
           {virtualRows.map((vrow) => {
             const company = companies[vrow.index]
+            if (!company) return null
             const isSelected = selectedIds.has(company.id)
 
             return (
@@ -464,22 +523,67 @@ export function CompanyTable({
                 )}
 
                 {/* Editable cells for remaining columns */}
-                {visibleCols.slice(1).map((col, relIdx) => {
+                {mergedVisibleCols.slice(1).map((col, relIdx) => {
                   const colIdx = relIdx + 1
                   const fieldKey = col.field as keyof CompanySummary
                   const isCellFocused = editCell?.rowIdx === vrow.index && editCell?.colIdx === colIdx
+                  const customFieldId = col.key.startsWith('custom:') ? col.key.slice(7) : null
+                  const cellValue = customFieldId
+                    ? (customFieldValues?.[company.id]?.[customFieldId] ?? null)
+                    : col.field ? (company[fieldKey] as string | null) : null
+                  const isCustomSelect = !!customFieldId && col.type === 'select'
+
+                  if (isCustomSelect && !isCellFocused) {
+                    return (
+                      <div
+                        key={col.key}
+                        className={styles.chipCell}
+                        onClick={() => handleStartEdit(vrow.index, colIdx)}
+                      >
+                        {cellValue ? (
+                          <span className={styles.chip} style={chipStyle(cellValue)}>
+                            {cellValue}
+                          </span>
+                        ) : null}
+                      </div>
+                    )
+                  }
 
                   return (
                     <EditableCell
                       key={col.key}
-                      value={col.field ? company[fieldKey] : null}
+                      value={cellValue}
                       col={col}
                       isFocused={isCellFocused}
                       onStartEdit={() => handleStartEdit(vrow.index, colIdx)}
                       onEndEdit={(dir) => handleEndEdit(vrow.index, colIdx, dir ?? null)}
+                      onAddOption={
+                        col.type === 'select'
+                          ? async (newOption) => {
+                              if (customFieldId) {
+                                const def = useCustomFieldStore.getState().companyDefs.find(d => d.id === customFieldId)
+                                await addCustomFieldOption(customFieldId, def?.optionsJson ?? null, newOption)
+                              } else {
+                                const builtinDef = useCustomFieldStore.getState().companyDefs.find(d => d.isBuiltin && d.fieldKey === col.key)
+                                if (builtinDef) await addCustomFieldOption(builtinDef.id, builtinDef.optionsJson, newOption)
+                              }
+                            }
+                          : undefined
+                      }
                       onSave={async (newVal) => {
-                        if (!col.field) return
-                        await handleCellSave(company, col.field, newVal)
+                        if (customFieldId) {
+                          await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, {
+                            fieldDefinitionId: customFieldId,
+                            entityType: 'company',
+                            entityId: company.id,
+                            valueText: col.type === 'number' ? null : (newVal || null),
+                            valueNumber: col.type === 'number' ? (newVal ? parseFloat(newVal) : null) : null,
+                          })
+                          onPatchCustomField?.(company.id, customFieldId, newVal)
+                        } else {
+                          if (!col.field) return
+                          await handleCellSave(company, col.field, newVal)
+                        }
                       }}
                     />
                   )

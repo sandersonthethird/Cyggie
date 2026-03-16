@@ -50,6 +50,11 @@ import type {
   ImportProgress,
   ImportResult,
   PreviewResult,
+  MergeResult,
+  RunImportOptions,
+  ContactDiff,
+  CompanyDiff,
+  FieldChange,
   CSVFileInfo
 } from '../../shared/types/csv-import'
 import { getProvider } from '../llm/summarizer'
@@ -87,6 +92,20 @@ export const COMPANY_FIELD_KEYS = [
 ]
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024 // 50 MB
+
+// ─── Field labels for diff display ──────────────────────────────────────────
+
+const FIELD_LABELS: Record<string, string> = {
+  full_name: 'Full Name', first_name: 'First Name', last_name: 'Last Name',
+  title: 'Title', contact_type: 'Contact Type', linkedin_url: 'LinkedIn URL',
+  city: 'City', state: 'State', phone: 'Phone', twitter_handle: 'Twitter',
+  canonical_name: 'Company Name', primary_domain: 'Domain',
+  entity_type: 'Entity Type', pipeline_stage: 'Stage',
+  sector: 'Sector', raise_size: 'Raise ($M)', arr: 'ARR ($M)',
+  description: 'Description', website_url: 'Website',
+  round: 'Round', priority: 'Priority', deal_source: 'Deal Source',
+  founding_year: 'Founded', employee_count_range: 'Employees',
+}
 
 // ─── Alias table fallback ────────────────────────────────────────────────────
 
@@ -314,9 +333,23 @@ export async function previewImport(
   const companyNameMappings = mappings.filter(
     (m) => m.targetEntity === 'company' && m.targetField === 'canonical_name'
   )
+  // All contact field mappings (for conflict detection)
+  const contactFieldMappings = mappings.filter(
+    (m) => m.targetEntity === 'contact' && m.targetField !== null
+  )
+  // All company field mappings (for conflict detection)
+  const companyFieldMappings = mappings.filter(
+    (m) => m.targetEntity === 'company' && m.targetField !== null
+  )
 
   const emails: string[] = []
   const companyNames: string[] = []
+  // email → { fieldKey: csvValue } — collected for conflict detection
+  const contactRowData = new Map<string, Record<string, string>>()
+  // normalized name → { fieldKey: csvValue } — for rows with no email
+  const contactNameRowData = new Map<string, Record<string, string>>()
+  // normalized company name → { fieldKey: csvValue }
+  const companyRowData = new Map<string, Record<string, string>>()
   let totalRows = 0
 
   await new Promise<void>((resolve, reject) => {
@@ -328,13 +361,59 @@ export async function previewImport(
       let row: Record<string, string>
       while ((row = parser.read()) !== null) {
         totalRows++
+
+        // Collect email for contact dedup
+        let rowEmail: string | null = null
         for (const m of emailMappings) {
           const val = row[m.csvHeader]?.trim()
-          if (val) emails.push(val.toLowerCase())
+          if (val) { rowEmail = val.toLowerCase(); emails.push(rowEmail) }
         }
+
+        // Collect all contact field values keyed by email
+        if (rowEmail) {
+          if (!contactRowData.has(rowEmail)) {
+            const fields: Record<string, string> = {}
+            for (const fm of contactFieldMappings) {
+              const v = row[fm.csvHeader]?.trim()
+              if (v) fields[fm.targetField!] = v
+            }
+            contactRowData.set(rowEmail, fields)
+          }
+        } else {
+          // No email on this row — collect by normalized name for name-based dedup
+          const fullNameVal = contactFieldMappings
+            .filter((m) => m.targetField === 'full_name' || m.targetField === 'first_name' || m.targetField === 'last_name')
+            .map((m) => row[m.csvHeader]?.trim())
+            .filter(Boolean)
+            .join(' ')
+          if (fullNameVal) {
+            const normName = fullNameVal.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ')
+            if (!contactNameRowData.has(normName)) {
+              const fields: Record<string, string> = {}
+              for (const fm of contactFieldMappings) {
+                const v = row[fm.csvHeader]?.trim()
+                if (v) fields[fm.targetField!] = v
+              }
+              contactNameRowData.set(normName, fields)
+            }
+          }
+        }
+
+        // Collect company name + field values
         for (const m of companyNameMappings) {
           const val = row[m.csvHeader]?.trim()
-          if (val) companyNames.push(val.toLowerCase())
+          if (val) {
+            const normalizedName = val.toLowerCase()
+            companyNames.push(normalizedName)
+            if (!companyRowData.has(normalizedName)) {
+              const fields: Record<string, string> = {}
+              for (const fm of companyFieldMappings) {
+                const v = row[fm.csvHeader]?.trim()
+                if (v) fields[fm.targetField!] = v
+              }
+              companyRowData.set(normalizedName, fields)
+            }
+          }
         }
       }
     })
@@ -345,22 +424,98 @@ export async function previewImport(
 
   // Batch email dedup: one query regardless of CSV size
   const existingEmailMap = emails.length > 0 ? contactRepo.resolveContactsByEmails(emails) : {}
-  const duplicateContactCount = Object.keys(existingEmailMap).length
+  // Name-based dedup fallback for rows with no email (unique matches only)
+  const existingNameMap = contactNameRowData.size > 0
+    ? contactRepo.resolveContactsByNormalizedNames([...contactNameRowData.keys()])
+    : {}
+  const duplicateContactCount = new Set([
+    ...Object.values(existingEmailMap),
+    ...Object.values(existingNameMap)
+  ]).size
 
-  // Company dedup: check by normalized name
-  let duplicateCompanyCount = 0
-  if (companyNames.length > 0) {
-    const db = getDatabase()
-    const placeholders = companyNames.map(() => '?').join(', ')
-    const existing = db
-      .prepare(
-        `SELECT normalized_name FROM org_companies WHERE lower(normalized_name) IN (${placeholders})`
-      )
-      .all(...companyNames) as { normalized_name: string }[]
-    duplicateCompanyCount = existing.length
+  // Fetch full contact records for conflict detection
+  const duplicateContactIds = [...new Set([
+    ...Object.values(existingEmailMap),
+    ...Object.values(existingNameMap)
+  ])]
+  const existingContacts = contactRepo.getContactsByIds(duplicateContactIds)
+
+  function buildContactDiff(contactId: string, csvFields: Record<string, string>): ContactDiff | null {
+    const existing = existingContacts[contactId]
+    if (!existing) return null
+    const fieldChanges: FieldChange[] = []
+    for (const [field, csvVal] of Object.entries(csvFields)) {
+      if (!csvVal?.trim()) continue
+      const camelKey = toCamelCase(field) as keyof typeof existing
+      const existingVal = existing[camelKey]
+      if (existingVal && String(existingVal).trim() !== csvVal.trim()) {
+        fieldChanges.push({
+          field,
+          label: FIELD_LABELS[field] ?? field,
+          existingValue: String(existingVal),
+          csvValue: csvVal,
+        })
+      }
+    }
+    if (fieldChanges.length === 0) return null
+    return {
+      contactId,
+      displayName: String(existing.full_name ?? existing.email ?? contactId),
+      fieldChanges,
+    }
   }
 
-  return { totalRows, duplicateContactCount, duplicateCompanyCount }
+  // Build per-record contact diffs (email-keyed rows)
+  const contactDiffs: ContactDiff[] = []
+  for (const [email, csvFields] of contactRowData.entries()) {
+    const contactId = existingEmailMap[email]
+    if (!contactId) continue
+    const diff = buildContactDiff(contactId, csvFields)
+    if (diff) contactDiffs.push(diff)
+  }
+  // Build diffs for name-keyed rows (no email)
+  for (const [normName, csvFields] of contactNameRowData.entries()) {
+    const contactId = existingNameMap[normName]
+    if (!contactId) continue
+    const diff = buildContactDiff(contactId, csvFields)
+    if (diff) contactDiffs.push(diff)
+  }
+
+  // Company dedup and diff
+  const existingCompanies = companyRepo.getCompaniesByNormalizedNames(
+    [...companyRowData.keys()]
+  )
+  const duplicateCompanyCount = Object.keys(existingCompanies).length
+
+  const companyDiffs: CompanyDiff[] = []
+  for (const [normalizedName, csvFields] of companyRowData.entries()) {
+    const existing = existingCompanies[normalizedName]
+    if (!existing) continue
+
+    const fieldChanges: FieldChange[] = []
+    for (const [field, csvVal] of Object.entries(csvFields)) {
+      if (!csvVal?.trim() || field === 'canonical_name') continue
+      const camelKey = toCamelCase(field) as keyof typeof existing
+      const existingVal = existing[camelKey]
+      if (existingVal && String(existingVal).trim() !== csvVal.trim()) {
+        fieldChanges.push({
+          field,
+          label: FIELD_LABELS[field] ?? field,
+          existingValue: String(existingVal),
+          csvValue: csvVal,
+        })
+      }
+    }
+    if (fieldChanges.length > 0) {
+      companyDiffs.push({
+        companyId: existing.id,
+        displayName: existing.canonicalName,
+        fieldChanges,
+      })
+    }
+  }
+
+  return { totalRows, duplicateContactCount, duplicateCompanyCount, contactDiffs, companyDiffs }
 }
 
 // ─── runImport ───────────────────────────────────────────────────────────────
@@ -417,48 +572,130 @@ const STAGE1_CONTACT_KEYS = new Set([
   'full_name', 'first_name', 'last_name', 'email', 'title', 'contact_type', 'linkedin_url'
 ])
 
+/**
+ * Merge CSV contact data with an existing contact record.
+ * resolve() is a pure selector — no side effects, no mutation.
+ * Fields in overwriteSetCamel override existing values; others fill blanks only.
+ * Returns merged field values + explicit fill/overwrite counters.
+ */
+function mergeContactData(
+  csvData: {
+    fullName: string | null
+    firstName: string | null
+    lastName: string | null
+    title: string | null
+    contactType: string | null
+    linkedinUrl: string | null
+  },
+  existing: { full_name: string | null; first_name: string | null; last_name: string | null; title: string | null; contact_type: string | null; linkedin_url: string | null },
+  overwriteSetCamel: Set<string>
+): MergeResult {
+  const resolve = (key: string, csvVal: unknown, existingVal: unknown): unknown => {
+    if (csvVal == null || (typeof csvVal === 'string' && !csvVal.trim())) return existingVal
+    if (overwriteSetCamel.has(key)) return csvVal    // explicit overwrite
+    if (!existingVal) return csvVal                   // fill blank
+    return existingVal                                // preserve existing
+  }
+
+  const merged: MergeResult['merged'] = {
+    fullName:    resolve('fullName',    csvData.fullName,    existing.full_name),
+    firstName:   resolve('firstName',   csvData.firstName,   existing.first_name),
+    lastName:    resolve('lastName',    csvData.lastName,    existing.last_name),
+    title:       resolve('title',       csvData.title,       existing.title),
+    contactType: resolve('contactType', csvData.contactType, existing.contact_type),
+    linkedinUrl: resolve('linkedinUrl', csvData.linkedinUrl, existing.linkedin_url),
+  }
+
+  // Count fills and overwrites explicitly (not inside resolve — keep it pure)
+  let fieldsFilled = 0
+  let fieldsOverwritten = 0
+  const pairs: Array<[string, unknown, unknown]> = [
+    ['fullName',    csvData.fullName,    existing.full_name],
+    ['firstName',   csvData.firstName,   existing.first_name],
+    ['lastName',    csvData.lastName,    existing.last_name],
+    ['title',       csvData.title,       existing.title],
+    ['contactType', csvData.contactType, existing.contact_type],
+    ['linkedinUrl', csvData.linkedinUrl, existing.linkedin_url],
+  ]
+  for (const [key, csvVal, existingVal] of pairs) {
+    if (csvVal == null || (typeof csvVal === 'string' && !csvVal.trim())) continue
+    if (!existingVal) fieldsFilled++
+    else if (overwriteSetCamel.has(key)) fieldsOverwritten++
+  }
+
+  return { merged, fieldsFilled, fieldsOverwritten }
+}
+
 export async function runImport(
   filePath: string,
   mappings: FieldMapping[],
   importType: ImportType,
   onProgress: (p: ImportProgress) => void,
   signal?: AbortSignal,
-  contactDefaults?: FieldDefaultsMap,
-  companyDefaults?: FieldDefaultsMap
+  options: RunImportOptions = {}
 ): Promise<ImportResult> {
   const startMs = Date.now()
   const userId = getCurrentUserId()
 
+  const {
+    contactDefaults,
+    companyDefaults,
+    contactOverwriteFields = [],
+    companyOverwriteFields = [],
+    contactSkipIds = [],
+    companySkipIds = [],
+  } = options
+
+  const contactOverwriteSetCamel = new Set(contactOverwriteFields.map(toCamelCase))
+  const companyOverwriteSetCamel = new Set(companyOverwriteFields.map(toCamelCase))
+  const contactSkipSet = new Set(contactSkipIds)
+  const companySkipSet = new Set(companySkipIds)
+
   // Build lookup maps for custom field definition IDs (cached per label to avoid N lookups)
   const customFieldIdCache = new Map<string, string>()
 
-  const contactMappings = mappings.filter((m) => m.targetEntity === 'contact' && m.targetField !== null)
-  const companyMappings = mappings.filter((m) => m.targetEntity === 'company' && m.targetField !== null)
+  const contactMappings = mappings.filter((m) => m.targetEntity === 'contact' && m.targetField !== null && !m.targetField.startsWith('custom:'))
+  const companyMappings = mappings.filter((m) => m.targetEntity === 'company' && m.targetField !== null && !m.targetField.startsWith('custom:'))
   const contactCustomMappings = mappings.filter((m) => m.targetEntity === 'contact' && m.targetField === null && m.customFieldLabel)
   const companyCustomMappings = mappings.filter((m) => m.targetEntity === 'company' && m.targetField === null && m.customFieldLabel)
+  // Mappings pointing to existing custom field definitions (targetField = 'custom:{defId}')
+  const contactExistingCustomMappings = mappings.filter((m) => m.targetEntity === 'contact' && m.targetField?.startsWith('custom:'))
+  const companyExistingCustomMappings = mappings.filter((m) => m.targetEntity === 'company' && m.targetField?.startsWith('custom:'))
 
-  const hasContactFields = importType !== 'companies' && (contactMappings.length > 0 || contactCustomMappings.length > 0)
-  const hasCompanyFields = importType !== 'contacts' && (companyMappings.length > 0 || companyCustomMappings.length > 0)
+  const hasContactFields = importType !== 'companies' && (contactMappings.length > 0 || contactCustomMappings.length > 0 || contactExistingCustomMappings.length > 0)
+  const hasCompanyFields = importType !== 'contacts' && (companyMappings.length > 0 || companyCustomMappings.length > 0 || companyExistingCustomMappings.length > 0)
 
   let contactsCreated = 0
   let companiesCreated = 0
-  let skipped = 0
+  let contactsUpdated = 0
+  let totalFieldsFilled = 0
+  let totalFieldsOverwritten = 0
   const errors: Array<{ row: number; message: string }> = []
 
-  // Pre-load existing company IDs to detect new vs existing during import
+  // Pre-load existing IDs to detect new vs existing during import (mirrors company pattern)
   const db = getDatabase()
+  const preExistingContactIds = new Set<string>(
+    (db.prepare('SELECT id FROM contacts').all() as { id: string }[]).map((r) => r.id)
+  )
   const preExistingCompanyIds = new Set<string>(
     (db.prepare('SELECT id FROM org_companies').all() as { id: string }[]).map((r) => r.id)
   )
   // Track companies created during this import (avoid double-counting if same name appears multiple times)
   const createdCompanyIds = new Set<string>()
 
-  // First pass: count rows and collect emails for batch dedup query
+  // First pass: count rows and collect emails + names for batch dedup queries
   onProgress({ stage: 'parsing', current: 0, total: 0, message: 'Scanning file...' })
   let totalRows = 0
   const allEmailsInCSV: string[] = []
+  // Collect derived names for rows that have no email — used for name-based dedup fallback
+  const noEmailNamesInCSV: string[] = []
   const emailMappingsForScan = mappings.filter(
     (m) => m.targetEntity === 'contact' && m.targetField === 'email'
+  )
+  const nameMappingsForScan = mappings.filter(
+    (m) => m.targetEntity === 'contact' && (
+      m.targetField === 'full_name' || m.targetField === 'first_name' || m.targetField === 'last_name'
+    )
   )
   await new Promise<void>((resolve, reject) => {
     const counter = createReadStream(filePath).pipe(
@@ -468,9 +705,18 @@ export async function runImport(
       let row: Record<string, string>
       while ((row = counter.read()) !== null) {
         totalRows++
+        let rowEmail: string | null = null
         for (const m of emailMappingsForScan) {
           const val = row[m.csvHeader]?.trim().toLowerCase()
-          if (val) allEmailsInCSV.push(val)
+          if (val) { rowEmail = val; allEmailsInCSV.push(val) }
+        }
+        // Collect name for name-based dedup (only for rows with no email)
+        if (!rowEmail) {
+          const fullName = nameMappingsForScan
+            .map((m) => row[m.csvHeader]?.trim())
+            .filter(Boolean)
+            .join(' ')
+          if (fullName) noEmailNamesInCSV.push(fullName.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' '))
         }
       }
     })
@@ -479,9 +725,36 @@ export async function runImport(
   })
 
   // Batch dedup check — one query for all emails in the CSV
-  const preExistingContactsByEmail = allEmailsInCSV.length > 0
+  const emailToContactId = allEmailsInCSV.length > 0
     ? contactRepo.resolveContactsByEmails(allEmailsInCSV)
     : {}
+  // Fetch full contact records for fill-blanks/overwrite merge logic
+  const preExistingContactsByEmail = allEmailsInCSV.length > 0
+    ? (() => {
+        const byId = contactRepo.getContactsByIds(Object.values(emailToContactId))
+        const byEmail: Record<string, typeof byId[string]> = {}
+        for (const [email, id] of Object.entries(emailToContactId)) {
+          if (byId[id]) byEmail[email] = byId[id]
+        }
+        return byEmail
+      })()
+    : {} as Record<string, ReturnType<typeof contactRepo.getContactsByIds>[string]>
+
+  // Name-based dedup fallback — used when a row has no email.
+  // Only resolves unique matches (ambiguous names are excluded).
+  const nameToContactId = noEmailNamesInCSV.length > 0
+    ? contactRepo.resolveContactsByNormalizedNames(noEmailNamesInCSV)
+    : {}
+  const preExistingContactsByName = noEmailNamesInCSV.length > 0
+    ? (() => {
+        const byId = contactRepo.getContactsByIds(Object.values(nameToContactId))
+        const byName: Record<string, ReturnType<typeof contactRepo.getContactsByIds>[string]> = {}
+        for (const [name, id] of Object.entries(nameToContactId)) {
+          if (byId[id]) byName[name] = byId[id]
+        }
+        return byName
+      })()
+    : {} as Record<string, ReturnType<typeof contactRepo.getContactsByIds>[string]>
 
   let processedRows = 0
   let lastProgressTime = 0
@@ -533,24 +806,36 @@ export async function runImport(
               const isNew = !preExistingCompanyIds.has(company.id) && !createdCompanyIds.has(company.id)
               if (isNew) createdCompanyIds.add(company.id)
 
-              // Apply other mapped company fields (convert snake_case → camelCase for updateCompany)
+              // Apply other mapped company fields with fill-blanks/overwrite logic
               const updateData: Record<string, unknown> = {}
               for (const m of companyMappings) {
                 if (m.targetField === 'canonical_name') continue
                 const val = row[m.csvHeader]?.trim()
-                if (val) updateData[toCamelCase(m.targetField!)] = val
+                if (!val) continue
+                const camelKey = toCamelCase(m.targetField!)
+                if (isNew || companySkipSet.has(company.id)) {
+                  // New company: apply all values. Skipped company: no updates.
+                  if (!companySkipSet.has(company.id)) updateData[camelKey] = val
+                } else {
+                  const existingVal = (company as Record<string, unknown>)[camelKey]
+                  if (!existingVal || companyOverwriteSetCamel.has(camelKey)) {
+                    updateData[camelKey] = val
+                  }
+                }
               }
               // Apply company defaults for fields not already set from CSV
-              for (const [key, val] of Object.entries(companyDefaults ?? {})) {
-                if (!val.trim()) continue
-                const camelKey = toCamelCase(key)
-                if (!updateData[camelKey]) updateData[camelKey] = val
+              if (!companySkipSet.has(company.id)) {
+                for (const [key, val] of Object.entries(companyDefaults ?? {})) {
+                  if (!val.trim()) continue
+                  const camelKey = toCamelCase(key)
+                  if (!updateData[camelKey]) updateData[camelKey] = val
+                }
               }
               if (Object.keys(updateData).length > 0) {
                 companyRepo.updateCompany(company.id, updateData as Parameters<typeof companyRepo.updateCompany>[1], userId)
               }
 
-              // Write company custom fields
+              // Write company custom fields (new definitions created on-the-fly)
               for (const m of companyCustomMappings) {
                 const val = row[m.csvHeader]?.trim()
                 if (!val) continue
@@ -560,6 +845,13 @@ export async function runImport(
                   defId = getOrCreateCustomFieldId('company', m.customFieldLabel!, m.isMultiSelect)
                   customFieldIdCache.set(cacheKey, defId)
                 }
+                customFieldRepo.setFieldValue({ fieldDefinitionId: defId, entityType: 'company', entityId: company.id, valueText: val })
+              }
+              // Write company custom fields (existing definitions — targetField = 'custom:{defId}')
+              for (const m of companyExistingCustomMappings) {
+                const val = row[m.csvHeader]?.trim()
+                if (!val) continue
+                const defId = m.targetField!.slice(7)  // strip 'custom:'
                 customFieldRepo.setFieldValue({ fieldDefinitionId: defId, entityType: 'company', entityId: company.id, valueText: val })
               }
 
@@ -586,7 +878,6 @@ export async function runImport(
               null
 
             if (!derivedFullName) {
-              skipped++
               emitProgress()
               continue
             }
@@ -605,22 +896,94 @@ export async function runImport(
               firstName: derivedFirstName,
               lastName: derivedLastName,
               email: emailVal,
-              title: getValue('title') ?? contactDefaults?.['title'] ?? null,
-              contactType: getValue('contact_type') ?? contactDefaults?.['contact_type'] ?? null,
-              linkedinUrl: getValue('linkedin_url') ?? contactDefaults?.['linkedin_url'] ?? null
+              title: getValue('title') || contactDefaults?.['title'] || null,
+              contactType: getValue('contact_type') || contactDefaults?.['contact_type'] || null,
+              linkedinUrl: getValue('linkedin_url') || contactDefaults?.['linkedin_url'] || null
             }
 
-            // Use pre-fetched dedup map (no per-row DB query)
-            const wasNew = !emailVal || !preExistingContactsByEmail[emailVal.toLowerCase()]
-            const contact = contactRepo.createContact(contactData, userId)
-            contactId = contact.id
+            // Use pre-fetched dedup map (no per-row DB query).
+            // Fall back to name-based dedup when row has no email (unique match only).
+            const existingContact = emailVal
+              ? preExistingContactsByEmail[emailVal.toLowerCase()]
+              : (() => {
+                  const norm = derivedFullName.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ')
+                  return preExistingContactsByName[norm]
+                })()
+            const wasNew = !existingContact
 
-            // Update remaining contact fields (convert snake_case → camelCase for updateContact)
+            // If user explicitly excluded this contact, skip entirely
+            if (existingContact && contactSkipSet.has(existingContact.id)) {
+              emitProgress()
+              continue
+            }
+
+            // Apply stage-1 merge: fill-blanks-only unless field is in overwrite set
+            let mergedData = contactData
+            let mfilled = 0
+            let moverwritten = 0
+            if (existingContact) {
+              const { merged, fieldsFilled, fieldsOverwritten } = mergeContactData(
+                contactData, existingContact, contactOverwriteSetCamel
+              )
+              mergedData = {
+                fullName: (merged.fullName as string | null) ?? contactData.fullName,
+                firstName: merged.firstName as string | null,
+                lastName: merged.lastName as string | null,
+                email: contactData.email,
+                title: merged.title as string | null,
+                contactType: merged.contactType as string | null,
+                linkedinUrl: merged.linkedinUrl as string | null,
+              }
+              mfilled = fieldsFilled
+              moverwritten = fieldsOverwritten
+            }
+
+            // When deduped by name (no email on row), createContact would INSERT a new record
+            // since it only deduplicates by email. Bypass it and update directly instead.
+            let actuallyNew: boolean
+            if (existingContact && !emailVal) {
+              contactId = existingContact.id
+              actuallyNew = false
+              // Apply stage-1 field updates directly via updateContact
+              const stage1Updates: Record<string, unknown> = {}
+              if (mergedData.fullName !== existingContact.full_name) stage1Updates.fullName = mergedData.fullName
+              if (mergedData.firstName !== existingContact.first_name) stage1Updates.firstName = mergedData.firstName
+              if (mergedData.lastName !== existingContact.last_name) stage1Updates.lastName = mergedData.lastName
+              if (mergedData.title && mergedData.title !== existingContact.title) stage1Updates.title = mergedData.title
+              if (mergedData.contactType && mergedData.contactType !== existingContact.contact_type) stage1Updates.contactType = mergedData.contactType
+              if (mergedData.linkedinUrl && mergedData.linkedinUrl !== existingContact.linkedin_url) stage1Updates.linkedinUrl = mergedData.linkedinUrl
+              if (Object.keys(stage1Updates).length > 0) {
+                contactRepo.updateContact(existingContact.id, stage1Updates as Parameters<typeof contactRepo.updateContact>[1], userId)
+              }
+            } else {
+              const contact = contactRepo.createContact(mergedData, userId)
+              contactId = contact.id
+              // Determine new vs existing from pre-loaded ID set — handles all dedup paths
+              // (email match, contact_emails table match, etc.) not just our pre-fetch map
+              actuallyNew = !preExistingContactIds.has(contact.id)
+            }
+            totalFieldsFilled += mfilled
+            totalFieldsOverwritten += moverwritten
+
+            // Stage-2: update remaining fields with fill-blanks/overwrite logic
             const extraFields: Record<string, unknown> = {}
             for (const m of contactMappings) {
               if (STAGE1_CONTACT_KEYS.has(m.targetField!)) continue
               const val = row[m.csvHeader]?.trim()
-              if (val) extraFields[toCamelCase(m.targetField!)] = val
+              if (!val) continue
+              const camelKey = toCamelCase(m.targetField!)
+              if (actuallyNew) {
+                extraFields[camelKey] = val
+              } else {
+                const existingVal = (existingContact as Record<string, unknown>)[camelKey]
+                if (!existingVal) {
+                  extraFields[camelKey] = val
+                  totalFieldsFilled++
+                } else if (contactOverwriteSetCamel.has(camelKey)) {
+                  extraFields[camelKey] = val
+                  totalFieldsOverwritten++
+                }
+              }
             }
             // Apply stage-2 defaults for fields not already set from CSV
             for (const [key, val] of Object.entries(contactDefaults ?? {})) {
@@ -633,7 +996,7 @@ export async function runImport(
               contactRepo.updateContact(contactId, extraFields as Parameters<typeof contactRepo.updateContact>[1], userId)
             }
 
-            // Write contact custom fields
+            // Write contact custom fields (new definitions created on-the-fly)
             for (const m of contactCustomMappings) {
               const val = row[m.csvHeader]?.trim()
               if (!val) continue
@@ -645,9 +1008,16 @@ export async function runImport(
               }
               customFieldRepo.setFieldValue({ fieldDefinitionId: defId, entityType: 'contact', entityId: contactId, valueText: val })
             }
+            // Write contact custom fields (existing definitions — targetField = 'custom:{defId}')
+            for (const m of contactExistingCustomMappings) {
+              const val = row[m.csvHeader]?.trim()
+              if (!val) continue
+              const defId = m.targetField!.slice(7)  // strip 'custom:'
+              customFieldRepo.setFieldValue({ fieldDefinitionId: defId, entityType: 'contact', entityId: contactId, valueText: val })
+            }
 
-            if (wasNew) contactsCreated++
-            else skipped++
+            if (actuallyNew) contactsCreated++
+            else contactsUpdated++
           }
 
           // ── Link contact → company ──────────────────────────────────────
@@ -673,7 +1043,9 @@ export async function runImport(
     file: filePath,
     contactsCreated,
     companiesCreated,
-    skipped,
+    contactsUpdated,
+    contactFieldsFilled: totalFieldsFilled,
+    contactFieldsOverwritten: totalFieldsOverwritten,
     errorCount: errors.length,
     durationMs,
     ...(contactDefaults && Object.keys(contactDefaults).length > 0
@@ -686,5 +1058,13 @@ export async function runImport(
 
   onProgress({ stage: 'done', current: totalRows, total: totalRows, message: 'Import complete.' })
 
-  return { contactsCreated, companiesCreated, skipped, errors, durationMs }
+  return {
+    contactsCreated,
+    companiesCreated,
+    contactsUpdated,
+    contactFieldsFilled: totalFieldsFilled,
+    contactFieldsOverwritten: totalFieldsOverwritten,
+    errors,
+    durationMs
+  }
 }

@@ -94,6 +94,18 @@
   opacity: 0.6;
 }
 
+/* ── Column drag reorder ── */
+.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+/* Left-edge insertion indicator: shows where the dragged column will land */
+.dragOver {
+  box-shadow: inset 3px 0 0 var(--color-primary, #4f8ef7);
+  background-color: rgba(79, 142, 247, 0.06);
+}
+
 /* ── Checkbox cells ── */
 .checkboxCell {
   display: flex;
@@ -199,6 +211,10 @@
   accent-color: var(--color-primary);
   cursor: pointer;
   flex-shrink: 0;
+}
+
+.filterableCell {
+  overflow: visible; /* allows HeaderFilter dropdown to escape headerCell overflow:hidden */
 }
 
 /* ── Picker header cell ── */
@@ -417,3 +433,88 @@
 }
 
 .bulkEditApplyBtn:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Bulk fill indicator ── */
+.pendingBulkFill {
+  background: rgba(59, 130, 246, 0.08) !important;
+  outline: 1px solid rgba(59, 130, 246, 0.3);
+  outline-offset: -1px;
+}
+
+.bulkFillHint {
+  padding: 4px 14px;
+  font-size: 12px;
+  color: var(--color-accent, #3b82f6);
+  background: rgba(59, 130, 246, 0.06);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+  flex-shrink: 0;
+}
+
+/* ── Undo toast ── */
+.undoToast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  background: var(--color-card-bg);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  flex-shrink: 0;
+}
+
+.undoBtn {
+  font-size: 12px;
+  color: var(--color-accent, #3b82f6);
+  text-decoration: underline;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.undoDismiss {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+/* ── Column rename input ── */
+.renameInput {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--color-primary);
+  font: inherit;
+  color: inherit;
+  outline: none;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── Custom field chip cell ── */
+.chipCell {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  height: 100%;
+  cursor: default;
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
