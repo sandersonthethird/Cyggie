@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
+import { jaroWinkler } from '../../utils/jaroWinkler'
+import { UnionFind } from '../../utils/unionFind'
 import type {
   CompanyEntityType,
   CompanyPriority,
@@ -135,6 +137,9 @@ function parseTimestamp(value: string | null | undefined): number {
     : trimmed
   return Date.parse(normalized)
 }
+
+const MAX_FUZZY_CANDIDATES = 500
+const FUZZY_THRESHOLD = 0.88
 
 function compareDuplicateCompanies(a: CompanyDuplicateSummary, b: CompanyDuplicateSummary): number {
   const aUpdated = parseTimestamp(a.updatedAt)
@@ -1281,8 +1286,6 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
         pipeline_stage,
         updated_at
       FROM org_companies
-      WHERE (primary_domain IS NOT NULL AND TRIM(primary_domain) <> '')
-         OR (website_url IS NOT NULL AND TRIM(website_url) <> '')
       ORDER BY datetime(updated_at) DESC
     `)
     .all() as Array<{
@@ -1317,11 +1320,14 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
   }
 
   const groups: CompanyDuplicateGroup[] = []
+  const domainGroupedIds = new Set<string>()
+
   for (const [domainKey, companies] of groupsByDomain.entries()) {
     if (companies.length < 2) continue
     const sortedCompanies = [...companies].sort(compareDuplicateCompanies)
     const suggestedKeep = sortedCompanies[0]
     if (!suggestedKeep) continue
+    sortedCompanies.forEach((c) => domainGroupedIds.add(c.id))
 
     groups.push({
       key: `domain:${domainKey}`,
@@ -1330,6 +1336,76 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
       suggestedKeepCompanyId: suggestedKeep.id,
       companies: sortedCompanies
     })
+  }
+
+  // ── Fuzzy name pass for companies without a domain match ─────────────────────
+
+  const ungroupedRows = rows.filter((r) => !domainGroupedIds.has(r.id))
+  const ungroupedNames = [
+    ...new Set(
+      ungroupedRows
+        .map((r) => r.canonical_name?.trim().toLowerCase())
+        .filter((n): n is string => !!n && n.length > 0)
+    )
+  ]
+
+  if (ungroupedNames.length > 0 && ungroupedNames.length <= MAX_FUZZY_CANDIDATES) {
+    const uf = new UnionFind()
+    const maxSimByPair = new Map<string, number>()
+
+    for (let i = 0; i < ungroupedNames.length; i++) {
+      for (let j = i + 1; j < ungroupedNames.length; j++) {
+        const sim = jaroWinkler(ungroupedNames[i]!, ungroupedNames[j]!)
+        if (sim >= FUZZY_THRESHOLD) {
+          uf.union(ungroupedNames[i]!, ungroupedNames[j]!)
+          const pairKey = `${ungroupedNames[i]}\0${ungroupedNames[j]}`
+          maxSimByPair.set(pairKey, Math.max(maxSimByPair.get(pairKey) ?? 0, sim))
+        }
+      }
+    }
+
+    for (const [, cluster] of uf.clusters()) {
+      if (cluster.length < 2) continue
+
+      let maxSim = 0
+      for (let i = 0; i < cluster.length; i++) {
+        for (let j = i + 1; j < cluster.length; j++) {
+          const pairKey = `${cluster[i]}\0${cluster[j]}`
+          const altKey = `${cluster[j]}\0${cluster[i]}`
+          const sim = maxSimByPair.get(pairKey) ?? maxSimByPair.get(altKey) ?? 0
+          if (sim > maxSim) maxSim = sim
+        }
+      }
+
+      const clusterSet = new Set(cluster)
+      const clusterCompanies: CompanyDuplicateSummary[] = ungroupedRows
+        .filter((r) => clusterSet.has(r.canonical_name?.trim().toLowerCase()))
+        .map((r) => ({
+          id: r.id,
+          canonicalName: r.canonical_name,
+          primaryDomain: r.primary_domain,
+          websiteUrl: r.website_url,
+          entityType: r.entity_type,
+          pipelineStage: r.pipeline_stage,
+          updatedAt: r.updated_at
+        }))
+
+      if (clusterCompanies.length < 2) continue
+      const sortedCompanies = [...clusterCompanies].sort(compareDuplicateCompanies)
+      const suggestedKeep = sortedCompanies[0]!
+      const confidence = Math.round(maxSim * 100)
+
+      groups.push({
+        key: `fuzzy-name:${cluster.sort().join('|')}`,
+        domain: null,
+        reason: `Similar names (~${confidence}% match)`,
+        suggestedKeepCompanyId: suggestedKeep.id,
+        companies: sortedCompanies,
+        confidence
+      })
+    }
+  } else if (ungroupedNames.length > MAX_FUZZY_CANDIDATES) {
+    console.warn(`[dedup] skipping fuzzy company pass: ${ungroupedNames.length} ungrouped names exceeds MAX_FUZZY_CANDIDATES (${MAX_FUZZY_CANDIDATES})`)
   }
 
   groups.sort((a, b) => {

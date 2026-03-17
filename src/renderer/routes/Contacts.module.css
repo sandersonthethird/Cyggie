@@ -355,8 +355,17 @@
   font-size: 12px;
 }
 
-.dedupReason { color: var(--color-text-primary); font-weight: 600; }
+.dedupReason { color: var(--color-text-primary); font-weight: 600; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dedupReasonMeta { margin-top: 2px; color: var(--color-text-tertiary); font-size: 11px; }
+.confidenceBadge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
 
 .dedupContactList { display: flex; flex-direction: column; gap: 7px; }
 .dedupContactItem { display: flex; flex-direction: column; gap: 2px; }

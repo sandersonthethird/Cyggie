@@ -98,6 +98,7 @@ export interface ContactDetail extends ContactSummary {
   investmentSectorFocus: string | null
   proudPortfolioCompanies: string | null
   noteCount: number
+  fieldSources: string | null
 }
 
 export interface ContactNote {
@@ -224,6 +225,8 @@ export interface ContactDuplicateGroup {
   reason: string
   suggestedKeepContactId: string
   contacts: ContactDuplicateSummary[]
+  /** Set only for fuzzy-name groups (0–100). Omitted for exact-match groups. */
+  confidence?: number
 }
 
 export interface ContactDedupDecision {

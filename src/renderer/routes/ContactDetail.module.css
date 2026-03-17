@@ -95,3 +95,157 @@
   color: var(--color-text-tertiary);
   font-size: 14px;
 }
+
+/* ── Enrichment success banner (in left panel) ── */
+.enrichSuccess {
+  padding: 6px 12px;
+  background: rgba(var(--color-success-rgb, 52,199,89), 0.12);
+  color: var(--color-success, #34c759);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  margin: 0 12px 8px;
+}
+
+/* ── Contact enrich dialog (portal) ── */
+.enrichOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(10, 18, 31, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.enrichDialog {
+  width: min(480px, 100%);
+  max-height: min(80vh, 600px);
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
+}
+
+.enrichDialogTitle {
+  margin: 0;
+  padding: 14px 16px 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.enrichDialogSubtitle {
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.enrichProposalList {
+  overflow-y: auto;
+  flex: 1;
+  padding: 0 16px 8px;
+}
+
+.enrichProposal {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.enrichProposal:last-child {
+  border-bottom: none;
+}
+
+.enrichProposalName {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.enrichProposalChanges {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 24px;
+}
+
+.enrichChange {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.enrichChangeField {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  min-width: 70px;
+}
+
+.enrichChangeFrom {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.enrichChangeTo {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.enrichDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.enrichDialogSkip {
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.enrichDialogSkip:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text-primary);
+}
+
+.enrichDialogSkip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.enrichDialogApply {
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.enrichDialogApply:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.enrichDialogApply:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

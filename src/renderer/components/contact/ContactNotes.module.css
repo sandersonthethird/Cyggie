@@ -108,6 +108,18 @@
   -webkit-box-orient: vertical;
 }
 
+.noteTitleRow {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.pinnedBadge {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
 .noteMeta {
   display: flex;
   align-items: center;
@@ -115,6 +127,39 @@
   margin-top: 8px;
   font-size: 11px;
   color: var(--color-text-tertiary);
+}
+
+.noteMetaActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pinBtn {
+  background: none;
+  border: none;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.25;
+  line-height: 1;
+}
+
+.pinBtn:hover {
+  opacity: 0.7;
+}
+
+.pinBtn.pinned {
+  opacity: 1;
+}
+
+.pinBtn:disabled {
+  cursor: default;
+  opacity: 0.15;
+}
+
+.notePinned {
+  border-color: var(--color-primary);
 }
 
 .deleteBtn {

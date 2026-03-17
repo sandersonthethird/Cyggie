@@ -1,6 +1,7 @@
 import * as companyRepo from '../database/repositories/org-company.repo'
 import { resolveContactsByEmails } from '../database/repositories/contact.repo'
 import { getContact } from '../database/repositories/contact.repo'
+import { normalizeWhitespace as _normalizeWhitespace, isDifferentText as _isDifferentText, stripMarkdown as _stripMarkdown } from '../utils/summary-text-utils'
 import type { CompanyPipelineStage, CompanyRound, CompanySummary } from '../../shared/types/company'
 import type {
   CompanySummaryUpdateChange,
@@ -42,16 +43,8 @@ const SECTION_HEADER_HINTS = [
 
 const MONEY_FRAGMENT_RE = /\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:billion|bn|b|million|mm|m|thousand|k)?/i
 
-function normalizeWhitespace(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
-}
-
-function isDifferentText(next: string | null | undefined, current: string | null | undefined): boolean {
-  if (!next) return false
-  const normalizedNext = normalizeWhitespace(next).toLowerCase()
-  const normalizedCurrent = normalizeWhitespace(current || '').toLowerCase()
-  return normalizedNext !== normalizedCurrent
-}
+const normalizeWhitespace = _normalizeWhitespace
+const isDifferentText = _isDifferentText
 
 function isDifferentNumber(next: number | null | undefined, current: number | null | undefined): boolean {
   if (next == null) return false
@@ -59,16 +52,7 @@ function isDifferentNumber(next: number | null | undefined, current: number | nu
   return Math.abs(next - current) > 0.001
 }
 
-function stripMarkdown(value: string): string {
-  return value
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/^[-*]\s+/, '')
-    .replace(/^\d+[\).]\s+/, '')
-    .trim()
-}
+const stripMarkdown = _stripMarkdown
 
 function normalizeHeaderLine(value: string): string {
   const plain = stripMarkdown(value)

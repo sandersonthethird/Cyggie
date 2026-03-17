@@ -1345,3 +1345,115 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* ── Contact enrichment button + banners ── */
+.enrichBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.enrichBtn {
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.enrichBtn:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text-primary);
+}
+
+.enrichError {
+  font-size: 12px;
+  color: var(--color-danger, #ff3b30);
+}
+
+.enrichSuccessBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(var(--color-success-rgb, 52,199,89), 0.12);
+  color: var(--color-success, #34c759);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.enrichSuccessBanner button {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  padding: 0 2px;
+}
+
+.enrichSuccessBanner button:hover {
+  opacity: 1;
+}
+
+/* ── Contact enrich proposal rows (inside taskProposalDialog) ── */
+.contactEnrichProposal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.contactEnrichProposal:last-child {
+  border-bottom: none;
+}
+
+.contactEnrichName {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.contactEnrichChanges {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 26px;
+}
+
+.contactEnrichChange {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.contactEnrichField {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  min-width: 70px;
+}
+
+.contactEnrichFrom {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.contactEnrichArrow {
+  color: var(--color-text-tertiary);
+}
+
+.contactEnrichTo {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}

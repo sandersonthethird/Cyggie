@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CustomFieldDefinition, CustomFieldType } from '../../../shared/types/custom-fields'
+import { CONTACT_SECTIONS, COMPANY_SECTIONS } from '../../../shared/types/custom-fields'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import { FIELD_TYPES, slugify } from '../../utils/customFieldUtils'
+import { FIELD_TYPES } from '../../utils/customFieldUtils'
 import { api } from '../../api'
 import styles from './CreateCustomFieldModal.module.css'
 
@@ -14,21 +15,19 @@ interface CreateCustomFieldModalProps {
 
 interface FormState {
   label: string
-  fieldKey: string
-  fieldKeyTouched: boolean
   fieldType: CustomFieldType
   options: string[]
   required: boolean
+  section: string
 }
 
 export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateCustomFieldModalProps) {
   const [form, setForm] = useState<FormState>({
     label: '',
-    fieldKey: '',
-    fieldKeyTouched: false,
     fieldType: 'text',
     options: [],
     required: false,
+    section: '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,11 +53,7 @@ export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateC
   }, [form.fieldType])
 
   function handleLabelChange(label: string) {
-    setForm((f) => ({
-      ...f,
-      label,
-      fieldKey: f.fieldKeyTouched ? f.fieldKey : slugify(label),
-    }))
+    setForm((f) => ({ ...f, label }))
   }
 
   function updateOption(i: number, value: string) {
@@ -77,7 +72,6 @@ export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateC
 
   async function handleSave() {
     if (!form.label.trim()) { setError('Label is required'); return }
-    if (!form.fieldKey.trim()) { setError('Field key is required'); return }
 
     const optionsJson =
       (form.fieldType === 'select' || form.fieldType === 'multiselect') &&
@@ -92,12 +86,12 @@ export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateC
       {
         entityType,
         label: form.label.trim(),
-        fieldKey: form.fieldKey.trim(),
         fieldType: form.fieldType,
         optionsJson,
         isRequired: form.required,
         sortOrder: 999,
         showInList: true,
+        section: form.section || null,
       }
     )
     setSaving(false)
@@ -109,6 +103,7 @@ export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateC
   }
 
   const isSelect = form.fieldType === 'select' || form.fieldType === 'multiselect'
+  const sectionOptions = entityType === 'contact' ? CONTACT_SECTIONS : COMPANY_SECTIONS
 
   return createPortal(
     <div className={styles.overlay} onClick={onClose}>
@@ -133,16 +128,6 @@ export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateC
           </div>
 
           <div className={styles.row}>
-            <label className={styles.label}>Field key</label>
-            <input
-              className={styles.input}
-              value={form.fieldKey}
-              onChange={(e) => setForm((f) => ({ ...f, fieldKey: e.target.value, fieldKeyTouched: true }))}
-              placeholder="e.g. investment_focus"
-            />
-          </div>
-
-          <div className={styles.row}>
             <label className={styles.label}>Type</label>
             <select
               className={styles.select}
@@ -151,6 +136,20 @@ export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateC
             >
               {FIELD_TYPES.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className={styles.row}>
+            <label className={styles.label}>Section</label>
+            <select
+              className={styles.select}
+              value={form.section}
+              onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))}
+            >
+              <option value=''>Custom Fields (default)</option>
+              {sectionOptions.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
               ))}
             </select>
           </div>

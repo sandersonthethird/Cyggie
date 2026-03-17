@@ -41,8 +41,37 @@ export interface CompanySummaryUpdateProposal {
   founderUpdate?: ContactTypeUpdateProposal | null
 }
 
+export type ContactSummaryAutoFillField = 'title' | 'phone' | 'linkedinUrl' | 'company'
+
+export interface ContactSummaryUpdateChange {
+  field: ContactSummaryAutoFillField
+  from: string | null
+  to: string | null
+}
+
+export interface ContactSummaryUpdatePayload {
+  title?: string | null
+  phone?: string | null
+  linkedinUrl?: string | null
+  fieldSources?: string | null  // serialized JSON: { title: meetingId, phone: meetingId, ... }
+}
+
+export interface ContactCompanyLinkProposal {
+  companyId: string
+  companyName: string
+}
+
+export interface ContactSummaryUpdateProposal {
+  contactId: string
+  contactName: string
+  updates: ContactSummaryUpdatePayload
+  companyLink?: ContactCompanyLinkProposal
+  changes: ContactSummaryUpdateChange[]
+}
+
 export interface SummaryGenerateResult {
   summary: string
   companyUpdateProposals: CompanySummaryUpdateProposal[]
   taskExtractionResult?: TaskExtractionResult
+  contactUpdateProposals: ContactSummaryUpdateProposal[]
 }

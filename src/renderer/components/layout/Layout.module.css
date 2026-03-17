@@ -195,3 +195,31 @@
 .bannerDismissBtn:hover {
   color: var(--color-text);
 }
+
+/* Recording in-progress banner (modifier on top of .meetingBanner) */
+.recordingBanner {
+  border-color: var(--color-danger, #dc3545);
+  gap: 8px;
+  align-items: center;
+}
+
+.recordingDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-danger, #dc3545);
+  flex-shrink: 0;
+  animation: recordingPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes recordingPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+.bannerRecordingText {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-text);
+  white-space: nowrap;
+}

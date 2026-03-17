@@ -4,6 +4,7 @@ import type { ContactNote } from '../../../shared/types/contact'
 import { ContactNoteDetailModal } from '../crm/ContactNoteDetailModal'
 import styles from './ContactNotes.module.css'
 import { api } from '../../api'
+import { usePinToggle } from '../../hooks/usePinToggle'
 
 interface ContactNotesProps {
   contactId: string
@@ -18,6 +19,7 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
   const [focused, setFocused] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const { togglePin, togglingIds } = usePinToggle<ContactNote>(IPC_CHANNELS.CONTACT_NOTES_UPDATE, setNotes)
 
   useEffect(() => {
     if (loaded) return
@@ -121,19 +123,30 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
         return (
           <div
             key={note.id}
-            className={styles.note}
+            className={`${styles.note} ${note.isPinned ? styles.notePinned : ''}`}
             onClick={() => setSelectedNoteId(note.id)}
           >
-            <div className={styles.noteTitle}>{title}</div>
+            <div className={styles.noteTitleRow}>
+              <div className={styles.noteTitle}>{title}</div>
+              {note.isPinned && <span className={styles.pinnedBadge}>📌 Pinned</span>}
+            </div>
             {body && <div className={styles.noteBody}>{body}</div>}
             <div className={styles.noteMeta}>
               <span>{new Date(note.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-              <button
-                className={styles.deleteBtn}
-                onClick={(e) => { e.stopPropagation(); deleteNote(note.id) }}
-              >
-                Delete
-              </button>
+              <div className={styles.noteMetaActions}>
+                <button
+                  className={`${styles.pinBtn} ${note.isPinned ? styles.pinned : ''}`}
+                  disabled={togglingIds.has(note.id)}
+                  onClick={(e) => { e.stopPropagation(); void togglePin(note) }}
+                  title={note.isPinned ? 'Unpin' : 'Pin to top'}
+                >📌</button>
+                <button
+                  className={styles.deleteBtn}
+                  onClick={(e) => { e.stopPropagation(); deleteNote(note.id) }}
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         )

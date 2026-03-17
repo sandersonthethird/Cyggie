@@ -16,6 +16,7 @@ import type { WebShareResponse } from '../../shared/types/web-share'
 import type {
   CompanySummaryUpdateChange,
   CompanySummaryUpdateProposal,
+  ContactSummaryUpdateProposal,
   SummaryGenerateResult
 } from '../../shared/types/summary'
 import type { Task, ProposedTask, TaskCreateData } from '../../shared/types/task'
@@ -221,6 +222,12 @@ export default function MeetingDetail() {
   const [taskProposalDialogOpen, setTaskProposalDialogOpen] = useState(false)
   const [pendingProposedTasks, setPendingProposedTasks] = useState<ProposedTask[]>([])
   const [proposedTaskSelections, setProposedTaskSelections] = useState<Record<string, boolean>>({})
+  const [pendingContactUpdates, setPendingContactUpdates] = useState<ContactSummaryUpdateProposal[]>([])
+  const [contactEnrichDialogOpen, setContactEnrichDialogOpen] = useState(false)
+  const [contactEnrichSelections, setContactEnrichSelections] = useState<Record<string, boolean>>({})
+  const [isApplyingContactUpdates, setIsApplyingContactUpdates] = useState(false)
+  const [contactEnrichError, setContactEnrichError] = useState<string | null>(null)
+  const [enrichSuccessMsg, setEnrichSuccessMsg] = useState<string | null>(null)
 
   // Close share menu on click outside
   useEffect(() => {
@@ -680,25 +687,6 @@ export default function MeetingDetail() {
     }
   }, [data, isRecording, notesDraft, saveNotes, startRecording, id, navigate, location.state])
 
-  const handleContinueRecording = useCallback(async () => {
-    if (!data || isRecording) return
-    // Save any pending notes first
-    if (notesSaveRef.current) {
-      clearTimeout(notesSaveRef.current)
-      await saveNotes(notesDraft)
-    }
-    try {
-      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
-        IPC_CHANNELS.RECORDING_START,
-        undefined,
-        undefined,
-        data.meeting.id
-      )
-      startRecording(result.meetingId, result.meetingPlatform)
-    } catch (err) {
-      console.error('Failed to continue recording:', err)
-    }
-  }, [data, isRecording, notesDraft, saveNotes, startRecording])
 
   // Auto-scroll live transcript
   useEffect(() => {
@@ -786,7 +774,11 @@ export default function MeetingDetail() {
   const handleApplyCompanyUpdates = useCallback(async () => {
     if (pendingCompanyUpdates.length === 0) {
       setCompanyUpdateDialogOpen(false)
-      if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
+      if (pendingContactUpdates.length > 0) {
+        setContactEnrichDialogOpen(true)
+      } else if (pendingProposedTasks.length > 0) {
+        setTaskProposalDialogOpen(true)
+      }
       return
     }
 
@@ -811,8 +803,69 @@ export default function MeetingDetail() {
       console.error('[MeetingDetail] Failed to apply company updates from summary:', err)
     }
 
-    if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
-  }, [pendingCompanyUpdates, pendingProposedTasks])
+    if (pendingContactUpdates.length > 0) {
+      setContactEnrichDialogOpen(true)
+    } else if (pendingProposedTasks.length > 0) {
+      setTaskProposalDialogOpen(true)
+    }
+  }, [pendingCompanyUpdates, pendingContactUpdates, pendingProposedTasks])
+
+  const handleApplyContactUpdates = useCallback(async () => {
+    const accepted = pendingContactUpdates.filter(
+      (p) => contactEnrichSelections[p.contactId] !== false
+    )
+    setContactEnrichDialogOpen(false)
+    setPendingContactUpdates([])
+    if (accepted.length === 0) {
+      if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
+      return
+    }
+    setIsApplyingContactUpdates(true)
+    try {
+      const names: string[] = []
+      for (const p of accepted) {
+        const fieldUpdates = { ...p.updates }
+        if (Object.keys(fieldUpdates).length > 0) {
+          await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, p.contactId, fieldUpdates)
+        }
+        if (p.companyLink) {
+          await api.invoke(IPC_CHANNELS.CONTACT_SET_COMPANY, p.contactId, p.companyLink.companyName)
+        }
+        names.push(p.contactName)
+      }
+      setEnrichSuccessMsg(`${names.join(', ')} updated`)
+      setTimeout(() => setEnrichSuccessMsg(null), 3000)
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to apply contact updates:', err)
+    } finally {
+      setIsApplyingContactUpdates(false)
+      if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
+    }
+  }, [pendingContactUpdates, contactEnrichSelections, pendingProposedTasks])
+
+  const handleEnrichFromMeeting = useCallback(async () => {
+    if (!id) return
+    setContactEnrichError(null)
+    try {
+      const proposals = await api.invoke<ContactSummaryUpdateProposal[]>(
+        IPC_CHANNELS.CONTACT_ENRICH_FROM_MEETING, id
+      )
+      if (proposals.length > 0) {
+        const selections: Record<string, boolean> = {}
+        for (const p of proposals) selections[p.contactId] = true
+        setContactEnrichSelections(selections)
+        setPendingContactUpdates(proposals)
+        setContactEnrichDialogOpen(true)
+      } else {
+        setContactEnrichError('No new contact info found in this meeting.')
+        setTimeout(() => setContactEnrichError(null), 3000)
+      }
+    } catch (err) {
+      console.error('[MeetingDetail] Contact enrichment failed:', err)
+      setContactEnrichError('Could not extract contact info — please try again.')
+      setTimeout(() => setContactEnrichError(null), 4000)
+    }
+  }, [id])
 
   const handleGenerateSummary = useCallback(async () => {
     if (!id || !selectedTemplateId || isGenerating) return
@@ -835,6 +888,9 @@ export default function MeetingDetail() {
       const companyUpdateProposals = typeof result === 'string'
         ? []
         : (result.companyUpdateProposals || [])
+      const contactProposals = typeof result === 'string'
+        ? []
+        : (result.contactUpdateProposals || [])
       setData((prev) =>
         prev ? { ...prev, summary, meeting: { ...prev.meeting, status: 'summarized' } } : prev
       )
@@ -854,10 +910,20 @@ export default function MeetingDetail() {
         setProposedTaskSelections(selections)
       }
 
+      if (contactProposals.length > 0) {
+        const selections: Record<string, boolean> = {}
+        for (const p of contactProposals) selections[p.contactId] = true
+        setContactEnrichSelections(selections)
+        setPendingContactUpdates(contactProposals)
+      }
+
       if (companyUpdateProposals.length > 0) {
         setPendingCompanyUpdates(companyUpdateProposals)
         setCompanyUpdateDialogOpen(true)
-        // Task dialog will open after company updates dialog closes
+        // Contact dialog opens after company dialog; task dialog opens after contact dialog
+      } else if (contactProposals.length > 0) {
+        setContactEnrichDialogOpen(true)
+        // Task dialog opens after contact dialog
       } else if (proposedTasks.length > 0) {
         setTaskProposalDialogOpen(true)
       }
@@ -1426,6 +1492,27 @@ export default function MeetingDetail() {
               </div>
             )}
 
+            {meeting.status === 'summarized' && (meeting.attendeeEmails?.length ?? 0) > 0 && (
+              <div className={styles.enrichBar}>
+                <button
+                  className={styles.enrichBtn}
+                  onClick={() => void handleEnrichFromMeeting()}
+                >
+                  Enrich contacts from meeting
+                </button>
+                {contactEnrichError && (
+                  <span className={styles.enrichError}>{contactEnrichError}</span>
+                )}
+              </div>
+            )}
+
+            {enrichSuccessMsg && (
+              <div className={styles.enrichSuccessBanner}>
+                ✓ {enrichSuccessMsg}
+                <button onClick={() => setEnrichSuccessMsg(null)}>×</button>
+              </div>
+            )}
+
             {hasSummary && (
               <>
                 <div className={styles.summaryDivider}>
@@ -1721,9 +1808,79 @@ export default function MeetingDetail() {
         onCancel={() => {
           setCompanyUpdateDialogOpen(false)
           setPendingCompanyUpdates([])
-          if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
+          if (pendingContactUpdates.length > 0) {
+            setContactEnrichDialogOpen(true)
+          } else if (pendingProposedTasks.length > 0) {
+            setTaskProposalDialogOpen(true)
+          }
         }}
       />
+      {contactEnrichDialogOpen && createPortal(
+        <div className={styles.taskProposalOverlay}>
+          <div className={styles.taskProposalDialog}>
+            <h3 className={styles.taskProposalTitle}>
+              Enrich contacts from this meeting
+            </h3>
+            <p className={styles.taskProposalSubtitle}>
+              New information was found in the meeting summary. Select which updates to apply.
+            </p>
+            <div className={styles.taskProposalList}>
+              {pendingContactUpdates.map((proposal) => (
+                <div key={proposal.contactId} className={styles.contactEnrichProposal}>
+                  <div className={styles.contactEnrichName}>
+                    <input
+                      type="checkbox"
+                      checked={contactEnrichSelections[proposal.contactId] !== false}
+                      onChange={() => {
+                        setContactEnrichSelections((prev) => ({
+                          ...prev,
+                          [proposal.contactId]: prev[proposal.contactId] === false
+                        }))
+                      }}
+                      className={styles.taskProposalCheckbox}
+                    />
+                    <strong>{proposal.contactName}</strong>
+                  </div>
+                  <div className={styles.contactEnrichChanges}>
+                    {proposal.changes.map((change) => (
+                      <div key={change.field} className={styles.contactEnrichChange}>
+                        <span className={styles.contactEnrichField}>{change.field}:</span>
+                        <span className={styles.contactEnrichFrom}>{change.from || '(empty)'}</span>
+                        <span className={styles.contactEnrichArrow}>→</span>
+                        <span className={styles.contactEnrichTo}>{change.to}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className={styles.taskProposalActions}>
+              <button
+                className={styles.taskProposalSkip}
+                onClick={() => {
+                  setContactEnrichDialogOpen(false)
+                  setPendingContactUpdates([])
+                  if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
+                }}
+                disabled={isApplyingContactUpdates}
+              >
+                Skip
+              </button>
+              <button
+                className={styles.taskProposalAccept}
+                onClick={() => void handleApplyContactUpdates()}
+                disabled={isApplyingContactUpdates || Object.values(contactEnrichSelections).every((v) => v === false)}
+              >
+                {isApplyingContactUpdates
+                  ? 'Applying…'
+                  : `Apply ${Object.values(contactEnrichSelections).filter((v) => v !== false).length} update${Object.values(contactEnrichSelections).filter((v) => v !== false).length !== 1 ? 's' : ''}`
+                }
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
       {taskProposalDialogOpen && createPortal(
         <div className={styles.taskProposalOverlay}>
           <div className={styles.taskProposalDialog}>

@@ -37,6 +37,7 @@ function rowToDefinition(row: Record<string, unknown>): CustomFieldDefinition {
     sortOrder: row.sort_order as number,
     showInList: Boolean(row.show_in_list),
     isBuiltin: Boolean(row.is_builtin),
+    section: (row.section as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string
   }
@@ -108,27 +109,43 @@ export function listFieldDefinitions(entityType: CustomFieldEntityType): CustomF
   return rows.map(rowToDefinition)
 }
 
+function slugify(label: string): string {
+  return label.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || 'field'
+}
+
 export function createFieldDefinition(data: CreateCustomFieldDefinitionInput): CustomFieldDefinition {
-  if (!FIELD_KEY_REGEX.test(data.fieldKey)) {
-    throw new Error(`Invalid field_key "${data.fieldKey}": must match /^[a-z0-9_]+$/`)
-  }
   const db = getDatabase()
+
+  // Derive key from label if not provided; then resolve collisions with _2, _3...
+  let fieldKey = ((data.fieldKey ?? '').trim()) || slugify(data.label.trim())
+  if (!FIELD_KEY_REGEX.test(fieldKey)) {
+    throw new Error(`Invalid field_key "${fieldKey}": must match /^[a-z0-9_]+$/`)
+  }
+  const taken = new Set(
+    (db.prepare(`SELECT field_key FROM custom_field_definitions WHERE entity_type = ?`)
+      .all(data.entityType) as { field_key: string }[]).map(r => r.field_key)
+  )
+  const base = fieldKey
+  let suffix = 2
+  while (taken.has(fieldKey)) fieldKey = `${base}_${suffix++}`
+
   const id = randomUUID()
   const now = new Date().toISOString()
   db.prepare(
     `INSERT INTO custom_field_definitions
-      (id, entity_type, field_key, label, field_type, options_json, is_required, sort_order, show_in_list, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      (id, entity_type, field_key, label, field_type, options_json, is_required, sort_order, show_in_list, section, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     data.entityType,
-    data.fieldKey,
+    fieldKey,
     data.label,
     data.fieldType,
     data.optionsJson ?? null,
     data.isRequired ? 1 : 0,
     data.sortOrder ?? 0,
     data.showInList ? 1 : 0,
+    data.section ?? null,
     now,
     now
   )
@@ -156,6 +173,7 @@ export function updateFieldDefinition(
       is_required = ?,
       sort_order = ?,
       show_in_list = ?,
+      section = ?,
       updated_at = ?
     WHERE id = ?`
   ).run(
@@ -165,6 +183,7 @@ export function updateFieldDefinition(
     'isRequired' in updates ? (updates.isRequired ? 1 : 0) : existing.is_required,
     updates.sortOrder ?? existing.sort_order,
     'showInList' in updates ? (updates.showInList ? 1 : 0) : existing.show_in_list,
+    'section' in updates ? (updates.section ?? null) : existing.section,
     now,
     id
   )

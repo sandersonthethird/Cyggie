@@ -307,6 +307,25 @@
   color: var(--color-text-secondary);
 }
 
+.dropTarget {
+  outline: 2px dashed var(--color-primary);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+}
+
+.dragHandle {
+  cursor: grab;
+  opacity: 0.4;
+  margin-right: 4px;
+  user-select: none;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.sectionedFieldRow {
+  display: flex;
+  align-items: center;
+}
 
 /* ── Current Decision Widget ─────────────────────────────────── */
 

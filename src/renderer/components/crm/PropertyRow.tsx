@@ -260,6 +260,9 @@ export function PropertyRow({
       }
 
       case 'multiselect': {
+        const parsedOpts = safeParseOptions(options)
+        const selected = String(editValue ?? '').split(',').map(s => s.trim()).filter(Boolean)
+
         if (addingOption) {
           return (
             <AddOptionInlineInput
@@ -268,6 +271,12 @@ export function PropertyRow({
                 setAddingOption(false)
                 try {
                   await onAddOption?.(opt)
+                  const trimmed = opt.trim()
+                  if (trimmed) {
+                    const next = [...selected, trimmed].join(',')
+                    setEditValue(next)
+                    handleSave(next)
+                  }
                 } catch (e) {
                   console.error('[PropertyRow] addOption failed:', e)
                 }
@@ -276,17 +285,29 @@ export function PropertyRow({
             />
           )
         }
+
         return (
-          <div>
-            <input
-              ref={inputRef as React.RefObject<HTMLInputElement>}
-              className={styles.input}
-              value={String(editValue ?? '')}
-              onChange={(e) => setEditValue(e.target.value)}
-              onBlur={() => handleSave(editValue)}
-              onKeyDown={handleKeyDown}
-              placeholder="comma-separated values"
-            />
+          <div className={styles.chipPicker}>
+            {parsedOpts.map((opt) => {
+              const val = optionValue(opt)
+              const isSelected = selected.includes(val)
+              return (
+                <span
+                  key={val}
+                  className={`${styles.chip} ${styles.chipToggle} ${isSelected ? styles.chipActive : styles.chipInactive}`}
+                  style={isSelected ? chipStyle(val) : undefined}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    const next = isSelected ? selected.filter(s => s !== val) : [...selected, val]
+                    const joined = next.join(',') || null
+                    setEditValue(joined ?? '')
+                    handleSave(joined)
+                  }}
+                >
+                  {optionLabel(opt)}
+                </span>
+              )
+            })}
             {onAddOption && (
               <button
                 type="button"
@@ -447,7 +468,19 @@ export function PropertyRow({
       return <span>{displayLabel || String(displayValue)}</span>
     }
 
-    if ((type === 'select' || type === 'multiselect') && displayValue) {
+    if (type === 'multiselect' && displayValue) {
+      const vals = String(displayValue).split(',').map(s => s.trim()).filter(Boolean)
+      if (vals.length === 0) return <span className={styles.empty}>—</span>
+      return (
+        <span className={styles.chips}>
+          {vals.map(v => (
+            <span key={v} className={styles.chip} style={chipStyle(v)}>{v}</span>
+          ))}
+        </span>
+      )
+    }
+
+    if (type === 'select' && displayValue) {
       const strVal = String(displayValue)
       return <span className={styles.chip} style={chipStyle(strVal)}>{strVal}</span>
     }

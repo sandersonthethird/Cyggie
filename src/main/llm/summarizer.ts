@@ -18,6 +18,7 @@ import { critiqueText } from './critique'
 import type { LlmProvider } from '../../shared/types/settings'
 import { getVcSummaryCompanyUpdateProposals } from '../services/company-summary-sync.service'
 import { extractTasksFromSummary } from '../services/task-extraction.service'
+import { getContactSummaryUpdateProposals } from '../services/contact-summary-sync.service'
 import { listMeetingCompanies } from '../database/repositories/org-company.repo'
 import { resolveContactsByEmails } from '../database/repositories/contact.repo'
 import { createContactNote } from '../database/repositories/contact-notes.repo'
@@ -164,6 +165,11 @@ export async function generateSummary(
     }
   }
 
+  // Hoist emailToContactId — built once, reused for cross-save notes and contact proposals
+  const emailToContactId = (meeting.attendeeEmails?.length ?? 0) > 0
+    ? resolveContactsByEmails(meeting.attendeeEmails!)
+    : {}
+
   // Cross-save summary as a note for each linked contact and company
   const noteTitle = meeting.title?.trim() || 'Meeting'
   const noteContent = `${noteTitle}\n${summary}`
@@ -175,16 +181,12 @@ export async function generateSummary(
         userId
       )
     }
-    const attendeeEmails = meeting.attendeeEmails || []
-    if (attendeeEmails.length > 0) {
-      const emailToContactId = resolveContactsByEmails(attendeeEmails)
-      const contactIds = [...new Set(Object.values(emailToContactId))]
-      for (const contactId of contactIds) {
-        createContactNote(
-          { contactId, title: noteTitle, content: noteContent, sourceMeetingId: meetingId },
-          userId
-        )
-      }
+    const contactIds = [...new Set(Object.values(emailToContactId))]
+    for (const contactId of contactIds) {
+      createContactNote(
+        { contactId, title: noteTitle, content: noteContent, sourceMeetingId: meetingId },
+        userId
+      )
     }
   } catch (err) {
     console.error('[Notes] Failed to cross-save summary as contact/company notes:', err)
@@ -203,6 +205,22 @@ export async function generateSummary(
     console.error('[Tasks] Failed to extract tasks from summary:', err)
   }
 
+  // Extract contact field proposals from summary (parallel with task extraction, non-blocking)
+  let contactUpdateProposals: SummaryGenerateResult['contactUpdateProposals'] = []
+  try {
+    contactUpdateProposals = await getContactSummaryUpdateProposals(
+      summary,
+      emailToContactId,
+      provider,
+      meetingId
+    )
+    if (contactUpdateProposals.length > 0) {
+      console.log(`[Contact AutoFill] ${contactUpdateProposals.length} proposals for meeting ${meetingId}`)
+    }
+  } catch (err) {
+    console.error('[Contact AutoFill] Failed to extract contact fields:', err)
+  }
+
   // Upload summary to Drive (fire-and-forget)
   if (hasDriveScope()) {
     const fullPath = join(getSummariesDir(), summaryPath)
@@ -216,5 +234,5 @@ export async function generateSummary(
       })
   }
 
-  return { summary, companyUpdateProposals, taskExtractionResult }
+  return { summary, companyUpdateProposals, taskExtractionResult, contactUpdateProposals }
 }

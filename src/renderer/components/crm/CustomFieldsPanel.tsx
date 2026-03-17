@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CustomFieldEntityType, CustomFieldWithValue, SetCustomFieldValueInput } from '../../../shared/types/custom-fields'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
@@ -13,17 +13,21 @@ interface CustomFieldsPanelProps {
   entityId: string
   onFieldsLoaded?: (fields: CustomFieldWithValue[]) => void
   onCreateField?: () => void
+  draggingFieldId?: string | null
+  onDropToUnsectioned?: () => void
 }
 
-export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded, onCreateField }: CustomFieldsPanelProps) {
+export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded, onCreateField, draggingFieldId, onDropToUnsectioned }: CustomFieldsPanelProps) {
   const { load, loaded, companyDefs, contactDefs } = useCustomFieldStore()
   const { getJSON, setJSON } = usePreferencesStore()
   const [fields, setFields] = useState<CustomFieldWithValue[]>([])
   const [loading, setLoading] = useState(true)
+  const [dropHighlight, setDropHighlight] = useState(false)
 
   const defs = (entityType === 'company' ? companyDefs : contactDefs).filter((d) => !d.isBuiltin)
-  const prefKey = `cyggie:${entityType}-summary-fields`
+  const prefKey = `cyggie:${entityType}-pinned-fields`
   const pinnedKeys = getJSON<string[]>(prefKey, [])
+  const dropCounter = useRef(0)
 
   useEffect(() => {
     if (!loaded) {
@@ -51,7 +55,8 @@ export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded, onCrea
   }, [entityType, entityId, loaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!loaded || loading) return null
-  if (defs.length === 0) return null
+  if (defs.length === 0 && !onCreateField) return null
+
 
   function togglePin(id: string) {
     const key = `custom:${id}`
@@ -125,10 +130,21 @@ export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded, onCrea
     }
   }
 
+  const unsectionedFields = fields.filter((f) => !f.section)
+
+  if (unsectionedFields.length === 0 && defs.filter(d => !d.section).length === 0 && !onCreateField) return null
+
+  const panelDropProps = draggingFieldId && onDropToUnsectioned ? {
+    onDragOver: (e: React.DragEvent) => e.preventDefault(),
+    onDragEnter: () => { dropCounter.current++; setDropHighlight(true) },
+    onDragLeave: () => { if (--dropCounter.current === 0) setDropHighlight(false) },
+    onDrop: () => { dropCounter.current = 0; setDropHighlight(false); onDropToUnsectioned() },
+  } : {}
+
   return (
-    <div className={styles.panel}>
+    <div className={`${styles.panel} ${dropHighlight ? styles.dropTarget : ''}`} {...panelDropProps}>
       <div className={styles.sectionHeader}>Custom Fields</div>
-      {fields.map((field) => {
+      {unsectionedFields.map((field) => {
         const isPinned = pinnedKeys.includes(`custom:${field.id}`)
         return (
           <div key={field.id} className={styles.fieldRow}>
@@ -161,7 +177,7 @@ export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded, onCrea
             />
             <button
               className={`${styles.pinBtn} ${isPinned ? styles.pinned : ''}`}
-              title={isPinned ? 'Remove from summary' : 'Pin to summary'}
+              title={isPinned ? 'Remove from Pinned section' : 'Pin to Pinned section'}
               onClick={() => togglePin(field.id)}
             >
               📌

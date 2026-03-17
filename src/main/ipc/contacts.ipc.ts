@@ -7,6 +7,8 @@ import {
   enrichContactsViaWebLookup,
   mergeContactEnrichmentResults
 } from '../services/contact-web-enrichment'
+import { getContactSummaryUpdateProposalsFromMeetingId } from '../services/contact-summary-sync.service'
+import { getProvider } from '../llm/summarizer'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 import type {
@@ -387,6 +389,17 @@ export function registerContactHandlers(): void {
       logAudit(userId, 'contact', contactId, 'delete', {})
     }
   )
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_ENRICH_FROM_MEETING, async (_event, meetingId: string) => {
+    if (!meetingId) return []
+    try {
+      const provider = getProvider()
+      return await getContactSummaryUpdateProposalsFromMeetingId(meetingId, provider)
+    } catch (err) {
+      console.error('[Contact AutoFill] On-demand enrichment failed:', err)
+      return []
+    }
+  })
 
   try {
     contactRepo.syncContactsFromMeetings(getCurrentUserId())

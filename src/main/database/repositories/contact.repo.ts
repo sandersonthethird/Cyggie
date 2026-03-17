@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
+import { jaroWinkler } from '../../utils/jaroWinkler'
+import { UnionFind } from '../../utils/unionFind'
 import {
   createCompany as createOrgCompany,
   findCompanyIdByDomain,
@@ -65,6 +67,7 @@ interface ContactRow {
   investment_stage_focus?: string | null
   investment_sector_focus?: string | null
   proud_portfolio_companies?: string | null
+  field_sources?: string | null
 }
 
 export interface ContactEmailOnboardingCandidate {
@@ -101,6 +104,8 @@ interface ContactDuplicateRow {
   id: string
   full_name: string
   normalized_name: string
+  first_name: string | null
+  last_name: string | null
   email: string | null
   primary_company_id: string | null
   primary_company_name: string | null
@@ -1574,6 +1579,7 @@ const CONTACT_UPDATABLE_FIELDS = {
   investmentStageFocus: 'investment_stage_focus',
   investmentSectorFocus: 'investment_sector_focus',
   proudPortfolioCompanies: 'proud_portfolio_companies',
+  fieldSources: 'field_sources',
 } as const
 
 type ContactUpdatableKey = keyof typeof CONTACT_UPDATABLE_FIELDS
@@ -1969,6 +1975,7 @@ export function getContact(contactId: string): ContactDetail | null {
         c.investment_stage_focus,
         c.investment_sector_focus,
         c.proud_portfolio_companies,
+        c.field_sources,
         c.created_at,
         c.updated_at,
         oc.canonical_name AS primary_company_name,
@@ -2079,6 +2086,7 @@ export function getContact(contactId: string): ContactDetail | null {
     investmentStageFocus: row.investment_stage_focus ?? null,
     investmentSectorFocus: row.investment_sector_focus ?? null,
     proudPortfolioCompanies: row.proud_portfolio_companies ?? null,
+    fieldSources: row.field_sources ?? null,
     noteCount: (() => {
       try {
         const countRow = db.prepare('SELECT COUNT(*) as count FROM contact_notes WHERE contact_id = ?').get(contactId) as { count: number } | undefined
@@ -3194,87 +3202,228 @@ function mergeContactsIntoOne(
   return normalizedSources.length
 }
 
+const MAX_FUZZY_CANDIDATES = 500
+const FUZZY_THRESHOLD = 0.88
+
 export function listSuspectedDuplicateContacts(limitGroups = 30): ContactDuplicateGroup[] {
   const db = getDatabase()
   const normalizedLimit = Number.isFinite(limitGroups)
     ? Math.max(1, Math.min(Math.floor(limitGroups), 200))
     : 30
 
-  const candidateNames = db
+  // ── Step 1: Exact-match candidates (UNION: normalized_name + first+last) ──────
+
+  // Primary candidates: exact normalized_name duplicates
+  const primaryCandidates = db
     .prepare(`
-      SELECT normalized_name
+      SELECT normalized_name AS candidate_name
       FROM contacts
-      WHERE normalized_name IS NOT NULL
-        AND TRIM(normalized_name) <> ''
+      WHERE normalized_name IS NOT NULL AND TRIM(normalized_name) <> ''
       GROUP BY normalized_name
       HAVING COUNT(*) > 1
-      ORDER BY COUNT(*) DESC, normalized_name ASC
-      LIMIT ?
     `)
-    .all(normalizedLimit) as Array<{ normalized_name: string }>
+    .all() as Array<{ candidate_name: string }>
 
-  const normalizedNames = candidateNames
-    .map((row) => (row.normalized_name || '').trim())
-    .filter((name) => name.length > 0 && !GENERIC_DUPLICATE_NAMES.has(name))
-
-  if (normalizedNames.length === 0) return []
-
-  const placeholders = normalizedNames.map(() => '?').join(', ')
-  const rows = db
+  // Secondary candidates: same first+last (catches "Last, First" variants)
+  const secondaryCandidates = db
     .prepare(`
-      SELECT
-        c.id,
-        c.full_name,
-        c.normalized_name,
-        c.email,
-        c.primary_company_id,
-        oc.canonical_name AS primary_company_name,
-        c.title,
-        c.updated_at
-      FROM contacts c
-      LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
-      WHERE c.normalized_name IN (${placeholders})
-      ORDER BY c.normalized_name ASC, datetime(c.updated_at) DESC, c.id ASC
+      SELECT LOWER(TRIM(first_name || ' ' || last_name)) AS candidate_name
+      FROM contacts
+      WHERE first_name IS NOT NULL AND TRIM(first_name) <> ''
+        AND last_name IS NOT NULL AND TRIM(last_name) <> ''
+      GROUP BY LOWER(TRIM(first_name || ' ' || last_name))
+      HAVING COUNT(*) > 1
     `)
-    .all(...normalizedNames) as ContactDuplicateRow[]
+    .all() as Array<{ candidate_name: string }>
 
-  const groupsByName = new Map<string, ContactDuplicateSummary[]>()
-  for (const row of rows) {
-    const normalizedName = (row.normalized_name || '').trim()
-    if (!normalizedName) continue
+  const primaryNameSet = new Set(
+    primaryCandidates
+      .map((r) => r.candidate_name.trim())
+      .filter((n) => n.length > 0 && !GENERIC_DUPLICATE_NAMES.has(n))
+  )
+  const secondaryNameSet = new Set(
+    secondaryCandidates
+      .map((r) => r.candidate_name.trim())
+      .filter((n) => n.length > 0 && !GENERIC_DUPLICATE_NAMES.has(n))
+  )
 
-    const summary: ContactDuplicateSummary = {
-      id: row.id,
-      fullName: row.full_name,
-      email: row.email,
-      primaryCompanyId: row.primary_company_id,
-      primaryCompanyName: row.primary_company_name,
-      title: row.title,
-      updatedAt: row.updated_at
+  const allCandidateNames = [...new Set([...primaryNameSet, ...secondaryNameSet])]
+  if (allCandidateNames.length === 0 && primaryNameSet.size === 0) {
+    // Still run fuzzy pass below, but no exact groups
+  }
+
+  // ── Step 2: Fetch contact rows for exact-match candidates ────────────────────
+
+  const groups: ContactDuplicateGroup[] = []
+  const exactGroupedIds = new Set<string>()
+
+  if (allCandidateNames.length > 0) {
+    const primaryArr = [...primaryNameSet]
+    const secondaryArr = [...secondaryNameSet]
+    const primaryPlaceholders = primaryArr.map(() => '?').join(', ') || 'NULL'
+    const secondaryPlaceholders = secondaryArr.map(() => '?').join(', ') || 'NULL'
+
+    const rows = db
+      .prepare(`
+        SELECT
+          c.id,
+          c.full_name,
+          c.normalized_name,
+          c.first_name,
+          c.last_name,
+          c.email,
+          c.primary_company_id,
+          oc.canonical_name AS primary_company_name,
+          c.title,
+          c.updated_at
+        FROM contacts c
+        LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
+        WHERE ${primaryArr.length > 0 ? `c.normalized_name IN (${primaryPlaceholders})` : 'FALSE'}
+          ${secondaryArr.length > 0 ? `OR (c.first_name IS NOT NULL AND c.last_name IS NOT NULL
+            AND LOWER(TRIM(c.first_name || ' ' || c.last_name)) IN (${secondaryPlaceholders}))` : ''}
+        GROUP BY c.id
+        ORDER BY c.normalized_name ASC, datetime(c.updated_at) DESC, c.id ASC
+      `)
+      .all(...primaryArr, ...secondaryArr) as ContactDuplicateRow[]
+
+    // ── Step 3: Group rows by key, preferring normalized_name ──────────────────
+    const groupsByKey = new Map<string, ContactDuplicateSummary[]>()
+    for (const row of rows) {
+      const normalizedName = (row.normalized_name || '').trim()
+      const firstLast =
+        row.first_name && row.last_name
+          ? `${row.first_name.trim()} ${row.last_name.trim()}`.toLowerCase()
+          : ''
+
+      const groupKey = primaryNameSet.has(normalizedName)
+        ? normalizedName
+        : firstLast || normalizedName
+
+      if (!groupKey || GENERIC_DUPLICATE_NAMES.has(groupKey)) continue
+
+      const summary: ContactDuplicateSummary = {
+        id: row.id,
+        fullName: row.full_name,
+        email: row.email,
+        primaryCompanyId: row.primary_company_id,
+        primaryCompanyName: row.primary_company_name,
+        title: row.title,
+        updatedAt: row.updated_at
+      }
+
+      const existing = groupsByKey.get(groupKey)
+      if (existing) existing.push(summary)
+      else groupsByKey.set(groupKey, [summary])
     }
 
-    const existing = groupsByName.get(normalizedName)
-    if (existing) {
-      existing.push(summary)
-    } else {
-      groupsByName.set(normalizedName, [summary])
+    for (const [groupKey, contacts] of groupsByKey.entries()) {
+      if (contacts.length < 2) continue
+      const sortedContacts = [...contacts].sort(compareDuplicateCandidates)
+      const suggestedKeep = sortedContacts[0]
+      if (!suggestedKeep) continue
+      sortedContacts.forEach((c) => exactGroupedIds.add(c.id))
+      groups.push({
+        key: `normalized-name:${groupKey}`,
+        normalizedName: groupKey,
+        reason: `Same normalized name: ${suggestedKeep.fullName}`,
+        suggestedKeepContactId: suggestedKeep.id,
+        contacts: sortedContacts
+      })
     }
   }
 
-  const groups: ContactDuplicateGroup[] = []
-  for (const [normalizedName, contacts] of groupsByName.entries()) {
-    if (contacts.length < 2) continue
-    const sortedContacts = [...contacts].sort(compareDuplicateCandidates)
-    const suggestedKeep = sortedContacts[0]
-    if (!suggestedKeep) continue
+  // ── Step 4: Fuzzy pass (Jaro-Winkler) on ungrouped contacts ─────────────────
 
-    groups.push({
-      key: `normalized-name:${normalizedName}`,
-      normalizedName,
-      reason: `Same normalized name: ${suggestedKeep.fullName}`,
-      suggestedKeepContactId: suggestedKeep.id,
-      contacts: sortedContacts
-    })
+  const ungroupedNameRows = db
+    .prepare(`
+      SELECT DISTINCT normalized_name
+      FROM contacts
+      WHERE normalized_name IS NOT NULL AND TRIM(normalized_name) <> ''
+        AND id NOT IN (${exactGroupedIds.size > 0 ? [...exactGroupedIds].map(() => '?').join(', ') : 'SELECT NULL'})
+    `)
+    .all(...exactGroupedIds) as Array<{ normalized_name: string }>
+
+  const ungroupedNames = ungroupedNameRows
+    .map((r) => r.normalized_name.trim())
+    .filter((n) => n.length > 0 && !GENERIC_DUPLICATE_NAMES.has(n))
+
+  if (ungroupedNames.length > 0 && ungroupedNames.length <= MAX_FUZZY_CANDIDATES) {
+    const uf = new UnionFind()
+    const maxSimByPair = new Map<string, number>()
+
+    for (let i = 0; i < ungroupedNames.length; i++) {
+      for (let j = i + 1; j < ungroupedNames.length; j++) {
+        const sim = jaroWinkler(ungroupedNames[i]!, ungroupedNames[j]!)
+        if (sim >= FUZZY_THRESHOLD) {
+          uf.union(ungroupedNames[i]!, ungroupedNames[j]!)
+          const pairKey = `${ungroupedNames[i]}\0${ungroupedNames[j]}`
+          maxSimByPair.set(pairKey, Math.max(maxSimByPair.get(pairKey) ?? 0, sim))
+        }
+      }
+    }
+
+    for (const [, cluster] of uf.clusters()) {
+      if (cluster.length < 2) continue
+
+      // Compute max similarity across all pairs in the cluster
+      let maxSim = 0
+      for (let i = 0; i < cluster.length; i++) {
+        for (let j = i + 1; j < cluster.length; j++) {
+          const pairKey = `${cluster[i]}\0${cluster[j]}`
+          const altKey = `${cluster[j]}\0${cluster[i]}`
+          const sim = maxSimByPair.get(pairKey) ?? maxSimByPair.get(altKey) ?? 0
+          if (sim > maxSim) maxSim = sim
+        }
+      }
+
+      const clusterPlaceholders = cluster.map(() => '?').join(', ')
+      const clusterRows = db
+        .prepare(`
+          SELECT
+            c.id,
+            c.full_name,
+            c.normalized_name,
+            c.first_name,
+            c.last_name,
+            c.email,
+            c.primary_company_id,
+            oc.canonical_name AS primary_company_name,
+            c.title,
+            c.updated_at
+          FROM contacts c
+          LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
+          WHERE c.normalized_name IN (${clusterPlaceholders})
+          GROUP BY c.id
+          ORDER BY datetime(c.updated_at) DESC, c.id ASC
+        `)
+        .all(...cluster) as ContactDuplicateRow[]
+
+      const contacts: ContactDuplicateSummary[] = clusterRows.map((row) => ({
+        id: row.id,
+        fullName: row.full_name,
+        email: row.email,
+        primaryCompanyId: row.primary_company_id,
+        primaryCompanyName: row.primary_company_name,
+        title: row.title,
+        updatedAt: row.updated_at
+      }))
+
+      if (contacts.length < 2) continue
+      const sortedContacts = [...contacts].sort(compareDuplicateCandidates)
+      const suggestedKeep = sortedContacts[0]!
+      const confidence = Math.round(maxSim * 100)
+
+      groups.push({
+        key: `fuzzy-name:${cluster.sort().join('|')}`,
+        normalizedName: suggestedKeep.fullName,
+        reason: `Similar names (~${confidence}% match)`,
+        suggestedKeepContactId: suggestedKeep.id,
+        contacts: sortedContacts,
+        confidence
+      })
+    }
+  } else if (ungroupedNames.length > MAX_FUZZY_CANDIDATES) {
+    console.warn(`[dedup] skipping fuzzy contact pass: ${ungroupedNames.length} ungrouped names exceeds MAX_FUZZY_CANDIDATES (${MAX_FUZZY_CANDIDATES})`)
   }
 
   groups.sort((a, b) => {
@@ -3284,7 +3433,7 @@ export function listSuspectedDuplicateContacts(limitGroups = 30): ContactDuplica
     return a.normalizedName.localeCompare(b.normalizedName)
   })
 
-  return groups
+  return groups.slice(0, normalizedLimit)
 }
 
 export function applyContactDedupDecisions(

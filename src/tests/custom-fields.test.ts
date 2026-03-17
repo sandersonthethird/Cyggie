@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { runCustomFieldDefinitionsMigration } from '../main/database/migrations/039-custom-field-definitions'
 import { runCustomFieldValuesMigration } from '../main/database/migrations/040-custom-field-values'
+import { runCustomFieldSectionMigration } from '../main/database/migrations/049-custom-field-section'
 
 // Create a shared in-memory db for this test module.
 // We mock the connection module so all repo imports use it.
@@ -41,6 +42,7 @@ function makeTestDb(): Database.Database {
   `)
   runCustomFieldDefinitionsMigration(db)
   runCustomFieldValuesMigration(db)
+  runCustomFieldSectionMigration(db)
   return db
 }
 
@@ -165,6 +167,22 @@ describe('createFieldDefinition', () => {
     })
     expect(a.entityType).toBe('company')
     expect(b.entityType).toBe('contact')
+  })
+
+  it('auto-derives fieldKey from label when not provided', () => {
+    const def = createFieldDefinition({ entityType: 'company', label: 'Investment Focus', fieldType: 'text' })
+    expect(def.fieldKey).toBe('investment_focus')
+  })
+
+  it('resolves collision by appending _2', () => {
+    createFieldDefinition({ entityType: 'company', label: 'Investment Focus', fieldType: 'text' })
+    const def2 = createFieldDefinition({ entityType: 'company', label: 'Investment Focus', fieldType: 'text' })
+    expect(def2.fieldKey).toBe('investment_focus_2')
+  })
+
+  it('falls back to "field" when label has no alphanumeric chars', () => {
+    const def = createFieldDefinition({ entityType: 'company', label: '!!!', fieldType: 'text' })
+    expect(def.fieldKey).toBe('field')
   })
 })
 
@@ -381,5 +399,115 @@ describe('getFieldValuesForEntity', () => {
     setFieldValue({ fieldDefinitionId: def.id, entityType: 'contact', entityId: 'ct-1', valueText: null, valueNumber: null, valueBoolean: null, valueDate: null, valueRefId: 'org-xyz' })
     const results = getFieldValuesForEntity('contact', 'ct-1')
     expect(results[0].value?.resolvedLabel).toBe('Acme Corp')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Section field — createFieldDefinition, updateFieldDefinition, sectionedFields
+// ---------------------------------------------------------------------------
+describe('section field', () => {
+  it('createFieldDefinition stores and returns section', () => {
+    const def = createFieldDefinition({
+      entityType: 'contact',
+      label: 'Thesis Focus',
+      fieldType: 'text',
+      section: 'investor_info',
+    })
+    expect(def.section).toBe('investor_info')
+  })
+
+  it('createFieldDefinition defaults section to null when not provided', () => {
+    const def = createFieldDefinition({
+      entityType: 'company',
+      label: 'Notes',
+      fieldType: 'textarea',
+    })
+    expect(def.section).toBeNull()
+  })
+
+  it('updateFieldDefinition sets section column', () => {
+    const def = createFieldDefinition({ entityType: 'contact', label: 'Bio', fieldType: 'textarea' })
+    expect(def.section).toBeNull()
+    const updated = updateFieldDefinition(def.id, { section: 'professional' })
+    expect(updated?.section).toBe('professional')
+  })
+
+  it('updateFieldDefinition clears section when set to null', () => {
+    const def = createFieldDefinition({ entityType: 'contact', label: 'Bio', fieldType: 'textarea', section: 'professional' })
+    const updated = updateFieldDefinition(def.id, { section: null })
+    expect(updated?.section).toBeNull()
+  })
+
+  it('section filtering: fields.filter(!f.section) excludes sectioned fields', () => {
+    const fields = [
+      { id: '1', section: null },
+      { id: '2', section: 'contact_info' },
+      { id: '3', section: null },
+      { id: '4', section: 'professional' },
+    ] as Array<{ id: string; section: string | null }>
+    const unsectioned = fields.filter((f) => !f.section)
+    expect(unsectioned.map((f) => f.id)).toEqual(['1', '3'])
+  })
+
+  it('sectionedFields helper returns only fields matching section, empty for unknown', () => {
+    const fields = [
+      { id: '1', section: 'contact_info' },
+      { id: '2', section: 'professional' },
+      { id: '3', section: null },
+    ] as Array<{ id: string; section: string | null }>
+    const sectionedFields = (key: string) => fields.filter((f) => f.section === key)
+    expect(sectionedFields('contact_info').map((f) => f.id)).toEqual(['1'])
+    expect(sectionedFields('professional').map((f) => f.id)).toEqual(['2'])
+    expect(sectionedFields('investor_info')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// runCustomFieldSectionMigration — idempotency
+// ---------------------------------------------------------------------------
+describe('runCustomFieldSectionMigration', () => {
+  it('is idempotent — running twice does not throw', () => {
+    expect(() => runCustomFieldSectionMigration(testDb)).not.toThrow()
+    expect(() => runCustomFieldSectionMigration(testDb)).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Pref migration logic
+// ---------------------------------------------------------------------------
+describe('pref migration: copy custom: keys from summary-fields to pinned-fields', () => {
+  it('copies custom: keys when pinned-fields is empty', () => {
+    const summaryFields = ['custom:abc', 'entityType', 'custom:def']
+    const pinnedFields: string[] = []
+    // Simulate the migration guard
+    let result = pinnedFields
+    if (pinnedFields.length === 0) {
+      const customKeys = summaryFields.filter((k) => k.startsWith('custom:'))
+      if (customKeys.length > 0) result = customKeys
+    }
+    expect(result).toEqual(['custom:abc', 'custom:def'])
+  })
+
+  it('does not overwrite pinned-fields when it already has values', () => {
+    const summaryFields = ['custom:abc', 'entityType']
+    const pinnedFields = ['custom:xyz']
+    // Simulate the migration guard
+    let result = pinnedFields
+    if (pinnedFields.length === 0) {
+      const customKeys = summaryFields.filter((k) => k.startsWith('custom:'))
+      if (customKeys.length > 0) result = customKeys
+    }
+    expect(result).toEqual(['custom:xyz'])
+  })
+
+  it('skips copy when summary-fields has no custom: keys', () => {
+    const summaryFields = ['entityType', 'pipelineStage']
+    const pinnedFields: string[] = []
+    let result = pinnedFields
+    if (pinnedFields.length === 0) {
+      const customKeys = summaryFields.filter((k) => k.startsWith('custom:'))
+      if (customKeys.length > 0) result = customKeys
+    }
+    expect(result).toEqual([])
   })
 })

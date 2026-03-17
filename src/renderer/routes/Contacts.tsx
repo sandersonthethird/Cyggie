@@ -921,7 +921,12 @@ export default function Contacts() {
                     return (
                       <tr key={group.key}>
                         <td>
-                          <div className={styles.dedupReason}>{group.reason}</div>
+                          <div className={styles.dedupReason}>
+                            {group.reason}
+                            {group.confidence != null && (
+                              <span className={styles.confidenceBadge}>{group.confidence}% match</span>
+                            )}
+                          </div>
                           <div className={styles.dedupReasonMeta}>
                             {group.contacts.length} contacts · {selectedContactIds.length} selected
                           </div>

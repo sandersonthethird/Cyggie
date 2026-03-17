@@ -46,6 +46,9 @@ import { runUserPreferencesMigration } from './migrations/043-user-preferences'
 import { runCompanyDecisionLogsMigration } from './migrations/044-company-decision-logs'
 import { runPortfolioCompanyFieldsMigration } from './migrations/045-portfolio-company-fields'
 import { runBuiltinFieldDefsMigration } from './migrations/046-builtin-field-defs'
+import { runBackfillNormalizedNamesMigration } from './migrations/047-backfill-normalized-names'
+import { runContactFieldSourcesMigration } from './migrations/048-contact-field-sources'
+import { runCustomFieldSectionMigration } from './migrations/049-custom-field-section'
 
 let db: Database.Database | null = null
 
@@ -100,6 +103,9 @@ export function getDatabase(): Database.Database {
     runCompanyDecisionLogsMigration(db)
     runPortfolioCompanyFieldsMigration(db)
     runBuiltinFieldDefsMigration(db)
+    runBackfillNormalizedNamesMigration(db)
+    runContactFieldSourcesMigration(db)
+    runCustomFieldSectionMigration(db)
   }
   return db
 }

@@ -249,6 +249,9 @@ export const IPC_CHANNELS = {
   // Maintenance
   MEETING_NOTES_BACKFILL: 'maintenance:meeting-notes-backfill',
 
+  // Contact enrichment
+  CONTACT_ENRICH_FROM_MEETING: 'contact:enrich-from-meeting',
+
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',
   APP_OPEN_STORAGE_DIR: 'app:open-storage-dir',

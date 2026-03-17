@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useCustomFieldSection } from '../../hooks/useCustomFieldSection'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
@@ -119,6 +120,7 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
   const { getJSON, setJSON } = usePreferencesStore()
   const { companyDefs } = useCustomFieldStore()
   const pinnedKeys = getJSON<string[]>('cyggie:company-summary-fields', [])
+  const pinnedFieldKeys = getJSON<string[]>('cyggie:company-pinned-fields', [])
 
   const entityTypeDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'entityType')
   const stageDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'pipelineStage')
@@ -147,6 +149,63 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
       : [...pinnedKeys, key]
     setJSON('cyggie:company-summary-fields', next)
   }
+
+  function togglePinnedField(key: string) {
+    const next = pinnedFieldKeys.includes(key)
+      ? pinnedFieldKeys.filter((k) => k !== key)
+      : [...pinnedFieldKeys, key]
+    setJSON('cyggie:company-pinned-fields', next)
+  }
+
+  // One-time migration: copy custom: keys from summary-fields → pinned-fields if pinned-fields is empty
+  useEffect(() => {
+    if (pinnedFieldKeys.length === 0) {
+      const customKeys = pinnedKeys.filter(k => k.startsWith('custom:'))
+      if (customKeys.length > 0) {
+        setJSON('cyggie:company-pinned-fields', customKeys)
+      }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pinnedCustomFields = pinnedFieldKeys
+    .filter(k => k.startsWith('custom:'))
+    .map(key => customFields.find(f => f.id === key.slice(7)) ?? null)
+    .filter((f): f is NonNullable<typeof f> => f !== null)
+
+  function getPinnedFieldValue(field: (typeof pinnedCustomFields)[0]): string | number | boolean | null {
+    if (!field.value) return null
+    switch (field.fieldType) {
+      case 'number': case 'currency': return field.value.valueNumber
+      case 'boolean': return field.value.valueBoolean
+      case 'date': return field.value.valueDate
+      case 'contact_ref': case 'company_ref': return field.value.valueRefId
+      default: return field.value.valueText
+    }
+  }
+
+  async function handlePinnedFieldSave(field: (typeof pinnedCustomFields)[0], newValue: string | number | boolean | null) {
+    if (newValue == null || newValue === '') {
+      await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_DELETE_VALUE, field.id, company.id)
+      setCustomFields(prev => prev.map(f => f.id === field.id ? { ...f, value: null } : f))
+      return
+    }
+    const input: import('../../../shared/types/custom-fields').SetCustomFieldValueInput = {
+      fieldDefinitionId: field.id,
+      entityId: company.id,
+      entityType: 'company',
+    }
+    switch (field.fieldType) {
+      case 'number': case 'currency': input.valueNumber = Number(newValue); break
+      case 'boolean': input.valueBoolean = Boolean(newValue); break
+      case 'date': input.valueDate = String(newValue); break
+      case 'contact_ref': case 'company_ref': input.valueRefId = String(newValue); break
+      default: input.valueText = String(newValue)
+    }
+    await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
+  }
+
+  const { draggingFieldId, setDraggingFieldId, dragOverSection, sectionedFields, handleFieldDrop, sectionDragProps } =
+    useCustomFieldSection('company', company.id, customFields, setCustomFields)
 
   // Sync name draft when entering edit mode
   useEffect(() => {
@@ -212,6 +271,43 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
   function show(value: unknown): boolean {
     if (isEditing || showAllFields) return true
     return value !== null && value !== undefined && value !== ''
+  }
+
+  function renderSectionedFields(sectionKey: string) {
+    const opts = (field: (typeof customFields)[0]) => {
+      try { return field.optionsJson ? JSON.parse(field.optionsJson) : [] } catch { return [] }
+    }
+    return sectionedFields(sectionKey).map((field) => (
+      <div
+        key={field.id}
+        className={styles.sectionedFieldRow}
+        draggable={isEditing}
+        onDragStart={() => setDraggingFieldId(field.id)}
+        onDragEnd={() => setDraggingFieldId(null)}
+      >
+        {isEditing && <span className={styles.dragHandle}>⠿</span>}
+        <PropertyRow
+          label={field.label}
+          value={getPinnedFieldValue(field)}
+          type={field.fieldType as import('../crm/PropertyRow').PropertyRowType}
+          options={opts(field)}
+          onSave={(val) => handlePinnedFieldSave(field, val)}
+          onAddOption={
+            (field.fieldType === 'select' || field.fieldType === 'multiselect')
+              ? async (newOption) => {
+                  const opt = newOption.trim().slice(0, 200)
+                  await addCustomFieldOption(field.id, field.optionsJson, opt)
+                  setCustomFields(prev => prev.map(f => {
+                    if (f.id !== field.id) return f
+                    const cur: string[] = (() => { try { return JSON.parse(f.optionsJson ?? '[]') } catch { return [] } })()
+                    return { ...f, optionsJson: JSON.stringify([...cur, opt]) }
+                  }))
+                }
+              : undefined
+          }
+        />
+      </div>
+    ))
   }
 
   function renderPinnedChip(key: string) {
@@ -467,115 +563,144 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
       )}
       <div className={styles.headerDivider} />
 
-      <SectionHeader title="Overview" />
-      {show(company.sector) && <PropertyRow label="Sector" value={company.sector} type="text" editMode={isEditing} onSave={(v) => save('sector', v)} />}
-      {show(company.targetCustomer) && (
-        <PropertyRow
-          label="Target Customer"
-          value={company.targetCustomer}
-          type="select"
-          options={targetCustomerOptions}
-          editMode={isEditing}
-          onSave={(v) => save('targetCustomer', v)}
-          onAddOption={targetCustomerDef ? async (opt) => addCustomFieldOption(targetCustomerDef.id, targetCustomerDef.optionsJson, opt) : undefined}
-        />
+      {pinnedCustomFields.length > 0 && (
+        <>
+          <SectionHeader title="Pinned" />
+          {pinnedCustomFields.map((field) => {
+            const opts = field.optionsJson ? (() => { try { return JSON.parse(field.optionsJson!) } catch { return [] } })() : []
+            return (
+              <PropertyRow
+                key={field.id}
+                label={field.label}
+                value={getPinnedFieldValue(field)}
+                type={field.fieldType as import('../crm/PropertyRow').PropertyRowType}
+                options={opts}
+                onSave={(val) => handlePinnedFieldSave(field, val)}
+              />
+            )
+          })}
+        </>
       )}
-      {show(company.businessModel) && (
-        <PropertyRow
-          label="Business Model"
-          value={company.businessModel}
-          type="select"
-          options={businessModelOptions}
-          editMode={isEditing}
-          onSave={(v) => save('businessModel', v)}
-          onAddOption={businessModelDef ? async (opt) => addCustomFieldOption(businessModelDef.id, businessModelDef.optionsJson, opt) : undefined}
-        />
-      )}
-      {show(company.productStage) && (
-        <PropertyRow
-          label="Product Stage"
-          value={company.productStage}
-          type="select"
-          options={productStageOptions}
-          editMode={isEditing}
-          onSave={(v) => save('productStage', v)}
-          onAddOption={productStageDef ? async (opt) => addCustomFieldOption(productStageDef.id, productStageDef.optionsJson, opt) : undefined}
-        />
-      )}
-      {show(company.foundingYear) && <PropertyRow label="Founded" value={company.foundingYear} type="number" editMode={isEditing} onSave={(v) => save('foundingYear', v)} />}
-      {show(company.employeeCountRange) && (
-        <PropertyRow
-          label="Employees"
-          value={company.employeeCountRange}
-          type="select"
-          options={employeeRangeOptions}
-          editMode={isEditing}
-          onSave={(v) => save('employeeCountRange', v)}
-          onAddOption={employeeCountDef ? async (opt) => addCustomFieldOption(employeeCountDef.id, employeeCountDef.optionsJson, opt) : undefined}
-        />
-      )}
-      {show(company.hqAddress) && <PropertyRow label="HQ" value={company.hqAddress} type="text" editMode={isEditing} onSave={(v) => save('hqAddress', v)} />}
-      {show(company.revenueModel) && <PropertyRow label="Revenue Model" value={company.revenueModel} type="text" editMode={isEditing} onSave={(v) => save('revenueModel', v)} />}
 
-      <SectionHeader title="Pipeline" />
-      <PropertyRow
-        label="Stage"
-        value={company.pipelineStage}
-        type="select"
-        options={[{ value: '', label: '—' }, ...stageOptions]}
-        editMode={isEditing}
-        onSave={(v) => saveWithDecisionPrompt('pipelineStage', v || null)}
-        onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
-      />
-      <PropertyRow
-        label="Priority"
-        value={company.priority}
-        type="select"
-        options={[{ value: '', label: '—' }, ...priorityOptions]}
-        editMode={isEditing}
-        onSave={(v) => save('priority', v)}
-        onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
-      />
-      {show(company.dealSource) && <PropertyRow label="Deal Source" value={company.dealSource} type="text" editMode={isEditing} onSave={(v) => save('dealSource', v)} />}
-      {show(company.warmIntroSource) && <PropertyRow label="Warm Intro Source" value={company.warmIntroSource} type="text" editMode={isEditing} onSave={(v) => save('warmIntroSource', v)} />}
-      {show(company.referralContactId) && (
-        <PropertyRow
-          label="Referral Contact"
-          value={company.referralContactId}
-          type="contact_ref"
-          editMode={isEditing}
-          onSave={(v) => save('referralContactId', v)}
-        />
-      )}
-      {show(company.relationshipOwner) && <PropertyRow label="Relationship Owner" value={company.relationshipOwner} type="text" editMode={isEditing} onSave={(v) => save('relationshipOwner', v)} />}
-      {show(company.nextFollowupDate) && <PropertyRow label="Next Follow-up" value={company.nextFollowupDate} type="date" editMode={isEditing} onSave={(v) => save('nextFollowupDate', v)} />}
+      <div {...sectionDragProps('overview')} className={dragOverSection === 'overview' ? styles.dropTarget : ''}>
+        <SectionHeader title="Overview" />
+        {show(company.sector) && <PropertyRow label="Sector" value={company.sector} type="text" editMode={isEditing} onSave={(v) => save('sector', v)} />}
+        {show(company.targetCustomer) && (
+          <PropertyRow
+            label="Target Customer"
+            value={company.targetCustomer}
+            type="select"
+            options={targetCustomerOptions}
+            editMode={isEditing}
+            onSave={(v) => save('targetCustomer', v)}
+            onAddOption={targetCustomerDef ? async (opt) => addCustomFieldOption(targetCustomerDef.id, targetCustomerDef.optionsJson, opt) : undefined}
+          />
+        )}
+        {show(company.businessModel) && (
+          <PropertyRow
+            label="Business Model"
+            value={company.businessModel}
+            type="select"
+            options={businessModelOptions}
+            editMode={isEditing}
+            onSave={(v) => save('businessModel', v)}
+            onAddOption={businessModelDef ? async (opt) => addCustomFieldOption(businessModelDef.id, businessModelDef.optionsJson, opt) : undefined}
+          />
+        )}
+        {show(company.productStage) && (
+          <PropertyRow
+            label="Product Stage"
+            value={company.productStage}
+            type="select"
+            options={productStageOptions}
+            editMode={isEditing}
+            onSave={(v) => save('productStage', v)}
+            onAddOption={productStageDef ? async (opt) => addCustomFieldOption(productStageDef.id, productStageDef.optionsJson, opt) : undefined}
+          />
+        )}
+        {show(company.foundingYear) && <PropertyRow label="Founded" value={company.foundingYear} type="number" editMode={isEditing} onSave={(v) => save('foundingYear', v)} />}
+        {show(company.employeeCountRange) && (
+          <PropertyRow
+            label="Employees"
+            value={company.employeeCountRange}
+            type="select"
+            options={employeeRangeOptions}
+            editMode={isEditing}
+            onSave={(v) => save('employeeCountRange', v)}
+            onAddOption={employeeCountDef ? async (opt) => addCustomFieldOption(employeeCountDef.id, employeeCountDef.optionsJson, opt) : undefined}
+          />
+        )}
+        {show(company.hqAddress) && <PropertyRow label="HQ" value={company.hqAddress} type="text" editMode={isEditing} onSave={(v) => save('hqAddress', v)} />}
+        {show(company.revenueModel) && <PropertyRow label="Revenue Model" value={company.revenueModel} type="text" editMode={isEditing} onSave={(v) => save('revenueModel', v)} />}
+        {renderSectionedFields('overview')}
+      </div>
 
-      <SectionHeader title="Financials" />
-      {show(company.round) && (
+      <div {...sectionDragProps('pipeline')} className={dragOverSection === 'pipeline' ? styles.dropTarget : ''}>
+        <SectionHeader title="Pipeline" />
         <PropertyRow
-          label="Round"
-          value={company.round}
+          label="Stage"
+          value={company.pipelineStage}
           type="select"
-          options={[{ value: '', label: '—' }, ...roundOptions]}
+          options={[{ value: '', label: '—' }, ...stageOptions]}
           editMode={isEditing}
-          onSave={(v) => save('round', v)}
-          onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
+          onSave={(v) => saveWithDecisionPrompt('pipelineStage', v || null)}
+          onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
         />
-      )}
-      {show(company.raiseSize) && <PropertyRow label="Raise Size" value={company.raiseSize} type="currency" editMode={isEditing} onSave={(v) => save('raiseSize', v)} />}
-      {show(company.postMoneyValuation) && <PropertyRow label="Post-Money Val." value={company.postMoneyValuation} type="currency" editMode={isEditing} onSave={(v) => save('postMoneyValuation', v)} />}
-      {show(company.arr) && <PropertyRow label="ARR" value={company.arr} type="currency" editMode={isEditing} onSave={(v) => save('arr', v)} />}
-      {show(company.burnRate) && <PropertyRow label="Burn Rate" value={company.burnRate} type="currency" editMode={isEditing} onSave={(v) => save('burnRate', v)} />}
-      {show(company.runwayMonths) && <PropertyRow label="Runway (months)" value={company.runwayMonths} type="number" editMode={isEditing} onSave={(v) => save('runwayMonths', v)} />}
-      {show(company.lastFundingDate) && <PropertyRow label="Last Funded" value={company.lastFundingDate} type="date" editMode={isEditing} onSave={(v) => save('lastFundingDate', v)} />}
-      {show(company.totalFundingRaised) && <PropertyRow label="Total Raised" value={company.totalFundingRaised} type="currency" editMode={isEditing} onSave={(v) => save('totalFundingRaised', v)} />}
-      {show(company.leadInvestor) && <PropertyRow label="Lead Investor" value={company.leadInvestor} type="text" editMode={isEditing} onSave={(v) => save('leadInvestor', v)} />}
-      {show(company.coInvestors) && <PropertyRow label="Co-Investors" value={company.coInvestors} type="text" editMode={isEditing} onSave={(v) => save('coInvestors', v)} />}
+        <PropertyRow
+          label="Priority"
+          value={company.priority}
+          type="select"
+          options={[{ value: '', label: '—' }, ...priorityOptions]}
+          editMode={isEditing}
+          onSave={(v) => save('priority', v)}
+          onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
+        />
+        {show(company.dealSource) && <PropertyRow label="Deal Source" value={company.dealSource} type="text" editMode={isEditing} onSave={(v) => save('dealSource', v)} />}
+        {show(company.warmIntroSource) && <PropertyRow label="Warm Intro Source" value={company.warmIntroSource} type="text" editMode={isEditing} onSave={(v) => save('warmIntroSource', v)} />}
+        {show(company.referralContactId) && (
+          <PropertyRow
+            label="Referral Contact"
+            value={company.referralContactId}
+            type="contact_ref"
+            editMode={isEditing}
+            onSave={(v) => save('referralContactId', v)}
+          />
+        )}
+        {show(company.relationshipOwner) && <PropertyRow label="Relationship Owner" value={company.relationshipOwner} type="text" editMode={isEditing} onSave={(v) => save('relationshipOwner', v)} />}
+        {show(company.nextFollowupDate) && <PropertyRow label="Next Follow-up" value={company.nextFollowupDate} type="date" editMode={isEditing} onSave={(v) => save('nextFollowupDate', v)} />}
+        {renderSectionedFields('pipeline')}
+      </div>
+
+      <div {...sectionDragProps('financials')} className={dragOverSection === 'financials' ? styles.dropTarget : ''}>
+        <SectionHeader title="Financials" />
+        {show(company.round) && (
+          <PropertyRow
+            label="Round"
+            value={company.round}
+            type="select"
+            options={[{ value: '', label: '—' }, ...roundOptions]}
+            editMode={isEditing}
+            onSave={(v) => save('round', v)}
+            onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
+          />
+        )}
+        {show(company.raiseSize) && <PropertyRow label="Raise Size" value={company.raiseSize} type="currency" editMode={isEditing} onSave={(v) => save('raiseSize', v)} />}
+        {show(company.postMoneyValuation) && <PropertyRow label="Post-Money Val." value={company.postMoneyValuation} type="currency" editMode={isEditing} onSave={(v) => save('postMoneyValuation', v)} />}
+        {show(company.arr) && <PropertyRow label="ARR" value={company.arr} type="currency" editMode={isEditing} onSave={(v) => save('arr', v)} />}
+        {show(company.burnRate) && <PropertyRow label="Burn Rate" value={company.burnRate} type="currency" editMode={isEditing} onSave={(v) => save('burnRate', v)} />}
+        {show(company.runwayMonths) && <PropertyRow label="Runway (months)" value={company.runwayMonths} type="number" editMode={isEditing} onSave={(v) => save('runwayMonths', v)} />}
+        {show(company.lastFundingDate) && <PropertyRow label="Last Funded" value={company.lastFundingDate} type="date" editMode={isEditing} onSave={(v) => save('lastFundingDate', v)} />}
+        {show(company.totalFundingRaised) && <PropertyRow label="Total Raised" value={company.totalFundingRaised} type="currency" editMode={isEditing} onSave={(v) => save('totalFundingRaised', v)} />}
+        {show(company.leadInvestor) && <PropertyRow label="Lead Investor" value={company.leadInvestor} type="text" editMode={isEditing} onSave={(v) => save('leadInvestor', v)} />}
+        {show(company.coInvestors) && <PropertyRow label="Co-Investors" value={company.coInvestors} type="text" editMode={isEditing} onSave={(v) => save('coInvestors', v)} />}
+        {renderSectionedFields('financials')}
+      </div>
 
       {(isEditing || company.entityType === 'portfolio' ||
         company.investmentSize || company.ownershipPct ||
-        company.followonInvestmentSize || company.totalInvested) && (
-        <>
+        company.followonInvestmentSize || company.totalInvested ||
+        sectionedFields('investment').length > 0) && (
+        <div {...sectionDragProps('investment')} className={dragOverSection === 'investment' ? styles.dropTarget : ''}>
           <SectionHeader title="Investment" />
           {show(company.investmentSize) && (
             <PropertyRow label="Investment Size" value={company.investmentSize} type="text" editMode={isEditing} onSave={(v) => save('investmentSize', v)} />
@@ -589,14 +714,18 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
           {show(company.totalInvested) && (
             <PropertyRow label="Total Invested" value={company.totalInvested} type="text" editMode={isEditing} onSave={(v) => save('totalInvested', v)} />
           )}
-        </>
+          {renderSectionedFields('investment')}
+        </div>
       )}
 
-      <SectionHeader title="Links" />
-      {show(company.linkedinCompanyUrl) && <PropertyRow label="LinkedIn" value={company.linkedinCompanyUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinCompanyUrl', v)} />}
-      {show(company.crunchbaseUrl) && <PropertyRow label="Crunchbase" value={company.crunchbaseUrl} type="url" editMode={isEditing} onSave={(v) => save('crunchbaseUrl', v)} />}
-      {show(company.angellistUrl) && <PropertyRow label="AngelList" value={company.angellistUrl} type="url" editMode={isEditing} onSave={(v) => save('angellistUrl', v)} />}
-      {show(company.twitterHandle) && <PropertyRow label="Twitter/X" value={company.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} />}
+      <div {...sectionDragProps('links')} className={dragOverSection === 'links' ? styles.dropTarget : ''}>
+        <SectionHeader title="Links" />
+        {show(company.linkedinCompanyUrl) && <PropertyRow label="LinkedIn" value={company.linkedinCompanyUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinCompanyUrl', v)} />}
+        {show(company.crunchbaseUrl) && <PropertyRow label="Crunchbase" value={company.crunchbaseUrl} type="url" editMode={isEditing} onSave={(v) => save('crunchbaseUrl', v)} />}
+        {show(company.angellistUrl) && <PropertyRow label="AngelList" value={company.angellistUrl} type="url" editMode={isEditing} onSave={(v) => save('angellistUrl', v)} />}
+        {show(company.twitterHandle) && <PropertyRow label="Twitter/X" value={company.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} />}
+        {renderSectionedFields('links')}
+      </div>
 
       {hasHiddenFields && (
         <button className={styles.showAllBtn} onClick={() => setShowAllFields(true)}>
@@ -614,6 +743,8 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
         entityId={company.id}
         onFieldsLoaded={setCustomFields}
         onCreateField={() => setCreateFieldOpen(true)}
+        draggingFieldId={draggingFieldId}
+        onDropToUnsectioned={() => handleFieldDrop(null)}
       />
 
       {createFieldOpen && (

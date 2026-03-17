@@ -1,5 +1,18 @@
 # TODOS
 
+## P3 — Dedup
+
+### Fuzzy dedup threshold tuning
+**What:** `FUZZY_THRESHOLD = 0.88` is an empirical choice. It may produce false positives (grouping distinct people/companies) or false negatives (missing obvious dupes) at scale.
+**Why:** A production dataset with diverse names will expose edge cases not covered by the 4-test suites. Users seeing incorrect groupings will lose trust in the dedup feature.
+**Pros:** Better precision/recall; could add a user feedback/dismiss mechanism.
+**Cons:** Requires real data sampling to tune; adding dismiss UX is medium effort.
+**Context:** The threshold is a single constant (`FUZZY_THRESHOLD = 0.88`) defined in both `src/main/database/repositories/contact.repo.ts` and `org-company.repo.ts`. The Jaro-Winkler function is in `src/main/utils/jaroWinkler.ts`. Track false-positive/negative user reports from the dedup UI → adjust constant → re-run test suite.
+**Effort:** S (constant tuning) / M (user dismiss/feedback mechanism)
+**Depends on:** Fuzzy dedup shipped (this PR).
+
+---
+
 ## P3 — Custom Fields
 
 ### URL param persistence for custom field select filters
@@ -33,6 +46,20 @@
 **Effort:** L
 **Priority:** P2
 **Depends on:** Add-option PR (this PR).
+
+---
+
+## P3 — Contact Enrichment
+
+### Per-field dismiss in contact enrich dialog
+**What:** "Don't suggest this field again" option in the contact enrich dialog.
+**Why:** If a user deliberately leaves phone empty (doesn't want to share it), they'll see a phone proposal on every meeting. The Skip button dismisses the whole dialog; there's no way to suppress just one field.
+**Pros:** Removes repetitive noise for intentionally-empty fields.
+**Cons:** Requires storing dismissed fields per-contact — could reuse `field_sources` with a sentinel value like `"dismissed"`.
+**Context:** `field_sources` column (migration 048) stores `{title: meetingId}` for enriched fields. Extend with `{phone: "dismissed"}` to suppress future suggestions. In `contact-summary-sync.service.ts`, the service already reads `contact.fieldSources` before building proposals — add a check `if (existingSources[field] === 'dismissed') skip`. UI change: add a small "×" dismiss button per field in the contact enrich dialog (both `MeetingDetail.tsx` and `ContactDetail.tsx`).
+**Effort:** S
+**Priority:** P3
+**Depends on:** Contact enrichment flow (migration 048 + contact-summary-sync.service.ts).
 
 ---
 

@@ -110,6 +110,8 @@ export interface CompanyDuplicateGroup {
   reason: string
   suggestedKeepCompanyId: string
   companies: CompanyDuplicateSummary[]
+  /** Set only for fuzzy-name groups (0–100). Omitted for domain-match groups. */
+  confidence?: number
 }
 
 export interface CompanyDedupDecision {

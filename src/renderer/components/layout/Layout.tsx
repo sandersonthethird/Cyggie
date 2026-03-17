@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Outlet, useMatch, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import { useAppStore } from '../../stores/app.store'
 import { useRecordingStore } from '../../stores/recording.store'
@@ -18,7 +18,9 @@ export default function Layout() {
   const calendarEvents = useAppStore((s) => s.calendarEvents)
   const dismissedEventIds = useAppStore((s) => s.dismissedEventIds)
   const isRecording = useRecordingStore((s) => s.isRecording)
+  const recordingMeetingId = useRecordingStore((s) => s.meetingId)
   const startRecordingStore = useRecordingStore((s) => s.startRecording)
+  const meetingMatch = useMatch('/meeting/:id')
   const [bannerEvent, setBannerEvent] = useState<CalendarEvent | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState<Set<string>>(new Set())
   const [recordingError, setRecordingError] = useState<string | null>(null)
@@ -192,6 +194,18 @@ export default function Layout() {
               ×
             </button>
           </div>
+        </div>
+      )}
+      {isRecording && recordingMeetingId && meetingMatch?.params.id !== recordingMeetingId && (
+        <div className={`${styles.meetingBanner} ${styles.recordingBanner}`}>
+          <span className={styles.recordingDot} />
+          <span className={styles.bannerRecordingText}>Recording in progress</span>
+          <button
+            className={styles.bannerRecordBtn}
+            onClick={() => navigate(`/meeting/${recordingMeetingId}`)}
+          >
+            Return to meeting →
+          </button>
         </div>
       )}
       {recordingError && (

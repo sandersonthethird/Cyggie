@@ -1,3 +1,18 @@
+export const CONTACT_SECTIONS: { key: string; label: string }[] = [
+  { key: 'contact_info',  label: 'Contact Info' },
+  { key: 'professional',  label: 'Professional' },
+  { key: 'relationship',  label: 'Relationship' },
+  { key: 'investor_info', label: 'Investor Info' },
+]
+
+export const COMPANY_SECTIONS: { key: string; label: string }[] = [
+  { key: 'overview',   label: 'Overview' },
+  { key: 'pipeline',   label: 'Pipeline' },
+  { key: 'financials', label: 'Financials' },
+  { key: 'investment', label: 'Investment' },
+  { key: 'links',      label: 'Links' },
+]
+
 export type CustomFieldType =
   | 'text'
   | 'textarea'
@@ -24,6 +39,7 @@ export interface CustomFieldDefinition {
   sortOrder: number
   showInList: boolean
   isBuiltin: boolean
+  section: string | null
   createdAt: string
   updatedAt: string
 }
@@ -49,13 +65,14 @@ export interface CustomFieldWithValue extends CustomFieldDefinition {
 
 export interface CreateCustomFieldDefinitionInput {
   entityType: CustomFieldEntityType
-  fieldKey: string
+  fieldKey?: string
   label: string
   fieldType: CustomFieldType
   optionsJson?: string | null
   isRequired?: boolean
   sortOrder?: number
   showInList?: boolean
+  section?: string | null
 }
 
 export interface UpdateCustomFieldDefinitionInput {
@@ -65,6 +82,7 @@ export interface UpdateCustomFieldDefinitionInput {
   isRequired?: boolean
   sortOrder?: number
   showInList?: boolean
+  section?: string | null
 }
 
 export interface SetCustomFieldValueInput {
