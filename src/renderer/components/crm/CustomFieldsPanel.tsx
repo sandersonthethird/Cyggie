@@ -18,7 +18,7 @@ interface CustomFieldsPanelProps {
 }
 
 export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded, onCreateField, draggingFieldId, onDropToUnsectioned }: CustomFieldsPanelProps) {
-  const { load, loaded, companyDefs, contactDefs } = useCustomFieldStore()
+  const { load, loaded, version, companyDefs, contactDefs } = useCustomFieldStore()
   const { getJSON, setJSON } = usePreferencesStore()
   const [fields, setFields] = useState<CustomFieldWithValue[]>([])
   const [loading, setLoading] = useState(true)
@@ -52,7 +52,7 @@ export function CustomFieldsPanel({ entityType, entityId, onFieldsLoaded, onCrea
       })
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [entityType, entityId, loaded]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entityType, entityId, loaded, version]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!loaded || loading) return null
   if (defs.length === 0 && !onCreateField) return null

@@ -1436,6 +1436,15 @@
   align-items: center;
   gap: 6px;
   font-size: 11px;
+  cursor: pointer;
+}
+
+.fieldSelectCheckbox {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  accent-color: var(--color-primary);
 }
 
 .contactEnrichField {

@@ -33,6 +33,16 @@ vi.mock('../main/database/repositories/contact.repo', () => ({
   resolveContactsByEmails: (...args: unknown[]) => mockResolveContactsByEmails(...args)
 }))
 
+// ─── Mock: custom-fields repo ─────────────────────────────────────────────────
+
+const mockListFieldDefinitions = vi.fn()
+const mockGetFieldValuesForEntity = vi.fn()
+
+vi.mock('../main/database/repositories/custom-fields.repo', () => ({
+  listFieldDefinitions: (...args: unknown[]) => mockListFieldDefinitions(...args),
+  getFieldValuesForEntity: (...args: unknown[]) => mockGetFieldValuesForEntity(...args)
+}))
+
 // ─── Mock: meeting repo ───────────────────────────────────────────────────────
 
 const mockGetMeeting = vi.fn()
@@ -54,7 +64,8 @@ vi.mock('../main/storage/file-manager', () => ({
 const {
   getContactSummaryUpdateProposals,
   getContactSummaryUpdateProposalsFromMeetingId,
-  findCompanyByName
+  findCompanyByName,
+  matchSelectOption
 } = await import('../main/services/contact-summary-sync.service')
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -65,7 +76,11 @@ function makeTestDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS org_companies (
       id TEXT PRIMARY KEY,
       canonical_name TEXT NOT NULL DEFAULT ''
-    )
+    );
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL DEFAULT ''
+    );
   `)
   return db
 }
@@ -79,6 +94,11 @@ function makeContact(overrides: Record<string, unknown> = {}) {
     linkedinUrl: null,
     primaryCompanyId: null,
     fieldSources: null,
+    fundSize: null,
+    typicalCheckSizeMin: null,
+    typicalCheckSizeMax: null,
+    investmentStageFocus: null,
+    investmentSectorFocus: null,
     ...overrides
   }
 }
@@ -96,6 +116,9 @@ function makeMockProvider(responseJson: string) {
 beforeEach(() => {
   testDb = makeTestDb()
   vi.clearAllMocks()
+  // Default: no custom fields, no field values
+  mockListFieldDefinitions.mockReturnValue([])
+  mockGetFieldValuesForEntity.mockReturnValue([])
 })
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -321,6 +344,133 @@ describe('getContactSummaryUpdateProposalsFromMeetingId', () => {
 
     expect(proposals).toHaveLength(0)
     expect(provider.generateSummary).not.toHaveBeenCalled()
+  })
+})
+
+describe('investor field enrichment', () => {
+  it('test 10: fundSize extracted and proposed when not hidden', async () => {
+    testDb.prepare(`INSERT INTO user_preferences VALUES ('cyggie:contact-hidden-fields', '[]')`).run()
+    const contact = makeContact({ fundSize: null })
+    mockGetContact.mockReturnValue(contact)
+
+    const response = JSON.stringify({
+      'alice@example.com': {
+        title: null, phone: null, linkedinUrl: null, company: null,
+        fundSize: 50000000, typicalCheckSizeMin: null, typicalCheckSizeMax: null,
+        investmentStageFocus: null, investmentSectorFocus: null
+      }
+    })
+    const proposals = await getContactSummaryUpdateProposals(
+      'Alice runs a $50M fund.', { 'alice@example.com': 'c1' }, makeMockProvider(response), 'mtg-1'
+    )
+
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0]!.updates.fundSize).toBe(50000000)
+    expect(proposals[0]!.changes[0]!.field).toBe('fundSize')
+  })
+
+  it('test 11: hidden field guard — fundSize not proposed when hidden', async () => {
+    testDb.prepare(`INSERT INTO user_preferences VALUES ('cyggie:contact-hidden-fields', '["fundSize"]')`).run()
+    const contact = makeContact({ fundSize: null })
+    mockGetContact.mockReturnValue(contact)
+
+    const response = JSON.stringify({
+      'alice@example.com': {
+        title: null, phone: null, linkedinUrl: null, company: null, fundSize: 50000000
+      }
+    })
+    const proposals = await getContactSummaryUpdateProposals(
+      'Alice runs a $50M fund.', { 'alice@example.com': 'c1' }, makeMockProvider(response), 'mtg-1'
+    )
+
+    expect(proposals).toHaveLength(0)
+  })
+
+  it('test 12: investor-only change produces proposal — guard runs after investor blocks', async () => {
+    testDb.prepare(`INSERT INTO user_preferences VALUES ('cyggie:contact-hidden-fields', '[]')`).run()
+    const contact = makeContact({ title: null, phone: null, fundSize: null })
+    mockGetContact.mockReturnValue(contact)
+
+    // Only fundSize in LLM response — no title/phone/linkedin changes
+    const response = JSON.stringify({
+      'alice@example.com': {
+        title: null, phone: null, linkedinUrl: null, company: null,
+        fundSize: 25000000, investmentStageFocus: null, investmentSectorFocus: null
+      }
+    })
+    const proposals = await getContactSummaryUpdateProposals(
+      'Fund is $25M.', { 'alice@example.com': 'c1' }, makeMockProvider(response), 'mtg-1'
+    )
+
+    expect(proposals).toHaveLength(1) // would be 0 if guard ran before investor extraction
+    expect(proposals[0]!.updates.fundSize).toBe(25000000)
+  })
+})
+
+describe('matchSelectOption', () => {
+  it('exact match returns canonical option', () => {
+    expect(matchSelectOption('Seed', ['Pre-Seed', 'Seed', 'Series A'])).toBe('Seed')
+  })
+
+  it('fuzzy match "seed" returns "Seed"', () => {
+    expect(matchSelectOption('seed', ['Pre-Seed', 'Seed', 'Series A'])).toBe('Seed')
+  })
+
+  it('no confident match returns null', () => {
+    expect(matchSelectOption('completely unrelated text xyz', ['Pre-Seed', 'Seed', 'Series A'])).toBeNull()
+  })
+})
+
+describe('select custom field enrichment', () => {
+  it('test 14: select field fuzzy matched to canonical option', async () => {
+    testDb.prepare(`INSERT INTO user_preferences VALUES ('cyggie:contact-hidden-fields', '[]')`).run()
+    const contact = makeContact()
+    mockGetContact.mockReturnValue(contact)
+    mockListFieldDefinitions.mockReturnValue([{
+      id: 'def-1',
+      entityType: 'contact',
+      fieldKey: 'investment_stage',
+      label: 'Investment Stage',
+      fieldType: 'select',
+      optionsJson: '["Pre-Seed","Seed","Series A"]',
+      isBuiltin: false,
+      isRequired: false,
+      sortOrder: 0,
+      showInList: false,
+      section: null,
+      createdAt: '',
+      updatedAt: ''
+    }])
+    mockGetFieldValuesForEntity.mockReturnValue([{
+      id: 'def-1',
+      entityType: 'contact',
+      fieldKey: 'investment_stage',
+      label: 'Investment Stage',
+      fieldType: 'select',
+      optionsJson: '["Pre-Seed","Seed","Series A"]',
+      isBuiltin: false,
+      isRequired: false,
+      sortOrder: 0,
+      showInList: false,
+      section: null,
+      createdAt: '',
+      updatedAt: '',
+      value: null
+    }])
+
+    const response = JSON.stringify({
+      'alice@example.com': {
+        title: null, phone: null, linkedinUrl: null, company: null,
+        investment_stage: 'seed'
+      }
+    })
+    const proposals = await getContactSummaryUpdateProposals(
+      'Alice invests at seed stage.', { 'alice@example.com': 'c1' }, makeMockProvider(response), 'mtg-1'
+    )
+
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0]!.customFieldUpdates).toHaveLength(1)
+    expect(proposals[0]!.customFieldUpdates![0]!.toDisplay).toBe('Seed') // canonical, not 'seed'
   })
 })
 

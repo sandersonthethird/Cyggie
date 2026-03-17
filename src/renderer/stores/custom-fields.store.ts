@@ -7,6 +7,7 @@ interface CustomFieldStoreState {
   companyDefs: CustomFieldDefinition[]
   contactDefs: CustomFieldDefinition[]
   loaded: boolean
+  version: number
   load: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -24,6 +25,7 @@ export const useCustomFieldStore = create<CustomFieldStoreState>((set, get) => (
   companyDefs: [],
   contactDefs: [],
   loaded: false,
+  version: 0,
 
   load: async () => {
     if (get().loaded) return
@@ -39,6 +41,6 @@ export const useCustomFieldStore = create<CustomFieldStoreState>((set, get) => (
       fetchDefs('company'),
       fetchDefs('contact')
     ])
-    set({ companyDefs, contactDefs, loaded: true })
+    set(s => ({ companyDefs, contactDefs, loaded: true, version: s.version + 1 }))
   }
 }))

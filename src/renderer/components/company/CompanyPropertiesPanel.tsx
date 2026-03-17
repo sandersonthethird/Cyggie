@@ -118,7 +118,7 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
   const headerBadgesRef = useRef<HTMLDivElement>(null)
 
   const { getJSON, setJSON } = usePreferencesStore()
-  const { companyDefs } = useCustomFieldStore()
+  const { companyDefs, refresh } = useCustomFieldStore()
   const pinnedKeys = getJSON<string[]>('cyggie:company-summary-fields', [])
   const pinnedFieldKeys = getJSON<string[]>('cyggie:company-pinned-fields', [])
 
@@ -750,7 +750,7 @@ export function CompanyPropertiesPanel({ company, onUpdate }: CompanyPropertiesP
       {createFieldOpen && (
         <CreateCustomFieldModal
           entityType="company"
-          onSaved={() => setCreateFieldOpen(false)}
+          onSaved={() => { void refresh().then(() => setCreateFieldOpen(false)) }}
           onClose={() => setCreateFieldOpen(false)}
         />
       )}

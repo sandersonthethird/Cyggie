@@ -17,8 +17,10 @@ import type {
   CompanySummaryUpdateChange,
   CompanySummaryUpdateProposal,
   ContactSummaryUpdateProposal,
+  ContactSummaryUpdatePayload,
   SummaryGenerateResult
 } from '../../shared/types/summary'
+import type { SetCustomFieldValueInput } from '../../shared/types/custom-fields'
 import type { Task, ProposedTask, TaskCreateData } from '../../shared/types/task'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
@@ -225,6 +227,7 @@ export default function MeetingDetail() {
   const [pendingContactUpdates, setPendingContactUpdates] = useState<ContactSummaryUpdateProposal[]>([])
   const [contactEnrichDialogOpen, setContactEnrichDialogOpen] = useState(false)
   const [contactEnrichSelections, setContactEnrichSelections] = useState<Record<string, boolean>>({})
+  const [fieldSelections, setFieldSelections] = useState<Record<string, boolean>>({})
   const [isApplyingContactUpdates, setIsApplyingContactUpdates] = useState(false)
   const [contactEnrichError, setContactEnrichError] = useState<string | null>(null)
   const [enrichSuccessMsg, setEnrichSuccessMsg] = useState<string | null>(null)
@@ -843,13 +846,80 @@ export default function MeetingDetail() {
     try {
       const names: string[] = []
       for (const p of accepted) {
-        const fieldUpdates = { ...p.updates }
-        if (Object.keys(fieldUpdates).length > 0) {
-          await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, p.contactId, fieldUpdates)
+        // Build set of selected field names for this contact
+        const selectedFields = new Set(
+          p.changes
+            .filter(c => fieldSelections[`${p.contactId}:${c.field}`] !== false)
+            .map(c => c.field)
+        )
+
+        // Copy only selected built-in + investor fields
+        const filteredUpdates: ContactSummaryUpdatePayload = {}
+        const copyableKeys = [
+          'title', 'phone', 'linkedinUrl',
+          'fundSize', 'typicalCheckSizeMin', 'typicalCheckSizeMax',
+          'investmentStageFocus', 'investmentSectorFocus',
+        ] as const
+        for (const key of copyableKeys) {
+          if (selectedFields.has(key) && p.updates[key] !== undefined) {
+            (filteredUpdates as Record<string, unknown>)[key] = p.updates[key]
+          }
         }
+
+        // Recompute fieldSources — only keep entries for selected fields
+        if (p.updates.fieldSources) {
+          try {
+            const sources: Record<string, string> = JSON.parse(p.updates.fieldSources)
+            const filteredSources: Record<string, string> = {}
+            for (const [k, v] of Object.entries(sources)) {
+              if (selectedFields.has(k)) filteredSources[k] = v
+            }
+            if (Object.keys(filteredSources).length > 0) {
+              filteredUpdates.fieldSources = JSON.stringify(filteredSources)
+            }
+          } catch { /* ignore */ }
+        }
+
+        if (Object.keys(filteredUpdates).length > 0) {
+          await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, p.contactId, filteredUpdates)
+        }
+
+        // Company link is whole-contact level — not per-field selectable
         if (p.companyLink) {
           await api.invoke(IPC_CHANNELS.CONTACT_SET_COMPANY, p.contactId, p.companyLink.companyName)
         }
+
+        // Apply selected custom field updates
+        if (p.customFieldUpdates) {
+          for (const cfu of p.customFieldUpdates) {
+            if (fieldSelections[`${p.contactId}:${cfu.label}`] === false) continue
+            const input: SetCustomFieldValueInput = {
+              fieldDefinitionId: cfu.fieldDefinitionId,
+              entityId: p.contactId,
+              entityType: 'contact',
+            }
+            const v = cfu.newValue
+            switch (cfu.fieldType) {
+              case 'number':
+              case 'currency':
+                input.valueNumber = Number(v)
+                break
+              case 'boolean':
+                input.valueBoolean = Boolean(v)
+                break
+              case 'date':
+                input.valueDate = String(v)
+                break
+              case 'multiselect':
+                input.valueText = JSON.stringify(v)
+                break
+              default:
+                input.valueText = String(v)
+            }
+            await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
+          }
+        }
+
         names.push(p.contactName)
       }
       setEnrichSuccessMsg(`${names.join(', ')} updated`)
@@ -860,7 +930,7 @@ export default function MeetingDetail() {
       setIsApplyingContactUpdates(false)
       if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
     }
-  }, [pendingContactUpdates, contactEnrichSelections, pendingProposedTasks])
+  }, [pendingContactUpdates, contactEnrichSelections, fieldSelections, pendingProposedTasks])
 
   const handleEnrichFromMeeting = useCallback(async () => {
     if (!id) return
@@ -871,8 +941,15 @@ export default function MeetingDetail() {
       )
       if (proposals.length > 0) {
         const selections: Record<string, boolean> = {}
-        for (const p of proposals) selections[p.contactId] = true
+        const newFieldSelections: Record<string, boolean> = {}
+        for (const p of proposals) {
+          selections[p.contactId] = true
+          for (const change of p.changes) {
+            newFieldSelections[`${p.contactId}:${change.field}`] = true
+          }
+        }
         setContactEnrichSelections(selections)
+        setFieldSelections(newFieldSelections)
         setPendingContactUpdates(proposals)
         setContactEnrichDialogOpen(true)
       } else {
@@ -1861,14 +1938,23 @@ export default function MeetingDetail() {
                     <strong>{proposal.contactName}</strong>
                   </div>
                   <div className={styles.contactEnrichChanges}>
-                    {proposal.changes.map((change) => (
-                      <div key={change.field} className={styles.contactEnrichChange}>
-                        <span className={styles.contactEnrichField}>{change.field}:</span>
-                        <span className={styles.contactEnrichFrom}>{change.from || '(empty)'}</span>
-                        <span className={styles.contactEnrichArrow}>→</span>
-                        <span className={styles.contactEnrichTo}>{change.to}</span>
-                      </div>
-                    ))}
+                    {proposal.changes.map((change) => {
+                      const fieldKey = `${proposal.contactId}:${change.field}`
+                      return (
+                        <label key={change.field} className={styles.contactEnrichChange}>
+                          <input
+                            type="checkbox"
+                            checked={fieldSelections[fieldKey] !== false}
+                            onChange={(e) => setFieldSelections(prev => ({ ...prev, [fieldKey]: e.target.checked }))}
+                            className={styles.fieldSelectCheckbox}
+                          />
+                          <span className={styles.contactEnrichField}>{change.field}:</span>
+                          <span className={styles.contactEnrichFrom}>{change.from || '(empty)'}</span>
+                          <span className={styles.contactEnrichArrow}>→</span>
+                          <span className={styles.contactEnrichTo}>{change.to}</span>
+                        </label>
+                      )
+                    })}
                   </div>
                 </div>
               ))}

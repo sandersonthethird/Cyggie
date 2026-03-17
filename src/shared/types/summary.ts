@@ -41,10 +41,13 @@ export interface CompanySummaryUpdateProposal {
   founderUpdate?: ContactTypeUpdateProposal | null
 }
 
-export type ContactSummaryAutoFillField = 'title' | 'phone' | 'linkedinUrl' | 'company'
+export type ContactSummaryAutoFillField =
+  | 'title' | 'phone' | 'linkedinUrl' | 'company'
+  | 'fundSize' | 'typicalCheckSizeMin' | 'typicalCheckSizeMax'
+  | 'investmentStageFocus' | 'investmentSectorFocus'
 
 export interface ContactSummaryUpdateChange {
-  field: ContactSummaryAutoFillField
+  field: string  // ContactSummaryAutoFillField for built-in/investor fields, or custom field label
   from: string | null
   to: string | null
 }
@@ -54,6 +57,20 @@ export interface ContactSummaryUpdatePayload {
   phone?: string | null
   linkedinUrl?: string | null
   fieldSources?: string | null  // serialized JSON: { title: meetingId, phone: meetingId, ... }
+  fundSize?: number | null
+  typicalCheckSizeMin?: number | null
+  typicalCheckSizeMax?: number | null
+  investmentStageFocus?: string | null
+  investmentSectorFocus?: string | null
+}
+
+export interface CustomFieldProposedUpdate {
+  fieldDefinitionId: string
+  label: string
+  fieldType: string
+  newValue: string | number | boolean | string[] | null
+  fromDisplay: string | null
+  toDisplay: string
 }
 
 export interface ContactCompanyLinkProposal {
@@ -67,6 +84,7 @@ export interface ContactSummaryUpdateProposal {
   updates: ContactSummaryUpdatePayload
   companyLink?: ContactCompanyLinkProposal
   changes: ContactSummaryUpdateChange[]
+  customFieldUpdates?: CustomFieldProposedUpdate[]
 }
 
 export interface SummaryGenerateResult {

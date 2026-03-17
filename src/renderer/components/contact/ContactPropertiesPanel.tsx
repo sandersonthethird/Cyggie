@@ -90,7 +90,7 @@ export function ContactPropertiesPanel({
   const firstNameInputRef = useRef<HTMLInputElement>(null)
 
   const { getJSON, setJSON } = usePreferencesStore()
-  const { contactDefs } = useCustomFieldStore()
+  const { contactDefs, refresh } = useCustomFieldStore()
   const pinnedKeys = getJSON<string[]>('cyggie:contact-summary-fields', [])
   const pinnedFieldKeys = getJSON<string[]>('cyggie:contact-pinned-fields', [])
   const hiddenFields = getJSON<string[]>('cyggie:contact-hidden-fields', [])
@@ -671,7 +671,7 @@ export function ContactPropertiesPanel({
       {createFieldOpen && (
         <CreateCustomFieldModal
           entityType="contact"
-          onSaved={() => setCreateFieldOpen(false)}
+          onSaved={() => { void refresh().then(() => setCreateFieldOpen(false)) }}
           onClose={() => setCreateFieldOpen(false)}
         />
       )}
