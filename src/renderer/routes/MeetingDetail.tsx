@@ -687,6 +687,25 @@ export default function MeetingDetail() {
     }
   }, [data, isRecording, notesDraft, saveNotes, startRecording, id, navigate, location.state])
 
+  const handleContinueRecording = useCallback(async () => {
+    if (!data || isRecording) return
+    if (notesSaveRef.current) {
+      clearTimeout(notesSaveRef.current)
+      await saveNotes(notesDraft)
+    }
+    try {
+      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
+        IPC_CHANNELS.RECORDING_START,
+        undefined,
+        undefined,
+        data.meeting.id
+      )
+      startRecording(result.meetingId, result.meetingPlatform)
+    } catch (err) {
+      console.error('Failed to continue recording:', err)
+    }
+  }, [data, isRecording, notesDraft, saveNotes, startRecording])
+
 
   // Auto-scroll live transcript
   useEffect(() => {
