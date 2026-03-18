@@ -1,54 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { createPortal } from 'react-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { ContactDetail as ContactDetailType, ContactMeetingRef } from '../../shared/types/contact'
 import type { ContactSummaryUpdateProposal } from '../../shared/types/summary'
+import type { SetCustomFieldValueInput } from '../../shared/types/custom-fields'
 import type { CalendarEvent } from '../../shared/types/calendar'
+import { contactEnrichedAtKey } from '../../shared/utils/enrichment-keys'
 import { ContactPropertiesPanel } from '../components/contact/ContactPropertiesPanel'
 import { ContactMeetings } from '../components/contact/ContactMeetings'
 import { ContactEmails } from '../components/contact/ContactEmails'
 import { ContactNotes } from '../components/contact/ContactNotes'
 import { ContactTimeline } from '../components/contact/ContactTimeline'
+import { ContactDecisions } from '../components/contact/ContactDecisions'
+import { EnrichmentProposalDialog } from '../components/enrichment/EnrichmentProposalDialog'
+import type { EnrichmentEntityProposal } from '../components/enrichment/EnrichmentProposalDialog'
 import ChatInterface from '../components/chat/ChatInterface'
 import { usePanelResize } from '../hooks/usePanelResize'
+import { mergeContactProposals } from '../../shared/utils/contact-proposal-utils'
 import styles from './ContactDetail.module.css'
 
-/**
- * Merge proposals from multiple meetings for the same contact.
- * For each field, keep the first non-null value (most recent meeting first,
- * since summarizedMeetings is sorted date-desc before calling).
- */
-function mergeContactProposals(proposals: ContactSummaryUpdateProposal[]): ContactSummaryUpdateProposal[] {
-  const byContact = new Map<string, ContactSummaryUpdateProposal>()
-  for (const p of proposals) {
-    const existing = byContact.get(p.contactId)
-    if (!existing) {
-      byContact.set(p.contactId, { ...p, changes: [...p.changes], updates: { ...p.updates } })
-      continue
-    }
-    // Merge: keep first non-null per field
-    for (const change of p.changes) {
-      if (!existing.changes.some((c) => c.field === change.field)) {
-        existing.changes.push(change)
-        if (change.field === 'title' && !existing.updates.title) existing.updates.title = change.to
-        if (change.field === 'phone' && !existing.updates.phone) existing.updates.phone = change.to
-        if (change.field === 'linkedinUrl' && !existing.updates.linkedinUrl) existing.updates.linkedinUrl = change.to
-      }
-    }
-    if (!existing.companyLink && p.companyLink) {
-      existing.companyLink = p.companyLink
-      if (!existing.changes.some((c) => c.field === 'company')) {
-        existing.changes.push({ field: 'company', from: null, to: p.companyLink.companyName })
-      }
-    }
-    // Merge fieldSources: latest meeting wins per field (already handled by service)
-    if (p.updates.fieldSources) existing.updates.fieldSources = p.updates.fieldSources
-  }
-  return [...byContact.values()]
-}
-
-type ContactTab = 'timeline' | 'meetings' | 'emails' | 'notes'
+type ContactTab = 'timeline' | 'meetings' | 'emails' | 'notes' | 'decisions'
 
 export default function ContactDetail() {
   const { contactId: id } = useParams<{ contactId: string }>()
@@ -56,16 +27,22 @@ export default function ContactDetail() {
   const [loading, setLoading] = useState(true)
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [activeTab, setActiveTab] = useState<ContactTab>('timeline')
-  const { leftWidth, dividerProps } = usePanelResize()
+  const { leftWidth, dividerProps } = usePanelResize({ defaultWidth: 360 })
   const [contactEnrichProposals, setContactEnrichProposals] = useState<ContactSummaryUpdateProposal[]>([])
-  const [contactEnrichDialogOpen, setContactEnrichDialogOpen] = useState(false)
-  const [contactEnrichSelections, setContactEnrichSelections] = useState<Record<string, boolean>>({})
+  const [enrichDialogOpen, setEnrichDialogOpen] = useState(false)
+  const [fieldSelections, setFieldSelections] = useState<Record<string, boolean>>({})
   const [isApplyingEnrich, setIsApplyingEnrich] = useState(false)
   const [isLoadingEnrich, setIsLoadingEnrich] = useState(false)
   const [enrichSuccessMsg, setEnrichSuccessMsg] = useState<string | null>(null)
+  const [enrichError, setEnrichError] = useState<string | null>(null)
+  const [lastEnrichedAt, setLastEnrichedAt] = useState<string | null>(() => {
+    if (!id) return null
+    return localStorage.getItem(contactEnrichedAtKey(id))
+  })
 
   useEffect(() => {
     if (!id) return
+    setLastEnrichedAt(localStorage.getItem(contactEnrichedAtKey(id)))
     setLoading(true)
     window.api
       .invoke<ContactDetailType>(IPC_CHANNELS.CONTACT_GET, id)
@@ -136,14 +113,13 @@ export default function ContactDetail() {
     [contact]
   )
 
-  const showEnrichBanner = useMemo(
-    () =>
-      !contact?.title &&
-      !contact?.phone &&
-      !contact?.linkedinUrl &&
-      summarizedMeetings.length > 0,
-    [contact, summarizedMeetings]
-  )
+  const showEnrichBanner = useMemo(() => {
+    if (!contact) return false
+    if (contact.title && contact.phone && contact.linkedinUrl) return false
+    if (summarizedMeetings.length === 0) return false
+    if (!lastEnrichedAt) return true
+    return summarizedMeetings.some((m) => m.date > lastEnrichedAt)
+  }, [contact, summarizedMeetings, lastEnrichedAt])
 
   const parsedFieldSources = useMemo((): Record<string, { meetingId: string; meetingTitle: string }> => {
     if (!contact?.fieldSources) return {}
@@ -164,6 +140,7 @@ export default function ContactDetail() {
   const handleEnrichFromMeetings = useCallback(async () => {
     if (summarizedMeetings.length === 0) return
     setIsLoadingEnrich(true)
+    setEnrichError(null)
     try {
       const allResults = await Promise.all(
         summarizedMeetings.map((m) =>
@@ -172,52 +149,162 @@ export default function ContactDetail() {
       )
       const merged = mergeContactProposals(allResults.flat())
       if (merged.length > 0) {
+        // Initialize per-field selections
         const selections: Record<string, boolean> = {}
-        for (const p of merged) selections[p.contactId] = true
-        setContactEnrichSelections(selections)
+        for (const p of merged) {
+          for (const change of p.changes) {
+            selections[`${p.contactId}:${change.field}`] = true
+          }
+          for (const cfu of p.customFieldUpdates ?? []) {
+            selections[`${p.contactId}:${cfu.label}`] = true
+          }
+        }
+        setFieldSelections(selections)
         setContactEnrichProposals(merged)
-        setContactEnrichDialogOpen(true)
+        setEnrichDialogOpen(true)
+      } else {
+        // No proposals found — mark as enriched so the banner hides
+        const enrichedAt = new Date().toISOString()
+        if (id) {
+          localStorage.setItem(contactEnrichedAtKey(id), enrichedAt)
+          setLastEnrichedAt(enrichedAt)
+        }
       }
     } catch (err) {
       console.error('[ContactDetail] Failed to load enrichment proposals:', err)
+      setEnrichError('Could not load enrichment — please try again')
+      setTimeout(() => setEnrichError(null), 4000)
     } finally {
       setIsLoadingEnrich(false)
     }
-  }, [summarizedMeetings])
+  }, [summarizedMeetings, id])
 
   const handleApplyEnrich = useCallback(async () => {
-    const accepted = contactEnrichProposals.filter(
-      (p) => contactEnrichSelections[p.contactId] !== false
-    )
-    setContactEnrichDialogOpen(false)
-    setContactEnrichProposals([])
+    setEnrichDialogOpen(false)
+    const accepted = contactEnrichProposals
     if (accepted.length === 0) return
     setIsApplyingEnrich(true)
     try {
       const names: string[] = []
       for (const p of accepted) {
-        const fieldUpdates = { ...p.updates }
-        if (Object.keys(fieldUpdates).length > 0) {
-          await window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE, p.contactId, fieldUpdates)
+        // Build set of selected field names for this contact
+        const selectedFields = new Set(
+          p.changes
+            .filter((c) => fieldSelections[`${p.contactId}:${c.field}`] !== false)
+            .map((c) => c.field)
+        )
+
+        // Copy only selected built-in + investor fields
+        const filteredUpdates: Record<string, unknown> = {}
+        const copyableKeys = [
+          'title', 'phone', 'linkedinUrl',
+          'fundSize', 'typicalCheckSizeMin', 'typicalCheckSizeMax',
+          'investmentStageFocus', 'investmentSectorFocus',
+        ] as const
+        for (const key of copyableKeys) {
+          if (selectedFields.has(key) && (p.updates as Record<string, unknown>)[key] !== undefined) {
+            filteredUpdates[key] = (p.updates as Record<string, unknown>)[key]
+          }
         }
+
+        // Recompute fieldSources — only keep entries for selected fields
+        if (p.updates.fieldSources) {
+          try {
+            const sources: Record<string, string> = JSON.parse(p.updates.fieldSources)
+            const filteredSources: Record<string, string> = {}
+            for (const [k, v] of Object.entries(sources)) {
+              if (selectedFields.has(k)) filteredSources[k] = v
+            }
+            if (Object.keys(filteredSources).length > 0) {
+              filteredUpdates.fieldSources = JSON.stringify(filteredSources)
+            }
+          } catch { /* ignore */ }
+        }
+
+        if (Object.keys(filteredUpdates).length > 0) {
+          await window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE, p.contactId, filteredUpdates)
+        }
+
+        // Company link — not per-field selectable
         if (p.companyLink) {
           await window.api.invoke(IPC_CHANNELS.CONTACT_SET_COMPANY, p.contactId, p.companyLink.companyName)
         }
+
+        // Apply selected custom field updates
+        if (p.customFieldUpdates) {
+          for (const cfu of p.customFieldUpdates) {
+            if (fieldSelections[`${p.contactId}:${cfu.label}`] === false) continue
+            const input: SetCustomFieldValueInput = {
+              fieldDefinitionId: cfu.fieldDefinitionId,
+              entityId: p.contactId,
+              entityType: 'contact',
+            }
+            const v = cfu.newValue
+            switch (cfu.fieldType) {
+              case 'number':
+              case 'currency':
+                input.valueNumber = Number(v)
+                break
+              case 'boolean':
+                input.valueBoolean = Boolean(v)
+                break
+              case 'date':
+                input.valueDate = String(v)
+                break
+              case 'multiselect':
+                input.valueText = JSON.stringify(v)
+                break
+              default:
+                input.valueText = String(v)
+            }
+            await window.api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
+          }
+        }
+
         names.push(p.contactName)
       }
+
       // Re-fetch contact to show updated values
       if (id) {
         const updated = await window.api.invoke<ContactDetailType>(IPC_CHANNELS.CONTACT_GET, id)
         if (updated) setContact(updated)
+      }
+      const enrichedAt = new Date().toISOString()
+      if (id) {
+        localStorage.setItem(contactEnrichedAtKey(id), enrichedAt)
+        setLastEnrichedAt(enrichedAt)
       }
       setEnrichSuccessMsg(`${names.join(', ')} updated`)
       setTimeout(() => setEnrichSuccessMsg(null), 3000)
     } catch (err) {
       console.error('[ContactDetail] Failed to apply contact updates:', err)
     } finally {
+      setContactEnrichProposals([])
       setIsApplyingEnrich(false)
     }
-  }, [contactEnrichProposals, contactEnrichSelections, id])
+  }, [contactEnrichProposals, fieldSelections, id])
+
+  // Build proposals for shared dialog
+  const dialogProposals = useMemo((): EnrichmentEntityProposal[] => {
+    return contactEnrichProposals.map((p) => ({
+      entityId: p.contactId,
+      entityName: p.contactName,
+      changes: [
+        ...p.changes.map((c) => ({
+          key: `${p.contactId}:${c.field}`,
+          label: c.field,
+          from: c.from,
+          to: String(c.to),
+        })),
+        ...(p.customFieldUpdates ?? []).map((cfu) => ({
+          key: `${p.contactId}:${cfu.label}`,
+          label: cfu.label,
+          from: cfu.fromDisplay,
+          to: cfu.toDisplay,
+        })),
+      ],
+    }))
+  }, [contactEnrichProposals])
 
   if (loading) {
     return <div className={styles.loading}>Loading…</div>
@@ -231,7 +318,8 @@ export default function ContactDetail() {
     { key: 'timeline', label: 'Timeline', badge: totalActivity || undefined },
     { key: 'meetings', label: 'Meetings', badge: contact.meetingCount || undefined },
     { key: 'emails', label: 'Emails', badge: contact.emailCount || undefined },
-    { key: 'notes', label: 'Notes', badge: contact.noteCount || undefined }
+    { key: 'notes', label: 'Notes', badge: contact.noteCount || undefined },
+    { key: 'decisions', label: 'Decisions' }
   ]
 
   return (
@@ -251,6 +339,11 @@ export default function ContactDetail() {
         {enrichSuccessMsg && (
           <div className={styles.enrichSuccess}>
             ✓ {enrichSuccessMsg}
+          </div>
+        )}
+        {enrichError && (
+          <div className={styles.enrichError}>
+            {enrichError}
           </div>
         )}
       </div>
@@ -301,69 +394,41 @@ export default function ContactDetail() {
             contactId={contact.id}
             className={activeTab !== 'notes' ? styles.hidden : ''}
           />
+          {activeTab === 'decisions' && (
+            <ContactDecisions
+              contactId={contact.id}
+              primaryCompanyId={contact.primaryCompanyId ?? null}
+              primaryCompanyName={contact.primaryCompanyName ?? null}
+            />
+          )}
         </div>
       </div>
 
-      {contactEnrichDialogOpen && createPortal(
-        <div className={styles.enrichOverlay}>
-          <div className={styles.enrichDialog}>
-            <h3 className={styles.enrichDialogTitle}>
-              Enrich contact profile
-            </h3>
-            <p className={styles.enrichDialogSubtitle}>
-              New information was found in meeting summaries. Select which updates to apply.
-            </p>
-            <div className={styles.enrichProposalList}>
-              {contactEnrichProposals.map((proposal) => (
-                <div key={proposal.contactId} className={styles.enrichProposal}>
-                  <div className={styles.enrichProposalName}>
-                    <input
-                      type="checkbox"
-                      checked={contactEnrichSelections[proposal.contactId] !== false}
-                      onChange={() => {
-                        setContactEnrichSelections((prev) => ({
-                          ...prev,
-                          [proposal.contactId]: prev[proposal.contactId] === false
-                        }))
-                      }}
-                    />
-                    <strong>{proposal.contactName}</strong>
-                  </div>
-                  <div className={styles.enrichProposalChanges}>
-                    {proposal.changes.map((change) => (
-                      <div key={change.field} className={styles.enrichChange}>
-                        <span className={styles.enrichChangeField}>{change.field}:</span>
-                        <span className={styles.enrichChangeFrom}>{change.from || '(empty)'}</span>
-                        <span>→</span>
-                        <span className={styles.enrichChangeTo}>{change.to}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className={styles.enrichDialogActions}>
-              <button
-                className={styles.enrichDialogSkip}
-                onClick={() => {
-                  setContactEnrichDialogOpen(false)
-                  setContactEnrichProposals([])
-                }}
-                disabled={isApplyingEnrich}
-              >
-                Skip
-              </button>
-              <button
-                className={styles.enrichDialogApply}
-                onClick={() => void handleApplyEnrich()}
-                disabled={isApplyingEnrich || Object.values(contactEnrichSelections).every((v) => v === false)}
-              >
-                {isApplyingEnrich ? 'Applying…' : `Apply ${Object.values(contactEnrichSelections).filter((v) => v !== false).length} update${Object.values(contactEnrichSelections).filter((v) => v !== false).length !== 1 ? 's' : ''}`}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
+      {enrichDialogOpen && contactEnrichProposals.length > 0 && (
+        <EnrichmentProposalDialog
+          open={true}
+          title="Enrich contact profile"
+          subtitle="New information was found in meeting summaries. Select which updates to apply."
+          proposals={dialogProposals}
+          fieldSelections={fieldSelections}
+          onFieldToggle={(key, value) => setFieldSelections((prev) => ({ ...prev, [key]: value }))}
+          onSelectAll={() => {
+            const all: Record<string, boolean> = {}
+            for (const p of dialogProposals) for (const c of p.changes) all[c.key] = true
+            setFieldSelections(all)
+          }}
+          onDeselectAll={() => {
+            const none: Record<string, boolean> = {}
+            for (const p of dialogProposals) for (const c of p.changes) none[c.key] = false
+            setFieldSelections(none)
+          }}
+          onApply={() => void handleApplyEnrich()}
+          onSkip={() => {
+            setEnrichDialogOpen(false)
+            setContactEnrichProposals([])
+          }}
+          isApplying={isApplyingEnrich}
+        />
       )}
     </div>
   )

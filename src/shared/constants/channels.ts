@@ -110,6 +110,13 @@ export const IPC_CHANNELS = {
   CONTACT_NOTES_UPDATE: 'contact-notes:update',
   CONTACT_NOTES_DELETE: 'contact-notes:delete',
 
+  // Contact decision log
+  CONTACT_DECISION_LOG_LIST: 'contact-decision-log:list',
+  CONTACT_DECISION_LOG_GET: 'contact-decision-log:get',
+  CONTACT_DECISION_LOG_CREATE: 'contact-decision-log:create',
+  CONTACT_DECISION_LOG_UPDATE: 'contact-decision-log:update',
+  CONTACT_DECISION_LOG_DELETE: 'contact-decision-log:delete',
+
   // Company decision log
   COMPANY_DECISION_LOG_LIST: 'company-decision-log:list',
   COMPANY_DECISION_LOG_GET: 'company-decision-log:get',
@@ -251,6 +258,9 @@ export const IPC_CHANNELS = {
 
   // Contact enrichment
   CONTACT_ENRICH_FROM_MEETING: 'contact:enrich-from-meeting',
+
+  // Company on-demand enrichment (batched — one LLM call for all meetings)
+  COMPANY_ENRICH_FROM_MEETINGS: 'company:enrich-from-meetings',
 
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',

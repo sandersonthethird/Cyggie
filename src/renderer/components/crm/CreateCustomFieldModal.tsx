@@ -11,6 +11,7 @@ interface CreateCustomFieldModalProps {
   entityType: 'company' | 'contact'
   onSaved: (def: CustomFieldDefinition) => void
   onClose: () => void
+  defaultSection?: string
 }
 
 interface FormState {
@@ -21,13 +22,15 @@ interface FormState {
   section: string
 }
 
-export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateCustomFieldModalProps) {
+export function CreateCustomFieldModal({ entityType, onSaved, onClose, defaultSection }: CreateCustomFieldModalProps) {
+  const sectionOptions = entityType === 'contact' ? CONTACT_SECTIONS : COMPANY_SECTIONS
+
   const [form, setForm] = useState<FormState>({
     label: '',
     fieldType: 'text',
     options: [],
     required: false,
-    section: '',
+    section: defaultSection ?? sectionOptions[0]?.key ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -103,7 +106,6 @@ export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateC
   }
 
   const isSelect = form.fieldType === 'select' || form.fieldType === 'multiselect'
-  const sectionOptions = entityType === 'contact' ? CONTACT_SECTIONS : COMPANY_SECTIONS
 
   return createPortal(
     <div className={styles.overlay} onClick={onClose}>
@@ -147,7 +149,6 @@ export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateC
               value={form.section}
               onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))}
             >
-              <option value=''>Custom Fields (default)</option>
               {sectionOptions.map((s) => (
                 <option key={s.key} value={s.key}>{s.label}</option>
               ))}
@@ -188,7 +189,18 @@ export function CreateCustomFieldModal({ entityType, onSaved, onClose }: CreateC
                     <button className={styles.removeBtn} onClick={() => removeOption(i)}>×</button>
                   </div>
                 ))}
-                <button className={styles.addOptionBtn} onClick={addOption}>+ Add option</button>
+                <button
+                  className={styles.addOptionBtn}
+                  onClick={() => {
+                    addOption()
+                    setTimeout(() => {
+                      const inputs = optionsListRef.current?.querySelectorAll('input')
+                      inputs?.[inputs.length - 1]?.focus()
+                    }, 0)
+                  }}
+                >
+                  + Add option
+                </button>
               </div>
             </div>
           )}

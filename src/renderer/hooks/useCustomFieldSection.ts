@@ -3,6 +3,21 @@ import type { CustomFieldEntityType, CustomFieldWithValue } from '../../shared/t
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { api } from '../api'
 
+/** Pure helper: reorder fields within a section by moving draggingId to just before targetId. */
+export function computeWithinSectionReorder<T extends { id: string }>(
+  sectionFields: T[],
+  draggingId: string,
+  targetId: string
+): T[] | null {
+  if (draggingId === targetId) return null
+  const dragField = sectionFields.find((f) => f.id === draggingId)
+  if (!dragField) return null
+  const withoutDrag = sectionFields.filter((f) => f.id !== draggingId)
+  const targetIdx = withoutDrag.findIndex((f) => f.id === targetId)
+  if (targetIdx === -1) return null
+  return [...withoutDrag.slice(0, targetIdx), dragField, ...withoutDrag.slice(targetIdx)]
+}
+
 export function useCustomFieldSection(
   _entityType: CustomFieldEntityType,
   _entityId: string,
@@ -11,6 +26,8 @@ export function useCustomFieldSection(
 ) {
   const [draggingFieldId, setDraggingFieldId] = useState<string | null>(null)
   const [dragOverSection, setDragOverSection] = useState<string | null>(null)
+  // Tracks which field the dragged item is hovering over (for within-section reorder)
+  const [draggingOverFieldId, setDraggingOverFieldId] = useState<string | null>(null)
   // Counter per section to handle onDragLeave firing when entering child elements
   const dragCounters = useRef<Record<string, number>>({})
 
@@ -18,6 +35,11 @@ export function useCustomFieldSection(
     return customFields.filter((f) => f.section === section)
   }
 
+  function nullSectionFields(): CustomFieldWithValue[] {
+    return customFields.filter((f) => f.section === null || f.section === '')
+  }
+
+  // Cross-section move: update a field's section property
   async function handleFieldDrop(targetSection: string | null) {
     if (!draggingFieldId) return
     const fieldId = draggingFieldId
@@ -28,6 +50,39 @@ export function useCustomFieldSection(
       await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_UPDATE_DEFINITION, fieldId, { section: targetSection })
     } catch {
       // Revert on failure
+      setCustomFields(prev)
+    }
+  }
+
+  // Within-section reorder: move draggingFieldId to the position of targetFieldId
+  async function handleWithinSectionDrop(targetFieldId: string) {
+    if (!draggingFieldId || draggingFieldId === targetFieldId) return
+    setDraggingOverFieldId(null)
+
+    // Find the section these fields share
+    const dragField = customFields.find((f) => f.id === draggingFieldId)
+    const targetField = customFields.find((f) => f.id === targetFieldId)
+    if (!dragField || !targetField || dragField.section !== targetField.section) return
+
+    const sectionKey = dragField.section
+    const sectionFields = customFields.filter((f) => f.section === sectionKey)
+
+    const reordered = computeWithinSectionReorder(sectionFields, draggingFieldId, targetFieldId)
+    if (!reordered) return
+
+    const orderedIds = reordered.map((f) => f.id)
+    const prev = customFields
+
+    // Optimistic update: apply the new order in local state
+    setCustomFields((fs) => {
+      const sectionSet = new Set(orderedIds)
+      const others = fs.filter((f) => !sectionSet.has(f.id))
+      return [...others, ...reordered]
+    })
+
+    try {
+      await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_REORDER_DEFINITIONS, orderedIds)
+    } catch {
       setCustomFields(prev)
     }
   }
@@ -55,8 +110,12 @@ export function useCustomFieldSection(
     draggingFieldId,
     setDraggingFieldId,
     dragOverSection,
+    draggingOverFieldId,
+    setDraggingOverFieldId,
     sectionedFields,
+    nullSectionFields,
     handleFieldDrop,
+    handleWithinSectionDrop,
     sectionDragProps,
   }
 }

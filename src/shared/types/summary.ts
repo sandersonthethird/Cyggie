@@ -24,6 +24,7 @@ export interface CompanySummaryUpdatePayload {
   city?: string | null
   state?: string | null
   pipelineStage?: CompanyPipelineStage | null
+  fieldSources?: string | null  // serialized JSON: { description: meetingId, round: meetingId, ... }
 }
 
 export interface ContactTypeUpdateProposal {
@@ -38,6 +39,7 @@ export interface CompanySummaryUpdateProposal {
   companyName: string
   updates: CompanySummaryUpdatePayload
   changes: CompanySummaryUpdateChange[]
+  customFieldUpdates?: CustomFieldProposedUpdate[]
   founderUpdate?: ContactTypeUpdateProposal | null
 }
 

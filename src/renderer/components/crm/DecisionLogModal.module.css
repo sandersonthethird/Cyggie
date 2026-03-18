@@ -77,6 +77,13 @@
   font-size: 14px;
 }
 
+/* Single-column row */
+.row1 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
 /* Two-column row */
 .row2 {
   display: grid;

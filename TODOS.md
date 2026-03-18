@@ -63,6 +63,32 @@
 
 ---
 
+## P2 — Enrichment
+
+### Enrichment run history
+**What:** Track every enrichment run (timestamp, meeting IDs, fields changed) per company/contact.
+**Why:** `lastEnrichedAt` in localStorage is a weak signal — it's device-specific, invisible in the UI, and provides no audit trail. If a user enriches on device A, device B still shows the banner.
+**Pros:** Persistent cross-device history; enables "what changed and when" view; better banner suppression logic (check if latest meeting has already been used).
+**Cons:** Requires a new DB table; medium schema + service work.
+**Context:** Currently `localStorage.setItem('company_enriched_at_${id}', ...)` and `contact_enriched_at_${id}` store ISO timestamps. A proper `enrichment_runs` table would have columns: `id`, `entity_type` (company/contact), `entity_id`, `meeting_ids` (JSON array), `fields_changed` (JSON array), `created_at`. The banner suppression check in `CompanyDetail.tsx` and `ContactDetail.tsx` (`showEnrichBanner` useMemo) would query this table instead of localStorage.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Company enrichment feature (this PR).
+
+---
+
+### Migrate auto-gen company enrichment to LLM
+**What:** `getVcSummaryCompanyUpdateProposals()` still uses regex-based extraction (`parseVcPitchSummary()`). Align it with the new LLM approach used by `getCompanyEnrichmentProposalsFromMeetings()`.
+**Why:** Regex extraction is brittle for varied summary formats; misses custom fields entirely; the two code paths now use different extraction strategies for the same data.
+**Pros:** Unified code path; custom fields populated on first summary; more robust extraction.
+**Cons:** LLM adds latency to summary generation (already has one LLM call; this adds another or requires combining them); harder to test without mocking.
+**Context:** `getVcSummaryCompanyUpdateProposals()` is called from `summary.ipc.ts` during `SUMMARY_GENERATE`. It feeds `companyUpdateProposals` in `SummaryGenerateResult`. The regex path is fast and appropriate for first-meeting auto-fill (no prior data). Full migration may be premature; consider a hybrid: regex for speed, LLM only when custom fields are defined.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Company enrichment feature (this PR).
+
+---
+
 ## P2 — Email Sync
 
 ### Determinate progress bar during email discovery
@@ -70,4 +96,17 @@
 **Why:** The current "Fetching 42 of 312…" text is helpful but a visual progress bar would make long syncs much less anxiety-inducing.
 **Effort:** S
 **Context:** The `COMPANY_EMAIL_INGEST_PROGRESS` and `CONTACT_EMAIL_INGEST_PROGRESS` channels already emit `{ phase, fetched, total }`. The `total` is known after the discovering phase completes. Add a `<progress>` element or a CSS-based bar to the sync row in `CompanyTimeline.tsx` and `ContactEmails.tsx`.
+
+---
+
+## P3 — Header Panel UX
+
+### Bulk "Add all section to header" button
+**What:** A per-section `↑ All` link in edit mode that adds all fields in that section to the header chips in one click.
+**Why:** If a user has 5+ fields in a section and wants to surface all of them as chips, clicking the × drag for each is tedious. A bulk action removes friction.
+**Pros:** Zero-friction for power users building info-dense headers; consistent with the drag-to-header paradigm already in place.
+**Cons:** Could create visual clutter if users accidentally bulk-add many chips. Requires a "dedup-safe" bulk togglePinnedKey call.
+**Context:** The drag-to-header system (Change 1) is complete: dragging a field to the Header section auto-adds it to `cyggie:contact-summary-fields` / `cyggie:company-summary-fields` via `computeChipDelta`. A bulk add would call `togglePinnedKey(chipId, true)` for each field in the section that isn't already in `pinnedKeys`. The `+ All` button would appear next to the `+ Add field` button in each section in edit mode (only visible when the section has fields not yet in the header). Start in `ContactPropertiesPanel.tsx` and `CompanyPropertiesPanel.tsx` in the `renderSectionedFields` callers.
+**Effort:** S
+**Depends on:** Header section unification PR (drag-to-header, Change 1).
 

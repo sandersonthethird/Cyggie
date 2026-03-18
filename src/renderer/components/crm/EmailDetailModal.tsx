@@ -92,7 +92,25 @@ export function EmailDetailModal({ messageId, onClose }: EmailDetailModalProps) 
               : state.status === 'notFound' ? 'Email not found'
               : 'Error'}
           </div>
-          <button className={styles.closeBtn} onClick={onClose} title="Close">✕</button>
+          <div className={styles.headerActions}>
+            {state.status === 'loaded' && state.email.providerThreadId && (
+              <button
+                className={styles.gmailBtn}
+                title="Open in Gmail"
+                onClick={() => {
+                  if (state.status !== 'loaded' || !state.email.providerThreadId) return
+                  const accountEmail = state.email.accountEmail
+                  const gmailUrl = accountEmail
+                    ? `https://mail.google.com/mail/u/0/?authuser=${encodeURIComponent(accountEmail)}#all/${state.email.providerThreadId}`
+                    : `https://mail.google.com/mail/u/0/#all/${state.email.providerThreadId}`
+                  window.api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, gmailUrl).catch(console.error)
+                }}
+              >
+                Open in Gmail ↗
+              </button>
+            )}
+            <button className={styles.closeBtn} onClick={onClose} title="Close">✕</button>
+          </div>
         </div>
 
         {/* Body */}

@@ -98,3 +98,26 @@
   color: var(--color-text-tertiary);
   font-size: 14px;
 }
+
+/* Enrichment feedback toasts */
+.enrichSuccess {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--color-success-bg, #ecfdf5);
+  color: var(--color-success-text, #065f46);
+  border: 1px solid var(--color-success-border, #6ee7b7);
+}
+
+.enrichError {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--color-error-bg, #fef2f2);
+  color: var(--color-error-text, #991b1b);
+  border: 1px solid var(--color-error-border, #fca5a5);
+}

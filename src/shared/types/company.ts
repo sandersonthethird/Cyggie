@@ -85,6 +85,8 @@ export interface CompanySummary {
   ownershipPct: string | null
   followonInvestmentSize: string | null
   totalInvested: string | null
+  // Field source tracking — JSON string { fieldName: meetingId }
+  fieldSources: string | null
 }
 
 export interface CompanyDetail extends CompanySummary {
@@ -176,8 +178,10 @@ export interface CompanyEmailRef {
   bodyText: string | null
   isUnread: boolean
   threadId: string | null
+  providerThreadId: string | null
   threadMessageCount: number
   participants: CompanyEmailParticipantRef[]
+  accountEmail: string | null
 }
 
 export type EmailParticipantRole = 'from' | 'to' | 'cc' | 'bcc' | 'reply_to'

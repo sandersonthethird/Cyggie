@@ -3,6 +3,7 @@ export const CONTACT_SECTIONS: { key: string; label: string }[] = [
   { key: 'professional',  label: 'Professional' },
   { key: 'relationship',  label: 'Relationship' },
   { key: 'investor_info', label: 'Investor Info' },
+  { key: 'summary',       label: 'Header' },
 ]
 
 export const COMPANY_SECTIONS: { key: string; label: string }[] = [
@@ -11,6 +12,7 @@ export const COMPANY_SECTIONS: { key: string; label: string }[] = [
   { key: 'financials', label: 'Financials' },
   { key: 'investment', label: 'Investment' },
   { key: 'links',      label: 'Links' },
+  { key: 'summary',    label: 'Header' },
 ]
 
 export type CustomFieldType =

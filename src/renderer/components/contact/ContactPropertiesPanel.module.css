@@ -12,6 +12,10 @@
   padding: 16px 0 12px;
   border-bottom: 1px solid var(--color-bg-tertiary);
   margin-bottom: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-card-bg);
 }
 
 .headerMeta {
@@ -86,9 +90,9 @@
 
 .headerBadge {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .badge {
@@ -169,6 +173,9 @@
 }
 
 .sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -176,6 +183,22 @@
   color: var(--color-text-tertiary);
   padding: 14px 0 4px;
   margin-bottom: 2px;
+}
+
+.sectionCollapseBtn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 9px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.6;
+}
+
+.sectionCollapseBtn:hover {
+  opacity: 1;
+  color: var(--color-primary);
 }
 
 .emailRow {
@@ -424,6 +447,16 @@
   align-items: center;
 }
 
+.sectionedFieldRow .hideable {
+  flex: 1;
+  min-width: 0;
+}
+
+.dragOverFieldIndicator {
+  border-top: 2px solid var(--color-primary);
+  border-radius: 2px;
+}
+
 /* ── Enrichment banner ── */
 .enrichBanner {
   display: flex;
@@ -536,4 +569,115 @@
 
 .fieldHidden {
   opacity: 0.45;
+}
+
+/* ── Header chip drag-to-reorder ── */
+.headerChipDraggable {
+  cursor: grab;
+}
+
+.chipDropIndicator {
+  outline: 2px dashed var(--color-primary);
+  border-radius: 4px;
+}
+
+/* ── Edit mode chip label row ── */
+.editChipField {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.editChipLabel {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  user-select: none;
+}
+
+/* ── Add custom field button ── */
+.addFieldBtn {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  margin-top: 4px;
+  background: none;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.addFieldBtn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* ── Hidden header chips (Change 4b) ── */
+.hiddenHeaderChip {
+  opacity: 0.45;
+}
+
+.hiddenChipPlaceholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  padding: 2px 6px;
+  border: 1px dashed var(--color-border);
+  border-radius: 999px;
+}
+
+.restoreChipBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-primary);
+  padding: 0;
+  line-height: 1;
+}
+
+.hideChipBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  padding: 0 0 0 2px;
+  line-height: 1;
+}
+
+.hideChipBtn:hover {
+  color: var(--color-danger, #c00);
+}
+
+/* ── Inline field rename (Change 11) ── */
+.inlineRenameInput {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm, 4px);
+  width: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-sizing: border-box;
+  margin-bottom: 4px;
+}
+
+.renameFieldBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  padding: 0 0 0 4px;
+  flex-shrink: 0;
+}
+
+.renameFieldBtn:hover {
+  color: var(--color-primary);
 }

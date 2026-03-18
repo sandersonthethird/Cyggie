@@ -7,11 +7,12 @@ import type {
   DecisionLinkedArtifact,
   InvestmentMemoWithLatest
 } from '../../../shared/types/company'
+import type { ContactDecisionLog } from '../../../shared/types/contact'
 import ConfirmDialog from '../common/ConfirmDialog'
 import styles from './DecisionLogModal.module.css'
 import { api } from '../../api'
 
-const DECISION_TYPE_OPTIONS = [
+const COMPANY_DECISION_TYPE_OPTIONS = [
   'Investment Approved',
   'Pass',
   'Increase Allocation',
@@ -20,14 +21,40 @@ const DECISION_TYPE_OPTIONS = [
   'Other'
 ]
 
-interface DecisionLogModalProps {
-  companyId: string
-  logId?: string
-  initialDecisionType?: string
-  onClose: () => void
-  onSaved: (log: CompanyDecisionLog) => void
-  onDeleted?: (logId: string) => void
+const CONTACT_DECISION_TYPE_OPTIONS = [
+  'Pass',
+  'Advance',
+  'Offer',
+  'Other'
+]
+
+// Minimal shared type for onSaved callback — avoids cross-type coupling
+export type SavedDecisionRef = {
+  id: string
+  decisionType: string
+  decisionDate: string
+  decisionOwner: string | null
 }
+
+type DecisionLogModalProps =
+  | {
+      companyId: string
+      contactId?: never
+      logId?: string
+      initialDecisionType?: string
+      onClose: () => void
+      onSaved: (log: SavedDecisionRef) => void
+      onDeleted?: (logId: string) => void
+    }
+  | {
+      contactId: string
+      companyId?: never
+      logId?: string
+      initialDecisionType?: string
+      onClose: () => void
+      onSaved: (log: SavedDecisionRef) => void
+      onDeleted?: (logId: string) => void
+    }
 
 type ModalState =
   | { status: 'create' }
@@ -79,18 +106,22 @@ function formatAddendumMarkdown(log: CompanyDecisionLog): string {
 
 export function DecisionLogModal({
   companyId,
+  contactId,
   logId,
   initialDecisionType,
   onClose,
   onSaved,
   onDeleted
 }: DecisionLogModalProps) {
+  const isContactMode = !!contactId
+  const DECISION_TYPE_OPTIONS = isContactMode ? CONTACT_DECISION_TYPE_OPTIONS : COMPANY_DECISION_TYPE_OPTIONS
+
   const [state, setState] = useState<ModalState>(
     logId ? { status: 'loading' } : { status: 'create' }
   )
 
   // Draft fields
-  const [decisionType, setDecisionType] = useState(initialDecisionType ?? 'Investment Approved')
+  const [decisionType, setDecisionType] = useState(initialDecisionType ?? (isContactMode ? 'Pass' : 'Investment Approved'))
   const [decisionDate, setDecisionDate] = useState(today())
   const [decisionOwner, setDecisionOwner] = useState('')
   const [amountApproved, setAmountApproved] = useState('')
@@ -119,7 +150,10 @@ export function DecisionLogModal({
       return
     }
     setState({ status: 'loading' })
-    api.invoke<CompanyDecisionLog | null>(IPC_CHANNELS.COMPANY_DECISION_LOG_GET, logId)
+    const getChannel = isContactMode
+      ? IPC_CHANNELS.CONTACT_DECISION_LOG_GET
+      : IPC_CHANNELS.COMPANY_DECISION_LOG_GET
+    api.invoke<CompanyDecisionLog | ContactDecisionLog | null>(getChannel, logId)
       .then((log) => {
         if (!log) {
           setState({ status: 'error' })
@@ -128,18 +162,21 @@ export function DecisionLogModal({
         setDecisionType(log.decisionType)
         setDecisionDate(log.decisionDate)
         setDecisionOwner(log.decisionOwner ?? '')
-        setAmountApproved(log.amountApproved ?? '')
-        setTargetOwnership(log.targetOwnership ?? '')
-        setMoreIfPossible(log.moreIfPossible)
-        setStructure(log.structure ?? '')
+        if (!isContactMode) {
+          const cLog = log as CompanyDecisionLog
+          setAmountApproved(cLog.amountApproved ?? '')
+          setTargetOwnership(cLog.targetOwnership ?? '')
+          setMoreIfPossible(cLog.moreIfPossible)
+          setStructure(cLog.structure ?? '')
+          setDependencies(cLog.dependencies)
+          setLinkedArtifacts(cLog.linkedArtifacts)
+        }
         setRationale(log.rationale.length > 0 ? log.rationale : [''])
-        setDependencies(log.dependencies)
         setNextSteps(log.nextSteps)
-        setLinkedArtifacts(log.linkedArtifacts)
-        setState({ status: 'editing', log })
+        setState({ status: 'editing', log: log as CompanyDecisionLog })
       })
       .catch(() => setState({ status: 'error' }))
-  }, [logId])
+  }, [logId, isContactMode])
 
   const handleClose = useCallback(() => {
     onClose()
@@ -162,32 +199,53 @@ export function DecisionLogModal({
     setIsSaving(true)
     setSaveError(false)
     try {
-      const payload = {
-        decisionType: decisionType.trim(),
-        decisionDate: decisionDate.trim(),
-        decisionOwner: decisionOwner.trim() || null,
-        amountApproved: amountApproved.trim() || null,
-        targetOwnership: targetOwnership.trim() || null,
-        moreIfPossible,
-        structure: structure.trim() || null,
-        rationale: rationale.filter((r) => r.trim()),
-        dependencies: dependencies.filter((d) => d.trim()),
-        nextSteps: nextSteps.filter((s) => s.what.trim()),
-        linkedArtifacts: linkedArtifacts.filter((a) => a.label.trim())
-      }
-
-      let saved: CompanyDecisionLog
-      if (logId && state.status === 'editing') {
-        saved = await api.invoke<CompanyDecisionLog>(
-          IPC_CHANNELS.COMPANY_DECISION_LOG_UPDATE,
-          logId,
-          payload
-        )
+      let saved: SavedDecisionRef
+      if (isContactMode) {
+        const contactPayload = {
+          decisionType: decisionType.trim(),
+          decisionDate: decisionDate.trim(),
+          decisionOwner: decisionOwner.trim() || null,
+          rationale: rationale.filter((r) => r.trim()),
+          nextSteps: nextSteps.filter((s) => s.what.trim())
+        }
+        if (logId && state.status === 'editing') {
+          saved = await api.invoke<SavedDecisionRef>(
+            IPC_CHANNELS.CONTACT_DECISION_LOG_UPDATE,
+            logId,
+            contactPayload
+          )
+        } else {
+          saved = await api.invoke<SavedDecisionRef>(
+            IPC_CHANNELS.CONTACT_DECISION_LOG_CREATE,
+            { contactId, ...contactPayload }
+          )
+        }
       } else {
-        saved = await api.invoke<CompanyDecisionLog>(
-          IPC_CHANNELS.COMPANY_DECISION_LOG_CREATE,
-          { companyId, ...payload }
-        )
+        const companyPayload = {
+          decisionType: decisionType.trim(),
+          decisionDate: decisionDate.trim(),
+          decisionOwner: decisionOwner.trim() || null,
+          amountApproved: amountApproved.trim() || null,
+          targetOwnership: targetOwnership.trim() || null,
+          moreIfPossible,
+          structure: structure.trim() || null,
+          rationale: rationale.filter((r) => r.trim()),
+          dependencies: dependencies.filter((d) => d.trim()),
+          nextSteps: nextSteps.filter((s) => s.what.trim()),
+          linkedArtifacts: linkedArtifacts.filter((a) => a.label.trim())
+        }
+        if (logId && state.status === 'editing') {
+          saved = await api.invoke<SavedDecisionRef>(
+            IPC_CHANNELS.COMPANY_DECISION_LOG_UPDATE,
+            logId,
+            companyPayload
+          )
+        } else {
+          saved = await api.invoke<SavedDecisionRef>(
+            IPC_CHANNELS.COMPANY_DECISION_LOG_CREATE,
+            { companyId, ...companyPayload }
+          )
+        }
       }
       onSaved(saved)
       onClose()
@@ -202,7 +260,10 @@ export function DecisionLogModal({
     setConfirmDelete(false)
     if (!logId) return
     try {
-      await api.invoke(IPC_CHANNELS.COMPANY_DECISION_LOG_DELETE, logId)
+      const deleteChannel = isContactMode
+        ? IPC_CHANNELS.CONTACT_DECISION_LOG_DELETE
+        : IPC_CHANNELS.COMPANY_DECISION_LOG_DELETE
+      await api.invoke(deleteChannel, logId)
       onDeleted?.(logId)
       onClose()
     } catch {
@@ -316,8 +377,8 @@ export function DecisionLogModal({
                 </div>
               </div>
 
-              {/* Row 2: Owner + Amount */}
-              <div className={styles.row2}>
+              {/* Row 2: Owner + Amount (amount hidden in contact mode) */}
+              <div className={isContactMode ? styles.row1 : styles.row2}>
                 <div className={styles.field}>
                   <label className={styles.label}>Decision Owner</label>
                   <input
@@ -328,52 +389,56 @@ export function DecisionLogModal({
                     placeholder="e.g. J. Smith"
                   />
                 </div>
-                <div className={styles.field}>
-                  <label className={styles.label}>Amount Approved</label>
-                  <input
-                    type="text"
-                    className={styles.input}
-                    value={amountApproved}
-                    onChange={(e) => setAmountApproved(e.target.value)}
-                    placeholder="e.g. $2M or $1M–$3M"
-                  />
-                </div>
+                {!isContactMode && (
+                  <div className={styles.field}>
+                    <label className={styles.label}>Amount Approved</label>
+                    <input
+                      type="text"
+                      className={styles.input}
+                      value={amountApproved}
+                      onChange={(e) => setAmountApproved(e.target.value)}
+                      placeholder="e.g. $2M or $1M–$3M"
+                    />
+                  </div>
+                )}
               </div>
 
-              {/* Row 3: Ownership + More if possible + Structure */}
-              <div className={styles.row3}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Target Ownership</label>
-                  <input
-                    type="text"
-                    className={styles.input}
-                    value={targetOwnership}
-                    onChange={(e) => setTargetOwnership(e.target.value)}
-                    placeholder="e.g. 10%"
-                  />
-                </div>
-                <div className={`${styles.field} ${styles.checkboxField}`}>
-                  <label className={styles.label}>&nbsp;</label>
-                  <label className={styles.checkboxLabel}>
+              {/* Row 3: Ownership + More if possible + Structure (hidden in contact mode) */}
+              {!isContactMode && (
+                <div className={styles.row3}>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Target Ownership</label>
                     <input
-                      type="checkbox"
-                      checked={moreIfPossible}
-                      onChange={(e) => setMoreIfPossible(e.target.checked)}
+                      type="text"
+                      className={styles.input}
+                      value={targetOwnership}
+                      onChange={(e) => setTargetOwnership(e.target.value)}
+                      placeholder="e.g. 10%"
                     />
-                    More if possible
-                  </label>
+                  </div>
+                  <div className={`${styles.field} ${styles.checkboxField}`}>
+                    <label className={styles.label}>&nbsp;</label>
+                    <label className={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={moreIfPossible}
+                        onChange={(e) => setMoreIfPossible(e.target.checked)}
+                      />
+                      More if possible
+                    </label>
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Structure</label>
+                    <input
+                      type="text"
+                      className={styles.input}
+                      value={structure}
+                      onChange={(e) => setStructure(e.target.value)}
+                      placeholder="e.g. Direct equity, SAFE"
+                    />
+                  </div>
                 </div>
-                <div className={styles.field}>
-                  <label className={styles.label}>Structure</label>
-                  <input
-                    type="text"
-                    className={styles.input}
-                    value={structure}
-                    onChange={(e) => setStructure(e.target.value)}
-                    placeholder="e.g. Direct equity, SAFE"
-                  />
-                </div>
-              </div>
+              )}
 
               {/* Rationale */}
               <div className={styles.section}>
@@ -400,28 +465,30 @@ export function DecisionLogModal({
                 ))}
               </div>
 
-              {/* Dependencies */}
-              <div className={styles.section}>
-                <div className={styles.sectionHeader}>
-                  <span className={styles.sectionLabel}>Dependencies / Conditions</span>
-                  <button className={styles.addBtn} onClick={addDep}>+ Add</button>
-                </div>
-                {dependencies.length === 0 && (
-                  <div className={styles.emptyHint}>None — click + Add to add a condition</div>
-                )}
-                {dependencies.map((d, i) => (
-                  <div key={i} className={styles.listRow}>
-                    <input
-                      type="text"
-                      className={styles.input}
-                      value={d}
-                      onChange={(e) => setDep(i, e.target.value)}
-                      placeholder="e.g. Final legal review"
-                    />
-                    <button className={styles.removeBtn} onClick={() => removeDep(i)}>✕</button>
+              {/* Dependencies (hidden in contact mode) */}
+              {!isContactMode && (
+                <div className={styles.section}>
+                  <div className={styles.sectionHeader}>
+                    <span className={styles.sectionLabel}>Dependencies / Conditions</span>
+                    <button className={styles.addBtn} onClick={addDep}>+ Add</button>
                   </div>
-                ))}
-              </div>
+                  {dependencies.length === 0 && (
+                    <div className={styles.emptyHint}>None — click + Add to add a condition</div>
+                  )}
+                  {dependencies.map((d, i) => (
+                    <div key={i} className={styles.listRow}>
+                      <input
+                        type="text"
+                        className={styles.input}
+                        value={d}
+                        onChange={(e) => setDep(i, e.target.value)}
+                        placeholder="e.g. Final legal review"
+                      />
+                      <button className={styles.removeBtn} onClick={() => removeDep(i)}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Next Steps */}
               <div className={styles.section}>
@@ -465,7 +532,7 @@ export function DecisionLogModal({
           {(state.status === 'create' || state.status === 'editing') && (
             <div className={styles.footer}>
               <div className={styles.footerLeft}>
-                {isEditing && (
+                {isEditing && !isContactMode && (
                   <button
                     className={`${styles.memoBtn} ${addToMemoState === 'done' ? styles.memoDone : addToMemoState === 'error' ? styles.memoError : ''}`}
                     onClick={handleAddToMemo}

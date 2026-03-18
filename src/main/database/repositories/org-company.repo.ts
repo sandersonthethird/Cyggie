@@ -77,6 +77,7 @@ interface CompanyRow {
   warm_intro_source: string | null
   referral_contact_id: string | null
   next_followup_date: string | null
+  field_sources: string | null
 }
 
 export interface CompanyMergeResult {
@@ -241,8 +242,10 @@ interface EmailMessageRow {
   body_text: string | null
   is_unread: number
   thread_id: string | null
+  provider_thread_id?: string | null
   thread_message_count: number
   participants_json: string
+  account_email?: string | null
 }
 
 function mapEmailRow(row: EmailMessageRow): CompanyEmailRef {
@@ -257,8 +260,10 @@ function mapEmailRow(row: EmailMessageRow): CompanyEmailRef {
     bodyText: row.body_text,
     isUnread: row.is_unread === 1,
     threadId: row.thread_id,
+    providerThreadId: row.provider_thread_id ?? null,
     threadMessageCount: row.thread_message_count || 1,
-    participants: parseEmailParticipants(row.participants_json)
+    participants: parseEmailParticipants(row.participants_json),
+    accountEmail: row.account_email ?? null,
   }
 }
 
@@ -316,7 +321,8 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     dealSource: row.deal_source ?? null,
     warmIntroSource: row.warm_intro_source ?? null,
     referralContactId: row.referral_contact_id ?? null,
-    nextFollowupDate: row.next_followup_date ?? null
+    nextFollowupDate: row.next_followup_date ?? null,
+    fieldSources: row.field_sources ?? null
   }
 }
 
@@ -382,7 +388,8 @@ function baseCompanySelect(whereClause = ''): string {
       c.deal_source,
       c.warm_intro_source,
       c.referral_contact_id,
-      c.next_followup_date
+      c.next_followup_date,
+      NULL AS field_sources
     FROM org_companies c
     LEFT JOIN (
       SELECT
@@ -446,7 +453,8 @@ function baseCompanySelectLight(whereClause = ''): string {
       0 AS note_count,
       c.updated_at AS last_touchpoint,
       c.created_at,
-      c.updated_at
+      c.updated_at,
+      NULL AS field_sources
     FROM org_companies c
     ${whereClause}
   `
@@ -664,6 +672,17 @@ export function getCompany(companyId: string): CompanyDetail | null {
     .get(companyId) as CompanyRow | undefined
   if (!row) return null
 
+  // field_sources is excluded from baseCompanySelect (schema compat with older DBs).
+  // Fetch it separately here so it's only required in the detail view path.
+  try {
+    const fsRow = db
+      .prepare(`SELECT field_sources FROM org_companies WHERE id = ?`)
+      .get(companyId) as { field_sources: string | null } | undefined
+    if (fsRow !== undefined) row.field_sources = fsRow.field_sources ?? null
+  } catch {
+    // Column doesn't exist yet (migration pending) — leave as null
+  }
+
   const industries = db
     .prepare(`
       SELECT i.name
@@ -815,6 +834,7 @@ const COMPANY_UPDATABLE_FIELDS = {
   raiseSize: 'raise_size',
   round: 'round',
   pipelineStage: 'pipeline_stage',
+  fieldSources: 'field_sources',
 } as const
 
 type CompanyUpdatableKey = keyof typeof COMPANY_UPDATABLE_FIELDS
@@ -1793,7 +1813,8 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
           em.thread_id,
           em.updated_at,
           COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
-          COALESCE(em.thread_id, em.id) AS thread_group
+          COALESCE(em.thread_id, em.id) AS thread_group,
+          em.account_id
         FROM email_company_links l
         JOIN email_messages em ON em.id = l.message_id
         WHERE l.company_id = ?
@@ -1811,7 +1832,8 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
           em.thread_id,
           em.updated_at,
           COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
-          COALESCE(em.thread_id, em.id) AS thread_group
+          COALESCE(em.thread_id, em.id) AS thread_group,
+          em.account_id
         FROM email_message_participants p
         JOIN email_messages em ON em.id = p.message_id
         WHERE p.contact_id IN (SELECT id FROM company_contact_ids)
@@ -1833,7 +1855,8 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
             PARTITION BY thread_group
             ORDER BY datetime(sort_at) DESC, datetime(updated_at) DESC, id DESC
           ) AS row_num,
-          COUNT(*) OVER (PARTITION BY thread_group) AS thread_message_count
+          COUNT(*) OVER (PARTITION BY thread_group) AS thread_message_count,
+          account_id
         FROM linked
       ),
       participant_rows AS (
@@ -1891,9 +1914,11 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
         ranked.is_unread,
         ranked.thread_id,
         ranked.thread_message_count,
-        COALESCE(participants.participants_json, '[]') AS participants_json
+        COALESCE(participants.participants_json, '[]') AS participants_json,
+        ea.account_email
       FROM ranked
       LEFT JOIN participants ON participants.message_id = ranked.id
+      LEFT JOIN email_accounts ea ON ea.id = ranked.account_id
       WHERE ranked.row_num = 1
       ORDER BY datetime(ranked.sort_at) DESC, ranked.id DESC
       LIMIT 200
@@ -1918,6 +1943,8 @@ export function getCompanyEmailById(messageId: string): CompanyEmailRef | null {
         em.body_text,
         em.is_unread,
         em.thread_id,
+        et.provider_thread_id,
+        ea.account_email,
         1 AS thread_message_count,
         COALESCE((
           SELECT json_group_array(
@@ -1940,6 +1967,8 @@ export function getCompanyEmailById(messageId: string): CompanyEmailRef | null {
           LEFT JOIN contacts c2 ON c2.id = p2.contact_id
         ), '[]') AS participants_json
       FROM email_messages em
+      LEFT JOIN email_threads et ON et.id = em.thread_id
+      LEFT JOIN email_accounts ea ON ea.id = em.account_id
       WHERE em.id = ?
     `)
     .get(messageId) as EmailMessageRow | undefined

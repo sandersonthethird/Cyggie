@@ -49,38 +49,10 @@ import type {
 import { readSummary } from '../storage/file-manager'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { resolveContactsByEmails } from '../database/repositories/contact.repo'
+import { safeParseJson, extractString, extractNumber } from '../utils/json-utils'
 
 const LINKEDIN_URL_RE = /linkedin\.com\/in\/[\w-]+/i
 const FUZZY_THRESHOLD = 0.88
-
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-function safeParseJson(text: string): Record<string, unknown> | null {
-  try {
-    // Strip markdown fences if present
-    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
-    const parsed = JSON.parse(cleaned)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-function extractString(value: unknown): string | null {
-  if (typeof value === 'string' && value.trim()) return value.trim()
-  return null
-}
-
-function extractNumber(v: unknown): number | null {
-  if (v == null) return null
-  const n = typeof v === 'number' ? v : Number(v)
-  return isFinite(n) ? n : null
-}
 
 function parseOptions(def: CustomFieldDefinition): string[] {
   if (!def.optionsJson) return []

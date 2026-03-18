@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useRecordingStore } from '../stores/recording.store'
@@ -16,10 +16,14 @@ import type { WebShareResponse } from '../../shared/types/web-share'
 import type {
   CompanySummaryUpdateChange,
   CompanySummaryUpdateProposal,
+  CompanySummaryUpdatePayload,
   ContactSummaryUpdateProposal,
   ContactSummaryUpdatePayload,
   SummaryGenerateResult
 } from '../../shared/types/summary'
+import { contactEnrichedAtKey, companyEnrichedAtKey } from '../../shared/utils/enrichment-keys'
+import { EnrichmentProposalDialog } from '../components/enrichment/EnrichmentProposalDialog'
+import type { EnrichmentEntityProposal } from '../components/enrichment/EnrichmentProposalDialog'
 import type { SetCustomFieldValueInput } from '../../shared/types/custom-fields'
 import type { Task, ProposedTask, TaskCreateData } from '../../shared/types/task'
 import { createPortal } from 'react-dom'
@@ -122,26 +126,9 @@ function formatFieldValue(field: CompanySummaryUpdateChange['field'], value: str
   return String(value)
 }
 
-function buildCompanyUpdatePrompt(proposals: CompanySummaryUpdateProposal[]): string {
-  if (proposals.length === 0) return ''
-  return proposals.map((proposal) => {
-    const parts: string[] = []
-    if (proposal.changes.length > 0) {
-      const changePreview = proposal.changes
-        .slice(0, 5)
-        .map((change) =>
-          `${fieldLabel(change.field)}: ${formatFieldValue(change.field, change.from)} -> ${formatFieldValue(change.field, change.to)}`
-        )
-        .join('; ')
-      const extra = proposal.changes.length > 5 ? ` (+${proposal.changes.length - 5} more)` : ''
-      parts.push(`${changePreview}${extra}`)
-    }
-    if (proposal.founderUpdate) {
-      parts.push(`Tag ${proposal.founderUpdate.contactName} as founder`)
-    }
-    return `${proposal.companyName}: ${parts.join('; ')}`
-  }).join(' | ')
-}
+type UnifiedEnrichProposal =
+  | { kind: 'company'; proposal: CompanySummaryUpdateProposal }
+  | { kind: 'contact'; proposal: ContactSummaryUpdateProposal }
 
 export default function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
@@ -193,8 +180,8 @@ export default function MeetingDetail() {
   const [isVideoLoading, setIsVideoLoading] = useState(false)
   const [videoBlobFailed, setVideoBlobFailed] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [companyUpdateDialogOpen, setCompanyUpdateDialogOpen] = useState(false)
-  const [pendingCompanyUpdates, setPendingCompanyUpdates] = useState<CompanySummaryUpdateProposal[]>([])
+  const [enrichDialogOpen, setEnrichDialogOpen] = useState(false)
+  const [enrichProposals, setEnrichProposals] = useState<UnifiedEnrichProposal[]>([])
   const videoRef = useRef<HTMLVideoElement>(null)
   const playRequestRef = useRef<Promise<void> | null>(null)
   const videoWrapperRef = useRef<HTMLDivElement>(null)
@@ -224,9 +211,6 @@ export default function MeetingDetail() {
   const [taskProposalDialogOpen, setTaskProposalDialogOpen] = useState(false)
   const [pendingProposedTasks, setPendingProposedTasks] = useState<ProposedTask[]>([])
   const [proposedTaskSelections, setProposedTaskSelections] = useState<Record<string, boolean>>({})
-  const [pendingContactUpdates, setPendingContactUpdates] = useState<ContactSummaryUpdateProposal[]>([])
-  const [contactEnrichDialogOpen, setContactEnrichDialogOpen] = useState(false)
-  const [contactEnrichSelections, setContactEnrichSelections] = useState<Record<string, boolean>>({})
   const [fieldSelections, setFieldSelections] = useState<Record<string, boolean>>({})
   const [isApplyingContactUpdates, setIsApplyingContactUpdates] = useState(false)
   const [contactEnrichError, setContactEnrichError] = useState<string | null>(null)
@@ -725,6 +709,8 @@ export default function MeetingDetail() {
     prevRecordingRef.current = isRecording
   }, [isRecording, loadMeeting])
 
+  const generateSummaryRef = useRef<() => void>(() => {})
+
   const handleStop = useCallback(async () => {
     try {
       if (videoCapture.isVideoRecording) {
@@ -733,10 +719,13 @@ export default function MeetingDetail() {
       audioCapture.stop()
       await api.invoke(IPC_CHANNELS.RECORDING_STOP)
       stopRecording()
+      if (selectedTemplateId) {
+        generateSummaryRef.current()
+      }
     } catch (err) {
       setRecordingError(String(err))
     }
-  }, [stopRecording, setRecordingError, audioCapture, videoCapture])
+  }, [stopRecording, setRecordingError, audioCapture, videoCapture, selectedTemplateId])
 
   const handlePause = useCallback(async () => {
     try {
@@ -793,144 +782,137 @@ export default function MeetingDetail() {
     api.invoke(IPC_CHANNELS.SUMMARY_ABORT)
   }, [])
 
-  const handleApplyCompanyUpdates = useCallback(async () => {
-    if (pendingCompanyUpdates.length === 0) {
-      setCompanyUpdateDialogOpen(false)
-      if (pendingContactUpdates.length > 0) {
-        setContactEnrichDialogOpen(true)
-      } else if (pendingProposedTasks.length > 0) {
-        setTaskProposalDialogOpen(true)
-      }
-      return
-    }
-
-    const proposals = [...pendingCompanyUpdates]
-    setCompanyUpdateDialogOpen(false)
-    setPendingCompanyUpdates([])
-
-    try {
-      for (const proposal of proposals) {
-        if (Object.keys(proposal.updates).length > 0) {
-          await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, proposal.companyId, proposal.updates)
-        }
-        if (proposal.founderUpdate) {
-          await api.invoke(
-            IPC_CHANNELS.CONTACT_UPDATE,
-            proposal.founderUpdate.contactId,
-            { contactType: proposal.founderUpdate.toType }
-          )
-        }
-      }
-    } catch (err) {
-      console.error('[MeetingDetail] Failed to apply company updates from summary:', err)
-    }
-
-    if (pendingContactUpdates.length > 0) {
-      setContactEnrichDialogOpen(true)
-    } else if (pendingProposedTasks.length > 0) {
-      setTaskProposalDialogOpen(true)
-    }
-  }, [pendingCompanyUpdates, pendingContactUpdates, pendingProposedTasks])
-
-  const handleApplyContactUpdates = useCallback(async () => {
-    const accepted = pendingContactUpdates.filter(
-      (p) => contactEnrichSelections[p.contactId] !== false
-    )
-    setContactEnrichDialogOpen(false)
-    setPendingContactUpdates([])
-    if (accepted.length === 0) {
+  const handleApplyEnrich = useCallback(async () => {
+    const proposals = [...enrichProposals]
+    setEnrichDialogOpen(false)
+    setEnrichProposals([])
+    if (proposals.length === 0) {
       if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
       return
     }
     setIsApplyingContactUpdates(true)
     try {
+      const enrichedAt = new Date().toISOString()
       const names: string[] = []
-      for (const p of accepted) {
-        // Build set of selected field names for this contact
-        const selectedFields = new Set(
-          p.changes
-            .filter(c => fieldSelections[`${p.contactId}:${c.field}`] !== false)
-            .map(c => c.field)
-        )
-
-        // Copy only selected built-in + investor fields
-        const filteredUpdates: ContactSummaryUpdatePayload = {}
-        const copyableKeys = [
-          'title', 'phone', 'linkedinUrl',
-          'fundSize', 'typicalCheckSizeMin', 'typicalCheckSizeMax',
-          'investmentStageFocus', 'investmentSectorFocus',
-        ] as const
-        for (const key of copyableKeys) {
-          if (selectedFields.has(key) && p.updates[key] !== undefined) {
-            (filteredUpdates as Record<string, unknown>)[key] = p.updates[key]
+      for (const item of proposals) {
+        if (item.kind === 'company') {
+          const p = item.proposal
+          const selectedFields = new Set(
+            p.changes
+              .filter(c => fieldSelections[`${p.companyId}:${c.field}`] !== false)
+              .map(c => c.field)
+          )
+          const companyBuiltinKeys = [
+            'description', 'round', 'raiseSize', 'postMoneyValuation',
+            'city', 'state', 'pipelineStage',
+          ] as const
+          const filteredUpdates: CompanySummaryUpdatePayload = {}
+          for (const key of companyBuiltinKeys) {
+            if (selectedFields.has(key) && (p.updates as Record<string, unknown>)[key] !== undefined) {
+              (filteredUpdates as Record<string, unknown>)[key] = (p.updates as Record<string, unknown>)[key]
+            }
           }
-        }
-
-        // Recompute fieldSources — only keep entries for selected fields
-        if (p.updates.fieldSources) {
-          try {
-            const sources: Record<string, string> = JSON.parse(p.updates.fieldSources)
-            const filteredSources: Record<string, string> = {}
-            for (const [k, v] of Object.entries(sources)) {
-              if (selectedFields.has(k)) filteredSources[k] = v
-            }
-            if (Object.keys(filteredSources).length > 0) {
-              filteredUpdates.fieldSources = JSON.stringify(filteredSources)
-            }
-          } catch { /* ignore */ }
-        }
-
-        if (Object.keys(filteredUpdates).length > 0) {
-          await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, p.contactId, filteredUpdates)
-        }
-
-        // Company link is whole-contact level — not per-field selectable
-        if (p.companyLink) {
-          await api.invoke(IPC_CHANNELS.CONTACT_SET_COMPANY, p.contactId, p.companyLink.companyName)
-        }
-
-        // Apply selected custom field updates
-        if (p.customFieldUpdates) {
-          for (const cfu of p.customFieldUpdates) {
-            if (fieldSelections[`${p.contactId}:${cfu.label}`] === false) continue
-            const input: SetCustomFieldValueInput = {
-              fieldDefinitionId: cfu.fieldDefinitionId,
-              entityId: p.contactId,
-              entityType: 'contact',
-            }
-            const v = cfu.newValue
-            switch (cfu.fieldType) {
-              case 'number':
-              case 'currency':
-                input.valueNumber = Number(v)
-                break
-              case 'boolean':
-                input.valueBoolean = Boolean(v)
-                break
-              case 'date':
-                input.valueDate = String(v)
-                break
-              case 'multiselect':
-                input.valueText = JSON.stringify(v)
-                break
-              default:
-                input.valueText = String(v)
-            }
-            await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
+          if (Object.keys(filteredUpdates).length > 0) {
+            await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, p.companyId, filteredUpdates)
           }
+          if (p.founderUpdate) {
+            await api.invoke(
+              IPC_CHANNELS.CONTACT_UPDATE,
+              p.founderUpdate.contactId,
+              { contactType: p.founderUpdate.toType }
+            )
+          }
+          if (p.customFieldUpdates) {
+            for (const cfu of p.customFieldUpdates) {
+              if (fieldSelections[`${p.companyId}:${cfu.label}`] === false) continue
+              const input: SetCustomFieldValueInput = {
+                fieldDefinitionId: cfu.fieldDefinitionId,
+                entityId: p.companyId,
+                entityType: 'company',
+              }
+              const v = cfu.newValue
+              switch (cfu.fieldType) {
+                case 'number': case 'currency': input.valueNumber = Number(v); break
+                case 'boolean': input.valueBoolean = Boolean(v); break
+                case 'date': input.valueDate = String(v); break
+                case 'multiselect': input.valueText = JSON.stringify(v); break
+                default: input.valueText = String(v)
+              }
+              await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
+            }
+          }
+          names.push(p.companyName)
+          localStorage.setItem(companyEnrichedAtKey(p.companyId), enrichedAt)
+        } else if (item.kind === 'contact') {
+          const p = item.proposal
+          const selectedFields = new Set(
+            p.changes
+              .filter(c => fieldSelections[`${p.contactId}:${c.field}`] !== false)
+              .map(c => c.field)
+          )
+          const filteredUpdates: ContactSummaryUpdatePayload = {}
+          const copyableKeys = [
+            'title', 'phone', 'linkedinUrl',
+            'fundSize', 'typicalCheckSizeMin', 'typicalCheckSizeMax',
+            'investmentStageFocus', 'investmentSectorFocus',
+          ] as const
+          for (const key of copyableKeys) {
+            if (selectedFields.has(key) && p.updates[key] !== undefined) {
+              (filteredUpdates as Record<string, unknown>)[key] = p.updates[key]
+            }
+          }
+          if (p.updates.fieldSources) {
+            try {
+              const sources: Record<string, string> = JSON.parse(p.updates.fieldSources)
+              const filteredSources: Record<string, string> = {}
+              for (const [k, v] of Object.entries(sources)) {
+                if (selectedFields.has(k)) filteredSources[k] = v
+              }
+              if (Object.keys(filteredSources).length > 0) {
+                filteredUpdates.fieldSources = JSON.stringify(filteredSources)
+              }
+            } catch { /* ignore */ }
+          }
+          if (Object.keys(filteredUpdates).length > 0) {
+            await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, p.contactId, filteredUpdates)
+          }
+          if (p.companyLink) {
+            await api.invoke(IPC_CHANNELS.CONTACT_SET_COMPANY, p.contactId, p.companyLink.companyName)
+          }
+          if (p.customFieldUpdates) {
+            for (const cfu of p.customFieldUpdates) {
+              if (fieldSelections[`${p.contactId}:${cfu.label}`] === false) continue
+              const input: SetCustomFieldValueInput = {
+                fieldDefinitionId: cfu.fieldDefinitionId,
+                entityId: p.contactId,
+                entityType: 'contact',
+              }
+              const v = cfu.newValue
+              switch (cfu.fieldType) {
+                case 'number': case 'currency': input.valueNumber = Number(v); break
+                case 'boolean': input.valueBoolean = Boolean(v); break
+                case 'date': input.valueDate = String(v); break
+                case 'multiselect': input.valueText = JSON.stringify(v); break
+                default: input.valueText = String(v)
+              }
+              await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
+            }
+          }
+          names.push(p.contactName)
+          localStorage.setItem(contactEnrichedAtKey(p.contactId), enrichedAt)
         }
-
-        names.push(p.contactName)
       }
-      setEnrichSuccessMsg(`${names.join(', ')} updated`)
-      setTimeout(() => setEnrichSuccessMsg(null), 3000)
+      if (names.length > 0) {
+        setEnrichSuccessMsg(`${names.join(', ')} updated`)
+        setTimeout(() => setEnrichSuccessMsg(null), 3000)
+      }
     } catch (err) {
-      console.error('[MeetingDetail] Failed to apply contact updates:', err)
+      console.error('[MeetingDetail] Failed to apply enrichment:', err)
     } finally {
       setIsApplyingContactUpdates(false)
       if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
     }
-  }, [pendingContactUpdates, contactEnrichSelections, fieldSelections, pendingProposedTasks])
+  }, [enrichProposals, fieldSelections, pendingProposedTasks])
 
   const handleEnrichFromMeeting = useCallback(async () => {
     if (!id) return
@@ -940,18 +922,18 @@ export default function MeetingDetail() {
         IPC_CHANNELS.CONTACT_ENRICH_FROM_MEETING, id
       )
       if (proposals.length > 0) {
-        const selections: Record<string, boolean> = {}
         const newFieldSelections: Record<string, boolean> = {}
         for (const p of proposals) {
-          selections[p.contactId] = true
           for (const change of p.changes) {
             newFieldSelections[`${p.contactId}:${change.field}`] = true
           }
+          for (const cfu of p.customFieldUpdates ?? []) {
+            newFieldSelections[`${p.contactId}:${cfu.label}`] = true
+          }
         }
-        setContactEnrichSelections(selections)
         setFieldSelections(newFieldSelections)
-        setPendingContactUpdates(proposals)
-        setContactEnrichDialogOpen(true)
+        setEnrichProposals(proposals.map(p => ({ kind: 'contact' as const, proposal: p })))
+        setEnrichDialogOpen(true)
       } else {
         setContactEnrichError('No new contact info found in this meeting.')
         setTimeout(() => setContactEnrichError(null), 3000)
@@ -1006,22 +988,36 @@ export default function MeetingDetail() {
         setProposedTaskSelections(selections)
       }
 
-      if (contactProposals.length > 0) {
-        const selections: Record<string, boolean> = {}
-        for (const p of contactProposals) selections[p.contactId] = true
-        setContactEnrichSelections(selections)
-        setPendingContactUpdates(contactProposals)
+      const newFieldSelections: Record<string, boolean> = {}
+      for (const p of companyUpdateProposals) {
+        for (const change of p.changes) newFieldSelections[`${p.companyId}:${change.field}`] = true
+        for (const cfu of p.customFieldUpdates ?? []) newFieldSelections[`${p.companyId}:${cfu.label}`] = true
       }
+      for (const p of contactProposals) {
+        for (const change of p.changes) newFieldSelections[`${p.contactId}:${change.field}`] = true
+        for (const cfu of p.customFieldUpdates ?? []) newFieldSelections[`${p.contactId}:${cfu.label}`] = true
+      }
+      setFieldSelections(newFieldSelections)
 
-      if (companyUpdateProposals.length > 0) {
-        setPendingCompanyUpdates(companyUpdateProposals)
-        setCompanyUpdateDialogOpen(true)
-        // Contact dialog opens after company dialog; task dialog opens after contact dialog
-      } else if (contactProposals.length > 0) {
-        setContactEnrichDialogOpen(true)
-        // Task dialog opens after contact dialog
+      const unified: UnifiedEnrichProposal[] = [
+        ...companyUpdateProposals.map(p => ({ kind: 'company' as const, proposal: p })),
+        ...contactProposals.map(p => ({ kind: 'contact' as const, proposal: p })),
+      ]
+      if (unified.length > 0) {
+        setEnrichProposals(unified)
+        setEnrichDialogOpen(true)
       } else if (proposedTasks.length > 0) {
         setTaskProposalDialogOpen(true)
+      }
+
+      // macOS notification
+      const totalFieldCount = companyUpdateProposals.reduce((n, p) => n + p.changes.length, 0)
+                            + contactProposals.reduce((n, p) => n + p.changes.length, 0)
+      if (totalFieldCount > 0 && 'Notification' in window && Notification.permission === 'granted') {
+        const notif = new Notification('Meeting summarized', {
+          body: `${totalFieldCount} field${totalFieldCount !== 1 ? 's' : ''} ready to review`
+        })
+        notif.onclick = () => window.focus()
       }
 
       // Refresh existing tasks
@@ -1041,6 +1037,8 @@ export default function MeetingDetail() {
       setSummaryPhase('')
     }
   }, [id, selectedTemplateId, isGenerating, notesDraft, saveNotes])
+
+  useEffect(() => { generateSummaryRef.current = handleGenerateSummary }, [handleGenerateSummary])
 
   const handleAcceptProposedTasks = useCallback(async () => {
     const selected = pendingProposedTasks.filter((t) => proposedTaskSelections[t.key])
@@ -1080,15 +1078,83 @@ export default function MeetingDetail() {
 
   const selectedTaskCount = Object.values(proposedTaskSelections).filter(Boolean).length
 
-  const pendingCompanyUpdateCount = pendingCompanyUpdates.reduce(
-    (total, proposal) => total + proposal.changes.length + (proposal.founderUpdate ? 1 : 0),
-    0
-  )
-  const companyUpdatePromptTitle =
-    pendingCompanyUpdateCount === 1
-      ? 'Apply 1 company update?'
-      : `Apply ${pendingCompanyUpdateCount} company updates?`
-  const companyUpdatePromptMessage = buildCompanyUpdatePrompt(pendingCompanyUpdates)
+  const dialogProposals = useMemo<EnrichmentEntityProposal[]>(() => {
+    return enrichProposals.map(item => {
+      if (item.kind === 'company') {
+        const p = item.proposal
+        return {
+          entityId: p.companyId,
+          entityName: p.companyName,
+          changes: [
+            ...p.changes.map(c => ({
+              key: c.field,
+              label: fieldLabel(c.field),
+              from: formatFieldValue(c.field, c.from),
+              to: formatFieldValue(c.field, c.to),
+            })),
+            ...(p.customFieldUpdates ?? []).map(cfu => ({
+              key: cfu.label,
+              label: cfu.label,
+              from: cfu.fromDisplay,
+              to: cfu.toDisplay,
+            })),
+            ...(p.founderUpdate ? [{
+              key: 'founderUpdate',
+              label: 'Founder tag',
+              from: null,
+              to: `Tag ${p.founderUpdate.contactName} as founder`,
+            }] : []),
+          ],
+        }
+      } else {
+        const p = item.proposal
+        return {
+          entityId: p.contactId,
+          entityName: p.contactName,
+          changes: [
+            ...p.changes.map(c => ({
+              key: c.field,
+              label: c.field,
+              from: c.from || null,
+              to: c.to,
+            })),
+            ...(p.customFieldUpdates ?? []).map(cfu => ({
+              key: cfu.label,
+              label: cfu.label,
+              from: cfu.fromDisplay,
+              to: cfu.toDisplay,
+            })),
+          ],
+        }
+      }
+    })
+  }, [enrichProposals])
+
+  const handleSelectAll = useCallback(() => {
+    setFieldSelections(prev => {
+      const next = { ...prev }
+      for (const ep of dialogProposals) {
+        for (const c of ep.changes) next[`${ep.entityId}:${c.key}`] = true
+      }
+      return next
+    })
+  }, [dialogProposals])
+
+  const handleDeselectAll = useCallback(() => {
+    setFieldSelections(prev => {
+      const next = { ...prev }
+      for (const ep of dialogProposals) {
+        for (const c of ep.changes) next[`${ep.entityId}:${c.key}`] = false
+      }
+      return next
+    })
+  }, [dialogProposals])
+
+  const handleSkipEnrich = useCallback(() => {
+    setEnrichDialogOpen(false)
+    setEnrichProposals([])
+    if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
+  }, [pendingProposedTasks])
 
   const handleTitleClick = useCallback(() => {
     if (!data) return
@@ -1894,98 +1960,19 @@ export default function MeetingDetail() {
         onConfirm={() => void handleConfirmDelete()}
         onCancel={() => setDeleteDialogOpen(false)}
       />
-      <ConfirmDialog
-        open={companyUpdateDialogOpen}
-        title={companyUpdatePromptTitle}
-        message={companyUpdatePromptMessage}
-        confirmLabel="Apply updates"
-        cancelLabel="Keep current values"
-        onConfirm={() => void handleApplyCompanyUpdates()}
-        onCancel={() => {
-          setCompanyUpdateDialogOpen(false)
-          setPendingCompanyUpdates([])
-          if (pendingContactUpdates.length > 0) {
-            setContactEnrichDialogOpen(true)
-          } else if (pendingProposedTasks.length > 0) {
-            setTaskProposalDialogOpen(true)
-          }
-        }}
+      <EnrichmentProposalDialog
+        title="Update fields from this meeting"
+        subtitle="New information was found in the meeting summary. Select which updates to apply."
+        proposals={dialogProposals}
+        fieldSelections={fieldSelections}
+        onFieldToggle={(key, value) => setFieldSelections(prev => ({ ...prev, [key]: value }))}
+        onSelectAll={handleSelectAll}
+        onDeselectAll={handleDeselectAll}
+        onApply={() => void handleApplyEnrich()}
+        onSkip={handleSkipEnrich}
+        isApplying={isApplyingContactUpdates}
+        open={enrichDialogOpen}
       />
-      {contactEnrichDialogOpen && createPortal(
-        <div className={styles.taskProposalOverlay}>
-          <div className={styles.taskProposalDialog}>
-            <h3 className={styles.taskProposalTitle}>
-              Enrich contacts from this meeting
-            </h3>
-            <p className={styles.taskProposalSubtitle}>
-              New information was found in the meeting summary. Select which updates to apply.
-            </p>
-            <div className={styles.taskProposalList}>
-              {pendingContactUpdates.map((proposal) => (
-                <div key={proposal.contactId} className={styles.contactEnrichProposal}>
-                  <div className={styles.contactEnrichName}>
-                    <input
-                      type="checkbox"
-                      checked={contactEnrichSelections[proposal.contactId] !== false}
-                      onChange={() => {
-                        setContactEnrichSelections((prev) => ({
-                          ...prev,
-                          [proposal.contactId]: prev[proposal.contactId] === false
-                        }))
-                      }}
-                      className={styles.taskProposalCheckbox}
-                    />
-                    <strong>{proposal.contactName}</strong>
-                  </div>
-                  <div className={styles.contactEnrichChanges}>
-                    {proposal.changes.map((change) => {
-                      const fieldKey = `${proposal.contactId}:${change.field}`
-                      return (
-                        <label key={change.field} className={styles.contactEnrichChange}>
-                          <input
-                            type="checkbox"
-                            checked={fieldSelections[fieldKey] !== false}
-                            onChange={(e) => setFieldSelections(prev => ({ ...prev, [fieldKey]: e.target.checked }))}
-                            className={styles.fieldSelectCheckbox}
-                          />
-                          <span className={styles.contactEnrichField}>{change.field}:</span>
-                          <span className={styles.contactEnrichFrom}>{change.from || '(empty)'}</span>
-                          <span className={styles.contactEnrichArrow}>→</span>
-                          <span className={styles.contactEnrichTo}>{change.to}</span>
-                        </label>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className={styles.taskProposalActions}>
-              <button
-                className={styles.taskProposalSkip}
-                onClick={() => {
-                  setContactEnrichDialogOpen(false)
-                  setPendingContactUpdates([])
-                  if (pendingProposedTasks.length > 0) setTaskProposalDialogOpen(true)
-                }}
-                disabled={isApplyingContactUpdates}
-              >
-                Skip
-              </button>
-              <button
-                className={styles.taskProposalAccept}
-                onClick={() => void handleApplyContactUpdates()}
-                disabled={isApplyingContactUpdates || Object.values(contactEnrichSelections).every((v) => v === false)}
-              >
-                {isApplyingContactUpdates
-                  ? 'Applying…'
-                  : `Apply ${Object.values(contactEnrichSelections).filter((v) => v !== false).length} update${Object.values(contactEnrichSelections).filter((v) => v !== false).length !== 1 ? 's' : ''}`
-                }
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
       {taskProposalDialogOpen && createPortal(
         <div className={styles.taskProposalOverlay}>
           <div className={styles.taskProposalDialog}>

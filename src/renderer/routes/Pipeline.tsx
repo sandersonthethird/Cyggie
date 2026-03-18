@@ -14,6 +14,7 @@ import { DecisionLogModal } from '../components/crm/DecisionLogModal'
 import { AddOptionInlineInput } from '../components/crm/AddOptionInlineInput'
 import { shouldPromptDecisionLog, defaultDecisionType } from '../utils/decisionLogTrigger'
 import { useCustomFieldStore } from '../stores/custom-fields.store'
+import { usePreferencesStore } from '../stores/preferences.store'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../utils/customFieldUtils'
 import styles from './Pipeline.module.css'
 import { api } from '../api'
@@ -51,6 +52,53 @@ const ROUNDS: { value: CompanyRound; label: string }[] = [
   { value: 'series_a', label: 'Series A' },
   { value: 'series_b', label: 'Series B' }
 ]
+
+// Derived sort orders — automatically track array order
+const STAGE_ORDER = Object.fromEntries(STAGES.map((s, i) => [s.value, i]))
+const PRIORITY_ORDER = Object.fromEntries(PRIORITIES.map((p, i) => [p.value, i]))
+const ROUND_ORDER = Object.fromEntries(ROUNDS.map((r, i) => [r.value, i]))
+
+/** Pure sort function — exported for unit testing */
+export function sortCompanies(
+  companies: CompanySummary[],
+  column: string,
+  direction: 'asc' | 'desc'
+): CompanySummary[] {
+  return [...companies].sort((a, b) => {
+    let cmp = 0
+    switch (column) {
+      case 'name':
+        cmp = (a.canonicalName ?? '').localeCompare(b.canonicalName ?? '')
+        break
+      case 'priority':
+        cmp = (PRIORITY_ORDER[a.priority ?? ''] ?? 99) - (PRIORITY_ORDER[b.priority ?? ''] ?? 99)
+        break
+      case 'stage':
+        cmp = (STAGE_ORDER[a.pipelineStage ?? ''] ?? 99) - (STAGE_ORDER[b.pipelineStage ?? ''] ?? 99)
+        break
+      case 'round':
+        cmp = (ROUND_ORDER[a.round ?? ''] ?? 99) - (ROUND_ORDER[b.round ?? ''] ?? 99)
+        break
+      case 'postMoney': {
+        const aV = a.postMoneyValuation, bV = b.postMoneyValuation
+        if (aV == null && bV == null) break
+        if (aV == null) return 1   // null always last — bypass direction multiplier
+        if (bV == null) return -1
+        cmp = aV - bV
+        break
+      }
+      case 'raiseSize': {
+        const aV = a.raiseSize, bV = b.raiseSize
+        if (aV == null && bV == null) break
+        if (aV == null) return 1   // null always last
+        if (bV == null) return -1
+        cmp = aV - bV
+        break
+      }
+    }
+    return direction === 'asc' ? cmp : -cmp
+  })
+}
 
 function formatPriority(value: CompanyPriority | null): string {
   if (!value) return '-'
@@ -160,6 +208,7 @@ function passExpiryCutoff(days: number): string {
 export default function Pipeline() {
   const navigate = useNavigate()
   const { companyDefs, load, loaded } = useCustomFieldStore()
+  const { getJSON, setJSON } = usePreferencesStore()
 
   useEffect(() => { if (!loaded) load() }, [loaded, load])
 
@@ -188,15 +237,37 @@ export default function Pipeline() {
   const [createPostMoney, setCreatePostMoney] = useState('')
   const [createRaiseSize, setCreateRaiseSize] = useState('')
 
-  // Table filters — sets (empty = show all). Default excludes 'pass'.
-  const [filterStages, setFilterStages] = useState<Set<CompanyPipelineStage>>(
-    new Set<CompanyPipelineStage>(['screening', 'diligence', 'decision', 'documentation'])
+  // Table filters — persisted to preferences. Default excludes 'pass'.
+  const [filterStages, setFilterStages] = useState<Set<CompanyPipelineStage>>(() => {
+    const stored = getJSON<string[] | null>('cyggie:pipeline-filter-stages', null)
+    return stored !== null
+      ? new Set(stored as CompanyPipelineStage[])
+      : new Set<CompanyPipelineStage>(['screening', 'diligence', 'decision', 'documentation'])
+  })
+  const [filterPriorities, setFilterPriorities] = useState<Set<CompanyPriority>>(() =>
+    new Set(getJSON<string[]>('cyggie:pipeline-filter-priorities', []) as CompanyPriority[])
   )
-  const [filterPriorities, setFilterPriorities] = useState<Set<CompanyPriority>>(new Set())
-  const [filterRounds, setFilterRounds] = useState<Set<CompanyRound>>(new Set())
+  const [filterRounds, setFilterRounds] = useState<Set<CompanyRound>>(() =>
+    new Set(getJSON<string[]>('cyggie:pipeline-filter-rounds', []) as CompanyRound[])
+  )
   const [filterQuery, setFilterQuery] = useState('')
   const [pendingDecisionCompany, setPendingDecisionCompany] =
     useState<{ id: string; stage: CompanyPipelineStage; entityType: string } | null>(null)
+
+  // Sort state — persisted to preferences
+  const [sortColumn, setSortColumn] = useState<string | null>(() =>
+    getJSON<string | null>('cyggie:pipeline-sort-column', null)
+  )
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(() =>
+    getJSON<'asc' | 'desc'>('cyggie:pipeline-sort-direction', 'asc')
+  )
+
+  // Persist filter/sort state on change
+  useEffect(() => { setJSON('cyggie:pipeline-filter-stages', [...filterStages]) }, [filterStages]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setJSON('cyggie:pipeline-filter-priorities', [...filterPriorities]) }, [filterPriorities]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setJSON('cyggie:pipeline-filter-rounds', [...filterRounds]) }, [filterRounds]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setJSON('cyggie:pipeline-sort-column', sortColumn) }, [sortColumn]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setJSON('cyggie:pipeline-sort-direction', sortDirection) }, [sortDirection]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -306,6 +377,20 @@ export default function Pipeline() {
     }
   }, [companies, loadData])
 
+  function handleSort(column: string) {
+    if (sortColumn === column) {
+      setSortDirection(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortColumn(column)
+      setSortDirection('asc')
+    }
+  }
+
+  const sortIcon = (column: string) => {
+    if (sortColumn !== column) return <span className={styles.sortIcon}>⇅</span>
+    return <span className={styles.sortIconActive}>{sortDirection === 'asc' ? '↑' : '↓'}</span>
+  }
+
   const filteredCompanies = useMemo(() => {
     let result = companies
     if (filterStages.size > 0) result = result.filter((c) => c.pipelineStage != null && filterStages.has(c.pipelineStage))
@@ -318,8 +403,11 @@ export default function Pipeline() {
         (c.description || '').toLowerCase().includes(q)
       )
     }
+    if (sortColumn) {
+      result = sortCompanies(result, sortColumn, sortDirection)
+    }
     return result
-  }, [companies, filterStages, filterPriorities, filterRounds, filterQuery])
+  }, [companies, filterStages, filterPriorities, filterRounds, filterQuery, sortColumn, sortDirection])
 
   if (loading && companies.length === 0) {
     return <div className={styles.page}>Loading pipeline...</div>
@@ -467,129 +555,161 @@ export default function Pipeline() {
         })}
       </div>
 
-      <div className={styles.filterBar}>
-            <MultiSelectFilter
-              options={stageOptions}
-              selected={filterStages}
-              onChange={setFilterStages}
-              allLabel="All Stages"
-              fixedLabel="Stage"
-            />
-            <MultiSelectFilter
-              options={priorityOptions}
-              selected={filterPriorities}
-              onChange={setFilterPriorities}
-              allLabel="All Priorities"
-              fixedLabel="Priority"
-            />
-            <MultiSelectFilter
-              options={roundOptions}
-              selected={filterRounds}
-              onChange={setFilterRounds}
-              allLabel="All Rounds"
-            />
-            <input
-              className={styles.filterInput}
-              placeholder="Search companies..."
-              value={filterQuery}
-              onChange={(e) => setFilterQuery(e.target.value)}
-            />
-          </div>
-
-          <div className={styles.tableWrapper}>
-            <table className={styles.pipelineTable}>
-              <thead>
-                <tr>
-                  <th className={styles.companyColumn}>Company</th>
-                  <th>Priority</th>
-                  <th>Stage</th>
-                  <th>Round</th>
-                  <th>Post Money</th>
-                  <th>Raise Size</th>
-                  <th>Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredCompanies.map((company) => (
-                  <tr key={company.id}>
-                    <td className={styles.companyColumn}>
-                      <button
-                        className={styles.companyLink}
-                        onClick={() => navigate(`/company/${company.id}`)}
-                      >
-                        {company.canonicalName}
-                      </button>
-                    </td>
-                    <td>
-                      <ChipDropdownCell
-                        value={company.priority}
-                        options={priorityOptions}
-                        colorMap={PRIORITY_STYLE}
-                        onChange={(v) => void updateCompanyField(company.id, 'priority', v)}
-                        onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
-                      />
-                    </td>
-                    <td>
-                      <ChipDropdownCell
-                        value={company.pipelineStage}
-                        options={stageOptions}
-                        colorMap={STAGE_STYLE}
-                        onChange={(v) => void updateCompanyField(company.id, 'pipelineStage', v)}
-                        onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
-                      />
-                    </td>
-                    <td>
-                      <ChipDropdownCell
-                        value={company.round}
-                        options={roundOptions}
-                        colorMap={ROUND_STYLE}
-                        onChange={(v) => void updateCompanyField(company.id, 'round', v)}
-                        onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className={styles.cellInput}
-                        type="number"
-                        step="0.1"
-                        placeholder="-"
-                        value={company.postMoneyValuation ?? ''}
-                        onChange={(e) => {
-                          const val = e.target.value.trim()
-                          void updateCompanyField(company.id, 'postMoneyValuation', val ? Number(val) : null)
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className={styles.cellInput}
-                        type="number"
-                        step="0.1"
-                        placeholder="-"
-                        value={company.raiseSize ?? ''}
-                        onChange={(e) => {
-                          const val = e.target.value.trim()
-                          void updateCompanyField(company.id, 'raiseSize', val ? Number(val) : null)
-                        }}
-                      />
-                    </td>
-                    <td className={styles.descriptionCell}>
-                      {company.description || '-'}
-                    </td>
-                  </tr>
-                ))}
-                {filteredCompanies.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className={styles.empty}>
-                      {companies.length === 0
-                        ? 'No companies in pipeline yet. Add one above.'
-                        : 'No companies match the current filters.'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+      <div className={styles.tableWrapper}>
+        <table className={styles.pipelineTable}>
+          <thead>
+            <tr>
+              <th className={styles.companyColumn}>
+                <div className={styles.thContent}>
+                  <span className={styles.thSortLabel} onClick={() => handleSort('name')}>
+                    Company {sortIcon('name')}
+                  </span>
+                  <input
+                    className={styles.thSearchInput}
+                    placeholder="Search…"
+                    value={filterQuery}
+                    onChange={(e) => setFilterQuery(e.target.value)}
+                  />
+                </div>
+              </th>
+              <th>
+                <div className={styles.thHeaderWithFilter}>
+                  <MultiSelectFilter
+                    options={priorityOptions}
+                    selected={filterPriorities}
+                    onChange={setFilterPriorities}
+                    allLabel="All"
+                    fixedLabel="Priority"
+                    variant="header"
+                    portal
+                  />
+                  <button className={styles.sortBtn} onClick={() => handleSort('priority')} type="button">
+                    {sortIcon('priority')}
+                  </button>
+                </div>
+              </th>
+              <th>
+                <div className={styles.thHeaderWithFilter}>
+                  <MultiSelectFilter
+                    options={stageOptions}
+                    selected={filterStages}
+                    onChange={setFilterStages}
+                    allLabel="All"
+                    fixedLabel="Stage"
+                    variant="header"
+                    portal
+                  />
+                  <button className={styles.sortBtn} onClick={() => handleSort('stage')} type="button">
+                    {sortIcon('stage')}
+                  </button>
+                </div>
+              </th>
+              <th>
+                <div className={styles.thHeaderWithFilter}>
+                  <MultiSelectFilter
+                    options={roundOptions}
+                    selected={filterRounds}
+                    onChange={setFilterRounds}
+                    allLabel="All"
+                    fixedLabel="Round"
+                    variant="header"
+                    portal
+                  />
+                  <button className={styles.sortBtn} onClick={() => handleSort('round')} type="button">
+                    {sortIcon('round')}
+                  </button>
+                </div>
+              </th>
+              <th className={styles.sortableTh} onClick={() => handleSort('postMoney')}>
+                Post Money {sortIcon('postMoney')}
+              </th>
+              <th className={styles.sortableTh} onClick={() => handleSort('raiseSize')}>
+                Raise Size {sortIcon('raiseSize')}
+              </th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredCompanies.map((company) => (
+              <tr key={company.id}>
+                <td className={styles.companyColumn}>
+                  <button
+                    className={styles.companyLink}
+                    onClick={() => navigate(`/company/${company.id}`)}
+                  >
+                    {company.canonicalName}
+                  </button>
+                </td>
+                <td>
+                  <ChipDropdownCell
+                    value={company.priority}
+                    options={priorityOptions}
+                    colorMap={PRIORITY_STYLE}
+                    onChange={(v) => void updateCompanyField(company.id, 'priority', v)}
+                    onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
+                  />
+                </td>
+                <td>
+                  <ChipDropdownCell
+                    value={company.pipelineStage}
+                    options={stageOptions}
+                    colorMap={STAGE_STYLE}
+                    onChange={(v) => void updateCompanyField(company.id, 'pipelineStage', v)}
+                    onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
+                  />
+                </td>
+                <td>
+                  <ChipDropdownCell
+                    value={company.round}
+                    options={roundOptions}
+                    colorMap={ROUND_STYLE}
+                    onChange={(v) => void updateCompanyField(company.id, 'round', v)}
+                    onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
+                  />
+                </td>
+                <td>
+                  <input
+                    className={styles.cellInput}
+                    type="number"
+                    step="0.1"
+                    placeholder="-"
+                    value={company.postMoneyValuation ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value.trim()
+                      void updateCompanyField(company.id, 'postMoneyValuation', val ? Number(val) : null)
+                    }}
+                  />
+                </td>
+                <td>
+                  <input
+                    className={styles.cellInput}
+                    type="number"
+                    step="0.1"
+                    placeholder="-"
+                    value={company.raiseSize ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value.trim()
+                      void updateCompanyField(company.id, 'raiseSize', val ? Number(val) : null)
+                    }}
+                  />
+                </td>
+                <td className={styles.descriptionCell}>
+                  {company.description || '-'}
+                </td>
+              </tr>
+            ))}
+            {filteredCompanies.length === 0 && (
+              <tr>
+                <td colSpan={7} className={styles.empty}>
+                  {companies.length === 0
+                    ? 'No companies in pipeline yet. Add one above.'
+                    : 'No companies match the current filters.'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
       <div className={styles.chatSection}>
         <ChatInterface compact />
       </div>

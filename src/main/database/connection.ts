@@ -49,6 +49,8 @@ import { runBuiltinFieldDefsMigration } from './migrations/046-builtin-field-def
 import { runBackfillNormalizedNamesMigration } from './migrations/047-backfill-normalized-names'
 import { runContactFieldSourcesMigration } from './migrations/048-contact-field-sources'
 import { runCustomFieldSectionMigration } from './migrations/049-custom-field-section'
+import { runCompanyFieldSourcesMigration } from './migrations/050-company-field-sources'
+import { runContactDecisionLogsMigration } from './migrations/051-contact-decision-logs'
 
 let db: Database.Database | null = null
 
@@ -106,6 +108,8 @@ export function getDatabase(): Database.Database {
     runBackfillNormalizedNamesMigration(db)
     runContactFieldSourcesMigration(db)
     runCustomFieldSectionMigration(db)
+    runCompanyFieldSourcesMigration(db)
+    runContactDecisionLogsMigration(db)
   }
   return db
 }

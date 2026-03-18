@@ -1,0 +1,148 @@
+.root {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.loading {
+  padding: 16px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.companyLink {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.companyLink:hover {
+  text-decoration: underline;
+}
+
+.addBtn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 10px;
+}
+
+.addBtn:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.card {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover {
+  border-color: var(--color-border-hover, var(--color-primary));
+  background: var(--color-bg-secondary);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.decisionType {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.cardMeta {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.cardChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  font-size: 12px;
+  background: var(--color-bg-tertiary);
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: var(--color-text-secondary);
+}
+
+.rationaleList {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.nextSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 8px;
+}
+
+.nextStep {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.nextStepWhat {
+  color: var(--color-text-secondary);
+}
+
+.nextStepMeta {
+  color: var(--color-text-tertiary);
+}

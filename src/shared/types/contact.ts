@@ -251,3 +251,17 @@ export interface ContactDedupApplyResult {
   deletedContacts: number
   failures: ContactDedupFailure[]
 }
+
+export type ContactDecisionLogType = 'Pass' | 'Advance' | 'Offer' | 'Other'
+
+export interface ContactDecisionLog {
+  id: string
+  contactId: string
+  decisionType: string
+  decisionDate: string
+  decisionOwner: string | null
+  rationale: string[]
+  nextSteps: import('./company').DecisionNextStep[]
+  createdAt: string
+  updatedAt: string
+}

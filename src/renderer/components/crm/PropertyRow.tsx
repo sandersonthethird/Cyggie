@@ -101,16 +101,27 @@ export function PropertyRow({
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(null)
 
+  // Multiselect dropdown state
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [draftSelected, setDraftSelected] = useState<string[]>([])
+  const [focusedIndex, setFocusedIndex] = useState(-1)
+  const [search, setSearch] = useState('')
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+
   const debouncedEdit = useDebounce(editValue, 300)
 
-  // Sync external value changes (only when not in any edit state)
+  // Sync external value changes — only when the prop value changes from outside.
+  // Intentionally excludes `editing` and `editMode` from deps: when editMode transitions
+  // from true→false (user clicks "Done"), we must NOT reset displayValue to the stale prop
+  // while an async IPC save from closeAndSave() is still in flight.
   useEffect(() => {
     if (!editing && !editMode) {
       setDisplayValue(value)
       setEditValue(value)
       setDisplayLabel(resolvedLabel ?? null)
     }
-  }, [value, resolvedLabel, editing, editMode])
+  }, [value, resolvedLabel]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When editMode first activates, prime editValue from the current display value
   useEffect(() => {
@@ -128,12 +139,54 @@ export function PropertyRow({
     handleSave(debouncedEdit)
   }, [debouncedEdit]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Close multiselect dropdown when edit mode is deactivated
+  useEffect(() => {
+    if (!editMode && !editing && dropdownOpen) {
+      closeAndSave()
+    }
+  }, [editMode, editing]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Click-outside listener for multiselect dropdown
+  useEffect(() => {
+    if (!dropdownOpen) return
+    function onMouseDown(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        closeAndSave()
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [dropdownOpen, draftSelected]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function openDropdown(initialValue?: string | number | boolean | null) {
+    const src = initialValue !== undefined ? initialValue : editValue
+    const current = String(src ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    setDraftSelected(current)
+    setFocusedIndex(-1)
+    setSearch('')
+    setDropdownOpen(true)
+    setTimeout(() => (searchRef.current ?? dropdownRef.current)?.focus(), 0)
+  }
+
+  function closeAndSave() {
+    setDropdownOpen(false)
+    setSearch('')
+    const joined = draftSelected.join(',') || null
+    setEditValue(joined ?? '')
+    handleSave(joined)
+  }
+
   function startEdit() {
     if (readOnly || editMode) return
     setEditing(true)
     setEditValue(displayValue)
     setError(null)
-    setTimeout(() => (inputRef.current as HTMLElement | null)?.focus(), 0)
+    if (type === 'multiselect') {
+      // Open dropdown immediately on click, seeding from displayValue (editValue not yet updated)
+      setTimeout(() => openDropdown(displayValue), 0)
+    } else {
+      setTimeout(() => (inputRef.current as HTMLElement | null)?.focus(), 0)
+    }
   }
 
   function cancelEdit() {
@@ -261,7 +314,9 @@ export function PropertyRow({
 
       case 'multiselect': {
         const parsedOpts = safeParseOptions(options)
-        const selected = String(editValue ?? '').split(',').map(s => s.trim()).filter(Boolean)
+        const filteredOpts = search
+          ? parsedOpts.filter(o => optionLabel(o).toLowerCase().includes(search.toLowerCase()))
+          : parsedOpts
 
         if (addingOption) {
           return (
@@ -273,9 +328,11 @@ export function PropertyRow({
                   await onAddOption?.(opt)
                   const trimmed = opt.trim()
                   if (trimmed) {
-                    const next = [...selected, trimmed].join(',')
-                    setEditValue(next)
-                    handleSave(next)
+                    const next = [...draftSelected, trimmed]
+                    setDraftSelected(next)
+                    const joined = next.join(',')
+                    setEditValue(joined)
+                    handleSave(joined)
                   }
                 } catch (e) {
                   console.error('[PropertyRow] addOption failed:', e)
@@ -286,37 +343,127 @@ export function PropertyRow({
           )
         }
 
+        // Trigger — shown in both open and closed states
+        // Uses draftSelected when open (buffered), editValue when closed (saved)
+        const triggerChips = dropdownOpen
+          ? draftSelected
+          : String(editValue ?? '').split(',').map(s => s.trim()).filter(Boolean)
+
+        const trigger = (
+          <div
+            className={styles.multiselectTrigger}
+            onClick={() => !readOnly && !dropdownOpen && openDropdown()}
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded={dropdownOpen}
+          >
+            {triggerChips.length > 0
+              ? triggerChips.map(v => (
+                  <span key={v} className={styles.chip} style={chipStyle(v)}>{v}</span>
+                ))
+              : <span className={styles.empty}>—</span>
+            }
+            {!readOnly && <span className={styles.multiselectCaret}>{dropdownOpen ? '▴' : '▾'}</span>}
+          </div>
+        )
+
+        if (!dropdownOpen) return trigger
+
         return (
-          <div className={styles.chipPicker}>
-            {parsedOpts.map((opt) => {
-              const val = optionValue(opt)
-              const isSelected = selected.includes(val)
-              return (
-                <span
-                  key={val}
-                  className={`${styles.chip} ${styles.chipToggle} ${isSelected ? styles.chipActive : styles.chipInactive}`}
-                  style={isSelected ? chipStyle(val) : undefined}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    const next = isSelected ? selected.filter(s => s !== val) : [...selected, val]
-                    const joined = next.join(',') || null
-                    setEditValue(joined ?? '')
-                    handleSave(joined)
+          <div className={styles.multiselectWrapper}>
+            {trigger}
+            <div
+              ref={dropdownRef}
+              className={styles.multiselectDropdown}
+              role="listbox"
+              aria-multiselectable={true}
+              tabIndex={-1}
+              onKeyDown={(e) => {
+                const opts = filteredOpts
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setFocusedIndex(i => opts.length === 0 ? -1 : (i + 1) % opts.length)
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setFocusedIndex(i => opts.length === 0 ? -1 : (i - 1 + opts.length) % opts.length)
+                } else if (e.key === ' ' && focusedIndex >= 0 && focusedIndex < opts.length) {
+                  e.preventDefault()
+                  const val = optionValue(opts[focusedIndex])
+                  setDraftSelected(prev =>
+                    prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]
+                  )
+                } else if (e.key === 'Escape' || e.key === 'Enter') {
+                  e.preventDefault()
+                  closeAndSave()
+                }
+              }}
+            >
+              {/* Search input — only when 5+ options */}
+              {parsedOpts.length >= 5 && (
+                <input
+                  ref={searchRef}
+                  className={styles.multiselectSearch}
+                  placeholder="Search..."
+                  value={search}
+                  onChange={e => { setSearch(e.target.value); setFocusedIndex(-1) }}
+                  onKeyDown={e => {
+                    if (e.key === 'Escape') { e.stopPropagation(); closeAndSave() }
                   }}
+                  aria-label="Search options"
+                />
+              )}
+
+              {/* Clear all */}
+              {draftSelected.length > 0 && (
+                <button
+                  type="button"
+                  className={styles.multiselectClearAll}
+                  onMouseDown={e => { e.preventDefault(); setDraftSelected([]) }}
                 >
-                  {optionLabel(opt)}
-                </span>
-              )
-            })}
-            {onAddOption && (
-              <button
-                type="button"
-                className={styles.addOptionLink}
-                onMouseDown={(e) => { e.preventDefault(); setAddingOption(true) }}
-              >
-                + Add option
-              </button>
-            )}
+                  Clear all
+                </button>
+              )}
+
+              {/* Options */}
+              {filteredOpts.length === 0 && (
+                <div className={styles.multiselectEmpty}>No options match</div>
+              )}
+              {filteredOpts.map((opt, i) => {
+                const val = optionValue(opt)
+                const isSelected = draftSelected.includes(val)
+                return (
+                  <div
+                    key={val}
+                    className={`${styles.multiselectOption} ${i === focusedIndex ? styles.multiselectOptionFocused : ''}`}
+                    role="option"
+                    aria-selected={isSelected}
+                    onMouseDown={e => {
+                      e.preventDefault()
+                      setDraftSelected(prev =>
+                        prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]
+                      )
+                    }}
+                    onMouseEnter={() => setFocusedIndex(i)}
+                  >
+                    <span className={isSelected ? styles.checkboxChecked : styles.checkboxUnchecked}>
+                      {isSelected ? '☑' : '☐'}
+                    </span>
+                    <span style={isSelected ? chipStyle(val) : undefined}>{optionLabel(opt)}</span>
+                  </div>
+                )
+              })}
+
+              {/* Add option */}
+              {onAddOption && (
+                <button
+                  type="button"
+                  className={styles.addOptionLink}
+                  onMouseDown={e => { e.preventDefault(); setAddingOption(true); setDropdownOpen(false) }}
+                >
+                  + Add option
+                </button>
+              )}
+            </div>
           </div>
         )
       }

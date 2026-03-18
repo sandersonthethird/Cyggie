@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { CompanyDecisionLog, CompanyNote, CompanyTimelineItem } from '../../../shared/types/company'
+import type { CompanyNote, CompanyTimelineItem } from '../../../shared/types/company'
 import { useEmailSync } from '../../hooks/useEmailSync'
 import { EmailDetailModal } from '../crm/EmailDetailModal'
 import { NoteDetailModal } from '../crm/NoteDetailModal'
@@ -11,13 +11,16 @@ import styles from './CompanyTimeline.module.css'
 interface CompanyTimelineProps {
   companyId: string
   className?: string
+  refreshKey?: number
 }
 
 const TYPE_LABEL: Record<string, string> = {
   meeting: 'Meeting',
   email: 'Email',
   note: 'Note',
-  decision: 'Decision'
+  decision: 'Decision',
+  'Stage Change': 'Stage Change',
+  'Pipeline Exit': 'Pipeline Exit'
 }
 
 type TimelineFilter = 'all' | 'meeting' | 'email' | 'note' | 'decision'
@@ -30,7 +33,7 @@ const FILTERS: Array<{ key: TimelineFilter; label: string }> = [
   { key: 'decision', label: 'Decisions' }
 ]
 
-export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) {
+export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTimelineProps) {
   const navigate = useNavigate()
   const [items, setItems] = useState<CompanyTimelineItem[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -46,6 +49,11 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
     handleSync,
     handleCancel
   } = useEmailSync('company', companyId, () => setLoaded(false))
+
+  // Reset loaded when refreshKey changes (e.g. after a pipeline stage change creates a new decision log)
+  useEffect(() => {
+    setLoaded(false)
+  }, [companyId, refreshKey])
 
   useEffect(() => {
     if (loaded) return
@@ -64,7 +72,7 @@ export function CompanyTimeline({ companyId, className }: CompanyTimelineProps) 
     }
   }
 
-  const handleDecisionSaved = useCallback((_log: CompanyDecisionLog) => {
+  const handleDecisionSaved = useCallback((_log: { id: string; decisionType: string; decisionOwner: string | null }) => {
     setItems((prev) =>
       prev.map((i) =>
         i.referenceId === _log.id

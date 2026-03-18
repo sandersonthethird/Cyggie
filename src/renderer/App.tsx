@@ -31,6 +31,15 @@ function PreferencesInit() {
   return null
 }
 
+function NotificationPermissionInit() {
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      void Notification.requestPermission()
+    }
+  }, [])
+  return null
+}
+
 function NotificationListener() {
   const navigate = useNavigate()
   const startRecording = useRecordingStore((s) => s.startRecording)
@@ -75,6 +84,7 @@ export default function App() {
       <AudioCaptureProvider>
         <CalendarInit />
         <PreferencesInit />
+        <NotificationPermissionInit />
         <NotificationListener />
         <Routes>
           <Route element={<Layout />}>

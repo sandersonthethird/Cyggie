@@ -5,6 +5,8 @@ import { join, extname, basename, resolve as resolvePath } from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import * as contactRepo from '../database/repositories/contact.repo'
+import { createCompanyDecisionLog } from '../database/repositories/company-decision-log.repo'
+import { getDatabase } from '../database/connection'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import * as settingsRepo from '../database/repositories/settings.repo'
 import type {
@@ -17,11 +19,13 @@ import type {
   CompanyDedupDecision
 } from '../../shared/types/company'
 import { ingestCompanyEmails, cancelCompanyEmailIngest } from '../services/company-email-ingest.service'
+import { getCompanyEnrichmentProposalsFromMeetings } from '../services/company-summary-sync.service'
 import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 import { readSummary } from '../storage/file-manager'
+import { getProvider } from '../llm/summarizer'
 
 const companyDriveRootCache = new Map<string, string>()
 
@@ -325,10 +329,46 @@ export function registerCompanyHandlers(): void {
     (_event, companyId: string, updates: Record<string, unknown>) => {
       if (!companyId) throw new Error('companyId is required')
       const userId = getCurrentUserId()
+      const db = getDatabase()
+
+      // Pre-fetch current pipeline_stage to detect changes
+      let currentStage: string | null = null
+      const newStage = 'pipelineStage' in updates ? (updates.pipelineStage as string | null) : undefined
+
+      if (newStage !== undefined) {
+        const row = db.prepare('SELECT pipeline_stage FROM org_companies WHERE id = ?').get(companyId) as
+          | { pipeline_stage: string | null }
+          | undefined
+        currentStage = row?.pipeline_stage ?? null
+      }
+
       const updated = companyRepo.updateCompany(companyId, updates || {}, userId)
+
       if (updated) {
         logAudit(userId, 'company', companyId, 'update', updates || {})
       }
+
+      // Auto-log stage changes atomically
+      if (newStage !== undefined && newStage !== currentStage) {
+        try {
+          db.transaction(() => {
+            const decisionType = newStage != null ? 'Stage Change' : 'Pipeline Exit'
+            const rationaleMsg = newStage != null
+              ? `Moved from ${currentStage ?? 'none'} to ${newStage}`
+              : `Removed from pipeline (was: ${currentStage ?? 'none'})`
+            createCompanyDecisionLog({
+              companyId,
+              decisionType,
+              decisionDate: new Date().toISOString().slice(0, 10),
+              rationale: [rationaleMsg]
+            }, userId)
+          })()
+          console.log('[company.ipc] Stage Change logged: companyId=%s, from=%s to=%s', companyId, currentStage, newStage)
+        } catch (err) {
+          console.error('[company.ipc] Failed to log stage change:', err)
+        }
+      }
+
       return updated
     }
   )
@@ -609,4 +649,18 @@ export function registerCompanyHandlers(): void {
     if (!messageId) throw new Error('messageId is required')
     return companyRepo.getCompanyEmailById(messageId)
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_ENRICH_FROM_MEETINGS,
+    async (_event, meetingIds: string[], companyId: string) => {
+      if (!meetingIds?.length || !companyId) return null
+      try {
+        const provider = getProvider()
+        return await getCompanyEnrichmentProposalsFromMeetings(meetingIds, companyId, provider)
+      } catch (err) {
+        console.error('[Company Enrich] IPC handler failed:', err)
+        return null
+      }
+    }
+  )
 }

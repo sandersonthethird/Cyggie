@@ -94,6 +94,7 @@ export function listCompanyDecisionLogs(companyId: string): CompanyDecisionLog[]
       FROM company_decision_logs
       WHERE company_id = ?
       ORDER BY decision_date DESC, created_at DESC
+      LIMIT 200
     `)
     .all(companyId) as DecisionLogRow[]
   return rows.map(rowToDecisionLog)

@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as companyRepo from '../database/repositories/org-company.repo'
+import * as contactDecisionLogRepo from '../database/repositories/contact-decision-log.repo'
 import { ingestContactEmails, cancelContactEmailIngest } from '../services/company-email-ingest.service'
 import {
   enrichContactsViaWebLookup,
@@ -389,6 +390,42 @@ export function registerContactHandlers(): void {
       logAudit(userId, 'contact', contactId, 'delete', {})
     }
   )
+
+  // Contact decision log CRUD
+  ipcMain.handle(IPC_CHANNELS.CONTACT_DECISION_LOG_LIST, (_event, contactId: string) => {
+    if (!contactId) throw new Error('contactId is required')
+    return contactDecisionLogRepo.listContactDecisionLogs(contactId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_DECISION_LOG_GET, (_event, logId: string) => {
+    if (!logId) throw new Error('logId is required')
+    return contactDecisionLogRepo.getContactDecisionLog(logId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_DECISION_LOG_CREATE, (_event, data: {
+    contactId: string
+    decisionType: string
+    decisionDate: string
+    decisionOwner?: string | null
+    rationale?: string[]
+    nextSteps?: import('../../shared/types/company').DecisionNextStep[]
+  }) => {
+    if (!data?.contactId) throw new Error('contactId is required')
+    const userId = getCurrentUserId()
+    return contactDecisionLogRepo.createContactDecisionLog(data, userId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_DECISION_LOG_UPDATE, (_event, logId: string, data: Record<string, unknown>) => {
+    if (!logId) throw new Error('logId is required')
+    const userId = getCurrentUserId()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return contactDecisionLogRepo.updateContactDecisionLog(logId, data as any, userId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_DECISION_LOG_DELETE, (_event, logId: string) => {
+    if (!logId) throw new Error('logId is required')
+    return contactDecisionLogRepo.deleteContactDecisionLog(logId)
+  })
 
   ipcMain.handle(IPC_CHANNELS.CONTACT_ENRICH_FROM_MEETING, async (_event, meetingId: string) => {
     if (!meetingId) return []
