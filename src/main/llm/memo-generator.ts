@@ -1,10 +1,5 @@
-import type { LLMProvider } from './provider'
-import { ClaudeProvider } from './claude-provider'
-import { OllamaProvider } from './ollama-provider'
-import { getCredential } from '../security/credentials'
-import { getSetting } from '../database/repositories/settings.repo'
-import type { LlmProvider } from '../../shared/types/settings'
 
+import { getProvider } from './provider-factory'
 const MEMO_SYSTEM_PROMPT = `You are an experienced venture capital analyst writing investment memos for an investment committee. Write in a professional but direct tone — be specific, data-driven, and opinionated. Avoid vague platitudes.
 
 Your task is to write a comprehensive investment memo based on the information provided. Use the following section structure exactly:
@@ -63,20 +58,6 @@ CRITICAL INSTRUCTIONS:
 - If existing memo content is provided, incorporate and improve upon it rather than starting from scratch.
 - Output clean markdown only. No preamble or commentary.`
 
-function getProvider(): LLMProvider {
-  const providerType = (getSetting('llmProvider') || 'claude') as LlmProvider
-  if (providerType === 'ollama') {
-    const host = getSetting('ollamaHost') || 'http://127.0.0.1:11434'
-    const model = getSetting('ollamaModel') || 'llama3.1'
-    return new OllamaProvider(model, host)
-  }
-  const apiKey = getCredential('claudeApiKey')
-  if (!apiKey) {
-    throw new Error('Claude API key not configured. Go to Settings to add it.')
-  }
-  const model = getSetting('claudeSummaryModel') || 'claude-sonnet-4-5-20250929'
-  return new ClaudeProvider(apiKey, model)
-}
 
 function truncateForContext(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text

@@ -71,7 +71,10 @@ interface CompanyRow {
   last_funding_date: string | null
   total_funding_raised: number | null
   lead_investor: string | null
-  co_investors: string | null
+  co_investors: string | null  // legacy column kept in DB, not surfaced in TypeScript types
+  source_type: string | null
+  source_entity_type: string | null
+  source_entity_id: string | null
   relationship_owner: string | null
   deal_source: string | null
   warm_intro_source: string | null
@@ -316,7 +319,9 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     lastFundingDate: row.last_funding_date ?? null,
     totalFundingRaised: row.total_funding_raised ?? null,
     leadInvestor: row.lead_investor ?? null,
-    coInvestors: row.co_investors ?? null,
+    sourceType: row.source_type ?? null,
+    sourceEntityType: (row.source_entity_type as 'company' | 'contact' | null) ?? null,
+    sourceEntityId: row.source_entity_id ?? null,
     relationshipOwner: row.relationship_owner ?? null,
     dealSource: row.deal_source ?? null,
     warmIntroSource: row.warm_intro_source ?? null,
@@ -384,6 +389,9 @@ function baseCompanySelect(whereClause = ''): string {
       c.total_funding_raised,
       c.lead_investor,
       c.co_investors,
+      c.source_type,
+      c.source_entity_type,
+      c.source_entity_id,
       c.relationship_owner,
       c.deal_source,
       c.warm_intro_source,
@@ -411,7 +419,8 @@ function baseCompanySelect(whereClause = ''): string {
     ) ec ON ec.company_id = c.id
     LEFT JOIN (
       SELECT company_id, COUNT(*) AS note_count
-      FROM company_notes
+      FROM notes
+      WHERE company_id IS NOT NULL
       GROUP BY company_id
     ) nc ON nc.company_id = c.id
     LEFT JOIN (
@@ -649,7 +658,8 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         productStage: nullStr, revenueModel: nullStr, foundingYear: nullNum,
         employeeCountRange: nullStr, burnRate: nullNum, runwayMonths: nullNum,
         totalFundingRaised: nullNum, lastFundingDate: nullStr, leadInvestor: nullStr,
-        coInvestors: nullStr, relationshipOwner: nullStr, dealSource: nullStr,
+        sourceType: nullStr, sourceEntityType: null, sourceEntityId: nullStr,
+        relationshipOwner: nullStr, dealSource: nullStr,
         warmIntroSource: nullStr, referralContactId: nullStr, nextFollowupDate: nullStr,
         investmentSize: nullStr, ownershipPct: nullStr,
         followonInvestmentSize: nullStr, totalInvested: nullStr,
@@ -658,7 +668,8 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         classificationConfidence: nullNum, contactCount: 0, lastTouchpoint: nullStr,
         meetingCount: 0, noteCount: 0, emailCount: 0,
         createdAt: '', updatedAt: '',
-        industries: [], themes: []
+        industries: [], themes: [],
+        sourceEntityName: nullStr, coInvestorsList: [], priorInvestorsList: [], coInvestedIn: []
       } satisfies CompanyDetail
     }
   }
@@ -703,10 +714,71 @@ export function getCompany(companyId: string): CompanyDetail | null {
     `)
     .all(companyId) as { name: string }[]
 
+  // Resolve source entity name (company or contact)
+  let sourceEntityName: string | null = null
+  if (row.source_entity_type === 'company' && row.source_entity_id) {
+    const r = db
+      .prepare('SELECT canonical_name FROM org_companies WHERE id = ?')
+      .get(row.source_entity_id) as { canonical_name: string } | undefined
+    sourceEntityName = r?.canonical_name ?? null
+  } else if (row.source_entity_type === 'contact' && row.source_entity_id) {
+    const r = db
+      .prepare('SELECT full_name FROM contacts WHERE id = ?')
+      .get(row.source_entity_id) as { full_name: string } | undefined
+    sourceEntityName = r?.full_name ?? null
+  }
+
+  const coInvestorsList = getCompanyInvestors(db, companyId, 'co_investor')
+  const priorInvestorsList = getCompanyInvestors(db, companyId, 'prior_investor')
+  const coInvestedIn = getCompanyCoInvestedIn(db, companyId)
+
   return {
     ...rowToCompanySummary(row),
     industries: industries.map((v) => v.name),
-    themes: themes.map((v) => v.name)
+    themes: themes.map((v) => v.name),
+    sourceEntityName,
+    coInvestorsList,
+    priorInvestorsList,
+    coInvestedIn,
+  }
+}
+
+function getCompanyInvestors(
+  db: ReturnType<typeof getDatabase>,
+  companyId: string,
+  type: 'co_investor' | 'prior_investor'
+): Array<{ id: string; name: string }> {
+  try {
+    return db
+      .prepare(`
+        SELECT ci.investor_company_id AS id, oc.canonical_name AS name
+        FROM company_investors ci
+        JOIN org_companies oc ON oc.id = ci.investor_company_id
+        WHERE ci.company_id = ? AND ci.investor_type = ?
+        ORDER BY ci.created_at
+      `)
+      .all(companyId, type) as Array<{ id: string; name: string }>
+  } catch {
+    return []
+  }
+}
+
+function getCompanyCoInvestedIn(
+  db: ReturnType<typeof getDatabase>,
+  companyId: string
+): Array<{ id: string; name: string }> {
+  try {
+    return db
+      .prepare(`
+        SELECT ci.company_id AS id, oc.canonical_name AS name
+        FROM company_investors ci
+        JOIN org_companies oc ON oc.id = ci.company_id
+        WHERE ci.investor_company_id = ? AND ci.investor_type = 'co_investor'
+        ORDER BY ci.created_at
+      `)
+      .all(companyId) as Array<{ id: string; name: string }>
+  } catch {
+    return []
   }
 }
 
@@ -823,7 +895,9 @@ const COMPANY_UPDATABLE_FIELDS = {
   lastFundingDate: 'last_funding_date',
   totalFundingRaised: 'total_funding_raised',
   leadInvestor: 'lead_investor',
-  coInvestors: 'co_investors',
+  sourceType: 'source_type',
+  sourceEntityType: 'source_entity_type',
+  sourceEntityId: 'source_entity_id',
   relationshipOwner: 'relationship_owner',
   dealSource: 'deal_source',
   warmIntroSource: 'warm_intro_source',
@@ -931,6 +1005,42 @@ export function updateCompany(
     )
   }
   return detail
+}
+
+export function updateCompanyIndustries(companyId: string, names: string[]): void {
+  const db = getDatabase()
+  db.transaction(() => {
+    db.prepare('DELETE FROM org_company_industries WHERE company_id = ?').run(companyId)
+    for (const name of names.filter(Boolean)) {
+      let industry = db
+        .prepare('SELECT id FROM industries WHERE LOWER(name) = LOWER(?)')
+        .get(name) as { id: string } | undefined
+      if (!industry) {
+        const id = randomUUID()
+        db.prepare('INSERT INTO industries (id, name) VALUES (?, ?)').run(id, name)
+        industry = { id }
+      }
+      db.prepare(
+        'INSERT OR IGNORE INTO org_company_industries (company_id, industry_id) VALUES (?, ?)'
+      ).run(companyId, industry.id)
+    }
+  })()
+}
+
+export function setCompanyInvestors(
+  companyId: string,
+  type: 'co_investor' | 'prior_investor',
+  investors: Array<{ id: string; name: string }>
+): void {
+  const db = getDatabase()
+  db.transaction(() => {
+    db.prepare('DELETE FROM company_investors WHERE company_id = ? AND investor_type = ?').run(companyId, type)
+    for (const inv of investors) {
+      db.prepare(
+        'INSERT INTO company_investors (id, company_id, investor_company_id, investor_type) VALUES (?, ?, ?, ?)'
+      ).run(randomUUID(), companyId, inv.id, type)
+    }
+  })()
 }
 
 export function findCompanyIdByDomain(domain: string): string | null {
@@ -1198,7 +1308,7 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
 
     relinked.notes = db
       .prepare(`
-        UPDATE company_notes
+        UPDATE notes
         SET company_id = ?, updated_at = datetime('now')
         WHERE company_id = ?
       `)
@@ -1545,7 +1655,7 @@ export function deleteCompany(companyId: string): void {
     db.prepare('UPDATE contacts SET primary_company_id = NULL, updated_at = datetime(\'now\') WHERE primary_company_id = ?').run(companyId)
     db.prepare('DELETE FROM org_company_contacts WHERE company_id = ?').run(companyId)
     db.prepare('DELETE FROM deals WHERE company_id = ?').run(companyId)
-    db.prepare('DELETE FROM company_notes WHERE company_id = ?').run(companyId)
+    db.prepare("UPDATE notes SET company_id = NULL, updated_at = datetime('now') WHERE company_id = ?").run(companyId)
     db.prepare('DELETE FROM company_conversations WHERE company_id = ?').run(companyId)
     // Delete memo versions first, then memos
     db.prepare('DELETE FROM investment_memo_versions WHERE memo_id IN (SELECT id FROM investment_memos WHERE company_id = ?)').run(companyId)
@@ -1747,6 +1857,23 @@ export function listCompanyContacts(companyId: string): CompanyContactRef[] {
     lastInteractedAt: row.last_meeting_at ?? row.updated_at,
     updatedAt: row.updated_at
   }))
+}
+
+export function unlinkMeetingCompany(meetingId: string, companyId: string): void {
+  const db = getDatabase()
+  db.prepare(`
+    DELETE FROM meeting_company_links
+    WHERE meeting_id = ? AND company_id = ?
+  `).run(meetingId, companyId)
+}
+
+export function clearCompanyPrimaryContact(companyId: string): void {
+  const db = getDatabase()
+  db.prepare(`
+    UPDATE org_company_contacts
+    SET is_primary = 0
+    WHERE company_id = ?
+  `).run(companyId)
 }
 
 export function setCompanyPrimaryContact(companyId: string, contactId: string): void {
@@ -2075,7 +2202,7 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
   const noteRows = db
     .prepare(`
       SELECT id, title, content, created_at, updated_at
-      FROM company_notes
+      FROM notes
       WHERE company_id = ?
       ORDER BY datetime(updated_at) DESC
       LIMIT 300

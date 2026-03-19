@@ -24,7 +24,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
   const searchQuery = useAppStore((s) => s.searchQuery)
   const setSearchQuery = useAppStore((s) => s.setSearchQuery)
   const setSearchFilter = useAppStore((s) => s.setSearchFilter)
-  const [categorized, setCategorized] = useState<CategorizedSuggestions>({ people: [], companies: [], meetings: [] })
+  const [categorized, setCategorized] = useState<CategorizedSuggestions>({ people: [], companies: [], meetings: [], notes: [] })
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [activeSuggestion, setActiveSuggestion] = useState(-1)
   const suggestRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -50,10 +50,11 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
   const entityQuery = (searchParams.get('q') || '').trim()
 
   const flatItems = useMemo(() => {
-    const items: { type: 'person' | 'company' | 'meeting'; label: string; id?: string; domain?: string }[] = []
+    const items: { type: 'person' | 'company' | 'meeting' | 'note'; label: string; id?: string; domain?: string }[] = []
     for (const name of categorized.people) items.push({ type: 'person', label: name })
     for (const c of categorized.companies) items.push({ type: 'company', label: c.name, domain: c.domain })
     for (const m of categorized.meetings) items.push({ type: 'meeting', label: m.title, id: m.id })
+    for (const n of categorized.notes) items.push({ type: 'note', label: n.label, id: n.id })
     return items
   }, [categorized])
 
@@ -85,7 +86,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
   useEffect(() => {
     if (suggestRef.current) clearTimeout(suggestRef.current)
     if (value.trim().length < 2) {
-      setCategorized({ people: [], companies: [], meetings: [] })
+      setCategorized({ people: [], companies: [], meetings: [], notes: [] })
       setShowSuggestions(false)
       return
     }
@@ -93,7 +94,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
       try {
         const results = await api.invoke<CategorizedSuggestions>(IPC_CHANNELS.SEARCH_CATEGORIZED, value)
         setCategorized(results)
-        const hasResults = results.people.length > 0 || results.companies.length > 0 || results.meetings.length > 0
+        const hasResults = results.people.length > 0 || results.companies.length > 0 || results.meetings.length > 0 || results.notes.length > 0
         setShowSuggestions(hasResults)
         if (hasResults) setShowFilterPanel(false)
         setActiveSuggestion(-1)
@@ -120,11 +121,16 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
 
   const handleSuggestionSelect = useCallback(async (item: typeof flatItems[number]) => {
     setShowSuggestions(false)
-    setCategorized({ people: [], companies: [], meetings: [] })
+    setCategorized({ people: [], companies: [], meetings: [], notes: [] })
     setActiveSuggestion(-1)
     setValue(item.label)
     setSearchQuery(item.label)
     setSearchFilter(null)
+
+    if (item.type === 'note' && item.id) {
+      navigate(`/note/${item.id}`)
+      return
+    }
 
     if (item.type === 'meeting' && item.id) {
       navigate(`/meeting/${item.id}`)
@@ -219,7 +225,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
       setSearchParams(next)
     }
     clearAdvancedFilters()
-    setCategorized({ people: [], companies: [], meetings: [] })
+    setCategorized({ people: [], companies: [], meetings: [], notes: [] })
     setShowSuggestions(false)
     setShowFilterPanel(false)
   }, [
@@ -356,6 +362,33 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
                     </div>
                   )
                 })}
+              </div>
+            )}
+            {categorized.notes.length > 0 && (
+              <div className={styles.suggestionSection}>
+                <div className={styles.sectionHeader}>Notes</div>
+                {categorized.notes.map((n) => {
+                  const i = idx++
+                  return (
+                    <div
+                      key={`note-${n.id}`}
+                      className={`${styles.suggestionItem} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
+                      onMouseDown={() => { void handleSuggestionSelect({ type: 'note', label: n.label, id: n.id }) }}
+                      onMouseEnter={() => setActiveSuggestion(i)}
+                    >
+                      {n.label}
+                      {n.context && (
+                        <span className={styles.suggestionContext}> · {n.context}</span>
+                      )}
+                    </div>
+                  )
+                })}
+                <div
+                  className={styles.suggestionFooter}
+                  onMouseDown={() => { navigate(`/notes?q=${encodeURIComponent(value)}`) }}
+                >
+                  See all notes for &ldquo;{value}&rdquo;
+                </div>
               </div>
             )}
           </div>

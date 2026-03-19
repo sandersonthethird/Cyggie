@@ -73,8 +73,10 @@ export interface CompanySummary {
   lastFundingDate: string | null
   totalFundingRaised: number | null
   leadInvestor: string | null
-  coInvestors: string | null
-  // Deal Provenance
+  // Deal Provenance — source fields
+  sourceType: string | null
+  sourceEntityType: 'company' | 'contact' | null
+  sourceEntityId: string | null
   relationshipOwner: string | null
   dealSource: string | null
   warmIntroSource: string | null
@@ -92,6 +94,10 @@ export interface CompanySummary {
 export interface CompanyDetail extends CompanySummary {
   industries: string[]
   themes: string[]
+  sourceEntityName: string | null
+  coInvestorsList: Array<{ id: string; name: string }>
+  priorInvestorsList: Array<{ id: string; name: string }>
+  coInvestedIn: Array<{ id: string; name: string }>
 }
 
 export type CompanyDedupAction = 'skip' | 'delete' | 'merge'
@@ -245,16 +251,7 @@ export interface CompanyTimelineItem {
   referenceType: CompanyTimelineReferenceType
 }
 
-export interface CompanyNote {
-  id: string
-  companyId: string
-  themeId: string | null
-  title: string | null
-  content: string
-  isPinned: boolean
-  createdAt: string
-  updatedAt: string
-}
+export type { Note as CompanyNote } from './note'
 
 export interface InvestmentMemo {
   id: string

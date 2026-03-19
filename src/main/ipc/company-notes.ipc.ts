@@ -5,6 +5,7 @@ import { listCompanyMeetingSummaryPaths } from '../database/repositories/org-com
 import { getCurrentUserId } from '../security/current-user'
 import { readSummary } from '../storage/file-manager'
 import { logAudit } from '../database/repositories/audit.repo'
+import { hydrateCompanionNote } from './note-hydration'
 
 function ensureCompanyMeetingSummaryNotes(companyId: string, userId: string | null): void {
   try {
@@ -40,7 +41,9 @@ export function registerCompanyNotesHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_NOTES_GET, (_event, noteId: string) => {
     if (!noteId) throw new Error('noteId is required')
-    return notesRepo.getCompanyNote(noteId)
+    const note = notesRepo.getCompanyNote(noteId)
+    if (!note) return null
+    return hydrateCompanionNote(note, getCurrentUserId())
   })
 
   ipcMain.handle(

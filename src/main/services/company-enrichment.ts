@@ -1,7 +1,5 @@
 import { net } from 'electron'
-import Anthropic from '@anthropic-ai/sdk'
-import { getCredential } from '../security/credentials'
-import { getSetting } from '../database/repositories/settings.repo'
+import { getProvider } from '../llm/provider-factory'
 import * as companyCacheRepo from '../database/repositories/company.repo'
 import * as orgCompanyRepo from '../database/repositories/org-company.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
@@ -222,29 +220,16 @@ function cleanTitle(title: string): string {
 }
 
 async function resolveViaLLM(domain: string): Promise<string | null> {
-  const apiKey = getCredential('claudeApiKey')
-  if (!apiKey) return null
-
   try {
-    const client = new Anthropic({ apiKey })
-    const message = await client.messages.create({
-      model: getSetting('claudeEnrichmentModel') || 'claude-haiku-4-5-20251001',
-      max_tokens: 50,
-      messages: [
-        {
-          role: 'user',
-          content: `What company operates the website domain "${domain}"? Reply with only the company name, nothing else.`
-        }
-      ]
-    })
-
-    const block = message.content[0]
-    if (block.type === 'text') {
-      const name = block.text.trim()
-      // Sanity check: should be a reasonable company name
-      if (name.length >= 2 && name.length <= 100 && !name.includes('\n')) {
-        return name
-      }
+    const provider = getProvider('enrichment')
+    const name = (
+      await provider.generateSummary(
+        '',
+        `What company operates the website domain "${domain}"? Reply with only the company name, nothing else.`
+      )
+    ).trim()
+    if (name.length >= 2 && name.length <= 100 && !name.includes('\n')) {
+      return name
     }
   } catch (err) {
     console.error(`LLM company resolution failed for ${domain}:`, err)

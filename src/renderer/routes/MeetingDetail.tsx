@@ -9,7 +9,10 @@ import ChatInterface from '../components/chat/ChatInterface'
 import ConfirmDialog from '../components/common/ConfirmDialog'
 import { useChatStore } from '../stores/chat.store'
 import type { Meeting, CompanySuggestion } from '../../shared/types/meeting'
-import type { CompanyEntityType } from '../../shared/types/company'
+import type { CompanyEntityType, CompanySummary } from '../../shared/types/company'
+import type { ContactSummary } from '../../shared/types/contact'
+import { usePicker } from '../hooks/usePicker'
+import { EntityPicker } from '../components/common/EntityPicker'
 import type { MeetingTemplate } from '../../shared/types/template'
 import type { DriveShareResponse } from '../../shared/types/drive'
 import type { WebShareResponse } from '../../shared/types/web-share'
@@ -149,8 +152,13 @@ export default function MeetingDetail() {
   const [editingSpeaker, setEditingSpeaker] = useState<number | null>(null)
   const [speakerDraft, setSpeakerDraft] = useState('')
   const [localSpeakerMap, setLocalSpeakerMap] = useState<Record<number, string>>({})
+  const [speakerContactMap, setSpeakerContactMap] = useState<Record<number, string>>({})
+  const [linkingPicker, setLinkingPicker] = useState<number | null>(null)
+  const [showCompanyPicker, setShowCompanyPicker] = useState(false)
   const [isSavingSpeakers, setIsSavingSpeakers] = useState(false)
   const speakerInputRef = useRef<HTMLInputElement>(null)
+  const speakerContactPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST)
+  const companyLinkPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
   const [notesDraft, setNotesDraft] = useState('')
   const notesSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const notesDraftRef = useRef('')
@@ -172,6 +180,7 @@ export default function MeetingDetail() {
   const liveTranscript = useRecordingStore((s) => s.liveTranscript)
   const interimSegment = useRecordingStore((s) => s.interimSegment)
   const channelMode = useRecordingStore((s) => s.channelMode)
+  const autoStoppedMeetingIds = useRecordingStore((s) => s.autoStoppedMeetingIds)
   const audioCapture = useSharedAudioCapture()
   const videoCapture = useSharedVideoCapture()
   const prevRecordingRef = useRef(false)
@@ -211,6 +220,8 @@ export default function MeetingDetail() {
   const [taskProposalDialogOpen, setTaskProposalDialogOpen] = useState(false)
   const [pendingProposedTasks, setPendingProposedTasks] = useState<ProposedTask[]>([])
   const [proposedTaskSelections, setProposedTaskSelections] = useState<Record<string, boolean>>({})
+  const [editingTaskKey, setEditingTaskKey] = useState<string | null>(null)
+  const [editingTaskDraft, setEditingTaskDraft] = useState('')
   const [fieldSelections, setFieldSelections] = useState<Record<string, boolean>>({})
   const [isApplyingContactUpdates, setIsApplyingContactUpdates] = useState(false)
   const [contactEnrichError, setContactEnrichError] = useState<string | null>(null)
@@ -462,6 +473,7 @@ export default function MeetingDetail() {
     }
     setData(result)
     setLocalSpeakerMap(result.meeting.speakerMap)
+    setSpeakerContactMap(result.meeting.speakerContactMap ?? {})
     setNotesDraft(result.meeting.notes || '')
     notesDraftRef.current = result.meeting.notes || ''
     setSummaryDraft(result.summary || '')
@@ -484,7 +496,14 @@ export default function MeetingDetail() {
     // Fetch company suggestions (with logos)
     api.invoke<CompanySuggestion[]>(IPC_CHANNELS.COMPANY_GET_SUGGESTIONS, id)
       .then((suggestions) => {
-        setCompanySuggestions(suggestions)
+        const seen = new Set<string>()
+        const deduped = suggestions.filter((s) => {
+          const key = companySuggestionKey(s)
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+        setCompanySuggestions(deduped)
         const persistedSelections = suggestions.reduce<Record<string, CompanyEntityType>>(
           (acc, suggestion) => {
             if (suggestion.entityType) {
@@ -599,7 +618,7 @@ export default function MeetingDetail() {
           entityType: company.entityType || 'unknown'
         }
       )
-      navigate(`/company/${resolved.id}`)
+      navigate(`/company/${resolved.id}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
     } catch (err) {
       console.error('[MeetingDetail] Failed to open company detail:', err)
     }
@@ -1074,7 +1093,16 @@ export default function MeetingDetail() {
     setTaskProposalDialogOpen(false)
     setPendingProposedTasks([])
     setProposedTaskSelections({})
+    setEditingTaskKey(null)
   }, [])
+
+  const commitTaskEdit = useCallback(() => {
+    if (!editingTaskKey) return
+    setPendingProposedTasks((prev) =>
+      prev.map((t) => t.key === editingTaskKey ? { ...t, title: editingTaskDraft } : t)
+    )
+    setEditingTaskKey(null)
+  }, [editingTaskKey, editingTaskDraft])
 
   const selectedTaskCount = Object.values(proposedTaskSelections).filter(Boolean).length
 
@@ -1230,6 +1258,58 @@ export default function MeetingDetail() {
     }
   }, [handleSpeakerSave])
 
+  const handleLinkSpeakerContact = useCallback(async (index: number, contact: ContactSummary) => {
+    setLinkingPicker(null)
+    const prevMap = localSpeakerMap
+    const prevLinks = speakerContactMap
+    setLocalSpeakerMap({ ...localSpeakerMap, [index]: contact.fullName })
+    setSpeakerContactMap({ ...speakerContactMap, [index]: contact.id })
+    try {
+      await api.invoke(IPC_CHANNELS.MEETING_TAG_SPEAKER_CONTACT, id, index, contact.id, contact.fullName)
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to tag speaker contact:', err)
+      setLocalSpeakerMap(prevMap)
+      setSpeakerContactMap(prevLinks)
+    }
+  }, [localSpeakerMap, speakerContactMap, id])
+
+  const handleUnlinkSpeaker = useCallback(async (index: number) => {
+    const prevMap = localSpeakerMap
+    const prevLinks = speakerContactMap
+    const updatedLinks = { ...speakerContactMap }
+    delete updatedLinks[index]
+    setLocalSpeakerMap({ ...localSpeakerMap, [index]: `Speaker ${index}` })
+    setSpeakerContactMap(updatedLinks)
+    try {
+      await api.invoke(IPC_CHANNELS.MEETING_TAG_SPEAKER_CONTACT, id, index, null, null)
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to unlink speaker contact:', err)
+      setLocalSpeakerMap(prevMap)
+      setSpeakerContactMap(prevLinks)
+    }
+  }, [localSpeakerMap, speakerContactMap, id])
+
+  const handleLinkExistingCompany = useCallback(async (company: CompanySummary) => {
+    setShowCompanyPicker(false)
+    try {
+      await api.invoke(IPC_CHANNELS.MEETING_LINK_EXISTING_COMPANY, id, company.id)
+      await loadMeeting()
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to link company:', err)
+    }
+  }, [id, loadMeeting])
+
+  const handleUnlinkCompany = useCallback(async (e: React.MouseEvent, company: CompanySuggestion) => {
+    e.stopPropagation()
+    if (!company.id) return
+    try {
+      await api.invoke(IPC_CHANNELS.MEETING_UNLINK_COMPANY, id, company.id)
+      await loadMeeting()
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to unlink company:', err)
+    }
+  }, [id, loadMeeting])
+
   const handleCopyDriveLink = useCallback(async () => {
     if (!id) return
     setShareMenuOpen(false)
@@ -1376,7 +1456,7 @@ export default function MeetingDetail() {
                 >
                   Stop Meeting
                 </button>
-              ) : (!isRecording && (meeting.status === 'transcribed' || meeting.status === 'summarized')) && (
+              ) : (!isRecording && !autoStoppedMeetingIds.has(meeting.id) && (meeting.status === 'transcribed' || meeting.status === 'summarized')) && (
                 <button className={styles.recordBtn} onClick={handleContinueRecording}>
                   Continue Recording
                 </button>
@@ -1416,67 +1496,139 @@ export default function MeetingDetail() {
               <div className={styles.speakers}>
                 {speakerEntries.map(([idx, name]) => {
                   const index = Number(idx)
-                  if (editingSpeaker === index) {
+                  const linkedContactId = speakerContactMap[index]
+
+                  if (editingSpeaker === index && !linkedContactId) {
                     return (
-                      <input
-                        key={idx}
-                        ref={speakerInputRef}
-                        className={styles.speakerInput}
-                        value={speakerDraft}
-                        onChange={(e) => setSpeakerDraft(e.target.value)}
-                        onBlur={handleSpeakerSave}
-                        onKeyDown={handleSpeakerKeyDown}
-                        disabled={isSavingSpeakers}
-                      />
+                      <div key={idx} className={styles.speakerChipGroup}>
+                        <input
+                          ref={speakerInputRef}
+                          className={styles.speakerInput}
+                          value={speakerDraft}
+                          onChange={(e) => setSpeakerDraft(e.target.value)}
+                          onBlur={handleSpeakerSave}
+                          onKeyDown={handleSpeakerKeyDown}
+                          disabled={isSavingSpeakers}
+                        />
+                        <button
+                          className={styles.speakerLinkBtn}
+                          onClick={() => { setEditingSpeaker(null); setLinkingPicker(index); speakerContactPicker.search('', 0) }}
+                          title="Tag to contact"
+                        >
+                          🔗
+                        </button>
+                      </div>
                     )
                   }
+
                   return (
-                    <button
-                      key={idx}
-                      className={styles.speakerChip}
-                      onClick={() => handleSpeakerClick(index)}
-                      title="Click to rename"
-                    >
-                      {name}
-                    </button>
+                    <div key={idx} className={styles.speakerChipGroup}>
+                      {linkedContactId ? (
+                        <button
+                          className={`${styles.speakerChip} ${styles.speakerChipLinked}`}
+                          onClick={() => navigate(`/contact/${linkedContactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })}
+                          title="View contact"
+                        >
+                          {name} →
+                        </button>
+                      ) : (
+                        <button
+                          className={styles.speakerChip}
+                          onClick={() => handleSpeakerClick(index)}
+                          title="Click to rename"
+                        >
+                          {name}
+                        </button>
+                      )}
+
+                      {linkedContactId ? (
+                        <button
+                          className={styles.speakerUnlinkBtn}
+                          onClick={() => handleUnlinkSpeaker(index)}
+                          title="Unlink contact"
+                        >
+                          ×
+                        </button>
+                      ) : (
+                        <button
+                          className={styles.speakerLinkBtn}
+                          onClick={() => { setLinkingPicker(index); speakerContactPicker.search('', 0) }}
+                          title="Tag to contact"
+                        >
+                          🔗
+                        </button>
+                      )}
+
+                      {linkingPicker === index && (
+                        <EntityPicker<ContactSummary>
+                          picker={speakerContactPicker}
+                          placeholder="Search contact…"
+                          renderItem={(c) => (
+                            <>
+                              <span>{c.fullName}</span>
+                              {c.primaryCompanyName && (
+                                <span className={styles.speakerPickerSub}>{c.primaryCompanyName}</span>
+                              )}
+                            </>
+                          )}
+                          onSelect={(c) => handleLinkSpeakerContact(index, c)}
+                          onClose={() => setLinkingPicker(null)}
+                        />
+                      )}
+                    </div>
                   )
                 })}
               </div>
             )}
-            {meeting.attendees && meeting.attendees.length > 0 && (
-              <div className={styles.speakers}>
-                {meeting.attendees.map((attendee, i) => {
-                  const email = meeting.attendeeEmails?.[i]?.trim().toLowerCase() || ''
-                  const contactId = attendeeContactMap[email]
-                  return (
-                    <button
-                      key={`${attendee}-${i}`}
-                      className={styles.speakerChip}
-                      onClick={async () => {
-                        if (contactId) {
-                          navigate(`/contact/${contactId}`)
-                          return
-                        }
-                        if (!email) return
-                        try {
-                          const created = await api.invoke<{ id: string }>(
-                            IPC_CHANNELS.CONTACT_CREATE,
-                            { fullName: attendee, email }
-                          )
-                          setAttendeeContactMap((prev) => ({ ...prev, [email]: created.id }))
-                          navigate(`/contact/${created.id}`)
-                        } catch (err) {
-                          console.error('[MeetingDetail] Failed to create contact:', err)
-                        }
-                      }}
-                      title="View contact"
-                    >
-                      {attendee}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+            <div className={styles.speakers}>
+              {meeting.attendees?.map((attendee, i) => {
+                const email = meeting.attendeeEmails?.[i]?.trim().toLowerCase() || ''
+                const contactId = attendeeContactMap[email]
+                return (
+                  <button
+                    key={`${attendee}-${i}`}
+                    className={styles.speakerChip}
+                    onClick={async () => {
+                      if (contactId) {
+                        navigate(`/contact/${contactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
+                        return
+                      }
+                      if (!email) return
+                      try {
+                        const created = await api.invoke<{ id: string }>(
+                          IPC_CHANNELS.CONTACT_CREATE,
+                          { fullName: attendee, email }
+                        )
+                        setAttendeeContactMap((prev) => ({ ...prev, [email]: created.id }))
+                        navigate(`/contact/${created.id}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
+                      } catch (err) {
+                        console.error('[MeetingDetail] Failed to create contact:', err)
+                      }
+                    }}
+                    title="View contact"
+                  >
+                    {attendee}
+                  </button>
+                )
+              })}
+              {!showCompanyPicker ? (
+                <button
+                  className={styles.addCompanyBtn}
+                  onClick={() => { setShowCompanyPicker(true); companyLinkPicker.search('', 0) }}
+                >
+                  + Add Company
+                </button>
+              ) : (
+                <EntityPicker<CompanySummary>
+                  picker={companyLinkPicker}
+                  placeholder="Search company…"
+                  renderItem={(c) => c.canonicalName}
+                  onSelect={handleLinkExistingCompany}
+                  onClose={() => setShowCompanyPicker(false)}
+                />
+              )}
+            </div>
+
             {companySuggestions.length > 0 && (
               <div className={styles.companies}>
                 {companySuggestions.map((c) => {
@@ -1499,6 +1651,16 @@ export default function MeetingDetail() {
                         )}
                         {c.name}
                       </button>
+                      {c.id && (
+                        <button
+                          type="button"
+                          className={styles.companyChipRemove}
+                          onClick={(e) => void handleUnlinkCompany(e, c)}
+                          title="Remove company tag"
+                        >
+                          ×
+                        </button>
+                      )}
                       {!selectedType && (
                         <span className={styles.companyChipActions}>
                           {TAGGABLE_COMPANY_TYPES.map((entityType) => (
@@ -1779,15 +1941,43 @@ export default function MeetingDetail() {
                 {liveTranscript.length === 0 && !interimSegment && !transcript && (
                   <p className={styles.noContent}>Waiting for speech...</p>
                 )}
-                {liveTranscript.map((segment, i) => (
-                  <div key={i} className={styles.liveSegment}>
-                    <span className={styles.liveSpeaker}>Speaker {segment.speaker + 1}</span>
-                    <span>{segment.text}</span>
-                  </div>
-                ))}
+                {liveTranscript.map((segment, i) => {
+                  const speakerName = localSpeakerMap[segment.speaker] ?? `Speaker ${segment.speaker + 1}`
+                  const contactId = speakerContactMap[segment.speaker]
+                  return (
+                    <div key={i} className={styles.liveSegment}>
+                      {contactId ? (
+                        <button
+                          className={`${styles.liveSpeaker} ${styles.liveSpeakerLinked}`}
+                          onClick={() => navigate(`/contact/${contactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })}
+                          title="View contact"
+                        >
+                          {speakerName}
+                        </button>
+                      ) : (
+                        <span className={styles.liveSpeaker}>{speakerName}</span>
+                      )}
+                      <span>{segment.text}</span>
+                    </div>
+                  )
+                })}
                 {interimSegment && (
                   <div className={`${styles.liveSegment} ${styles.interim}`}>
-                    <span className={styles.liveSpeaker}>Speaker {interimSegment.speaker + 1}</span>
+                    {(() => {
+                      const speakerName = localSpeakerMap[interimSegment.speaker] ?? `Speaker ${interimSegment.speaker + 1}`
+                      const contactId = speakerContactMap[interimSegment.speaker]
+                      return contactId ? (
+                        <button
+                          className={`${styles.liveSpeaker} ${styles.liveSpeakerLinked}`}
+                          onClick={() => navigate(`/contact/${contactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })}
+                          title="View contact"
+                        >
+                          {speakerName}
+                        </button>
+                      ) : (
+                        <span className={styles.liveSpeaker}>{speakerName}</span>
+                      )
+                    })()}
                     <span>{interimSegment.text}</span>
                   </div>
                 )}
@@ -1984,7 +2174,7 @@ export default function MeetingDetail() {
             </p>
             <div className={styles.taskProposalList}>
               {pendingProposedTasks.map((task) => (
-                <label key={task.key} className={styles.taskProposalRow}>
+                <div key={task.key} className={styles.taskProposalRow}>
                   <input
                     type="checkbox"
                     checked={proposedTaskSelections[task.key] ?? true}
@@ -1996,11 +2186,31 @@ export default function MeetingDetail() {
                     }}
                     className={styles.taskProposalCheckbox}
                   />
-                  <span className={styles.taskProposalText}>{task.title}</span>
+                  {editingTaskKey === task.key ? (
+                    <input
+                      className={styles.taskProposalInput}
+                      value={editingTaskDraft}
+                      autoFocus
+                      onChange={(e) => setEditingTaskDraft(e.target.value)}
+                      onBlur={commitTaskEdit}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitTaskEdit()
+                        if (e.key === 'Escape') setEditingTaskKey(null)
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className={styles.taskProposalText}
+                      onClick={() => { setEditingTaskKey(task.key); setEditingTaskDraft(task.title) }}
+                      title="Click to edit"
+                    >
+                      {task.title}
+                    </span>
+                  )}
                   <span className={styles.taskProposalBadge}>
                     {task.category === 'action_item' ? 'Action' : task.category === 'decision' ? 'Decision' : 'Follow-up'}
                   </span>
-                </label>
+                </div>
               ))}
             </div>
             <div className={styles.taskProposalActions}>

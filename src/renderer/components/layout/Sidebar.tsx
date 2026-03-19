@@ -67,6 +67,18 @@ export default function Sidebar() {
     navigate(`/meeting/${meetingId}`)
   }, [navigate])
 
+  // Cmd+Shift+N → new note from anywhere
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'N') {
+        e.preventDefault()
+        navigate('/note/new')
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [navigate])
+
   return (
     <nav className={styles.sidebar}>
       <div className={styles.searchSection}>
@@ -113,6 +125,13 @@ export default function Sidebar() {
         >
           <span className={styles.icon}>&#9776;</span>
           Meetings
+        </NavLink>
+        <NavLink
+          to="/notes"
+          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
+        >
+          <span className={styles.icon}>&#128221;</span>
+          Notes
         </NavLink>
         <NavLink
           to="/tasks"

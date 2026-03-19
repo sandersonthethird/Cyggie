@@ -25,7 +25,7 @@ import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 import { readSummary } from '../storage/file-manager'
-import { getProvider } from '../llm/summarizer'
+import { getProvider } from '../llm/provider-factory'
 
 const companyDriveRootCache = new Map<string, string>()
 
@@ -331,9 +331,40 @@ export function registerCompanyHandlers(): void {
       const userId = getCurrentUserId()
       const db = getDatabase()
 
+      // Peel off non-column keys that require special handling
+      let remaining: Record<string, unknown> = { ...updates }
+
+      if ('industries' in remaining) {
+        try {
+          companyRepo.updateCompanyIndustries(companyId, (remaining.industries as string[] | null) ?? [])
+        } catch (err) {
+          console.error('[COMPANY_UPDATE] Failed to update industries:', err)
+        }
+        const { industries: _, ...rest } = remaining
+        remaining = rest
+      }
+      if ('coInvestorsList' in remaining) {
+        try {
+          companyRepo.setCompanyInvestors(companyId, 'co_investor', (remaining.coInvestorsList as Array<{ id: string; name: string }>) ?? [])
+        } catch (err) {
+          console.error('[COMPANY_UPDATE] Failed to update coInvestorsList:', err)
+        }
+        const { coInvestorsList: _, ...rest } = remaining
+        remaining = rest
+      }
+      if ('priorInvestorsList' in remaining) {
+        try {
+          companyRepo.setCompanyInvestors(companyId, 'prior_investor', (remaining.priorInvestorsList as Array<{ id: string; name: string }>) ?? [])
+        } catch (err) {
+          console.error('[COMPANY_UPDATE] Failed to update priorInvestorsList:', err)
+        }
+        const { priorInvestorsList: _, ...rest } = remaining
+        remaining = rest
+      }
+
       // Pre-fetch current pipeline_stage to detect changes
       let currentStage: string | null = null
-      const newStage = 'pipelineStage' in updates ? (updates.pipelineStage as string | null) : undefined
+      const newStage = 'pipelineStage' in remaining ? (remaining.pipelineStage as string | null) : undefined
 
       if (newStage !== undefined) {
         const row = db.prepare('SELECT pipeline_stage FROM org_companies WHERE id = ?').get(companyId) as
@@ -342,10 +373,10 @@ export function registerCompanyHandlers(): void {
         currentStage = row?.pipeline_stage ?? null
       }
 
-      const updated = companyRepo.updateCompany(companyId, updates || {}, userId)
+      const updated = companyRepo.updateCompany(companyId, remaining, userId)
 
       if (updated) {
-        logAudit(userId, 'company', companyId, 'update', updates || {})
+        logAudit(userId, 'company', companyId, 'update', updates)
       }
 
       // Auto-log stage changes atomically
@@ -499,6 +530,22 @@ export function registerCompanyHandlers(): void {
         contactRepo.setContactPrimaryCompany(contactId, companyId, userId)
       } catch (err) {
         console.warn('[COMPANY_SET_PRIMARY_CONTACT] Could not update contact primary company:', err)
+      }
+      return { success: true }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_CLEAR_PRIMARY_CONTACT,
+    (_event, companyId: string, contactId: string) => {
+      if (!companyId) throw new Error('companyId is required')
+      const userId = getCurrentUserId()
+      companyRepo.clearCompanyPrimaryContact(companyId)
+      // Clear the contact's primary company if it points back to this company
+      try {
+        contactRepo.setContactPrimaryCompany(contactId, null, userId)
+      } catch (err) {
+        console.warn('[COMPANY_CLEAR_PRIMARY_CONTACT] Could not clear contact primary company:', err)
       }
       return { success: true }
     }

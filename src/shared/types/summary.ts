@@ -9,9 +9,10 @@ export type CompanySummaryAutoFillField =
   | 'city'
   | 'state'
   | 'pipelineStage'
+  | 'industries'
 
 export interface CompanySummaryUpdateChange {
-  field: CompanySummaryAutoFillField
+  field: string  // CompanySummaryAutoFillField for built-in fields; 'industries' also included
   from: string | number | null
   to: string | number | null
 }
@@ -24,6 +25,7 @@ export interface CompanySummaryUpdatePayload {
   city?: string | null
   state?: string | null
   pipelineStage?: CompanyPipelineStage | null
+  industries?: string[]
   fieldSources?: string | null  // serialized JSON: { description: meetingId, round: meetingId, ... }
 }
 

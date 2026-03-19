@@ -1,15 +1,10 @@
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { getSetting } from '../database/repositories/settings.repo'
-import { getCredential } from '../security/credentials'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as contactNotesRepo from '../database/repositories/contact-notes.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { readSummary, readTranscript } from '../storage/file-manager'
-import { ClaudeProvider } from './claude-provider'
-import { OllamaProvider } from './ollama-provider'
-import type { LLMProvider } from './provider'
-import type { LlmProvider } from '../../shared/types/settings'
+import { getProvider } from './provider-factory'
 
 let contactChatAbortController: AbortController | null = null
 
@@ -18,18 +13,6 @@ export function abortContactChat(): void {
   contactChatAbortController = null
 }
 
-function getProvider(): LLMProvider {
-  const providerType = (getSetting('llmProvider') || 'claude') as LlmProvider
-  if (providerType === 'ollama') {
-    const host = getSetting('ollamaHost') || 'http://127.0.0.1:11434'
-    const model = getSetting('ollamaModel') || 'llama3.1'
-    return new OllamaProvider(model, host)
-  }
-  const apiKey = getCredential('claudeApiKey')
-  if (!apiKey) throw new Error('Claude API key not configured. Go to Settings to add it.')
-  const model = getSetting('claudeSummaryModel') || 'claude-sonnet-4-5-20250929'
-  return new ClaudeProvider(apiKey, model)
-}
 
 function sendProgress(text: string): void {
   for (const win of BrowserWindow.getAllWindows()) {

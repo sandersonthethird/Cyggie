@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { createPortal } from 'react-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 
 import { useCalendar } from '../hooks/useCalendar'
@@ -10,6 +11,7 @@ import type {
   ContactEmailOnboardingProgress
 } from '../../shared/types/contact'
 import type { UserProfile } from '../../shared/types/user'
+import type { ImportFormat } from '../../shared/types/note'
 import styles from './Settings.module.css'
 import { CustomFieldsSettings } from '../components/settings/CustomFieldsSettings'
 import { ImportModal } from '../components/settings/ImportModal'
@@ -40,6 +42,13 @@ function formatOnboardingStage(stage: ContactEmailOnboardingProgress['stage']): 
   if (stage === 'failed') return 'Failed'
   return 'Running'
 }
+
+const OPENAI_MODEL_OPTIONS = [
+  { value: 'gpt-4o', label: 'GPT-4o' },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+  { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
+]
 
 const CLAUDE_MODEL_LABELS: Record<string, string> = {
   'claude-opus-4-6': 'Claude Opus 4.6',
@@ -73,6 +82,9 @@ interface SettingsState {
   claudeEnrichmentModel: string
   ollamaHost: string
   ollamaModel: string
+  openAiApiKey: string
+  openAiSummaryModel: string
+  openAiEnrichmentModel: string
   showLiveTranscript: boolean
   defaultMaxSpeakers: string
   companyDriveRootFolder: string
@@ -83,6 +95,7 @@ interface SettingsState {
 export default function Settings() {
 
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     const tab = searchParams.get('tab')
     if (tab === 'ai' || tab === 'integrations' || tab === 'import' || tab === 'profile') return tab
@@ -97,12 +110,20 @@ export default function Settings() {
     claudeEnrichmentModel: 'claude-haiku-4-5-20251001',
     ollamaHost: 'http://127.0.0.1:11434',
     ollamaModel: 'llama3.1',
+    openAiApiKey: '',
+    openAiSummaryModel: 'gpt-4o',
+    openAiEnrichmentModel: 'gpt-4o-mini',
     showLiveTranscript: true,
     defaultMaxSpeakers: '',
     companyDriveRootFolder: '',
     companyLocalFilesRoot: '',
     autoSyncEmails: true
   })
+  const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false)
+  const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai'>('claude')
+  const [apiKeyDraft, setApiKeyDraft] = useState('')
+  const [showApiKeyDraft, setShowApiKeyDraft] = useState(false)
+  const [isSavingKey, setIsSavingKey] = useState(false)
   const [saved, setSaved] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [storagePath, setStoragePath] = useState('')
@@ -129,6 +150,15 @@ export default function Settings() {
   const [backfillRunning, setBackfillRunning] = useState(false)
   const [backfillResult, setBackfillResult] = useState<{ meetings: number; created: number; skipped: number } | null>(null)
   const [backfillError, setBackfillError] = useState('')
+  const [notesImportFormat, setNotesImportFormat] = useState<ImportFormat>('apple-notes')
+  const [notesImportRunning, setNotesImportRunning] = useState(false)
+  const [notesImportProgress, setNotesImportProgress] = useState<{ created: number; skipped: number; total: number } | null>(null)
+  const [notesImportResult, setNotesImportResult] = useState<{ created: number; skipped: number; errors: string[] } | null>(null)
+  const [notesImportError, setNotesImportError] = useState('')
+  const [notesImportScan, setNotesImportScan] = useState<{ total: number; alreadyExist: number; folders: number; folderPath: string } | null>(null)
+  const [showImportErrors, setShowImportErrors] = useState(false)
+  const [testKeyStatus, setTestKeyStatus] = useState<{ ok: boolean; message: string } | null>(null)
+  const [isTesting, setIsTesting] = useState(false)
 
   // Calendar state
   const { calendarConnected, connect, disconnect } = useCalendar()
@@ -147,7 +177,6 @@ export default function Settings() {
   const [driveFilesExpanded, setDriveFilesExpanded] = useState(false)
   const [editingThresholds, setEditingThresholds] = useState(false)
   const [editingTranscription, setEditingTranscription] = useState(false)
-  const [editingSummarization, setEditingSummarization] = useState(false)
 
   const refreshGoogleScopes = useCallback(async () => {
     const [driveScopeResult, driveFilesScopeResult, gmailConnectedResult] = await Promise.allSettled([
@@ -179,8 +208,13 @@ export default function Settings() {
             deepgramApiKey: all.deepgramApiKey || '',
             llmProvider: (all.llmProvider as LlmProvider) || 'claude',
             claudeApiKey: all.claudeApiKey || '',
+            claudeSummaryModel: all.claudeSummaryModel || 'claude-sonnet-4-5-20250929',
+            claudeEnrichmentModel: all.claudeEnrichmentModel || 'claude-haiku-4-5-20251001',
             ollamaHost: all.ollamaHost || 'http://127.0.0.1:11434',
             ollamaModel: all.ollamaModel || 'llama3.1',
+            openAiApiKey: all.openAiApiKey || '',
+            openAiSummaryModel: all.openAiSummaryModel || 'gpt-4o',
+            openAiEnrichmentModel: all.openAiEnrichmentModel || 'gpt-4o-mini',
             showLiveTranscript: all.showLiveTranscript !== 'false',
             defaultMaxSpeakers: all.defaultMaxSpeakers || '',
             companyDriveRootFolder: all.companyDriveRootFolder || '',
@@ -228,9 +262,9 @@ export default function Settings() {
     if (initialLoad) return
     const deepgramMissing = !settings.deepgramApiKey
     const claudeMissing = settings.llmProvider === 'claude' && !settings.claudeApiKey
+    const openAiMissing = settings.llmProvider === 'openai' && !settings.openAiApiKey
     if (deepgramMissing) setEditingTranscription(true)
-    if (claudeMissing) setEditingSummarization(true)
-    if ((deepgramMissing || claudeMissing) && !searchParams.get('tab')) {
+    if ((deepgramMissing || claudeMissing || openAiMissing) && !searchParams.get('tab')) {
       setActiveTab('ai')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -246,6 +280,18 @@ export default function Settings() {
     )
     return unsubscribe
   }, [])
+
+  useEffect(() => {
+    if (!apiKeyModalOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setApiKeyModalOpen(false)
+        setTestKeyStatus(null)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [apiKeyModalOpen])
 
   const saveUserProfile = useCallback(async (): Promise<boolean> => {
     setProfileError('')
@@ -301,13 +347,63 @@ export default function Settings() {
     setEditingProfile(false)
   }, [userProfile])
 
+  // Listen for import progress events from main process
+  useEffect(() => {
+    const unsub = api.on(IPC_CHANNELS.NOTES_IMPORT_PROGRESS, (progress: { created: number; skipped: number; total: number }) => {
+      setNotesImportProgress(progress)
+    })
+    return unsub
+  }, [])
+
+  const handleScanNotes = useCallback(async () => {
+    setNotesImportScan(null)
+    setNotesImportResult(null)
+    setNotesImportError('')
+    setShowImportErrors(false)
+    try {
+      const result = await api.invoke<{ total: number; alreadyExist: number; folders: number; folderPath: string }>(
+        IPC_CHANNELS.NOTES_IMPORT_SCAN,
+        notesImportFormat
+      )
+      if (result) setNotesImportScan(result)
+    } catch (err) {
+      setNotesImportError(String(err))
+    }
+  }, [notesImportFormat])
+
+  const handleImportNotes = useCallback(async () => {
+    if (!notesImportScan) return
+    setNotesImportRunning(true)
+    setNotesImportProgress(null)
+    setNotesImportResult(null)
+    setShowImportErrors(false)
+    try {
+      const result = await api.invoke<{ created: number; skipped: number; errors: string[] }>(
+        IPC_CHANNELS.NOTES_IMPORT_FOLDER,
+        notesImportScan.folderPath,
+        notesImportFormat
+      )
+      if (result) setNotesImportResult(result)
+    } catch (err) {
+      setNotesImportError(String(err))
+    } finally {
+      setNotesImportRunning(false)
+      setNotesImportScan(null)
+    }
+  }, [notesImportScan, notesImportFormat])
+
+  const handleCancelImport = useCallback(async () => {
+    await api.invoke(IPC_CHANNELS.NOTES_IMPORT_CANCEL)
+  }, [])
+
   const handleSave = useCallback(async () => {
     const savedProfile = await saveUserProfile()
     if (!savedProfile) return
 
     const entries = Object.entries(settings) as [string, string | boolean][]
     for (const [key, value] of entries) {
-      await api.invoke(IPC_CHANNELS.SETTINGS_SET, key, String(value))
+      const stored = key === 'claudeApiKey' ? String(value).trim() : String(value)
+      await api.invoke(IPC_CHANNELS.SETTINGS_SET, key, stored)
     }
     await api.invoke(
       IPC_CHANNELS.SETTINGS_SET,
@@ -327,6 +423,25 @@ export default function Settings() {
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }, [settings, saveUserProfile, staleRelationshipDays, stalledPipelineDays, passExpiryDays])
+
+  const handleTestKey = useCallback(async (provider: 'claude' | 'openai', apiKey: string): Promise<{ ok: boolean; message: string }> => {
+    setIsTesting(true)
+    setTestKeyStatus(null)
+    try {
+      const result = await api.invoke<{ ok: boolean; message: string }>(
+        IPC_CHANNELS.SETTINGS_TEST_LLM_KEY,
+        { provider, apiKey }
+      )
+      setTestKeyStatus(result)
+      return result
+    } catch (err) {
+      const r = { ok: false, message: String(err) }
+      setTestKeyStatus(r)
+      return r
+    } finally {
+      setIsTesting(false)
+    }
+  }, [])
 
   const handleOpenStorage = useCallback(async () => {
     await api.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_DIR)
@@ -434,7 +549,8 @@ export default function Settings() {
 
   const needsDeepgram = !settings.deepgramApiKey
   const needsClaude = settings.llmProvider === 'claude' && !settings.claudeApiKey
-  const needsSetup = needsDeepgram || needsClaude
+  const needsOpenAi = settings.llmProvider === 'openai' && !settings.openAiApiKey
+  const needsSetup = needsDeepgram || needsClaude || needsOpenAi
   const profileName = userDisplayName.trim()
     || [userFirstName.trim(), userLastName.trim()].filter(Boolean).join(' ')
     || 'No name set'
@@ -679,11 +795,20 @@ export default function Settings() {
                 <a href="https://console.anthropic.com/" target="_blank" rel="noreferrer">
                   console.anthropic.com
                 </a>
-                , go to Settings &gt; API Keys, and create a new key. Paste it into the Summarization section below.
+                , go to Settings &gt; API Keys, and create a new key. Click <strong>Add key</strong> in the Summarization section below.
+              </li>
+            )}
+            {needsOpenAi && (
+              <li>
+                <strong>OpenAI</strong> (AI summaries &amp; chat) — Sign up at{' '}
+                <a href="https://platform.openai.com/" target="_blank" rel="noreferrer">
+                  platform.openai.com
+                </a>
+                , go to API Keys, and create a new key. Click <strong>Add key</strong> in the Summarization section below.
               </li>
             )}
           </ol>
-          {needsClaude && (
+          {(needsClaude || needsOpenAi) && (
             <p style={{ marginTop: 8, marginBottom: 0 }}>
               Prefer a free option? Select <strong>Ollama</strong> as your LLM provider below and run models locally.
             </p>
@@ -784,121 +909,176 @@ export default function Settings() {
       </section>
 
       <section className={styles.section}>
-        <div className={styles.sectionTitleRow}>
-          <h3 className={styles.sectionTitle}>Summarization</h3>
-          {!editingSummarization && (
-            <button className={styles.linkBtn} onClick={() => setEditingSummarization(true)}>
-              Edit
-            </button>
-          )}
-        </div>
+        <h3 className={styles.sectionTitle}>Summarization</h3>
         <p className={styles.hint} style={{ marginBottom: 12 }}>
-          Generates meeting summaries, extracts action items, and powers AI chat. Also used for contact web enrichment (title and LinkedIn inference). Uses Claude (Anthropic API) or a local Ollama model.
+          Generates meeting summaries, extracts action items, and powers AI chat. Also used for contact web enrichment (title and LinkedIn inference).
         </p>
-        {editingSummarization ? (
+        <div className={styles.inlineFieldRow}>
+          <span className={styles.inlineFieldLabel}>LLM Provider</span>
+          <select
+            className={styles.inlineSelect}
+            value={settings.llmProvider}
+            onChange={async (e) => {
+              const v = e.target.value as LlmProvider
+              setSettings((prev) => ({ ...prev, llmProvider: v }))
+              await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'llmProvider', v)
+            }}
+          >
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama (Local)</option>
+          </select>
+        </div>
+
+        {settings.llmProvider === 'claude' && (
           <>
-            <div className={styles.field}>
-              <label className={styles.label}>LLM Provider</label>
+            <div className={styles.field} style={{ marginTop: 12 }}>
+              <label className={styles.label}>Claude API Key</label>
+              <div className={styles.apiKeyRow}>
+                <span className={styles.apiKeyMask}>
+                  {settings.claudeApiKey ? '••••••••' : <span style={{ color: 'var(--color-danger, #ef4444)' }}>Not configured</span>}
+                </span>
+                <button
+                  className={styles.connectBtn}
+                  onClick={() => { setApiKeyDraft(''); setTestKeyStatus(null); setShowApiKeyDraft(false); setApiKeyModalProvider('claude'); setApiKeyModalOpen(true) }}
+                >
+                  {settings.claudeApiKey ? 'Change key' : 'Add key'}
+                </button>
+                {settings.claudeApiKey && (
+                  <button
+                    className={styles.connectBtn}
+                    onClick={() => handleTestKey('claude', settings.claudeApiKey)}
+                    disabled={isTesting}
+                  >
+                    {isTesting ? 'Testing…' : 'Test key'}
+                  </button>
+                )}
+              </div>
+              {testKeyStatus && apiKeyModalProvider === 'claude' && !apiKeyModalOpen && (
+                <div style={{ marginTop: 6, fontSize: 13, color: testKeyStatus.ok ? 'var(--color-success, #16a34a)' : 'var(--color-danger, #ef4444)' }}>
+                  {testKeyStatus.ok ? `✓ ${testKeyStatus.message}` : `✗ ${testKeyStatus.message}`}
+                </div>
+              )}
+            </div>
+            <div className={styles.inlineFieldRow}>
+              <span className={styles.inlineFieldLabel}>Summary model</span>
               <select
-                className={styles.select}
-                value={settings.llmProvider}
-                onChange={(e) =>
-                  setSettings({ ...settings, llmProvider: e.target.value as LlmProvider })
-                }
+                className={styles.inlineSelect}
+                value={settings.claudeSummaryModel}
+                onChange={async (e) => {
+                  const v = e.target.value
+                  setSettings((prev) => ({ ...prev, claudeSummaryModel: v }))
+                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'claudeSummaryModel', v)
+                }}
               >
-                <option value="claude">Claude (Anthropic API)</option>
-                <option value="ollama">Ollama (Local)</option>
+                {CLAUDE_MODEL_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
             </div>
-            {settings.llmProvider === 'claude' && (
-              <>
-                <div className={styles.field}>
-                  <label className={styles.label}>Claude API Key</label>
-                  <input
-                    type="password"
-                    className={styles.input}
-                    value={settings.claudeApiKey}
-                    onChange={(e) => setSettings({ ...settings, claudeApiKey: e.target.value })}
-                    placeholder="Enter your Anthropic API key"
-                  />
-                </div>
-                <div className={styles.inlineFieldRow}>
-                  <span className={styles.inlineFieldLabel}>Summary model</span>
-                  <select
-                    className={styles.inlineSelect}
-                    value={settings.claudeSummaryModel}
-                    onChange={(e) => setSettings({ ...settings, claudeSummaryModel: e.target.value })}
-                  >
-                    {CLAUDE_MODEL_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className={styles.inlineFieldRow}>
-                  <span className={styles.inlineFieldLabel}>Enrichment model</span>
-                  <select
-                    className={styles.inlineSelect}
-                    value={settings.claudeEnrichmentModel}
-                    onChange={(e) => setSettings({ ...settings, claudeEnrichmentModel: e.target.value })}
-                  >
-                    {CLAUDE_MODEL_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </>
-            )}
-            {settings.llmProvider === 'ollama' && (
-              <>
-                <div className={styles.field}>
-                  <label className={styles.label}>Ollama Host</label>
-                  <input
-                    className={styles.input}
-                    value={settings.ollamaHost}
-                    onChange={(e) => setSettings({ ...settings, ollamaHost: e.target.value })}
-                  />
-                </div>
-                <div className={styles.field}>
-                  <label className={styles.label}>Model</label>
-                  <input
-                    className={styles.input}
-                    value={settings.ollamaModel}
-                    onChange={(e) => setSettings({ ...settings, ollamaModel: e.target.value })}
-                    placeholder="e.g., llama3.1"
-                  />
-                </div>
-              </>
-            )}
-            <div className={styles.profileEditActions}>
-              <button className={styles.connectBtn} onClick={() => setEditingSummarization(false)}>
-                Done
-              </button>
+            <div className={styles.inlineFieldRow}>
+              <span className={styles.inlineFieldLabel}>Enrichment model</span>
+              <select
+                className={styles.inlineSelect}
+                value={settings.claudeEnrichmentModel}
+                onChange={async (e) => {
+                  const v = e.target.value
+                  setSettings((prev) => ({ ...prev, claudeEnrichmentModel: v }))
+                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'claudeEnrichmentModel', v)
+                }}
+              >
+                {CLAUDE_MODEL_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
             </div>
           </>
-        ) : (
+        )}
+
+        {settings.llmProvider === 'openai' && (
           <>
-            <p className={styles.profileMeta}>
-              Provider: {settings.llmProvider === 'claude' ? 'Claude (Anthropic API)' : 'Ollama (Local)'}
-            </p>
-            {settings.llmProvider === 'claude' && (
-              <>
-                <p className={styles.profileMeta}>
-                  API key: {settings.claudeApiKey ? '••••••••' : <span style={{ color: 'var(--color-danger, #ef4444)' }}>Not configured</span>}
-                </p>
-                <p className={styles.profileMeta}>
-                  Summary model: {CLAUDE_MODEL_LABELS[settings.claudeSummaryModel] ?? settings.claudeSummaryModel}
-                </p>
-                <p className={styles.profileMeta}>
-                  Enrichment model: {CLAUDE_MODEL_LABELS[settings.claudeEnrichmentModel] ?? settings.claudeEnrichmentModel}
-                </p>
-              </>
-            )}
-            {settings.llmProvider === 'ollama' && (
-              <>
-                <p className={styles.profileMeta}>Host: {settings.ollamaHost}</p>
-                <p className={styles.profileMeta}>Model: {settings.ollamaModel || 'Not set'}</p>
-              </>
-            )}
+            <div className={styles.field} style={{ marginTop: 12 }}>
+              <label className={styles.label}>OpenAI API Key</label>
+              <div className={styles.apiKeyRow}>
+                <span className={styles.apiKeyMask}>
+                  {settings.openAiApiKey ? '••••••••' : <span style={{ color: 'var(--color-danger, #ef4444)' }}>Not configured</span>}
+                </span>
+                <button
+                  className={styles.connectBtn}
+                  onClick={() => { setApiKeyDraft(''); setTestKeyStatus(null); setShowApiKeyDraft(false); setApiKeyModalProvider('openai'); setApiKeyModalOpen(true) }}
+                >
+                  {settings.openAiApiKey ? 'Change key' : 'Add key'}
+                </button>
+                {settings.openAiApiKey && (
+                  <button
+                    className={styles.connectBtn}
+                    onClick={() => handleTestKey('openai', settings.openAiApiKey)}
+                    disabled={isTesting}
+                  >
+                    {isTesting ? 'Testing…' : 'Test key'}
+                  </button>
+                )}
+              </div>
+              {testKeyStatus && apiKeyModalProvider === 'openai' && !apiKeyModalOpen && (
+                <div style={{ marginTop: 6, fontSize: 13, color: testKeyStatus.ok ? 'var(--color-success, #16a34a)' : 'var(--color-danger, #ef4444)' }}>
+                  {testKeyStatus.ok ? `✓ ${testKeyStatus.message}` : `✗ ${testKeyStatus.message}`}
+                </div>
+              )}
+            </div>
+            <div className={styles.inlineFieldRow}>
+              <span className={styles.inlineFieldLabel}>Summary model</span>
+              <select
+                className={styles.inlineSelect}
+                value={settings.openAiSummaryModel}
+                onChange={async (e) => {
+                  const v = e.target.value
+                  setSettings((prev) => ({ ...prev, openAiSummaryModel: v }))
+                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'openAiSummaryModel', v)
+                }}
+              >
+                {OPENAI_MODEL_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.inlineFieldRow}>
+              <span className={styles.inlineFieldLabel}>Enrichment model</span>
+              <select
+                className={styles.inlineSelect}
+                value={settings.openAiEnrichmentModel}
+                onChange={async (e) => {
+                  const v = e.target.value
+                  setSettings((prev) => ({ ...prev, openAiEnrichmentModel: v }))
+                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'openAiEnrichmentModel', v)
+                }}
+              >
+                {OPENAI_MODEL_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
+
+        {settings.llmProvider === 'ollama' && (
+          <>
+            <div className={styles.field} style={{ marginTop: 12 }}>
+              <label className={styles.label}>Ollama Host</label>
+              <input
+                className={styles.input}
+                value={settings.ollamaHost}
+                onChange={(e) => setSettings({ ...settings, ollamaHost: e.target.value })}
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Model</label>
+              <input
+                className={styles.input}
+                value={settings.ollamaModel}
+                onChange={(e) => setSettings({ ...settings, ollamaModel: e.target.value })}
+                placeholder="e.g., llama3.1"
+              />
+            </div>
           </>
         )}
       </section>
@@ -1239,6 +1419,113 @@ export default function Settings() {
       </section>
 
       <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Import Notes</h3>
+        <div className={styles.field}>
+          <p className={styles.hint}>
+            Import notes from Apple Notes, Notion, or any folder of .txt / .md files.
+            Subfolders are walked recursively; duplicate notes are skipped automatically.
+          </p>
+          <div className={styles.onboardingActionRow} style={{ alignItems: 'center', gap: 8 }}>
+            <select
+              className={styles.select}
+              value={notesImportFormat}
+              onChange={e => {
+                setNotesImportFormat(e.target.value as ImportFormat)
+                setNotesImportScan(null)
+                setNotesImportResult(null)
+                setNotesImportError('')
+              }}
+              disabled={notesImportRunning}
+            >
+              <option value="apple-notes">Apple Notes</option>
+              <option value="notion">Notion</option>
+              <option value="generic">Generic (.txt / .md)</option>
+            </select>
+            <button
+              className={styles.connectBtn}
+              onClick={handleScanNotes}
+              disabled={notesImportRunning}
+            >
+              Scan Folder
+            </button>
+          </div>
+
+          {/* Scan preview */}
+          {notesImportScan && !notesImportRunning && !notesImportResult && (
+            <div style={{ marginTop: 10 }}>
+              <p className={styles.hint}>
+                Found {notesImportScan.total} note{notesImportScan.total !== 1 ? 's' : ''} in{' '}
+                {notesImportScan.folders} folder{notesImportScan.folders !== 1 ? 's' : ''}.
+                {notesImportScan.alreadyExist > 0
+                  ? ` ${notesImportScan.alreadyExist} already exist and will be skipped.`
+                  : ' None exist yet.'}
+              </p>
+              <button
+                className={styles.connectBtn}
+                onClick={handleImportNotes}
+                disabled={notesImportScan.total === 0}
+              >
+                Import {notesImportScan.total - notesImportScan.alreadyExist} note{notesImportScan.total - notesImportScan.alreadyExist !== 1 ? 's' : ''}
+              </button>
+            </div>
+          )}
+
+          {/* Live progress */}
+          {notesImportRunning && notesImportProgress && (
+            <div className={styles.onboardingActionRow} style={{ marginTop: 10, alignItems: 'center', gap: 12 }}>
+              <p className={styles.hint} style={{ margin: 0 }}>
+                Importing {notesImportProgress.created + notesImportProgress.skipped} of {notesImportProgress.total}…
+              </p>
+              <button className={styles.disconnectBtn} onClick={handleCancelImport}>
+                Cancel
+              </button>
+            </div>
+          )}
+          {notesImportRunning && !notesImportProgress && (
+            <p className={styles.hint} style={{ marginTop: 10 }}>Starting import…</p>
+          )}
+
+          {/* Result */}
+          {notesImportResult && (
+            <div style={{ marginTop: 10 }}>
+              <p className={styles.hint}>
+                Done — {notesImportResult.created} note{notesImportResult.created !== 1 ? 's' : ''} imported,{' '}
+                {notesImportResult.skipped} skipped.
+              </p>
+              {notesImportResult.errors.length > 0 && (
+                <div>
+                  <button
+                    className={styles.disconnectBtn}
+                    onClick={() => setShowImportErrors(v => !v)}
+                    style={{ fontSize: 12 }}
+                  >
+                    {notesImportResult.errors.length} error{notesImportResult.errors.length !== 1 ? 's' : ''}{' '}
+                    {showImportErrors ? '▲' : '▼'}
+                  </button>
+                  {showImportErrors && (
+                    <ul className={styles.hint} style={{ marginTop: 6, paddingLeft: 16 }}>
+                      {notesImportResult.errors.map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              <button
+                className={styles.connectBtn}
+                onClick={() => navigate('/notes')}
+                style={{ marginTop: 8 }}
+              >
+                View imported notes →
+              </button>
+            </div>
+          )}
+
+          {notesImportError && <p className={styles.error} style={{ marginTop: 10 }}>{notesImportError}</p>}
+        </div>
+      </section>
+
+      <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Import Data</h3>
         <p className={styles.hint} style={{ marginBottom: 12 }}>
           Import contacts and companies from a CSV file. Cyggie will suggest field mappings automatically.
@@ -1302,6 +1589,75 @@ export default function Settings() {
 
       {showImportModal && (
         <ImportModal onClose={() => setShowImportModal(false)} />
+      )}
+
+      {apiKeyModalOpen && createPortal(
+        <div
+          className={styles.apiKeyOverlay}
+          onClick={() => { setApiKeyModalOpen(false); setTestKeyStatus(null) }}
+        >
+          <div className={styles.apiKeyDialog} onClick={(e) => e.stopPropagation()}>
+            <h2 className={styles.apiKeyDialogTitle}>
+              {apiKeyModalProvider === 'openai' ? 'Update OpenAI API Key' : 'Update Claude API Key'}
+            </h2>
+            <div className={styles.apiKeyInputRow}>
+              <input
+                className={styles.input}
+                type={showApiKeyDraft ? 'text' : 'password'}
+                autoFocus
+                value={apiKeyDraft}
+                onChange={(e) => { setApiKeyDraft(e.target.value); setTestKeyStatus(null) }}
+                placeholder={apiKeyModalProvider === 'openai' ? 'sk-...' : 'sk-ant-api03-…'}
+              />
+              <button
+                className={styles.apiKeyToggle}
+                onClick={() => setShowApiKeyDraft((v) => !v)}
+              >
+                {showApiKeyDraft ? '🙈' : '👁'}
+              </button>
+            </div>
+            {testKeyStatus && (
+              <div style={{ marginTop: 6, fontSize: 13, color: testKeyStatus.ok ? 'var(--color-success, #16a34a)' : 'var(--color-danger, #ef4444)' }}>
+                {testKeyStatus.ok ? `✓ ${testKeyStatus.message}` : `✗ ${testKeyStatus.message}`}
+              </div>
+            )}
+            <div className={styles.apiKeyDialogActions}>
+              <button
+                className={styles.connectBtn}
+                onClick={() => handleTestKey(apiKeyModalProvider, apiKeyDraft)}
+                disabled={isTesting || !apiKeyDraft}
+              >
+                {isTesting ? 'Testing…' : 'Test key'}
+              </button>
+              <button
+                className={styles.connectBtn}
+                onClick={() => { setApiKeyModalOpen(false); setTestKeyStatus(null) }}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.saveBtn}
+                disabled={isSavingKey || !apiKeyDraft}
+                onClick={async () => {
+                  setIsSavingKey(true)
+                  const result = await handleTestKey(apiKeyModalProvider, apiKeyDraft)
+                  if (result.ok) {
+                    const settingKey = apiKeyModalProvider === 'openai' ? 'openAiApiKey' : 'claudeApiKey'
+                    const trimmed = apiKeyDraft.trim()
+                    await api.invoke(IPC_CHANNELS.SETTINGS_SET, settingKey, trimmed)
+                    setSettings((prev) => ({ ...prev, [settingKey]: trimmed }))
+                    setApiKeyModalOpen(false)
+                    setTestKeyStatus(null)
+                  }
+                  setIsSavingKey(false)
+                }}
+              >
+                {isSavingKey ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   )

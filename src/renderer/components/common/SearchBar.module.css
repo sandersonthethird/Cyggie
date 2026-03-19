@@ -242,3 +242,20 @@
   color: var(--color-text);
   border-color: var(--color-text-secondary);
 }
+
+.suggestionContext {
+  color: var(--color-text-tertiary);
+  font-size: 0.85em;
+}
+
+.suggestionFooter {
+  padding: 6px 12px;
+  font-size: 0.8em;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-top: 1px solid var(--color-border);
+}
+
+.suggestionFooter:hover {
+  color: var(--color-text);
+}

@@ -1,5 +1,5 @@
 import { net } from 'electron'
-import Anthropic from '@anthropic-ai/sdk'
+import { getProvider } from '../llm/provider-factory'
 import type {
   ContactDetail,
   ContactEnrichmentResult,
@@ -7,8 +7,6 @@ import type {
 } from '../../shared/types/contact'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as companyRepo from '../database/repositories/org-company.repo'
-import { getCredential } from '../security/credentials'
-import { getSetting } from '../database/repositories/settings.repo'
 import { enrichCompany } from './company-enrichment'
 import { extractDomainFromEmail, humanizeDomainName } from '../utils/company-extractor'
 
@@ -206,8 +204,6 @@ async function inferWithLlm(
   domain: string,
   pages: PageSnapshot[]
 ): Promise<WebContactGuess> {
-  const apiKey = getCredential('claudeApiKey')
-  if (!apiKey) return { title: null, linkedinUrl: null }
   if (pages.length === 0) return { title: null, linkedinUrl: null }
 
   const context = pages
@@ -221,30 +217,19 @@ async function inferWithLlm(
   if (!context) return { title: null, linkedinUrl: null }
 
   try {
-    const client = new Anthropic({ apiKey })
-    const response = await client.messages.create({
-      model: getSetting('claudeEnrichmentModel') || 'claude-haiku-4-5-20251001',
-      max_tokens: 300,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            'Given the website excerpts below, infer this person\'s job title and LinkedIn profile URL if clearly supported.',
-            `Person: ${contact.fullName}`,
-            `Company domain: ${domain}`,
-            'Respond with strict JSON only in this shape:',
-            '{"title": string|null, "linkedinUrl": string|null}',
-            'If uncertain, return null for that field.',
-            '',
-            context
-          ].join('\n')
-        }
-      ]
-    })
-
-    const first = response.content[0]
-    if (!first || first.type !== 'text') return { title: null, linkedinUrl: null }
-    const payload = pickValidLlmJson(first.text)
+    const provider = getProvider('enrichment')
+    const userPrompt = [
+      "Given the website excerpts below, infer this person's job title and LinkedIn profile URL if clearly supported.",
+      `Person: ${contact.fullName}`,
+      `Company domain: ${domain}`,
+      'Respond with strict JSON only in this shape:',
+      '{"title": string|null, "linkedinUrl": string|null}',
+      'If uncertain, return null for that field.',
+      '',
+      context
+    ].join('\n')
+    const responseText = await provider.generateSummary('', userPrompt)
+    const payload = pickValidLlmJson(responseText)
     if (!payload) return { title: null, linkedinUrl: null }
     const parsed = JSON.parse(payload) as { title?: unknown; linkedinUrl?: unknown }
     const title = typeof parsed.title === 'string' ? parsed.title.trim() : null

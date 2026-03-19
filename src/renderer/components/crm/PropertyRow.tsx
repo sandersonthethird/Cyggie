@@ -605,7 +605,7 @@ export function PropertyRow({
           onClick={() => openExternalUrl(url)}
           title={url}
         >
-          {url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}
+          {url.replace(/^https?:\/\//, '')}
         </a>
       )
     }

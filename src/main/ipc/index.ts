@@ -26,6 +26,7 @@ import { registerCsvImportHandlers } from './csv-import.ipc'
 import { registerUserPreferencesHandlers } from './user-preferences.ipc'
 import { registerContactChatHandlers } from './contact-chat.ipc'
 import { registerCompanyDecisionHandlers } from './company-decision.ipc'
+import { registerNotesHandlers } from './notes.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -56,4 +57,5 @@ export function registerAllHandlers(): void {
   registerUserPreferencesHandlers()
   registerContactChatHandlers()
   registerCompanyDecisionHandlers()
+  registerNotesHandlers()
 }

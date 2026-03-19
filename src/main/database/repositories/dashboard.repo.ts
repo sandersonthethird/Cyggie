@@ -241,7 +241,8 @@ const ACTIVITY_SQL_NOTE = `
     n.company_id AS company_id,
     NULL AS body_text,
     NULL AS snippet
-  FROM company_notes n
+  FROM notes n
+  WHERE n.company_id IS NOT NULL
 `
 
 function getActivityFilter(): DashboardActivityFilter {

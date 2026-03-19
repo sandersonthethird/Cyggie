@@ -555,6 +555,17 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
   return results
 }
 
+/**
+ * Sanitize user input for SQLite FTS5 MATCH queries.
+ * Strips special FTS5 chars and appends * for prefix matching.
+ * Returns null if nothing searchable remains.
+ */
+function sanitizeFtsQuery(input: string): string | null {
+  const sanitized = input.replace(/["()*^]/g, '').trim()
+  if (!sanitized) return null
+  return sanitized + '*'
+}
+
 export function getCategorizedSuggestions(prefix: string, limit = 5): CategorizedSuggestions {
   const db = getDatabase()
   const lower = prefix.toLowerCase()
@@ -781,10 +792,50 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     .sort((a, b) => a.name.localeCompare(b.name))
     .slice(0, limit)
 
+  // 4. Notes: FTS5 prefix search with inline company/contact context
+  let noteSuggestions: { id: string; label: string; context?: string }[] = []
+  const ftsQuery = sanitizeFtsQuery(prefix)
+  if (ftsQuery) {
+    try {
+      const noteRows = db
+        .prepare(`
+          SELECT nf.id, n.title, n.content,
+                 c.canonical_name AS company_name,
+                 ct.full_name AS contact_name
+          FROM notes_fts nf
+          JOIN notes n ON nf.id = n.id
+          LEFT JOIN org_companies c ON c.id = n.company_id
+          LEFT JOIN contacts ct ON ct.id = n.contact_id
+          WHERE notes_fts MATCH ?
+          ORDER BY rank
+          LIMIT ?
+        `)
+        .all(ftsQuery, limit) as {
+          id: string
+          title: string | null
+          content: string
+          company_name: string | null
+          contact_name: string | null
+        }[]
+
+      noteSuggestions = noteRows.map((n) => {
+        const raw = n.title?.trim() || n.content.replace(/\n/g, ' ').trim()
+        const label = raw
+          ? raw.length > 60 ? raw.slice(0, 60) + '…' : raw
+          : 'Untitled note'
+        const context = n.company_name ?? n.contact_name ?? undefined
+        return { id: n.id, label, context }
+      })
+    } catch {
+      // FTS5 MATCH failed (e.g. unsanitized edge case) — return no notes
+    }
+  }
+
   return {
     people: [...people].sort().slice(0, limit),
     companies: companySuggestions,
-    meetings: meetingRows
+    meetings: meetingRows,
+    notes: noteSuggestions,
   }
 }
 
@@ -959,11 +1010,12 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
         COALESCE(NULLIF(TRIM(n.title), ''), 'Note') AS title,
         substr(replace(replace(trim(n.content), char(10), ' '), char(13), ' '), 1, 320) AS snippet,
         n.updated_at AS occurred_at
-      FROM company_notes n
+      FROM notes n
       LEFT JOIN org_companies c ON c.id = n.company_id
       WHERE
-        lower(COALESCE(n.title, '')) LIKE ?
-        OR lower(COALESCE(n.content, '')) LIKE ?
+        n.company_id IS NOT NULL
+        AND (lower(COALESCE(n.title, '')) LIKE ?
+        OR lower(COALESCE(n.content, '')) LIKE ?)
       ORDER BY datetime(n.updated_at) DESC
       LIMIT ?
     `)

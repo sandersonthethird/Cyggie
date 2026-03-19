@@ -25,6 +25,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     templateId: row.template_id,
     speakerCount: row.speaker_count,
     speakerMap: JSON.parse(row.speaker_map || '{}'),
+    speakerContactMap: {},
     attendees: row.attendees ? JSON.parse(row.attendees) : null,
     attendeeEmails: row.attendee_emails ? JSON.parse(row.attendee_emails) : null,
     companies: row.companies ? JSON.parse(row.companies) : null,
@@ -309,10 +310,21 @@ export function findMeetingByCalendarEventId(calendarEventId: string): Meeting |
   return row ? rowToMeeting(row) : null
 }
 
+export function getMeetingSpeakerContactMap(meetingId: string): Record<number, string> {
+  const db = getDatabase()
+  const rows = db
+    .prepare('SELECT speaker_index, contact_id FROM meeting_speaker_contact_links WHERE meeting_id = ?')
+    .all(meetingId) as { speaker_index: number; contact_id: string }[]
+  return Object.fromEntries(rows.map((r) => [r.speaker_index, r.contact_id]))
+}
+
 export function getMeeting(id: string): Meeting | null {
   const db = getDatabase()
   const row = db.prepare('SELECT * FROM meetings WHERE id = ?').get(id) as MeetingRow | undefined
-  return row ? rowToMeeting(row) : null
+  if (!row) return null
+  const meeting = rowToMeeting(row)
+  meeting.speakerContactMap = getMeetingSpeakerContactMap(id)
+  return meeting
 }
 
 export function listMeetings(filter?: MeetingListFilter): Meeting[] {

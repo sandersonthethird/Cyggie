@@ -40,6 +40,18 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
     setLoaded(false)
   }
 
+  async function handleSetPrimary(e: React.MouseEvent, contactId: string) {
+    e.stopPropagation()
+    await api.invoke(IPC_CHANNELS.COMPANY_SET_PRIMARY_CONTACT, companyId, contactId)
+    setLoaded(false)
+  }
+
+  async function handleClearPrimary(e: React.MouseEvent, contactId: string) {
+    e.stopPropagation()
+    await api.invoke(IPC_CHANNELS.COMPANY_CLEAR_PRIMARY_CONTACT, companyId, contactId)
+    setLoaded(false)
+  }
+
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
       <div className={styles.searchRow}>
@@ -71,6 +83,23 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
           <div className={styles.meta}>
             {contact.meetingCount > 0 && (
               <span className={styles.badge}>{contact.meetingCount} mtg</span>
+            )}
+            {contact.isPrimary ? (
+              <button
+                className={styles.primaryBtn}
+                onClick={(e) => handleClearPrimary(e, contact.id)}
+                title="Remove primary"
+              >
+                Remove primary
+              </button>
+            ) : (
+              <button
+                className={styles.primaryBtn}
+                onClick={(e) => handleSetPrimary(e, contact.id)}
+                title="Make primary"
+              >
+                Make primary
+              </button>
             )}
             <button
               className={styles.removeBtn}

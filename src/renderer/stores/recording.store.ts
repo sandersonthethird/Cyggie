@@ -15,6 +15,9 @@ interface RecordingState {
   speakerCount: number
   channelMode: ChannelMode | null
   error: string | null
+  // Tracks meetings that were stopped automatically (calendar end time / silence).
+  // Hides "Continue Recording" for the session — resets on app restart.
+  autoStoppedMeetingIds: Set<string>
 
   startRecording: (meetingId: string, meetingPlatform?: string | null) => void
   stopRecording: () => void
@@ -27,6 +30,7 @@ interface RecordingState {
   setChannelMode: (mode: ChannelMode | null) => void
   setError: (error: string | null) => void
   clearTranscript: () => void
+  markAutoStopped: (meetingId: string) => void
 }
 
 export const useRecordingStore = create<RecordingState>((set) => ({
@@ -41,6 +45,7 @@ export const useRecordingStore = create<RecordingState>((set) => ({
   speakerCount: 0,
   channelMode: null,
   error: null,
+  autoStoppedMeetingIds: new Set<string>(),
 
   startRecording: (meetingId, meetingPlatform) =>
     set({
@@ -91,5 +96,10 @@ export const useRecordingStore = create<RecordingState>((set) => ({
     set({
       liveTranscript: [],
       interimSegment: null
-    })
+    }),
+
+  markAutoStopped: (meetingId) =>
+    set((state) => ({
+      autoStoppedMeetingIds: new Set([...state.autoStoppedMeetingIds, meetingId])
+    }))
 }))

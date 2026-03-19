@@ -65,6 +65,35 @@ async function processFile(file: File): Promise<PendingAttachment | null> {
   }
 }
 
+function parseChatError(errStr: string): string {
+  // Try to extract Anthropic API error message from the JSON blob
+  try {
+    const jsonMatch = errStr.match(/\{.*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0])
+      const msg: string | undefined = parsed?.error?.message
+      if (msg) {
+        if (msg.toLowerCase().includes('credit balance')) {
+          return 'Your Anthropic API credit balance is too low. Please add credits at console.anthropic.com → Billing.'
+        }
+        return msg
+      }
+    }
+  } catch {
+    // fall through to raw string handling
+  }
+  if (errStr.toLowerCase().includes('credit balance')) {
+    return 'Your Anthropic API credit balance is too low. Please add credits at console.anthropic.com → Billing.'
+  }
+  if (errStr.includes('API key not configured')) {
+    return 'Claude API key is not configured. Go to Settings to add it.'
+  }
+  if (errStr.includes('401') || errStr.toLowerCase().includes('invalid api key') || errStr.toLowerCase().includes('authentication')) {
+    return 'Invalid API key. Please check your Claude API key in Settings.'
+  }
+  return 'Something went wrong. Please try again.'
+}
+
 export default function ChatInterface({ meetingId, meetingIds, companyId, contactId, entityName, placeholder, fillHeight = false, compact = false, floating = false }: ChatInterfaceProps) {
   const contextId = companyId ? `company:${companyId}` : contactId ? `contact:${contactId}` : meetingIds ? 'search-results' : (meetingId ?? 'global')
 
@@ -264,7 +293,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
           addMessage(contextId, { role: 'assistant', content: partial })
         }
       } else {
-        setError(errStr)
+        setError(parseChatError(errStr))
       }
     } finally {
       setIsLoading(false)

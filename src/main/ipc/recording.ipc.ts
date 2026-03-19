@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, shell } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { AudioCapture } from '../audio/capture'
 import { AudioStreamManager } from '../audio/stream-manager'
@@ -17,8 +17,10 @@ import { getTranscriptsDir } from '../storage/paths'
 import { join } from 'path'
 import { RecordingAutoStop } from '../recording/auto-stop'
 import { extractCompaniesFromEmails } from '../utils/company-extractor'
-import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
-import { getCurrentUserId } from '../security/current-user'
+import { syncContactsFromAttendees, listContactsLight } from '../database/repositories/contact.repo'
+import { listCompanies } from '../database/repositories/org-company.repo'
+import { correctProperNouns } from '../utils/proper-noun-corrector'
+import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 import type { TranscriptResult } from '../deepgram/types'
 import type { TranscriptSegment } from '../../shared/types/recording'
@@ -52,6 +54,25 @@ function sendToRenderer(channel: string, data: unknown): void {
   const win = getMainWindow()
   if (win && !win.isDestroyed()) {
     win.webContents.send(channel, data)
+  }
+}
+
+async function openMeetingUrlInBrowser(url: string): Promise<void> {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return
+    // Inject authuser for Google Meet so the browser opens with the right account
+    if (parsed.hostname === 'meet.google.com') {
+      try {
+        const email = getCurrentUserProfile().email
+        if (email) parsed.searchParams.set('authuser', email)
+      } catch {
+        // Non-fatal: open without authuser if profile unavailable
+      }
+    }
+    await shell.openExternal(parsed.toString())
+  } catch (err) {
+    console.warn('[Recording] Failed to open meeting URL:', err)
   }
 }
 
@@ -212,6 +233,10 @@ export function registerRecordingHandlers(): void {
             calendarAttendees = calEvent.attendees
             calendarAttendeeEmails = calEvent.attendeeEmails
             calendarEndTime = calEvent.endTime
+            // Auto-open meeting link so the user doesn't have to navigate manually
+            if (meetingUrl) {
+              void openMeetingUrlInBrowser(meetingUrl)
+            }
           }
         } catch {
           // Calendar lookup failed, use default title
@@ -509,7 +534,22 @@ export function registerRecordingHandlers(): void {
         }
       }
 
-      const transcriptMd = transcriptAssembler.toMarkdown(speakerMap)
+      const rawTranscriptMd = transcriptAssembler.toMarkdown(speakerMap)
+
+      // Proper noun correction: fix CRM company/contact name misspellings in transcript
+      let transcriptMd = rawTranscriptMd
+      try {
+        const contactNames = listContactsLight({ limit: 200 }).map((c) => c.fullName).filter(Boolean) as string[]
+        const companyNames = listCompanies({ view: 'all' }).map((c) => c.canonicalName).filter(Boolean) as string[]
+        const crmNames = [...contactNames, ...companyNames]
+        if (crmNames.length > 0) {
+          transcriptMd = correctProperNouns(rawTranscriptMd, crmNames)
+        }
+      } catch (err) {
+        console.warn('[Recording] Proper noun correction failed, using raw transcript:', err)
+        transcriptMd = rawTranscriptMd
+      }
+
       const transcriptPath = writeTranscript(meetingId, transcriptMd, meeting?.title, meeting?.date, meeting?.attendees)
       const fullText = transcriptAssembler.getFullText()
 

@@ -531,3 +531,69 @@
     grid-template-columns: 1fr auto auto;
   }
 }
+
+/* API Key row (read-only display + buttons) */
+.apiKeyRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.apiKeyMask {
+  flex: 1;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  letter-spacing: 2px;
+}
+
+/* API Key change modal */
+.apiKeyOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.apiKeyDialog {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  padding: 24px;
+  width: 440px;
+  max-width: calc(100% - 48px);
+}
+
+.apiKeyDialogTitle {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.apiKeyInputRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.apiKeyToggle {
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-bg-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.apiKeyDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

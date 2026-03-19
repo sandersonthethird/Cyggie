@@ -2089,7 +2089,7 @@ export function getContact(contactId: string): ContactDetail | null {
     fieldSources: row.field_sources ?? null,
     noteCount: (() => {
       try {
-        const countRow = db.prepare('SELECT COUNT(*) as count FROM contact_notes WHERE contact_id = ?').get(contactId) as { count: number } | undefined
+        const countRow = db.prepare('SELECT COUNT(*) as count FROM notes WHERE contact_id = ?').get(contactId) as { count: number } | undefined
         return countRow?.count ?? 0
       } catch {
         return 0
@@ -3598,7 +3598,7 @@ export function listContactTimeline(contactId: string): ContactTimelineItem[] {
   const noteRows = db
     .prepare(`
       SELECT id, title, content, created_at, updated_at
-      FROM contact_notes
+      FROM notes
       WHERE contact_id = ?
       ORDER BY datetime(updated_at) DESC
       LIMIT 300

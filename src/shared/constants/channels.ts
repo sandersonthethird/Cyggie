@@ -4,6 +4,9 @@ export const IPC_CHANNELS = {
   MEETING_GET: 'meeting:get',
   MEETING_DELETE: 'meeting:delete',
   MEETING_UPDATE: 'meeting:update',
+  MEETING_TAG_SPEAKER_CONTACT: 'meeting:tag-speaker-contact',
+  MEETING_LINK_EXISTING_COMPANY: 'meeting:link-existing-company',
+  MEETING_UNLINK_COMPANY: 'meeting:unlink-company',
 
   // Recording
   RECORDING_START: 'recording:start',
@@ -60,6 +63,7 @@ export const IPC_CHANNELS = {
   COMPANY_TIMELINE: 'company:timeline',
   COMPANY_MEETING_SUMMARIES: 'company:meeting-summaries',
   COMPANY_SET_PRIMARY_CONTACT: 'company:set-primary-contact',
+  COMPANY_CLEAR_PRIMARY_CONTACT: 'company:clear-primary-contact',
   COMPANY_LINK_CONTACT: 'company:link-contact',
   COMPANY_UNLINK_CONTACT: 'company:unlink-contact',
 
@@ -109,6 +113,18 @@ export const IPC_CHANNELS = {
   CONTACT_NOTES_CREATE: 'contact-notes:create',
   CONTACT_NOTES_UPDATE: 'contact-notes:update',
   CONTACT_NOTES_DELETE: 'contact-notes:delete',
+
+  // Standalone notes (unified)
+  NOTES_LIST: 'notes:list',
+  NOTES_GET: 'notes:get',
+  NOTES_CREATE: 'notes:create',
+  NOTES_UPDATE: 'notes:update',
+  NOTES_DELETE: 'notes:delete',
+  NOTES_SUGGEST_TAG: 'notes:suggest-tag',
+  NOTES_IMPORT_FOLDER: 'notes:import-folder',
+  NOTES_IMPORT_SCAN: 'notes:import-scan',
+  NOTES_IMPORT_PROGRESS: 'notes:import-progress',
+  NOTES_IMPORT_CANCEL: 'notes:import-cancel',
 
   // Contact decision log
   CONTACT_DECISION_LOG_LIST: 'contact-decision-log:list',
@@ -192,6 +208,7 @@ export const IPC_CHANNELS = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_GET_ALL: 'settings:get-all',
+  SETTINGS_TEST_LLM_KEY: 'settings:test-llm-key',
   USER_GET_CURRENT: 'user:get-current',
   USER_UPDATE_CURRENT: 'user:update-current',
 

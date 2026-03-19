@@ -101,16 +101,7 @@ export interface ContactDetail extends ContactSummary {
   fieldSources: string | null
 }
 
-export interface ContactNote {
-  id: string
-  contactId: string
-  themeId: string | null
-  title: string | null
-  content: string
-  isPinned: boolean
-  createdAt: string
-  updatedAt: string
-}
+export type { Note as ContactNote } from './note'
 
 export type ContactTimelineItemType = 'meeting' | 'email' | 'note'
 

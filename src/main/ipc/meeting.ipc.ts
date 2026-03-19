@@ -11,9 +11,48 @@ import { renameFile as renameDriveFile } from '../drive/google-drive'
 import { extractCompaniesFromEmails, extractCompaniesFromAttendees } from '../utils/company-extractor'
 import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
 import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
+import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany } from '../database/repositories/org-company.repo'
+import { getDatabase } from '../database/connection'
 import type { ChatMessage, MeetingListFilter } from '../../shared/types/meeting'
 import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
+
+// Pure helpers — exported for unit testing
+export function mergeSpeakerTag(
+  speakerMap: Record<number, string>,
+  contactMap: Record<number, string>,
+  index: number,
+  contactId: string,
+  contactName: string
+): { speakerMap: Record<number, string>; contactMap: Record<number, string> } {
+  return {
+    speakerMap: { ...speakerMap, [index]: contactName },
+    contactMap: { ...contactMap, [index]: contactId }
+  }
+}
+
+export function removeSpeakerTag(
+  speakerMap: Record<number, string>,
+  contactMap: Record<number, string>,
+  index: number
+): { speakerMap: Record<number, string>; contactMap: Record<number, string> } {
+  const newContactMap = { ...contactMap }
+  delete newContactMap[index]
+  return {
+    speakerMap: { ...speakerMap, [index]: `Speaker ${index}` },
+    contactMap: newContactMap
+  }
+}
+
+export function appendCompanyIfMissing(companies: string[] | null, canonicalName: string): string[] {
+  const arr = companies ?? []
+  return arr.includes(canonicalName) ? arr : [...arr, canonicalName]
+}
+
+function removeCompanyFromList(companies: string[] | null, canonicalName: string): string[] {
+  if (!companies) return []
+  return companies.filter((n) => n.toLowerCase() !== canonicalName.toLowerCase())
+}
 
 export function registerMeetingHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.MEETING_LIST, (_event, filter?: MeetingListFilter) => {
@@ -55,6 +94,10 @@ export function registerMeetingHandlers(): void {
       if (meeting.recordingPath) deleteRecording(meeting.recordingPath)
       removeFromIndex(id)
     }
+    // Delete empty companion notes before the meeting is removed.
+    // Notes with user-written content are preserved as standalone notes (ON DELETE SET NULL).
+    const db = getDatabase()
+    db.prepare("DELETE FROM notes WHERE source_meeting_id = ? AND TRIM(content) = ''").run(id)
     const deleted = meetingRepo.deleteMeeting(id)
     if (deleted) {
       logAudit(userId, 'meeting', id, 'delete', null)
@@ -311,7 +354,11 @@ export function registerMeetingHandlers(): void {
     (_event, meetingId: string) => {
       const meeting = meetingRepo.getMeeting(meetingId)
       if (!meeting) return []
-      return getCompanySuggestionsForMeeting(meeting.attendeeEmails, meeting.companies)
+      const suggestions = getCompanySuggestionsForMeeting(meeting.attendeeEmails, meeting.companies)
+      return suggestions.map((s) => {
+        const id = findCompanyIdByNameOrDomain(s.name, s.domain) ?? undefined
+        return id ? { ...s, id } : s
+      })
     }
   )
 
@@ -397,4 +444,112 @@ export function registerMeetingHandlers(): void {
     settingsRepo.setSetting('storagePath', newPath)
     return newPath
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEETING_TAG_SPEAKER_CONTACT,
+    (
+      _event,
+      meetingId: string,
+      speakerIndex: number,
+      contactId: string | null,
+      contactName: string | null
+    ) => {
+      if (!meetingId) throw new Error('meetingId is required')
+      if (!Number.isInteger(speakerIndex) || speakerIndex < 0) throw new Error('speakerIndex must be a non-negative integer')
+      const userId = getCurrentUserId()
+      const meeting = meetingRepo.getMeeting(meetingId)
+      if (!meeting) throw new Error('Meeting not found')
+
+      const db = getDatabase()
+
+      if (contactId && contactName) {
+        // LINK: rename speaker + insert join row
+        const updatedSpeakerMap = { ...meeting.speakerMap, [speakerIndex]: contactName }
+        const updated = meetingRepo.updateMeeting(meetingId, { speakerMap: updatedSpeakerMap }, userId)
+        if (!updated) throw new Error('Failed to update meeting')
+
+        db.prepare(
+          'INSERT OR REPLACE INTO meeting_speaker_contact_links (meeting_id, speaker_index, contact_id) VALUES (?, ?, ?)'
+        ).run(meetingId, speakerIndex, contactId)
+
+        // Auto-tag companion note (first-link-wins, non-fatal)
+        try {
+          const companionNote = db
+            .prepare('SELECT id, contact_id FROM notes WHERE source_meeting_id = ? LIMIT 1')
+            .get(meetingId) as { id: string; contact_id: string | null } | undefined
+          if (companionNote && !companionNote.contact_id) {
+            db.prepare('UPDATE notes SET contact_id = ? WHERE id = ?').run(contactId, companionNote.id)
+          }
+        } catch (err) {
+          console.warn('[MeetingDetail] Failed to auto-tag companion note:', err)
+        }
+
+        logAudit(userId, 'meeting', meetingId, 'tag_speaker_contact', { speakerIndex, contactId })
+      } else {
+        // UNLINK: reset speaker name + delete join row
+        const defaultName = `Speaker ${speakerIndex}`
+        const updatedSpeakerMap = { ...meeting.speakerMap, [speakerIndex]: defaultName }
+        const updated = meetingRepo.updateMeeting(meetingId, { speakerMap: updatedSpeakerMap }, userId)
+        if (!updated) throw new Error('Failed to update meeting')
+
+        db.prepare(
+          'DELETE FROM meeting_speaker_contact_links WHERE meeting_id = ? AND speaker_index = ?'
+        ).run(meetingId, speakerIndex)
+
+        logAudit(userId, 'meeting', meetingId, 'untag_speaker_contact', { speakerIndex })
+      }
+
+      return meetingRepo.getMeeting(meetingId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEETING_LINK_EXISTING_COMPANY,
+    (_event, meetingId: string, companyId: string) => {
+      if (!meetingId) throw new Error('meetingId is required')
+      if (!companyId) throw new Error('companyId is required')
+      const userId = getCurrentUserId()
+
+      const meeting = meetingRepo.getMeeting(meetingId)
+      if (!meeting) throw new Error('Meeting not found')
+
+      const company = getCompany(companyId)
+      if (!company) throw new Error('Company not found')
+
+      linkMeetingCompany(meetingId, companyId, 1, 'manual', userId)
+
+      // Update the denormalized companies cache on the meeting row
+      const updatedCompanies = appendCompanyIfMissing(meeting.companies, company.canonicalName)
+      if (updatedCompanies !== meeting.companies) {
+        meetingRepo.updateMeeting(meetingId, { companies: updatedCompanies }, userId)
+      }
+
+      logAudit(userId, 'meeting', meetingId, 'link_company', { companyId })
+      return meetingRepo.getMeeting(meetingId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEETING_UNLINK_COMPANY,
+    (_event, meetingId: string, companyId: string) => {
+      if (!meetingId) throw new Error('meetingId is required')
+      if (!companyId) throw new Error('companyId is required')
+      const userId = getCurrentUserId()
+
+      const meeting = meetingRepo.getMeeting(meetingId)
+      if (!meeting) throw new Error('Meeting not found')
+
+      const company = getCompany(companyId)
+      if (!company) throw new Error('Company not found')
+
+      unlinkMeetingCompany(meetingId, companyId)
+
+      // Update the denormalized companies cache (mirror of MEETING_LINK_EXISTING_COMPANY)
+      const updatedCompanies = removeCompanyFromList(meeting.companies, company.canonicalName)
+      meetingRepo.updateMeeting(meetingId, { companies: updatedCompanies }, userId)
+
+      logAudit(userId, 'meeting', meetingId, 'unlink_company', { companyId })
+      return meetingRepo.getMeeting(meetingId)
+    }
+  )
 }

@@ -1,0 +1,65 @@
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  font-size: 13px;
+}
+
+.icon {
+  font-size: 15px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+.headline {
+  font-weight: 500;
+  color: #1e40af;
+  margin-bottom: 2px;
+}
+
+.reasoning {
+  color: #3b82f6;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.acceptBtn {
+  padding: 4px 12px;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.acceptBtn:hover {
+  background: #1d4ed8;
+}
+
+.dismissBtn {
+  padding: 4px 12px;
+  background: none;
+  border: 1px solid #bfdbfe;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #3b82f6;
+}
+.dismissBtn:hover {
+  background: #dbeafe;
+}

@@ -39,7 +39,7 @@ export function listCompanyNotes(companyId: string): CompanyNote[] {
         is_pinned,
         created_at,
         updated_at
-      FROM company_notes
+      FROM notes
       WHERE company_id = ?
       ORDER BY is_pinned DESC, datetime(updated_at) DESC
     `)
@@ -55,16 +55,23 @@ export function createCompanyNote(data: {
   sourceMeetingId?: string | null
 }, userId: string | null = null): CompanyNote | null {
   const db = getDatabase()
+  // Dedup: if this note was auto-generated from a meeting summary, avoid creating a duplicate
+  if (data.sourceMeetingId) {
+    const existing = db
+      .prepare(`SELECT id FROM notes WHERE source_meeting_id = ? AND company_id = ?`)
+      .get(data.sourceMeetingId, data.companyId) as { id: string } | undefined
+    if (existing) return getCompanyNote(existing.id)
+  }
   const id = randomUUID()
   const result = db.prepare(`
-    INSERT OR IGNORE INTO company_notes (
+    INSERT INTO notes (
       id, company_id, theme_id, title, content, is_pinned, source_meeting_id,
       created_by_user_id, updated_by_user_id, created_at, updated_at
     )
     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, datetime('now'), datetime('now'))
   `).run(id, data.companyId, data.themeId ?? null, data.title ?? null, data.content,
     data.sourceMeetingId ?? null, userId, userId)
-  if (result.changes === 0) return null // deduped by unique constraint
+  if (result.changes === 0) return null
   return getCompanyNote(id)!
 }
 
@@ -73,7 +80,7 @@ export function getCompanyNote(noteId: string): CompanyNote | null {
   const row = db
     .prepare(`
       SELECT id, company_id, theme_id, title, content, is_pinned, created_at, updated_at
-      FROM company_notes
+      FROM notes
       WHERE id = ?
     `)
     .get(noteId) as CompanyNoteRow | undefined
@@ -119,12 +126,12 @@ export function updateCompanyNote(
   }
   sets.push("updated_at = datetime('now')")
   params.push(noteId)
-  db.prepare(`UPDATE company_notes SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+  db.prepare(`UPDATE notes SET ${sets.join(', ')} WHERE id = ?`).run(...params)
   return getCompanyNote(noteId)
 }
 
 export function deleteCompanyNote(noteId: string): boolean {
   const db = getDatabase()
-  const result = db.prepare('DELETE FROM company_notes WHERE id = ?').run(noteId)
+  const result = db.prepare('DELETE FROM notes WHERE id = ?').run(noteId)
   return result.changes > 0
 }

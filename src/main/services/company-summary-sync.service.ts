@@ -4,7 +4,7 @@ import { resolveContactsByEmails } from '../database/repositories/contact.repo'
 import { getContact } from '../database/repositories/contact.repo'
 import { listFieldDefinitions, getFieldValuesForEntity } from '../database/repositories/custom-fields.repo'
 import { normalizeWhitespace as _normalizeWhitespace, isDifferentText as _isDifferentText, stripMarkdown as _stripMarkdown } from '../utils/summary-text-utils'
-import type { CompanyPipelineStage, CompanyRound, CompanySummary } from '../../shared/types/company'
+import type { CompanyDetail, CompanyPipelineStage, CompanyRound, CompanySummary } from '../../shared/types/company'
 import type {
   CompanySummaryUpdateChange,
   CompanySummaryUpdatePayload,
@@ -556,6 +556,7 @@ export async function getCompanyEnrichmentProposalsFromMeetings(
       '  "city": headquarters city (string or null)',
       '  "state": headquarters state abbreviation (string or null)',
       '  "pipelineStage": one of [screening, diligence, decision, documentation, pass] or null',
+      '  "industries": array of industry category tags (e.g. ["FinTech", "AI/ML"]) or null',
     ].join('\n')
 
     const customFieldNotes = customDefs.length > 0
@@ -628,6 +629,30 @@ export async function getCompanyEnrichmentProposalsFromMeetings(
     if (rawStage && validStages.includes(rawStage) && rawStage !== company.pipelineStage) {
       updates.pipelineStage = rawStage
       changes.push({ field: 'pipelineStage', from: company.pipelineStage, to: rawStage })
+    }
+
+    // Industries — LLM may return string[] or a comma-joined string; normalize to string[]
+    const rawIndustriesRaw = extracted.industries
+    const rawIndustries: string[] | null =
+      Array.isArray(rawIndustriesRaw)
+        ? (rawIndustriesRaw as unknown[]).map(String).filter(Boolean)
+        : typeof rawIndustriesRaw === 'string' && rawIndustriesRaw.trim()
+          ? rawIndustriesRaw.split(',').map((s: string) => s.trim()).filter(Boolean)
+          : null
+    if (rawIndustries && rawIndustries.length > 0) {
+      const extractedSet = new Set(rawIndustries.map((s) => s.toLowerCase()))
+      const currentSet = new Set(company.industries.map((s) => s.toLowerCase()))
+      const isDiff =
+        rawIndustries.some((i) => !currentSet.has(i.toLowerCase())) ||
+        company.industries.some((i) => !extractedSet.has(i.toLowerCase()))
+      if (isDiff) {
+        updates.industries = rawIndustries
+        changes.push({
+          field: 'industries',
+          from: company.industries.join(', ') || null,
+          to: rawIndustries.join(', ')
+        })
+      }
     }
 
     // --- Custom fields ---

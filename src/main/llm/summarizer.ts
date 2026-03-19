@@ -1,11 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import type { LLMProvider } from './provider'
-import { ClaudeProvider } from './claude-provider'
-import { OllamaProvider } from './ollama-provider'
+import { getProvider } from './provider-factory'
 import { buildPrompt } from './templates'
-import { getCredential } from '../security/credentials'
-import { getSetting } from '../database/repositories/settings.repo'
 import { getTemplate } from '../database/repositories/template.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { readTranscript, writeSummary } from '../storage/file-manager'
@@ -15,7 +11,6 @@ import { uploadSummary as uploadSummaryToDrive } from '../drive/google-drive'
 import { getSummariesDir } from '../storage/paths'
 import { join } from 'path'
 import { critiqueText } from './critique'
-import type { LlmProvider } from '../../shared/types/settings'
 import { getVcSummaryCompanyUpdateProposals } from '../services/company-summary-sync.service'
 import { extractTasksFromSummary } from '../services/task-extraction.service'
 import { getContactSummaryUpdateProposals } from '../services/contact-summary-sync.service'
@@ -34,22 +29,6 @@ export function abortSummary(): void {
   summaryAbortController = null
 }
 
-export function getProvider(): LLMProvider {
-  const providerType = (getSetting('llmProvider') || 'claude') as LlmProvider
-
-  if (providerType === 'ollama') {
-    const host = getSetting('ollamaHost') || 'http://127.0.0.1:11434'
-    const model = getSetting('ollamaModel') || 'llama3.1'
-    return new OllamaProvider(model, host)
-  }
-
-  const apiKey = getCredential('claudeApiKey')
-  if (!apiKey) {
-    throw new Error('Claude API key not configured. Go to Settings to add it.')
-  }
-  const model = getSetting('claudeSummaryModel') || 'claude-sonnet-4-5-20250929'
-  return new ClaudeProvider(apiKey, model)
-}
 
 function sendProgress(text: string): void {
   const windows = BrowserWindow.getAllWindows()

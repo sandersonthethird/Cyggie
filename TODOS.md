@@ -63,6 +63,20 @@
 
 ---
 
+## P2 — Company Fields
+
+### Source Name enrichment from meetings
+**What:** Auto-suggest `source_entity` (the person or firm who introduced a deal) from meeting attendee/invite context — e.g., "warm intro from John Smith at Sequoia" in a calendar description.
+**Why:** Source Name is currently manual-only. Meeting metadata often contains exactly this signal, making it a natural fit for the existing enrichment flow.
+**Pros:** Surfaces deal provenance without manual entry; consistent with the existing enrichment proposal UX users already know.
+**Cons:** Requires fuzzy entity resolution from free text (ambiguous company/contact matches when the name partially overlaps); medium effort; LLM may hallucinate names not in the database.
+**Context:** `source_entity_type` + `source_entity_id` columns ship in migration 056. The integration point is `company-summary-sync.service.ts` `getCompanyEnrichmentProposalsFromMeetings()`. Add `"sourceIntroducedBy": name of person or firm who introduced this deal, or null` to the LLM prompt's `builtinFields`, then fuzzy-match the returned string against contacts (`full_name`) and companies (`canonical_name`) — similar to how contact enrichment resolves company links. If exactly one match above a threshold, emit a proposal with `sourceEntityId` + `sourceEntityType`. If ambiguous, skip (don't propose).
+**Effort:** M
+**Priority:** P2
+**Depends on:** Migration 056 + company new fields PR (source_entity_type/source_entity_id columns must exist first).
+
+---
+
 ## P2 — Enrichment
 
 ### Enrichment run history
@@ -99,6 +113,34 @@
 
 ---
 
+## P1 — Layout Persistence
+
+### Cross-device layout sync
+**What:** Persist `fieldPlacements`, `addedFields`, and `sectionOrder` prefs in SQLite instead of localStorage.
+**Why:** localStorage is per-device. Two devices see different field layouts. The upcoming web version cannot use localStorage at all.
+**Pros:** Consistent UX across devices; survives reinstalls and new devices; required for the web version.
+**Cons:** Requires new DB table + IPC channels + usePreferencesStore hydration on startup; medium schema work.
+**Context:** Currently all three prefs are stored via `usePreferencesStore` which reads/writes localStorage (`cyggie:contact-added-fields`, `cyggie:contact-field-placements`, `cyggie:contact-sections-order`, and company equivalents). Migration path: new `user_layout_prefs(entity_type TEXT, pref_key TEXT, value_json TEXT, updated_at TEXT)` table. New IPC `PREFS_GET`/`PREFS_SET`. `usePreferencesStore` hydrates from DB on startup + fire-and-forget writes. Build as its own focused PR after the detail panel UX overhaul ships; plan alongside web version work.
+**Effort:** M
+**Priority:** P1
+**Depends on:** Detail panel UX overhaul PR (field-placements, added-fields, sections-order prefs).
+
+---
+
+## P3 — Layout Tools
+
+### Reset layout action
+**What:** Single "Reset to defaults" action that clears `fieldPlacements`, `addedFields`, and `sectionOrder` prefs for the current entity type.
+**Why:** After extensive layout customization, users may want a clean slate without manually undoing each change.
+**Pros:** Escape hatch for a confused layout state; very low implementation cost.
+**Cons:** No undo — user loses all customizations. Could add a confirmation dialog.
+**Context:** A `— Reset layout →` link in the `AddFieldDropdown` footer (or a button in Settings). Implementation: call `setJSON(addedFieldsKey, [])`, `setJSON(placementsKey, {})`, `setJSON(sectionOrderKey, [])` in `usePreferencesStore`. Each write triggers React re-render; panel snaps back to defaults immediately. ~15 min to implement. Start in `AddFieldDropdown.tsx` footer and `useFieldVisibility.ts` (add `resetLayout()` to returned interface).
+**Effort:** S
+**Priority:** P3
+**Depends on:** Detail panel UX overhaul PR (AddFieldDropdown, useFieldVisibility, useSectionOrder).
+
+---
+
 ## P3 — Header Panel UX
 
 ### Bulk "Add all section to header" button
@@ -110,3 +152,30 @@
 **Effort:** S
 **Depends on:** Header section unification PR (drag-to-header, Change 1).
 
+
+---
+
+## P2 — Tests
+
+### Unit tests for provider-factory + OpenAIProvider
+**What:** Tests for `getProvider()` routing (6 combinations: provider × use) and `OpenAIProvider` (key missing, streaming, abort, empty response).
+**Why:** The factory is the single point of failure for all LLM features. If routing is broken, every summarization, chat, and enrichment call silently fails or uses the wrong model.
+**Pros:** Catches regressions if new providers are added; documents expected routing behavior.
+**Cons:** Requires mocking `openai` and `@anthropic-ai/sdk` SDKs.
+**Context:** Factory at `src/main/llm/provider-factory.ts`. Provider at `src/main/llm/openai-provider.ts`. Mock both SDKs at module level; assert `new OpenAIProvider(key, model)` / `new ClaudeProvider(key, model)` / `new OllamaProvider(model, host)` are returned for each (`llmProvider` × `use`) combination. Test error thrown when key missing for claude/openai.
+**Effort:** S
+**Depends on:** OpenAI provider + factory (shipped in this change)
+
+
+---
+
+## P2 — Notes Import
+
+### Filter Notes by import source
+**What:** Add a filter pill in the Notes view to show only notes imported from a specific source (Apple Notes, Notion, generic).
+**Why:** After importing hundreds of notes, users need a way to find them quickly — especially to review or clean up the import. Without a source filter, imported notes are mixed invisibly into the full notes list.
+**Pros:** Makes import verifiable and actionable; enables "find all imported from Notion" workflows.
+**Cons:** Requires a schema change: `import_source TEXT` column on the `notes` table + a migration. The import handler already logs `importSource` in audit, but the notes table itself has no such column.
+**Context:** Import handler (`src/main/ipc/notes.ipc.ts`) sets `importSource` in `logAudit()`. To surface this in the UI: (1) add `import_source` column to `notes` table in a migration, (2) write it in `notesRepo.createNote()` when provided, (3) expose it on the `Note` type in `src/shared/types/note.ts`, (4) add a `source` filter option to `NoteFilterView` and `listNotes()`, (5) add a filter pill in `src/renderer/routes/Notes.tsx`.
+**Effort:** M
+**Depends on:** Notes import feature (this change)

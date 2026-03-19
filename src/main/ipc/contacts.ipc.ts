@@ -9,7 +9,7 @@ import {
   mergeContactEnrichmentResults
 } from '../services/contact-web-enrichment'
 import { getContactSummaryUpdateProposalsFromMeetingId } from '../services/contact-summary-sync.service'
-import { getProvider } from '../llm/summarizer'
+import { getProvider } from '../llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 import type {

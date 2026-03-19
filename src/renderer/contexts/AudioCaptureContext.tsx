@@ -69,6 +69,8 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
     const unsubAutoStop = api.on(IPC_CHANNELS.RECORDING_AUTO_STOP, async () => {
       if (!useRecordingStore.getState().isRecording) return
       console.log('[AutoStop] Received auto-stop signal, stopping recording')
+      // Capture meetingId before stopRecording() clears it
+      const meetingId = useRecordingStore.getState().meetingId
       try {
         if (videoCapture.isVideoRecording) {
           await videoCapture.stop()
@@ -76,6 +78,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
         audioCapture.stop()
         await api.invoke(IPC_CHANNELS.RECORDING_STOP)
         useRecordingStore.getState().stopRecording()
+        if (meetingId) useRecordingStore.getState().markAutoStopped(meetingId)
       } catch (err) {
         console.error('[AutoStop] Failed to stop recording:', err)
       }

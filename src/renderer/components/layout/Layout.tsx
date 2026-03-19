@@ -110,14 +110,9 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', handler)
   }, [newMenuOpen])
 
-  const handleNewNote = async () => {
+  const handleNewNote = () => {
     setNewMenuOpen(false)
-    try {
-      const meeting = await api.invoke<Meeting>(IPC_CHANNELS.MEETING_CREATE)
-      navigate(`/meeting/${meeting.id}`)
-    } catch (err) {
-      console.error('Failed to create note:', err)
-    }
+    navigate('/note/new')
   }
 
   const handleNewCompany = () => {

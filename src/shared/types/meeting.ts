@@ -27,6 +27,7 @@ export interface Meeting {
   templateId: string | null
   speakerCount: number
   speakerMap: Record<number, string>
+  speakerContactMap: Record<number, string>  // speakerIndex → contactId; populated by getMeeting, empty in listMeetings
   attendees: string[] | null  // Calendar attendees (names/emails)
   attendeeEmails: string[] | null
   companies: string[] | null
@@ -66,6 +67,7 @@ export interface AdvancedSearchParams {
 }
 
 export interface CompanySuggestion {
+  id?: string            // present when the company exists in org_companies
   name: string
   domain: string
   entityType?: CompanyEntityType | null
@@ -75,6 +77,7 @@ export interface CategorizedSuggestions {
   people: string[]
   companies: CompanySuggestion[]
   meetings: { id: string; title: string }[]
+  notes: { id: string; label: string; context?: string }[]
 }
 
 export interface AdvancedSearchResult {

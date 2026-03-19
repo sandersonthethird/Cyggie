@@ -51,6 +51,11 @@ import { runContactFieldSourcesMigration } from './migrations/048-contact-field-
 import { runCustomFieldSectionMigration } from './migrations/049-custom-field-section'
 import { runCompanyFieldSourcesMigration } from './migrations/050-company-field-sources'
 import { runContactDecisionLogsMigration } from './migrations/051-contact-decision-logs'
+import { runUnifiedNotesMigration } from './migrations/052-unified-notes'
+import { runConvertManualNotesMigration } from './migrations/053-convert-manual-notes'
+import { runNotesFts5Migration } from './migrations/054-notes-fts5'
+import { runSpeakerContactLinksMigration } from './migrations/055-speaker-contact-links'
+import { runCompanyNewFieldsMigration } from './migrations/056-company-new-fields'
 
 let db: Database.Database | null = null
 
@@ -110,6 +115,11 @@ export function getDatabase(): Database.Database {
     runCustomFieldSectionMigration(db)
     runCompanyFieldSourcesMigration(db)
     runContactDecisionLogsMigration(db)
+    runUnifiedNotesMigration(db)
+    runConvertManualNotesMigration(db)
+    runNotesFts5Migration(db)
+    runSpeakerContactLinksMigration(db)
+    runCompanyNewFieldsMigration(db)
   }
   return db
 }

@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as notesRepo from '../database/repositories/contact-notes.repo'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
+import { hydrateCompanionNote } from './note-hydration'
 
 export function registerContactNotesHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.CONTACT_NOTES_LIST, (_event, contactId: string) => {
@@ -12,7 +13,9 @@ export function registerContactNotesHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.CONTACT_NOTES_GET, (_event, noteId: string) => {
     if (!noteId) throw new Error('noteId is required')
-    return notesRepo.getContactNote(noteId)
+    const note = notesRepo.getContactNote(noteId)
+    if (!note) return null
+    return hydrateCompanionNote(note, getCurrentUserId())
   })
 
   ipcMain.handle(

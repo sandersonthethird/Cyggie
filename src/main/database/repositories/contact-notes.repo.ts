@@ -39,7 +39,7 @@ export function listContactNotes(contactId: string): ContactNote[] {
         is_pinned,
         created_at,
         updated_at
-      FROM contact_notes
+      FROM notes
       WHERE contact_id = ?
       ORDER BY is_pinned DESC, datetime(updated_at) DESC
     `)
@@ -57,14 +57,14 @@ export function createContactNote(data: {
   const db = getDatabase()
   const id = randomUUID()
   const result = db.prepare(`
-    INSERT OR IGNORE INTO contact_notes (
+    INSERT INTO notes (
       id, contact_id, theme_id, title, content, is_pinned, source_meeting_id,
       created_by_user_id, updated_by_user_id, created_at, updated_at
     )
     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, datetime('now'), datetime('now'))
   `).run(id, data.contactId, data.themeId ?? null, data.title ?? null, data.content,
     data.sourceMeetingId ?? null, userId, userId)
-  if (result.changes === 0) return null // deduped by unique constraint
+  if (result.changes === 0) return null
   return getContactNote(id)!
 }
 
@@ -73,7 +73,7 @@ export function getContactNote(noteId: string): ContactNote | null {
   const row = db
     .prepare(`
       SELECT id, contact_id, theme_id, title, content, is_pinned, created_at, updated_at
-      FROM contact_notes
+      FROM notes
       WHERE id = ?
     `)
     .get(noteId) as ContactNoteRow | undefined
@@ -119,12 +119,12 @@ export function updateContactNote(
   }
   sets.push("updated_at = datetime('now')")
   params.push(noteId)
-  db.prepare(`UPDATE contact_notes SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+  db.prepare(`UPDATE notes SET ${sets.join(', ')} WHERE id = ?`).run(...params)
   return getContactNote(noteId)
 }
 
 export function deleteContactNote(noteId: string): boolean {
   const db = getDatabase()
-  const result = db.prepare('DELETE FROM contact_notes WHERE id = ?').run(noteId)
+  const result = db.prepare('DELETE FROM notes WHERE id = ?').run(noteId)
   return result.changes > 0
 }

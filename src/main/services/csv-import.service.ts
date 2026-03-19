@@ -57,7 +57,7 @@ import type {
   FieldChange,
   CSVFileInfo
 } from '../../shared/types/csv-import'
-import { getProvider } from '../llm/summarizer'
+import { getProvider } from '../llm/provider-factory'
 import { getDatabase } from '../database/connection'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as companyRepo from '../database/repositories/org-company.repo'

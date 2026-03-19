@@ -225,6 +225,88 @@
   width: 120px;
 }
 
+.speakerChipGroup {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.speakerChipLinked {
+  color: var(--color-primary, #4f46e5);
+  border-color: var(--color-primary, #4f46e5);
+  background: color-mix(in srgb, var(--color-primary, #4f46e5) 8%, transparent);
+}
+.speakerChipLinked:hover {
+  background: var(--color-primary, #4f46e5);
+  color: white;
+  border-color: var(--color-primary, #4f46e5);
+}
+
+.speakerLinkBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px 3px;
+  font-size: 12px;
+  opacity: 0.45;
+  line-height: 1;
+  color: var(--color-text-secondary, #666);
+  border-radius: 4px;
+}
+.speakerLinkBtn:hover {
+  opacity: 1;
+  background: var(--color-bg-secondary, #f5f5f5);
+}
+
+.speakerUnlinkBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px 4px;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.5;
+  color: var(--color-text-secondary, #666);
+  border-radius: 4px;
+}
+.speakerUnlinkBtn:hover {
+  opacity: 1;
+  background: var(--color-bg-secondary, #f5f5f5);
+}
+
+.speakerPickerSub {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #888);
+}
+
+
+.addCompanyBtn {
+  background: none;
+  border: 1px dashed var(--color-border, #ccc);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.addCompanyBtn:hover {
+  border-color: var(--color-text-secondary, #888);
+  color: var(--color-text-primary, #111);
+}
+
+.liveSpeakerLinked {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  color: var(--color-primary, #4f46e5);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .companies {
   display: flex;
   flex-wrap: wrap;
@@ -260,6 +342,32 @@
 
 .companyChipMain:hover {
   color: var(--color-text);
+}
+
+.companyChipRemove {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.companyChipRemove:hover {
+  background: var(--color-danger-bg, #fee2e2);
+  color: var(--color-danger, #dc2626);
+}
+
+.companyChip:hover .companyChipRemove {
+  display: flex;
 }
 
 .companyChipActions {
@@ -1288,6 +1396,18 @@
   flex: 1;
   font-size: 13px;
   line-height: 1.4;
+  min-width: 0;
+  cursor: text;
+}
+
+.taskProposalInput {
+  flex: 1;
+  font-size: 13px;
+  border: 1px solid var(--color-primary);
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
   min-width: 0;
 }
 

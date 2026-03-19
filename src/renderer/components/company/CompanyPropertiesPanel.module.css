@@ -1,3 +1,17 @@
+.backBtn {
+  font-size: 13px;
+  color: var(--color-primary);
+  margin-bottom: 12px;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: block;
+}
+.backBtn:hover {
+  opacity: 0.7;
+}
+
 .panel {
   display: flex;
   flex-direction: column;
@@ -523,6 +537,9 @@
 /* ── Header chip drag-to-reorder ── */
 .headerChipDraggable {
   cursor: grab;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .chipDropIndicator {
@@ -615,4 +632,97 @@
 
 .renameFieldBtn:hover {
   color: var(--color-primary);
+}
+
+/* ── Section drag ── */
+.sectionDragging {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.addFieldContainer {
+  position: relative;
+}
+
+/* ── Compound field rows (investors, source name) ── */
+.propertyRow {
+  display: grid;
+  grid-template-columns: 40% 60%;
+  align-items: start;
+  min-height: 28px;
+  padding: 2px 0;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.propertyLabel {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding: 5px 6px 5px 0;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.chipInline {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  font-size: 12px;
+  color: #1e40af;
+  overflow: hidden;
+  margin: 4px 0;
+}
+
+.chipLinkBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.1s;
+}
+.chipLinkBtn:hover {
+  text-decoration-color: currentColor;
+}
+
+.chipRemoveInline {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px 2px 2px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.5;
+  color: inherit;
+}
+.chipRemoveInline:hover {
+  opacity: 1;
+}
+
+.addChipBtn {
+  background: none;
+  border: 1px dashed var(--color-border, #ccc);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+  cursor: pointer;
+  margin: 4px 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+.addChipBtn:hover {
+  border-color: var(--color-text-secondary, #888);
+  color: var(--color-text-primary, #111);
+}
+
+.chipList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 0;
 }
