@@ -1,0 +1,73 @@
+.collapsed {
+  cursor: pointer;
+  min-height: 28px;
+  padding: 4px 0;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.collapsed:hover {
+  background: var(--color-hover-bg, rgba(0,0,0,0.04));
+}
+
+.placeholder {
+  color: var(--color-text-muted, #9ca3af);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.preview {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-secondary, #374151);
+}
+
+.preview p {
+  margin: 0 0 4px;
+}
+
+.preview p:last-child {
+  margin-bottom: 0;
+}
+
+.preview ul,
+.preview ol {
+  margin: 0 0 4px;
+  padding-left: 18px;
+}
+
+.preview strong {
+  color: var(--color-text, #111827);
+}
+
+.editor {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-height: 80px;
+  background: var(--color-input-bg, #fff);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.editor :global(.ProseMirror) {
+  outline: none;
+  min-height: 60px;
+}
+
+.editor :global(.ProseMirror p) {
+  margin: 0 0 4px;
+}
+
+.editor :global(.ProseMirror ul),
+.editor :global(.ProseMirror ol) {
+  padding-left: 18px;
+}
+
+.editor :global(.ProseMirror p.is-editor-empty:first-child::before) {
+  content: attr(data-placeholder);
+  color: var(--color-text-muted, #9ca3af);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}

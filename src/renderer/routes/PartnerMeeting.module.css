@@ -1,0 +1,128 @@
+.page {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.loading,
+.errorState {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--color-text-muted);
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 24px 14px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.headerLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.weekOf {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.archivedBadge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: var(--color-badge-bg, #f3f4f6);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.exportBtn {
+  padding: 7px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-card-bg);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.exportBtn:hover:not(:disabled) {
+  background: var(--color-hover-bg);
+}
+
+.concludeBtn {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-accent, #6366f1);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.concludeBtn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.exportBtn:disabled,
+.concludeBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sections {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+/* Print layout for PDF export */
+@media print {
+  .page {
+    display: block;
+  }
+
+  .content {
+    display: block;
+  }
+
+  :global(.sidebar),
+  .headerActions,
+  :global(.addBtn),
+  :global(.removeBtn),
+  :global(.discussedBtn),
+  :global(.suggestionsPanel) {
+    display: none !important;
+  }
+}

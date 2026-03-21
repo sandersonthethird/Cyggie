@@ -8,6 +8,7 @@ interface EntityPickerProps<T extends { id: string }> {
   placeholder?: string
   onSelect: (item: T) => void
   onClose: () => void
+  onCreate?: (query: string) => void
 }
 
 export function EntityPicker<T extends { id: string }>({
@@ -15,7 +16,8 @@ export function EntityPicker<T extends { id: string }>({
   renderItem,
   placeholder = 'Search…',
   onSelect,
-  onClose
+  onClose,
+  onCreate
 }: EntityPickerProps<T>) {
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(-1)
@@ -58,6 +60,8 @@ export function EntityPicker<T extends { id: string }>({
   }, [onClose])
 
   const { results, searching } = picker
+  const hasCreate = !!onCreate && !!query.trim()
+  const totalItems = results.length + (hasCreate ? 1 : 0)
 
   return (
     <div className={styles.picker} ref={rootRef}>
@@ -69,10 +73,10 @@ export function EntityPicker<T extends { id: string }>({
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') { onClose(); return }
-          if (results.length === 0) return
+          if (totalItems === 0) return
           if (e.key === 'ArrowDown') {
             e.preventDefault()
-            setActiveIndex((i) => Math.min(i + 1, results.length - 1))
+            setActiveIndex((i) => Math.min(i + 1, totalItems - 1))
           } else if (e.key === 'ArrowUp') {
             e.preventDefault()
             setActiveIndex((i) => Math.max(i - 1, 0))
@@ -80,6 +84,8 @@ export function EntityPicker<T extends { id: string }>({
             e.preventDefault()
             if (activeIndex >= 0 && activeIndex < results.length) {
               onSelect(results[activeIndex])
+            } else if (hasCreate && activeIndex === results.length) {
+              onCreate!(query.trim())
             }
           }
         }}
@@ -87,7 +93,7 @@ export function EntityPicker<T extends { id: string }>({
       <div className={styles.dropdown} ref={dropdownRef}>
         {searching ? (
           <div className={styles.empty}>Searching…</div>
-        ) : results.length === 0 ? (
+        ) : results.length === 0 && !hasCreate ? (
           <div className={styles.empty}>No results found</div>
         ) : (
           results.map((item, i) => (
@@ -100,6 +106,15 @@ export function EntityPicker<T extends { id: string }>({
               {renderItem(item)}
             </div>
           ))
+        )}
+        {hasCreate && (
+          <div
+            className={`${styles.item} ${styles.createItem} ${activeIndex === results.length ? styles.itemActive : ''}`}
+            onMouseDown={() => onCreate!(query.trim())}
+            onMouseEnter={() => setActiveIndex(results.length)}
+          >
+            Create "{query}"
+          </div>
         )}
       </div>
     </div>

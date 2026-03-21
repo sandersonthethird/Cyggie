@@ -16,6 +16,10 @@ export function usePicker<T>(
   const [searching, setSearching] = useState(false)
   const searchIdRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Ref keeps extraParams fresh inside the memoized callback without adding
+  // it to the dependency array (which would cause a new closure each render).
+  const extraParamsRef = useRef(extraParams)
+  extraParamsRef.current = extraParams
 
   const search = useCallback(
     (query: string, delay = 250) => {
@@ -24,7 +28,7 @@ export function usePicker<T>(
         const id = ++searchIdRef.current
         setSearching(true)
         api
-          .invoke<T[]>(channel, { query: query || undefined, limit, ...extraParams })
+          .invoke<T[]>(channel, { query: query || undefined, limit, ...extraParamsRef.current })
           .then((data) => {
             if (searchIdRef.current === id) {
               setResults(data ?? [])

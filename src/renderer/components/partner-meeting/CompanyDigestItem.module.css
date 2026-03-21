@@ -1,0 +1,167 @@
+.item {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s;
+}
+
+.item.discussed {
+  opacity: 0.65;
+  border-color: var(--color-border-muted, #d1fae5);
+}
+
+.topRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nameArea {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.carryBadge {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  title: 'Carried over from last week';
+}
+
+.companyLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-accent, #6366f1);
+  cursor: pointer;
+  text-align: left;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.companyLink:hover {
+  text-decoration: underline;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.discussedBtn {
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-card-bg);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.discussedBtn:hover:not(:disabled) {
+  background: var(--color-hover-bg);
+}
+
+.discussedActive {
+  background: var(--color-success-bg, #d1fae5);
+  border-color: var(--color-success, #10b981);
+  color: var(--color-success, #059669);
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.removeBtn:hover {
+  background: var(--color-error-bg, #fef2f2);
+  color: var(--color-error, #dc2626);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionToggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-align: left;
+  font-weight: 500;
+}
+
+.sectionToggle:hover {
+  color: var(--color-text);
+}
+
+.sectionLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.statusTextarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: none;
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+
+.statusTextarea:focus {
+  outline: none;
+  border-color: var(--color-accent, #6366f1);
+}
+
+.statusText {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  min-height: 22px;
+}
+
+.statusText.clickable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+}
+
+.statusText.clickable:hover {
+  background: var(--color-hover-bg);
+}
+
+.placeholder {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
