@@ -210,6 +210,49 @@ describe('partner-meeting.repo', () => {
     })
   })
 
+  // ─── pipelineStage denormalization ────────────────────────────────────────
+
+  describe('pipelineStage in returned items', () => {
+    it('listItems includes pipelineStage when company has a stage', () => {
+      insertCompany(testDb, 'co1', { pipelineStage: 'diligence' })
+      const digest = getActiveDigest()
+      addItem(digest.id, { companyId: 'co1', section: 'new_deals' })
+      const refreshed = getActiveDigest()
+      const item = refreshed.items?.find(i => i.companyId === 'co1')
+      expect(item?.pipelineStage).toBe('diligence')
+    })
+
+    it('listItems returns pipelineStage as null when company has no stage', () => {
+      insertCompany(testDb, 'co2', { pipelineStage: null })
+      const digest = getActiveDigest()
+      addItem(digest.id, { companyId: 'co2', section: 'new_deals' })
+      const refreshed = getActiveDigest()
+      const item = refreshed.items?.find(i => i.companyId === 'co2')
+      expect(item?.pipelineStage).toBeNull()
+    })
+
+    it('addItem (company path) return value includes pipelineStage', () => {
+      insertCompany(testDb, 'co3', { pipelineStage: 'screening' })
+      const digest = getActiveDigest()
+      const item = addItem(digest.id, { companyId: 'co3', section: 'new_deals' })
+      expect(item.pipelineStage).toBe('screening')
+    })
+
+    it('addItem (admin path) return value has pipelineStage as null', () => {
+      const digest = getActiveDigest()
+      const item = addItem(digest.id, { companyId: null, section: 'admin', title: 'Agenda' })
+      expect(item.pipelineStage).toBeNull()
+    })
+
+    it('updateItem return value includes pipelineStage', () => {
+      insertCompany(testDb, 'co4', { pipelineStage: 'decision' })
+      const digest = getActiveDigest()
+      const added = addItem(digest.id, { companyId: 'co4', section: 'existing_deals' })
+      const updated = updateItem(added.id, { isDiscussed: true })
+      expect(updated?.pipelineStage).toBe('decision')
+    })
+  })
+
   // ─── deleteItem ────────────────────────────────────────────────────────────
 
   describe('deleteItem', () => {

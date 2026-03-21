@@ -12,7 +12,7 @@
  *   - ↩ carry-over badge if item.carryOver = true
  */
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { PartnerMeetingItem } from '../../../shared/types/partner-meeting'
@@ -31,6 +31,15 @@ const STAGE_LABELS: Record<string, string> = {
 
 const STAGE_OPTIONS: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
 
+// keep in sync with chipScreening/chipDiligence/etc. in CompanyPropertiesPanel.module.css
+const STAGE_COLORS: Record<string, { bg: string; color: string }> = {
+  screening:     { bg: '#dbeafe', color: '#1e40af' },
+  diligence:     { bg: '#ede9fe', color: '#4c1d95' },
+  decision:      { bg: '#ffedd5', color: '#9a3412' },
+  documentation: { bg: '#ccfbf1', color: '#0f766e' },
+  pass:          { bg: '#e5e7eb', color: '#374151' },
+}
+
 interface CompanyDigestItemProps {
   item: PartnerMeetingItem
   disabled?: boolean
@@ -40,7 +49,9 @@ interface CompanyDigestItemProps {
 
 export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }: CompanyDigestItemProps) {
   const navigate = useNavigate()
-  const [stage, setStage] = useState<string | null>(null) // null = unloaded; we don't own stage state
+  const [stage, setStage] = useState<string | null>(item.pipelineStage)
+  const [stageOpen, setStageOpen] = useState(false)
+  const stageRef = useRef<HTMLDivElement>(null)
   const [briefCollapsed, setBriefCollapsed] = useState(true)
   const [editingStatus, setEditingStatus] = useState(false)
   const [statusDraft, setStatusDraft] = useState(item.statusUpdate ?? '')
@@ -81,6 +92,33 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
       .catch(err => console.error('[CompanyDigestItem] remove failed:', err))
   }, [item.id, onRemove])
 
+  const handleStageChange = useCallback(async (newStage: CompanyPipelineStage) => {
+    if (!item.companyId) return
+    const prevStage = stage
+    setStage(newStage)       // optimistic
+    setStageOpen(false)
+    try {
+      await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, item.companyId, { pipelineStage: newStage })
+      // DecisionLog entry created automatically by company.ipc — no extra work needed
+      if (newStage === 'pass') {
+        await saveField({ section: 'passing' })  // saveField has its own try/catch
+      }
+    } catch (err) {
+      console.error('[CompanyDigestItem] stage change failed:', err)
+      setStage(prevStage)    // revert on failure
+    }
+  }, [item.companyId, stage, saveField])
+
+  // Close stage dropdown when clicking outside
+  useEffect(() => {
+    if (!stageOpen) return
+    function handleMouseDown(e: MouseEvent) {
+      if (!stageRef.current?.contains(e.target as Node)) setStageOpen(false)
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => document.removeEventListener('mousedown', handleMouseDown)
+  }, [stageOpen])
+
   return (
     <div className={`${styles.item} ${item.isDiscussed ? styles.discussed : ''}`}>
       <div className={styles.topRow}>
@@ -94,6 +132,31 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
             {item.companyName ?? 'Unknown Company'}
           </button>
         </div>
+        {item.companyId && !disabled && (
+          <div ref={stageRef} className={styles.stageChipWrap}>
+            <button
+              className={styles.stageChip}
+              style={stage ? { background: STAGE_COLORS[stage]?.bg, color: STAGE_COLORS[stage]?.color } : {}}
+              onClick={() => setStageOpen(v => !v)}
+            >
+              {STAGE_LABELS[stage ?? ''] ?? '—'}
+            </button>
+            {stageOpen && (
+              <div className={styles.stageDropdown}>
+                {STAGE_OPTIONS.map(s => (
+                  <button
+                    key={s}
+                    className={styles.stageOption}
+                    style={{ background: STAGE_COLORS[s]?.bg, color: STAGE_COLORS[s]?.color }}
+                    onClick={() => handleStageChange(s)}
+                  >
+                    {STAGE_LABELS[s]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className={styles.actions}>
           <button
             className={`${styles.discussedBtn} ${item.isDiscussed ? styles.discussedActive : ''}`}

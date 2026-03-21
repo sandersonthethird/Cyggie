@@ -47,6 +47,7 @@ interface ItemRow {
   digest_id: string
   company_id: string | null
   company_name: string | null
+  pipeline_stage: string | null
   section: string
   position: number
   title: string | null
@@ -86,6 +87,7 @@ function rowToItem(row: ItemRow): PartnerMeetingItem {
     digestId: row.digest_id,
     companyId: row.company_id,
     companyName: row.company_name,
+    pipelineStage: row.pipeline_stage ?? null,
     section: row.section as DigestSection,
     position: row.position,
     title: row.title,
@@ -294,7 +296,7 @@ function getItemsForDigest(digestId: string): PartnerMeetingItem[] {
   const db = getDatabase()
   const rows = db
     .prepare(
-      `SELECT pmi.*, oc.canonical_name AS company_name
+      `SELECT pmi.*, oc.canonical_name AS company_name, oc.pipeline_stage
        FROM partner_meeting_items pmi
        LEFT JOIN org_companies oc ON pmi.company_id = oc.id
        WHERE pmi.digest_id = ?
@@ -335,7 +337,7 @@ export function addItem(digestId: string, input: AddToSyncInput): PartnerMeeting
     // Return the upserted row (id may differ if it was an update)
     const row = db
       .prepare(
-        `SELECT pmi.*, oc.canonical_name AS company_name
+        `SELECT pmi.*, oc.canonical_name AS company_name, oc.pipeline_stage
          FROM partner_meeting_items pmi
          LEFT JOIN org_companies oc ON pmi.company_id = oc.id
          WHERE pmi.digest_id = ? AND pmi.company_id = ?`,
@@ -352,7 +354,7 @@ export function addItem(digestId: string, input: AddToSyncInput): PartnerMeeting
     ).run(id, digestId, position, input.title ?? null, now, now)
     const row = db
       .prepare(
-        `SELECT pmi.*, NULL AS company_name
+        `SELECT pmi.*, NULL AS company_name, NULL AS pipeline_stage
          FROM partner_meeting_items pmi
          WHERE pmi.id = ?`,
       )
@@ -380,7 +382,7 @@ export function updateItem(itemId: string, input: UpdateItemInput): PartnerMeeti
 
   const row = db
     .prepare(
-      `SELECT pmi.*, oc.canonical_name AS company_name
+      `SELECT pmi.*, oc.canonical_name AS company_name, oc.pipeline_stage
        FROM partner_meeting_items pmi
        LEFT JOIN org_companies oc ON pmi.company_id = oc.id
        WHERE pmi.id = ?`,

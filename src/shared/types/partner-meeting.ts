@@ -32,6 +32,7 @@ export interface PartnerMeetingItem {
   digestId: string
   companyId: string | null          // null for admin items
   companyName: string | null        // denormalized from JOIN
+  pipelineStage: string | null      // denormalized from org_companies JOIN; null for admin items
   section: DigestSection
   position: number
   title: string | null              // admin items only

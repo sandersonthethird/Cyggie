@@ -41,6 +41,8 @@ export function DigestItemNotes({ content, placeholder = 'Click to add notes…'
   const [draft, setDraft] = useState(content ?? '')
   const containerRef = useRef<HTMLDivElement>(null)
   const debouncedDraft = useDebounce(draft, 800)
+  const draftRef = useRef(draft)
+  draftRef.current = draft  // always current — avoids stale closure in onCreate
 
   // Sync content changes from parent (e.g., carry-over load) into local draft
   useEffect(() => {
@@ -66,8 +68,13 @@ export function DigestItemNotes({ content, placeholder = 'Click to add notes…'
         Markdown,
         Link.configure({ openOnClick: false }),
       ],
-      content: draft,
+      content: null,           // set via onCreate so @tiptap/markdown parses properly
       editable: !disabled,
+      onCreate: ({ editor: e }) => {
+        if (draftRef.current) {
+          e.commands.setContent(draftRef.current)
+        }
+      },
       onUpdate: ({ editor: e }) => {
         const md = e.storage.markdown?.getMarkdown?.() ?? e.getText()
         setDraft(md)

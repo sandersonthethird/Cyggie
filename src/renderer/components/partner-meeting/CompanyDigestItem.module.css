@@ -165,3 +165,55 @@
   color: var(--color-text-muted);
   font-style: italic;
 }
+
+/* ── Stage chip + dropdown ─────────────────────────────────────────────────── */
+
+.stageChipWrap {
+  position: relative;
+}
+
+.stageChip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 500;
+  background: var(--color-hover-bg);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.stageChip:hover {
+  filter: brightness(0.95);
+}
+
+.stageDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  min-width: 120px;
+}
+
+.stageOption {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 500;
+}
+
+.stageOption:hover {
+  filter: brightness(0.92);
+}

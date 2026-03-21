@@ -40,6 +40,19 @@
   color: var(--color-text, #111827);
 }
 
+.preview h1,
+.preview h2,
+.preview h3 {
+  font-size: 13px;       /* match body text — AI briefs use ## headers */
+  font-weight: 600;
+  margin: 6px 0 2px;
+  color: var(--color-text, #111827);
+}
+
+.preview li {
+  margin-bottom: 2px;
+}
+
 .editor {
   border: 1px solid var(--color-border, #e5e7eb);
   border-radius: 6px;
