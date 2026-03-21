@@ -56,6 +56,9 @@ import { runConvertManualNotesMigration } from './migrations/053-convert-manual-
 import { runNotesFts5Migration } from './migrations/054-notes-fts5'
 import { runSpeakerContactLinksMigration } from './migrations/055-speaker-contact-links'
 import { runCompanyNewFieldsMigration } from './migrations/056-company-new-fields'
+import { runNotesFolderPathMigration } from './migrations/057-notes-folder-path'
+import { runNoteFoldersMigration } from './migrations/058-note-folders'
+import { runPartnerMeetingMigration } from './migrations/059-partner-meeting'
 
 let db: Database.Database | null = null
 
@@ -120,6 +123,9 @@ export function getDatabase(): Database.Database {
     runNotesFts5Migration(db)
     runSpeakerContactLinksMigration(db)
     runCompanyNewFieldsMigration(db)
+    runNotesFolderPathMigration(db)
+    runNoteFoldersMigration(db)
+    runPartnerMeetingMigration(db)
   }
   return db
 }

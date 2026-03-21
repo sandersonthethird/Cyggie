@@ -7,6 +7,7 @@ export const IPC_CHANNELS = {
   MEETING_TAG_SPEAKER_CONTACT: 'meeting:tag-speaker-contact',
   MEETING_LINK_EXISTING_COMPANY: 'meeting:link-existing-company',
   MEETING_UNLINK_COMPANY: 'meeting:unlink-company',
+  MEETING_SWAP_COMPANY: 'meeting:swap-company',
 
   // Recording
   RECORDING_START: 'recording:start',
@@ -52,9 +53,11 @@ export const IPC_CHANNELS = {
   COMPANY_DEDUP_APPLY: 'company:dedup-apply',
   COMPANY_DELETE: 'company:delete',
   COMPANY_TAG_FROM_MEETING: 'company:tag-from-meeting',
+  COMPANY_FIND_OR_CREATE: 'company:find-or-create',
   COMPANY_MEETINGS: 'company:meetings',
   COMPANY_CONTACTS: 'company:contacts',
   COMPANY_EMAILS: 'company:emails',
+  COMPANY_FIX_CONCATENATED_NAMES: 'company:fix-concatenated-names',
   COMPANY_EMAIL_INGEST: 'company:email-ingest',
   COMPANY_EMAIL_INGEST_PROGRESS: 'company:email-ingest:progress',
   COMPANY_EMAIL_INGEST_CANCEL: 'company:email-ingest:cancel',
@@ -125,6 +128,12 @@ export const IPC_CHANNELS = {
   NOTES_IMPORT_SCAN: 'notes:import-scan',
   NOTES_IMPORT_PROGRESS: 'notes:import-progress',
   NOTES_IMPORT_CANCEL: 'notes:import-cancel',
+  NOTES_LIST_FOLDERS: 'notes:list-folders',
+  NOTES_LIST_IMPORT_SOURCES: 'notes:list-import-sources',
+  NOTES_FOLDER_TAG_SUGGESTION: 'notes:folder-tag-suggestion',
+  NOTES_FOLDER_CREATE: 'notes:folder-create',
+  NOTES_FOLDER_RENAME: 'notes:folder-rename',
+  NOTES_FOLDER_DELETE: 'notes:folder-delete',
 
   // Contact decision log
   CONTACT_DECISION_LOG_LIST: 'contact-decision-log:list',
@@ -278,6 +287,19 @@ export const IPC_CHANNELS = {
 
   // Company on-demand enrichment (batched — one LLM call for all meetings)
   COMPANY_ENRICH_FROM_MEETINGS: 'company:enrich-from-meetings',
+
+  // Partner Meeting Digest
+  PARTNER_MEETING_GET_ACTIVE: 'partner-meeting:get-active',
+  PARTNER_MEETING_GET: 'partner-meeting:get',
+  PARTNER_MEETING_LIST: 'partner-meeting:list',
+  PARTNER_MEETING_CONCLUDE: 'partner-meeting:conclude',
+  PARTNER_MEETING_EXPORT_PDF: 'partner-meeting:export-pdf',
+  PARTNER_MEETING_ITEM_ADD: 'partner-meeting:item-add',
+  PARTNER_MEETING_ITEM_UPDATE: 'partner-meeting:item-update',
+  PARTNER_MEETING_ITEM_DELETE: 'partner-meeting:item-delete',
+  PARTNER_MEETING_GET_SUGGESTIONS: 'partner-meeting:get-suggestions',
+  PARTNER_MEETING_DISMISS_SUGGESTION: 'partner-meeting:dismiss-suggestion',
+  PARTNER_MEETING_GENERATE_BRIEF: 'partner-meeting:generate-brief',
 
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',
