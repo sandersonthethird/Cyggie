@@ -3,7 +3,9 @@ import { existsSync } from 'fs'
 import { readdir, stat } from 'fs/promises'
 import { join, extname, basename, resolve as resolvePath } from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
+import { normalizeToken } from '../utils/string-utils'
 import * as companyRepo from '../database/repositories/org-company.repo'
+import { upsert as upsertCompanyCache } from '../database/repositories/company.repo'
 import * as contactRepo from '../database/repositories/contact.repo'
 import { createCompanyDecisionLog } from '../database/repositories/company-decision-log.repo'
 import { getDatabase } from '../database/connection'
@@ -29,14 +31,7 @@ import { getProvider } from '../llm/provider-factory'
 
 const companyDriveRootCache = new Map<string, string>()
 
-/**
- * Normalize a value for fuzzy folder matching — same approach as
- * `normalizeLookupValue` in google-drive.ts: lowercase, strip non-alphanumeric.
- */
-function normalizeName(value: string | null | undefined): string {
-  if (!value) return ''
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
-}
+// normalizeName is now normalizeToken from string-utils (same logic, shared)
 
 /**
  * Build lookup keys from company name + optional domain, mirroring
@@ -44,13 +39,13 @@ function normalizeName(value: string | null | undefined): string {
  */
 function buildLookupKeys(companyName: string, primaryDomain?: string | null): string[] {
   const keys = new Set<string>()
-  const normalizedName = normalizeName(companyName)
+  const normalizedName = normalizeToken(companyName)
   if (normalizedName) keys.add(normalizedName)
 
-  const normalizedDomain = normalizeName(primaryDomain)
+  const normalizedDomain = normalizeToken(primaryDomain)
   if (normalizedDomain) {
     keys.add(normalizedDomain)
-    const domainBase = normalizeName((primaryDomain || '').split('.')[0] || '')
+    const domainBase = normalizeToken((primaryDomain || '').split('.')[0] || '')
     if (domainBase) keys.add(domainBase)
   }
 
@@ -122,7 +117,7 @@ async function scanCompanyRoot(
         const fullPath = join(dir, entry.name)
 
         if (entry.isDirectory()) {
-          const normalized = normalizeName(entry.name)
+          const normalized = normalizeToken(entry.name)
           if (normalized) {
             // Exact normalized folder match
             if (!exactFolderMatch && lookupKeys.includes(normalized)) {
@@ -145,7 +140,7 @@ async function scanCompanyRoot(
           }
         } else {
           // Check file name against lookup keys
-          const normalizedFileName = normalizeName(entry.name.replace(/\.[^.]+$/, ''))
+          const normalizedFileName = normalizeToken(entry.name.replace(/\.[^.]+$/, ''))
           if (!normalizedFileName) continue
 
           const matches = lookupKeys.some((key) => hasFuzzyKeyOverlap(normalizedFileName, key))
@@ -377,6 +372,14 @@ export function registerCompanyHandlers(): void {
 
       if (updated) {
         logAudit(userId, 'company', companyId, 'update', updates)
+
+        // Sync email-domain cache when canonical name changes, so meeting chips update.
+        if ('canonicalName' in updates) {
+          const newName = (updates.canonicalName as string)?.trim()
+          if (newName && updated.primaryDomain) {
+            upsertCompanyCache(updated.primaryDomain, newName)
+          }
+        }
       }
 
       // Auto-log stage changes atomically
@@ -462,6 +465,15 @@ export function registerCompanyHandlers(): void {
     })
     return { success: true }
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_FIND_OR_CREATE,
+    (_event, companyName: string) => {
+      if (!companyName?.trim()) throw new Error('companyName is required')
+      const userId = getCurrentUserId()
+      return companyRepo.getOrCreateCompanyByName(companyName.trim(), userId)
+    }
+  )
 
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_TAG_FROM_MEETING,
@@ -695,6 +707,15 @@ export function registerCompanyHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.EMAIL_GET, (_event, messageId: string) => {
     if (!messageId) throw new Error('messageId is required')
     return companyRepo.getCompanyEmailById(messageId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_FIX_CONCATENATED_NAMES, () => {
+    try {
+      const userId = getCurrentUserId()
+      return companyRepo.fixConcatenatedCompanyNames(userId)
+    } catch (err) {
+      throw new Error(`Failed to fix company names: ${String(err)}`)
+    }
   })
 
   ipcMain.handle(

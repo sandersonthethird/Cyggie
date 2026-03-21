@@ -160,6 +160,7 @@ export function CompanyPropertiesPanel({
   const [editDecisionId, setEditDecisionId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [nameError, setNameError] = useState<string | null>(null)
   const [createFieldOpen, setCreateFieldOpen] = useState(false)
   const [createFieldSection, setCreateFieldSection] = useState<string | undefined>(undefined)
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
@@ -325,10 +326,11 @@ export function CompanyPropertiesPanel({
     }
   }
 
-  // Sync name draft when entering edit mode
+  // Sync name draft when entering edit mode; clear any prior error
   useEffect(() => {
     if (isEditing) {
       setNameDraft(company.canonicalName)
+      setNameError(null)
       setTimeout(() => nameInputRef.current?.focus(), 0)
     }
   }, [isEditing, company.canonicalName])
@@ -393,10 +395,22 @@ export function CompanyPropertiesPanel({
     }).catch(console.error)
   }
 
-  function handleDone() {
+  async function handleDone() {
     const trimmed = nameDraft.trim()
+    setNameError(null)
     if (trimmed && trimmed !== company.canonicalName) {
-      save('canonicalName', trimmed).catch(console.error)
+      try {
+        await save('canonicalName', trimmed)
+      } catch (err: unknown) {
+        console.error('[CompanyPropertiesPanel] Failed to save name:', err)
+        const msg = err instanceof Error ? err.message : String(err)
+        setNameError(
+          msg.toLowerCase().includes('unique') || msg.toLowerCase().includes('constraint')
+            ? 'A company with a similar name already exists.'
+            : 'Failed to save name. Please try again.'
+        )
+        return  // keep editing open so user can fix or cancel
+      }
     }
     // Clean up any explicitly-added empty fields from the addedFields pref
     const emptyKeys = fieldVisibility.addedFields.filter(key => {
@@ -785,13 +799,16 @@ export function CompanyPropertiesPanel({
         )}
         <div className={styles.headerMeta}>
           {isEditing ? (
-            <input
-              ref={nameInputRef}
-              className={styles.nameInput}
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-              onKeyDown={handleNameKeyDown}
-            />
+            <>
+              <input
+                ref={nameInputRef}
+                className={styles.nameInput}
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+              />
+              {nameError && <div className={styles.nameError}>{nameError}</div>}
+            </>
           ) : (
             <div className={styles.companyName}>{company.canonicalName}</div>
           )}

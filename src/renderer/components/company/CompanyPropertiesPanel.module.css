@@ -72,6 +72,13 @@
   line-height: 1.3;
 }
 
+.nameError {
+  font-size: 11px;
+  color: var(--color-danger, #e53e3e);
+  margin-top: -4px;
+  margin-bottom: 4px;
+}
+
 .headerBadges {
   display: flex;
   flex-direction: column;

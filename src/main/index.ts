@@ -6,14 +6,15 @@ import { initMain as initAudioLoopback } from 'electron-audio-loopback'
 import { createTray } from './tray'
 import { getDatabase } from './database/connection'
 import { registerAllHandlers } from './ipc'
-import { initializeStorage, setStoragePath, getRecordingsDir } from './storage/paths'
+import { initializeStorage, setStoragePath, getRecordingsDir, getStoragePath } from './storage/paths'
 import * as settingsRepo from './database/repositories/settings.repo'
 import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from './database/repositories/meeting.repo'
 import { cleanupOrphanedTempFiles } from './video/video-writer'
 import { getCurrentUserId } from './security/current-user'
 
-// Register media:// as a privileged scheme so the renderer can load local
-// video files through it (file:// is blocked by cross-origin restrictions).
+// Register privileged schemes before app.whenReady:
+//   media:// — local video files (cross-origin blocked on file://)
+//   asset:// — extracted note images (base64 images saved to disk during import)
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'media',
@@ -24,6 +25,15 @@ protocol.registerSchemesAsPrivileged([
       supportFetchAPI: true,
       corsEnabled: true,
       bypassCSP: true
+    }
+  },
+  {
+    scheme: 'asset',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
     }
   }
 ])
@@ -274,6 +284,30 @@ app.whenReady().then(() => {
         'Content-Length': String(fileSize)
       })
     })
+  })
+
+  // Handle asset:// protocol — serve extracted note images from {storagePath}/note-assets/
+  // Security: path traversal validation ensures requests stay inside the note-assets directory.
+  protocol.handle('asset', (request) => {
+    const url = new URL(request.url)
+    const relativePath = decodeURIComponent(url.host + url.pathname)
+    const allowedDir = normalize(join(getStoragePath(), 'note-assets') + '/')
+    const resolved = normalize(join(getStoragePath(), relativePath))
+    if (!resolved.startsWith(allowedDir)) {
+      return new Response('Forbidden', { status: 403 })
+    }
+    if (!existsSync(resolved)) {
+      return new Response('Not Found', { status: 404 })
+    }
+    const ext = extname(resolved).toLowerCase().slice(1)
+    const mimeMap: Record<string, string> = {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+      gif: 'image/gif', webp: 'image/webp'
+    }
+    const contentType = mimeMap[ext] ?? 'application/octet-stream'
+    const stream = createReadStream(resolved)
+    const body = Readable.toWeb(stream) as unknown as BodyInit
+    return new Response(body, { status: 200, headers: { 'Content-Type': contentType } })
   })
 
   // Register IPC handlers
