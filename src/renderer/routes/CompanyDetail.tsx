@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { CompanyDetail as CompanyDetailType, CompanyMeetingRef } from '../../shared/types/company'
 import type { CompanySummaryUpdateProposal } from '../../shared/types/summary'
@@ -26,6 +27,7 @@ export default function CompanyDetail() {
   const [activeTab, setActiveTab] = useState<CompanyTab>('timeline')
   const [timelineKey, setTimelineKey] = useState(0)
   const { leftWidth, dividerProps } = usePanelResize({ defaultWidth: 360 })
+  const [addToSyncOpen, setAddToSyncOpen] = useState(false)
 
   // Meetings (for enrichment)
   const [companyMeetings, setCompanyMeetings] = useState<CompanyMeetingRef[]>([])
@@ -302,6 +304,14 @@ export default function CompanyDetail() {
               )}
             </button>
           ))}
+          <div className={styles.tabBarSpacer} />
+          <button
+            className={styles.addToSyncBtn}
+            onClick={() => setAddToSyncOpen(true)}
+            title="Add to next Partner Sync"
+          >
+            + Partner Sync
+          </button>
         </div>
 
         {/* All tabs always mounted (CSS hide/show) to preserve CompanyMemo draft state */}
@@ -326,6 +336,13 @@ export default function CompanyDetail() {
           </div>
         </div>
       </div>
+
+      {addToSyncOpen && (
+        <AddToSyncModal
+          company={company}
+          onClose={() => setAddToSyncOpen(false)}
+        />
+      )}
 
       {enrichDialogOpen && enrichProposal && (
         <EnrichmentProposalDialog

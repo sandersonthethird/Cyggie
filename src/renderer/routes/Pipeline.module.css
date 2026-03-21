@@ -452,6 +452,30 @@
   text-decoration: underline;
 }
 
+.addToSyncBtn {
+  display: none;
+  margin-left: 6px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--color-accent, #6366f1);
+  border-radius: 4px;
+  background: none;
+  color: var(--color-accent, #6366f1);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.addToSyncBtn:hover {
+  background: var(--color-accent, #6366f1);
+  color: #fff;
+}
+
+/* Show on row hover */
+tr:hover .addToSyncBtn {
+  display: inline-block;
+}
+
 .chatSection {
   position: sticky;
   bottom: 0;

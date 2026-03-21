@@ -171,11 +171,119 @@
 
 ## P2 — Notes Import
 
-### Filter Notes by import source
-**What:** Add a filter pill in the Notes view to show only notes imported from a specific source (Apple Notes, Notion, generic).
+### Filter Notes by import source (filter pill UI)
+**What:** Add a dedicated filter pill in the Notes view to show only notes imported from a specific source (Apple Notes, Notion, generic).
 **Why:** After importing hundreds of notes, users need a way to find them quickly — especially to review or clean up the import. Without a source filter, imported notes are mixed invisibly into the full notes list.
 **Pros:** Makes import verifiable and actionable; enables "find all imported from Notion" workflows.
-**Cons:** Requires a schema change: `import_source TEXT` column on the `notes` table + a migration. The import handler already logs `importSource` in audit, but the notes table itself has no such column.
-**Context:** Import handler (`src/main/ipc/notes.ipc.ts`) sets `importSource` in `logAudit()`. To surface this in the UI: (1) add `import_source` column to `notes` table in a migration, (2) write it in `notesRepo.createNote()` when provided, (3) expose it on the `Note` type in `src/shared/types/note.ts`, (4) add a `source` filter option to `NoteFilterView` and `listNotes()`, (5) add a filter pill in `src/renderer/routes/Notes.tsx`.
+**Cons:** Low complexity — the hard parts (schema, type, IPC) are already done. Remaining work is a UI filter pill only.
+**Context:** Schema is complete: `import_source TEXT` column exists (migration 057), `Note` type exposes `importSource`, `createNote` writes it. The `FolderSidebar` already renders import sources as chips (visible when import sources exist). The remaining work is: expose this as a filter option in the filter pill row in Notes.tsx (or integrate into the sidebar chips more prominently). ~1 hour of UI work.
+**Effort:** S
+**Depends on:** Nothing — schema and backend are already in place.
+
+
+---
+
+## P2 — Notes
+
+### Enable `onCreate` in Notes.tsx bulk-tag company picker
+**What:** Pass `onCreate={handleCreateBulkCompany}` to the `EntityPicker` in the Notes.tsx bulk-tag flow so users can create a new company inline while tagging notes.
+**Why:** Users bulk-tagging notes to a newly-created company currently have to navigate to the Companies view to create it first, then return to Notes to tag — two round-trips for what should be a single action.
+**Pros:** Makes bulk-tagging self-contained; reuses `COMPANY_FIND_OR_CREATE` IPC and `EntityPicker.onCreate` added in the company-swap PR.
+**Cons:** Minimal — async `handleCreateBulkCompany` callback mirrors `NoteTagger.handleCreateCompany` verbatim.
+**Context:** Notes bulk-tag picker is in `src/renderer/routes/Notes.tsx` around the company `EntityPicker` usage. Add `handleCreateBulkCompany` async callback (`api.invoke(COMPANY_FIND_OR_CREATE, name)` → set selected company), pass as `onCreate`. Pattern is identical to `NoteTagger.tsx` — see `src/renderer/components/notes/NoteTagger.tsx:42-55` for reference.
+**Effort:** S
+**Depends on:** Company swap PR (`COMPANY_FIND_OR_CREATE` IPC + `EntityPicker.onCreate`)
+
+---
+
+## P3 — Refactoring
+
+### Centralize parseTimestamp / SQLITE_DATETIME_RE
+**What:** Extract `parseTimestamp`, `pickLatestTimestamp`, `setLatestMapValue`, and `SQLITE_DATETIME_RE` into a shared utility (e.g. `src/main/utils/db-utils.ts`) and remove the duplicates from `contact-utils.ts` and `org-company.repo.ts`.
+**Why:** Two identical implementations exist — any bug fix or change would need to be applied twice.
+**Pros:** Single source of truth; ~20 lines saved.
+**Cons:** Another import to add to two already-large files.
+**Context:** `parseTimestamp` + `SQLITE_DATETIME_RE` live in `src/main/database/repositories/contact-utils.ts` (exported) and `src/main/database/repositories/org-company.repo.ts` (local copy). Both are identical. Extraction is zero-risk — pure functions with no side effects. `setLatestMapValue` and `pickLatestTimestamp` are only in contact-utils.ts currently. Create `src/main/utils/db-utils.ts`, re-export from `contact-utils.ts` for backward compat.
+**Effort:** S
+**Priority:** P3
+**Depends on:** contact-utils.ts extraction (this PR).
+
+---
+
+### Centralize parseJsonArray / parseEmailParticipants
+**What:** Consolidate `parseJsonArray` and `parseEmailParticipants` into a shared utility module — they currently have slightly different implementations across `contact-utils.ts`, `meeting.repo.ts`, and `org-company.repo.ts`.
+**Why:** Signature drift between copies means bug fixes in one copy don't propagate; the email participant shape is defined three times.
+**Pros:** Unified parsing; easier to test once; easier to extend the participant role set.
+**Cons:** Signatures differ (e.g. the meeting.repo.ts version may handle extra fields) — needs careful reconciliation to avoid behavior changes.
+**Context:** `parseJsonArray` is in `contact-utils.ts` and used by multiple repos. `parseEmailParticipants` has variants in `contact-utils.ts` and likely in `meeting.repo.ts` / `org-company.repo.ts`. Audit all three before merging — reconcile the allowed `role` set and the `contactId` field presence. Put the canonical version in `src/main/utils/db-utils.ts` (alongside `parseTimestamp`).
+**Effort:** S
+**Priority:** P3
+**Depends on:** parseTimestamp centralization above.
+
+---
+
+### IPC validation/audit boilerplate reduction
+**What:** Extract the repeated `if (!param) throw new Error('X is required')` + `logAudit(userId, ...)` pattern from all IPC handler files into a small set of helpers.
+**Why:** 70+ occurrences of the same validation + audit logging pattern across all IPC files — any change to the audit schema or error format touches every file.
+**Pros:** One change propagates everywhere; handlers shrink to pure business logic.
+**Cons:** Adds indirection; cross-cutting change touches all IPC files; deserves its own focused PR with a test pass.
+**Context:** Every IPC handler has `const userId = getCurrentUserId()`, optional param checks, and `logAudit(userId, type, id, action, payload)`. A helper like `withUserId((userId, ...args) => { ... })` could wrap the userId retrieval. A `requireParam(value, 'name')` helper could replace the guard. Start by inventorying all patterns in `src/main/ipc/` — there are ~12 IPC files. Audit helper in `src/main/ipc/ipc-helpers.ts`.
 **Effort:** M
-**Depends on:** Notes import feature (this change)
+**Priority:** P3
+**Depends on:** notes-ipc-base.ts (this PR — establishes the factory pattern as a precedent).
+
+---
+
+### Frontend PropertyBadge / section header atoms
+**What:** Extract the inline badge and section header JSX shared between `ContactPropertiesPanel.tsx` and `CompanyPropertiesPanel.tsx` into shared `<PropertyBadge>` and `<SectionHeader>` components.
+**Why:** ~30 lines of near-identical badge + header JSX duplicated in both panels — any visual change must be made twice.
+**Pros:** Single edit for badge/header style changes; panels shrink by ~60 lines total.
+**Cons:** Wait for panels to stabilize (active development); premature extraction risks churn if the UX is still changing.
+**Context:** Both panels render entity-type badges (e.g. "Investor", "Startup") and collapsible section headers with the same markup and CSS class patterns. After the enrichment proposals UX settles, extract to `src/renderer/components/crm/PropertyBadge.tsx` and `SectionHeader.tsx`. Reference: `ContactPropertiesPanel.tsx` around the badge render and section header render; `CompanyPropertiesPanel.tsx` has matching patterns.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Enrichment proposals UX to stabilize first.
+
+
+---
+
+## P2 — NoteTagger
+
+### Create error UX in NoteTagger
+**What:** Show user-visible feedback when contact or company creation fails in the note tagger.
+**Why:** Both `handleCreateContact` and `handleCreateCompany` in `NoteTagger.tsx` currently `console.error` only — if the IPC call throws (e.g. DB locked, empty name), the user sees nothing and the picker just closes.
+**Pros:** Eliminates silent failure; user knows to retry.
+**Cons:** No shared toast/notification pattern exists yet — a one-off inline error would be inconsistent with future patterns.
+**Context:** Both handlers in `src/renderer/components/notes/NoteTagger.tsx` have `catch (err) { console.error(...) }` blocks. The right fix is to add an error state (`const [createError, setCreateError] = useState<string | null>(null)`) rendered below the picker input. Should follow whatever global notification/toast pattern is adopted first; otherwise an inline approach works as a stopgap.
+**Effort:** S (inline approach) / M (shared notification pattern)
+**Priority:** P2
+**Depends on:** Global notification/toast pattern (or accept inline approach as stopgap).
+
+
+---
+
+## P2 — Partner Meeting: Drag-and-drop item reordering
+
+### Drag-and-drop item reordering within digest sections
+**What:** Allow partners to drag items within sections in the Partner Sync digest view.
+**Why:** Partners want to set discussion priority within a section (e.g. put the most important New Deal first).
+**Pros:** Better meeting prep UX; `partner_meeting_items.position` is already REAL (fractional indexing) so the schema supports it without migration.
+**Cons:** DnD adds interaction complexity; needs a DnD library (same one as Pipeline kanban is the reference).
+**Context:** `partner_meeting_items.position` is a REAL column supporting fractional indexing: insert between a and b = (a+b)/2. If positions get too close (delta < 0.001), renumber the section. `PARTNER_MEETING_ITEM_UPDATE` already accepts `position` field. Start in `src/renderer/components/partner-meeting/DigestSection.tsx`. Use the same DnD library as Pipeline kanban (`src/renderer/routes/Pipeline.tsx`) for consistency.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Partner Meeting feature (this PR).
+
+---
+
+## P2 — Partner Meeting: Multi-user digest conflict handling
+
+### Last-write-wins conflict resolution for concurrent digest edits
+**What:** When two partners edit the same digest item simultaneously, the last save silently wins. Before multi-user lands, partners need to coordinate out-of-band.
+**Why:** Multi-user support is on the roadmap. The current implementation has no version/etag on `partner_meeting_items` so concurrent edits will silently overwrite each other.
+**Pros:** Prevents data loss for distributed partner teams; sets up the foundation for real-time collaboration.
+**Cons:** Optimistic locking (S effort) requires an `updated_at` check before every write; CRDT/field-level merging (L effort) requires significant architecture work.
+**Context:** `partner_meeting_items` has `updated_at` but no version counter. The write path is `updateItem()` in `src/main/database/repositories/partner-meeting.repo.ts`. When multi-user lands: add `expected_updated_at` parameter to `updateItem()`, check `WHERE id = ? AND updated_at = ?`, throw if 0 rows affected (conflict), surface conflict toast in `DigestItemNotes.tsx` and `CompanyDigestItem.tsx`. CRDT approach: adopt field-level merging (last-field-write-wins per key).
+**Effort:** S (optimistic lock + conflict toast) / L (CRDT field merging)
+**Priority:** P2
+**Depends on:** Multi-user auth system (not yet started).

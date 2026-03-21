@@ -15,6 +15,7 @@ import NoteDetail from './routes/NoteDetail'
 import LiveRecording from './routes/LiveRecording'
 import Templates from './routes/Templates'
 import Settings from './routes/Settings'
+import PartnerMeeting from './routes/PartnerMeeting'
 import { useCalendar } from './hooks/useCalendar'
 import { useRecordingStore } from './stores/recording.store'
 import { usePreferencesStore } from './stores/preferences.store'
@@ -56,17 +57,23 @@ function NotificationListener() {
 
   useEffect(() => {
     const unsub = api.on('notification:start-recording', async (payload: unknown) => {
-      if (isRecordingRef.current) return
+      if (isRecordingRef.current) {
+        const activeMeetingId = useRecordingStore.getState().meetingId
+        if (activeMeetingId) navigate(`/meeting/${activeMeetingId}`)
+        return
+      }
 
       const { title, calendarEventId } = (payload as { title: string; calendarEventId?: string; meetingUrl?: string }) ?? {}
 
       try {
-        const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
+        const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null; alreadyRecording?: boolean }>(
           IPC_CHANNELS.RECORDING_START,
           title,
           calendarEventId
         )
-        startRecording(result.meetingId, result.meetingPlatform)
+        if (!result.alreadyRecording) {
+          startRecording(result.meetingId, result.meetingPlatform)
+        }
         navigate(`/meeting/${result.meetingId}`)
       } catch (err) {
         // Show a visible alert since there's no UI context here
@@ -104,6 +111,7 @@ export default function App() {
             <Route path="/contact/:contactId" element={<ContactDetail />} />
             <Route path="/templates" element={<Templates />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/partner-meeting" element={<PartnerMeeting />} />
           </Route>
         </Routes>
       </AudioCaptureProvider>

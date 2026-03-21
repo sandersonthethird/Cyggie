@@ -8,6 +8,7 @@ import type {
   CompanyPriority,
   CompanyRound
 } from '../../shared/types/company'
+import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
 import ChatInterface from '../components/chat/ChatInterface'
 import MultiSelectFilter from '../components/common/MultiSelectFilter'
 import { DecisionLogModal } from '../components/crm/DecisionLogModal'
@@ -225,6 +226,7 @@ export default function Pipeline() {
   const [passExpiryDays, setPassExpiryDays] = useState(DEFAULT_PASS_EXPIRY_DAYS)
   const [dragCompanyId, setDragCompanyId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [addToSyncCompany, setAddToSyncCompany] = useState<CompanySummary | null>(null)
   const [createName, setCreateName] = useState('')
   const [createDomain, setCreateDomain] = useState('')
   const [createDescription, setCreateDescription] = useState('')
@@ -639,6 +641,13 @@ export default function Pipeline() {
                   >
                     {company.canonicalName}
                   </button>
+                  <button
+                    className={styles.addToSyncBtn}
+                    onClick={(e) => { e.stopPropagation(); setAddToSyncCompany(company) }}
+                    title="Add to Partner Sync"
+                  >
+                    + Sync
+                  </button>
                 </td>
                 <td>
                   <ChipDropdownCell
@@ -720,6 +729,13 @@ export default function Pipeline() {
           initialDecisionType={defaultDecisionType(pendingDecisionCompany.stage, pendingDecisionCompany.entityType)}
           onClose={() => setPendingDecisionCompany(null)}
           onSaved={() => { setPendingDecisionCompany(null); void loadData() }}
+        />
+      )}
+
+      {addToSyncCompany && (
+        <AddToSyncModal
+          company={addToSyncCompany}
+          onClose={() => setAddToSyncCompany(null)}
         />
       )}
     </div>
