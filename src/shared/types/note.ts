@@ -11,12 +11,14 @@ export interface Note {
   updatedByUserId: string | null
   createdAt: string
   updatedAt: string
+  folderPath: string | null
+  importSource: string | null
   // Denormalized from JOIN, only present on list queries
   companyName?: string | null
   contactName?: string | null
 }
 
-export type NoteFilterView = 'all' | 'untagged' | 'tagged'
+export type NoteFilterView = 'all' | 'untagged' | 'tagged' | 'unfoldered'
 
 export type ImportFormat = 'apple-notes' | 'notion' | 'generic'
 
@@ -27,6 +29,8 @@ export interface NoteCreateData {
   contactId?: string | null
   themeId?: string | null
   sourceMeetingId?: string | null
+  folderPath?: string | null
+  importSource?: string | null
 }
 
 export interface NoteUpdateData {
@@ -36,6 +40,7 @@ export interface NoteUpdateData {
   contactId?: string | null
   isPinned?: boolean
   themeId?: string | null
+  folderPath?: string | null
 }
 
 export interface TagSuggestion {

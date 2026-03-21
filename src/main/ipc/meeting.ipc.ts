@@ -8,10 +8,11 @@ import { readTranscript, readSummary, updateTranscriptContent, updateSummaryCont
 import { removeFromIndex } from '../database/repositories/search.repo'
 import { getStoragePath, setStoragePath } from '../storage/paths'
 import { renameFile as renameDriveFile } from '../drive/google-drive'
-import { extractCompaniesFromEmails, extractCompaniesFromAttendees } from '../utils/company-extractor'
+import { extractCompaniesFromEmails, extractCompaniesFromAttendees, extractDomainFromEmail } from '../utils/company-extractor'
 import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
 import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
-import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany } from '../database/repositories/org-company.repo'
+import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName } from '../database/repositories/org-company.repo'
+import { upsert as upsertCompanyCache, getByDomain as getCompanyCacheByDomain } from '../database/repositories/company.repo'
 import { getDatabase } from '../database/connection'
 import type { ChatMessage, MeetingListFilter } from '../../shared/types/meeting'
 import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
@@ -549,6 +550,60 @@ export function registerMeetingHandlers(): void {
       meetingRepo.updateMeeting(meetingId, { companies: updatedCompanies }, userId)
 
       logAudit(userId, 'meeting', meetingId, 'unlink_company', { companyId })
+      return meetingRepo.getMeeting(meetingId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEETING_SWAP_COMPANY,
+    (_event, meetingId: string, oldCompanyId: string | null, newCompanyName: string) => {
+      if (!meetingId) throw new Error('meetingId is required')
+      if (!newCompanyName?.trim()) throw new Error('newCompanyName is required')
+      const userId = getCurrentUserId()
+
+      const meeting = meetingRepo.getMeeting(meetingId)
+      if (!meeting) throw new Error('Meeting not found')
+
+      // Find or create the target company
+      const newCompany = getOrCreateCompanyByName(newCompanyName.trim(), userId)
+
+      // Unlink old company if it exists and is different from the new one
+      if (oldCompanyId && oldCompanyId !== newCompany.id) {
+        const oldCompany = getCompany(oldCompanyId)
+        if (oldCompany) {
+          unlinkMeetingCompany(meetingId, oldCompanyId)
+          const stripped = removeCompanyFromList(meeting.companies, oldCompany.canonicalName)
+          meetingRepo.updateMeeting(meetingId, { companies: stripped }, userId)
+          logAudit(userId, 'meeting', meetingId, 'unlink_company', { companyId: oldCompanyId })
+
+          // Update the domain→name cache so email-derived suggestions reflect the swap.
+          // We update any domain that currently maps to the old company's name — this
+          // covers both the old company's primary domain and email domains for this meeting
+          // (e.g. angellist.com was cached as "Wellfound" → now maps to "AngelList").
+          const domainsToUpdate = new Set<string>()
+          if (oldCompany.primaryDomain) domainsToUpdate.add(oldCompany.primaryDomain)
+          for (const email of (meeting.attendeeEmails ?? [])) {
+            const d = extractDomainFromEmail(email)
+            if (d) {
+              const cached = getCompanyCacheByDomain(d)
+              if (cached && cached.displayName === oldCompany.canonicalName) domainsToUpdate.add(d)
+            }
+          }
+          for (const d of domainsToUpdate) {
+            upsertCompanyCache(d, newCompany.canonicalName)
+          }
+        }
+      }
+
+      // Link new company (idempotent — INSERT OR IGNORE in linkMeetingCompany)
+      linkMeetingCompany(meetingId, newCompany.id, 1, 'manual', userId)
+      const refreshed = meetingRepo.getMeeting(meetingId)!
+      const updated = appendCompanyIfMissing(refreshed.companies, newCompany.canonicalName)
+      if (updated !== refreshed.companies) {
+        meetingRepo.updateMeeting(meetingId, { companies: updated }, userId)
+      }
+
+      logAudit(userId, 'meeting', meetingId, 'swap_company', { oldCompanyId, newCompanyId: newCompany.id })
       return meetingRepo.getMeeting(meetingId)
     }
   )

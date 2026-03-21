@@ -21,8 +21,13 @@
  * See also: NoteDetailModal.tsx — keep debounce/flush logic in sync.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState, Component } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import { Markdown } from '@tiptap/markdown'
+import Link from '@tiptap/extension-link'
+import Image from '@tiptap/extension-image'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useDebounce } from '../hooks/useDebounce'
 import { NoteTagger } from '../components/notes/NoteTagger'
@@ -40,7 +45,30 @@ type RouteState =
   | { status: 'notFound' }
   | { status: 'error' }
 
-export default function NoteDetail() {
+class NoteErrorBoundary extends Component<
+  { children: React.ReactNode; onBack: () => void },
+  { hasError: boolean }
+> {
+  state = { hasError: false }
+  static getDerivedStateFromError() { return { hasError: true } }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[NoteDetail] Uncaught error:', error, info)
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className={styles.errorBoundary}>
+          <p>Something went wrong loading this note.</p>
+          <button onClick={this.props.onBack}>← Back to notes</button>
+          <button onClick={() => this.setState({ hasError: false })}>Retry</button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+function NoteDetailInner() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const isNew = id === 'new'
@@ -53,12 +81,73 @@ export default function NoteDetail() {
   const [tagSuggestion, setTagSuggestion] = useState<TagSuggestion | null>(null)
   const [suggestionDismissed, setSuggestionDismissed] = useState(false)
 
+  // Folder picker state
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
+  const [availableFolders, setAvailableFolders] = useState<string[]>([])
+  const [folderInput, setFolderInput] = useState('')
+  const folderPickerRef = useRef<HTMLDivElement>(null)
+
   const savedNoteRef = useRef<Note | null>(null)
-  const contentRef = useRef<HTMLTextAreaElement>(null)
+  // Track whether we've already initialized editor content for the loaded note
+  const editorInitialized = useRef(false)
+  // routeState ref for use inside editor callbacks (avoids stale closure)
+  const routeStateRef = useRef(routeState)
+  useEffect(() => { routeStateRef.current = routeState }, [routeState])
+
+  // Create note on first keystroke (for /note/new) — called from editor onUpdate
+  const handleFirstInput = useCallback(async (content: string, title: string) => {
+    if (routeStateRef.current.status !== 'new') return
+    setRouteState({ status: 'creating' })
+    try {
+      const note = await api.invoke<Note>(IPC_CHANNELS.NOTES_CREATE, { content, title: title || null })
+      savedNoteRef.current = note
+      setRouteState({ status: 'loaded', note })
+      navigate(`/note/${note.id}`, { replace: true })
+    } catch {
+      setRouteState({ status: 'error' })
+    }
+  }, [navigate])
+
+  // Tiptap editor
+  const titleInputRef = useRef<HTMLInputElement>(null)
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      Markdown,
+      Link.configure({ openOnClick: true }),
+      Image,
+    ],
+    content: '',  // initialized empty; synced when note loads
+    onUpdate: ({ editor: ed }) => {
+      const mkd = (ed.storage.markdown as { getMarkdown?: () => string } | undefined)?.getMarkdown?.()
+      if (mkd === undefined) console.warn('[NoteDetail] Markdown ext not ready, falling back to getText()')
+      const md = mkd ?? ed.getText()
+      setContentDraft(md)
+      if (routeStateRef.current.status === 'new' && md.trim()) {
+        void handleFirstInput(md, titleDraft)
+      }
+    },
+  })
+
+  // Sync editor content when note loads (guard isFocused to avoid cursor jump)
+  useEffect(() => {
+    if (routeState.status === 'loaded' && editor && !editorInitialized.current) {
+      editorInitialized.current = true
+      editor.commands.setContent(routeState.note.content ?? '', false)
+    }
+  }, [routeState, editor])
+
+  // Sync editor editable state
+  useEffect(() => {
+    if (!editor) return
+    const editable = routeState.status !== 'creating' && routeState.status !== 'loading'
+    editor.setEditable(editable)
+  }, [editor, routeState.status])
 
   // Load existing note
   useEffect(() => {
     if (isNew) return
+    editorInitialized.current = false
     api.invoke<Note | null>(IPC_CHANNELS.NOTES_GET, id)
       .then((note) => {
         if (!note) {
@@ -74,33 +163,6 @@ export default function NoteDetail() {
       .catch(() => setRouteState({ status: 'error' }))
   }, [id, isNew])
 
-  // Auto-resize textarea
-  const resizeTextarea = useCallback(() => {
-    const el = contentRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = el.scrollHeight + 'px'
-  }, [])
-
-  useEffect(() => {
-    if (routeState.status === 'loaded') resizeTextarea()
-  }, [routeState.status, resizeTextarea])
-
-  // Create note on first keystroke (for /note/new)
-  const handleFirstInput = useCallback(async (content: string, title: string) => {
-    if (routeState.status !== 'new') return
-    setRouteState({ status: 'creating' })
-    try {
-      const note = await api.invoke<Note>(IPC_CHANNELS.NOTES_CREATE, { content, title: title || null })
-      savedNoteRef.current = note
-      setRouteState({ status: 'loaded', note })
-      // Redirect to the permanent URL without adding to history
-      navigate(`/note/${note.id}`, { replace: true })
-    } catch {
-      setRouteState({ status: 'error' })
-    }
-  }, [routeState.status, navigate])
-
   // Debounced auto-save
   const debouncedTitle = useDebounce(titleDraft, 800)
   const debouncedContent = useDebounce(contentDraft, 800)
@@ -113,6 +175,7 @@ export default function NoteDetail() {
     const titleChanged = debouncedTitle !== (saved.title ?? '')
     const contentChanged = debouncedContent !== saved.content
     if (!titleChanged && !contentChanged) return
+    if (!debouncedContent.trim() && !debouncedTitle.trim()) return  // never overwrite with blank
 
     setSaveStatus('saving')
     api.invoke<Note | null>(
@@ -144,13 +207,11 @@ export default function NoteDetail() {
     const saved = savedNoteRef.current
     if (!saved) return
 
-    // Delete empty notes (no content, no title)
     if (!contentDraft.trim() && !titleDraft.trim()) {
       api.invoke(IPC_CHANNELS.NOTES_DELETE, saved.id).catch(() => {/* fire-and-forget */})
       return
     }
 
-    // Flush any in-flight debounced changes
     const titleChanged = titleDraft !== (saved.title ?? '')
     const contentChanged = contentDraft !== saved.content
     if (titleChanged || contentChanged) {
@@ -162,8 +223,8 @@ export default function NoteDetail() {
     }
   }, [contentDraft, titleDraft])
 
-  // Tag a note immediately (no debounce — explicit user action)
-  const handleTagCompany = useCallback(async (companyId: string | null, companyName: string | null) => {
+  // Tag handlers
+  const handleTagCompany = useCallback(async (companyId: string | null, _companyName: string | null) => {
     const note = savedNoteRef.current
     if (!note) return
     try {
@@ -174,10 +235,9 @@ export default function NoteDetail() {
         setTagSuggestion(null)
       }
     } catch {/* ignore */}
-    void companyName // used only in NoteTagger display
   }, [])
 
-  const handleTagContact = useCallback(async (contactId: string | null, contactName: string | null) => {
+  const handleTagContact = useCallback(async (contactId: string | null, _contactName: string | null) => {
     const note = savedNoteRef.current
     if (!note) return
     try {
@@ -188,7 +248,6 @@ export default function NoteDetail() {
         setTagSuggestion(null)
       }
     } catch {/* ignore */}
-    void contactName
   }, [])
 
   const handleAcceptSuggestion = useCallback(async (suggestion: TagSuggestion) => {
@@ -208,6 +267,42 @@ export default function NoteDetail() {
     setSuggestionDismissed(true)
   }, [])
 
+  // --- Folder picker handlers ---
+
+  const openFolderPicker = useCallback(async () => {
+    const folders = await api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_FOLDERS)
+    setAvailableFolders(folders)
+    setFolderInput('')
+    setFolderPickerOpen(true)
+  }, [])
+
+  const handleSetFolder = useCallback(async (folderPath: string | null) => {
+    const note = savedNoteRef.current
+    if (!note) return
+    setFolderPickerOpen(false)
+    try {
+      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, note.id, { folderPath })
+      if (updated) {
+        savedNoteRef.current = updated
+        setRouteState({ status: 'loaded', note: updated })
+      }
+    } catch (err) {
+      console.error('Failed to set folder', err)
+    }
+  }, [])
+
+  // Close folder picker on outside click
+  useEffect(() => {
+    if (!folderPickerOpen) return
+    const handler = (e: MouseEvent) => {
+      if (folderPickerRef.current && !folderPickerRef.current.contains(e.target as Node)) {
+        setFolderPickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [folderPickerOpen])
+
   const handlePinToggle = useCallback(async () => {
     const note = savedNoteRef.current
     if (!note) return
@@ -217,7 +312,7 @@ export default function NoteDetail() {
       const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, note.id, { isPinned: newPinned })
       if (updated) savedNoteRef.current = updated
     } catch {
-      setIsPinned(!newPinned) // revert
+      setIsPinned(!newPinned)
     }
   }, [isPinned])
 
@@ -260,7 +355,68 @@ export default function NoteDetail() {
         <button className={styles.backBtn} onClick={handleBack} title="Back to notes">
           ←
         </button>
+
+        {note && (
+          <div className={styles.folderPickerWrapper} ref={folderPickerRef}>
+            <button
+              className={styles.folderPickerTrigger}
+              onClick={() => folderPickerOpen ? setFolderPickerOpen(false) : void openFolderPicker()}
+              title={note.folderPath ?? 'No folder assigned'}
+            >
+              {note.folderPath ? note.folderPath.split('/').pop() : 'No folder'}
+            </button>
+            {folderPickerOpen && (() => {
+              const filteredFolders = availableFolders.filter(f =>
+                f.toLowerCase().includes(folderInput.toLowerCase())
+              )
+              const exactMatch = filteredFolders.some(
+                f => f.toLowerCase() === folderInput.trim().toLowerCase()
+              )
+              return (
+                <div className={styles.folderPickerDropdown}>
+                  <input
+                    autoFocus
+                    className={styles.folderPickerInput}
+                    placeholder="Folder name…"
+                    value={folderInput}
+                    onChange={e => setFolderInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        const trimmed = folderInput.trim()
+                        if (trimmed) void handleSetFolder(trimmed)
+                        else if (filteredFolders.length > 0) void handleSetFolder(filteredFolders[0])
+                      }
+                      if (e.key === 'Escape') setFolderPickerOpen(false)
+                    }}
+                  />
+                  <button className={styles.folderPickerOption} onClick={() => void handleSetFolder(null)}>
+                    None
+                  </button>
+                  {filteredFolders.map(f => (
+                    <button
+                      key={f}
+                      className={`${styles.folderPickerOption} ${f === note.folderPath ? styles.folderPickerOptionActive : ''}`}
+                      onClick={() => void handleSetFolder(f)}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                  {folderInput.trim() && !exactMatch && (
+                    <button
+                      className={`${styles.folderPickerOption} ${styles.folderPickerOptionNew}`}
+                      onClick={() => void handleSetFolder(folderInput.trim())}
+                    >
+                      Create "{folderInput.trim()}"
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+        )}
+
         <input
+          ref={titleInputRef}
           className={styles.titleInput}
           placeholder="Untitled"
           value={titleDraft}
@@ -273,7 +429,7 @@ export default function NoteDetail() {
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault()
-              contentRef.current?.focus()
+              editor?.commands.focus()
             }
           }}
           disabled={routeState.status === 'creating' || routeState.status === 'loading'}
@@ -334,25 +490,11 @@ export default function NoteDetail() {
             </div>
           )}
 
-          <textarea
-            ref={contentRef}
-            className={styles.contentArea}
-            placeholder="Write a note…"
-            value={contentDraft}
-            rows={1}
-            onChange={(e) => {
-              setContentDraft(e.target.value)
-              resizeTextarea()
-              if (routeState.status === 'new' && e.target.value) {
-                void handleFirstInput(e.target.value, titleDraft)
-              }
-            }}
-            disabled={routeState.status === 'creating'}
-          />
+          <EditorContent editor={editor} className={styles.tiptapEditor} />
         </>
       )}
 
-      {(routeState.status === 'loading' || routeState.status === 'creating') && (
+      {routeState.status === 'loading' && (
         <div className={styles.stateMsg}>Loading…</div>
       )}
       {routeState.status === 'notFound' && (
@@ -370,5 +512,14 @@ export default function NoteDetail() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function NoteDetail() {
+  const navigate = useNavigate()
+  return (
+    <NoteErrorBoundary onBack={() => navigate('/notes')}>
+      <NoteDetailInner />
+    </NoteErrorBoundary>
   )
 }

@@ -168,6 +168,13 @@ function wireDeepgramEvents(client: DeepgramStreamingClient): void {
 export function registerRecordingHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.RECORDING_START, async (_event, title?: string, calEventId?: string, appendToMeetingId?: string) => {
     if (currentMeetingId) {
+      if (calEventId) {
+        const currentMeeting = meetingRepo.getMeeting(currentMeetingId)
+        if (currentMeeting?.calendarEventId === calEventId) {
+          console.log('[Recording] Already recording this calendar event, returning existing:', currentMeetingId)
+          return { meetingId: currentMeetingId, meetingPlatform: currentMeeting.meetingPlatform, alreadyRecording: true }
+        }
+      }
       throw new Error('Already recording')
     }
     const userId = getCurrentUserId()
@@ -274,6 +281,12 @@ export function registerRecordingHandlers(): void {
       const now = Date.now()
       const twentyFourHours = 24 * 60 * 60 * 1000
       const meetingIsRecent = meeting && Math.abs(new Date(meeting.date).getTime() - now) < twentyFourHours
+
+      // Handle meeting stuck in 'recording' with no active session (post-crash/restart)
+      if (meeting && meeting.status === 'recording' && !currentMeetingId && meetingIsRecent) {
+        console.log('[Recording] Meeting stuck in recording state post-restart, returning existing:', meeting.id)
+        return { meetingId: meeting.id, meetingPlatform: meeting.meetingPlatform, alreadyRecording: true }
+      }
 
       if (meeting && meeting.status === 'scheduled' && meetingIsRecent) {
         // Update attendees if we have them from calendar and meeting doesn't have them yet

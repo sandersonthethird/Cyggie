@@ -1,130 +1,46 @@
-import { randomUUID } from 'crypto'
-import { getDatabase } from '../connection'
-import type { ContactNote } from '../../../shared/types/contact'
+import { makeEntityNotesRepo } from './notes-base'
+import type { Note } from '../../../shared/types/note'
 
-interface ContactNoteRow {
-  id: string
-  contact_id: string
-  theme_id: string | null
-  title: string | null
-  content: string
-  is_pinned: number
-  created_at: string
-  updated_at: string
-}
+export type { Note as ContactNote }
 
-function rowToContactNote(row: ContactNoteRow): ContactNote {
-  return {
-    id: row.id,
-    contactId: row.contact_id,
-    themeId: row.theme_id,
-    title: row.title,
-    content: row.content,
-    isPinned: row.is_pinned === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }
-}
+const _repo = makeEntityNotesRepo('contact_id')
 
-export function listContactNotes(contactId: string): ContactNote[] {
-  const db = getDatabase()
-  const rows = db
-    .prepare(`
-      SELECT
-        id,
-        contact_id,
-        theme_id,
-        title,
-        content,
-        is_pinned,
-        created_at,
-        updated_at
-      FROM notes
-      WHERE contact_id = ?
-      ORDER BY is_pinned DESC, datetime(updated_at) DESC
-    `)
-    .all(contactId) as ContactNoteRow[]
-  return rows.map(rowToContactNote)
-}
+export const listContactNotes = (contactId: string): Note[] =>
+  _repo.list(contactId)
 
-export function createContactNote(data: {
-  contactId: string
-  themeId?: string | null
-  title?: string | null
-  content: string
-  sourceMeetingId?: string | null
-}, userId: string | null = null): ContactNote | null {
-  const db = getDatabase()
-  const id = randomUUID()
-  const result = db.prepare(`
-    INSERT INTO notes (
-      id, contact_id, theme_id, title, content, is_pinned, source_meeting_id,
-      created_by_user_id, updated_by_user_id, created_at, updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, datetime('now'), datetime('now'))
-  `).run(id, data.contactId, data.themeId ?? null, data.title ?? null, data.content,
-    data.sourceMeetingId ?? null, userId, userId)
-  if (result.changes === 0) return null
-  return getContactNote(id)!
-}
+export const getContactNote = (noteId: string): Note | null =>
+  _repo.get(noteId)
 
-export function getContactNote(noteId: string): ContactNote | null {
-  const db = getDatabase()
-  const row = db
-    .prepare(`
-      SELECT id, contact_id, theme_id, title, content, is_pinned, created_at, updated_at
-      FROM notes
-      WHERE id = ?
-    `)
-    .get(noteId) as ContactNoteRow | undefined
-  return row ? rowToContactNote(row) : null
-}
-
-export function updateContactNote(
-  noteId: string,
-  data: Partial<{
-    title: string | null
+export function createContactNote(
+  data: {
+    contactId: string
+    themeId?: string | null
+    title?: string | null
     content: string
-    isPinned: boolean
-    themeId: string | null
-  }>,
+    sourceMeetingId?: string | null
+  },
   userId: string | null = null
-): ContactNote | null {
-  const db = getDatabase()
-  const sets: string[] = []
-  const params: unknown[] = []
-
-  if (data.title !== undefined) {
-    sets.push('title = ?')
-    params.push(data.title)
-  }
-  if (data.content !== undefined) {
-    sets.push('content = ?')
-    params.push(data.content)
-  }
-  if (data.isPinned !== undefined) {
-    sets.push('is_pinned = ?')
-    params.push(data.isPinned ? 1 : 0)
-  }
-  if (data.themeId !== undefined) {
-    sets.push('theme_id = ?')
-    params.push(data.themeId)
-  }
-
-  if (sets.length === 0) return getContactNote(noteId)
-
-  if (userId) {
-    sets.push('updated_by_user_id = ?')
-    params.push(userId)
-  }
-  sets.push("updated_at = datetime('now')")
-  params.push(noteId)
-  db.prepare(`UPDATE notes SET ${sets.join(', ')} WHERE id = ?`).run(...params)
-  return getContactNote(noteId)
+): Note | null {
+  return _repo.create(
+    {
+      entityId: data.contactId,
+      themeId: data.themeId,
+      title: data.title,
+      content: data.content,
+      sourceMeetingId: data.sourceMeetingId,
+    },
+    userId
+  )
 }
 
-export function deleteContactNote(noteId: string): boolean {
-  const db = getDatabase()
-  const result = db.prepare('DELETE FROM notes WHERE id = ?').run(noteId)
-  return result.changes > 0
-}
+export const updateContactNote = (
+  noteId: string,
+  data: Partial<{ title: string | null; content: string; isPinned: boolean; themeId: string | null }>,
+  userId: string | null = null
+): Note | null => _repo.update(noteId, data, userId)
+
+export const deleteContactNote = (noteId: string): boolean =>
+  _repo.delete(noteId)
+
+/** The raw repo object, for use with registerEntityNotesIpc. */
+export const contactNotesRepo = _repo

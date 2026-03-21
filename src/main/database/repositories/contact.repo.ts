@@ -7,7 +7,35 @@ import {
   findCompanyIdByDomain,
   linkMeetingsForContactCompany
 } from './org-company.repo'
-import { extractDomainFromEmail as extractCompanyDomainFromEmail, humanizeDomainName } from '../../utils/company-extractor'
+import { humanizeDomainName } from '../../utils/company-extractor'
+import {
+  type CandidateContact,
+  normalizeEmail,
+  normalizeName,
+  splitFullNameParts,
+  inferNameFromEmail,
+  sanitizeDisplayName,
+  parseAttendeeEntry,
+  mergeCandidate,
+  parseJsonArray,
+  parseEmailParticipants,
+  normalizeForCompare,
+  SQLITE_DATETIME_RE,
+  parseTimestamp,
+  pickLatestTimestamp,
+  setLatestMapValue,
+  NAME_STOP_WORDS,
+  LINKEDIN_URL_RE,
+  normalizePersonNameCandidate,
+  nameQualityScore,
+  isLikelyLowQualityStoredName,
+  pickBestNameCandidate,
+  normalizeLinkedinUrl,
+  extractLinkedinUrlsFromText,
+  pickBestLinkedinUrl,
+  extractDomainFromEmail,
+  compareDuplicateCandidates,
+} from './contact-utils'
 import type {
   ContactSummary,
   ContactSortBy,
@@ -75,13 +103,6 @@ export interface ContactEmailOnboardingCandidate {
   fullName: string
 }
 
-interface CandidateContact {
-  email: string
-  fullName: string
-  normalizedName: string
-  explicitName: boolean
-}
-
 interface ContactSyncStats {
   candidates: number
   inserted: number
@@ -138,34 +159,6 @@ const GENERIC_DUPLICATE_NAMES = new Set<string>([
   'team'
 ])
 
-function compareDuplicateCandidates(a: ContactDuplicateSummary, b: ContactDuplicateSummary): number {
-  const completeness = (contact: ContactDuplicateSummary): number => {
-    let score = 0
-    if (contact.email) score += 3
-    if (contact.primaryCompanyId) score += 2
-    if (contact.title) score += 1
-    const tokenCount = contact.fullName
-      .trim()
-      .split(/\s+/)
-      .map((token) => token.trim())
-      .filter(Boolean).length
-    if (tokenCount >= 2) score += 1
-    return score
-  }
-
-  const aScore = completeness(a)
-  const bScore = completeness(b)
-  if (aScore !== bScore) return bScore - aScore
-
-  const aTs = parseTimestamp(a.updatedAt)
-  const bTs = parseTimestamp(b.updatedAt)
-  if (!Number.isNaN(aTs) && !Number.isNaN(bTs) && aTs !== bTs) {
-    return bTs - aTs
-  }
-
-  return a.id.localeCompare(b.id)
-}
-
 function choosePrimaryEmailForMergedContact(
   preferredEmail: string | null,
   allEmails: string[]
@@ -198,385 +191,6 @@ function rowToContactSummary(row: ContactRow): ContactSummary {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
-}
-
-function normalizeEmail(value: string): string | null {
-  const trimmed = value.trim().toLowerCase().replace(/^mailto:/, '')
-  const cleaned = trimmed.replace(/^<+|>+$/g, '').replace(/[;,]+$/g, '')
-  if (!cleaned || !cleaned.includes('@')) return null
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned)) return null
-  return cleaned
-}
-
-function normalizeName(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-}
-
-function splitFullNameParts(fullName: string): { firstName: string | null; lastName: string | null } {
-  const tokens = fullName
-    .trim()
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter(Boolean)
-
-  if (tokens.length < 2) {
-    return { firstName: null, lastName: null }
-  }
-
-  return {
-    firstName: tokens[0] || null,
-    lastName: tokens.slice(1).join(' ') || null
-  }
-}
-
-function inferNameFromEmail(email: string): string {
-  const localPart = email.split('@')[0] || email
-  const words = localPart
-    .split(/[._-]+/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-
-  return words.length > 0 ? words.join(' ') : email
-}
-
-function sanitizeDisplayName(value: string): string | null {
-  const trimmed = value.trim().replace(/^"+|"+$/g, '').replace(/^'+|'+$/g, '')
-  if (!trimmed) return null
-  if (trimmed.toLowerCase() === 'unknown') return null
-  if (normalizeEmail(trimmed)) return null
-  return trimmed
-}
-
-function parseAttendeeEntry(entry: string): {
-  email: string | null
-  fullName: string | null
-  explicitName: boolean
-} {
-  const trimmed = entry.trim()
-  if (!trimmed) {
-    return { email: null, fullName: null, explicitName: false }
-  }
-
-  const angleMatch = trimmed.match(/^(.*?)\s*<([^<>]+)>$/)
-  if (angleMatch) {
-    const email = normalizeEmail(angleMatch[2] || '')
-    const fullName = sanitizeDisplayName(angleMatch[1] || '')
-    return { email, fullName, explicitName: Boolean(fullName) }
-  }
-
-  const parenMatch = trimmed.match(/^(.*?)\s*\(([^()]+)\)$/)
-  if (parenMatch) {
-    const email = normalizeEmail(parenMatch[2] || '')
-    const fullName = sanitizeDisplayName(parenMatch[1] || '')
-    if (email) {
-      return { email, fullName, explicitName: Boolean(fullName) }
-    }
-  }
-
-  const directEmail = normalizeEmail(trimmed)
-  if (directEmail) {
-    return { email: directEmail, fullName: null, explicitName: false }
-  }
-
-  return { email: null, fullName: sanitizeDisplayName(trimmed), explicitName: true }
-}
-
-function mergeCandidate(existing: CandidateContact | undefined, incoming: CandidateContact): CandidateContact {
-  if (!existing) return incoming
-
-  if (incoming.explicitName && !existing.explicitName) {
-    return incoming
-  }
-
-  if (
-    incoming.explicitName === existing.explicitName
-    && incoming.fullName.length > existing.fullName.length
-  ) {
-    return incoming
-  }
-
-  return existing
-}
-
-function parseJsonArray(value: string | null): string[] {
-  if (!value) return []
-  try {
-    const parsed = JSON.parse(value)
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === 'string')
-      : []
-  } catch {
-    return []
-  }
-}
-
-function parseEmailParticipants(value: string | null): ContactEmailRef['participants'] {
-  if (!value) return []
-  try {
-    const parsed = JSON.parse(value)
-    if (!Array.isArray(parsed)) return []
-
-    const allowedRoles = new Set(['from', 'to', 'cc', 'bcc', 'reply_to'])
-    return parsed
-      .map((item) => {
-        if (!item || typeof item !== 'object') return null
-        const candidate = item as Record<string, unknown>
-        const role = typeof candidate.role === 'string' ? candidate.role.trim().toLowerCase() : ''
-        const email = typeof candidate.email === 'string' ? candidate.email.trim().toLowerCase() : ''
-        if (!allowedRoles.has(role) || !email) return null
-        return {
-          role: role as ContactEmailRef['participants'][number]['role'],
-          email,
-          displayName: typeof candidate.displayName === 'string'
-            ? candidate.displayName.trim() || null
-            : null,
-          contactId: typeof candidate.contactId === 'string'
-            ? candidate.contactId.trim() || null
-            : null
-        }
-      })
-      .filter((item): item is ContactEmailRef['participants'][number] => Boolean(item))
-  } catch {
-    return []
-  }
-}
-
-function normalizeForCompare(value: string | null | undefined): string {
-  if (!value) return ''
-  return value.trim().toLowerCase()
-}
-
-const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
-
-function parseTimestamp(value: string | null | undefined): number {
-  if (!value) return Number.NaN
-  const trimmed = value.trim()
-  if (!trimmed) return Number.NaN
-  const normalized = SQLITE_DATETIME_RE.test(trimmed)
-    ? `${trimmed.replace(' ', 'T')}Z`
-    : trimmed
-  return Date.parse(normalized)
-}
-
-function pickLatestTimestamp(values: Array<string | null | undefined>): string | null {
-  let latestValue: string | null = null
-  let latestTs = Number.NEGATIVE_INFINITY
-
-  for (const value of values) {
-    const ts = parseTimestamp(value)
-    if (Number.isNaN(ts)) continue
-    if (ts > latestTs) {
-      latestTs = ts
-      latestValue = value || null
-    }
-  }
-
-  return latestValue
-}
-
-const NAME_STOP_WORDS = new Set([
-  'team',
-  'support',
-  'info',
-  'hello',
-  'noreply',
-  'no-reply',
-  'unknown',
-  'meeting',
-  'calendar'
-])
-
-const LINKEDIN_URL_RE = /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/[^\s<>"')]+/gi
-
-function normalizePersonNameCandidate(value: string | null | undefined): string | null {
-  if (!value) return null
-  let candidate = value
-    .trim()
-    .replace(/^"+|"+$/g, '')
-    .replace(/^'+|'+$/g, '')
-    .replace(/\s*\([^)]*\)\s*/g, ' ')
-    .replace(/\s+/g, ' ')
-
-  if (!candidate) return null
-  if (normalizeEmail(candidate)) return null
-
-  const commaSplit = candidate.match(/^([^,]{2,}),\s*(.{2,})$/)
-  if (commaSplit) {
-    candidate = `${commaSplit[2]} ${commaSplit[1]}`.trim()
-  }
-
-  candidate = candidate
-    .replace(/^(mr|mrs|ms|dr|prof)\.?\s+/i, '')
-    .replace(/[^A-Za-z0-9 .,'-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  if (!candidate) return null
-  if (!/[A-Za-z]/.test(candidate)) return null
-  if (/\d/.test(candidate)) return null
-
-  const tokens = candidate
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter(Boolean)
-
-  if (tokens.length === 0) return null
-  if (tokens.some((token) => NAME_STOP_WORDS.has(token.toLowerCase()))) return null
-
-  return tokens.join(' ')
-}
-
-function nameQualityScore(value: string): number {
-  const candidate = normalizePersonNameCandidate(value)
-  if (!candidate) return 0
-
-  const tokens = candidate.split(/\s+/)
-  let score = 0
-
-  if (tokens.length >= 2) {
-    score += 40
-    score += Math.min(tokens.length, 4) * 5
-  } else {
-    score += 8
-  }
-
-  if (tokens.every((token) => /^[A-Za-z][A-Za-z.'-]*$/.test(token))) {
-    score += 16
-  }
-
-  if (tokens.every((token) => token.length >= 2)) {
-    score += 12
-  }
-
-  if (tokens.length === 1) {
-    score -= 25
-  }
-
-  score += Math.min(candidate.length, 25)
-  return score
-}
-
-function isLikelyLowQualityStoredName(value: string | null | undefined, email: string | null): boolean {
-  const name = normalizePersonNameCandidate(value)
-  if (!name) return true
-
-  const tokens = name.split(/\s+/)
-  if (tokens.length < 2) return true
-
-  const normalizedEmail = normalizeEmail(email || '')
-  if (normalizedEmail) {
-    const inferred = normalizeName(inferNameFromEmail(normalizedEmail))
-    if (normalizeName(name) === inferred) return true
-  }
-
-  return false
-}
-
-function pickBestNameCandidate(
-  candidates: string[],
-  currentFullName: string | null | undefined,
-  primaryEmail: string | null
-): string | null {
-  let best: { name: string; score: number } | null = null
-  for (const candidateRaw of candidates) {
-    const candidate = normalizePersonNameCandidate(candidateRaw)
-    if (!candidate) continue
-    const score = nameQualityScore(candidate)
-    if (!best || score > best.score) {
-      best = { name: candidate, score }
-    }
-  }
-
-  if (!best) return null
-
-  const currentScore = nameQualityScore(currentFullName || '')
-  if (isLikelyLowQualityStoredName(currentFullName, primaryEmail)) {
-    return best.score > 0 ? best.name : null
-  }
-
-  if (best.score >= currentScore + 12) {
-    return best.name
-  }
-
-  return null
-}
-
-function normalizeLinkedinUrl(url: string): string | null {
-  const trimmed = url.trim()
-  if (!trimmed) return null
-  if (!/linkedin\.com/i.test(trimmed)) return null
-
-  let normalized = trimmed.replace(/[)\].,;:!?]+$/, '')
-  normalized = normalized.replace(/^http:\/\//i, 'https://')
-
-  const queryIndex = normalized.indexOf('?')
-  if (queryIndex > 0) {
-    normalized = normalized.slice(0, queryIndex)
-  }
-
-  const hashIndex = normalized.indexOf('#')
-  if (hashIndex > 0) {
-    normalized = normalized.slice(0, hashIndex)
-  }
-
-  if (!/^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/.+/i.test(normalized)) {
-    return null
-  }
-
-  return normalized
-}
-
-function extractLinkedinUrlsFromText(value: string | null | undefined): string[] {
-  if (!value) return []
-  const matches = value.match(LINKEDIN_URL_RE)
-  if (!matches || matches.length === 0) return []
-  const urls = new Set<string>()
-  for (const match of matches) {
-    const normalized = normalizeLinkedinUrl(match)
-    if (normalized) urls.add(normalized)
-  }
-  return [...urls]
-}
-
-function pickBestLinkedinUrl(existingUrl: string | null | undefined, candidates: string[]): string | null {
-  const existing = normalizeLinkedinUrl(existingUrl || '')
-  const normalizedCandidates = [...new Set(candidates.map((candidate) => normalizeLinkedinUrl(candidate)).filter(
-    (candidate): candidate is string => Boolean(candidate)
-  ))]
-
-  if (normalizedCandidates.length === 0) return null
-
-  const rank = (url: string): number => {
-    if (/\/in\//i.test(url)) return 3
-    if (/\/pub\//i.test(url)) return 2
-    if (/\/company\//i.test(url)) return 1
-    return 0
-  }
-
-  const bestCandidate = normalizedCandidates.sort((a, b) => {
-    const rankDiff = rank(b) - rank(a)
-    if (rankDiff !== 0) return rankDiff
-    return a.length - b.length
-  })[0]
-
-  if (!bestCandidate) return null
-  if (!existing) return bestCandidate
-  if (rank(bestCandidate) > rank(existing)) return bestCandidate
-  return null
-}
-
-function extractDomainFromEmail(value: string | null | undefined): string | null {
-  if (!value) return null
-  const normalizedEmail = normalizeEmail(value)
-  if (!normalizedEmail) return null
-  const inferred = extractCompanyDomainFromEmail(normalizedEmail)
-  if (!inferred) return null
-  return inferred.replace(/^www\./, '')
 }
 
 function ensurePrimaryCompanyLink(
@@ -942,15 +556,6 @@ function buildContactOrderBy(sortBy: ContactSortBy | undefined, includeLastTouch
   `
 }
 
-function setLatestMapValue(map: Map<string, string>, key: string, candidate: string | null | undefined): void {
-  const normalizedKey = key.trim().toLowerCase()
-  if (!normalizedKey) return
-  const latest = pickLatestTimestamp([map.get(normalizedKey) || null, candidate])
-  if (latest) {
-    map.set(normalizedKey, latest)
-  }
-}
-
 function buildContactEmailMap(
   db: ReturnType<typeof getDatabase>,
   rows: ContactRow[]
@@ -1251,6 +856,7 @@ export function listContactsLight(filter?: {
   offset?: number
   sortBy?: ContactSortBy
   includeActivityTouchpoint?: boolean
+  companyId?: string
 }): ContactSummary[] {
   const db = getDatabase()
   const query = filter?.query?.trim()
@@ -1258,15 +864,33 @@ export function listContactsLight(filter?: {
   const conditions: string[] = []
 
   if (query) {
-    conditions.push('(c.full_name LIKE ? OR c.email LIKE ?)')
-    const like = `%${query}%`
-    params.push(like, like)
+    const words = query.split(/\s+/).filter(Boolean)
+    if (words.length > 1) {
+      // Multi-word: each word must appear somewhere in full_name (AND logic).
+      // "Pat McGovern" → LIKE '%Pat%' AND LIKE '%McGovern%' → matches "Patrick McGovern".
+      // Email still matches on the full original string (emails never contain spaces).
+      const nameClauses = words.map(() => 'c.full_name LIKE ?').join(' AND ')
+      conditions.push(`((${nameClauses}) OR c.email LIKE ?)`)
+      words.forEach(w => params.push(`%${w}%`))
+      params.push(`%${query}%`)
+    } else {
+      conditions.push('(c.full_name LIKE ? OR c.email LIKE ?)')
+      params.push(`%${query}%`, `%${query}%`)
+    }
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
   const limit = filter?.limit ?? 200
   const offset = filter?.offset ?? 0
   const includeActivityTouchpoint = filter?.includeActivityTouchpoint === true
+
+  // Company boost: when companyId is provided, surface that company's contacts first.
+  // The CASE WHEN param is appended after WHERE params, before LIMIT/OFFSET.
+  const companyId = filter?.companyId
+  const companyBoost = companyId
+    ? 'CASE WHEN c.primary_company_id = ? THEN 0 ELSE 1 END ASC,'
+    : ''
+  if (companyId) params.push(companyId)
 
   const baseRows = db
     .prepare(`
@@ -1292,7 +916,7 @@ export function listContactsLight(filter?: {
       FROM contacts c
       LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
       ${where}
-      ${buildContactOrderBy(filter?.sortBy, false)}
+      ORDER BY ${companyBoost} ${buildContactOrderBy(filter?.sortBy, false).trim().replace(/^ORDER BY\s*/i, '')}
       LIMIT ? OFFSET ?
     `)
     .all(...params, limit, offset) as ContactRow[]

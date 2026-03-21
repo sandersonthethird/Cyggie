@@ -1,11 +1,8 @@
-import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as notesRepo from '../database/repositories/company-notes.repo'
+import { companyNotesRepo, createCompanyNote } from '../database/repositories/company-notes.repo'
 import { listCompanyMeetingSummaryPaths } from '../database/repositories/org-company.repo'
-import { getCurrentUserId } from '../security/current-user'
 import { readSummary } from '../storage/file-manager'
-import { logAudit } from '../database/repositories/audit.repo'
-import { hydrateCompanionNote } from './note-hydration'
+import { registerEntityNotesIpc } from './notes-ipc-base'
 
 function ensureCompanyMeetingSummaryNotes(companyId: string, userId: string | null): void {
   try {
@@ -21,7 +18,7 @@ function ensureCompanyMeetingSummaryNotes(companyId: string, userId: string | nu
       if (!summary) continue
       const noteTitle = row.title?.trim() || 'Meeting'
       const noteContent = `${noteTitle}\n${summary}`
-      notesRepo.createCompanyNote(
+      createCompanyNote(
         { companyId, title: noteTitle, content: noteContent, sourceMeetingId: row.meetingId },
         userId
       )
@@ -32,62 +29,17 @@ function ensureCompanyMeetingSummaryNotes(companyId: string, userId: string | nu
 }
 
 export function registerCompanyNotesHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.COMPANY_NOTES_LIST, (_event, companyId: string) => {
-    if (!companyId) throw new Error('companyId is required')
-    const userId = getCurrentUserId()
-    ensureCompanyMeetingSummaryNotes(companyId, userId)
-    return notesRepo.listCompanyNotes(companyId)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.COMPANY_NOTES_GET, (_event, noteId: string) => {
-    if (!noteId) throw new Error('noteId is required')
-    const note = notesRepo.getCompanyNote(noteId)
-    if (!note) return null
-    return hydrateCompanionNote(note, getCurrentUserId())
-  })
-
-  ipcMain.handle(
-    IPC_CHANNELS.COMPANY_NOTES_CREATE,
-    (_event, data: { companyId: string; title?: string | null; content: string; themeId?: string | null }) => {
-      if (!data?.companyId) throw new Error('companyId is required')
-      if (!data.content?.trim()) throw new Error('content is required')
-      const userId = getCurrentUserId()
-      const note = notesRepo.createCompanyNote({
-        companyId: data.companyId,
-        title: data.title ?? null,
-        content: data.content,
-        themeId: data.themeId ?? null
-      }, userId)
-      if (!note) throw new Error('Failed to create note')
-      logAudit(userId, 'company_note', note.id, 'create', data)
-      return note
-    }
-  )
-
-  ipcMain.handle(
-    IPC_CHANNELS.COMPANY_NOTES_UPDATE,
-    (
-      _event,
-      noteId: string,
-      updates: Partial<{ title: string | null; content: string; isPinned: boolean; themeId: string | null }>
-    ) => {
-      if (!noteId) throw new Error('noteId is required')
-      const userId = getCurrentUserId()
-      const note = notesRepo.updateCompanyNote(noteId, updates || {}, userId)
-      if (note) {
-        logAudit(userId, 'company_note', noteId, 'update', updates || {})
-      }
-      return note
-    }
-  )
-
-  ipcMain.handle(IPC_CHANNELS.COMPANY_NOTES_DELETE, (_event, noteId: string) => {
-    if (!noteId) throw new Error('noteId is required')
-    const userId = getCurrentUserId()
-    const deleted = notesRepo.deleteCompanyNote(noteId)
-    if (deleted) {
-      logAudit(userId, 'company_note', noteId, 'delete', null)
-    }
-    return deleted
+  registerEntityNotesIpc({
+    channels: {
+      list: IPC_CHANNELS.COMPANY_NOTES_LIST,
+      get: IPC_CHANNELS.COMPANY_NOTES_GET,
+      create: IPC_CHANNELS.COMPANY_NOTES_CREATE,
+      update: IPC_CHANNELS.COMPANY_NOTES_UPDATE,
+      delete: IPC_CHANNELS.COMPANY_NOTES_DELETE,
+    },
+    entityIdParam: 'companyId',
+    auditType: 'company_note',
+    repo: companyNotesRepo,
+    onBeforeList: ensureCompanyMeetingSummaryNotes,
   })
 }

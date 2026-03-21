@@ -37,6 +37,7 @@ export function registerContactHandlers(): void {
       includeStats?: boolean
       includeActivityTouchpoint?: boolean
       sortBy?: ContactSortBy
+      companyId?: string
     }) => {
       if (filter?.includeStats) {
         return contactRepo.listContacts(filter)

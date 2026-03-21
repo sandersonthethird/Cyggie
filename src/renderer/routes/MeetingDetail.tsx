@@ -33,6 +33,7 @@ import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import styles from './MeetingDetail.module.css'
 import { api } from '../api'
+import { useNotesAutoSave } from '../hooks/useNotesAutoSave'
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600)
@@ -159,13 +160,20 @@ export default function MeetingDetail() {
   const speakerInputRef = useRef<HTMLInputElement>(null)
   const speakerContactPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST)
   const companyLinkPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
-  const [notesDraft, setNotesDraft] = useState('')
-  const notesSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const notesDraftRef = useRef('')
-  const [summaryDraft, setSummaryDraft] = useState('')
+  const swapCompanyPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
+  const [editingCompanyKey, setEditingCompanyKey] = useState<string | null>(null)
+  const [optimisticSwap, setOptimisticSwap] = useState<Record<string, string>>({})
+  const {
+    notesDraft,
+    summaryDraft,
+    setSummaryDraft,
+    handleNotesChange,
+    handleSummaryChange,
+    saveNotes,
+    flushNotes,
+    reset: resetAutoSave,
+  } = useNotesAutoSave(id)
   const [editingSummary, setEditingSummary] = useState(false)
-  const summarySaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const summaryDraftRef = useRef('')
   const summaryTextareaRef = useRef<HTMLTextAreaElement>(null)
   const startRecording = useRecordingStore((s) => s.startRecording)
   const stopRecording = useRecordingStore((s) => s.stopRecording)
@@ -474,10 +482,7 @@ export default function MeetingDetail() {
     setData(result)
     setLocalSpeakerMap(result.meeting.speakerMap)
     setSpeakerContactMap(result.meeting.speakerContactMap ?? {})
-    setNotesDraft(result.meeting.notes || '')
-    notesDraftRef.current = result.meeting.notes || ''
-    setSummaryDraft(result.summary || '')
-    summaryDraftRef.current = result.summary || ''
+    resetAutoSave(result.meeting.notes, result.summary)
     if (result.summary) setShowNotes(false)
 
     // Load tasks linked to this meeting
@@ -571,16 +576,6 @@ export default function MeetingDetail() {
     return unsub
   }, [isGenerating])
 
-  // Debounced notes auto-save
-  const saveNotes = useCallback(async (text: string) => {
-    if (!id) return
-    try {
-      await api.invoke(IPC_CHANNELS.MEETING_SAVE_NOTES, id, text)
-    } catch (err) {
-      console.error('Failed to save notes:', err)
-    }
-  }, [id])
-
   const handleTagCompany = useCallback(async (company: CompanySuggestion, entityType: CompanyEntityType) => {
     if (!id) return
     const suggestionKey = companySuggestionKey(company)
@@ -624,59 +619,11 @@ export default function MeetingDetail() {
     }
   }, [id, navigate])
 
-  const handleNotesChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const text = e.target.value
-    setNotesDraft(text)
-    notesDraftRef.current = text
-    if (notesSaveRef.current) clearTimeout(notesSaveRef.current)
-    notesSaveRef.current = setTimeout(() => {
-      saveNotes(text)
-      notesSaveRef.current = null
-    }, 500)
-  }, [saveNotes])
-
-  // Debounced summary auto-save
-  const saveSummary = useCallback(async (text: string) => {
-    if (!id) return
-    try {
-      await api.invoke(IPC_CHANNELS.MEETING_SAVE_SUMMARY, id, text)
-    } catch (err) {
-      console.error('Failed to save summary:', err)
-    }
-  }, [id])
-
-  const handleSummaryChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const text = e.target.value
-    setSummaryDraft(text)
-    summaryDraftRef.current = text
-    if (summarySaveRef.current) clearTimeout(summarySaveRef.current)
-    summarySaveRef.current = setTimeout(() => {
-      saveSummary(text)
-      summarySaveRef.current = null
-    }, 500)
-  }, [saveSummary])
-
-  // Flush any pending notes/summary saves on unmount
-  useEffect(() => {
-    return () => {
-      if (notesSaveRef.current) {
-        clearTimeout(notesSaveRef.current)
-        api.invoke(IPC_CHANNELS.MEETING_SAVE_NOTES, id, notesDraftRef.current)
-      }
-      if (summarySaveRef.current) {
-        clearTimeout(summarySaveRef.current)
-        api.invoke(IPC_CHANNELS.MEETING_SAVE_SUMMARY, id, summaryDraftRef.current)
-      }
-    }
-  }, [id])
 
   const handleStartRecording = useCallback(async () => {
     if (!data || isRecording) return
     // Save any pending notes first
-    if (notesSaveRef.current) {
-      clearTimeout(notesSaveRef.current)
-      await saveNotes(notesDraft)
-    }
+    await flushNotes()
     try {
       const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
@@ -691,14 +638,11 @@ export default function MeetingDetail() {
     } catch (err) {
       console.error('Failed to start recording:', err)
     }
-  }, [data, isRecording, notesDraft, saveNotes, startRecording, id, navigate, location.state])
+  }, [data, isRecording, flushNotes, startRecording, id, navigate, location.state])
 
   const handleContinueRecording = useCallback(async () => {
     if (!data || isRecording) return
-    if (notesSaveRef.current) {
-      clearTimeout(notesSaveRef.current)
-      await saveNotes(notesDraft)
-    }
+    await flushNotes()
     try {
       const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
@@ -710,7 +654,7 @@ export default function MeetingDetail() {
     } catch (err) {
       console.error('Failed to continue recording:', err)
     }
-  }, [data, isRecording, notesDraft, saveNotes, startRecording])
+  }, [data, isRecording, flushNotes, startRecording])
 
 
   // Auto-scroll live transcript
@@ -967,10 +911,7 @@ export default function MeetingDetail() {
   const handleGenerateSummary = useCallback(async () => {
     if (!id || !selectedTemplateId || isGenerating) return
     // Save any pending notes first
-    if (notesSaveRef.current) {
-      clearTimeout(notesSaveRef.current)
-      await saveNotes(notesDraft)
-    }
+    await flushNotes()
     setIsGenerating(true)
     setStreamedSummary('')
     setActiveTab('notes')
@@ -1055,7 +996,7 @@ export default function MeetingDetail() {
       setStreamedSummary('')
       setSummaryPhase('')
     }
-  }, [id, selectedTemplateId, isGenerating, notesDraft, saveNotes])
+  }, [id, selectedTemplateId, isGenerating, flushNotes])
 
   useEffect(() => { generateSummaryRef.current = handleGenerateSummary }, [handleGenerateSummary])
 
@@ -1307,6 +1248,21 @@ export default function MeetingDetail() {
       await loadMeeting()
     } catch (err) {
       console.error('[MeetingDetail] Failed to unlink company:', err)
+    }
+  }, [id, loadMeeting])
+
+  const handleSwapCompany = useCallback(async (oldCompany: CompanySuggestion, newName: string) => {
+    if (!id || !newName.trim()) return
+    const key = oldCompany.id ?? oldCompany.name
+    setOptimisticSwap((prev) => ({ ...prev, [key]: newName.trim() }))
+    setEditingCompanyKey(null)
+    try {
+      await api.invoke(IPC_CHANNELS.MEETING_SWAP_COMPANY, id, oldCompany.id ?? null, newName.trim())
+      await loadMeeting()
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to swap company:', err)
+    } finally {
+      setOptimisticSwap((prev) => { const n = { ...prev }; delete n[key]; return n })
     }
   }, [id, loadMeeting])
 
@@ -1634,34 +1590,75 @@ export default function MeetingDetail() {
                 {companySuggestions.map((c) => {
                   const suggestionKey = companySuggestionKey(c)
                   const selectedType = companyTagSelections[suggestionKey]
+                  const chipKey = c.id ?? c.name
+                  const isEditing = editingCompanyKey === chipKey
                   return (
                     <div key={c.domain || c.name} className={styles.companyChip}>
-                      <button
-                        type="button"
-                        className={styles.companyChipMain}
-                        onClick={() => void handleOpenCompanyDetail(c)}
-                      >
-                        {c.domain && (
-                          <img
-                            src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.domain)}&sz=32`}
-                            alt=""
-                            className={styles.companyChipLogo}
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                      <div className={styles.companyChipRow}>
+                        {isEditing ? (
+                          <EntityPicker<CompanySummary>
+                            picker={swapCompanyPicker}
+                            placeholder="Search company…"
+                            renderItem={(co) => (
+                              <span className={styles.companyPickerItem}>
+                                {co.primaryDomain && (
+                                  <img
+                                    src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(co.primaryDomain)}&sz=32`}
+                                    width={14}
+                                    height={14}
+                                    alt=""
+                                  />
+                                )}
+                                {co.canonicalName}
+                              </span>
+                            )}
+                            onSelect={(selected) => void handleSwapCompany(c, selected.canonicalName)}
+                            onClose={() => setEditingCompanyKey(null)}
+                            onCreate={(query) => void handleSwapCompany(c, query)}
                           />
+                        ) : (
+                          <button
+                            type="button"
+                            className={styles.companyChipMain}
+                            onClick={() => void handleOpenCompanyDetail(c)}
+                          >
+                            {c.domain && (
+                              <img
+                                src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.domain)}&sz=32`}
+                                alt=""
+                                className={styles.companyChipLogo}
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                              />
+                            )}
+                            {optimisticSwap[chipKey] ?? c.name}
+                          </button>
                         )}
-                        {c.name}
-                      </button>
-                      {c.id && (
-                        <button
-                          type="button"
-                          className={styles.companyChipRemove}
-                          onClick={(e) => void handleUnlinkCompany(e, c)}
-                          title="Remove company tag"
-                        >
-                          ×
-                        </button>
-                      )}
-                      {!selectedType && (
+                        {!isEditing && (
+                          <button
+                            type="button"
+                            className={styles.companyChipEdit}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setEditingCompanyKey(chipKey)
+                              swapCompanyPicker.search(c.name, 0)
+                            }}
+                            title="Change company"
+                          >
+                            ✎
+                          </button>
+                        )}
+                        {!isEditing && c.id && (
+                          <button
+                            type="button"
+                            className={styles.companyChipRemove}
+                            onClick={(e) => void handleUnlinkCompany(e, c)}
+                            title="Remove company tag"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                      {!isEditing && !selectedType && (
                         <span className={styles.companyChipActions}>
                           {TAGGABLE_COMPANY_TYPES.map((entityType) => (
                             <button

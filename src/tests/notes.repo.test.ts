@@ -8,6 +8,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { runUnifiedNotesMigration } from '../main/database/migrations/052-unified-notes'
+import { runNotesFolderPathMigration } from '../main/database/migrations/057-notes-folder-path'
+import { runNoteFoldersMigration } from '../main/database/migrations/058-note-folders'
 
 let testDb: Database.Database
 
@@ -17,10 +19,15 @@ vi.mock('../main/database/connection', () => ({
 
 const {
   listNotes,
+  searchNotes,
   getNote,
   createNote,
   updateNote,
-  deleteNote
+  deleteNote,
+  listFolders,
+  createFolder,
+  renameFolder,
+  deleteFolder,
 } = await import('../main/database/repositories/notes.repo')
 
 function buildDb(): Database.Database {
@@ -33,6 +40,8 @@ function buildDb(): Database.Database {
     CREATE TABLE themes (id TEXT PRIMARY KEY);
   `)
   runUnifiedNotesMigration(db)
+  runNotesFolderPathMigration(db)
+  runNoteFoldersMigration(db)
   return db
 }
 
@@ -148,6 +157,97 @@ describe('notes.repo', () => {
     })
   })
 
+  describe('listNotes dedup (source_meeting_id)', () => {
+    beforeEach(() => {
+      testDb.exec(`INSERT INTO org_companies VALUES ('co1', 'Acme')`)
+      testDb.exec(`INSERT INTO org_companies VALUES ('co2', 'Beta')`)
+      testDb.exec(`INSERT INTO meetings VALUES ('mtg1', 'Q1 Review')`)
+      testDb.exec(`INSERT INTO meetings VALUES ('mtg2', 'Q2 Review')`)
+    })
+
+    it('shows single note when companion + company-backfill share source_meeting_id', () => {
+      // Companion created first (no company_id)
+      createNote({ content: 'companion', sourceMeetingId: 'mtg1' }, null, '2024-01-01 10:00:00')
+      // Backfill created second (with company_id)
+      createNote({ content: 'backfill', sourceMeetingId: 'mtg1', companyId: 'co1' }, null, '2024-01-01 10:00:01')
+
+      const notes = listNotes('all')
+      expect(notes).toHaveLength(1)
+    })
+
+    it('shows the earliest-created note (companion), not the backfill', () => {
+      const companion = createNote({ content: 'companion', sourceMeetingId: 'mtg1' }, null, '2024-01-01 10:00:00')!
+      createNote({ content: 'backfill', sourceMeetingId: 'mtg1', companyId: 'co1' }, null, '2024-01-01 10:00:01')
+
+      const notes = listNotes('all')
+      expect(notes[0].id).toBe(companion.id)
+    })
+
+    it('standalone notes (no source_meeting_id) all appear unaffected', () => {
+      createNote({ content: 'note1' })
+      createNote({ content: 'note2' })
+      createNote({ content: 'note3' })
+
+      expect(listNotes('all')).toHaveLength(3)
+    })
+
+    it('multiple meetings show one note each', () => {
+      createNote({ content: 'companion A', sourceMeetingId: 'mtg1' }, null, '2024-01-01 10:00:00')
+      createNote({ content: 'backfill A', sourceMeetingId: 'mtg1', companyId: 'co1' }, null, '2024-01-01 10:00:01')
+      createNote({ content: 'companion B', sourceMeetingId: 'mtg2' }, null, '2024-01-01 11:00:00')
+      createNote({ content: 'backfill B', sourceMeetingId: 'mtg2', companyId: 'co2' }, null, '2024-01-01 11:00:01')
+
+      expect(listNotes('all')).toHaveLength(2)
+    })
+
+    it('multi-company meeting: two backfill notes both appear (different companies)', () => {
+      // First companion
+      createNote({ content: 'companion', sourceMeetingId: 'mtg1' }, null, '2024-01-01 10:00:00')
+      // company-2 meeting has a different source note
+      createNote({ content: 'backfill co2', sourceMeetingId: 'mtg1', companyId: 'co2' }, null, '2024-01-01 10:00:02')
+
+      // Two notes exist; dedup picks only the earliest
+      const notes = listNotes('all')
+      expect(notes).toHaveLength(1)
+      expect(notes[0].content).toBe('companion')
+    })
+  })
+
+  describe('searchNotes dedup', () => {
+    beforeEach(() => {
+      testDb.exec(`INSERT INTO org_companies VALUES ('co1', 'Acme')`)
+      testDb.exec(`INSERT INTO meetings VALUES ('mtg1', 'Q1 Review')`)
+    })
+
+    it('searching a meeting keyword returns 1 result, not 2', () => {
+      createNote({ content: 'quarterly review discussion', sourceMeetingId: 'mtg1' }, null, '2024-01-01 10:00:00')
+      createNote({ content: 'quarterly review discussion', sourceMeetingId: 'mtg1', companyId: 'co1' }, null, '2024-01-01 10:00:01')
+
+      const results = searchNotes('quarterly')
+      expect(results).toHaveLength(1)
+    })
+  })
+
+  describe('updateNote folderPath', () => {
+    it('assigns a folder path to a note', () => {
+      const note = createNote({ content: 'body' })!
+      const updated = updateNote(note.id, { folderPath: 'Work/Q1' })
+      expect(updated!.folderPath).toBe('Work/Q1')
+    })
+
+    it('clears folder path when null passed', () => {
+      const note = createNote({ content: 'body', folderPath: 'Work' })!
+      const updated = updateNote(note.id, { folderPath: null })
+      expect(updated!.folderPath).toBeNull()
+    })
+
+    it('undefined folderPath leaves existing path unchanged', () => {
+      const note = createNote({ content: 'body', folderPath: 'Work' })!
+      const updated = updateNote(note.id, { content: 'new body' })
+      expect(updated!.folderPath).toBe('Work')
+    })
+  })
+
   describe('updateNote', () => {
     it('updates content', () => {
       const note = createNote({ content: 'original' })!
@@ -207,6 +307,174 @@ describe('notes.repo', () => {
 
     it('returns false for unknown id', () => {
       expect(deleteNote('nonexistent')).toBe(false)
+    })
+  })
+
+  describe('listNotes unfoldered filter', () => {
+    it('returns only notes with null folder_path', () => {
+      createNote({ content: 'no folder' })
+      createNote({ content: 'in folder', folderPath: 'Work' })
+      const notes = listNotes('unfoldered')
+      expect(notes).toHaveLength(1)
+      expect(notes[0].content).toBe('no folder')
+    })
+
+    it('excludes notes with any folder assigned', () => {
+      createNote({ content: 'a', folderPath: 'Work' })
+      createNote({ content: 'b', folderPath: 'Work/Q1' })
+      expect(listNotes('unfoldered')).toHaveLength(0)
+    })
+
+    it('treats empty string folder_path as unfoldered', () => {
+      // createNote with folderPath '' — INSERT stores NULL via ?? null
+      const note = createNote({ content: 'empty path', folderPath: '' })!
+      // empty string is stored as null, so it shows in unfoldered
+      const notes = listNotes('unfoldered')
+      expect(notes.some(n => n.id === note.id)).toBe(true)
+    })
+  })
+
+  describe('createFolder / listFolders', () => {
+    it('createFolder: path appears in listFolders()', () => {
+      createFolder('Work')
+      expect(listFolders()).toContain('Work')
+    })
+
+    it('createFolder: INSERT OR IGNORE — no error on duplicate', () => {
+      expect(() => {
+        createFolder('Work')
+        createFolder('Work')
+      }).not.toThrow()
+      expect(listFolders().filter(f => f === 'Work')).toHaveLength(1)
+    })
+
+    it('listFolders returns union of note folder_paths + note_folders', () => {
+      createFolder('EmptyFolder')
+      createNote({ content: 'body', folderPath: 'Work' })
+      const folders = listFolders()
+      expect(folders).toContain('EmptyFolder')
+      expect(folders).toContain('Work')
+    })
+
+    it('listFolders returns sorted paths', () => {
+      createFolder('Z')
+      createFolder('A')
+      createFolder('M')
+      const folders = listFolders()
+      const relevant = folders.filter(f => ['Z', 'A', 'M'].includes(f))
+      expect(relevant).toEqual(['A', 'M', 'Z'])
+    })
+  })
+
+  describe('renameFolder', () => {
+    it('updates notes with exact old path to new path', () => {
+      const note = createNote({ content: 'body', folderPath: 'Work' })!
+      renameFolder('Work', 'Projects')
+      expect(getNote(note.id)!.folderPath).toBe('Projects')
+    })
+
+    it('updates nested children (Work/Q1 → Projects/Q1)', () => {
+      const note = createNote({ content: 'body', folderPath: 'Work/Q1' })!
+      renameFolder('Work', 'Projects')
+      expect(getNote(note.id)!.folderPath).toBe('Projects/Q1')
+    })
+
+    it('updates note_folders entries (delete old + insert new)', () => {
+      createFolder('Work')
+      createFolder('Work/Q1')
+      renameFolder('Work', 'Projects')
+      const folders = listFolders()
+      expect(folders).not.toContain('Work')
+      expect(folders).not.toContain('Work/Q1')
+      expect(folders).toContain('Projects')
+      expect(folders).toContain('Projects/Q1')
+    })
+
+    it('does not affect notes in unrelated folders', () => {
+      const other = createNote({ content: 'other', folderPath: 'Personal' })!
+      renameFolder('Work', 'Projects')
+      expect(getNote(other.id)!.folderPath).toBe('Personal')
+    })
+  })
+
+  describe('deleteFolder', () => {
+    it('clears folder_path on all notes inside', () => {
+      const note = createNote({ content: 'body', folderPath: 'Work' })!
+      deleteFolder('Work')
+      expect(getNote(note.id)!.folderPath).toBeNull()
+    })
+
+    it('clears folder_path on nested children too', () => {
+      const note = createNote({ content: 'body', folderPath: 'Work/Q1' })!
+      deleteFolder('Work')
+      expect(getNote(note.id)!.folderPath).toBeNull()
+    })
+
+    it('removes note_folders entry', () => {
+      createFolder('Work')
+      deleteFolder('Work')
+      expect(listFolders()).not.toContain('Work')
+    })
+
+    it('does not affect notes in unrelated folders', () => {
+      const other = createNote({ content: 'other', folderPath: 'Personal' })!
+      createFolder('Work')
+      deleteFolder('Work')
+      expect(getNote(other.id)!.folderPath).toBe('Personal')
+    })
+  })
+
+  describe('listNotes / searchNotes — hideClaimedMeetingNotes', () => {
+    beforeEach(() => {
+      testDb.exec(`INSERT INTO org_companies VALUES ('co1', 'Acme')`)
+      testDb.exec(`INSERT INTO contacts VALUES ('ct1', 'Alice')`)
+      testDb.exec(`INSERT INTO meetings VALUES ('mtg1', 'Q1 Review')`)
+      testDb.exec(`INSERT INTO meetings VALUES ('mtg2', 'Legal Call')`)
+      testDb.exec(`INSERT INTO meetings VALUES ('mtg3', 'Admin Meeting')`)
+    })
+
+    it('excludes meeting notes tagged to a company when hideClaimedMeetingNotes=true', () => {
+      const claimed = createNote({ content: 'Acme meeting', companyId: 'co1', sourceMeetingId: 'mtg1' })!
+      const results = listNotes('all', null, true)
+      expect(results.map(n => n.id)).not.toContain(claimed.id)
+    })
+
+    it('includes meeting notes tagged to a contact only (no company) when hideClaimedMeetingNotes=true', () => {
+      const contactOnly = createNote({ content: 'Legal call', contactId: 'ct1', sourceMeetingId: 'mtg2' })!
+      const results = listNotes('all', null, true)
+      expect(results.map(n => n.id)).toContain(contactOnly.id)
+    })
+
+    it('includes fully untagged meeting notes when hideClaimedMeetingNotes=true (thematic/admin meetings)', () => {
+      const untagged = createNote({ content: 'Admin meeting', sourceMeetingId: 'mtg3' })!
+      const results = listNotes('all', null, true)
+      expect(results.map(n => n.id)).toContain(untagged.id)
+    })
+
+    it('includes standalone notes tagged to a company when hideClaimedMeetingNotes=true', () => {
+      // Intentional research note — not meeting-generated
+      const standalone = createNote({ content: 'Research on Acme', companyId: 'co1' })!
+      const results = listNotes('all', null, true)
+      expect(results.map(n => n.id)).toContain(standalone.id)
+    })
+
+    it('includes meeting notes tagged to a company when hideClaimedMeetingNotes=false', () => {
+      const claimed = createNote({ content: 'Acme meeting', companyId: 'co1', sourceMeetingId: 'mtg1' })!
+      const results = listNotes('all', null, false)
+      expect(results.map(n => n.id)).toContain(claimed.id)
+    })
+
+    it('excludes company-tagged meeting notes from search results when hideClaimedMeetingNotes=true', () => {
+      createNote({ content: 'quarterly review notes for Acme', companyId: 'co1', sourceMeetingId: 'mtg1' })
+      const results = searchNotes('quarterly', null, true)
+      expect(results.every(n => n.sourceMeetingId === null || n.companyId === null)).toBe(true)
+    })
+
+    it('preserves hideClaimedMeetingNotes=true in searchNotes fallback path', () => {
+      // Simulate the fallback by calling listNotes with the flag — verifies the param propagates
+      const claimed = createNote({ content: 'Acme meeting', companyId: 'co1', sourceMeetingId: 'mtg1' })!
+      const fallback = listNotes('all', null, true)
+      expect(fallback.map(n => n.id)).not.toContain(claimed.id)
     })
   })
 

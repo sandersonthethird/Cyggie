@@ -85,16 +85,16 @@ describe('buildTitleFromPath', () => {
     expect(buildTitleFromPath(f, tmpDir, 'generic')).toBe('kick-off')
   })
 
-  it('one subfolder deep: prefixes with parent folder name', () => {
+  it('one subfolder deep: uses filename as title (folder stored separately)', () => {
     mkTmp()
     const f = write('Work/kick-off.md')
-    expect(buildTitleFromPath(f, tmpDir, 'generic')).toBe('Work — kick-off')
+    expect(buildTitleFromPath(f, tmpDir, 'generic')).toBe('kick-off')
   })
 
-  it('two subfolders deep: uses immediate parent only', () => {
+  it('two subfolders deep: uses filename as title (no parent prefix)', () => {
     mkTmp()
     const f = write('a/b/note.md')
-    expect(buildTitleFromPath(f, tmpDir, 'generic')).toBe('b — note')
+    expect(buildTitleFromPath(f, tmpDir, 'generic')).toBe('note')
   })
 
   it('strips file extension', () => {

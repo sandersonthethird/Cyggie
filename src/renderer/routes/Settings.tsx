@@ -150,10 +150,14 @@ export default function Settings() {
   const [backfillRunning, setBackfillRunning] = useState(false)
   const [backfillResult, setBackfillResult] = useState<{ meetings: number; created: number; skipped: number } | null>(null)
   const [backfillError, setBackfillError] = useState('')
+  const [fixNamesRunning, setFixNamesRunning] = useState(false)
+  const [fixNamesResult, setFixNamesResult] = useState<{ fixed: number; merged: number; changes: Array<{ id: string; before: string; after: string; action: 'renamed' | 'merged' }> } | null>(null)
+  const [fixNamesError, setFixNamesError] = useState('')
+  const [fixNamesExpanded, setFixNamesExpanded] = useState(false)
   const [notesImportFormat, setNotesImportFormat] = useState<ImportFormat>('apple-notes')
   const [notesImportRunning, setNotesImportRunning] = useState(false)
   const [notesImportProgress, setNotesImportProgress] = useState<{ created: number; skipped: number; total: number } | null>(null)
-  const [notesImportResult, setNotesImportResult] = useState<{ created: number; skipped: number; errors: string[] } | null>(null)
+  const [notesImportResult, setNotesImportResult] = useState<{ created: number; skipped: number; errors: string[]; imagesExtracted?: number; foldersFound?: number } | null>(null)
   const [notesImportError, setNotesImportError] = useState('')
   const [notesImportScan, setNotesImportScan] = useState<{ total: number; alreadyExist: number; folders: number; folderPath: string } | null>(null)
   const [showImportErrors, setShowImportErrors] = useState(false)
@@ -378,7 +382,7 @@ export default function Settings() {
     setNotesImportResult(null)
     setShowImportErrors(false)
     try {
-      const result = await api.invoke<{ created: number; skipped: number; errors: string[] }>(
+      const result = await api.invoke<{ created: number; skipped: number; errors: string[]; imagesExtracted: number; foldersFound: number }>(
         IPC_CHANNELS.NOTES_IMPORT_FOLDER,
         notesImportScan.folderPath,
         notesImportFormat
@@ -1491,6 +1495,12 @@ export default function Settings() {
               <p className={styles.hint}>
                 Done — {notesImportResult.created} note{notesImportResult.created !== 1 ? 's' : ''} imported,{' '}
                 {notesImportResult.skipped} skipped.
+                {(notesImportResult.foldersFound ?? 0) > 0 && (
+                  <> · {notesImportResult.foldersFound} folder{notesImportResult.foldersFound !== 1 ? 's' : ''}</>
+                )}
+                {(notesImportResult.imagesExtracted ?? 0) > 0 && (
+                  <> · {notesImportResult.imagesExtracted} image{notesImportResult.imagesExtracted !== 1 ? 's' : ''} extracted</>
+                )}
               </p>
               {notesImportResult.errors.length > 0 && (
                 <div>
@@ -1572,6 +1582,74 @@ export default function Settings() {
             </p>
           )}
           {backfillError && <p className={styles.error}>{backfillError}</p>}
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Fix Company Names</h3>
+        <div className={styles.field}>
+          <p className={styles.hint}>
+            Scans for company names that look like concatenated words (e.g. &ldquo;AcmeCorp&rdquo;, &ldquo;bowleycapital&rdquo;)
+            and corrects them. If a corrected name already exists, the duplicate is merged automatically.
+            Safe to run multiple times.
+          </p>
+          <div className={styles.onboardingActionRow}>
+            <button
+              className={styles.connectBtn}
+              onClick={async () => {
+                setFixNamesRunning(true)
+                setFixNamesResult(null)
+                setFixNamesError('')
+                setFixNamesExpanded(false)
+                try {
+                  const result = await api.invoke<{ fixed: number; merged: number; changes: Array<{ id: string; before: string; after: string; action: 'renamed' | 'merged' }> }>(
+                    IPC_CHANNELS.COMPANY_FIX_CONCATENATED_NAMES
+                  )
+                  setFixNamesResult(result)
+                } catch (err) {
+                  setFixNamesError(String(err))
+                } finally {
+                  setFixNamesRunning(false)
+                }
+              }}
+              disabled={fixNamesRunning}
+            >
+              {fixNamesRunning ? 'Running…' : 'Fix Company Names'}
+            </button>
+          </div>
+          {fixNamesResult && (
+            <div>
+              <p className={styles.hint}>
+                {fixNamesResult.fixed === 0 && fixNamesResult.merged === 0
+                  ? 'No concatenated names found — all company names look correct.'
+                  : `Fixed ${fixNamesResult.fixed} name${fixNamesResult.fixed !== 1 ? 's' : ''}${fixNamesResult.merged > 0 ? `, merged ${fixNamesResult.merged} duplicate${fixNamesResult.merged !== 1 ? 's' : ''}` : ''}.`}
+                {fixNamesResult.changes.length > 0 && (
+                  <>
+                    {' '}
+                    <button
+                      className={styles.linkBtn}
+                      onClick={() => setFixNamesExpanded((v) => !v)}
+                    >
+                      {fixNamesExpanded ? 'Hide what changed' : 'Show what changed'}
+                    </button>
+                  </>
+                )}
+              </p>
+              {fixNamesExpanded && fixNamesResult.changes.length > 0 && (
+                <ul className={styles.fixNamesList}>
+                  {fixNamesResult.changes.map((c) => (
+                    <li key={c.id}>
+                      <span className={styles.fixNameBefore}>{c.before}</span>
+                      {' → '}
+                      <span className={styles.fixNameAfter}>{c.after}</span>
+                      {c.action === 'merged' && <span className={styles.fixNameMergedBadge}> [merged]</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {fixNamesError && <p className={styles.error}>{fixNamesError}</p>}
         </div>
       </section>
         </>

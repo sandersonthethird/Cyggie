@@ -1,13 +1,17 @@
 import { ipcMain, dialog } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
+import { randomUUID } from 'crypto'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as notesRepo from '../database/repositories/notes.repo'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 import { getDatabase } from '../database/connection'
-import { suggestNoteTag } from '../services/note-tagging.service'
+import { getStoragePath } from '../storage/paths'
+import { suggestNoteTag, suggestFolderEntityTag, suggestTitleEntityTag } from '../services/note-tagging.service'
 import { hydrateCompanionNote } from './note-hydration'
+import { convertHtmlToMarkdown } from '../utils/html-to-markdown'
+import type { ExtractedImage } from '../utils/html-to-markdown'
 import type { NoteCreateData, NoteFilterView, NoteUpdateData } from '../../shared/types/note'
 import type { ImportFormat } from '../../shared/types/note'
 
@@ -17,33 +21,38 @@ import type { ImportFormat } from '../../shared/types/note'
 
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024 // 2MB
 
-/** Recursively collect all .txt/.md files under a folder */
+/** Recursively collect all .txt/.md/.html files under a folder */
 export function collectFiles(dir: string): string[] {
   const entries = fs.readdirSync(dir, { withFileTypes: true })
   const files: string[] = []
   for (const e of entries) {
     const full = path.join(dir, e.name)
     if (e.isDirectory()) files.push(...collectFiles(full))
-    else if (/\.(txt|md)$/i.test(e.name)) files.push(full)
+    else if (/\.(txt|md|html)$/i.test(e.name)) files.push(full)
   }
   return files
 }
 
-/** Build display title from file path + root folder.
- *  If file is in a subfolder, prefix with immediate parent folder name.
- *  "rootFolder/Work/kick-off.md" → "Work — kick-off"
- *  "rootFolder/kick-off.md"      → "kick-off"
+/** Build display title from file path: always just the filename stem, no folder prefix. */
+export function buildTitleFromPath(filePath: string, _rootFolder: string, format: ImportFormat): string {
+  const filename = path.basename(filePath, path.extname(filePath))
+  return format === 'notion' ? stripNotionUUID(filename) : filename
+}
+
+/**
+ * Build the folder_path to store in DB from a file path relative to the root.
+ * Root-level files return '' (stored as NULL). Nested files return slash-joined
+ * parent segments, always using '/' regardless of OS path separator.
+ *
+ * Examples:
+ *   rootFolder/kick-off.md             → ''
+ *   rootFolder/Work/kick-off.md        → 'Work'
+ *   rootFolder/Work/Q1/kick-off.md     → 'Work/Q1'
  */
-export function buildTitleFromPath(filePath: string, rootFolder: string, format: ImportFormat): string {
-  const rel = path.relative(rootFolder, filePath)
-  const parts = rel.split(path.sep)
-  const filename = path.basename(parts[parts.length - 1], path.extname(parts[parts.length - 1]))
-  const cleaned = format === 'notion' ? stripNotionUUID(filename) : filename
-  if (parts.length > 1) {
-    const parent = parts[parts.length - 2]
-    return `${parent} — ${cleaned}`
-  }
-  return cleaned
+export function buildFolderPath(filePath: string, rootFolder: string): string {
+  const parts = path.relative(rootFolder, filePath).split(path.sep)
+  if (parts.length <= 1) return ''
+  return parts.slice(0, -1).join('/')
 }
 
 /** Strip Notion's trailing UUID from filenames.
@@ -60,10 +69,13 @@ export function buildFingerprint(content: string): string {
 
 interface ProcessFileResult {
   title: string
-  content: string
+  content: string        // markdown (converted for .html; as-is for .md/.txt)
+  images: ExtractedImage[] // populated only for .html files; empty array otherwise
   fingerprint: string
   skip: boolean
   error?: string
+  folderPath: string     // '' for root-level files
+  fileDate: string | null  // stat.mtime.toISOString()
 }
 
 /** Shared per-file logic used by both scan and import handlers.
@@ -73,15 +85,75 @@ export function processFile(file: string, rootFolder: string, format: ImportForm
   const stat = fs.statSync(file)
   if (stat.size > MAX_FILE_SIZE_BYTES) {
     return {
-      title: '', content: '', fingerprint: '', skip: true,
+      title: '', content: '', images: [], fingerprint: '', skip: true, folderPath: '', fileDate: null,
       error: `${path.basename(file)}: file too large (>${MAX_FILE_SIZE_BYTES / 1024 / 1024}MB)`
     }
   }
-  const content = fs.readFileSync(file, 'utf8').trim()
-  if (!content) return { title: '', content: '', fingerprint: '', skip: true }
+
   const title = buildTitleFromPath(file, rootFolder, format)
-  const fingerprint = buildFingerprint(content)
-  return { title, content, fingerprint, skip: false }
+  const folderPath = buildFolderPath(file, rootFolder)
+  const fileDate = stat.mtime.toISOString()
+  const ext = path.extname(file).toLowerCase()
+
+  if (ext === '.html') {
+    const html = fs.readFileSync(file, 'utf8')
+    const { markdown, images } = convertHtmlToMarkdown(html)
+    const trimmed = markdown.trim()
+    if (!trimmed) return { title: '', content: '', images: [], fingerprint: '', skip: true, folderPath, fileDate }
+    return { title, content: trimmed, images, fingerprint: buildFingerprint(trimmed), skip: false, folderPath, fileDate }
+  }
+
+  const content = fs.readFileSync(file, 'utf8').trim()
+  if (!content) return { title: '', content: '', images: [], fingerprint: '', skip: true, folderPath, fileDate }
+  return { title, content, images: [], fingerprint: buildFingerprint(content), skip: false, folderPath, fileDate }
+}
+
+// ---------------------------------------------------------------------------
+// Image extraction helper (exported for unit tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Write extracted images to disk and resolve __IMG_{n}__ placeholders to asset:// URIs.
+ *
+ * On per-image write failure: placeholder replaced with [image].
+ * On total failure: all remaining __IMG_\d+__ tokens stripped to [image].
+ *
+ *   images[]  ──► write to {assetsDir}/image-NNN.ext
+ *                 ──► replace __IMG_{n}__ with asset://note-assets/{noteId}/image-NNN.ext
+ */
+export function extractImages(
+  images: ExtractedImage[],
+  assetsDir: string,
+  markdownWithPlaceholders: string
+): { markdown: string; count: number } {
+  try {
+    let markdown = markdownWithPlaceholders
+    let count = 0
+
+    for (let n = 0; n < images.length; n++) {
+      const img = images[n]
+      const ext = img.mimeType.replace('jpeg', 'jpg')
+      const filename = `image-${String(n).padStart(3, '0')}.${ext}`
+      const placeholder = `__IMG_${n}__`
+
+      try {
+        fs.mkdirSync(assetsDir, { recursive: true })
+        fs.writeFileSync(path.join(assetsDir, filename), Buffer.from(img.data, 'base64'))
+        const noteId = path.basename(assetsDir)
+        const uri = `asset://note-assets/${noteId}/${filename}`
+        markdown = markdown.replace(placeholder, `![image](${uri})`)
+        count++
+      } catch {
+        markdown = markdown.replace(placeholder, '[image]')
+      }
+    }
+
+    return { markdown, count }
+  } catch {
+    // Strip any remaining placeholder tokens
+    const cleaned = markdownWithPlaceholders.replace(/__IMG_\d+__/g, '[image]')
+    return { markdown: cleaned, count: 0 }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -97,10 +169,19 @@ let importInFlight = false
 // ---------------------------------------------------------------------------
 
 export function registerNotesHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.NOTES_LIST, (_event, filter?: NoteFilterView, query?: string) => {
-    if (query?.trim()) return notesRepo.searchNotes(query.trim())
-    return notesRepo.listNotes(filter)
-  })
+  ipcMain.handle(
+    IPC_CHANNELS.NOTES_LIST,
+    (_event, opts: {
+      filter?: NoteFilterView
+      query?: string
+      folderPath?: string | null
+      hideClaimedMeetingNotes?: boolean
+    } = {}) => {
+      const { filter, query, folderPath, hideClaimedMeetingNotes } = opts
+      if (query?.trim()) return notesRepo.searchNotes(query.trim(), folderPath, hideClaimedMeetingNotes)
+      return notesRepo.listNotes(filter, folderPath, hideClaimedMeetingNotes)
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.NOTES_GET, (_event, noteId: string) => {
     if (!noteId) throw new Error('noteId is required')
@@ -138,6 +219,9 @@ export function registerNotesHandlers(): void {
     const deleted = notesRepo.deleteNote(noteId)
     if (deleted) {
       logAudit(userId, 'note', noteId, 'delete', null)
+      // Clean up extracted images for this note
+      const assetsDir = path.join(getStoragePath(), 'note-assets', noteId)
+      try { fs.rmSync(assetsDir, { recursive: true, force: true }) } catch { /* non-fatal */ }
     }
     return deleted
   })
@@ -149,6 +233,34 @@ export function registerNotesHandlers(): void {
     // Only suggest tags for notes that aren't already tagged
     if (note.companyId || note.contactId) return null
     return suggestNoteTag(note.content)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_LIST_FOLDERS, () => {
+    return notesRepo.listFolders()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_LIST_IMPORT_SOURCES, () => {
+    return notesRepo.listImportSources()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_FOLDER_CREATE, (_event, folderPath: string) => {
+    const sanitized = String(folderPath ?? '').trim().replace(/[*?[\]]/g, '')
+    if (!sanitized) throw new Error('folderPath is required')
+    notesRepo.createFolder(sanitized)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_FOLDER_RENAME, (_event, oldPath: string, newPath: string) => {
+    const sanitizedOld = String(oldPath ?? '').trim()
+    const sanitizedNew = String(newPath ?? '').trim().replace(/[*?[\]]/g, '')
+    if (!sanitizedOld) throw new Error('oldPath is required')
+    if (!sanitizedNew) throw new Error('newPath is required')
+    notesRepo.renameFolder(sanitizedOld, sanitizedNew)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_FOLDER_DELETE, (_event, folderPath: string) => {
+    const sanitized = String(folderPath ?? '').trim()
+    if (!sanitized) throw new Error('folderPath is required')
+    notesRepo.deleteFolder(sanitized)
   })
 
   // ---------------------------------------------------------------------------
@@ -194,13 +306,15 @@ export function registerNotesHandlers(): void {
       const db = getDatabase()
       const userId = getCurrentUserId()
       const createdNoteIds: string[] = []
-      let created = 0, skipped = 0
+      const assetsBaseDir = path.join(getStoragePath(), 'note-assets')
+      let created = 0, skipped = 0, imagesExtracted = 0
       const errors: string[] = []
+      const foldersSeenDuringImport = new Set<string>()
 
       try {
         const files = collectFiles(folderPath)
         if (files.length === 0) {
-          return { created: 0, skipped: 0, errors: ['No .txt or .md files found in the selected folder'] }
+          return { created: 0, skipped: 0, errors: ['No importable files found in the selected folder'], imagesExtracted: 0, foldersFound: 0 }
         }
         const total = files.length
 
@@ -221,10 +335,36 @@ export function registerNotesHandlers(): void {
               ).get(pf.title, pf.fingerprint)
               if (existing) { skipped++; continue }
 
-              const note = notesRepo.createNote({ title: pf.title, content: pf.content }, userId)
+              // Pre-generate UUID: used for both asset dir and note ID (single write)
+              const preGenId = randomUUID()
+              let finalContent = pf.content
+
+              if (pf.images.length > 0) {
+                const { markdown, count } = extractImages(
+                  pf.images,
+                  path.join(assetsBaseDir, preGenId),
+                  pf.content
+                )
+                finalContent = markdown
+                imagesExtracted += count
+              }
+
+              const note = notesRepo.createNote(
+                {
+                  id: preGenId,
+                  title: pf.title,
+                  content: finalContent,
+                  folderPath: pf.folderPath || null,
+                  importSource: format,
+                },
+                userId,
+                pf.fileDate
+              )
+
               if (note) {
                 logAudit(userId, 'note', note.id, 'create', { importSource: format })
                 createdNoteIds.push(note.id)
+                if (pf.folderPath) foldersSeenDuringImport.add(pf.folderPath)
                 created++
               } else { skipped++ }
             } catch (err) {
@@ -243,13 +383,14 @@ export function registerNotesHandlers(): void {
         importInFlight = false
       }
 
-      // Fire-and-forget auto-tag pass
+      // Fire-and-forget auto-tag pass (per-note LLM + per-folder fuzzy)
       setImmediate(async () => {
         for (const noteId of createdNoteIds) {
           try {
             const note = notesRepo.getNote(noteId)
             if (!note || note.companyId || note.contactId) continue
-            const suggestion = await suggestNoteTag(note.content)
+            // Title match first (fast, no LLM), then LLM as fallback
+          const suggestion = suggestTitleEntityTag(note.title) ?? await suggestNoteTag(note.content)
             if (suggestion?.companyId) {
               notesRepo.updateNote(noteId, { companyId: suggestion.companyId }, userId)
             } else if (suggestion?.contactId) {
@@ -257,9 +398,25 @@ export function registerNotesHandlers(): void {
             }
           } catch { /* non-fatal */ }
         }
+
+        // Per-folder fuzzy entity match
+        const distinctFolders = [...new Set(
+          createdNoteIds
+            .map(id => notesRepo.getNote(id)?.folderPath)
+            .filter((fp): fp is string => Boolean(fp))
+        )]
+        for (const fp of distinctFolders) {
+          try {
+            const leafName = fp.split('/').pop()!
+            const suggestion = suggestFolderEntityTag(leafName)
+            if (suggestion && !event.sender.isDestroyed()) {
+              event.sender.send(IPC_CHANNELS.NOTES_FOLDER_TAG_SUGGESTION, { folderPath: fp, suggestion })
+            }
+          } catch { /* non-fatal */ }
+        }
       })
 
-      return { created, skipped, errors }
+      return { created, skipped, errors, imagesExtracted, foldersFound: foldersSeenDuringImport.size }
     }
   )
 

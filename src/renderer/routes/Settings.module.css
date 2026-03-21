@@ -237,6 +237,30 @@
   cursor: default;
 }
 
+.fixNamesList {
+  margin: 6px 0 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.fixNameBefore {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, monospace);
+}
+
+.fixNameAfter {
+  color: var(--color-text);
+  font-family: var(--font-mono, monospace);
+}
+
+.fixNameMergedBadge {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
 .actions {
   margin-top: 24px;
 }

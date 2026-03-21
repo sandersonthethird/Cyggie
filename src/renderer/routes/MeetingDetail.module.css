@@ -327,6 +327,13 @@
   border-radius: 12px;
 }
 
+.companyChipRow {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+}
+
 .companyChipMain {
   display: inline-flex;
   align-items: center;
@@ -368,6 +375,33 @@
 
 .companyChip:hover .companyChipRemove {
   display: flex;
+}
+
+.companyChipEdit {
+  display: none;
+  padding: 0 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted, #888);
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.companyChip:hover .companyChipEdit {
+  display: inline-flex;
+  align-items: center;
+}
+
+.companyChipEdit:hover {
+  color: var(--color-primary);
+}
+
+.companyPickerItem {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 .companyChipActions {

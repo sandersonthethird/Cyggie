@@ -2,6 +2,9 @@ import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 import { jaroWinkler } from '../../utils/jaroWinkler'
 import { UnionFind } from '../../utils/unionFind'
+import { splitCamelCase } from '../../utils/string-utils'
+import { trySegment } from '../../utils/company-extractor'
+import { logAudit } from './audit.repo'
 import type {
   CompanyEntityType,
   CompanyPriority,
@@ -410,12 +413,25 @@ function baseCompanySelect(whereClause = ''): string {
     ) mc ON mc.company_id = c.id
     LEFT JOIN (
       SELECT
-        l.company_id,
-        COUNT(DISTINCT l.message_id) AS email_count,
-        MAX(COALESCE(em.received_at, em.sent_at, em.created_at)) AS last_email_at
-      FROM email_company_links l
-      JOIN email_messages em ON em.id = l.message_id
-      GROUP BY l.company_id
+        company_id,
+        COUNT(DISTINCT message_id) AS email_count,
+        MAX(sort_at) AS last_email_at
+      FROM (
+        SELECT l.company_id, l.message_id, COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at
+        FROM email_company_links l
+        JOIN email_messages em ON em.id = l.message_id
+        UNION
+        SELECT
+          COALESCE(c.primary_company_id, occ.company_id) AS company_id,
+          p.message_id,
+          COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at
+        FROM email_message_participants p
+        JOIN email_messages em ON em.id = p.message_id
+        JOIN contacts c ON c.id = p.contact_id
+        LEFT JOIN org_company_contacts occ ON occ.contact_id = c.id
+        WHERE COALESCE(c.primary_company_id, occ.company_id) IS NOT NULL
+      )
+      GROUP BY company_id
     ) ec ON ec.company_id = c.id
     LEFT JOIN (
       SELECT company_id, COUNT(*) AS note_count
@@ -501,9 +517,19 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
   }
 
   if (query) {
-    conditions.push('(c.canonical_name LIKE ? OR c.primary_domain LIKE ? OR c.description LIKE ?)')
-    const like = `%${query}%`
-    params.push(like, like, like)
+    const words = query.split(/\s+/).filter(Boolean)
+    if (words.length > 1) {
+      // Multi-word: each word must appear in canonical_name (AND logic).
+      // "Bowery Capital" → LIKE '%Bowery%' AND LIKE '%Capital%'.
+      // Domain/description still match on the full original string.
+      const nameClauses = words.map(() => 'c.canonical_name LIKE ?').join(' AND ')
+      conditions.push(`((${nameClauses}) OR c.primary_domain LIKE ? OR c.description LIKE ?)`)
+      words.forEach(w => params.push(`%${w}%`))
+      params.push(`%${query}%`, `%${query}%`)
+    } else {
+      conditions.push('(c.canonical_name LIKE ? OR c.primary_domain LIKE ? OR c.description LIKE ?)')
+      params.push(`%${query}%`, `%${query}%`, `%${query}%`)
+    }
   }
 
   if (filter?.entityTypes && filter.entityTypes.length > 0) {
@@ -2252,4 +2278,105 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
   return [...meetingItems, ...emailItems, ...noteItems, ...decisionItems].sort((a, b) =>
     new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()
   )
+}
+
+// Known company suffix patterns for the regex fallback in fixConcatenatedCompanyNames.
+// Matches names like "bowleycapital" → "Bowley Capital" where the prefix is not in DOMAIN_WORDS.
+const CONCAT_SUFFIX_PATTERN =
+  /^(.+?)(corp|inc|llc|ltd|lp|ventures?|capital|partners?|labs?|tech|health|group|solutions|services|systems|holdings?)$/i
+
+export interface CompanyNameFixResult {
+  id: string
+  before: string
+  after: string
+  action: 'renamed' | 'merged'
+}
+
+/**
+ * One-time (idempotent) pass over all companies whose canonical_name has no spaces.
+ * Attempts to detect and fix concatenated multi-word names using three strategies
+ * in order (first match wins):
+ *
+ *   1. CamelCase split:   "AcmeCorp"        → "Acme Corp"        (high confidence)
+ *   2. DOMAIN_WORDS:      "redswanventures" → "Red Swan Ventures" (medium confidence)
+ *   3. Suffix regex:      "bowleycapital"   → "Bowley Capital"    (lower confidence)
+ *
+ * On conflict (suggested name already exists as a different company):
+ *   → mergeCompanies(existingId, currentId)  (folds duplicate into canonical)
+ * On no conflict:
+ *   → updateCompany(currentId, { canonicalName: suggested })
+ *
+ * Safe to run multiple times — already-fixed names have spaces and are skipped.
+ */
+export function fixConcatenatedCompanyNames(
+  userId: string | null
+): { fixed: number; merged: number; changes: CompanyNameFixResult[] } {
+  const db = getDatabase()
+  const changes: CompanyNameFixResult[] = []
+  let fixed = 0
+  let merged = 0
+
+  const rows = db
+    .prepare(
+      `SELECT id, canonical_name FROM org_companies WHERE canonical_name NOT LIKE '% %'`
+    )
+    .all() as Array<{ id: string; canonical_name: string }>
+
+  db.transaction(() => {
+    for (const row of rows) {
+      const name = row.canonical_name
+
+      // Skip: too short, all-uppercase (abbreviations like IBM/IDEO), contains digits
+      if (name.length <= 3) continue
+      if (name.length > 60) continue     // cap for trySegment O(n²) safety
+      if (!/[a-z]/.test(name)) continue  // all-caps → abbreviation, leave alone
+      if (/\d/.test(name)) continue
+
+      let suggested: string | null = null
+
+      // Step 1: CamelCase split (high confidence — unambiguous word boundaries)
+      const camel = splitCamelCase(name)
+      if (camel !== name) {
+        suggested = camel
+      }
+
+      // Step 2: DOMAIN_WORDS segmentation via trySegment
+      if (!suggested) {
+        const segments = trySegment(name.toLowerCase(), 0)
+        if (segments && segments.length > 1) {
+          suggested = segments.map((w) => w[0].toUpperCase() + w.slice(1)).join(' ')
+        }
+      }
+
+      // Step 3: Suffix-only regex fallback (catches proper-name prefix + known suffix)
+      if (!suggested) {
+        const m = name.toLowerCase().match(CONCAT_SUFFIX_PATTERN)
+        if (m && m[1].length >= 3) {
+          const prefix = m[1][0].toUpperCase() + m[1].slice(1)
+          const suffix = m[2][0].toUpperCase() + m[2].slice(1)
+          suggested = `${prefix} ${suffix}`
+        }
+      }
+
+      if (!suggested) continue
+
+      // Conflict check: does the suggested name already exist as a different company?
+      const existingId = findCompanyIdByNameOrDomain(suggested, null)
+
+      if (existingId && existingId !== row.id) {
+        // Fold the concatenated entry into the existing canonical record
+        mergeCompanies(existingId, row.id)
+        logAudit(userId, 'company', row.id, 'update', { before: name, after: suggested, action: 'merged' })
+        changes.push({ id: row.id, before: name, after: suggested, action: 'merged' })
+        merged++
+      } else {
+        updateCompany(row.id, { canonicalName: suggested }, userId)
+        logAudit(userId, 'company', row.id, 'update', { before: name, after: suggested, action: 'renamed' })
+        changes.push({ id: row.id, before: name, after: suggested, action: 'renamed' })
+        fixed++
+      }
+    }
+  })()
+
+  return { fixed, merged, changes }
 }

@@ -1,137 +1,71 @@
-import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
-import type { CompanyNote } from '../../../shared/types/company'
+import { makeEntityNotesRepo } from './notes-base'
+import type { Note } from '../../../shared/types/note'
 
-interface CompanyNoteRow {
-  id: string
-  company_id: string
-  theme_id: string | null
-  title: string | null
-  content: string
-  is_pinned: number
-  created_at: string
-  updated_at: string
-}
+export type { Note as CompanyNote }
 
-function rowToCompanyNote(row: CompanyNoteRow): CompanyNote {
-  return {
-    id: row.id,
-    companyId: row.company_id,
-    themeId: row.theme_id,
-    title: row.title,
-    content: row.content,
-    isPinned: row.is_pinned === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }
-}
+const _repo = makeEntityNotesRepo('company_id')
 
-export function listCompanyNotes(companyId: string): CompanyNote[] {
-  const db = getDatabase()
-  const rows = db
-    .prepare(`
-      SELECT
-        id,
-        company_id,
-        theme_id,
-        title,
-        content,
-        is_pinned,
-        created_at,
-        updated_at
-      FROM notes
-      WHERE company_id = ?
-      ORDER BY is_pinned DESC, datetime(updated_at) DESC
-    `)
-    .all(companyId) as CompanyNoteRow[]
-  return rows.map(rowToCompanyNote)
-}
+export const listCompanyNotes = (companyId: string): Note[] =>
+  _repo.list(companyId)
 
-export function createCompanyNote(data: {
-  companyId: string
-  themeId?: string | null
-  title?: string | null
-  content: string
-  sourceMeetingId?: string | null
-}, userId: string | null = null): CompanyNote | null {
-  const db = getDatabase()
-  // Dedup: if this note was auto-generated from a meeting summary, avoid creating a duplicate
-  if (data.sourceMeetingId) {
-    const existing = db
-      .prepare(`SELECT id FROM notes WHERE source_meeting_id = ? AND company_id = ?`)
-      .get(data.sourceMeetingId, data.companyId) as { id: string } | undefined
-    if (existing) return getCompanyNote(existing.id)
-  }
-  const id = randomUUID()
-  const result = db.prepare(`
-    INSERT INTO notes (
-      id, company_id, theme_id, title, content, is_pinned, source_meeting_id,
-      created_by_user_id, updated_by_user_id, created_at, updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, datetime('now'), datetime('now'))
-  `).run(id, data.companyId, data.themeId ?? null, data.title ?? null, data.content,
-    data.sourceMeetingId ?? null, userId, userId)
-  if (result.changes === 0) return null
-  return getCompanyNote(id)!
-}
+export const getCompanyNote = (noteId: string): Note | null =>
+  _repo.get(noteId)
 
-export function getCompanyNote(noteId: string): CompanyNote | null {
-  const db = getDatabase()
-  const row = db
-    .prepare(`
-      SELECT id, company_id, theme_id, title, content, is_pinned, created_at, updated_at
-      FROM notes
-      WHERE id = ?
-    `)
-    .get(noteId) as CompanyNoteRow | undefined
-  return row ? rowToCompanyNote(row) : null
-}
-
-export function updateCompanyNote(
-  noteId: string,
-  data: Partial<{
-    title: string | null
+/**
+ * Creates a company note.
+ * If `sourceMeetingId` is provided, checks for an existing note with the same
+ * source_meeting_id + company_id pair to avoid duplicates from meeting summary backfill.
+ */
+export function createCompanyNote(
+  data: {
+    companyId: string
+    themeId?: string | null
+    title?: string | null
     content: string
-    isPinned: boolean
-    themeId: string | null
-  }>,
+    sourceMeetingId?: string | null
+  },
   userId: string | null = null
-): CompanyNote | null {
-  const db = getDatabase()
-  const sets: string[] = []
-  const params: unknown[] = []
-
-  if (data.title !== undefined) {
-    sets.push('title = ?')
-    params.push(data.title)
+): Note | null {
+  if (data.sourceMeetingId) {
+    const db = getDatabase()
+    // Check for ANY note linked to this meeting (not just ones already tagged to this company).
+    // If the companion note has no company yet → claim it by setting company_id.
+    // If it already has the same company → no-op.
+    // If it has a DIFFERENT company → fall through and create a new note (multi-company meeting).
+    const existing = db
+      .prepare(`SELECT id, company_id FROM notes WHERE source_meeting_id = ? LIMIT 1`)
+      .get(data.sourceMeetingId) as { id: string; company_id: string | null } | undefined
+    if (existing) {
+      if (existing.company_id === data.companyId) return _repo.get(existing.id)
+      if (existing.company_id === null) {
+        db.prepare(`UPDATE notes SET company_id = ?, updated_at = datetime('now') WHERE id = ?`)
+          .run(data.companyId, existing.id)
+        return _repo.get(existing.id)
+      }
+      // existing.company_id is a different company — fall through to create a separate note
+    }
   }
-  if (data.content !== undefined) {
-    sets.push('content = ?')
-    params.push(data.content)
-  }
-  if (data.isPinned !== undefined) {
-    sets.push('is_pinned = ?')
-    params.push(data.isPinned ? 1 : 0)
-  }
-  if (data.themeId !== undefined) {
-    sets.push('theme_id = ?')
-    params.push(data.themeId)
-  }
-
-  if (sets.length === 0) return getCompanyNote(noteId)
-
-  if (userId) {
-    sets.push('updated_by_user_id = ?')
-    params.push(userId)
-  }
-  sets.push("updated_at = datetime('now')")
-  params.push(noteId)
-  db.prepare(`UPDATE notes SET ${sets.join(', ')} WHERE id = ?`).run(...params)
-  return getCompanyNote(noteId)
+  return _repo.create(
+    {
+      entityId: data.companyId,
+      themeId: data.themeId,
+      title: data.title,
+      content: data.content,
+      sourceMeetingId: data.sourceMeetingId,
+    },
+    userId
+  )
 }
 
-export function deleteCompanyNote(noteId: string): boolean {
-  const db = getDatabase()
-  const result = db.prepare('DELETE FROM notes WHERE id = ?').run(noteId)
-  return result.changes > 0
-}
+export const updateCompanyNote = (
+  noteId: string,
+  data: Partial<{ title: string | null; content: string; isPinned: boolean; themeId: string | null }>,
+  userId: string | null = null
+): Note | null => _repo.update(noteId, data, userId)
+
+export const deleteCompanyNote = (noteId: string): boolean =>
+  _repo.delete(noteId)
+
+/** The raw repo object, for use with registerEntityNotesIpc. */
+export const companyNotesRepo = _repo
