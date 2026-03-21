@@ -1,3 +1,5 @@
+import { splitCamelCase } from './string-utils'
+
 const COMMON_PROVIDERS = new Set([
   'gmail', 'yahoo', 'hotmail', 'outlook', 'icloud', 'aol',
   'protonmail', 'me', 'live', 'msn', 'zoho', 'fastmail',
@@ -6,6 +8,8 @@ const COMMON_PROVIDERS = new Set([
 
 // Words commonly found in company domain names, used for word segmentation
 const DOMAIN_WORDS = new Set([
+  // Legal entity suffixes
+  'corp', 'inc', 'llc', 'ltd', 'lp',
   // Business suffixes
   'ventures', 'venture', 'capital', 'partners', 'partner', 'labs', 'lab',
   'technologies', 'technology', 'tech', 'solutions', 'digital', 'media',
@@ -42,8 +46,9 @@ const DOMAIN_WORDS = new Set([
 /**
  * Try to segment a concatenated string into known words using backtracking.
  * Returns the words array if the ENTIRE string can be segmented, null otherwise.
+ * Exported for use in fixConcatenatedCompanyNames().
  */
-function trySegment(str: string, start: number): string[] | null {
+export function trySegment(str: string, start: number): string[] | null {
   if (start === str.length) return []
   // Try longest match first for better results
   for (let len = Math.min(str.length - start, 15); len >= 2; len--) {
@@ -58,7 +63,11 @@ function trySegment(str: string, start: number): string[] | null {
 
 /**
  * Convert a raw domain name part to a human-readable name.
- * Splits hyphens/underscores, then tries word segmentation on concatenated parts.
+ *
+ * Processing order per token:
+ *   1. CamelCase split  — "AcmeCorp"       → "Acme Corp"       (high confidence)
+ *   2. DOMAIN_WORDS     — "redswanventures" → "Red Swan Ventures" (medium)
+ *   3. Unchanged        — "bowley"          → "Bowley"           (no match)
  */
 export function humanizeDomainName(name: string): string {
   // Split on hyphens and underscores first
@@ -66,6 +75,10 @@ export function humanizeDomainName(name: string): string {
 
   const result = parts.map((part) => {
     if (part.length <= 2) return part
+    // 1. CamelCase split (handles folder names / manual entries like "AcmeCorp")
+    const camelSplit = splitCamelCase(part)
+    if (camelSplit !== part) return camelSplit
+    // 2. DOMAIN_WORDS segmentation (handles "redswanventures" etc.)
     const segments = trySegment(part.toLowerCase(), 0)
     return segments && segments.length > 1 ? segments.join(' ') : part
   }).join(' ')
