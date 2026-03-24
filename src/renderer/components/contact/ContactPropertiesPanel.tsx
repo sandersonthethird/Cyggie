@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type HTMLAttributes } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode, type HTMLAttributes } from 'react'
 import { useCustomFieldSection } from '../../hooks/useCustomFieldSection'
 import { useHeaderChipOrder } from '../../hooks/useHeaderChipOrder'
 import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
@@ -8,7 +8,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactDetail } from '../../../shared/types/contact'
 import type { CompanySummary } from '../../../shared/types/company'
-import type { CustomFieldWithValue } from '../../../shared/types/custom-fields'
+import type { CustomFieldWithValue, CustomFieldValue } from '../../../shared/types/custom-fields'
 import { CONTACT_SECTIONS } from '../../../shared/types/custom-fields'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { daysSince, formatCurrency, formatDate } from '../../utils/format'
@@ -24,6 +24,7 @@ import { AddFieldDropdown } from '../crm/AddFieldDropdown'
 import { computeChipDelta } from '../../utils/chip-delta'
 import { usePinnedMigration } from '../../hooks/usePinnedMigration'
 import { ContactAvatar } from '../crm/ContactAvatar'
+import { saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
 import { CONTACT_HARDCODED_FIELDS } from '../../constants/contactFields'
 import {
   CONTACT_TYPES,
@@ -32,6 +33,16 @@ import {
 } from './contactColumns'
 import styles from './ContactPropertiesPanel.module.css'
 import { api } from '../../api'
+import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
+
+// All pref base keys managed as per-contact layout overrides (contacts have no sub-type tier)
+const LAYOUT_PREF_BASE_KEYS = [
+  'cyggie:contact-hidden-header-chips',
+  'cyggie:contact-header-chip-order',
+  'cyggie:contact-added-fields',
+  'cyggie:contact-field-placements',
+  'cyggie:contact-sections-order',
+] as const
 
 const CONTACT_TYPE_STYLE: Record<string, string> = {
   investor: styles.chipInvestor,
@@ -146,6 +157,9 @@ export function ContactPropertiesPanel({
   const priorCompanyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const firstNameInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const [showApplyPrompt, setShowApplyPrompt] = useState(false)
+  const sessionChanges = useRef(false)
+  const markChanged = useCallback(() => { sessionChanges.current = true }, [])
 
   const { getJSON, setJSON } = usePreferencesStore()
   const { contactDefs, refresh, loaded: defsLoaded, load: loadDefs, version: defsVersion } = useCustomFieldStore()
@@ -162,11 +176,15 @@ export function ContactPropertiesPanel({
     hiddenFields,
     showAllFields,
     isEditing,
+    { entityId: contact.id, profileKey: null, onLayoutChange: markChanged },
   )
 
   const sectionOrder = useSectionOrder(
     'contact',
     CONTACT_SECTIONS.filter(s => s.key !== 'summary').map(s => s.key),
+    contact.id,
+    null,
+    markChanged,
   )
 
   // Per-entity collapsed sections (Change 10)
@@ -191,12 +209,14 @@ export function ContactPropertiesPanel({
 
   function hideHeaderChip(key: string) {
     if (!hiddenHeaderChips.includes(key)) {
-      setJSON('cyggie:contact-hidden-header-chips', [...hiddenHeaderChips, key])
+      saveLayoutPref(setJSON, 'cyggie:contact-hidden-header-chips', contact.id, [...hiddenHeaderChips, key])
+      markChanged()
     }
   }
 
   function restoreHeaderChip(key: string) {
-    setJSON('cyggie:contact-hidden-header-chips', hiddenHeaderChips.filter(k => k !== key))
+    saveLayoutPref(setJSON, 'cyggie:contact-hidden-header-chips', contact.id, hiddenHeaderChips.filter(k => k !== key))
+    markChanged()
   }
 
   const { draggingFieldId, setDraggingFieldId, dragOverSection, draggingOverFieldId, setDraggingOverFieldId, sectionedFields, nullSectionFields, handleWithinSectionDrop, sectionDragProps } =
@@ -208,7 +228,7 @@ export function ContactPropertiesPanel({
   const customSummaryIds = customFields.filter(f => f.section === 'summary').map(f => `custom:${f.id}`)
   const allChipIds = [...new Set(['contactType', ...pinnedKeys, ...customSummaryIds])]
   const { effectiveOrder, chipDragProps, chipDropZoneProps, chipDragOverIndex } =
-    useHeaderChipOrder('contact', allChipIds)
+    useHeaderChipOrder('contact', allChipIds, contact.id, null, markChanged)
 
   // Migrate old 'Pinned' section fields to 'Header' section (Change 4)
   usePinnedMigration('contact')
@@ -218,6 +238,27 @@ export function ContactPropertiesPanel({
       await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_DELETE_VALUE, field.id, contact.id)
       setCustomFields(prev => prev.map(f => f.id === field.id ? { ...f, value: null } : f))
       return
+    }
+    // Build optimistic CustomFieldValue so PropertyRow displays the new value immediately
+    // after edit mode exits (without waiting for the IPC round-trip).
+    const optimisticValue: CustomFieldValue = {
+      id: field.value?.id ?? '',
+      fieldDefinitionId: field.id,
+      entityType: 'contact',
+      entityId: contact.id,
+      valueText: null, valueNumber: null, valueBoolean: null,
+      valueDate: null, valueRefId: null, resolvedLabel: null,
+      createdAt: field.value?.createdAt ?? '',
+      updatedAt: new Date().toISOString(),
+      ...(field.fieldType === 'number' || field.fieldType === 'currency'
+        ? { valueNumber: Number(newValue) }
+        : field.fieldType === 'boolean'
+        ? { valueBoolean: Boolean(newValue) }
+        : field.fieldType === 'date'
+        ? { valueDate: String(newValue) }
+        : field.fieldType === 'contact_ref' || field.fieldType === 'company_ref'
+        ? { valueRefId: String(newValue) }
+        : { valueText: String(newValue) })
     }
     const input: import('../../../shared/types/custom-fields').SetCustomFieldValueInput = {
       fieldDefinitionId: field.id,
@@ -231,7 +272,12 @@ export function ContactPropertiesPanel({
       case 'contact_ref': case 'company_ref': input.valueRefId = String(newValue); break
       default: input.valueText = String(newValue)
     }
-    await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
+    const prev = customFields
+    return withOptimisticUpdate(
+      () => setCustomFields(fs => fs.map(f => f.id === field.id ? { ...f, value: optimisticValue } : f)),
+      () => api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input),
+      () => setCustomFields(prev),
+    )
   }
 
   function getPinnedFieldValue(field: CustomFieldWithValue): string | number | boolean | null {
@@ -303,6 +349,11 @@ export function ContactPropertiesPanel({
       .catch(console.error)
   }, [contact.id, defsLoaded, defsVersion]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Reset sessionChanges flag when entering Edit View
+  useEffect(() => {
+    if (isEditing) sessionChanges.current = false
+  }, [isEditing])
+
   // Sync name drafts when entering edit mode
   useEffect(() => {
     if (isEditing) {
@@ -325,7 +376,7 @@ export function ContactPropertiesPanel({
         e.target instanceof HTMLSelectElement
       ) return
       if ((e.key === 'e' || e.key === 'E') && !isEditing) setIsEditing(true)
-      if (e.key === 'Escape' && isEditing) handleDoneRef.current()
+      if (e.key === 'Escape' && isEditing) void handleDoneRef.current()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -359,22 +410,42 @@ export function ContactPropertiesPanel({
     save('previousCompanies', filtered.length ? JSON.stringify(filtered) : null)
   }
 
-  function save(field: string, value: unknown) {
-    return window.api
-      .invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { [field]: value })
-      .then(() => { onUpdate({ [field]: value }) })
+  async function save(field: string, value: unknown) {
+    const prev = (contact as Record<string, unknown>)[field]
+    return withOptimisticUpdate(
+      () => onUpdate({ [field]: value }),
+      () => window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { [field]: value }),
+      () => onUpdate({ [field]: prev }),
+    )
+  }
+
+  async function saveEmail(oldEmail: string, newEmail: string) {
+    const isPrimary = oldEmail === contact.email
+    const optimisticEmails = contact.emails.map(e => e === oldEmail ? newEmail : e)
+    try {
+      await withOptimisticUpdate(
+        () => onUpdate({ emails: optimisticEmails, ...(isPrimary ? { email: newEmail } : {}) }),
+        () => isPrimary
+          ? window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { email: newEmail })
+          : window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE_EMAIL, { contactId: contact.id, oldEmail, newEmail }),
+        () => onUpdate({ emails: contact.emails, ...(isPrimary ? { email: contact.email } : {}) }),
+        (updated) => onUpdate(updated),
+      )
+    } catch (err) {
+      console.error('[ContactPropertiesPanel] saveEmail failed:', err)
+    }
   }
 
   function copyEmail(email: string) {
     navigator.clipboard.writeText(email).catch(console.error)
   }
 
-  function handleDone() {
+  async function handleDone() {
     const firstName = firstNameDraft.trim()
     const lastName = lastNameDraft.trim()
     const fullName = [firstName, lastName].filter(Boolean).join(' ')
     if (fullName && fullName !== contact.fullName) {
-      window.api
+      await window.api
         .invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { firstName: firstName || null, lastName: lastName || null })
         .then(() => { onUpdate({ firstName: firstName || null, lastName: lastName || null, fullName }) })
         .catch(console.error)
@@ -390,7 +461,32 @@ export function ContactPropertiesPanel({
       return value === null || value === undefined || (typeof value === 'string' && value.trim() === '')
     })
     fieldVisibility.cleanupOnDone(emptyKeys)
+    if (sessionChanges.current) {
+      setShowApplyPrompt(true)
+    } else {
+      setIsEditing(false)
+    }
+  }
+
+  function handleApplyToAll() {
+    for (const baseKey of LAYOUT_PREF_BASE_KEYS) {
+      propagateLayoutPref(getJSON, setJSON, baseKey, contact.id, null)
+    }
+    setShowApplyPrompt(false)
     setIsEditing(false)
+  }
+
+  function handleJustThisContact() {
+    setShowApplyPrompt(false)
+    setIsEditing(false)
+  }
+
+  function handleResetLayout() {
+    for (const baseKey of LAYOUT_PREF_BASE_KEYS) {
+      clearPerEntityPref(setJSON, baseKey, contact.id)
+    }
+    setIsEditing(false)
+    sessionChanges.current = false
   }
 
   async function handleDeleteContact() {
@@ -408,13 +504,8 @@ export function ContactPropertiesPanel({
   }
 
   function handleNameKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter') handleDone()
+    if (e.key === 'Enter') void handleDone()
     if (e.key === 'Escape') setIsEditing(false)
-  }
-
-  function show(value: unknown): boolean {
-    if (isEditing || showAllFields) return true
-    return value !== null && value !== undefined && value !== ''
   }
 
   function showField(key: string, value: unknown): boolean {
@@ -769,7 +860,20 @@ export function ContactPropertiesPanel({
           </div>
         </div>
         {isEditing ? (
-          <button className={styles.doneBtn} onClick={handleDone}>Done</button>
+          <div className={styles.editActions}>
+            {showApplyPrompt ? (
+              <div className={styles.applyPrompt}>
+                <span>Default for all contacts?</span>
+                <button className={styles.applyAllBtn} onClick={handleApplyToAll}>Apply to all</button>
+                <button className={styles.applyOneBtn} onClick={handleJustThisContact}>Just this one</button>
+              </div>
+            ) : (
+              <>
+                <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">↺</button>
+                <button className={styles.doneBtn} onClick={() => void handleDone()}>Done</button>
+              </>
+            )}
+          </div>
         ) : (
           <button className={styles.editBtn} onClick={() => setIsEditing(true)}>Edit</button>
         )}
@@ -839,8 +943,22 @@ export function ContactPropertiesPanel({
               {!isCollapsed('contact_info') && (<>
               {contact.emails.map((email) => (
                 <div key={email} className={styles.emailRow}>
-                  <span className={styles.emailValue}>{email}</span>
-                  <button className={styles.copyBtn} onClick={() => copyEmail(email)} title="Copy email">⎘</button>
+                  {isEditing ? (
+                    <input
+                      className={styles.emailInput}
+                      defaultValue={email}
+                      type="email"
+                      onBlur={(e) => {
+                        const newVal = e.target.value.trim()
+                        if (newVal && newVal !== email) void saveEmail(email, newVal)
+                      }}
+                    />
+                  ) : (
+                    <span className={styles.emailValue}>{email}</span>
+                  )}
+                  {!isEditing && (
+                    <button className={styles.copyBtn} onClick={() => copyEmail(email)} title="Copy email">⎘</button>
+                  )}
                 </div>
               ))}
               {renderHardcodedSection([

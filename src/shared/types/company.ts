@@ -3,6 +3,7 @@ export type CompanyEntityType =
   | 'portfolio'
   | 'pass'
   | 'vc_fund'
+  | 'lp'
   | 'customer'
   | 'partner'
   | 'vendor'
@@ -18,7 +19,7 @@ export interface CompanyListFilter {
   query?: string
   limit?: number
   offset?: number
-  view?: 'companies' | 'all'
+  view?: 'companies' | 'all' | 'hidden'
   entityTypes?: CompanyEntityType[]
   sortBy?: CompanySortBy
   includeStats?: boolean

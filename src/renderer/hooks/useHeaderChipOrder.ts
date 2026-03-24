@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { usePreferencesStore } from '../stores/preferences.store'
+import { resolveLayoutPref, saveLayoutPref } from '../utils/layoutPref'
 
 /*
  * useHeaderChipOrder — manages drag-to-reorder for header chips in detail panels.
@@ -8,6 +9,10 @@ import { usePreferencesStore } from '../stores/preferences.store'
  *   storedValid = stored ∩ allChipIds   (stale IDs filtered out)
  *   newChips    = allChipIds \ storedValid  (unknown IDs appended to end)
  *   effectiveOrder = [...storedValid, ...newChips]
+ *
+ * When entityId is provided, reads/writes use three-tier resolution:
+ *   per-entity → per-profile-type → global → []
+ *   (see src/renderer/utils/layoutPref.ts for key conventions)
  *
  * State machine per drag:
  *   idle → dragging (onDragStart) → hovering (onDragOver) → dropped (onDrop) → idle
@@ -32,10 +37,16 @@ export function applyReorder(effectiveOrder: string[], fromId: string, toIndex: 
 export function useHeaderChipOrder(
   entityKey: 'company' | 'contact',
   allChipIds: string[],
+  entityId?: string,
+  profileKey?: string | null,
+  onLayoutChange?: () => void,
 ) {
   const { getJSON, setJSON } = usePreferencesStore()
   const storageKey = `cyggie:${entityKey}-header-chip-order`
-  const chipOrder = getJSON<string[]>(storageKey, [])
+
+  const chipOrder = entityId
+    ? resolveLayoutPref(getJSON, storageKey, entityId, profileKey ?? null, [] as string[])
+    : getJSON<string[]>(storageKey, [])
 
   const [draggingChipId, setDraggingChipId] = useState<string | null>(null)
   const [chipDragOverIndex, setChipDragOverIndex] = useState<number | null>(null)
@@ -48,7 +59,13 @@ export function useHeaderChipOrder(
 
   function reorderChip(fromId: string, toIndex: number) {
     const next = applyReorder(effectiveOrder, fromId, toIndex)
-    if (next) setJSON(storageKey, next)
+    if (!next) return
+    if (entityId) {
+      saveLayoutPref(setJSON, storageKey, entityId, next)
+    } else {
+      setJSON(storageKey, next)
+    }
+    onLayoutChange?.()
   }
 
   function chipDragProps(chipId: string): React.HTMLAttributes<HTMLElement> {

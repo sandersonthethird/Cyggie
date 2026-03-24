@@ -6,12 +6,19 @@ import { useChatStore } from '../../stores/chat.store'
 import styles from './ChatInterface.module.css'
 import { api } from '../../api'
 
+export interface ContextOption {
+  type: 'company' | 'contact'
+  id: string
+  name: string
+}
+
 interface ChatInterfaceProps {
   meetingId?: string // If provided, queries single meeting. Otherwise queries all meetings.
   meetingIds?: string[] // If provided, queries these specific meetings (search results).
   companyId?: string // If provided, queries company context (meetings, emails, files).
   contactId?: string // If provided, queries contact context (meetings, emails, notes).
   entityName?: string // Display name shown in context label (company/contact name).
+  contextOptions?: ContextOption[] // If provided, shows a context switcher chip in floating mode.
   placeholder?: string
   fillHeight?: boolean // If true, container expands to fill available space
   compact?: boolean // If true, hides empty state text — just shows the input bar
@@ -27,7 +34,7 @@ interface PendingAttachment {
 }
 
 // Stable empty array to avoid infinite re-renders
-const EMPTY_MESSAGES: { role: 'user' | 'assistant'; content: string }[] = []
+const EMPTY_MESSAGES: { role: 'user' | 'assistant' | 'system'; content: string }[] = []
 
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -94,7 +101,7 @@ function parseChatError(errStr: string): string {
   return 'Something went wrong. Please try again.'
 }
 
-export default function ChatInterface({ meetingId, meetingIds, companyId, contactId, entityName, placeholder, fillHeight = false, compact = false, floating = false }: ChatInterfaceProps) {
+export default function ChatInterface({ meetingId, meetingIds, companyId, contactId, entityName, contextOptions, placeholder, fillHeight = false, compact = false, floating = false }: ChatInterfaceProps) {
   const contextId = companyId ? `company:${companyId}` : contactId ? `contact:${contactId}` : meetingIds ? 'search-results' : (meetingId ?? 'global')
 
   const storedMessages = useChatStore((s) => s.conversations[contextId]?.messages)
@@ -108,9 +115,12 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
   const [floatingPanelOpen, setFloatingPanelOpen] = useState(false)
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
+  const [activeContext, setActiveContext] = useState<'meeting' | ContextOption>('meeting')
+  const [contextDropdownOpen, setContextDropdownOpen] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const dragCounterRef = useRef(0)
+  const contextDropdownRef = useRef<HTMLDivElement>(null)
 
   // Revoke object URLs on unmount
   useEffect(() => {
@@ -138,6 +148,26 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
 
     return unsub
   }, [isLoading])
+
+  // Close context dropdown on click outside
+  useEffect(() => {
+    if (!contextDropdownOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (contextDropdownRef.current && !contextDropdownRef.current.contains(e.target as Node)) {
+        setContextDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [contextDropdownOpen])
+
+  function handleContextSwitch(next: 'meeting' | ContextOption) {
+    if (next === activeContext || (next !== 'meeting' && activeContext !== 'meeting' && next.id === activeContext.id)) return
+    setActiveContext(next)
+    setContextDropdownOpen(false)
+    const label = next === 'meeting' ? 'This meeting' : `All ${next.name} meetings`
+    addMessage(contextId, { role: 'system' as const, content: `Context: ${label}` })
+  }
 
   // Auto-resize textarea
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -206,14 +236,20 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
   }, [addAttachments])
 
   const handleStop = useCallback(() => {
-    if (companyId) {
+    if (contextOptions && activeContext !== 'meeting') {
+      if (activeContext.type === 'company') {
+        api.invoke(IPC_CHANNELS.COMPANY_CHAT_ABORT)
+      } else {
+        api.invoke(IPC_CHANNELS.CONTACT_CHAT_ABORT)
+      }
+    } else if (companyId) {
       api.invoke(IPC_CHANNELS.COMPANY_CHAT_ABORT)
     } else if (contactId) {
       api.invoke(IPC_CHANNELS.CONTACT_CHAT_ABORT)
     } else {
       api.invoke(IPC_CHANNELS.CHAT_ABORT)
     }
-  }, [companyId, contactId])
+  }, [contextOptions, activeContext, companyId, contactId])
 
   const handleSubmit = useCallback(async () => {
     if ((!input.trim() && attachments.length === 0) || isLoading) return
@@ -249,7 +285,13 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
 
     try {
       let response: string
-      if (companyId) {
+      if (contextOptions && activeContext !== 'meeting') {
+        if (activeContext.type === 'company') {
+          response = await api.invoke<string>(IPC_CHANNELS.COMPANY_CHAT_QUERY, { companyId: activeContext.id, question })
+        } else {
+          response = await api.invoke<string>(IPC_CHANNELS.CONTACT_CHAT_QUERY, { contactId: activeContext.id, question })
+        }
+      } else if (companyId) {
         response = await api.invoke<string>(
           IPC_CHANNELS.COMPANY_CHAT_QUERY,
           { companyId, question }
@@ -279,7 +321,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
 
       addMessage(contextId, { role: 'assistant', content: response })
 
-      if (meetingId) {
+      if (meetingId && activeContext === 'meeting') {
         const allMessages = useChatStore.getState().conversations[contextId]?.messages
         if (allMessages) {
           api.invoke(IPC_CHANNELS.MEETING_SAVE_CHAT, meetingId, allMessages)
@@ -299,7 +341,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
       setIsLoading(false)
       setStreamedContent('')
     }
-  }, [input, attachments, isLoading, meetingId, meetingIds, companyId, contactId, contextId, addMessage, floating])
+  }, [input, attachments, isLoading, meetingId, meetingIds, companyId, contactId, contextId, addMessage, floating, contextOptions, activeContext])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -316,7 +358,12 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
 
   const messagesContent = (
     <>
-      {messages.map((msg, i) => (
+      {messages.map((msg, i) =>
+        msg.role === 'system' ? (
+          <div key={i} className={styles.contextDivider}>
+            <span className={styles.contextDividerLabel}>{msg.content}</span>
+          </div>
+        ) : (
         <div key={i} className={styles.message}>
           <span className={`${styles.messageRole} ${styles[msg.role]}`}>
             {msg.role === 'user' ? 'You' : 'AI'}
@@ -327,7 +374,8 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
               : <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>}
           </div>
         </div>
-      ))}
+        )
+      )}
       {isLoading && streamedContent && (
         <div className={styles.message}>
           <span className={`${styles.messageRole} ${styles.assistant}`}>AI</span>
@@ -406,7 +454,39 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
             <div className={styles.floatingPanelHeader}>
               <div className={styles.floatingPanelTitleWrap}>
                 <span className={styles.floatingPanelTitle}>Ask AI</span>
-                {(companyId || contactId) && entityName ? (
+                {meetingId ? (
+                  <div className={styles.contextChipWrap} ref={contextDropdownRef}>
+                    <button
+                      className={styles.contextChip}
+                      onClick={() => contextOptions?.length ? setContextDropdownOpen(v => !v) : undefined}
+                      aria-haspopup={contextOptions?.length ? 'listbox' : undefined}
+                    >
+                      {activeContext === 'meeting'
+                        ? 'This meeting'
+                        : `All ${activeContext.name} meetings`}
+                      {contextOptions?.length ? <span className={styles.contextChevron}>▾</span> : null}
+                    </button>
+                    {contextDropdownOpen && contextOptions && (
+                      <div className={styles.contextDropdown} role="listbox">
+                        <button
+                          className={`${styles.contextDropdownItem} ${activeContext === 'meeting' ? styles.contextDropdownItemActive : ''}`}
+                          onClick={() => handleContextSwitch('meeting')}
+                        >
+                          This meeting
+                        </button>
+                        {contextOptions.map(opt => (
+                          <button
+                            key={opt.id}
+                            className={`${styles.contextDropdownItem} ${activeContext !== 'meeting' && (activeContext as ContextOption).id === opt.id ? styles.contextDropdownItemActive : ''}`}
+                            onClick={() => handleContextSwitch(opt)}
+                          >
+                            {opt.type === 'company' ? '🏢' : '👤'} All {opt.name} meetings
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (companyId || contactId) && entityName ? (
                   <span className={styles.contextLabel}>
                     {entityName} · {companyId ? 'meetings, emails & files' : 'meetings, emails & notes'}
                   </span>

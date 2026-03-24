@@ -30,6 +30,7 @@ export const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
   { value: 'portfolio', label: 'Portfolio' },
   { value: 'pass', label: 'Pass' },
   { value: 'vc_fund', label: 'Investor' },
+  { value: 'lp', label: 'LP' },
   { value: 'customer', label: 'Customer' },
   { value: 'partner', label: 'Partner' },
   { value: 'vendor', label: 'Vendor' },
@@ -364,7 +365,7 @@ export function filterCompanies(
 
 // ─── URL → IPC filter builder ─────────────────────────────────────────────────
 
-export type CompanyScope = 'all' | 'prospects' | 'vc_fund' | 'unknown'
+export type CompanyScope = 'all' | 'prospects' | 'vc_fund' | 'unknown' | 'hidden'
 
 export function buildUrlFilter(
   scope: CompanyScope,
@@ -382,6 +383,7 @@ export function buildUrlFilter(
   if (scope === 'prospects') filter.entityTypes = ['prospect']
   else if (scope === 'vc_fund') filter.entityTypes = ['vc_fund']
   else if (scope === 'unknown') filter.entityTypes = ['unknown']
+  else if (scope === 'hidden') filter.view = 'hidden'
 
   return filter
 }

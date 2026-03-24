@@ -59,6 +59,10 @@ import { runCompanyNewFieldsMigration } from './migrations/056-company-new-field
 import { runNotesFolderPathMigration } from './migrations/057-notes-folder-path'
 import { runNoteFoldersMigration } from './migrations/058-note-folders'
 import { runPartnerMeetingMigration } from './migrations/059-partner-meeting'
+import { runRepairOwnCompanyContactsMigration } from './migrations/060-repair-own-company-contacts'
+import { runPartnerMeetingLinkedMeetingMigration } from './migrations/061-partner-meeting-linked-meeting'
+import { runRepairOwnerLinkedinUrlMigration } from './migrations/062-repair-owner-linkedin-url'
+import { runRemoveNotificationContactsMigration } from './migrations/063-remove-notification-contacts'
 
 let db: Database.Database | null = null
 
@@ -126,6 +130,10 @@ export function getDatabase(): Database.Database {
     runNotesFolderPathMigration(db)
     runNoteFoldersMigration(db)
     runPartnerMeetingMigration(db)
+    runRepairOwnCompanyContactsMigration(db)
+    runPartnerMeetingLinkedMeetingMigration(db)
+    runRepairOwnerLinkedinUrlMigration(db)
+    runRemoveNotificationContactsMigration(db)
   }
   return db
 }

@@ -33,6 +33,8 @@ interface Props {
   onCreateFolder: (path: string) => Promise<void>
   onRenameFolder: (oldPath: string, newPath: string) => Promise<void>
   onDeleteFolder: (path: string) => Promise<void>
+  /** Count badge per folder. Keys: folder path, INBOX_SENTINEL, '__all__' */
+  counts?: Record<string, number>
 }
 
 /** Build a nested tree from a flat sorted array of folder paths. */
@@ -69,9 +71,10 @@ interface FolderNodeItemProps {
   selected: string | null
   tagSuggestions: Map<string, TagSuggestion>
   handlers: NodeHandlers
+  counts?: Record<string, number>
 }
 
-function FolderNodeItem({ node, depth, selected, tagSuggestions, handlers }: FolderNodeItemProps) {
+function FolderNodeItem({ node, depth, selected, tagSuggestions, handlers, counts }: FolderNodeItemProps) {
   const [expanded, setExpanded] = useState(true)
   const [menuOpen, setMenuOpen] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
@@ -146,6 +149,10 @@ function FolderNodeItem({ node, depth, selected, tagSuggestions, handlers }: Fol
           <span className={styles.folderName}>{node.name}</span>
         )}
 
+        {!isRenaming && counts?.[node.fullPath] != null && (
+          <span className={styles.countBadge}>{counts[node.fullPath]}</span>
+        )}
+
         {!isRenaming && (
           <div className={styles.folderMenuWrapper} ref={menuRef}>
             <button
@@ -198,6 +205,7 @@ function FolderNodeItem({ node, depth, selected, tagSuggestions, handlers }: Fol
               selected={selected}
               tagSuggestions={tagSuggestions}
               handlers={handlers}
+              counts={counts}
             />
           ))}
         </div>
@@ -217,6 +225,7 @@ export function FolderSidebar({
   tagSuggestions, onDismissSuggestion, onAcceptSuggestion,
   importSources, selectedImportSource, onSelectImportSource,
   onCreateFolder, onRenameFolder, onDeleteFolder,
+  counts,
 }: Props) {
   const tree = useMemo(() => buildFolderTree(folders), [folders])
   const [creatingFolder, setCreatingFolder] = useState(false)
@@ -240,6 +249,9 @@ export function FolderSidebar({
       >
         <span className={styles.folderLeafSpacer} />
         <span className={styles.folderName}>All Notes</span>
+        {counts?.['__all__'] != null && (
+          <span className={styles.countBadge}>{counts['__all__']}</span>
+        )}
       </div>
 
       <div
@@ -249,6 +261,9 @@ export function FolderSidebar({
       >
         <span className={styles.folderLeafSpacer} />
         <span className={styles.folderName}>Inbox</span>
+        {counts?.[INBOX_SENTINEL] != null && (
+          <span className={styles.countBadge}>{counts[INBOX_SENTINEL]}</span>
+        )}
       </div>
 
       {tree.map(node => (
@@ -259,6 +274,7 @@ export function FolderSidebar({
           selected={selected}
           tagSuggestions={tagSuggestions}
           handlers={handlers}
+          counts={counts}
         />
       ))}
 

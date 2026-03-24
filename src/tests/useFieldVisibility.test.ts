@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest'
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { renderHook, act } from '@testing-library/react'
 import {
   computeShowField,
   computeGetFieldSection,
@@ -46,6 +48,20 @@ describe('computeShowField', () => {
 
   it('hidden field with showAllFields still returns false', () => {
     expect(computeShowField('phone', null, ['phone'], noAdded, false, true)).toBe(false)
+  })
+
+  // Array edge cases
+  it('returns false for empty array (treated as no value)', () => {
+    expect(computeShowField('coInvestors', [], noHidden, noAdded, false, false)).toBe(false)
+  })
+
+  it('returns true for non-empty array', () => {
+    expect(computeShowField('industries', ['fintech'], noHidden, noAdded, false, false)).toBe(true)
+  })
+
+  // Regression guard: edit mode must NOT bypass filtering for fields not in addedFields
+  it('returns false for empty field when isEditing=true but field not in addedFields', () => {
+    expect(computeShowField('sector', null, noHidden, noAdded, true, false)).toBe(false)
   })
 })
 
@@ -125,5 +141,104 @@ describe('computeCleanupOnDone', () => {
     const original = ['phone', 'city']
     computeCleanupOnDone(original, ['phone'])
     expect(original).toEqual(['phone', 'city'])
+  })
+})
+
+// ── useFieldVisibility hook — onLayoutChange callback behaviour ───────────────
+//
+// Critical invariant: cleanupOnDone must NOT call onLayoutChange.
+// If it did, exiting Edit View would trigger the "Apply to all?" prompt even
+// when the user made no intentional layout changes.
+
+const mockPrefs: Record<string, string> = {}
+const mockSetJSON = vi.fn((key: string, value: unknown) => {
+  mockPrefs[key] = JSON.stringify(value)
+})
+const mockGetJSON = vi.fn(<U>(key: string, defaultValue: U): U => {
+  const s = mockPrefs[key]
+  if (s == null) return defaultValue
+  try {
+    return JSON.parse(s) as U
+  } catch {
+    return defaultValue
+  }
+})
+
+vi.mock('../renderer/stores/preferences.store', () => ({
+  usePreferencesStore: () => ({ getJSON: mockGetJSON, setJSON: mockSetJSON }),
+}))
+
+const { useFieldVisibility } = await import('../renderer/hooks/useFieldVisibility')
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  for (const key of Object.keys(mockPrefs)) delete mockPrefs[key]
+})
+
+describe('useFieldVisibility hook — onLayoutChange', () => {
+  const opts = (onLayoutChange: () => void) => ({
+    entityId: 'c-1',
+    profileKey: null,
+    onLayoutChange,
+  })
+
+  it('addToAddedFields calls onLayoutChange', () => {
+    const onChange = vi.fn()
+    const { result } = renderHook(() =>
+      useFieldVisibility('contact', [], [], false, true, opts(onChange)),
+    )
+    act(() => { result.current.addToAddedFields(['phone']) })
+    expect(onChange).toHaveBeenCalledOnce()
+  })
+
+  it('removeFromAddedFields calls onLayoutChange', () => {
+    // Seed a field so remove has something to do
+    mockPrefs['cyggie:contact-added-fields:entity:c-1'] = JSON.stringify(['phone'])
+    const onChange = vi.fn()
+    const { result } = renderHook(() =>
+      useFieldVisibility('contact', [], [], false, true, opts(onChange)),
+    )
+    act(() => { result.current.removeFromAddedFields('phone') })
+    expect(onChange).toHaveBeenCalledOnce()
+  })
+
+  it('cleanupOnDone does NOT call onLayoutChange', () => {
+    // Seed an added field so cleanup has work to do
+    mockPrefs['cyggie:contact-added-fields:entity:c-1'] = JSON.stringify(['phone'])
+    const onChange = vi.fn()
+    const { result } = renderHook(() =>
+      useFieldVisibility('contact', [], [], false, true, opts(onChange)),
+    )
+    act(() => { result.current.cleanupOnDone(['phone']) })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('addToAddedFields writes to per-entity key when entityId provided', () => {
+    const { result } = renderHook(() =>
+      useFieldVisibility('contact', [], [], false, true, {
+        entityId: 'c-2',
+        profileKey: null,
+      }),
+    )
+    act(() => { result.current.addToAddedFields(['email']) })
+    expect(mockSetJSON).toHaveBeenCalledWith(
+      'cyggie:contact-added-fields:entity:c-2',
+      expect.arrayContaining(['email']),
+    )
+  })
+
+  it('cleanupOnDone writes to per-entity key when entityId provided', () => {
+    mockPrefs['cyggie:contact-added-fields:entity:c-3'] = JSON.stringify(['phone', 'city'])
+    const { result } = renderHook(() =>
+      useFieldVisibility('contact', [], [], false, true, {
+        entityId: 'c-3',
+        profileKey: null,
+      }),
+    )
+    act(() => { result.current.cleanupOnDone(['phone']) })
+    expect(mockSetJSON).toHaveBeenCalledWith(
+      'cyggie:contact-added-fields:entity:c-3',
+      ['city'],
+    )
   })
 })

@@ -2,6 +2,7 @@ import { usePreferencesStore } from '../stores/preferences.store'
 import type { HardcodedFieldDef } from '../constants/contactFields'
 import type { CustomFieldWithValue } from '../../shared/types/custom-fields'
 import { CONTACT_SECTIONS, COMPANY_SECTIONS } from '../../shared/types/custom-fields'
+import { resolveLayoutPref, saveLayoutPref } from '../utils/layoutPref'
 
 /*
  * useFieldVisibility — shared field visibility + placement logic for both detail panels.
@@ -9,6 +10,10 @@ import { CONTACT_SECTIONS, COMPANY_SECTIONS } from '../../shared/types/custom-fi
  * Manages two prefs per entity type:
  *   cyggie:contact-added-fields (string[]) — explicitly added empty fields (template)
  *   cyggie:contact-field-placements (Record<string,string>) — hardcoded key → section override
+ *
+ * Three-tier read resolution (when opts.entityId provided):
+ *   per-entity → per-profile-type → global → default
+ *   (see src/renderer/utils/layoutPref.ts for key conventions)
  *
  * Visibility precedence:
  *   hiddenFields.includes(key) → false (hidden wins)
@@ -32,7 +37,9 @@ export function computeShowField(
   showAllFields: boolean,
 ): boolean {
   if (hiddenFields.includes(key)) return false
-  const hasValue = value !== null && value !== undefined && value !== ''
+  const hasValue = Array.isArray(value)
+    ? value.length > 0
+    : (value !== null && value !== undefined && value !== '')
   if (hasValue) return true
   if ((isEditing || showAllFields) && addedFields.includes(key)) return true
   if (showAllFields) return true
@@ -67,22 +74,34 @@ export interface UseFieldVisibilityReturn {
   isCustomFieldVisible(field: CustomFieldWithValue, isEditing: boolean, showAll: boolean): boolean
 }
 
+export interface UseFieldVisibilityOpts {
+  entityId?: string
+  profileKey?: string | null
+  onLayoutChange?: () => void
+}
+
 export function useFieldVisibility(
   entityType: 'contact' | 'company',
   hardcodedDefs: HardcodedFieldDef[],
   hiddenFields: string[],
   showAllFields: boolean,
   isEditing: boolean,
+  opts?: UseFieldVisibilityOpts,
 ): UseFieldVisibilityReturn {
   const { getJSON, setJSON } = usePreferencesStore()
+  const { entityId, profileKey, onLayoutChange } = opts ?? {}
 
   const addedFieldsKey = `cyggie:${entityType}-added-fields`
   const placementsKey = `cyggie:${entityType}-field-placements`
 
-  const rawAddedFields = getJSON<unknown>(addedFieldsKey, [])
+  const rawAddedFields = entityId
+    ? resolveLayoutPref(getJSON, addedFieldsKey, entityId, profileKey ?? null, [] as unknown)
+    : getJSON<unknown>(addedFieldsKey, [])
   const addedFields: string[] = Array.isArray(rawAddedFields) ? rawAddedFields as string[] : []
 
-  const rawPlacements = getJSON<unknown>(placementsKey, {})
+  const rawPlacements = entityId
+    ? resolveLayoutPref(getJSON, placementsKey, entityId, profileKey ?? null, {} as unknown)
+    : getJSON<unknown>(placementsKey, {})
   const fieldPlacements: Record<string, string> =
     rawPlacements && typeof rawPlacements === 'object' && !Array.isArray(rawPlacements)
       ? rawPlacements as Record<string, string>
@@ -106,20 +125,44 @@ export function useFieldVisibility(
 
   function addToAddedFields(keys: string[]) {
     const next = [...new Set([...addedFields, ...keys])]
-    setJSON(addedFieldsKey, next)
+    if (entityId) {
+      saveLayoutPref(setJSON, addedFieldsKey, entityId, next)
+    } else {
+      setJSON(addedFieldsKey, next)
+    }
+    onLayoutChange?.()
   }
 
   function removeFromAddedFields(key: string) {
-    setJSON(addedFieldsKey, addedFields.filter((k) => k !== key))
+    const next = addedFields.filter((k) => k !== key)
+    if (entityId) {
+      saveLayoutPref(setJSON, addedFieldsKey, entityId, next)
+    } else {
+      setJSON(addedFieldsKey, next)
+    }
+    onLayoutChange?.()
   }
 
   function setFieldPlacement(key: string, section: string) {
-    setJSON(placementsKey, { ...fieldPlacements, [key]: section })
+    const next = { ...fieldPlacements, [key]: section }
+    if (entityId) {
+      saveLayoutPref(setJSON, placementsKey, entityId, next)
+    } else {
+      setJSON(placementsKey, next)
+    }
+    onLayoutChange?.()
   }
 
   function cleanupOnDone(emptyKeys: string[]) {
     if (emptyKeys.length === 0) return
-    setJSON(addedFieldsKey, computeCleanupOnDone(addedFields, emptyKeys))
+    const next = computeCleanupOnDone(addedFields, emptyKeys)
+    // Write to per-entity key if available — but do NOT call onLayoutChange
+    // (this is automatic cleanup on Done exit, not a user-initiated layout change)
+    if (entityId) {
+      saveLayoutPref(setJSON, addedFieldsKey, entityId, next)
+    } else {
+      setJSON(addedFieldsKey, next)
+    }
   }
 
   function isCustomFieldVisible(

@@ -19,6 +19,7 @@ import type { PartnerMeetingItem } from '../../../shared/types/partner-meeting'
 import type { CompanyPipelineStage } from '../../../shared/types/company'
 import { DigestItemNotes } from './DigestItemNotes'
 import { api } from '../../api'
+import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
 import styles from './CompanyDigestItem.module.css'
 
 const STAGE_LABELS: Record<string, string> = {
@@ -58,16 +59,16 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
 
   const saveField = useCallback(async (field: Partial<Parameters<typeof api.invoke>[1]>) => {
     try {
-      const updated = await api.invoke<PartnerMeetingItem>(
-        IPC_CHANNELS.PARTNER_MEETING_ITEM_UPDATE,
-        item.id,
-        field
+      await withOptimisticUpdate(
+        () => onUpdate({ ...item, ...field } as PartnerMeetingItem),
+        () => api.invoke<PartnerMeetingItem>(IPC_CHANNELS.PARTNER_MEETING_ITEM_UPDATE, item.id, field),
+        () => onUpdate(item),
+        (updated) => { if (updated) onUpdate(updated) },
       )
-      if (updated) onUpdate(updated)
     } catch (err) {
       console.error('[CompanyDigestItem] save failed:', err)
     }
-  }, [item.id, onUpdate])
+  }, [item, onUpdate])
 
   const handleBriefSave = useCallback((content: string) => {
     saveField({ brief: content || null })
@@ -172,45 +173,49 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
         </div>
       </div>
 
-      {/* Company brief — collapsed by default */}
-      <div className={styles.section}>
-        <button
-          className={styles.sectionToggle}
-          onClick={() => setBriefCollapsed(v => !v)}
-        >
-          {briefCollapsed ? '▶' : '▾'} Company Brief
-        </button>
-        {!briefCollapsed && (
-          <DigestItemNotes
-            content={item.brief}
-            placeholder="Add a company brief…"
-            disabled={disabled}
-            onSave={handleBriefSave}
-          />
-        )}
-      </div>
-
-      {/* Status update */}
-      <div className={styles.section}>
-        <div className={styles.sectionLabel}>This week</div>
-        {editingStatus && !disabled ? (
-          <textarea
-            className={styles.statusTextarea}
-            value={statusDraft}
-            autoFocus
-            onChange={e => setStatusDraft(e.target.value)}
-            onBlur={handleStatusBlur}
-            rows={2}
-          />
-        ) : (
-          <div
-            className={`${styles.statusText} ${!disabled ? styles.clickable : ''}`}
-            onClick={() => { if (!disabled) setEditingStatus(true) }}
+      {/* Company brief — collapsed by default; hidden for archived items with no brief */}
+      {(!disabled || item.brief) && (
+        <div className={styles.section}>
+          <button
+            className={styles.sectionToggle}
+            onClick={() => setBriefCollapsed(v => !v)}
           >
-            {statusDraft || <span className={styles.placeholder}>Click to add…</span>}
-          </div>
-        )}
-      </div>
+            {briefCollapsed ? '▶' : '▾'} Company Brief
+          </button>
+          {!briefCollapsed && (
+            <DigestItemNotes
+              content={item.brief}
+              placeholder="Add a company brief…"
+              disabled={disabled}
+              onSave={handleBriefSave}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Status update — hidden for archived items with no data */}
+      {(!disabled || statusDraft) && (
+        <div className={styles.section}>
+          <div className={styles.sectionLabel}>This week</div>
+          {editingStatus && !disabled ? (
+            <textarea
+              className={styles.statusTextarea}
+              value={statusDraft}
+              autoFocus
+              onChange={e => setStatusDraft(e.target.value)}
+              onBlur={handleStatusBlur}
+              rows={2}
+            />
+          ) : (
+            <div
+              className={`${styles.statusText} ${!disabled ? styles.clickable : ''}`}
+              onClick={() => { if (!disabled) setEditingStatus(true) }}
+            >
+              {statusDraft || <span className={styles.placeholder}>Click to add…</span>}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Meeting notes */}
       <div className={styles.section}>

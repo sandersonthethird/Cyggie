@@ -441,3 +441,86 @@
   background: var(--color-danger);
   color: #fff;
 }
+
+/* Context chip + dropdown */
+.contextChipWrap {
+  position: relative;
+}
+
+.contextChip {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--color-text-secondary, #666);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+.contextChip[aria-haspopup] {
+  cursor: pointer;
+}
+.contextChip[aria-haspopup]:hover {
+  color: var(--color-text-primary, #111);
+}
+
+.contextChevron {
+  font-size: 9px;
+  opacity: 0.6;
+}
+
+.contextDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: var(--color-bg, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  min-width: 200px;
+  z-index: 100;
+  padding: 4px;
+}
+
+.contextDropdownItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--color-text-primary, #111);
+  cursor: pointer;
+}
+.contextDropdownItem:hover {
+  background: var(--color-bg-secondary, #f5f5f5);
+}
+.contextDropdownItemActive {
+  font-weight: 600;
+  color: var(--color-accent, #4f46e5);
+}
+
+/* Context separator divider between chat messages */
+.contextDivider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.contextDivider::before,
+.contextDivider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border, #e5e7eb);
+}
+.contextDividerLabel {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #9ca3af);
+  white-space: nowrap;
+}

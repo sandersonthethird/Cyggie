@@ -195,6 +195,7 @@ function normalizeEntityType(value: string | null | undefined): CompanyEntityTyp
     'portfolio',
     'pass',
     'vc_fund',
+    'lp',
     'customer',
     'partner',
     'vendor',
@@ -512,8 +513,10 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
   const conditions: string[] = []
   const params: unknown[] = []
 
-  if (view !== 'all') {
+  if (view === 'companies') {
     conditions.push('c.include_in_companies_view = 1')
+  } else if (view === 'hidden') {
+    conditions.push('c.include_in_companies_view = 0')
   }
 
   if (query) {
@@ -978,7 +981,7 @@ export function updateCompany(
     // only update entityType (common from the Company Detail type control).
     if (data.includeInCompaniesView === undefined) {
       sets.push('include_in_companies_view = ?')
-      params.push(normalizedEntityType === 'prospect' ? 1 : 0)
+      params.push(normalizedEntityType !== 'unknown' ? 1 : 0)
     }
   }
   if (data.includeInCompaniesView !== undefined) {

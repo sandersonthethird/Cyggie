@@ -553,6 +553,12 @@ export function registerCompanyHandlers(): void {
       if (!companyId) throw new Error('companyId is required')
       const userId = getCurrentUserId()
       companyRepo.clearCompanyPrimaryContact(companyId)
+      // Ensure the contact has an explicit org_company_contacts row before clearing
+      // primary_company_id — contacts linked only via primary_company_id would otherwise
+      // disappear from the company's contacts list entirely.
+      if (contactId) {
+        companyRepo.linkContactToCompany(companyId, contactId)
+      }
       // Clear the contact's primary company if it points back to this company
       try {
         contactRepo.setContactPrimaryCompany(contactId, null, userId)

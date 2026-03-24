@@ -145,8 +145,11 @@ export async function generateSummary(
   }
 
   // Hoist emailToContactId — built once, reused for cross-save notes and contact proposals
-  const emailToContactId = (meeting.attendeeEmails?.length ?? 0) > 0
-    ? resolveContactsByEmails(meeting.attendeeEmails!)
+  // resolveContactsByEmails returns { id, fullName } objects; extract just ids for downstream use
+  const emailToContactId: Record<string, string> = (meeting.attendeeEmails?.length ?? 0) > 0
+    ? Object.fromEntries(
+        Object.entries(resolveContactsByEmails(meeting.attendeeEmails!)).map(([email, { id }]) => [email, id])
+      )
     : {}
 
   // Cross-save summary as a note for each linked contact and company

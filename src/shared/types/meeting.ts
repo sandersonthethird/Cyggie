@@ -5,7 +5,7 @@ import type { CompanyEntityType } from './company'
 export type MeetingStatus = 'scheduled' | 'recording' | 'transcribed' | 'summarized' | 'error'
 
 export interface ChatMessage {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   content: string
 }
 

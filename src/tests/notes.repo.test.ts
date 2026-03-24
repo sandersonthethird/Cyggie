@@ -28,6 +28,7 @@ const {
   createFolder,
   renameFolder,
   deleteFolder,
+  getFolderCounts,
 } = await import('../main/database/repositories/notes.repo')
 
 function buildDb(): Database.Database {
@@ -500,6 +501,35 @@ describe('notes.repo', () => {
 
       const all = listNotes('tagged')
       expect(all).toHaveLength(1)
+    })
+  })
+
+  describe('getFolderCounts', () => {
+    it('returns empty array when no notes exist', () => {
+      const counts = getFolderCounts()
+      expect(counts).toEqual([])
+    })
+
+    it('returns count per folder path', () => {
+      createNote({ content: 'A', folderPath: 'Work' })
+      createNote({ content: 'B', folderPath: 'Work' })
+      createNote({ content: 'C', folderPath: 'Personal' })
+
+      const counts = getFolderCounts()
+      const work = counts.find(r => r.folderPath === 'Work')
+      const personal = counts.find(r => r.folderPath === 'Personal')
+      expect(work?.count).toBe(2)
+      expect(personal?.count).toBe(1)
+    })
+
+    it('includes null folder_path (unfoldered notes) as separate entry', () => {
+      createNote({ content: 'unfoldered' })
+      createNote({ content: 'foldered', folderPath: 'Work' })
+
+      const counts = getFolderCounts()
+      const unfoldered = counts.find(r => r.folderPath === null)
+      expect(unfoldered).toBeDefined()
+      expect(unfoldered?.count).toBe(1)
     })
   })
 })

@@ -321,6 +321,13 @@ export function deleteFolder(path: string): void {
   tx()
 }
 
+export function getFolderCounts(): { folderPath: string | null; count: number }[] {
+  const db = getDatabase()
+  return db
+    .prepare('SELECT folder_path AS folderPath, COUNT(*) as count FROM notes GROUP BY folder_path')
+    .all() as { folderPath: string | null; count: number }[]
+}
+
 export function listImportSources(): string[] {
   const db = getDatabase()
   const rows = db

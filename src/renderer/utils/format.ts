@@ -47,3 +47,21 @@ export function daysSince(value: string | null | undefined): number | null {
   if (Number.isNaN(ts)) return null
   return Math.max(0, Math.floor((Date.now() - ts) / 86400000))
 }
+
+/** Strip markdown syntax from text for use in plain-text previews (e.g. note list snippets).
+ *  Not a full markdown parser — covers the common cases from Apple Notes / Notion exports.
+ *  Known limitation: nested markers like ***bold-italic*** are only partially stripped.
+ */
+export function stripMarkdownPreview(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, '')              // # headings
+    .replace(/\*\*([^*]+)\*\*/g, '$1')         // **bold**
+    .replace(/\*([^*]+)\*/g, '$1')             // *italic*
+    .replace(/__([^_]+)__/g, '$1')             // __bold__
+    .replace(/_([^_]+)_/g, '$1')               // _italic_
+    .replace(/`([^`]+)`/g, '$1')               // `code`
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')   // [text](url)
+    .replace(/^>\s+/gm, '')                    // > blockquote
+    .replace(/\n+/g, ' ')                      // collapse newlines
+    .trim()
+}

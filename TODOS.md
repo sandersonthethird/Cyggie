@@ -1,5 +1,42 @@
 # TODOS
 
+## P3 — Meeting Detail
+
+### Speaker editing for finalized transcripts
+**What:** Allow renaming and contact-linking of transcript speakers in already-recorded (finalized) meetings.
+**Why:** After a recording ends, the speaker chips in the live transcript disappear. Users have no way to label or link "Speaker 1" to a contact for finalized meetings.
+**Pros:** Completes the speaker-attribution workflow end-to-end; useful for retrospective review of old meetings.
+**Cons:** Finalized transcripts are markdown strings — speaker labels are baked in. Requires either parsing the markdown for speaker patterns to make labels interactive, or a side-panel speaker mapping UI separate from the transcript text.
+**Context:** This was explicitly deferred in the meeting header chips redesign PR. The live recording path now shows editable speaker chips in the transcript panel (`isThisMeetingRecording` block in `MeetingDetail.tsx`). The finalized path renders the transcript via `ReactMarkdown` with no interactive labels. Start near the `transcriptTab` section and the `localSpeakerMap` / `speakerContactMap` state.
+**Effort:** L
+**Depends on:** Meeting header chips redesign PR.
+
+---
+
+## P3 — Pipeline View
+
+### Pipeline search result count
+**What:** Show "14 companies" label next to the `headerSearch` input when `filterQuery` is active.
+**Why:** Immediate feedback on how filtered the view is — especially useful when toggling between board and table views with a filter active.
+**Pros:** ~15 min effort; `filteredCompanies.length` is already computed.
+**Cons:** Minor visual clutter if label is always present; show only when `filterQuery.length > 0`.
+**Context:** `filterQuery` and the filtered company arrays are all in `src/renderer/routes/Pipeline.tsx`. Render `<span className={styles.searchCount}>{n} companies</span>` in `headerRow`, conditionally visible. Add `.searchCount` style (muted, small text) to `Pipeline.module.css`.
+**Effort:** S
+**Depends on:** Pipeline search bar relocation (this PR).
+
+---
+
+### Pipeline search clear button
+**What:** Small "×" button inside the `headerSearch` input when `filterQuery.length > 0`.
+**Why:** One-click clear without select+delete — standard search input affordance; especially useful after switching views and realizing a filter is still active.
+**Pros:** ~20 min effort; reuses existing `setFilterQuery` setter.
+**Cons:** Requires wrapping the `<input>` in a relative-positioned container.
+**Context:** In `Pipeline.tsx` `headerRow`, wrap `<input className={styles.headerSearch}>` in `<div className={styles.headerSearchWrap}>`, absolute-position a `<button onClick={() => setFilterQuery('')}>×</button>` on the right, show only when `filterQuery.length > 0`. Add `.headerSearchWrap` and `.headerSearchClear` to `Pipeline.module.css`.
+**Effort:** S
+**Depends on:** Pipeline search bar relocation (this PR).
+
+---
+
 ## P3 — Dedup
 
 ### Fuzzy dedup threshold tuning
@@ -120,7 +157,7 @@
 **Why:** localStorage is per-device. Two devices see different field layouts. The upcoming web version cannot use localStorage at all.
 **Pros:** Consistent UX across devices; survives reinstalls and new devices; required for the web version.
 **Cons:** Requires new DB table + IPC channels + usePreferencesStore hydration on startup; medium schema work.
-**Context:** Currently all three prefs are stored via `usePreferencesStore` which reads/writes localStorage (`cyggie:contact-added-fields`, `cyggie:contact-field-placements`, `cyggie:contact-sections-order`, and company equivalents). Migration path: new `user_layout_prefs(entity_type TEXT, pref_key TEXT, value_json TEXT, updated_at TEXT)` table. New IPC `PREFS_GET`/`PREFS_SET`. `usePreferencesStore` hydrates from DB on startup + fire-and-forget writes. Build as its own focused PR after the detail panel UX overhaul ships; plan alongside web version work.
+**Context:** Currently all three prefs are stored via `usePreferencesStore` which reads/writes localStorage (`cyggie:contact-added-fields`, `cyggie:contact-field-placements`, `cyggie:contact-sections-order`, and company equivalents). Migration path: new `user_layout_prefs(entity_type TEXT, pref_key TEXT, value_json TEXT, updated_at TEXT)` table. New IPC `PREFS_GET`/`PREFS_SET`. `usePreferencesStore` hydrates from DB on startup + fire-and-forget writes. Build as its own focused PR after the detail panel UX overhaul ships; plan alongside web version work. **Key pattern expansion (layout profiles PR):** The key space now includes per-entity and per-profile-type variants. The migration must cover these patterns in addition to the base keys: `${baseKey}:company:${entityId}` (per-company override), `${baseKey}:entity:${profileType}` (entity-type template, e.g. `vc_fund`, `lp`). Affected base keys: `cyggie:company-hidden-header-chips`, `cyggie:company-header-chip-order`, `cyggie:company-added-fields`, `cyggie:company-field-placements`, `cyggie:company-sections-order`, and all `contact-` equivalents. The sync table should store these as-is (the `pref_key` column holds the full qualified key including `:company:${id}` suffix).
 **Effort:** M
 **Priority:** P1
 **Depends on:** Detail panel UX overhaul PR (field-placements, added-fields, sections-order prefs).
@@ -184,6 +221,15 @@
 ---
 
 ## P2 — Notes
+
+### Use meeting title as note card title fallback
+**What:** When a note has no explicit `title` but has a `sourceMeetingId`, display the linked meeting's title as the note card title in the Notes list.
+**Why:** Meeting-sourced notes created without a typed title currently fall back to the first line of content (which may be blank or a heading), making them hard to identify in the list.
+**Pros:** Makes meeting-sourced notes clearly identifiable by their meeting name without any user action.
+**Cons:** Requires a JOIN to the `meetings` table in `listNotes()`, or adding a denormalized `meeting_title` column to `notes` (migration needed). The JOIN approach is simpler but adds query cost.
+**Context:** `listNotes()` is in `src/main/database/repositories/notes.repo.ts`. The `firstLine` extraction in `src/renderer/routes/Notes.tsx` (~line 541) already has a fallback chain — adding `note.meetingTitle` as the second priority (after `note.title`, before content extraction) is the right insertion point. The JOIN would add `m.title AS meeting_title` to the existing LEFT JOINs in the base SELECT.
+**Effort:** S
+**Depends on:** None
 
 ### Enable `onCreate` in Notes.tsx bulk-tag company picker
 **What:** Pass `onCreate={handleCreateBulkCompany}` to the `EntityPicker` in the Notes.tsx bulk-tag flow so users can create a new company inline while tagging notes.
@@ -287,3 +333,73 @@
 **Effort:** S (optimistic lock + conflict toast) / L (CRDT field merging)
 **Priority:** P2
 **Depends on:** Multi-user auth system (not yet started).
+
+---
+
+## P3 — Partner Meeting: Transcript context indicator in ReconcileModal
+
+### Show transcript chars matched per company card in ReconcileModal
+**What:** Add a muted badge on each ReconcileModal card header showing "N chars from transcript" (or nothing if 0), so partners know why a proposal is rich or sparse without opening the full transcript.
+**Why:** When a company isn't mentioned in the transcript, the LLM generates a weaker proposal based only on digest notes. Partners currently have no signal about why one card is detailed and another is thin.
+**Pros:** Pure polish — no architecture change; makes reconciliation results more trustworthy and self-explanatory.
+**Cons:** Adds a field to `ReconcileProposal`; slightly increases IPC payload.
+**Context:** In `generateReconciliationProposals` (`src/main/services/partner-meeting-reconcile.service.ts`), after calling `extractCompanyExcerpts`, record `transcriptCharsUsed: filteredExcerpt.length`. Add `transcriptCharsUsed?: number` to `ReconcileProposal` in `src/shared/types/partner-meeting.ts`. In `ReconcileModal.tsx`, display as a muted `<span>` in the card header row: "N chars from transcript" when > 0, or "no transcript match" when 0 and a transcript was linked.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Partner Meeting reconciliation feature (this PR).
+
+---
+
+## P2 — Notes: Quick Switcher (Cmd+K)
+
+### Notes quick switcher
+**What:** Floating modal triggered by Cmd+K (from any route), searches notes by title and content, opens the result in the three-pane Notes view right pane.
+**Why:** The Notes search bar requires navigating to the Notes route first. The quick switcher works from any route, making it the fastest path to any note.
+**Pros:** Dramatically speeds up note access for users with large note collections; consistent with "Cmd+K opens search" conventions users already know.
+**Cons:** Requires a global keyboard listener (can attach in App.tsx or a new provider) and a floating modal component. Notes search results need to surface from main process — reuses `NOTES_LIST` with `query` param.
+**Context:** The three-pane Notes view introduces `selectedNoteId` state. The quick switcher should navigate to `/notes?note=:id` so the full three-pane view opens with the note selected. Reuse `usePicker` pattern for the search field. Register Cmd+K in App.tsx with a `useEffect`; render a `<NotesQuickSwitcher>` portal near the root.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Three-pane Notes view (this PR).
+
+---
+
+## P3 — Notes: Drag notes between folders
+
+### Drag notes between folders
+**What:** Drag a note card in the list pane onto a FolderSidebar item to assign that folder to the note (calls `NOTES_UPDATE` with `folderPath`).
+**Why:** Currently reassigning a folder requires opening the note in the editor and using the folder picker. Drag is more direct and discoverable.
+**Pros:** Faster folder management for heavy note users; natural interaction model.
+**Cons:** Requires DnD library or HTML5 drag API; needs visual drop targets on FolderSidebar items and drag state on note cards. Medium complexity.
+**Context:** FolderSidebar items are plain divs — add `onDragOver` / `onDrop` handlers. Note cards in `Notes.tsx` get `draggable` prop + `onDragStart` storing `note.id`. On drop, call `api.invoke(NOTES_UPDATE, id, { folderPath })` then `fetchNotes()` + `fetchFolderCounts()`.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Three-pane Notes view (this PR).
+
+---
+
+## P3 — Notes: Index for getFolderCounts() scalability
+
+### Add idx_notes_folder index
+**What:** `CREATE INDEX idx_notes_folder ON notes(folder_path)` in a new migration.
+**Why:** `getFolderCounts()` does a full table scan (`GROUP BY folder_path`). Fast at 1k notes, degrades at 100k+.
+**Pros:** Trivial one-line migration; no behavior change; future-proofs the feature.
+**Cons:** Negligible extra storage and write overhead per insert/update.
+**Context:** `getFolderCounts()` is in `src/main/database/repositories/notes.repo.ts`. Add a new migration file (next after 063). The index is not needed at current scale but costs almost nothing to add.
+**Effort:** S
+**Priority:** P3
+**Depends on:** getFolderCounts() (this PR).
+
+---
+
+## P3 — Chat: Persist context selection across sessions in MeetingDetail
+
+### Remember last-selected AI chat context per meeting
+**What:** Persist the user's last-selected context option (company or contact) in the AI chat panel so it restores when they reopen the meeting.
+**Why:** Currently the context chip always defaults to "This meeting" on every open. If a user consistently wants to ask cross-company questions about a given meeting, they have to re-select the context every time.
+**Pros:** Small quality-of-life win; eliminates a repeat click for users who frequently use company/contact context.
+**Cons:** Requires either localStorage or a new `user_preferences` DB table keyed by meeting ID. Adds state persistence complexity to what is currently a simple piece of UI state.
+**Context:** The `activeContext` state lives in `ChatInterface.tsx`. On mount it defaults to `'meeting'`. To persist: store as `chat_context_<meetingId>` in localStorage, read on mount when `contextOptions` is provided. Validate that the stored context ID still exists in the current `contextOptions` before restoring (otherwise fall back to `'meeting'`).
+**Effort:** S
+**Priority:** P3
+**Depends on:** Chat Context Switcher feature (this PR).

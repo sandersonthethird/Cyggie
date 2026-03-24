@@ -403,7 +403,7 @@ export default function Dashboard() {
                 className={styles.newMenuItem}
                 onClick={() => { setNewMenuOpen(false); void handleQuickNote() }}
               >
-                Note
+                Meeting
               </button>
               <button
                 className={styles.newMenuItem}

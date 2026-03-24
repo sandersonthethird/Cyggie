@@ -49,6 +49,7 @@ import type {
 import { readSummary } from '../storage/file-manager'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { resolveContactsByEmails } from '../database/repositories/contact.repo'
+import { getCurrentUserProfile } from '../security/current-user'
 import { safeParseJson, extractString, extractNumber } from '../utils/json-utils'
 
 const LINKEDIN_URL_RE = /linkedin\.com\/in\/[\w-]+/i
@@ -160,7 +161,18 @@ export async function getContactSummaryUpdateProposals(
   provider: LLMProvider,
   meetingId: string
 ): Promise<ContactSummaryUpdateProposal[]> {
-  if (Object.keys(emailToContactId).length === 0) return []
+  // Remove the app owner from the attendee map so the LLM never extracts data
+  // for the owner and incorrectly attributes it to other contacts.
+  let ownerEmail: string | null = null
+  try {
+    ownerEmail = getCurrentUserProfile().email?.toLowerCase().trim() ?? null
+  } catch {
+    // user profile not yet initialized — skip owner exclusion
+  }
+  const filteredEmailToContactId = { ...emailToContactId }
+  if (ownerEmail) delete filteredEmailToContactId[ownerEmail]
+
+  if (Object.keys(filteredEmailToContactId).length === 0) return []
   const trimmedSummary = summary.trim()
   if (!trimmedSummary) return []
 
@@ -175,7 +187,7 @@ export async function getContactSummaryUpdateProposals(
 
   // Build attendee list with names (looked up from contacts)
   const attendeeLines: string[] = []
-  for (const [email, contactId] of Object.entries(emailToContactId)) {
+  for (const [email, contactId] of Object.entries(filteredEmailToContactId)) {
     const contact = getContact(contactId)
     const name = contact?.fullName || email
     attendeeLines.push(`- ${name} (${email})`)
@@ -244,7 +256,7 @@ export async function getContactSummaryUpdateProposals(
 
   const proposals: ContactSummaryUpdateProposal[] = []
 
-  for (const [email, contactId] of Object.entries(emailToContactId)) {
+  for (const [email, contactId] of Object.entries(filteredEmailToContactId)) {
     const emailKey = email.toLowerCase().trim()
     const extracted = parsed[emailKey] ?? parsed[email]
     if (!extracted || typeof extracted !== 'object') continue
@@ -459,6 +471,10 @@ export async function getContactSummaryUpdateProposalsFromMeetingId(
   const emails = meeting.attendeeEmails || []
   if (emails.length === 0) return []
 
-  const emailToContactId = resolveContactsByEmails(emails)
+  // resolveContactsByEmails returns { id, fullName } objects; extract just ids for downstream use
+  const resolved = resolveContactsByEmails(emails)
+  const emailToContactId: Record<string, string> = Object.fromEntries(
+    Object.entries(resolved).map(([email, { id }]) => [email, id])
+  )
   return getContactSummaryUpdateProposals(summary, emailToContactId, provider, meetingId)
 }

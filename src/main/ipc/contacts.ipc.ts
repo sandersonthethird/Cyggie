@@ -150,6 +150,19 @@ export function registerContactHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC_CHANNELS.CONTACT_UPDATE_EMAIL,
+    (_event, { contactId, oldEmail, newEmail }: { contactId: string; oldEmail: string; newEmail: string }) => {
+      if (!contactId?.trim()) throw new Error('contactId is required')
+      if (!oldEmail?.trim()) throw new Error('oldEmail is required')
+      if (!newEmail?.trim()) throw new Error('newEmail is required')
+      const userId = getCurrentUserId()
+      const updated = contactRepo.updateContactEmail(contactId, oldEmail, newEmail, userId)
+      logAudit(userId, 'contact', contactId, 'update', { oldEmail, newEmail })
+      return updated
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.CONTACT_RESOLVE_EMAILS,
     (_event, emails: string[]) => {
       if (!Array.isArray(emails)) return {}

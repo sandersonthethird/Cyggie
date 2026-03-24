@@ -1,13 +1,17 @@
 /**
  * NoteDetail — full-page route for creating and editing standalone notes.
  *
- * Routes: /note/new, /note/:id
+ * Routes:
+ *   /note/new → NoteDetailNew  (exported default + named)
+ *   /note/:id → NoteDetailLoaded  (named export)
  *
- * State machine:
+ * State machine — NoteDetailNew:
  *
- *   'new' ──► (first keystroke) ──► 'creating' ──► 'loaded'
+ *   'new' ──► (first keystroke) ──► 'creating' ──► navigate('/note/:id')
  *                                        │
  *                                     error ──► 'error'
+ *
+ * State machine — NoteDetailLoaded (via useNoteEditor):
  *
  *   'loading' ──► 'loaded'
  *       │
@@ -17,8 +21,6 @@
  *     content change ──► debounce 800ms ──► save ──► saveStatus: 'saved'
  *     tag change ──► immediate save
  *     navigate away with empty note ──► NOTES_DELETE (fire-and-forget)
- *
- * See also: NoteDetailModal.tsx — keep debounce/flush logic in sync.
  */
 
 import React, { useCallback, useEffect, useRef, useState, Component } from 'react'
@@ -29,7 +31,7 @@ import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { useDebounce } from '../hooks/useDebounce'
+import { useNoteEditor } from '../hooks/useNoteEditor'
 import { NoteTagger } from '../components/notes/NoteTagger'
 import { TagSuggestionBanner } from '../components/notes/TagSuggestionBanner'
 import { api } from '../api'
@@ -37,13 +39,6 @@ import styles from './NoteDetail.module.css'
 import type { Note, TagSuggestion } from '../../shared/types/note'
 
 type SaveStatus = 'saved' | 'saving' | 'error'
-type RouteState =
-  | { status: 'new' }
-  | { status: 'loading' }
-  | { status: 'creating' }
-  | { status: 'loaded'; note: Note }
-  | { status: 'notFound' }
-  | { status: 'error' }
 
 class NoteErrorBoundary extends Component<
   { children: React.ReactNode; onBack: () => void },
@@ -68,47 +63,32 @@ class NoteErrorBoundary extends Component<
   }
 }
 
-function NoteDetailInner() {
-  const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
-  const isNew = id === 'new'
+// ---------------------------------------------------------------------------
+// NoteDetailNew — handles /note/new
+// Creates a note on first keystroke, then navigates to /note/:id
+// ---------------------------------------------------------------------------
 
-  const [routeState, setRouteState] = useState<RouteState>(isNew ? { status: 'new' } : { status: 'loading' })
+function NoteDetailNewInner() {
+  const navigate = useNavigate()
+
+  type NewState = 'new' | 'creating' | 'error'
+  const [state, setState] = useState<NewState>('new')
   const [titleDraft, setTitleDraft] = useState('')
   const [contentDraft, setContentDraft] = useState('')
-  const [isPinned, setIsPinned] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
-  const [tagSuggestion, setTagSuggestion] = useState<TagSuggestion | null>(null)
-  const [suggestionDismissed, setSuggestionDismissed] = useState(false)
+  const stateRef = useRef(state)
+  useEffect(() => { stateRef.current = state }, [state])
 
-  // Folder picker state
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
-  const [availableFolders, setAvailableFolders] = useState<string[]>([])
-  const [folderInput, setFolderInput] = useState('')
-  const folderPickerRef = useRef<HTMLDivElement>(null)
-
-  const savedNoteRef = useRef<Note | null>(null)
-  // Track whether we've already initialized editor content for the loaded note
-  const editorInitialized = useRef(false)
-  // routeState ref for use inside editor callbacks (avoids stale closure)
-  const routeStateRef = useRef(routeState)
-  useEffect(() => { routeStateRef.current = routeState }, [routeState])
-
-  // Create note on first keystroke (for /note/new) — called from editor onUpdate
   const handleFirstInput = useCallback(async (content: string, title: string) => {
-    if (routeStateRef.current.status !== 'new') return
-    setRouteState({ status: 'creating' })
+    if (stateRef.current !== 'new') return
+    setState('creating')
     try {
       const note = await api.invoke<Note>(IPC_CHANNELS.NOTES_CREATE, { content, title: title || null })
-      savedNoteRef.current = note
-      setRouteState({ status: 'loaded', note })
       navigate(`/note/${note.id}`, { replace: true })
     } catch {
-      setRouteState({ status: 'error' })
+      setState('error')
     }
   }, [navigate])
 
-  // Tiptap editor
   const titleInputRef = useRef<HTMLInputElement>(null)
   const editor = useEditor({
     extensions: [
@@ -117,157 +97,131 @@ function NoteDetailInner() {
       Link.configure({ openOnClick: true }),
       Image,
     ],
-    content: '',  // initialized empty; synced when note loads
+    content: '',
     onUpdate: ({ editor: ed }) => {
       const mkd = (ed.storage.markdown as { getMarkdown?: () => string } | undefined)?.getMarkdown?.()
-      if (mkd === undefined) console.warn('[NoteDetail] Markdown ext not ready, falling back to getText()')
       const md = mkd ?? ed.getText()
       setContentDraft(md)
-      if (routeStateRef.current.status === 'new' && md.trim()) {
+      if (stateRef.current === 'new' && md.trim()) {
         void handleFirstInput(md, titleDraft)
       }
     },
   })
 
-  // Sync editor content when note loads (guard isFocused to avoid cursor jump)
-  useEffect(() => {
-    if (routeState.status === 'loaded' && editor && !editorInitialized.current) {
-      editorInitialized.current = true
-      editor.commands.setContent(routeState.note.content ?? '', false)
-    }
-  }, [routeState, editor])
-
-  // Sync editor editable state
   useEffect(() => {
     if (!editor) return
-    const editable = routeState.status !== 'creating' && routeState.status !== 'loading'
-    editor.setEditable(editable)
-  }, [editor, routeState.status])
+    editor.setEditable(state !== 'creating')
+  }, [editor, state])
 
-  // Load existing note
-  useEffect(() => {
-    if (isNew) return
-    editorInitialized.current = false
-    api.invoke<Note | null>(IPC_CHANNELS.NOTES_GET, id)
-      .then((note) => {
-        if (!note) {
-          setRouteState({ status: 'notFound' })
-          return
-        }
-        savedNoteRef.current = note
-        setTitleDraft(note.title ?? '')
-        setContentDraft(note.content)
-        setIsPinned(note.isPinned)
-        setRouteState({ status: 'loaded', note })
-      })
-      .catch(() => setRouteState({ status: 'error' }))
-  }, [id, isNew])
+  const handleBack = useCallback(() => {
+    if (window.history.length > 1) navigate(-1)
+    else navigate('/notes')
+  }, [navigate])
 
-  // Debounced auto-save
-  const debouncedTitle = useDebounce(titleDraft, 800)
-  const debouncedContent = useDebounce(contentDraft, 800)
+  return (
+    <div className={styles.container}>
+      <div className={styles.header}>
+        <button className={styles.backBtn} onClick={handleBack} title="Back to notes">←</button>
+        <input
+          ref={titleInputRef}
+          className={styles.titleInput}
+          placeholder="Untitled"
+          value={titleDraft}
+          onChange={(e) => {
+            setTitleDraft(e.target.value)
+            if (state === 'new' && (e.target.value || contentDraft)) {
+              void handleFirstInput(contentDraft, e.target.value)
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); editor?.commands.focus() }
+          }}
+          disabled={state === 'creating'}
+        />
+      </div>
+      {state !== 'error' && (
+        <EditorContent editor={editor} className={styles.tiptapEditor} />
+      )}
+      {state === 'error' && (
+        <div className={styles.stateMsg}>Failed to create note.</div>
+      )}
+    </div>
+  )
+}
 
-  useEffect(() => {
-    const saved = savedNoteRef.current
-    if (!saved) return
-    if (routeState.status !== 'loaded') return
+export default function NoteDetailNew() {
+  const navigate = useNavigate()
+  return (
+    <NoteErrorBoundary onBack={() => navigate('/notes')}>
+      <NoteDetailNewInner />
+    </NoteErrorBoundary>
+  )
+}
 
-    const titleChanged = debouncedTitle !== (saved.title ?? '')
-    const contentChanged = debouncedContent !== saved.content
-    if (!titleChanged && !contentChanged) return
-    if (!debouncedContent.trim() && !debouncedTitle.trim()) return  // never overwrite with blank
+// ---------------------------------------------------------------------------
+// NoteDetailLoaded — handles /note/:id via useNoteEditor
+// ---------------------------------------------------------------------------
 
-    setSaveStatus('saving')
-    api.invoke<Note | null>(
-      IPC_CHANNELS.NOTES_UPDATE,
-      saved.id,
-      { title: debouncedTitle || null, content: debouncedContent }
-    ).then((updated) => {
-      if (updated) {
-        savedNoteRef.current = updated
-        setSaveStatus('saved')
-      }
-    }).catch(() => setSaveStatus('error'))
-  }, [debouncedTitle, debouncedContent, routeState.status]) // eslint-disable-line react-hooks/exhaustive-deps
+function NoteDetailLoadedInner() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
 
-  // Fetch AI tag suggestion after note is saved (non-blocking)
-  useEffect(() => {
-    const note = savedNoteRef.current
-    if (!note || suggestionDismissed) return
-    if (note.companyId || note.contactId) return
-    if (note.content.trim().length < 20) return
+  const {
+    note,
+    loadState,
+    titleDraft,
+    setTitleDraft,
+    editor,
+    saveStatus,
+    isPinned,
+    setIsPinned,
+    tagSuggestion,
+    dismissSuggestion,
+    deleteNote,
+  } = useNoteEditor(id!)
 
-    api.invoke<TagSuggestion | null>(IPC_CHANNELS.NOTES_SUGGEST_TAG, note.id)
-      .then((s) => { if (s) setTagSuggestion(s) })
-      .catch(() => { /* silent — no banner on failure */ })
-  }, [debouncedContent, suggestionDismissed]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Folder picker state
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
+  const [availableFolders, setAvailableFolders] = useState<string[]>([])
+  const [folderInput, setFolderInput] = useState('')
+  const folderPickerRef = useRef<HTMLDivElement>(null)
 
-  // Flush unsaved changes on navigate-away
-  const flushAndCleanup = useCallback(async () => {
-    const saved = savedNoteRef.current
-    if (!saved) return
+  const savedNoteRef = useRef<Note | null>(null)
+  useEffect(() => { if (note) savedNoteRef.current = note }, [note])
 
-    if (!contentDraft.trim() && !titleDraft.trim()) {
-      api.invoke(IPC_CHANNELS.NOTES_DELETE, saved.id).catch(() => {/* fire-and-forget */})
-      return
-    }
+  const [localNote, setLocalNote] = useState<Note | null>(null)
+  useEffect(() => { if (note) setLocalNote(note) }, [note])
 
-    const titleChanged = titleDraft !== (saved.title ?? '')
-    const contentChanged = contentDraft !== saved.content
-    if (titleChanged || contentChanged) {
-      await api.invoke<Note | null>(
-        IPC_CHANNELS.NOTES_UPDATE,
-        saved.id,
-        { title: titleDraft || null, content: contentDraft }
-      ).catch(() => {/* best-effort */})
-    }
-  }, [contentDraft, titleDraft])
-
-  // Tag handlers
-  const handleTagCompany = useCallback(async (companyId: string | null, _companyName: string | null) => {
-    const note = savedNoteRef.current
-    if (!note) return
+  const handleTagCompany = useCallback(async (companyId: string | null) => {
+    const n = savedNoteRef.current
+    if (!n) return
     try {
-      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, note.id, { companyId })
-      if (updated) {
-        savedNoteRef.current = updated
-        setRouteState({ status: 'loaded', note: updated })
-        setTagSuggestion(null)
-      }
+      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, n.id, { companyId })
+      if (updated) { savedNoteRef.current = updated; setLocalNote(updated) }
     } catch {/* ignore */}
   }, [])
 
-  const handleTagContact = useCallback(async (contactId: string | null, _contactName: string | null) => {
-    const note = savedNoteRef.current
-    if (!note) return
+  const handleTagContact = useCallback(async (contactId: string | null) => {
+    const n = savedNoteRef.current
+    if (!n) return
     try {
-      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, note.id, { contactId })
-      if (updated) {
-        savedNoteRef.current = updated
-        setRouteState({ status: 'loaded', note: updated })
-        setTagSuggestion(null)
-      }
+      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, n.id, { contactId })
+      if (updated) { savedNoteRef.current = updated; setLocalNote(updated) }
     } catch {/* ignore */}
   }, [])
 
   const handleAcceptSuggestion = useCallback(async (suggestion: TagSuggestion) => {
-    const note = savedNoteRef.current
-    if (!note) return
+    const n = savedNoteRef.current
+    if (!n) return
     try {
-      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, note.id, {
+      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, n.id, {
         companyId: suggestion.companyId,
-        contactId: suggestion.contactId
+        contactId: suggestion.contactId,
       })
-      if (updated) {
-        savedNoteRef.current = updated
-        setRouteState({ status: 'loaded', note: updated })
-      }
+      if (updated) { savedNoteRef.current = updated; setLocalNote(updated) }
     } catch {/* ignore */}
-    setTagSuggestion(null)
-    setSuggestionDismissed(true)
-  }, [])
-
-  // --- Folder picker handlers ---
+    dismissSuggestion()
+  }, [dismissSuggestion])
 
   const openFolderPicker = useCallback(async () => {
     const folders = await api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_FOLDERS)
@@ -277,21 +231,17 @@ function NoteDetailInner() {
   }, [])
 
   const handleSetFolder = useCallback(async (folderPath: string | null) => {
-    const note = savedNoteRef.current
-    if (!note) return
+    const n = savedNoteRef.current
+    if (!n) return
     setFolderPickerOpen(false)
     try {
-      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, note.id, { folderPath })
-      if (updated) {
-        savedNoteRef.current = updated
-        setRouteState({ status: 'loaded', note: updated })
-      }
+      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, n.id, { folderPath })
+      if (updated) { savedNoteRef.current = updated; setLocalNote(updated) }
     } catch (err) {
       console.error('Failed to set folder', err)
     }
   }, [])
 
-  // Close folder picker on outside click
   useEffect(() => {
     if (!folderPickerOpen) return
     const handler = (e: MouseEvent) => {
@@ -304,66 +254,50 @@ function NoteDetailInner() {
   }, [folderPickerOpen])
 
   const handlePinToggle = useCallback(async () => {
-    const note = savedNoteRef.current
-    if (!note) return
+    const n = savedNoteRef.current
+    if (!n) return
     const newPinned = !isPinned
     setIsPinned(newPinned)
     try {
-      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, note.id, { isPinned: newPinned })
-      if (updated) savedNoteRef.current = updated
+      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, n.id, { isPinned: newPinned })
+      if (updated) { savedNoteRef.current = updated; setLocalNote(updated) }
     } catch {
       setIsPinned(!newPinned)
     }
-  }, [isPinned])
+  }, [isPinned, setIsPinned])
 
   const handleDelete = useCallback(async () => {
-    const note = savedNoteRef.current
-    if (!note) return
-    await api.invoke(IPC_CHANNELS.NOTES_DELETE, note.id).catch(() => {/* ignore */})
+    await deleteNote()
     navigate('/notes', { replace: true })
-  }, [navigate])
-
-  const handleBack = useCallback(async () => {
-    await flushAndCleanup()
-    if (window.history.length > 1) {
-      navigate(-1)
-    } else {
-      navigate('/notes')
-    }
-  }, [flushAndCleanup, navigate])
+  }, [deleteNote, navigate])
 
   const handleRetry = useCallback(() => {
-    const saved = savedNoteRef.current
-    if (!saved) return
-    setSaveStatus('saving')
-    api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, saved.id, {
+    const n = savedNoteRef.current
+    if (!n) return
+    api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, n.id, {
       title: titleDraft || null,
-      content: contentDraft
-    }).then((updated) => {
-      if (updated) {
-        savedNoteRef.current = updated
-        setSaveStatus('saved')
-      }
-    }).catch(() => setSaveStatus('error'))
-  }, [titleDraft, contentDraft])
+      content: (editor?.storage.markdown as { getMarkdown?: () => string } | undefined)?.getMarkdown?.() ?? editor?.getText() ?? '',
+    }).catch(() => {/* ignore */})
+  }, [titleDraft, editor])
 
-  const note = routeState.status === 'loaded' ? routeState.note : null
+  const handleBack = useCallback(() => {
+    if (window.history.length > 1) navigate(-1)
+    else navigate('/notes')
+  }, [navigate])
 
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <button className={styles.backBtn} onClick={handleBack} title="Back to notes">
-          ←
-        </button>
+        <button className={styles.backBtn} onClick={handleBack} title="Back to notes">←</button>
 
-        {note && (
+        {localNote && (
           <div className={styles.folderPickerWrapper} ref={folderPickerRef}>
             <button
               className={styles.folderPickerTrigger}
               onClick={() => folderPickerOpen ? setFolderPickerOpen(false) : void openFolderPicker()}
-              title={note.folderPath ?? 'No folder assigned'}
+              title={localNote.folderPath ?? 'No folder assigned'}
             >
-              {note.folderPath ? note.folderPath.split('/').pop() : 'No folder'}
+              {localNote.folderPath ? localNote.folderPath.split('/').pop() : 'No folder'}
             </button>
             {folderPickerOpen && (() => {
               const filteredFolders = availableFolders.filter(f =>
@@ -395,7 +329,7 @@ function NoteDetailInner() {
                   {filteredFolders.map(f => (
                     <button
                       key={f}
-                      className={`${styles.folderPickerOption} ${f === note.folderPath ? styles.folderPickerOptionActive : ''}`}
+                      className={`${styles.folderPickerOption} ${f === localNote.folderPath ? styles.folderPickerOptionActive : ''}`}
                       onClick={() => void handleSetFolder(f)}
                     >
                       {f}
@@ -416,37 +350,27 @@ function NoteDetailInner() {
         )}
 
         <input
-          ref={titleInputRef}
           className={styles.titleInput}
           placeholder="Untitled"
           value={titleDraft}
-          onChange={(e) => {
-            setTitleDraft(e.target.value)
-            if (routeState.status === 'new' && (e.target.value || contentDraft)) {
-              void handleFirstInput(contentDraft, e.target.value)
-            }
-          }}
+          onChange={(e) => setTitleDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              editor?.commands.focus()
-            }
+            if (e.key === 'Enter') { e.preventDefault(); editor?.commands.focus() }
           }}
-          disabled={routeState.status === 'creating' || routeState.status === 'loading'}
+          disabled={loadState === 'loading'}
         />
-        {note?.sourceMeetingId && (
+
+        {localNote?.sourceMeetingId && (
           <button
             className={styles.meetingLink}
-            onClick={async () => {
-              await flushAndCleanup()
-              navigate(`/meeting/${note.sourceMeetingId}`)
-            }}
+            onClick={() => navigate(`/meeting/${localNote.sourceMeetingId}`)}
             title="View original meeting"
           >
             View meeting →
           </button>
         )}
-        {note && (
+
+        {localNote && (
           <>
             <button
               className={`${styles.pinBtn} ${isPinned ? styles.pinBtnActive : ''}`}
@@ -462,30 +386,27 @@ function NoteDetailInner() {
         )}
       </div>
 
-      {(routeState.status === 'new' || routeState.status === 'loaded' || routeState.status === 'creating') && (
+      {(loadState === 'loaded' || loadState === 'loading') && (
         <>
-          {note && (
+          {localNote && (
             <div className={styles.taggerRow}>
               <NoteTagger
-                companyId={note.companyId}
-                companyName={note.companyName}
-                contactId={note.contactId}
-                contactName={note.contactName}
+                companyId={localNote.companyId}
+                companyName={localNote.companyName}
+                contactId={localNote.contactId}
+                contactName={localNote.contactName}
                 onTagCompany={handleTagCompany}
                 onTagContact={handleTagContact}
               />
             </div>
           )}
 
-          {tagSuggestion && !note?.companyId && !note?.contactId && (
+          {tagSuggestion && !localNote?.companyId && !localNote?.contactId && (
             <div className={styles.suggestionRow}>
               <TagSuggestionBanner
                 suggestion={tagSuggestion}
                 onAccept={handleAcceptSuggestion}
-                onDismiss={() => {
-                  setTagSuggestion(null)
-                  setSuggestionDismissed(true)
-                }}
+                onDismiss={dismissSuggestion}
               />
             </div>
           )}
@@ -494,13 +415,13 @@ function NoteDetailInner() {
         </>
       )}
 
-      {routeState.status === 'loading' && (
+      {loadState === 'loading' && (
         <div className={styles.stateMsg}>Loading…</div>
       )}
-      {routeState.status === 'notFound' && (
+      {loadState === 'notFound' && (
         <div className={styles.stateMsg}>Note not found.</div>
       )}
-      {routeState.status === 'error' && (
+      {loadState === 'error' && (
         <div className={styles.stateMsg}>Failed to load note.</div>
       )}
 
@@ -515,11 +436,11 @@ function NoteDetailInner() {
   )
 }
 
-export default function NoteDetail() {
+export function NoteDetailLoaded() {
   const navigate = useNavigate()
   return (
     <NoteErrorBoundary onBack={() => navigate('/notes')}>
-      <NoteDetailInner />
+      <NoteDetailLoadedInner />
     </NoteErrorBoundary>
   )
 }

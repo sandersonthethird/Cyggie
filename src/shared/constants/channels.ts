@@ -79,6 +79,7 @@ export const IPC_CHANNELS = {
   CONTACT_EMAIL_INGEST_CANCEL: 'contact:email-ingest:cancel',
   CONTACT_CREATE: 'contact:create',
   CONTACT_ADD_EMAIL: 'contact:add-email',
+  CONTACT_UPDATE_EMAIL: 'contact:update-email',
   CONTACT_SET_COMPANY: 'contact:set-company',
   CONTACT_UPDATE: 'contact:update',
   CONTACT_DELETE: 'contact:delete',
@@ -134,6 +135,7 @@ export const IPC_CHANNELS = {
   NOTES_FOLDER_CREATE: 'notes:folder-create',
   NOTES_FOLDER_RENAME: 'notes:folder-rename',
   NOTES_FOLDER_DELETE: 'notes:folder-delete',
+  NOTES_FOLDER_COUNTS: 'notes:folder-counts',
 
   // Contact decision log
   CONTACT_DECISION_LOG_LIST: 'contact-decision-log:list',
@@ -300,6 +302,11 @@ export const IPC_CHANNELS = {
   PARTNER_MEETING_GET_SUGGESTIONS: 'partner-meeting:get-suggestions',
   PARTNER_MEETING_DISMISS_SUGGESTION: 'partner-meeting:dismiss-suggestion',
   PARTNER_MEETING_GENERATE_BRIEF: 'partner-meeting:generate-brief',
+  PARTNER_MEETING_SET_MEETING: 'partner-meeting:set-meeting',
+  PARTNER_MEETING_GENERATE_RECONCILIATION: 'partner-meeting:generate-reconciliation',
+  PARTNER_MEETING_RECONCILE_PROPOSAL: 'partner-meeting:reconcile-proposal',
+  PARTNER_MEETING_RECONCILE_CANCEL: 'partner-meeting:reconcile-cancel',
+  PARTNER_MEETING_APPLY_RECONCILIATION: 'partner-meeting:apply-reconciliation',
 
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',

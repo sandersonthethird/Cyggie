@@ -7,7 +7,16 @@ import * as repo from '../database/repositories/partner-meeting.repo'
 import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts } from '../database/repositories/org-company.repo'
 import { listCompanyNotes } from '../database/repositories/company-notes.repo'
 import { getProvider } from '../llm/provider-factory'
-import type { AddToSyncInput, UpdateItemInput } from '../../shared/types/partner-meeting'
+import { getCurrentUserId } from '../security/current-user'
+import { logAudit } from '../database/repositories/audit.repo'
+import {
+  generateReconciliationProposals,
+  applyReconciliationProposals,
+} from '../services/partner-meeting-reconcile.service'
+import type { AddToSyncInput, UpdateItemInput, ApplyReconciliationInput } from '../../shared/types/partner-meeting'
+
+// AbortController registry for in-flight reconciliation generation
+const activeReconcileControllers = new Map<string, AbortController>()
 
 // ─── PDF Export ──────────────────────────────────────────────────────────────
 
@@ -188,4 +197,49 @@ export function registerPartnerMeetingIpc(): void {
     const brief = await generateBrief(companyId)
     return { brief }
   })
+
+  ipcMain.handle(IPC_CHANNELS.PARTNER_MEETING_SET_MEETING,
+    (_event, digestId: string, meetingId: string | null) => {
+      if (!digestId) throw new Error('digestId is required')
+      repo.setDigestMeetingId(digestId, meetingId)
+    },
+  )
+
+  ipcMain.handle(IPC_CHANNELS.PARTNER_MEETING_GENERATE_RECONCILIATION,
+    async (event, digestId: string) => {
+      if (!digestId) throw new Error('digestId is required')
+      const controller = new AbortController()
+      activeReconcileControllers.set(digestId, controller)
+      try {
+        const digest = repo.getDigestById(digestId)
+        if (!digest) throw new Error(`Digest ${digestId} not found`)
+        return await generateReconciliationProposals(
+          digest,
+          getCurrentUserId(),
+          getProvider('enrichment'),
+          (proposal) => event.sender.send(IPC_CHANNELS.PARTNER_MEETING_RECONCILE_PROPOSAL, proposal),
+          controller.signal,
+        )
+      } finally {
+        activeReconcileControllers.delete(digestId)
+      }
+    },
+  )
+
+  ipcMain.handle(IPC_CHANNELS.PARTNER_MEETING_RECONCILE_CANCEL,
+    (_event, digestId: string) => {
+      activeReconcileControllers.get(digestId)?.abort()
+      return { cancelled: true }
+    },
+  )
+
+  ipcMain.handle(IPC_CHANNELS.PARTNER_MEETING_APPLY_RECONCILIATION,
+    (_event, input: ApplyReconciliationInput) => {
+      if (!input?.digestId) throw new Error('digestId is required')
+      const userId = getCurrentUserId()
+      const result = applyReconciliationProposals(input, userId)
+      logAudit(userId, 'partner-meeting', input.digestId, 'reconcile', result)
+      return result
+    },
+  )
 }

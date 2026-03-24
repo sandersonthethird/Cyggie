@@ -137,6 +137,7 @@
 .chipPortfolio     { background: #d1fae5; color: #065f46; border-color: transparent; }
 .chipPass          { background: #e5e7eb; color: #374151; border-color: transparent; }
 .chipVcFund        { background: #ede9fe; color: #4c1d95; border-color: transparent; }
+.chipLp            { background: #f3e8ff; color: #6b21a8; border-color: transparent; }
 .chipCustomer      { background: #ccfbf1; color: #134e4a; border-color: transparent; }
 .chipPartner       { background: #e0e7ff; color: #312e81; border-color: transparent; }
 .chipVendor        { background: #fef3c7; color: #92400e; border-color: transparent; }
@@ -302,6 +303,90 @@
   opacity: 0.85;
 }
 
+/* Edit action row: contains Reset + Done (or Apply prompt) */
+.editActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ↺ Reset layout button (shown in Edit View, next to Done) */
+.resetLayoutBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm, 4px);
+  transition: color 0.1s;
+}
+.resetLayoutBtn:hover {
+  color: var(--color-text-primary);
+}
+
+/* "Save as default for all [Type]?" inline prompt */
+.applyPrompt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.applyPrompt span {
+  text-align: right;
+}
+.applyAllBtn {
+  padding: 3px 8px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 11px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.applyAllBtn:hover { opacity: 0.85; }
+
+.applyOneBtn {
+  padding: 3px 8px;
+  background: none;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 11px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.applyOneBtn:hover { opacity: 0.75; }
+
+/* Template indicator: transient badge when entity type changes and a template applies */
+.templateIndicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--color-surface-raised, #f9fafb);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+}
+.templateIndicator button {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
 .websiteLink {
   display: block;
   font-size: 12px;
@@ -379,6 +464,37 @@
 .dragOverFieldIndicator {
   border-top: 2px solid var(--color-primary);
   border-radius: 2px;
+}
+
+/* ── Hidden Company Banner ───────────────────────────────────── */
+
+.hiddenBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 6px 16px 4px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  border-left: 3px solid var(--color-text-muted, #a0aec0);
+  background: var(--color-bg-secondary, var(--color-card-hover));
+  font-size: 12px;
+  color: var(--color-text-muted, #718096);
+  gap: 10px;
+}
+
+.unhideBtn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-bg, #fff);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-text, #2d3748);
+}
+
+.unhideBtn:hover {
+  background: var(--color-bg-hover, #f7fafc);
 }
 
 /* ── Current Decision Widget ─────────────────────────────────── */

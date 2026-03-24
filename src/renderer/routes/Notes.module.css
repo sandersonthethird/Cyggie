@@ -37,9 +37,10 @@
 .filterBar {
   display: flex;
   gap: 6px;
-  padding: 0 24px 12px;
+  padding: 0 8px 8px;
   flex-shrink: 0;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 /* Meeting notes toggle — visually separated from tag filter chips.
@@ -92,6 +93,84 @@
   overflow: hidden;
 }
 
+/* Three-pane layout */
+.listPane {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--color-border, #e8e8e8);
+  outline: none;
+}
+
+.resizeHandle {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+}
+.resizeHandle:hover {
+  background: var(--color-accent, #4f46e5);
+}
+
+.detailPane {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* List header */
+.listHeader {
+  display: flex;
+  align-items: center;
+  padding: 12px 12px 6px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.listTitle {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-primary, #111);
+}
+.listCount {
+  font-weight: 400;
+  color: var(--color-text-tertiary, #aaa);
+  margin-left: 4px;
+}
+.newNoteBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 300;
+  color: var(--color-text-tertiary, #aaa);
+  padding: 0 4px;
+  border-radius: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.newNoteBtn:hover {
+  color: var(--color-accent, #4f46e5);
+  background: var(--color-bg-secondary, #f5f5f5);
+}
+
+/* Date group headers */
+.dateGroupHeader {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary, #aaa);
+  padding: 8px 12px 4px;
+  letter-spacing: 0.04em;
+}
+
 .mainColumn {
   display: flex;
   flex-direction: column;
@@ -102,28 +181,30 @@
 .list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 24px 24px;
+  padding: 0 0 24px;
 }
 
+/* Compact note card — title + date only */
 .noteCard {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--color-border, #e8e8e8);
-  border-radius: 8px;
-  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-subtle, #f0f0f0);
   cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
-  background: var(--color-bg-primary, #fff);
+  transition: background 0.1s;
 }
 .noteCard:hover {
   background: var(--color-bg-secondary, #f9f9f9);
-  border-color: var(--color-text-tertiary, #ccc);
+}
+.noteCardActive {
+  background: var(--color-accent-faint, #eff6ff);
+}
+.noteCardActive:hover {
+  background: var(--color-accent-faint, #e0eaff);
 }
 .noteCardSelected {
   background: #eff6ff;
-  border-color: #93c5fd;
 }
 .noteCardSelected:hover {
   background: #dbeafe;
@@ -146,13 +227,15 @@
 .noteContent {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .noteTitle {
   font-weight: 500;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--color-text-primary, #111);
-  margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -161,47 +244,9 @@
   color: var(--color-text-tertiary, #bbb);
 }
 
-.noteSnippet {
-  font-size: 12px;
-  color: var(--color-text-secondary, #666);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin-bottom: 6px;
-}
-
-.noteMeta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.metaBadge {
-  font-size: 11px;
-  padding: 1px 7px;
-  border-radius: 9px;
-  font-weight: 500;
-}
-
-.companyBadge {
-  background: #eff6ff;
-  color: #1e40af;
-  border: 1px solid #bfdbfe;
-}
-
-.contactBadge {
-  background: #f0fdf4;
-  color: #166534;
-  border: 1px solid #bbf7d0;
-}
-
 .noteDate {
   font-size: 11px;
   color: var(--color-text-tertiary, #aaa);
-  margin-left: auto;
 }
 
 .pinnedIcon {
@@ -238,7 +283,7 @@
 
 .searchRow {
   position: relative;
-  margin: 0 16px 8px;
+  margin: 0 8px 6px;
 }
 
 .searchInput {
@@ -279,8 +324,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 24px 12px;
+  padding: 0 8px 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .bulkSelectAll {

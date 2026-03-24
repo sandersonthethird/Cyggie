@@ -67,7 +67,18 @@ export function registerMeetingHandlers(): void {
     const transcript = meeting.transcriptPath ? readTranscript(meeting.transcriptPath) : null
     const summary = meeting.summaryPath ? readSummary(meeting.summaryPath) : null
 
-    return { meeting, transcript, summary }
+    const db = getDatabase()
+    const linkedCompanies = db
+      .prepare(`
+        SELECT c.id, c.canonical_name AS name
+        FROM meeting_company_links l
+        JOIN org_companies c ON c.id = l.company_id
+        WHERE l.meeting_id = ?
+        ORDER BY c.canonical_name
+      `)
+      .all(id) as { id: string; name: string }[]
+
+    return { meeting, transcript, summary, linkedCompanies }
   })
 
   ipcMain.handle(IPC_CHANNELS.MEETING_UPDATE, (_event, id: string, data: Parameters<typeof meetingRepo.updateMeeting>[1]) => {

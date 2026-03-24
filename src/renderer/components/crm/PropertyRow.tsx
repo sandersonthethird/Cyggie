@@ -101,6 +101,15 @@ export function PropertyRow({
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(null)
 
+  // Mirror editValue synchronously so the finally block can detect pending changes
+  // after an in-flight IPC save completes (Bug #2: prevents silent data loss on fast edits)
+  const editValueRef = useRef<string | number | boolean | null>(value)
+  useEffect(() => { editValueRef.current = editValue }, [editValue])
+
+  // Bail out of state updates if the component unmounts while a save is in-flight
+  const mountedRef = useRef(true)
+  useEffect(() => () => { mountedRef.current = false }, [])
+
   // Multiselect dropdown state
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [draftSelected, setDraftSelected] = useState<string[]>([])
@@ -213,7 +222,14 @@ export function PropertyRow({
       setError(msg)
       console.error('[PropertyRow] save failed:', e)
     } finally {
+      if (!mountedRef.current) return
+      const hadPendingChange = editValueRef.current !== val
       setSaving(false)
+      // If editValue changed while IPC was in-flight, re-trigger save to avoid data loss
+      if (hadPendingChange && (editing || editMode)) {
+        console.warn('[PropertyRow] re-triggering save: value changed during IPC')
+        setTimeout(() => handleSave(editValueRef.current), 0)
+      }
     }
   }
 

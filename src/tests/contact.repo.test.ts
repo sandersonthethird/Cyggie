@@ -21,7 +21,7 @@ vi.mock('../main/database/connection', () => ({
   getDatabase: () => testDb
 }))
 
-const { listContactsLight } = await import('../main/database/repositories/contact.repo')
+const { listContactsLight, resolveContactsByEmails } = await import('../main/database/repositories/contact.repo')
 
 function buildDb(): Database.Database {
   const db = new Database(':memory:')
@@ -122,5 +122,53 @@ describe('listContactsLight — companyId boost', () => {
   it('boost works alongside a search query', () => {
     const results = listContactsLight({ query: 'Pat', companyId: 'co1' })
     expect(results[0].id).toBe('c1')
+  })
+})
+
+describe('resolveContactsByEmails — returns { id, fullName }', () => {
+  beforeEach(() => {
+    testDb = new Database(':memory:')
+    testDb.exec(`
+      CREATE TABLE contacts (
+        id TEXT PRIMARY KEY,
+        full_name TEXT NOT NULL,
+        email TEXT
+      );
+      CREATE TABLE contact_emails (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL REFERENCES contacts(id),
+        email TEXT NOT NULL
+      );
+      INSERT INTO contacts (id, full_name, email) VALUES
+        ('c1', 'Sandy Cass', 'sandy.cass@gmail.com'),
+        ('c2', 'Alice Smith', 'alice@example.com'),
+        ('c3', 'No Email', NULL);
+      INSERT INTO contact_emails (id, contact_id, email) VALUES
+        ('ce1', 'c2', 'alice.alt@example.com');
+    `)
+  })
+
+  it('resolves primary email to { id, fullName }', () => {
+    const result = resolveContactsByEmails(['sandy.cass@gmail.com'])
+    expect(result['sandy.cass@gmail.com']).toEqual({ id: 'c1', fullName: 'Sandy Cass' })
+  })
+
+  it('resolves secondary contact_emails entry to { id, fullName }', () => {
+    const result = resolveContactsByEmails(['alice.alt@example.com'])
+    expect(result['alice.alt@example.com']).toEqual({ id: 'c2', fullName: 'Alice Smith' })
+  })
+
+  it('unmatched email is absent from result', () => {
+    const result = resolveContactsByEmails(['unknown@example.com'])
+    expect(result['unknown@example.com']).toBeUndefined()
+  })
+
+  it('returns empty object for empty input', () => {
+    expect(resolveContactsByEmails([])).toEqual({})
+  })
+
+  it('normalizes email casing', () => {
+    const result = resolveContactsByEmails(['Sandy.Cass@Gmail.COM'])
+    expect(result['sandy.cass@gmail.com']).toEqual({ id: 'c1', fullName: 'Sandy Cass' })
   })
 })

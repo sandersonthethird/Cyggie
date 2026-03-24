@@ -36,6 +36,7 @@ import {
   extractDomainFromEmail,
   compareDuplicateCandidates,
 } from './contact-utils'
+import { getUser } from './user.repo'
 import type {
   ContactSummary,
   ContactSortBy,
@@ -327,14 +328,26 @@ function collectEmailsFromAttendeeEntries(attendees: string[]): string[] {
   return [...emails]
 }
 
+// Email addresses that are never real people — calendar systems, bots, notification senders.
+// Matches exact addresses or local-part prefixes (noreply, no-reply, etc.).
+const NOTIFICATION_EMAIL_RE =
+  /^(noreply|no-reply|donotreply|do-not-reply|notifications?|mailer-daemon|postmaster|calendar-notification|invitations-noreply|bounce[s]?|automailer|automated?)@/i
+
+function isNotificationEmail(email: string): boolean {
+  return NOTIFICATION_EMAIL_RE.test(email)
+}
+
 function buildCandidateMap(
   attendees: string[] | null | undefined,
-  attendeeEmails: string[] | null | undefined
+  attendeeEmails: string[] | null | undefined,
+  ownerEmail: string | null = null
 ): { candidates: CandidateContact[]; invalid: number } {
   const map = new Map<string, CandidateContact>()
   const attendeeList = attendees || []
   const attendeeEmailList = attendeeEmails || []
   let invalid = 0
+
+  const normalizedOwnerEmail = ownerEmail ? normalizeEmail(ownerEmail) : null
 
   const addCandidate = (emailValue: string, nameValue: string | null, explicitName: boolean) => {
     const email = normalizeEmail(emailValue)
@@ -342,6 +355,11 @@ function buildCandidateMap(
       invalid += 1
       return
     }
+    // Never create a contact for the app owner
+    if (normalizedOwnerEmail && email === normalizedOwnerEmail) return
+
+    // Skip known notification/bot addresses — these are never real people
+    if (isNotificationEmail(email)) return
 
     const fullName = nameValue || inferNameFromEmail(email)
     const normalizedName = normalizeName(fullName)
@@ -1108,7 +1126,7 @@ export function createContact(data: {
       inferredCompanyId,
       data.title?.trim() || null,
       data.contactType?.trim() || null,
-      data.linkedinUrl?.trim() || null,
+      data.linkedinUrl ? normalizeLinkedinUrl(data.linkedinUrl) : null,
       userId,
       userId
     )
@@ -1266,7 +1284,7 @@ export function updateContact(
 
   if (data.linkedinUrl !== undefined) {
     sets.push('linkedin_url = ?')
-    params.push(data.linkedinUrl?.trim() || null)
+    params.push(data.linkedinUrl ? normalizeLinkedinUrl(data.linkedinUrl) : null)
   }
 
   // Handle all type-safe updatable fields via the const map
@@ -1314,7 +1332,7 @@ export function updateContact(
   db.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ?`).run(...params)
 
   if (shouldUpdateEmail && emailToAttach) {
-    db.prepare(`UPDATE contact_emails SET is_primary = 0 WHERE contact_id = ? AND is_primary = 1`).run(contactId)
+    db.prepare(`DELETE FROM contact_emails WHERE contact_id = ? AND is_primary = 1`).run(contactId)
     attachEmailToContact(db, contactId, emailToAttach, true)
   }
 
@@ -1391,6 +1409,52 @@ export function addContactEmail(
   if (!updated) {
     throw new Error('Failed to load updated contact')
   }
+  return updated
+}
+
+export function updateContactEmail(
+  contactId: string,
+  oldEmailInput: string,
+  newEmailInput: string,
+  userId: string | null = null
+): ContactDetail {
+  const db = getDatabase()
+  const oldEmail = normalizeEmail(oldEmailInput)
+  const newEmail = normalizeEmail(newEmailInput)
+  if (!oldEmail) throw new Error('Valid old email is required')
+  if (!newEmail) throw new Error('Valid new email is required')
+
+  const row = db
+    .prepare(`SELECT is_primary FROM contact_emails WHERE contact_id = ? AND lower(email) = ? LIMIT 1`)
+    .get(contactId, oldEmail) as { is_primary: number } | undefined
+  if (!row) throw new Error('Email not found on this contact')
+
+  const existingOwner = db
+    .prepare(`SELECT contact_id FROM contact_emails WHERE lower(email) = ? LIMIT 1`)
+    .get(newEmail) as { contact_id: string } | undefined
+  if (existingOwner && existingOwner.contact_id !== contactId) {
+    throw new Error('Email is already linked to another contact')
+  }
+
+  const isPrimary = row.is_primary === 1
+
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM contact_emails WHERE contact_id = ? AND lower(email) = ?`).run(contactId, oldEmail)
+    attachEmailToContact(db, contactId, newEmail, isPrimary)
+    if (isPrimary) {
+      if (userId) {
+        db.prepare(`UPDATE contacts SET email = ?, updated_by_user_id = ?, updated_at = datetime('now') WHERE id = ?`)
+          .run(newEmail, userId, contactId)
+      } else {
+        db.prepare(`UPDATE contacts SET email = ?, updated_at = datetime('now') WHERE id = ?`)
+          .run(newEmail, contactId)
+      }
+    }
+  })
+  tx()
+
+  const updated = getContact(contactId)
+  if (!updated) throw new Error('Failed to load updated contact')
   return updated
 }
 
@@ -1903,7 +1967,8 @@ export function syncContactsFromAttendees(
   attendeeEmails: string[] | null | undefined,
   userId: string | null = null
 ): ContactSyncStats {
-  const { candidates, invalid } = buildCandidateMap(attendees, attendeeEmails)
+  const ownerEmail = userId ? (getUser(userId)?.email ?? null) : null
+  const { candidates, invalid } = buildCandidateMap(attendees, attendeeEmails, ownerEmail)
   const result = applyCandidates(candidates, userId)
   autoLinkContactsByDomain(5000, userId)
   return {
@@ -1922,13 +1987,14 @@ export function syncContactsFromMeetings(userId: string | null = null): ContactS
     `)
     .all() as MeetingAttendeeRow[]
 
+  const ownerEmail = userId ? (getUser(userId)?.email ?? null) : null
   const mergedMap = new Map<string, CandidateContact>()
   let invalid = 0
 
   for (const row of rows) {
     const attendees = parseJsonArray(row.attendees)
     const attendeeEmails = parseJsonArray(row.attendee_emails)
-    const rowCandidates = buildCandidateMap(attendees, attendeeEmails)
+    const rowCandidates = buildCandidateMap(attendees, attendeeEmails, ownerEmail)
     invalid += rowCandidates.invalid
     for (const candidate of rowCandidates.candidates) {
       mergedMap.set(candidate.email, mergeCandidate(mergedMap.get(candidate.email), candidate))
@@ -2061,6 +2127,32 @@ function enrichContactCandidates(
   userId: string | null = null
 ): ContactEnrichmentResult {
   const { nameCandidatesByEmail, companyHitsByEmail } = buildMeetingEnrichmentIndexes(db)
+
+  // Resolve owner email once; used below to exclude owner-signed emails from
+  // LinkedIn URL extraction (prevents owner's LinkedIn URL being assigned to contacts).
+  const ownerEmail = userId ? (getUser(userId)?.email?.toLowerCase().trim() ?? null) : null
+
+  // Pre-load primary domains for all companies referenced in meeting hits.
+  // Used below to validate that a meeting-context company match is corroborated
+  // by the contact's own email domain before accepting the association.
+  const companyDomainById = new Map<string, string>()
+  {
+    const allCompanyIds = new Set<string>()
+    for (const hitMap of companyHitsByEmail.values()) {
+      for (const companyId of hitMap.keys()) allCompanyIds.add(companyId)
+    }
+    if (allCompanyIds.size > 0) {
+      const placeholders = Array.from(allCompanyIds).map(() => '?').join(', ')
+      const rows = db
+        .prepare(
+          `SELECT id, lower(trim(primary_domain)) AS domain FROM org_companies WHERE id IN (${placeholders})`,
+        )
+        .all(...allCompanyIds) as Array<{ id: string; domain: string | null }>
+      for (const row of rows) {
+        if (row.domain) companyDomainById.set(row.id, row.domain)
+      }
+    }
+  }
 
   const updateName = userId
     ? db.prepare(`
@@ -2207,13 +2299,28 @@ function enrichContactCandidates(
           }
         }
 
+        // Only accept a meeting-context hit if the contact's email domain matches
+        // the candidate company's primary_domain. Without this guard, external
+        // attendees of host-company meetings (e.g. Red Swan) accumulate many hits
+        // for the host and get incorrectly assigned to it — even though their own
+        // email domain points to their real employer.
+        //
+        // If no domain-validated hit is found, Step 3 (allowCreate=true) runs
+        // and creates the correct company from the contact's actual email domain.
+        const contactDomains = new Set(
+          uniqueEmails
+            .map((e) => extractDomainFromEmail(e))
+            .filter((d): d is string => d !== null),
+        )
+
         let bestCompanyId: string | null = null
         let bestCompanyHits = 0
         for (const [companyId, hitCount] of companyHits.entries()) {
-          if (hitCount > bestCompanyHits) {
-            bestCompanyId = companyId
-            bestCompanyHits = hitCount
-          }
+          if (hitCount <= bestCompanyHits) continue
+          const companyDomain = companyDomainById.get(companyId) ?? null
+          if (!companyDomain || !contactDomains.has(companyDomain)) continue
+          bestCompanyId = companyId
+          bestCompanyHits = hitCount
         }
         inferredCompanyId = bestCompanyId
       }
@@ -2228,11 +2335,16 @@ function enrichContactCandidates(
       }
     }
 
+    // Exclude emails sent by the owner to avoid picking up the owner's LinkedIn URL
+    // from their email signature (which appears in replies to contacts).
+    const ownerExclusionClause = ownerEmail
+      ? `AND lower(trim(em.from_email)) != ?`
+      : ''
     const linkedInSourceRows = db
       .prepare(`
         SELECT em.body_text, em.snippet
         FROM email_messages em
-        WHERE
+        WHERE (
           lower(trim(em.from_email)) IN (${emailPlaceholders})
           OR EXISTS (
             SELECT 1
@@ -2243,10 +2355,12 @@ function enrichContactCandidates(
                 OR lower(trim(p.email)) IN (${emailPlaceholders})
               )
           )
+        )
+        ${ownerExclusionClause}
         ORDER BY datetime(COALESCE(em.received_at, em.sent_at, em.created_at)) DESC
         LIMIT 200
       `)
-      .all(...uniqueEmails, contact.id, ...uniqueEmails) as Array<{
+      .all(...uniqueEmails, contact.id, ...uniqueEmails, ...(ownerEmail ? [ownerEmail] : [])) as Array<{
       body_text: string | null
       snippet: string | null
     }>
@@ -2413,30 +2527,31 @@ export function enrichContactsByIds(
   return enrichContactCandidates(db, contacts, userId)
 }
 
-/** Given a list of emails, return a map of lowercase email -> contactId for any that match a known contact. */
-export function resolveContactsByEmails(emails: string[]): Record<string, string> {
+/** Given a list of emails, return a map of lowercase email -> { id, fullName } for any that match a known contact. */
+export function resolveContactsByEmails(emails: string[]): Record<string, { id: string; fullName: string }> {
   if (!emails || emails.length === 0) return {}
   const db = getDatabase()
-  const result: Record<string, string> = {}
+  const result: Record<string, { id: string; fullName: string }> = {}
 
   const placeholders = emails.map(() => '?').join(', ')
   const normalized = emails.map((e) => e.trim().toLowerCase())
 
   const rows = db
     .prepare(`
-      SELECT ce.email, ce.contact_id
+      SELECT ce.email, ce.contact_id AS id, c.full_name
       FROM contact_emails ce
+      JOIN contacts c ON c.id = ce.contact_id
       WHERE lower(trim(ce.email)) IN (${placeholders})
       UNION
-      SELECT lower(trim(c.email)), c.id
+      SELECT lower(trim(c.email)) AS email, c.id, c.full_name
       FROM contacts c
       WHERE lower(trim(c.email)) IN (${placeholders})
         AND c.email IS NOT NULL
     `)
-    .all(...normalized, ...normalized) as { email: string; contact_id: string }[]
+    .all(...normalized, ...normalized) as { email: string; id: string; full_name: string | null }[]
 
   for (const row of rows) {
-    result[row.email.toLowerCase().trim()] = row.contact_id
+    result[row.email.toLowerCase().trim()] = { id: row.id, fullName: row.full_name ?? '' }
   }
 
   return result
@@ -3246,4 +3361,76 @@ export function listContactTimeline(contactId: string): ContactTimelineItem[] {
   return [...meetingItems, ...emailItems, ...noteItems].sort(
     (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()
   )
+}
+
+// ---------------------------------------------------------------------------
+// Repair: remove mis-associated contacts from a company
+// ---------------------------------------------------------------------------
+
+/**
+ * Removes contacts from a company where none of the contact's email addresses
+ * match the company's primary domain.
+ *
+ * The `companyHitsByEmail` enrichment bug caused external meeting attendees to
+ * be assigned to the meeting host's company (e.g. Red Swan Ventures) instead
+ * of their own employer. This function reverses those incorrect associations.
+ *
+ * Does NOT re-enrich removed contacts — the next enrichExistingContacts() run
+ * will re-assign them to the correct company via their actual email domain.
+ *
+ * @returns number of contact-company links removed
+ */
+export function repairContactCompanyMismatches(companyId: string): number {
+  const db = getDatabase()
+
+  const company = db
+    .prepare(`SELECT lower(trim(primary_domain)) AS domain FROM org_companies WHERE id = ? LIMIT 1`)
+    .get(companyId) as { domain: string | null } | undefined
+
+  const companyDomain = company?.domain ?? null
+  if (!companyDomain) {
+    // No primary domain on file — can't validate domain matches; skip repair.
+    return 0
+  }
+
+  // Load all contacts currently linked to this company
+  const linkedContacts = db
+    .prepare(`SELECT id, email FROM contacts WHERE primary_company_id = ?`)
+    .all(companyId) as Array<{ id: string; email: string | null }>
+
+  if (linkedContacts.length === 0) return 0
+
+  const clearPrimaryCompany = db.prepare(
+    `UPDATE contacts SET primary_company_id = NULL, updated_at = datetime('now') WHERE id = ?`,
+  )
+  const removeJunctionRow = db.prepare(
+    `DELETE FROM org_company_contacts WHERE company_id = ? AND contact_id = ?`,
+  )
+
+  let removed = 0
+
+  for (const contact of linkedContacts) {
+    // Gather all emails for this contact: dedicated table first, fallback to contacts.email
+    const emailRows = db
+      .prepare(`SELECT email FROM contact_emails WHERE contact_id = ? ORDER BY is_primary DESC`)
+      .all(contact.id) as Array<{ email: string }>
+
+    const allEmails: string[] = emailRows.map((r) => r.email)
+    if (contact.email && !allEmails.includes(contact.email)) {
+      allEmails.push(contact.email)
+    }
+
+    const hasDomainMatch = allEmails.some((email) => {
+      const domain = extractDomainFromEmail(email)
+      return domain === companyDomain
+    })
+
+    if (!hasDomainMatch) {
+      clearPrimaryCompany.run(contact.id)
+      removeJunctionRow.run(companyId, contact.id)
+      removed += 1
+    }
+  }
+
+  return removed
 }

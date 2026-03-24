@@ -44,7 +44,8 @@ const SCOPE_LABELS: Record<CompanyScope, string> = {
   all: 'All Orgs',
   prospects: 'Prospects',
   vc_fund: 'Investors',
-  unknown: 'Unknown'
+  unknown: 'Unknown',
+  hidden: 'Hidden',
 }
 
 // ─── Helpers (dedup dialog only) ──────────────────────────────────────────────

@@ -213,6 +213,15 @@
   color: var(--color-text, #222);
 }
 
+.countBadge {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-tertiary, #aaa);
+  min-width: 20px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
 .importSourceSection {
   margin-top: 16px;
   padding: 0 12px;

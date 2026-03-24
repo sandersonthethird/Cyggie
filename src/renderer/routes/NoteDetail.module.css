@@ -200,6 +200,9 @@
   padding-left: 12px;
   color: var(--color-text-secondary, #666);
 }
+.tiptapEditor :global(.ProseMirror p) { margin: 0 0 0.75em; }
+.tiptapEditor :global(.ProseMirror p:last-child) { margin-bottom: 0; }
+.tiptapEditor :global(.ProseMirror li p) { margin-bottom: 0; }
 
 /* Folder picker */
 .folderPickerWrapper {

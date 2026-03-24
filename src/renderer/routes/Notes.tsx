@@ -1,23 +1,48 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { usePicker } from '../hooks/usePicker'
+import { usePanelResize } from '../hooks/usePanelResize'
 import { EntityPicker } from '../components/common/EntityPicker'
 import { FolderSidebar, INBOX_SENTINEL } from '../components/notes/FolderSidebar'
+import NotePaneEditor from '../components/notes/NotePaneEditor'
 import { api } from '../api'
+import { stripMarkdownPreview } from '../utils/format'
 import styles from './Notes.module.css'
 import type { Note, NoteFilterView, TagSuggestion } from '../../shared/types/note'
 import type { CompanySummary } from '../../shared/types/company'
 import type { ContactSummary } from '../../shared/types/contact'
 
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+/**
+ * Returns the calendar-day grouping label for a note's updatedAt date.
+ * Uses midnight-truncated dates so "Yesterday" means the previous calendar
+ * day — not "24 hours ago".
+ */
+export function getDateGroup(dateStr: string): string {
+  const note = new Date(dateStr)
+  const today = new Date()
+  const noteDay  = new Date(note.getFullYear(),  note.getMonth(),  note.getDate())
+  const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const diffDays = Math.floor((todayDay.getTime() - noteDay.getTime()) / 86_400_000)
+  if (isNaN(diffDays) || diffDays < 0) return 'Older'
   if (diffDays === 0) return 'Today'
   if (diffDays === 1) return 'Yesterday'
-  if (diffDays < 7) return `${diffDays}d ago`
+  if (diffDays < 7) return 'This Week'
+  if (diffDays < 30) return 'This Month'
+  return 'Older'
+}
+
+function formatTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const noteDay  = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const todayDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const diffDays = Math.floor((todayDay.getTime() - noteDay.getTime()) / 86_400_000)
+  if (diffDays === 0) {
+    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  }
+  if (diffDays === 1) return 'Yesterday'
+  if (diffDays < 7) return date.toLocaleDateString(undefined, { weekday: 'short' })
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
@@ -28,19 +53,22 @@ const FILTERS: { label: string; value: NoteFilterView }[] = [
 ]
 
 export default function Notes() {
-  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [notes, setNotes] = useState<Note[]>([])
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get('q') ?? '')
   const [debouncedQuery, setDebouncedQuery] = useState(() => searchParams.get('q') ?? '')
+  const [folderCounts, setFolderCounts] = useState<Record<string, number>>({})
 
-  // Derived from URL params — these are the source of truth for navigation state
+  // Three-pane: selected note
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(
+    () => searchParams.get('note') ?? null
+  )
+
+  // Derived from URL params
   const filter = (searchParams.get('filter') ?? 'all') as NoteFilterView
   const selectedFolder = searchParams.get('folder') ?? null
   const selectedImportSource = searchParams.get('importSource') ?? null
-  // showMeetingNotes=true opts in to seeing meeting notes already tagged to a company.
-  // Default is false (hidden) — those notes have a home in the company Notes tab.
   const showMeetingNotes = searchParams.get('meetingNotes') === '1'
 
   // Folder sidebar state
@@ -59,6 +87,13 @@ export default function Notes() {
   const companyPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
   const contactPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST)
 
+  // Panel resize for the note list (middle pane)
+  const { leftWidth: listPaneWidth, dividerProps: resizeDividerProps } = usePanelResize({
+    defaultWidth: 280,
+    minWidth: 200,
+    maxWidth: 500,
+  })
+
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(searchQuery), 150)
     return () => clearTimeout(t)
@@ -75,9 +110,24 @@ export default function Notes() {
     } catch { /* non-fatal */ }
   }, [])
 
+  const fetchFolderCounts = useCallback(async () => {
+    try {
+      const rows = await api.invoke<{ folderPath: string | null; count: number }[]>(
+        IPC_CHANNELS.NOTES_FOLDER_COUNTS
+      )
+      const map: Record<string, number> = { __all__: 0 }
+      for (const row of rows) {
+        const key = row.folderPath ?? INBOX_SENTINEL
+        map[key] = row.count
+        map['__all__'] = (map['__all__'] ?? 0) + row.count
+      }
+      setFolderCounts(map)
+    } catch { /* non-fatal — no count badges */ }
+  }, [])
+
   useEffect(() => {
-    void fetchFolderData()
-  }, [fetchFolderData])
+    void Promise.all([fetchFolderData(), fetchFolderCounts()])
+  }, [fetchFolderData, fetchFolderCounts])
 
   // Listen for folder tag suggestions from post-import background pass
   useEffect(() => {
@@ -105,7 +155,6 @@ export default function Notes() {
         hideClaimedMeetingNotes: !showMeetingNotes,
       }
       const results = await api.invoke<Note[]>(IPC_CHANNELS.NOTES_LIST, opts)
-      // Apply import source filter client-side (it's a cheap in-memory filter)
       const filtered = selectedImportSource
         ? results.filter(n => n.importSource === selectedImportSource)
         : results
@@ -132,6 +181,80 @@ export default function Notes() {
     }, 4000)
   }, [])
 
+  // --- Note selection ---
+
+  const handleCardClick = useCallback((note: Note) => {
+    if (selectedIds.size > 0) {
+      // In bulk select mode, card click toggles selection
+      const next = new Set(selectedIds)
+      if (next.has(note.id)) next.delete(note.id)
+      else next.add(note.id)
+      setSelectedIds(next)
+    } else {
+      setSelectedNoteId(note.id)
+      setSearchParams(prev => { prev.set('note', note.id); return prev }, { replace: true })
+    }
+  }, [selectedIds, setSearchParams])
+
+  // ↑↓ keyboard navigation in list pane
+  const handleListKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    const idx = notes.findIndex(n => n.id === selectedNoteId)
+    const next = e.key === 'ArrowDown'
+      ? Math.min(idx + 1, notes.length - 1)
+      : Math.max(idx - 1, 0)
+    if (notes[next]) {
+      setSelectedNoteId(notes[next].id)
+      setSearchParams(prev => { prev.set('note', notes[next].id); return prev }, { replace: true })
+    }
+  }, [notes, selectedNoteId, setSearchParams])
+
+  // --- New note ---
+
+  const handleNewNote = useCallback(async () => {
+    try {
+      const note = await api.invoke<Note>(IPC_CHANNELS.NOTES_CREATE, {
+        content: '',
+        title: null,
+        folderPath: selectedFolder ?? undefined,
+      })
+      if (note) {
+        setNotes(prev => [note, ...prev])
+        setSelectedNoteId(note.id)
+        setSearchParams(prev => { prev.set('note', note.id); return prev }, { replace: true })
+        void fetchFolderCounts()
+      }
+    } catch {
+      showToast('Failed to create note')
+    }
+  }, [selectedFolder, fetchFolderCounts, setSearchParams, showToast])
+
+  // Cmd+N shortcut
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+        e.preventDefault()
+        void handleNewNote()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [handleNewNote])
+
+  // --- Note update/delete callbacks (from NotePaneEditor) ---
+
+  const handleNoteUpdated = useCallback((updated: Note) => {
+    setNotes(prev => prev.map(n => n.id === updated.id ? updated : n))
+  }, [])
+
+  const handleNoteDeleted = useCallback((noteId: string) => {
+    setNotes(prev => prev.filter(n => n.id !== noteId))
+    setSelectedNoteId(prev => prev === noteId ? null : prev)
+    setSearchParams(prev => { prev.delete('note'); return prev }, { replace: true })
+    void fetchFolderCounts()
+  }, [fetchFolderCounts, setSearchParams])
+
   // --- Bulk handlers ---
 
   const handleBulkDelete = useCallback(async () => {
@@ -148,6 +271,10 @@ export default function Notes() {
       ids.filter((_, i) => results[i].status === 'fulfilled')
     )
     setNotes(prev => prev.filter(n => !deletedIds.has(n.id)))
+    if (selectedNoteId && deletedIds.has(selectedNoteId)) {
+      setSelectedNoteId(null)
+      setSearchParams(prev => { prev.delete('note'); return prev }, { replace: true })
+    }
     setSelectedIds(new Set())
     lastCheckedRef.current = null
 
@@ -157,7 +284,7 @@ export default function Notes() {
     } else {
       showToast(`${succeeded} deleted · ${failed} failed`)
     }
-  }, [selectedIds, notes, showToast])
+  }, [selectedIds, notes, showToast, selectedNoteId, setSearchParams])
 
   const handleBulkTag = useCallback(async (field: 'companyId' | 'contactId', value: string) => {
     const ids = [...selectedIds]
@@ -212,7 +339,6 @@ export default function Notes() {
   }, [])
 
   const handleAcceptSuggestion = useCallback(async (folderPath: string, suggestion: TagSuggestion) => {
-    // Tag all untagged notes in this folder to the suggested entity
     const notesInFolder = await api.invoke<Note[]>(IPC_CHANNELS.NOTES_LIST, { folderPath })
     const field = suggestion.companyId ? 'companyId' : 'contactId'
     const value = (suggestion.companyId ?? suggestion.contactId)!
@@ -314,7 +440,7 @@ export default function Notes() {
     }
   }, [fetchFolderData, fetchNotes, selectedFolder, setSearchParams])
 
-  // --- Selection helpers ---
+  // --- Bulk selection helpers ---
 
   const toggleSelected = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -346,14 +472,6 @@ export default function Notes() {
     toggleSelected(note.id)
   }, [notes, toggleSelected])
 
-  const handleCardClick = useCallback((note: Note) => {
-    if (selectedIds.size > 0) {
-      toggleSelected(note.id)
-    } else {
-      navigate(`/note/${note.id}`)
-    }
-  }, [selectedIds.size, toggleSelected, navigate])
-
   const handleSelectAll = useCallback(() => {
     if (selectedIds.size === notes.length && notes.length > 0) {
       setSelectedIds(new Set())
@@ -363,8 +481,7 @@ export default function Notes() {
     }
   }, [selectedIds.size, notes])
 
-  // --- Keyboard shortcuts ---
-
+  // Escape / Delete shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (selectedIds.size === 0) return
@@ -385,26 +502,19 @@ export default function Notes() {
     return () => document.removeEventListener('keydown', handler)
   }, [selectedIds, handleBulkDelete])
 
-  // --- Other handlers ---
-
-  const handleNewNote = useCallback(() => {
-    navigate('/note/new')
-  }, [navigate])
+  // --- Render helpers ---
 
   const isEmpty = !loading && notes.length === 0
   const isSearching = debouncedQuery.trim().length > 0
   const allSelected = notes.length > 0 && selectedIds.size === notes.length
 
+  // Date-grouped note list
+  let lastGroup = ''
+
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <h1 className={styles.title}>Notes</h1>
-        <button className={styles.newBtn} onClick={handleNewNote}>
-          + New Note
-        </button>
-      </div>
-
       <div className={styles.body}>
+        {/* Left: folder sidebar */}
         <FolderSidebar
           folders={folders}
           selected={selectedFolder}
@@ -419,9 +529,44 @@ export default function Notes() {
           onCreateFolder={handleCreateFolder}
           onRenameFolder={handleRenameFolder}
           onDeleteFolder={handleDeleteFolder}
+          counts={folderCounts}
         />
 
-        <div className={styles.mainColumn}>
+        {/* Middle: note list pane */}
+        <div
+          className={styles.listPane}
+          style={{ width: listPaneWidth }}
+          onKeyDown={handleListKeyDown}
+          tabIndex={0}
+        >
+          {/* List header */}
+          <div className={styles.listHeader}>
+            <span className={styles.listTitle}>
+              {selectedFolder
+                ? selectedFolder.split('/').pop()
+                : filter === 'unfoldered'
+                ? 'Inbox'
+                : selectedImportSource
+                ? selectedImportSource
+                : 'All Notes'}
+              {(() => {
+                const countKey = selectedFolder ?? (filter === 'unfoldered' ? INBOX_SENTINEL : '__all__')
+                const count = folderCounts[countKey]
+                return count != null ? (
+                  <span className={styles.listCount}>{count}</span>
+                ) : null
+              })()}
+            </span>
+            <button
+              onClick={() => void handleNewNote()}
+              className={styles.newNoteBtn}
+              title="New note (⌘N)"
+            >
+              +
+            </button>
+          </div>
+
+          {/* Search */}
           <div className={styles.searchRow}>
             <input
               type="text"
@@ -437,6 +582,7 @@ export default function Notes() {
             )}
           </div>
 
+          {/* Filter chips / bulk bar */}
           {selectedIds.size > 0 ? (
             <div className={styles.bulkBar}>
               <label className={styles.bulkSelectAll}>
@@ -509,6 +655,7 @@ export default function Notes() {
             )
           )}
 
+          {/* Note list */}
           <div className={styles.list}>
             {isEmpty ? (
               <div className={styles.emptyState}>
@@ -530,7 +677,7 @@ export default function Notes() {
                     : filter === 'unfoldered'
                     ? 'All your notes are assigned to a folder.'
                     : filter === 'all'
-                    ? 'Press "+ New Note" or Cmd+Shift+N to capture a thought.'
+                    ? 'Press + or ⌘N to capture a thought.'
                     : filter === 'untagged'
                     ? 'All your notes are tagged to a company or contact.'
                     : 'Tag a note to a company or contact to see it here.'}
@@ -538,57 +685,43 @@ export default function Notes() {
               </div>
             ) : (
               notes.map((note, index) => {
-                const firstLine =
-                  note.title ||
-                  note.content.split('\n').find((l) => l.trim()) ||
+                const group = getDateGroup(note.updatedAt)
+                const showHeader = group !== lastGroup
+                lastGroup = group
+
+                const title = note.title ||
+                  stripMarkdownPreview(note.content.split('\n').find(l => l.trim()) || '') ||
                   ''
                 const isSelected = selectedIds.has(note.id)
+                const isActive = selectedNoteId === note.id
 
                 return (
-                  <div
-                    key={note.id}
-                    className={`${styles.noteCard} ${isSelected ? styles.noteCardSelected : ''}`}
-                    onClick={() => handleCardClick(note)}
-                  >
-                    <label
-                      className={styles.noteCheckbox}
-                      onClick={(e) => handleCheckbox(e, note, index)}
+                  <div key={note.id}>
+                    {showHeader && (
+                      <div className={styles.dateGroupHeader}>{group}</div>
+                    )}
+                    <div
+                      className={`${styles.noteCard} ${isActive ? styles.noteCardActive : ''} ${isSelected ? styles.noteCardSelected : ''}`}
+                      onClick={() => handleCardClick(note)}
                     >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => {/* handled by label onClick */}}
-                      />
-                    </label>
-                    <div className={styles.noteContent}>
-                      <div className={styles.noteTitle}>
-                        {note.isPinned && <span className={styles.pinnedIcon}>📌</span>}
-                        {firstLine ? (
-                          firstLine
-                        ) : (
-                          <span className={styles.noteUntitled}>Untitled</span>
-                        )}
-                      </div>
-                      {note.content && note.title && (
-                        <div className={styles.noteSnippet}>{note.content}</div>
+                      {selectedIds.size > 0 && (
+                        <label
+                          className={styles.noteCheckbox}
+                          onClick={(e) => handleCheckbox(e, note, index)}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {/* handled by label onClick */}}
+                          />
+                        </label>
                       )}
-                      {!note.title && note.content.includes('\n') && (
-                        <div className={styles.noteSnippet}>
-                          {note.content.split('\n').slice(1).join(' ').trim()}
+                      <div className={styles.noteContent}>
+                        <div className={styles.noteTitle}>
+                          {note.isPinned && <span className={styles.pinnedIcon}>📌</span>}
+                          {title || <span className={styles.noteUntitled}>Untitled</span>}
                         </div>
-                      )}
-                      <div className={styles.noteMeta}>
-                        {note.companyName && (
-                          <span className={`${styles.metaBadge} ${styles.companyBadge}`}>
-                            {note.companyName}
-                          </span>
-                        )}
-                        {note.contactName && (
-                          <span className={`${styles.metaBadge} ${styles.contactBadge}`}>
-                            {note.contactName}
-                          </span>
-                        )}
-                        <span className={styles.noteDate}>{formatDate(note.updatedAt)}</span>
+                        <div className={styles.noteDate}>{formatTime(note.updatedAt)}</div>
                       </div>
                     </div>
                   </div>
@@ -596,6 +729,18 @@ export default function Notes() {
               })
             )}
           </div>
+        </div>
+
+        {/* Resize handle */}
+        <div className={styles.resizeHandle} {...resizeDividerProps} />
+
+        {/* Right: detail pane */}
+        <div className={styles.detailPane}>
+          <NotePaneEditor
+            noteId={selectedNoteId}
+            onNoteUpdated={handleNoteUpdated}
+            onNoteDeleted={handleNoteDeleted}
+          />
         </div>
       </div>
 

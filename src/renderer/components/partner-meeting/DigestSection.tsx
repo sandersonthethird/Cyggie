@@ -21,6 +21,7 @@ const SECTION_LABELS: Record<DigestSectionId, string> = {
   portfolio_updates: 'Portfolio Updates',
   passing: 'Passing',
   admin: 'Admin',
+  other: 'Other',
 }
 
 interface DigestSectionProps {

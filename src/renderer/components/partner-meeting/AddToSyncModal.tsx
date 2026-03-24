@@ -35,10 +35,11 @@ const SECTION_LABELS: Record<DigestSection, string> = {
   portfolio_updates: 'Portfolio Updates',
   passing: 'Passing',
   admin: 'Admin',
+  other: 'Other',
 }
 
 const ALL_SECTIONS: DigestSection[] = [
-  'priorities', 'new_deals', 'existing_deals', 'portfolio_updates', 'passing',
+  'priorities', 'new_deals', 'existing_deals', 'portfolio_updates', 'passing', 'other',
 ]
 
 function autoDetectSection(company: CompanySummary): DigestSection {

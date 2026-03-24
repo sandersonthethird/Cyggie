@@ -243,6 +243,10 @@ export function registerNotesHandlers(): void {
     return notesRepo.listImportSources()
   })
 
+  ipcMain.handle(IPC_CHANNELS.NOTES_FOLDER_COUNTS, () => {
+    return notesRepo.getFolderCounts()
+  })
+
   ipcMain.handle(IPC_CHANNELS.NOTES_FOLDER_CREATE, (_event, folderPath: string) => {
     const sanitized = String(folderPath ?? '').trim().replace(/[*?[\]]/g, '')
     if (!sanitized) throw new Error('folderPath is required')

@@ -244,7 +244,7 @@ export const NAME_STOP_WORDS = new Set([
   'calendar'
 ])
 
-export const LINKEDIN_URL_RE = /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/[^\s<>"')]+/gi
+export const LINKEDIN_URL_RE = /(?:https?:\/\/)?(?:www\.)?(?:[a-z]{2,3}\.)?linkedin\.com\/[^\s<>"')]+/gi
 
 export function normalizePersonNameCandidate(value: string | null | undefined): string | null {
   if (!value) return null
@@ -368,6 +368,10 @@ export function normalizeLinkedinUrl(url: string): string | null {
   if (!/linkedin\.com/i.test(trimmed)) return null
 
   let normalized = trimmed.replace(/[)\].,;:!?]+$/, '')
+  // Add https:// when the URL has no protocol (e.g. www.linkedin.com/in/... or linkedin.com/in/...)
+  if (/^(?:www\.)?(?:[a-z]{2,3}\.)?linkedin\.com\//i.test(normalized)) {
+    normalized = 'https://' + normalized
+  }
   normalized = normalized.replace(/^http:\/\//i, 'https://')
 
   const queryIndex = normalized.indexOf('?')

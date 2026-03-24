@@ -419,6 +419,12 @@ export default function Pipeline() {
     <div className={styles.page}>
       <div className={styles.headerRow}>
         <h1 className={styles.title}>Pipeline</h1>
+        <input
+          className={styles.headerSearch}
+          placeholder="Search companies…"
+          value={filterQuery}
+          onChange={(e) => setFilterQuery(e.target.value)}
+        />
         <button
           className={styles.primaryButton}
           onClick={() => setShowCreate((v) => !v)}
@@ -561,18 +567,8 @@ export default function Pipeline() {
         <table className={styles.pipelineTable}>
           <thead>
             <tr>
-              <th className={styles.companyColumn}>
-                <div className={styles.thContent}>
-                  <span className={styles.thSortLabel} onClick={() => handleSort('name')}>
-                    Company {sortIcon('name')}
-                  </span>
-                  <input
-                    className={styles.thSearchInput}
-                    placeholder="Search…"
-                    value={filterQuery}
-                    onChange={(e) => setFilterQuery(e.target.value)}
-                  />
-                </div>
+              <th className={`${styles.companyColumn} ${styles.sortableTh}`} onClick={() => handleSort('name')}>
+                Company {sortIcon('name')}
               </th>
               <th>
                 <div className={styles.thHeaderWithFilter}>

@@ -12,7 +12,7 @@
  * Viewing archived digest: all inputs disabled, Conclude button hidden.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type {
@@ -21,15 +21,18 @@ import type {
   PartnerMeetingItem,
   DigestSuggestion,
   DigestSection,
+  ReconcileProposal,
 } from '../../shared/types/partner-meeting'
+import type { Meeting } from '../../shared/types/meeting'
 import { DigestArchiveSidebar } from '../components/partner-meeting/DigestArchiveSidebar'
 import { DigestSection as DigestSectionComponent } from '../components/partner-meeting/DigestSection'
 import { SuggestionsPanel } from '../components/partner-meeting/SuggestionsPanel'
+import { ReconcileModal } from '../components/partner-meeting/ReconcileModal'
 import { api } from '../api'
 import styles from './PartnerMeeting.module.css'
 
 const ALL_SECTIONS: DigestSection[] = [
-  'priorities', 'new_deals', 'existing_deals', 'portfolio_updates', 'passing', 'admin',
+  'priorities', 'new_deals', 'existing_deals', 'portfolio_updates', 'passing', 'admin', 'other',
 ]
 
 function formatWeekOf(weekOf: string): string {
@@ -51,6 +54,19 @@ export default function PartnerMeeting() {
   const [suggestions, setSuggestions] = useState<DigestSuggestion[]>([])
   const [concluding, setConcluding] = useState(false)
   const [exporting, setExporting] = useState(false)
+
+  // Meeting picker state
+  const [meetingId, setMeetingId] = useState<string | null>(null)
+  const [meetingTitle, setMeetingTitle] = useState<string | null>(null)
+  const [meetingPickerOpen, setMeetingPickerOpen] = useState(false)
+  const [meetingOptions, setMeetingOptions] = useState<Array<{ id: string; title: string; date: string }>>([])
+  const [meetingSearch, setMeetingSearch] = useState('')
+  const meetingPickerRef = useRef<HTMLDivElement>(null)
+
+  // Reconcile modal state
+  const [showReconcileModal, setShowReconcileModal] = useState(false)
+  const [reconcileState, setReconcileState] = useState<'generating' | 'ready' | 'error'>('generating')
+  const [proposals, setProposals] = useState<ReconcileProposal[]>([])
 
   // Load digest list
   const loadDigestList = useCallback(async () => {
@@ -77,6 +93,8 @@ export default function PartnerMeeting() {
       }
 
       setState({ status: 'loaded', digest, items: digest.items ?? [] })
+      setMeetingId(digest.meetingId ?? null)
+      setMeetingTitle(null)  // will be resolved lazily if meetingId is set
 
       // Load suggestions only for active digest
       if (digest.status === 'active') {
@@ -84,7 +102,7 @@ export default function PartnerMeeting() {
           .then(s => setSuggestions(s))
           .catch(() => {})
       }
-    } catch (err) {
+    } catch {
       setState({ status: 'error', message: 'Failed to load digest.' })
     }
   }, [])
@@ -93,6 +111,71 @@ export default function PartnerMeeting() {
     loadDigest(selectedId)
     loadDigestList()
   }, [selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Resolve meeting title when meetingId is set on load
+  useEffect(() => {
+    if (!meetingId) { setMeetingTitle(null); return }
+    api.invoke<Meeting>(IPC_CHANNELS.MEETING_GET, meetingId)
+      .then(m => { if (m) setMeetingTitle(m.title) })
+      .catch(() => {})
+  }, [meetingId])
+
+  // Close meeting picker on outside click
+  useEffect(() => {
+    if (!meetingPickerOpen) return
+    function handleMouseDown(e: MouseEvent) {
+      if (!meetingPickerRef.current?.contains(e.target as Node)) {
+        setMeetingPickerOpen(false)
+        setMeetingSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => document.removeEventListener('mousedown', handleMouseDown)
+  }, [meetingPickerOpen])
+
+  const handleOpenMeetingPicker = useCallback(async () => {
+    setMeetingPickerOpen(v => !v)
+    if (meetingOptions.length > 0) return  // already loaded
+    try {
+      const sixtyDaysAgo = new Date()
+      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60)
+      const list = await api.invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, {
+        dateFrom: sixtyDaysAgo.toISOString().slice(0, 10),
+        limit: 50,
+      })
+      setMeetingOptions(
+        list.map(m => ({ id: m.id, title: m.title, date: m.date }))
+          .sort((a, b) => b.date.localeCompare(a.date))
+      )
+    } catch {
+      // non-critical
+    }
+  }, [meetingOptions.length])
+
+  const handleSelectMeeting = useCallback(async (id: string, title: string) => {
+    if (state.status !== 'loaded') return
+    setMeetingPickerOpen(false)
+    setMeetingSearch('')
+    setMeetingId(id)
+    setMeetingTitle(title)
+    try {
+      await api.invoke(IPC_CHANNELS.PARTNER_MEETING_SET_MEETING, state.digest.id, id)
+    } catch {
+      setMeetingId(meetingId)  // revert on error
+    }
+  }, [state, meetingId])
+
+  const handleClearMeeting = useCallback(async () => {
+    if (state.status !== 'loaded') return
+    const prev = meetingId
+    setMeetingId(null)
+    setMeetingTitle(null)
+    try {
+      await api.invoke(IPC_CHANNELS.PARTNER_MEETING_SET_MEETING, state.digest.id, null)
+    } catch {
+      setMeetingId(prev)  // revert on error
+    }
+  }, [state, meetingId])
 
   const handleSelectDigest = useCallback((id: string) => {
     const digest = digests.find(d => d.id === id)
@@ -125,19 +208,56 @@ export default function PartnerMeeting() {
 
   const handleConclude = useCallback(async () => {
     if (state.status !== 'loaded') return
-    if (!window.confirm('Conclude this meeting? The digest will be archived and a new one created for next week.')) return
 
+    const discussed = state.items.filter(
+      i => i.isDiscussed && i.companyId && (i.meetingNotes || i.brief || i.statusUpdate),
+    )
+
+    if (discussed.length === 0) {
+      if (!window.confirm('Conclude this meeting? The digest will be archived and a new one created for next week.')) return
+      setConcluding(true)
+      try {
+        await api.invoke(IPC_CHANNELS.PARTNER_MEETING_CONCLUDE, state.digest.id)
+        await loadDigestList()
+        setSearchParams({})
+        await loadDigest(null)
+      } catch {
+        alert('Failed to conclude meeting. Please try again.')
+      } finally {
+        setConcluding(false)
+      }
+      return
+    }
+
+    // Open reconcile modal and start streaming proposals
+    setProposals([])
+    setReconcileState('generating')
+    setShowReconcileModal(true)
+
+    const unsubscribe = api.on(
+      IPC_CHANNELS.PARTNER_MEETING_RECONCILE_PROPOSAL,
+      (proposal: unknown) => setProposals(prev => [...prev, proposal as ReconcileProposal]),
+    )
+    try {
+      await api.invoke(IPC_CHANNELS.PARTNER_MEETING_GENERATE_RECONCILIATION, state.digest.id)
+      setReconcileState('ready')
+    } catch {
+      setReconcileState('error')
+    } finally {
+      unsubscribe()
+    }
+  }, [state, loadDigestList, loadDigest, setSearchParams])
+
+  const handleReconcileConclude = useCallback(async () => {
+    if (state.status !== 'loaded') return
+    setShowReconcileModal(false)
     setConcluding(true)
     try {
-      const newDigest = await api.invoke<PartnerMeetingDigest>(
-        IPC_CHANNELS.PARTNER_MEETING_CONCLUDE,
-        state.digest.id
-      )
+      await api.invoke(IPC_CHANNELS.PARTNER_MEETING_CONCLUDE, state.digest.id)
       await loadDigestList()
-      // Navigate to the new active digest
       setSearchParams({})
       await loadDigest(null)
-    } catch (err) {
+    } catch {
       alert('Failed to conclude meeting. Please try again.')
     } finally {
       setConcluding(false)
@@ -148,7 +268,7 @@ export default function PartnerMeeting() {
     setExporting(true)
     try {
       await api.invoke(IPC_CHANNELS.PARTNER_MEETING_EXPORT_PDF)
-    } catch (err) {
+    } catch {
       alert('Failed to export PDF.')
     } finally {
       setExporting(false)
@@ -175,7 +295,10 @@ export default function PartnerMeeting() {
 
   const { digest, items } = state
   const isActive = digest.status === 'active'
-  const currentDigestId = digests.find(d => d.status === 'active')?.id
+
+  const filteredMeetings = meetingOptions.filter(
+    m => !meetingSearch || m.title.toLowerCase().includes(meetingSearch.toLowerCase()),
+  )
 
   return (
     <div className={styles.page}>
@@ -194,6 +317,47 @@ export default function PartnerMeeting() {
               {formatWeekOf(digest.weekOf)}
               {!isActive && <span className={styles.archivedBadge}>Archived</span>}
             </div>
+            {/* Meeting picker — active digest only */}
+            {isActive && (
+              <div ref={meetingPickerRef} className={styles.meetingPickerWrap}>
+                {meetingId ? (
+                  <span className={styles.meetingChip}>
+                    {meetingTitle ?? 'Linked meeting'}
+                    <button className={styles.meetingChipClear} onClick={handleClearMeeting} title="Unlink meeting">×</button>
+                  </span>
+                ) : (
+                  <button className={styles.linkMeetingBtn} onClick={handleOpenMeetingPicker}>
+                    + Link meeting transcript
+                  </button>
+                )}
+                {meetingPickerOpen && (
+                  <div className={styles.meetingDropdown}>
+                    <input
+                      autoFocus
+                      className={styles.meetingSearch}
+                      placeholder="Search meetings…"
+                      value={meetingSearch}
+                      onChange={e => setMeetingSearch(e.target.value)}
+                    />
+                    <div className={styles.meetingList}>
+                      {filteredMeetings.length === 0 && (
+                        <div className={styles.meetingEmpty}>No meetings found</div>
+                      )}
+                      {filteredMeetings.map(m => (
+                        <button
+                          key={m.id}
+                          className={styles.meetingOption}
+                          onClick={() => handleSelectMeeting(m.id, m.title)}
+                        >
+                          <span className={styles.meetingOptionTitle}>{m.title}</span>
+                          <span className={styles.meetingOptionDate}>{m.date.slice(0, 10)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className={styles.headerActions}>
             <button
@@ -239,6 +403,19 @@ export default function PartnerMeeting() {
           ))}
         </div>
       </div>
+
+      {/* Reconcile modal */}
+      {showReconcileModal && (
+        <ReconcileModal
+          digestId={digest.id}
+          meetingId={meetingId}
+          weekOf={digest.weekOf}
+          proposals={proposals}
+          state={reconcileState}
+          onConclude={handleReconcileConclude}
+          onClose={() => setShowReconcileModal(false)}
+        />
+      )}
     </div>
   )
 }

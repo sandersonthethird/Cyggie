@@ -26,6 +26,7 @@ import { AddFieldDropdown } from '../crm/AddFieldDropdown'
 import { computeChipDelta } from '../../utils/chip-delta'
 import { usePinnedMigration } from '../../hooks/usePinnedMigration'
 import { COMPANY_HARDCODED_FIELDS } from '../../constants/companyFields'
+import { resolveLayoutPref, saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
 import {
   COLUMN_DEFS,
   COMPANY_HEADER_KEYS,
@@ -40,18 +41,49 @@ import {
 } from './companyColumns'
 import styles from './CompanyPropertiesPanel.module.css'
 import { api } from '../../api'
+import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
+import type { CustomFieldValue } from '../../../shared/types/custom-fields'
 
 const ENTITY_TYPE_STYLE: Record<string, string> = {
   prospect: styles.chipProspect,
   portfolio: styles.chipPortfolio,
   pass: styles.chipPass,
   vc_fund: styles.chipVcFund,
+  lp: styles.chipLp,
   customer: styles.chipCustomer,
   partner: styles.chipPartner,
   vendor: styles.chipVendor,
   unknown: styles.chipUnknown,
   other: styles.chipOther,
 }
+
+const ENTITY_LABELS: Record<string, string> = {
+  prospect: 'Prospects',
+  portfolio: 'Portfolio',
+  pass: 'Passes',
+  vc_fund: 'Investors',
+  lp: 'LPs',
+  customer: 'Customers',
+  partner: 'Partners',
+  vendor: 'Vendors',
+  unknown: 'Unknown',
+  other: 'Other',
+}
+
+// Chips hidden by default for specific entity types (no per-company override stored yet)
+const DEFAULT_ENTITY_HIDDEN_CHIPS: Partial<Record<string, string[]>> = {
+  vc_fund: ['pipelineStage', 'priority', 'round'],
+  lp: ['pipelineStage', 'priority', 'round'],
+}
+
+// All pref base keys managed as per-company layout overrides
+const LAYOUT_PREF_BASE_KEYS = [
+  'cyggie:company-hidden-header-chips',
+  'cyggie:company-header-chip-order',
+  'cyggie:company-added-fields',
+  'cyggie:company-field-placements',
+  'cyggie:company-sections-order',
+] as const
 
 const STAGE_STYLE: Record<string, string> = {
   screening: styles.chipScreening,
@@ -170,11 +202,23 @@ export function CompanyPropertiesPanel({
   const headerBadgesRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
+  const [showApplyPrompt, setShowApplyPrompt] = useState(false)
+  const [templateIndicator, setTemplateIndicator] = useState(false)
+  const sessionChanges = useRef(false)
+  const prevEntityType = useRef(company.entityType)
+  const markChanged = useCallback(() => { sessionChanges.current = true }, [])
+
   const { getJSON, setJSON } = usePreferencesStore()
   const { companyDefs, refresh, loaded: defsLoaded, load: loadDefs, version: defsVersion } = useCustomFieldStore()
   const pinnedKeys = getJSON<string[]>('cyggie:company-summary-fields', [])
   const hiddenFields = getJSON<string[]>('cyggie:company-hidden-fields', [])
-  const hiddenHeaderChips = getJSON<string[]>('cyggie:company-hidden-header-chips', [])
+  const hiddenHeaderChips = resolveLayoutPref(
+    getJSON,
+    'cyggie:company-hidden-header-chips',
+    company.id,
+    company.entityType ?? null,
+    DEFAULT_ENTITY_HIDDEN_CHIPS[company.entityType ?? ''] ?? [],
+  )
 
   const fieldVisibility = useFieldVisibility(
     'company',
@@ -182,11 +226,15 @@ export function CompanyPropertiesPanel({
     hiddenFields,
     showAllFields,
     isEditing,
+    { entityId: company.id, profileKey: company.entityType ?? null, onLayoutChange: markChanged },
   )
 
   const sectionOrder = useSectionOrder(
     'company',
     COMPANY_SECTIONS.filter(s => s.key !== 'summary').map(s => s.key),
+    company.id,
+    company.entityType ?? null,
+    markChanged,
   )
 
   const entityTypeDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'entityType')
@@ -232,12 +280,14 @@ export function CompanyPropertiesPanel({
 
   function hideHeaderChip(key: string) {
     if (!hiddenHeaderChips.includes(key)) {
-      setJSON('cyggie:company-hidden-header-chips', [...hiddenHeaderChips, key])
+      saveLayoutPref(setJSON, 'cyggie:company-hidden-header-chips', company.id, [...hiddenHeaderChips, key])
+      markChanged()
     }
   }
 
   function restoreHeaderChip(key: string) {
-    setJSON('cyggie:company-hidden-header-chips', hiddenHeaderChips.filter(k => k !== key))
+    saveLayoutPref(setJSON, 'cyggie:company-hidden-header-chips', company.id, hiddenHeaderChips.filter(k => k !== key))
+    markChanged()
   }
 
   // Migrate old 'Pinned' section fields to 'Header' section (Change 4)
@@ -260,6 +310,25 @@ export function CompanyPropertiesPanel({
       setCustomFields(prev => prev.map(f => f.id === field.id ? { ...f, value: null } : f))
       return
     }
+    const optimisticValue: CustomFieldValue = {
+      id: field.value?.id ?? '',
+      fieldDefinitionId: field.id,
+      entityType: 'company',
+      entityId: company.id,
+      valueText: null, valueNumber: null, valueBoolean: null,
+      valueDate: null, valueRefId: null, resolvedLabel: null,
+      createdAt: field.value?.createdAt ?? '',
+      updatedAt: new Date().toISOString(),
+      ...(field.fieldType === 'number' || field.fieldType === 'currency'
+        ? { valueNumber: Number(newValue) }
+        : field.fieldType === 'boolean'
+        ? { valueBoolean: Boolean(newValue) }
+        : field.fieldType === 'date'
+        ? { valueDate: String(newValue) }
+        : field.fieldType === 'contact_ref' || field.fieldType === 'company_ref'
+        ? { valueRefId: String(newValue) }
+        : { valueText: String(newValue) })
+    }
     const input: import('../../../shared/types/custom-fields').SetCustomFieldValueInput = {
       fieldDefinitionId: field.id,
       entityId: company.id,
@@ -272,7 +341,12 @@ export function CompanyPropertiesPanel({
       case 'contact_ref': case 'company_ref': input.valueRefId = String(newValue); break
       default: input.valueText = String(newValue)
     }
-    await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
+    const prev = customFields
+    return withOptimisticUpdate(
+      () => setCustomFields(fs => fs.map(f => f.id === field.id ? { ...f, value: optimisticValue } : f)),
+      () => api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input),
+      () => setCustomFields(prev),
+    )
   }
 
   const { draggingFieldId, setDraggingFieldId, dragOverSection, draggingOverFieldId, setDraggingOverFieldId, sectionedFields, nullSectionFields, handleWithinSectionDrop, sectionDragProps } =
@@ -283,7 +357,7 @@ export function CompanyPropertiesPanel({
   const customSummaryIds = customFields.filter(f => f.section === 'summary').map(f => `custom:${f.id}`)
   const allChipIds = [...new Set(['entityType', 'pipelineStage', 'priority', 'round', ...pinnedKeys, ...customSummaryIds])]
   const { effectiveOrder, chipDragProps, chipDropZoneProps, chipDragOverIndex } =
-    useHeaderChipOrder('company', allChipIds)
+    useHeaderChipOrder('company', allChipIds, company.id, company.entityType ?? null, markChanged)
 
   // Inline field label rename (Change 11)
   async function handleFieldLabelSave(fieldId: string, newLabel: string) {
@@ -326,6 +400,26 @@ export function CompanyPropertiesPanel({
     }
   }
 
+  // Reset sessionChanges flag when entering Edit View
+  useEffect(() => {
+    if (isEditing) sessionChanges.current = false
+  }, [isEditing])
+
+  // Template indicator: show for 3s when entity type changes and a template exists
+  useEffect(() => {
+    if (prevEntityType.current !== company.entityType) {
+      prevEntityType.current = company.entityType
+      const pk = company.entityType
+      const hasTemplate = pk && LAYOUT_PREF_BASE_KEYS.some(
+        (baseKey) => getJSON(`${baseKey}:entity:${pk}`, null) !== null
+      )
+      if (hasTemplate) {
+        setTemplateIndicator(true)
+        setTimeout(() => setTemplateIndicator(false), 3000)
+      }
+    }
+  }, [company.entityType]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Sync name draft when entering edit mode; clear any prior error
   useEffect(() => {
     if (isEditing) {
@@ -347,7 +441,7 @@ export function CompanyPropertiesPanel({
         e.target instanceof HTMLSelectElement
       ) return
       if ((e.key === 'e' || e.key === 'E') && !isEditing) setIsEditing(true)
-      if (e.key === 'Escape' && isEditing) handleDoneRef.current()
+      if (e.key === 'Escape' && isEditing) void handleDoneRef.current()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -377,9 +471,12 @@ export function CompanyPropertiesPanel({
   }, [company.id])
 
   function save(field: string, value: unknown) {
-    return window.api
-      .invoke(IPC_CHANNELS.COMPANY_UPDATE, company.id, { [field]: value })
-      .then(() => { onUpdate({ [field]: value }) })
+    const prev = (company as Record<string, unknown>)[field]
+    return withOptimisticUpdate(
+      () => onUpdate({ [field]: value }),
+      () => window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, company.id, { [field]: value }),
+      () => onUpdate({ [field]: prev }),
+    )
   }
 
   function saveWithDecisionPrompt(field: 'pipelineStage' | 'entityType', value: unknown) {
@@ -422,7 +519,36 @@ export function CompanyPropertiesPanel({
       return value === null || value === undefined || (typeof value === 'string' && value.trim() === '')
     })
     fieldVisibility.cleanupOnDone(emptyKeys)
+    // If layout was changed, prompt: "Apply to all [Type]?" or "Just this company"
+    if (sessionChanges.current) {
+      setShowApplyPrompt(true)
+    } else {
+      setIsEditing(false)
+    }
+  }
+
+  function handleApplyToAll() {
+    const profileKey = company.entityType ?? 'unknown'
+    for (const baseKey of LAYOUT_PREF_BASE_KEYS) {
+      propagateLayoutPref(getJSON, setJSON, baseKey, company.id, profileKey)
+    }
+    setShowApplyPrompt(false)
     setIsEditing(false)
+  }
+
+  function handleJustThisCompany() {
+    setShowApplyPrompt(false)
+    setIsEditing(false)
+  }
+
+  function handleResetLayout() {
+    // Clears per-company keys only — falls back to entity-type template or global default.
+    // Does NOT clear the entity-type template.
+    for (const baseKey of LAYOUT_PREF_BASE_KEYS) {
+      clearPerEntityPref(setJSON, baseKey, company.id)
+    }
+    setIsEditing(false)
+    sessionChanges.current = false
   }
 
   async function handleDeleteCompany() {
@@ -440,13 +566,12 @@ export function CompanyPropertiesPanel({
   }
 
   function handleNameKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter') handleDone()
+    if (e.key === 'Enter') void handleDone()
     if (e.key === 'Escape') setIsEditing(false)
   }
 
-  function show(value: unknown): boolean {
-    if (isEditing || showAllFields) return true
-    return value !== null && value !== undefined && value !== ''
+  function show(key: string, value: unknown): boolean {
+    return fieldVisibility.showField(key, value)
   }
 
   // Inline component for the polymorphic Source Name field
@@ -831,32 +956,35 @@ export function CompanyPropertiesPanel({
                 : id)
 
               return (
+                // Outer div = drop zone; inner div = drag handle (Bug #3 fix:
+                // prevents immediate onDragLeave on drag source in same element)
                 <div
                   key={id}
                   className={`${styles.headerChipDraggable} ${chipDragOverIndex === i ? styles.chipDropIndicator : ''} ${isEditing && isHidden ? styles.hiddenHeaderChip : ''}`}
-                  {...chipDragProps(id)}
                   {...chipDropZoneProps(i)}
                 >
-                  {isEditing && isHidden ? (
-                    <span className={styles.hiddenChipPlaceholder}>
-                      {chipDisplayLabel}
-                      <button className={styles.restoreChipBtn} title="Restore chip" onClick={() => restoreHeaderChip(id)}>↺</button>
-                    </span>
-                  ) : (
-                    <>
-                      {isEditing && CHIP_LABELS[id] ? (
-                        <div className={styles.editChipField}>
-                          <span className={styles.editChipLabel}>{CHIP_LABELS[id]}</span>
-                          {renderChipById(id)}
-                        </div>
-                      ) : (
-                        renderChipById(id)
-                      )}
-                      {isEditing && (
-                        <button className={styles.hideChipBtn} title="Hide chip" onClick={() => hideHeaderChip(id)}>×</button>
-                      )}
-                    </>
-                  )}
+                  <div {...chipDragProps(id)}>
+                    {isEditing && isHidden ? (
+                      <span className={styles.hiddenChipPlaceholder}>
+                        {chipDisplayLabel}
+                        <button className={styles.restoreChipBtn} title="Restore chip" onClick={() => restoreHeaderChip(id)}>↺</button>
+                      </span>
+                    ) : (
+                      <>
+                        {isEditing && CHIP_LABELS[id] ? (
+                          <div className={styles.editChipField}>
+                            <span className={styles.editChipLabel}>{CHIP_LABELS[id]}</span>
+                            {renderChipById(id)}
+                          </div>
+                        ) : (
+                          renderChipById(id)
+                        )}
+                        {isEditing && (
+                          <button className={styles.hideChipBtn} title="Hide chip" onClick={() => hideHeaderChip(id)}>×</button>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
               )
             })}
@@ -864,13 +992,44 @@ export function CompanyPropertiesPanel({
           </div>
         </div>
         {isEditing ? (
-          <button className={styles.doneBtn} onClick={handleDone} disabled={deleting}>
-            Done
-          </button>
+          <div className={styles.editActions}>
+            {showApplyPrompt ? (
+              <div className={styles.applyPrompt}>
+                <span>Default for all <strong>{ENTITY_LABELS[company.entityType ?? ''] ?? 'companies'}</strong>?</span>
+                <button className={styles.applyAllBtn} onClick={handleApplyToAll}>Apply to all</button>
+                <button className={styles.applyOneBtn} onClick={handleJustThisCompany}>Just this one</button>
+              </div>
+            ) : (
+              <>
+                <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">↺</button>
+                <button className={styles.doneBtn} onClick={() => void handleDone()} disabled={deleting}>Done</button>
+              </>
+            )}
+          </div>
         ) : (
           <button className={styles.editBtn} onClick={() => setIsEditing(true)}>Edit</button>
         )}
       </div>
+
+      {templateIndicator && (
+        <div className={styles.templateIndicator}>
+          {ENTITY_LABELS[company.entityType ?? ''] ?? 'Layout'} template applied
+          <button onClick={() => setIsEditing(true)}>Customize</button>
+        </div>
+      )}
+
+      {/* Hidden-company banner: shown when include_in_companies_view = false */}
+      {!company.includeInCompaniesView && (
+        <div className={styles.hiddenBanner}>
+          <span>This company is hidden from the main CRM view.</span>
+          <button
+            className={styles.unhideBtn}
+            onClick={() => save('includeInCompaniesView', true)}
+          >
+            Add to CRM view
+          </button>
+        </div>
+      )}
 
       {/* Current Decision widget */}
       {latestDecision && (
@@ -899,7 +1058,7 @@ export function CompanyPropertiesPanel({
         </div>
       )}
 
-      {show(company.websiteUrl) && (
+      {show('websiteUrl', company.websiteUrl) && (
         isEditing ? (
           <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={true} onSave={(v) => save('websiteUrl', v)} />
         ) : (
@@ -917,7 +1076,7 @@ export function CompanyPropertiesPanel({
           </a>
         )
       )}
-      {show(company.description) && (
+      {show('description', company.description) && (
         isEditing ? (
           <PropertyRow label="Description" value={company.description} type="textarea" editMode={true} onSave={(v) => save('description', v)} />
         ) : (
@@ -994,7 +1153,7 @@ export function CompanyPropertiesPanel({
               <SectionHeader title="Overview" collapsible isCollapsed={isCollapsed('overview')} onToggle={() => toggleSection('overview')} />
               {!isCollapsed('overview') && (<>
               {renderHardcodedSection([
-                { key: 'industries', visible: show(company.industries?.length), render: () => (
+                { key: 'industries', visible: show('industries', company.industries), render: () => (
                   <PropertyRow
                     label="Industry"
                     value={company.industries?.join(', ') ?? ''}
@@ -1007,22 +1166,22 @@ export function CompanyPropertiesPanel({
                     }}
                   />
                 )},
-                { key: 'sector', visible: show(company.sector), render: () => <PropertyRow label="Sector" value={company.sector} type="text" editMode={isEditing} onSave={(v) => save('sector', v)} /> },
-                { key: 'targetCustomer', visible: show(company.targetCustomer), render: () => (
+                { key: 'sector', visible: show('sector', company.sector), render: () => <PropertyRow label="Sector" value={company.sector} type="text" editMode={isEditing} onSave={(v) => save('sector', v)} /> },
+                { key: 'targetCustomer', visible: show('targetCustomer', company.targetCustomer), render: () => (
                   <PropertyRow label="Target Customer" value={company.targetCustomer} type="select" options={targetCustomerOptions} editMode={isEditing} onSave={(v) => save('targetCustomer', v)} onAddOption={targetCustomerDef ? async (opt) => addCustomFieldOption(targetCustomerDef.id, targetCustomerDef.optionsJson, opt) : undefined} />
                 )},
-                { key: 'businessModel', visible: show(company.businessModel), render: () => (
+                { key: 'businessModel', visible: show('businessModel', company.businessModel), render: () => (
                   <PropertyRow label="Business Model" value={company.businessModel} type="select" options={businessModelOptions} editMode={isEditing} onSave={(v) => save('businessModel', v)} onAddOption={businessModelDef ? async (opt) => addCustomFieldOption(businessModelDef.id, businessModelDef.optionsJson, opt) : undefined} />
                 )},
-                { key: 'productStage', visible: show(company.productStage), render: () => (
+                { key: 'productStage', visible: show('productStage', company.productStage), render: () => (
                   <PropertyRow label="Product Stage" value={company.productStage} type="select" options={productStageOptions} editMode={isEditing} onSave={(v) => save('productStage', v)} onAddOption={productStageDef ? async (opt) => addCustomFieldOption(productStageDef.id, productStageDef.optionsJson, opt) : undefined} />
                 )},
-                { key: 'foundingYear', visible: show(company.foundingYear), render: () => <PropertyRow label="Founded" value={company.foundingYear} type="number" editMode={isEditing} onSave={(v) => save('foundingYear', v)} /> },
-                { key: 'employeeCountRange', visible: show(company.employeeCountRange), render: () => (
+                { key: 'foundingYear', visible: show('foundingYear', company.foundingYear), render: () => <PropertyRow label="Founded" value={company.foundingYear} type="number" editMode={isEditing} onSave={(v) => save('foundingYear', v)} /> },
+                { key: 'employeeCountRange', visible: show('employeeCountRange', company.employeeCountRange), render: () => (
                   <PropertyRow label="Employees" value={company.employeeCountRange} type="select" options={employeeRangeOptions} editMode={isEditing} onSave={(v) => save('employeeCountRange', v)} onAddOption={employeeCountDef ? async (opt) => addCustomFieldOption(employeeCountDef.id, employeeCountDef.optionsJson, opt) : undefined} />
                 )},
-                { key: 'hqAddress', visible: show(company.hqAddress), render: () => <PropertyRow label="HQ" value={company.hqAddress} type="text" editMode={isEditing} onSave={(v) => save('hqAddress', v)} /> },
-                { key: 'revenueModel', visible: show(company.revenueModel), render: () => <PropertyRow label="Revenue Model" value={company.revenueModel} type="text" editMode={isEditing} onSave={(v) => save('revenueModel', v)} /> },
+                { key: 'hqAddress', visible: show('hqAddress', company.hqAddress), render: () => <PropertyRow label="HQ" value={company.hqAddress} type="text" editMode={isEditing} onSave={(v) => save('hqAddress', v)} /> },
+                { key: 'revenueModel', visible: show('revenueModel', company.revenueModel), render: () => <PropertyRow label="Revenue Model" value={company.revenueModel} type="text" editMode={isEditing} onSave={(v) => save('revenueModel', v)} /> },
               ], 'overview')}
               {renderSectionedFields('overview')}
               {isEditing && <AddFieldBtn />}
@@ -1067,7 +1226,7 @@ export function CompanyPropertiesPanel({
                 { key: 'priority', visible: true, render: () => (
                   <PropertyRow label="Priority" value={company.priority} type="select" options={[{ value: '', label: '—' }, ...priorityOptions]} editMode={isEditing} onSave={(v) => save('priority', v)} onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined} />
                 )},
-                { key: 'sourceType', visible: show(company.sourceType), render: () => (
+                { key: 'sourceType', visible: show('sourceType', company.sourceType), render: () => (
                   <PropertyRow
                     label="Source Type"
                     value={company.sourceType}
@@ -1088,12 +1247,12 @@ export function CompanyPropertiesPanel({
                     onSave={(v) => save('sourceType', v || null)}
                   />
                 )},
-                { key: 'sourceEntityId', visible: show(company.sourceEntityId) || isEditing, render: () => <SourceNameField /> },
-                { key: 'dealSource', visible: show(company.dealSource), render: () => <PropertyRow label="Deal Source" value={company.dealSource} type="text" editMode={isEditing} onSave={(v) => save('dealSource', v)} /> },
-                { key: 'warmIntroSource', visible: show(company.warmIntroSource), render: () => <PropertyRow label="Warm Intro Source" value={company.warmIntroSource} type="text" editMode={isEditing} onSave={(v) => save('warmIntroSource', v)} /> },
-                { key: 'referralContactId', visible: show(company.referralContactId), render: () => <PropertyRow label="Referral Contact" value={company.referralContactId} type="contact_ref" editMode={isEditing} onSave={(v) => save('referralContactId', v)} /> },
-                { key: 'relationshipOwner', visible: show(company.relationshipOwner), render: () => <PropertyRow label="Relationship Owner" value={company.relationshipOwner} type="text" editMode={isEditing} onSave={(v) => save('relationshipOwner', v)} /> },
-                { key: 'nextFollowupDate', visible: show(company.nextFollowupDate), render: () => <PropertyRow label="Next Follow-up" value={company.nextFollowupDate} type="date" editMode={isEditing} onSave={(v) => save('nextFollowupDate', v)} /> },
+                { key: 'sourceEntityId', visible: show('sourceEntityId', company.sourceEntityId), render: () => <SourceNameField /> },
+                { key: 'dealSource', visible: show('dealSource', company.dealSource), render: () => <PropertyRow label="Deal Source" value={company.dealSource} type="text" editMode={isEditing} onSave={(v) => save('dealSource', v)} /> },
+                { key: 'warmIntroSource', visible: show('warmIntroSource', company.warmIntroSource), render: () => <PropertyRow label="Warm Intro Source" value={company.warmIntroSource} type="text" editMode={isEditing} onSave={(v) => save('warmIntroSource', v)} /> },
+                { key: 'referralContactId', visible: show('referralContactId', company.referralContactId), render: () => <PropertyRow label="Referral Contact" value={company.referralContactId} type="contact_ref" editMode={isEditing} onSave={(v) => save('referralContactId', v)} /> },
+                { key: 'relationshipOwner', visible: show('relationshipOwner', company.relationshipOwner), render: () => <PropertyRow label="Relationship Owner" value={company.relationshipOwner} type="text" editMode={isEditing} onSave={(v) => save('relationshipOwner', v)} /> },
+                { key: 'nextFollowupDate', visible: show('nextFollowupDate', company.nextFollowupDate), render: () => <PropertyRow label="Next Follow-up" value={company.nextFollowupDate} type="date" editMode={isEditing} onSave={(v) => save('nextFollowupDate', v)} /> },
               ], 'pipeline')}
               {renderSectionedFields('pipeline')}
               {isEditing && <AddFieldBtn />}
@@ -1106,31 +1265,31 @@ export function CompanyPropertiesPanel({
               <SectionHeader title="Financials" collapsible isCollapsed={isCollapsed('financials')} onToggle={() => toggleSection('financials')} />
               {!isCollapsed('financials') && (<>
               {renderHardcodedSection([
-                { key: 'round', visible: show(company.round), render: () => (
+                { key: 'round', visible: show('round', company.round), render: () => (
                   <div className={!isEditing && fieldSources?.round ? styles.propertyWithBadge : undefined}>
                     <PropertyRow label="Round" value={company.round} type="select" options={[{ value: '', label: '—' }, ...roundOptions]} editMode={isEditing} onSave={(v) => save('round', v)} onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined} />
                     {!isEditing && fieldSources?.round && <span className={styles.sourceBadge} title={`From: ${fieldSources.round.meetingTitle}`}>📋</span>}
                   </div>
                 )},
-                { key: 'raiseSize', visible: show(company.raiseSize), render: () => (
+                { key: 'raiseSize', visible: show('raiseSize', company.raiseSize), render: () => (
                   <div className={!isEditing && fieldSources?.raiseSize ? styles.propertyWithBadge : undefined}>
                     <PropertyRow label="Raise Size" value={company.raiseSize} type="currency" editMode={isEditing} onSave={(v) => save('raiseSize', v)} />
                     {!isEditing && fieldSources?.raiseSize && <span className={styles.sourceBadge} title={`From: ${fieldSources.raiseSize.meetingTitle}`}>📋</span>}
                   </div>
                 )},
-                { key: 'postMoneyValuation', visible: show(company.postMoneyValuation), render: () => (
+                { key: 'postMoneyValuation', visible: show('postMoneyValuation', company.postMoneyValuation), render: () => (
                   <div className={!isEditing && fieldSources?.postMoneyValuation ? styles.propertyWithBadge : undefined}>
                     <PropertyRow label="Post-Money Val." value={company.postMoneyValuation} type="currency" editMode={isEditing} onSave={(v) => save('postMoneyValuation', v)} />
                     {!isEditing && fieldSources?.postMoneyValuation && <span className={styles.sourceBadge} title={`From: ${fieldSources.postMoneyValuation.meetingTitle}`}>📋</span>}
                   </div>
                 )},
-                { key: 'arr', visible: show(company.arr), render: () => <PropertyRow label="ARR" value={company.arr} type="currency" editMode={isEditing} onSave={(v) => save('arr', v)} /> },
-                { key: 'burnRate', visible: show(company.burnRate), render: () => <PropertyRow label="Burn Rate" value={company.burnRate} type="currency" editMode={isEditing} onSave={(v) => save('burnRate', v)} /> },
-                { key: 'runwayMonths', visible: show(company.runwayMonths), render: () => <PropertyRow label="Runway (months)" value={company.runwayMonths} type="number" editMode={isEditing} onSave={(v) => save('runwayMonths', v)} /> },
-                { key: 'lastFundingDate', visible: show(company.lastFundingDate), render: () => <PropertyRow label="Last Funded" value={company.lastFundingDate} type="date" editMode={isEditing} onSave={(v) => save('lastFundingDate', v)} /> },
-                { key: 'totalFundingRaised', visible: show(company.totalFundingRaised), render: () => <PropertyRow label="Total Raised" value={company.totalFundingRaised} type="currency" editMode={isEditing} onSave={(v) => save('totalFundingRaised', v)} /> },
-                { key: 'leadInvestor', visible: show(company.leadInvestor), render: () => <PropertyRow label="Lead Investor" value={company.leadInvestor} type="text" editMode={isEditing} onSave={(v) => save('leadInvestor', v)} /> },
-                { key: 'coInvestors', visible: company.coInvestorsList.length > 0 || isEditing, render: () => (
+                { key: 'arr', visible: show('arr', company.arr), render: () => <PropertyRow label="ARR" value={company.arr} type="currency" editMode={isEditing} onSave={(v) => save('arr', v)} /> },
+                { key: 'burnRate', visible: show('burnRate', company.burnRate), render: () => <PropertyRow label="Burn Rate" value={company.burnRate} type="currency" editMode={isEditing} onSave={(v) => save('burnRate', v)} /> },
+                { key: 'runwayMonths', visible: show('runwayMonths', company.runwayMonths), render: () => <PropertyRow label="Runway (months)" value={company.runwayMonths} type="number" editMode={isEditing} onSave={(v) => save('runwayMonths', v)} /> },
+                { key: 'lastFundingDate', visible: show('lastFundingDate', company.lastFundingDate), render: () => <PropertyRow label="Last Funded" value={company.lastFundingDate} type="date" editMode={isEditing} onSave={(v) => save('lastFundingDate', v)} /> },
+                { key: 'totalFundingRaised', visible: show('totalFundingRaised', company.totalFundingRaised), render: () => <PropertyRow label="Total Raised" value={company.totalFundingRaised} type="currency" editMode={isEditing} onSave={(v) => save('totalFundingRaised', v)} /> },
+                { key: 'leadInvestor', visible: show('leadInvestor', company.leadInvestor), render: () => <PropertyRow label="Lead Investor" value={company.leadInvestor} type="text" editMode={isEditing} onSave={(v) => save('leadInvestor', v)} /> },
+                { key: 'coInvestors', visible: show('coInvestors', company.coInvestorsList), render: () => (
                   <div className={styles.propertyRow}>
                     <span className={styles.propertyLabel}>Co-Investors</span>
                     <MultiCompanyPicker
@@ -1140,7 +1299,7 @@ export function CompanyPropertiesPanel({
                     />
                   </div>
                 )},
-                { key: 'priorInvestors', visible: company.priorInvestorsList.length > 0 || isEditing, render: () => (
+                { key: 'priorInvestors', visible: show('priorInvestors', company.priorInvestorsList), render: () => (
                   <div className={styles.propertyRow}>
                     <span className={styles.propertyLabel}>Prior Investors</span>
                     <MultiCompanyPicker
@@ -1185,10 +1344,10 @@ export function CompanyPropertiesPanel({
                 <SectionHeader title="Investment" collapsible isCollapsed={isCollapsed('investment')} onToggle={() => toggleSection('investment')} />
                 {!isCollapsed('investment') && (<>
                 {renderHardcodedSection([
-                  { key: 'investmentSize', visible: show(company.investmentSize), render: () => <PropertyRow label="Investment Size" value={company.investmentSize} type="text" editMode={isEditing} onSave={(v) => save('investmentSize', v)} /> },
-                  { key: 'ownershipPct', visible: show(company.ownershipPct), render: () => <PropertyRow label="Ownership %" value={company.ownershipPct} type="text" editMode={isEditing} onSave={(v) => save('ownershipPct', v)} /> },
-                  { key: 'followonInvestmentSize', visible: show(company.followonInvestmentSize), render: () => <PropertyRow label="Follow-on Size" value={company.followonInvestmentSize} type="text" editMode={isEditing} onSave={(v) => save('followonInvestmentSize', v)} /> },
-                  { key: 'totalInvested', visible: show(company.totalInvested), render: () => <PropertyRow label="Total Invested" value={company.totalInvested} type="text" editMode={isEditing} onSave={(v) => save('totalInvested', v)} /> },
+                  { key: 'investmentSize', visible: show('investmentSize', company.investmentSize), render: () => <PropertyRow label="Investment Size" value={company.investmentSize} type="text" editMode={isEditing} onSave={(v) => save('investmentSize', v)} /> },
+                  { key: 'ownershipPct', visible: show('ownershipPct', company.ownershipPct), render: () => <PropertyRow label="Ownership %" value={company.ownershipPct} type="text" editMode={isEditing} onSave={(v) => save('ownershipPct', v)} /> },
+                  { key: 'followonInvestmentSize', visible: show('followonInvestmentSize', company.followonInvestmentSize), render: () => <PropertyRow label="Follow-on Size" value={company.followonInvestmentSize} type="text" editMode={isEditing} onSave={(v) => save('followonInvestmentSize', v)} /> },
+                  { key: 'totalInvested', visible: show('totalInvested', company.totalInvested), render: () => <PropertyRow label="Total Invested" value={company.totalInvested} type="text" editMode={isEditing} onSave={(v) => save('totalInvested', v)} /> },
                 ], 'investment')}
                 {renderSectionedFields('investment')}
                 {isEditing && <AddFieldBtn />}
@@ -1202,10 +1361,10 @@ export function CompanyPropertiesPanel({
               <SectionHeader title="Links" collapsible isCollapsed={isCollapsed('links')} onToggle={() => toggleSection('links')} />
               {!isCollapsed('links') && (<>
               {renderHardcodedSection([
-                { key: 'linkedinCompanyUrl', visible: show(company.linkedinCompanyUrl), render: () => <PropertyRow label="LinkedIn" value={company.linkedinCompanyUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinCompanyUrl', v)} /> },
-                { key: 'crunchbaseUrl', visible: show(company.crunchbaseUrl), render: () => <PropertyRow label="Crunchbase" value={company.crunchbaseUrl} type="url" editMode={isEditing} onSave={(v) => save('crunchbaseUrl', v)} /> },
-                { key: 'angellistUrl', visible: show(company.angellistUrl), render: () => <PropertyRow label="AngelList" value={company.angellistUrl} type="url" editMode={isEditing} onSave={(v) => save('angellistUrl', v)} /> },
-                { key: 'twitterHandle', visible: show(company.twitterHandle), render: () => <PropertyRow label="Twitter/X" value={company.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} /> },
+                { key: 'linkedinCompanyUrl', visible: show('linkedinCompanyUrl', company.linkedinCompanyUrl), render: () => <PropertyRow label="LinkedIn" value={company.linkedinCompanyUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinCompanyUrl', v)} /> },
+                { key: 'crunchbaseUrl', visible: show('crunchbaseUrl', company.crunchbaseUrl), render: () => <PropertyRow label="Crunchbase" value={company.crunchbaseUrl} type="url" editMode={isEditing} onSave={(v) => save('crunchbaseUrl', v)} /> },
+                { key: 'angellistUrl', visible: show('angellistUrl', company.angellistUrl), render: () => <PropertyRow label="AngelList" value={company.angellistUrl} type="url" editMode={isEditing} onSave={(v) => save('angellistUrl', v)} /> },
+                { key: 'twitterHandle', visible: show('twitterHandle', company.twitterHandle), render: () => <PropertyRow label="Twitter/X" value={company.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} /> },
               ], 'links')}
               {renderSectionedFields('links')}
               {isEditing && <AddFieldBtn />}

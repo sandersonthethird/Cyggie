@@ -233,6 +233,22 @@
   flex: 1;
 }
 
+.emailInput {
+  font-size: 13px;
+  color: var(--color-text);
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--color-border, #ddd);
+  outline: none;
+  padding: 0;
+  font-family: inherit;
+}
+
+.emailInput:focus {
+  border-bottom-color: var(--color-primary);
+}
+
 .copyBtn {
   background: none;
   border: none;
@@ -420,6 +436,61 @@
 .doneBtn:hover {
   opacity: 0.85;
 }
+
+/* Edit action row: Reset + Done (or Apply prompt) */
+.editActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.resetLayoutBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm, 4px);
+  transition: color 0.1s;
+}
+.resetLayoutBtn:hover { color: var(--color-text-primary); }
+
+.applyPrompt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.applyPrompt span { text-align: right; }
+
+.applyAllBtn {
+  padding: 3px 8px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 11px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.applyAllBtn:hover { opacity: 0.85; }
+
+.applyOneBtn {
+  padding: 3px 8px;
+  background: none;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 11px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.applyOneBtn:hover { opacity: 0.75; }
 
 /* Show all / hide fields toggle */
 .showAllBtn {

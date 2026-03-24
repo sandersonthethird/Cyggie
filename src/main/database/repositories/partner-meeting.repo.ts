@@ -37,6 +37,7 @@ interface DigestRow {
   week_of: string
   status: string
   dismissed_suggestions: string
+  meeting_id: string | null
   archived_at: string | null
   created_at: string
   updated_at: string
@@ -74,6 +75,7 @@ function rowToDigest(row: DigestRow, items?: PartnerMeetingItem[]): PartnerMeeti
     weekOf: row.week_of,
     status: row.status as 'active' | 'archived',
     dismissedSuggestions: JSON.parse(row.dismissed_suggestions || '[]'),
+    meetingId: row.meeting_id ?? null,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -455,4 +457,11 @@ export function dismissSuggestion(digestId: string, companyId: string): void {
       `UPDATE partner_meeting_digests SET dismissed_suggestions=?, updated_at=? WHERE id=?`,
     ).run(JSON.stringify(dismissed), new Date().toISOString(), digestId)
   }
+}
+
+export function setDigestMeetingId(digestId: string, meetingId: string | null): void {
+  const db = getDatabase()
+  db.prepare(
+    `UPDATE partner_meeting_digests SET meeting_id=?, updated_at=? WHERE id=?`,
+  ).run(meetingId, new Date().toISOString(), digestId)
 }
