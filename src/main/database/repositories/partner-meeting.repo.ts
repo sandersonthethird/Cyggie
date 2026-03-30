@@ -64,7 +64,6 @@ interface ItemRow {
 interface ItemWithCompanyRow extends ItemRow {
   pipeline_stage: string | null
   entity_type: string | null
-  company_created_at: string | null
 }
 
 // ─── Row mappers ──────────────────────────────────────────────────────────────
@@ -112,28 +111,20 @@ function rowToItem(row: ItemRow): PartnerMeetingItem {
  *   admin (no company)         → 'admin'
  *   entity_type = 'portfolio'  → 'portfolio_updates'
  *   pipeline_stage = 'pass'    → 'passing'
- *   pipeline_stage = 'screening'|'diligence':
- *     company created within 7 days → 'new_deals'
- *     older                         → 'existing_deals'
+ *   pipeline_stage = 'screening' → 'new_deals'   (shown as "Screening")
+ *   pipeline_stage = 'diligence' → 'existing_deals' (shown as "Diligence")
  *   otherwise                  → 'priorities'
  */
 export function determineSection(
   companyId: string | null,
   entityType: string | null,
   pipelineStage: string | null,
-  companyCreatedAt: string | null,
 ): DigestSection {
   if (!companyId) return 'admin'
   if (entityType === 'portfolio') return 'portfolio_updates'
   if (pipelineStage === 'pass') return 'passing'
-  if (pipelineStage === 'screening' || pipelineStage === 'diligence') {
-    if (companyCreatedAt) {
-      const sevenDaysAgo = new Date()
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-      if (new Date(companyCreatedAt) >= sevenDaysAgo) return 'new_deals'
-    }
-    return 'existing_deals'
-  }
+  if (pipelineStage === 'screening') return 'new_deals'
+  if (pipelineStage === 'diligence') return 'existing_deals'
   return 'priorities'
 }
 
@@ -250,7 +241,6 @@ export function concludeDigest(digestId: string): PartnerMeetingDigest {
       .prepare(
         `SELECT pmi.*,
                 oc.pipeline_stage, oc.entity_type,
-                oc.created_at AS company_created_at,
                 oc.canonical_name AS company_name
          FROM partner_meeting_items pmi
          LEFT JOIN org_companies oc ON pmi.company_id = oc.id
@@ -267,7 +257,6 @@ export function concludeDigest(digestId: string): PartnerMeetingDigest {
         row.company_id,
         row.entity_type,
         row.pipeline_stage,
-        row.company_created_at,
       )
       sectionPositions[newSection] = (sectionPositions[newSection] ?? 0) + 1.0
       const newItemId = randomUUID()

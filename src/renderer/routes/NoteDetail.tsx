@@ -32,11 +32,14 @@ import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useNoteEditor } from '../hooks/useNoteEditor'
+import { useEditableTitle } from '../hooks/useEditableTitle'
 import { NoteTagger } from '../components/notes/NoteTagger'
 import { TagSuggestionBanner } from '../components/notes/TagSuggestionBanner'
+import { TiptapBubbleMenu } from '../components/common/TiptapBubbleMenu'
 import { api } from '../api'
 import styles from './NoteDetail.module.css'
 import type { Note, TagSuggestion } from '../../shared/types/note'
+import type { Meeting } from '../../shared/types/meeting'
 
 type SaveStatus = 'saved' | 'saving' | 'error'
 
@@ -99,8 +102,7 @@ function NoteDetailNewInner() {
     ],
     content: '',
     onUpdate: ({ editor: ed }) => {
-      const mkd = (ed.storage.markdown as { getMarkdown?: () => string } | undefined)?.getMarkdown?.()
-      const md = mkd ?? ed.getText()
+      const md = ed.getMarkdown?.() ?? ed.getText()
       setContentDraft(md)
       if (stateRef.current === 'new' && md.trim()) {
         void handleFirstInput(md, titleDraft)
@@ -120,28 +122,39 @@ function NoteDetailNewInner() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <button className={styles.backBtn} onClick={handleBack} title="Back to notes">←</button>
-        <input
-          ref={titleInputRef}
-          className={styles.titleInput}
-          placeholder="Untitled"
-          value={titleDraft}
-          onChange={(e) => {
-            setTitleDraft(e.target.value)
-            if (state === 'new' && (e.target.value || contentDraft)) {
-              void handleFirstInput(contentDraft, e.target.value)
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); editor?.commands.focus() }
-          }}
-          disabled={state === 'creating'}
-        />
+      <div className={styles.stickyHeader}>
+        <button className={styles.back} onClick={handleBack}>← Back</button>
+        <div className={styles.header}>
+          <div className={styles.titleRow}>
+            <input
+              ref={titleInputRef}
+              className={styles.titleInput}
+              placeholder="Untitled"
+              value={titleDraft}
+              onChange={(e) => {
+                setTitleDraft(e.target.value)
+                if (state === 'new' && (e.target.value || contentDraft)) {
+                  void handleFirstInput(contentDraft, e.target.value)
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); editor?.commands.focus() }
+              }}
+              disabled={state === 'creating'}
+            />
+          </div>
+          <div className={styles.meta}>
+            <span className={styles.metaDate}>New note</span>
+          </div>
+        </div>
       </div>
+
       {state !== 'error' && (
-        <EditorContent editor={editor} className={styles.tiptapEditor} />
+        <div className={styles.tiptapEditor}>
+          <EditorContent editor={editor} />
+        </div>
       )}
+      <TiptapBubbleMenu editor={editor ?? null} />
       {state === 'error' && (
         <div className={styles.stateMsg}>Failed to create note.</div>
       )}
@@ -165,6 +178,7 @@ export default function NoteDetailNew() {
 function NoteDetailLoadedInner() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const isPopOut = new URLSearchParams(window.location.search).get('popout') === 'true'
 
   const {
     note,
@@ -180,17 +194,47 @@ function NoteDetailLoadedInner() {
     deleteNote,
   } = useNoteEditor(id!)
 
-  // Folder picker state
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
-  const [availableFolders, setAvailableFolders] = useState<string[]>([])
-  const [folderInput, setFolderInput] = useState('')
-  const folderPickerRef = useRef<HTMLDivElement>(null)
+  const {
+    editingTitle,
+    titleRef,
+    handleTitleClick,
+    handleTitleBlur,
+    handleTitleKeyDown,
+  } = useEditableTitle(titleDraft, setTitleDraft)
+
+  // Source meeting title fetch
+  const [sourceMeetingTitle, setSourceMeetingTitle] = useState<string | null>(null)
 
   const savedNoteRef = useRef<Note | null>(null)
   useEffect(() => { if (note) savedNoteRef.current = note }, [note])
 
   const [localNote, setLocalNote] = useState<Note | null>(null)
   useEffect(() => { if (note) setLocalNote(note) }, [note])
+
+  // Fetch source meeting title once when localNote has a sourceMeetingId
+  useEffect(() => {
+    if (!localNote?.sourceMeetingId) return
+    api.invoke<Meeting>(IPC_CHANNELS.MEETING_GET, localNote.sourceMeetingId)
+      .then((meeting) => setSourceMeetingTitle(meeting.title))
+      .catch(() => setSourceMeetingTitle(null))  // suppress chip on failure
+  }, [localNote?.sourceMeetingId])
+
+  // Set window title in pop-out mode for Dock/taskbar identification
+  useEffect(() => {
+    if (!isPopOut) return
+    if (loadState === 'loaded' && note) {
+      document.title = note.title || 'Untitled note'
+    }
+  }, [isPopOut, loadState, note])
+
+  // Auto-focus: editor body if note has a title, title input if blank
+  useEffect(() => {
+    if (loadState !== 'loaded' || !editor) return
+    if (titleDraft) {
+      editor.commands.focus('end')
+    }
+    // If titleDraft is empty, leave focus on nothing — user will click title
+  }, [loadState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleTagCompany = useCallback(async (companyId: string | null) => {
     const n = savedNoteRef.current
@@ -222,6 +266,12 @@ function NoteDetailLoadedInner() {
     } catch {/* ignore */}
     dismissSuggestion()
   }, [dismissSuggestion])
+
+  // Folder picker state
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
+  const [availableFolders, setAvailableFolders] = useState<string[]>([])
+  const [folderInput, setFolderInput] = useState('')
+  const folderPickerRef = useRef<HTMLDivElement>(null)
 
   const openFolderPicker = useCallback(async () => {
     const folders = await api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_FOLDERS)
@@ -276,7 +326,7 @@ function NoteDetailLoadedInner() {
     if (!n) return
     api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, n.id, {
       title: titleDraft || null,
-      content: (editor?.storage.markdown as { getMarkdown?: () => string } | undefined)?.getMarkdown?.() ?? editor?.getText() ?? '',
+      content: editor?.getMarkdown?.() ?? editor?.getText() ?? '',
     }).catch(() => {/* ignore */})
   }, [titleDraft, editor])
 
@@ -287,131 +337,176 @@ function NoteDetailLoadedInner() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <button className={styles.backBtn} onClick={handleBack} title="Back to notes">←</button>
+      <div className={styles.stickyHeader}>
+        <button className={styles.back} onClick={handleBack}>← Back</button>
 
-        {localNote && (
-          <div className={styles.folderPickerWrapper} ref={folderPickerRef}>
-            <button
-              className={styles.folderPickerTrigger}
-              onClick={() => folderPickerOpen ? setFolderPickerOpen(false) : void openFolderPicker()}
-              title={localNote.folderPath ?? 'No folder assigned'}
-            >
-              {localNote.folderPath ? localNote.folderPath.split('/').pop() : 'No folder'}
-            </button>
-            {folderPickerOpen && (() => {
-              const filteredFolders = availableFolders.filter(f =>
-                f.toLowerCase().includes(folderInput.toLowerCase())
-              )
-              const exactMatch = filteredFolders.some(
-                f => f.toLowerCase() === folderInput.trim().toLowerCase()
-              )
-              return (
-                <div className={styles.folderPickerDropdown}>
-                  <input
-                    autoFocus
-                    className={styles.folderPickerInput}
-                    placeholder="Folder name…"
-                    value={folderInput}
-                    onChange={e => setFolderInput(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        const trimmed = folderInput.trim()
-                        if (trimmed) void handleSetFolder(trimmed)
-                        else if (filteredFolders.length > 0) void handleSetFolder(filteredFolders[0])
-                      }
-                      if (e.key === 'Escape') setFolderPickerOpen(false)
-                    }}
-                  />
-                  <button className={styles.folderPickerOption} onClick={() => void handleSetFolder(null)}>
-                    None
-                  </button>
-                  {filteredFolders.map(f => (
-                    <button
-                      key={f}
-                      className={`${styles.folderPickerOption} ${f === localNote.folderPath ? styles.folderPickerOptionActive : ''}`}
-                      onClick={() => void handleSetFolder(f)}
-                    >
-                      {f}
-                    </button>
-                  ))}
-                  {folderInput.trim() && !exactMatch && (
-                    <button
-                      className={`${styles.folderPickerOption} ${styles.folderPickerOptionNew}`}
-                      onClick={() => void handleSetFolder(folderInput.trim())}
-                    >
-                      Create "{folderInput.trim()}"
-                    </button>
-                  )}
-                </div>
-              )
-            })()}
+        <div className={styles.header}>
+          <div className={styles.titleRow}>
+            {editingTitle ? (
+              <input
+                ref={titleRef}
+                className={styles.titleInput}
+                placeholder="Untitled"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={handleTitleBlur}
+                onKeyDown={(e) => handleTitleKeyDown(e, () => editor?.commands.focus())}
+                disabled={loadState === 'loading'}
+              />
+            ) : (
+              <h2
+                className={styles.title}
+                onClick={handleTitleClick}
+                title="Click to rename"
+              >
+                {titleDraft || <span className={styles.titlePlaceholder}>Untitled</span>}
+              </h2>
+            )}
+
+            {localNote && (
+              <div className={styles.titleActions}>
+                <button
+                  className={styles.popoutBtn}
+                  title="Open in new window"
+                  onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_NOTE_WINDOW, localNote.id)}
+                >
+                  ⤢
+                </button>
+                <button
+                  className={`${styles.pinBtn} ${isPinned ? styles.pinBtnActive : ''}`}
+                  onClick={handlePinToggle}
+                  title={isPinned ? 'Unpin note' : 'Pin note'}
+                >
+                  {isPinned ? '📌 Pinned' : 'Pin'}
+                </button>
+                <button className={styles.deleteBtn} onClick={handleDelete}>
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
+
+          {localNote && (
+            <div className={styles.meta}>
+              <div className={styles.timestamps}>
+                {localNote.createdAt && (
+                  <span className={styles.timestamp}>
+                    Created {new Date(localNote.createdAt).toLocaleString(undefined, {
+                      month: 'numeric', day: 'numeric', year: 'numeric',
+                      hour: 'numeric', minute: '2-digit'
+                    })}
+                  </span>
+                )}
+                {localNote.updatedAt && (
+                  <span className={styles.timestamp}>
+                    Edited {new Date(localNote.updatedAt).toLocaleString(undefined, {
+                      month: 'numeric', day: 'numeric', year: 'numeric',
+                      hour: 'numeric', minute: '2-digit'
+                    })}
+                  </span>
+                )}
+              </div>
+
+              <div className={styles.folderPickerWrapper} ref={folderPickerRef}>
+                <button
+                  className={styles.folderPickerTrigger}
+                  onClick={() => folderPickerOpen ? setFolderPickerOpen(false) : void openFolderPicker()}
+                  title={localNote.folderPath ?? 'No folder assigned'}
+                >
+                  {localNote.folderPath ? localNote.folderPath.split('/').pop() : 'No folder'}
+                </button>
+                {folderPickerOpen && (() => {
+                  const filteredFolders = availableFolders.filter(f =>
+                    f.toLowerCase().includes(folderInput.toLowerCase())
+                  )
+                  const exactMatch = filteredFolders.some(
+                    f => f.toLowerCase() === folderInput.trim().toLowerCase()
+                  )
+                  return (
+                    <div className={styles.folderPickerDropdown}>
+                      <input
+                        autoFocus
+                        className={styles.folderPickerInput}
+                        placeholder="Folder name…"
+                        value={folderInput}
+                        onChange={e => setFolderInput(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            const trimmed = folderInput.trim()
+                            if (trimmed) void handleSetFolder(trimmed)
+                            else if (filteredFolders.length > 0) void handleSetFolder(filteredFolders[0])
+                          }
+                          if (e.key === 'Escape') setFolderPickerOpen(false)
+                        }}
+                      />
+                      <button className={styles.folderPickerOption} onClick={() => void handleSetFolder(null)}>
+                        None
+                      </button>
+                      {filteredFolders.map(f => (
+                        <button
+                          key={f}
+                          className={`${styles.folderPickerOption} ${f === localNote.folderPath ? styles.folderPickerOptionActive : ''}`}
+                          onClick={() => void handleSetFolder(f)}
+                        >
+                          {f}
+                        </button>
+                      ))}
+                      {folderInput.trim() && !exactMatch && (
+                        <button
+                          className={`${styles.folderPickerOption} ${styles.folderPickerOptionNew}`}
+                          onClick={() => void handleSetFolder(folderInput.trim())}
+                        >
+                          Create "{folderInput.trim()}"
+                        </button>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
+
+              {localNote.sourceMeetingId && sourceMeetingTitle && (
+                <button
+                  className={styles.meetingChip}
+                  onClick={() => navigate(`/meeting/${localNote.sourceMeetingId}`)}
+                  title="View source meeting"
+                >
+                  📋 {sourceMeetingTitle} →
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {(loadState === 'loaded' || loadState === 'loading') && localNote && (
+          <div className={styles.taggerRow}>
+            <NoteTagger
+              companyId={localNote.companyId}
+              companyName={localNote.companyName}
+              contactId={localNote.contactId}
+              contactName={localNote.contactName}
+              onTagCompany={handleTagCompany}
+              onTagContact={handleTagContact}
+            />
           </div>
         )}
 
-        <input
-          className={styles.titleInput}
-          placeholder="Untitled"
-          value={titleDraft}
-          onChange={(e) => setTitleDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); editor?.commands.focus() }
-          }}
-          disabled={loadState === 'loading'}
-        />
-
-        {localNote?.sourceMeetingId && (
-          <button
-            className={styles.meetingLink}
-            onClick={() => navigate(`/meeting/${localNote.sourceMeetingId}`)}
-            title="View original meeting"
-          >
-            View meeting →
-          </button>
-        )}
-
-        {localNote && (
-          <>
-            <button
-              className={`${styles.pinBtn} ${isPinned ? styles.pinBtnActive : ''}`}
-              onClick={handlePinToggle}
-              title={isPinned ? 'Unpin note' : 'Pin note'}
-            >
-              {isPinned ? '📌 Pinned' : 'Pin'}
-            </button>
-            <button className={styles.deleteBtn} onClick={handleDelete}>
-              Delete
-            </button>
-          </>
+        {tagSuggestion && !localNote?.companyId && !localNote?.contactId && (
+          <div className={styles.suggestionRow}>
+            <TagSuggestionBanner
+              suggestion={tagSuggestion}
+              onAccept={handleAcceptSuggestion}
+              onDismiss={dismissSuggestion}
+            />
+          </div>
         )}
       </div>
 
       {(loadState === 'loaded' || loadState === 'loading') && (
         <>
-          {localNote && (
-            <div className={styles.taggerRow}>
-              <NoteTagger
-                companyId={localNote.companyId}
-                companyName={localNote.companyName}
-                contactId={localNote.contactId}
-                contactName={localNote.contactName}
-                onTagCompany={handleTagCompany}
-                onTagContact={handleTagContact}
-              />
-            </div>
-          )}
-
-          {tagSuggestion && !localNote?.companyId && !localNote?.contactId && (
-            <div className={styles.suggestionRow}>
-              <TagSuggestionBanner
-                suggestion={tagSuggestion}
-                onAccept={handleAcceptSuggestion}
-                onDismiss={dismissSuggestion}
-              />
-            </div>
-          )}
-
-          <EditorContent editor={editor} className={styles.tiptapEditor} />
+          <div className={styles.tiptapEditor}>
+            <EditorContent editor={editor} />
+          </div>
+          <TiptapBubbleMenu editor={editor} />
         </>
       )}
 

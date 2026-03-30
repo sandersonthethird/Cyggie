@@ -349,6 +349,16 @@
 }
 .decisionEmpty:hover { background: var(--color-card-hover); }
 
+.noteHighlight {
+  animation: highlightFade 2s ease-out forwards;
+}
+
+@keyframes highlightFade {
+  0%   { background: var(--color-accent-subtle, #eef2ff); border-color: var(--color-accent, #6366f1); }
+  70%  { background: var(--color-accent-subtle, #eef2ff); border-color: var(--color-accent, #6366f1); }
+  100% { background: var(--color-card-bg); border-color: var(--color-border); }
+}
+
 /* Divider between decision section and notes */
 .notesDivider {
   height: 1px;

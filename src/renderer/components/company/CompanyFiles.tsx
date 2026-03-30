@@ -14,27 +14,71 @@ interface CompanyFilesProps {
   className?: string
 }
 
+/*
+ * Module-level cache: persists scan results across component unmounts.
+ * Keyed by companyId. Survives navigation away and back; cleared on ↻ or
+ * app restart. Exported so tests can pre-populate or clear between cases.
+ *
+ * State flow:
+ *
+ *   mount / companyId change / refreshKey change
+ *     │
+ *     ▼
+ *   filesCache.get(companyId)
+ *     │
+ *   HIT ──► setFiles/setLoaded(true), return (no IPC)
+ *     │
+ *   MISS ──► setLoading(true) ──► IPC: COMPANY_FILES
+ *                                     │
+ *                              filesCache.set ──► setFiles / setLoaded(true)
+ *
+ *   ↻ button ──► filesCache.delete ──► setRefreshKey(k+1) ──► re-run effect
+ */
+export const filesCache = new Map<string, CompanyFilesLookupResult>()
+
 export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
   const [files, setFiles] = useState<CompanyDriveFileRef[]>([])
   const [companyRoot, setCompanyRoot] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
-    if (loaded || loading) return
+    const cached = filesCache.get(companyId)
+    if (cached) {
+      setFiles(cached.files)
+      setCompanyRoot(cached.companyRoot)
+      setLoaded(true)
+      setLoading(false)
+      return
+    }
+
+    setFiles([])
+    setCompanyRoot(null)
+    setLoaded(false)
     setLoading(true)
-    window.api
+    api
       .invoke<CompanyFilesLookupResult>(IPC_CHANNELS.COMPANY_FILES, companyId)
       .then((data) => {
-        setFiles(data?.files ?? [])
-        setCompanyRoot(data?.companyRoot ?? null)
+        const result: CompanyFilesLookupResult = {
+          files: data?.files ?? [],
+          companyRoot: data?.companyRoot ?? null,
+        }
+        filesCache.set(companyId, result)
+        setFiles(result.files)
+        setCompanyRoot(result.companyRoot)
       })
       .catch(console.error)
       .finally(() => {
         setLoaded(true)
         setLoading(false)
       })
-  }, [companyId, loaded, loading])
+  }, [companyId, refreshKey])
+
+  function handleRefresh() {
+    filesCache.delete(companyId)
+    setRefreshKey((k) => k + 1)
+  }
 
   function openFile(file: CompanyDriveFileRef) {
     if (file.webViewLink) {
@@ -47,6 +91,9 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
       {companyRoot && <div className={styles.root_}>Folder: {companyRoot}</div>}
+      {loaded && !loading && (
+        <button className={styles.refreshBtn} onClick={handleRefresh} title="Refresh files">↻</button>
+      )}
       {loading && <div className={styles.loading}>Loading…</div>}
       {loaded && files.length === 0 && (
         <div className={styles.empty}>No files found. Configure a folder in Settings to see files here.</div>

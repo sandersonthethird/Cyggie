@@ -14,6 +14,7 @@ import type { UserProfile } from '../../shared/types/user'
 import type { ImportFormat } from '../../shared/types/note'
 import styles from './Settings.module.css'
 import { CustomFieldsSettings } from '../components/settings/CustomFieldsSettings'
+import TemplatesPanel from './Templates'
 import { ImportModal } from '../components/settings/ImportModal'
 import { api } from '../api'
 
@@ -64,14 +65,15 @@ const CLAUDE_MODEL_OPTIONS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ]
 
-type SettingsTab = 'profile' | 'ai' | 'integrations' | 'import' | 'custom-fields'
+type SettingsTab = 'profile' | 'ai' | 'integrations' | 'import' | 'custom-fields' | 'templates'
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   profile: 'Profile',
   ai: 'AI & Transcription',
   integrations: 'Integrations',
   import: 'Import',
-  'custom-fields': 'Custom Fields'
+  'custom-fields': 'Custom Fields',
+  templates: 'Templates',
 }
 
 interface SettingsState {
@@ -98,7 +100,7 @@ export default function Settings() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     const tab = searchParams.get('tab')
-    if (tab === 'ai' || tab === 'integrations' || tab === 'import' || tab === 'profile') return tab
+    if (tab === 'ai' || tab === 'integrations' || tab === 'import' || tab === 'profile' || tab === 'templates') return tab
     return 'profile'
   })
   const [initialLoad, setInitialLoad] = useState(true)
@@ -565,7 +567,7 @@ export default function Settings() {
   return (
     <div className={styles.container}>
       <div className={styles.tabRow}>
-        {(['profile', 'ai', 'integrations', 'import', 'custom-fields'] as SettingsTab[]).map((tab) => (
+        {(['profile', 'ai', 'integrations', 'import', 'custom-fields', 'templates'] as SettingsTab[]).map((tab) => (
           <button
             key={tab}
             className={`${styles.tab} ${activeTab === tab ? styles.activeTab : ''}`}
@@ -1655,14 +1657,20 @@ export default function Settings() {
         </>
       )}
 
-      <div className={styles.actions}>
-        <button className={styles.saveBtn} onClick={handleSave}>
-          {saved ? 'Saved' : 'Save Settings'}
-        </button>
-      </div>
+      {activeTab !== 'templates' && (
+        <div className={styles.actions}>
+          <button className={styles.saveBtn} onClick={handleSave}>
+            {saved ? 'Saved' : 'Save Settings'}
+          </button>
+        </div>
+      )}
 
       {activeTab === 'custom-fields' && (
         <CustomFieldsSettings />
+      )}
+
+      {activeTab === 'templates' && (
+        <TemplatesPanel />
       )}
 
       {showImportModal && (

@@ -10,7 +10,7 @@ import { getSetting } from '../database/repositories/settings.repo'
 import { writeTranscript } from '../storage/file-manager'
 import { indexMeeting } from '../database/repositories/search.repo'
 import { updateTrayMenu } from '../tray'
-import { getCurrentMeetingEvent } from '../calendar/google-calendar'
+import { getCurrentMeetingEvent, getEventById } from '../calendar/google-calendar'
 import { isCalendarConnected, hasDriveScope } from '../calendar/google-auth'
 import { uploadTranscript } from '../drive/google-drive'
 import { getTranscriptsDir } from '../storage/paths'
@@ -165,6 +165,21 @@ function wireDeepgramEvents(client: DeepgramStreamingClient): void {
   })
 }
 
+/**
+ * Determines the calendarEventId to assign to a newly created meeting.
+ * If a recent prior meeting already claimed this ID (but can't be reused —
+ * e.g. it's already transcribed), null it out to prevent a duplicate association.
+ * If the prior meeting is old/stale (recurring event), preserve the ID so today's
+ * recording is correctly linked to today's occurrence.
+ */
+export function resolveRecordingCalendarEventId(
+  priorMeeting: { id: string } | null | undefined,
+  meetingIsRecent: boolean,
+  calendarEventId: string | null
+): string | null {
+  return (priorMeeting && meetingIsRecent) ? null : calendarEventId
+}
+
 export function registerRecordingHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.RECORDING_START, async (_event, title?: string, calEventId?: string, appendToMeetingId?: string) => {
     if (currentMeetingId) {
@@ -183,6 +198,12 @@ export function registerRecordingHandlers(): void {
     if (!deepgramKey) {
       throw new Error('Deepgram API key not configured. Go to Settings to add it.')
     }
+
+    // Reset calendar-derived metadata to avoid bleeding between adjacent meetings.
+    calendarSelfName = null
+    calendarAttendees = []
+    calendarAttendeeEmails = []
+    calendarEndTime = null
 
     // Initialize components (Deepgram client created below after speaker count is known)
     transcriptAssembler = new TranscriptAssembler()
@@ -230,7 +251,18 @@ export function registerRecordingHandlers(): void {
 
       if (isCalendarConnected()) {
         try {
-          const calEvent = await getCurrentMeetingEvent()
+          let calEvent = null
+          if (calendarEventId) {
+            calEvent = await getEventById(calendarEventId)
+            if (!calEvent) {
+              const current = await getCurrentMeetingEvent()
+              if (current && current.id === calendarEventId) {
+                calEvent = current
+              }
+            }
+          } else {
+            calEvent = await getCurrentMeetingEvent()
+          }
           if (calEvent) {
             if (!meetingTitle) meetingTitle = calEvent.title
             if (!calendarEventId) calendarEventId = calEvent.id
@@ -304,10 +336,18 @@ export function registerRecordingHandlers(): void {
         }
         meeting = meetingRepo.updateMeeting(meeting.id, updates, userId) || meeting
       } else {
+        // If a recent prior meeting already claimed this calendarEventId (e.g. already
+        // transcribed same day), don't propagate it — prevents a duplicate card in the
+        // activity feed on back-to-back recordings. Old/stale meetings (recurring events,
+        // !meetingIsRecent) still get the ID so today's recording links to today's event.
+        if (meeting && meetingIsRecent) {
+          console.log('[Recording] Clearing calendarEventId for new recording — recent prior meeting already claimed it:', calendarEventId, '(status:', meeting.status, ')')
+        }
+        const newCalendarEventId = resolveRecordingCalendarEventId(meeting, !!meetingIsRecent, calendarEventId)
         meeting = meetingRepo.createMeeting({
           title: meetingTitle,
           date: new Date().toISOString(),
-          calendarEventId,
+          calendarEventId: newCalendarEventId,
           meetingPlatform: meetingPlatform as import('../../shared/constants/meeting-apps').MeetingPlatform | null,
           meetingUrl,
           attendees: calendarAttendees.length > 0 ? calendarAttendees : null,

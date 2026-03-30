@@ -1,0 +1,101 @@
+/**
+ * Shared ProseMirror / Tiptap element styles.
+ *
+ * Consumed by:
+ *   - src/renderer/components/notes/NotePaneEditor.module.css
+ *   - src/renderer/routes/NoteDetail.module.css
+ *   - src/renderer/routes/MeetingDetail.module.css
+ *
+ * Usage: add `composes: tiptapContent from '../styles/tiptap.module.css'`
+ * to the wrapper class that contains <EditorContent>.
+ *
+ * Dependency graph:
+ *   tiptap.module.css
+ *       ↓ composes
+ *   NotePaneEditor.module.css (.editor)
+ *   NoteDetail.module.css (.tiptapEditor)
+ *   MeetingDetail.module.css (.meetingNotesEditor)
+ */
+
+.tiptapContent :global(.ProseMirror) {
+  outline: none;
+  color: var(--cv-text);
+}
+
+.tiptapContent :global(.ProseMirror a) {
+  color: var(--cv-crimson);
+  text-decoration: underline;
+}
+
+.tiptapContent :global(.ProseMirror h1) {
+  font-size: 1.5em;
+  font-weight: 700;
+  margin: 0.75em 0 0.25em;
+  border-left: 3px solid var(--cv-crimson);
+  padding-left: 10px;
+}
+
+.tiptapContent :global(.ProseMirror h2) {
+  font-size: 1.25em;
+  font-weight: 600;
+  margin: 0.6em 0 0.2em;
+  border-left: 3px solid var(--cv-crimson);
+  padding-left: 10px;
+}
+
+.tiptapContent :global(.ProseMirror h3) {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin: 0.5em 0 0.15em;
+}
+
+.tiptapContent :global(.ProseMirror ul),
+.tiptapContent :global(.ProseMirror ol) {
+  padding-left: 1.5em;
+}
+
+.tiptapContent :global(.ProseMirror code) {
+  background: #F3F4F6;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 0.9em;
+}
+
+.tiptapContent :global(.ProseMirror pre) {
+  background: #F3F4F6;
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.tiptapContent :global(.ProseMirror blockquote) {
+  border-left: 3px solid var(--cv-border);
+  margin: 0;
+  padding-left: 12px;
+  color: var(--cv-text-meta);
+}
+
+.tiptapContent :global(.ProseMirror p) {
+  margin: 0 0 0.75em;
+}
+
+.tiptapContent :global(.ProseMirror p:last-child) {
+  margin-bottom: 0;
+}
+
+.tiptapContent :global(.ProseMirror li p) {
+  margin-bottom: 0;
+}
+
+.tiptapContent :global(.ProseMirror img) {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+.tiptapContent :global(.ProseMirror p.is-editor-empty:first-child::before) {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--cv-text-meta);
+  pointer-events: none;
+  height: 0;
+}

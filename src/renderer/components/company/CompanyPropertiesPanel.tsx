@@ -1,4 +1,6 @@
+import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useRef, useState, type ReactNode, type HTMLAttributes } from 'react'
+import { Globe, Share2, AtSign, Link, Mail, CheckSquare } from 'lucide-react'
 import { useCustomFieldSection } from '../../hooks/useCustomFieldSection'
 import { useHeaderChipOrder } from '../../hooks/useHeaderChipOrder'
 import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
@@ -43,6 +45,7 @@ import styles from './CompanyPropertiesPanel.module.css'
 import { api } from '../../api'
 import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
 import type { CustomFieldValue } from '../../../shared/types/custom-fields'
+import type { ContactSummary } from '../../../shared/types/contact'
 
 const ENTITY_TYPE_STYLE: Record<string, string> = {
   prospect: styles.chipProspect,
@@ -113,8 +116,13 @@ interface CompanyPropertiesPanelProps {
   showEnrichBanner?: boolean
   enrichMeetingCount?: number
   fieldSources?: Record<string, { meetingId: string; meetingTitle: string }>
-  onEnrichFromMeetings?: () => void
+  /** Unified enhancement callback — source determines which flow to trigger */
+  onEnhance?: (source: 'pdf' | 'url' | 'meetings') => void
   isLoadingEnrich?: boolean
+  /** Called when "Add to Partner Sync" or the sync status row is clicked */
+  onOpenSync?: () => void
+  /** Briefly true after an enhance completes — triggers the ✓ Enhanced button state */
+  enhanceJustCompleted?: boolean
 }
 
 function HealthBadge({ lastTouchpoint }: { lastTouchpoint: string | null }) {
@@ -157,6 +165,16 @@ function googleFaviconUrl(domain: string | null): string | null {
   return `https://www.google.com/s2/favicons?sz=32&domain=${domain}`
 }
 
+function formatRelativeTime(isoString: string): string {
+  const diffMs = Date.now() - new Date(isoString).getTime()
+  const diffMin = Math.floor(diffMs / 60_000)
+  if (diffMin < 1) return 'just now'
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffH = Math.floor(diffMin / 60)
+  if (diffH < 24) return `${diffH}h ago`
+  return `${Math.floor(diffH / 24)}d ago`
+}
+
 function formatPinnedValue(value: unknown, type: string, options?: { value: string; label: string }[]): string | null {
   if (value == null || value === '') return null
   if (options) {
@@ -170,14 +188,102 @@ function formatPinnedValue(value: unknown, type: string, options?: { value: stri
   }
 }
 
+// ── AddTaskModal ───────────────────────────────────────────────────────────
+
+interface AddTaskModalProps {
+  companyId: string
+  companyName: string
+  onClose: () => void
+}
+
+function AddTaskModal({ companyId, companyName, onClose }: AddTaskModalProps) {
+  const [title, setTitle] = useState('')
+  const [category, setCategory] = useState<'action_item' | 'follow_up' | 'decision'>('follow_up')
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!title.trim()) return
+    setSubmitting(true)
+    try {
+      await api.invoke(IPC_CHANNELS.TASK_CREATE, {
+        title: title.trim(),
+        category,
+        companyId,
+        source: 'manual',
+      })
+      onClose()
+    } catch {
+      setSubmitting(false)
+    }
+  }
+
+  return createPortal(
+    <div
+      className={styles.modalBackdrop}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className={styles.modal}>
+        <div className={styles.modalTitle}>New Task</div>
+        <div className={styles.modalCompany}>{companyName}</div>
+        <form onSubmit={(e) => void handleSubmit(e)}>
+          <div className={styles.modalField}>
+            <label className={styles.modalLabel}>Task</label>
+            <input
+              autoFocus
+              className={styles.modalInput}
+              placeholder="e.g. Send term sheet"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              disabled={submitting}
+            />
+          </div>
+          <div className={styles.modalField}>
+            <label className={styles.modalLabel}>Category</label>
+            <select
+              className={styles.modalInput}
+              value={category}
+              onChange={(e) => setCategory(e.target.value as typeof category)}
+              disabled={submitting}
+            >
+              <option value="follow_up">Follow-up</option>
+              <option value="action_item">Action Item</option>
+              <option value="decision">Decision</option>
+            </select>
+          </div>
+          <div className={styles.modalActions}>
+            <button type="button" className={styles.modalCancel} onClick={onClose} disabled={submitting}>
+              Cancel
+            </button>
+            <button type="submit" className={styles.modalSubmit} disabled={submitting || !title.trim()}>
+              {submitting ? 'Adding…' : 'Add Task'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+// ── CompanyPropertiesPanel ─────────────────────────────────────────────────
+
 export function CompanyPropertiesPanel({
   company,
   onUpdate,
   showEnrichBanner,
   enrichMeetingCount,
   fieldSources,
-  onEnrichFromMeetings,
+  onEnhance,
   isLoadingEnrich,
+  onOpenSync,
+  enhanceJustCompleted,
 }: CompanyPropertiesPanelProps) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -187,10 +293,12 @@ export function CompanyPropertiesPanel({
   const [nameDraft, setNameDraft] = useState(company.canonicalName)
   const [customFields, setCustomFields] = useState<CustomFieldWithValue[]>([])
   const [latestDecision, setLatestDecision] = useState<CompanyDecisionLog | null>(null)
+  const [keyContacts, setKeyContacts] = useState<ContactSummary[]>([])
   const [showDecisionModal, setShowDecisionModal] = useState(false)
   const [decisionTriggerType, setDecisionTriggerType] = useState<string | undefined>(undefined)
   const [editDecisionId, setEditDecisionId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [taskModalOpen, setTaskModalOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [nameError, setNameError] = useState<string | null>(null)
   const [createFieldOpen, setCreateFieldOpen] = useState(false)
@@ -198,6 +306,16 @@ export function CompanyPropertiesPanel({
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
   const [editingFieldLabel, setEditingFieldLabel] = useState('')
   const [addFieldDropdownSection, setAddFieldDropdownSection] = useState<string | undefined>(undefined)
+
+  // ── Enhance dropdown ──────────────────────────────────────────────────────
+  const [enhanceDropdownOpen, setEnhanceDropdownOpen] = useState(false)
+  const [enhanceFlash, setEnhanceFlash] = useState(false)
+  const [lastEnhancedAt, setLastEnhancedAt] = useState<string | null>(() =>
+    localStorage.getItem(`company_enhanced_at_${company.id}`)
+  )
+  // Partner Sync status row
+  const [digestItem, setDigestItem] = useState<{ brief?: string | null; section?: string } | null | 'loading'>('loading')
+
   const nameInputRef = useRef<HTMLInputElement>(null)
   const headerBadgesRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -469,6 +587,41 @@ export function CompanyPropertiesPanel({
       .then((d) => setLatestDecision(d ?? null))
       .catch(() => {})
   }, [company.id])
+
+  useEffect(() => {
+    window.api
+      .invoke<ContactSummary[]>(IPC_CHANNELS.COMPANY_CONTACTS, company.id)
+      .then((data) => setKeyContacts(Array.isArray(data) ? data.slice(0, 3) : []))
+      .catch(() => setKeyContacts([]))
+  }, [company.id])
+
+  // Fetch active digest to populate Partner Sync status row
+  useEffect(() => {
+    setDigestItem('loading')
+    window.api
+      .invoke<{ id: string; items?: Array<{ companyId: string; brief?: string | null; section?: string }> }>(
+        IPC_CHANNELS.PARTNER_MEETING_GET_ACTIVE
+      )
+      .then((digest) => {
+        const item = digest?.items?.find(i => i.companyId === company.id) ?? null
+        setDigestItem(item)
+      })
+      .catch(() => setDigestItem(null))
+  }, [company.id])
+
+  // Re-read last-enhanced timestamp when company changes or enhance just completed
+  useEffect(() => {
+    setLastEnhancedAt(localStorage.getItem(`company_enhanced_at_${company.id}`))
+  }, [company.id])
+
+  // Flash "✓ Enhanced" for 3s when parent signals completion
+  useEffect(() => {
+    if (!enhanceJustCompleted) return
+    setEnhanceFlash(true)
+    setLastEnhancedAt(localStorage.getItem(`company_enhanced_at_${company.id}`))
+    const t = setTimeout(() => setEnhanceFlash(false), 3000)
+    return () => clearTimeout(t)
+  }, [enhanceJustCompleted, company.id])
 
   function save(field: string, value: unknown) {
     const prev = (company as Record<string, unknown>)[field]
@@ -872,6 +1025,7 @@ export function CompanyPropertiesPanel({
   }
 
   // Count of explicitly-hidden fields + empty hardcoded fields (Change 6)
+  // pipelineStage and priority are excluded — they live in header chips, not sections
   const hiddenFieldCount = !isEditing && !showAllFields ? (
     hiddenFields.length +
     ([company.description, company.sector, company.targetCustomer,
@@ -890,23 +1044,10 @@ export function CompanyPropertiesPanel({
 
   const faviconUrl = googleFaviconUrl(company.primaryDomain)
 
+  const openExternal = (url: string) => { void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, url) }
+
   return (
     <div ref={panelRef} className={styles.panel}>
-      {showEnrichBanner && (
-        <div className={styles.enrichBanner}>
-          <span>✨ Meeting data available</span>
-          <button
-            className={styles.enrichBannerBtn}
-            onClick={onEnrichFromMeetings}
-            disabled={isLoadingEnrich}
-          >
-            {isLoadingEnrich
-              ? 'Loading…'
-              : `Enrich profile (${enrichMeetingCount} meeting${enrichMeetingCount !== 1 ? 's' : ''})`
-            }
-          </button>
-        </div>
-      )}
       {window.history.length > 1 && (
         <button className={styles.backBtn} onClick={() => navigate(-1)}>
           ← {backLabel}
@@ -914,6 +1055,7 @@ export function CompanyPropertiesPanel({
       )}
       {/* Header */}
       <div className={styles.header}>
+        <div className={styles.headerTopRow}>
         {faviconUrl && (
           <img
             src={faviconUrl}
@@ -935,7 +1077,14 @@ export function CompanyPropertiesPanel({
               {nameError && <div className={styles.nameError}>{nameError}</div>}
             </>
           ) : (
-            <div className={styles.companyName}>{company.canonicalName}</div>
+            <>
+              <div className={styles.companyName}>{company.canonicalName}</div>
+              {company.websiteUrl && (
+                <button className={styles.websiteLink} onClick={() => openExternal(company.websiteUrl!)}>
+                  {company.primaryDomain ?? company.websiteUrl}
+                </button>
+              )}
+            </>
           )}
           <div
             className={`${styles.headerBadges} ${isEditing && dragOverSection === 'summary' ? styles.dropTarget : ''}`}
@@ -1007,9 +1156,146 @@ export function CompanyPropertiesPanel({
             )}
           </div>
         ) : (
-          <button className={styles.editBtn} onClick={() => setIsEditing(true)}>Edit</button>
+          <div className={styles.headerBtnGroup}>
+            {onEnhance && (
+              <div className={styles.enhanceWrap}>
+                <button
+                  className={`${styles.enhanceBtn} ${enhanceFlash ? styles.enhanceBtnSuccess : ''}`}
+                  onClick={() => setEnhanceDropdownOpen(v => !v)}
+                  title="Enhance company profile"
+                >
+                  {enhanceFlash ? '✓ Enhanced' : 'Enhance ▾'}
+                </button>
+                {enhanceDropdownOpen && (
+                  <>
+                    <div className={styles.enhanceDropdownBackdrop} onClick={() => setEnhanceDropdownOpen(false)} />
+                    <div className={styles.enhanceDropdown}>
+                      <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('pdf') }}>
+                        📄 From a file (PDF)
+                      </button>
+                      <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('url') }}>
+                        🔗 From a URL
+                      </button>
+                      <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('meetings') }}
+                        disabled={!showEnrichBanner}
+                        title={showEnrichBanner ? undefined : 'No new meeting data available'}
+                      >
+                        ✨ From meeting notes
+                      </button>
+                      {lastEnhancedAt && (
+                        <div className={styles.enhanceTimestamp}>
+                          Last enhanced: {formatRelativeTime(lastEnhancedAt)}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            <button className={styles.editBtn} onClick={() => setIsEditing(true)}>Edit</button>
+          </div>
+        )}
+        </div>{/* end headerTopRow */}
+
+        {/* Partner Sync status row */}
+        {!isEditing && onOpenSync && digestItem !== 'loading' && (
+          <div className={styles.syncStatusRow}>
+            {digestItem ? (
+              <button className={styles.syncStatusBtn} onClick={onOpenSync} title="Edit Partner Sync entry">
+                <span className={styles.syncStatusIcon}>↩</span>
+                <span className={styles.syncStatusText}>
+                  In sync
+                  {digestItem.brief && (
+                    <span className={styles.syncBriefPreview}>
+                      {' · '}{digestItem.brief.split('\n')[0]?.slice(0, 60)}{digestItem.brief.split('\n')[0]?.length > 60 ? '…' : ''}
+                    </span>
+                  )}
+                </span>
+              </button>
+            ) : (
+              <button className={styles.syncStatusBtn} onClick={onOpenSync} title="Add to Partner Sync">
+                <span className={styles.syncStatusIcon}>+</span>
+                <span className={styles.syncStatusText}>Add to Partner Sync</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Description inside header card */}
+        {show('description', company.description) && (
+          isEditing ? (
+            <PropertyRow label="Description" value={company.description} type="textarea" editMode={true} onSave={(v) => save('description', v)} />
+          ) : (
+            <div className={styles.propertyWithBadge}>
+              <p className={styles.descriptionText}>{company.description}</p>
+              {fieldSources?.description && (
+                <span className={styles.sourceBadge} title={`From: ${fieldSources.description.meetingTitle}`}>📋</span>
+              )}
+            </div>
+          )
+        )}
+
+        {/* Social links inside header card */}
+        {isEditing ? (
+          show('websiteUrl', company.websiteUrl) && (
+            <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={true} onSave={(v) => save('websiteUrl', v)} />
+          )
+        ) : (
+          (company.websiteUrl || company.linkedinCompanyUrl || company.twitterHandle || company.crunchbaseUrl || company.angellistUrl) && (
+            <div className={styles.socialRow}>
+              {company.websiteUrl && (
+                <button className={styles.socialIcon} title={company.websiteUrl} onClick={() => openExternal(company.websiteUrl!)}>
+                  <Globe size={16} />
+                </button>
+              )}
+              {company.linkedinCompanyUrl && (
+                <button className={styles.socialIcon} title="LinkedIn" onClick={() => openExternal(company.linkedinCompanyUrl!)}>
+                  <Share2 size={16} />
+                </button>
+              )}
+              {company.twitterHandle && (
+                <button className={styles.socialIcon} title={`@${company.twitterHandle}`} onClick={() => openExternal(`https://twitter.com/${company.twitterHandle}`)}>
+                  <AtSign size={16} />
+                </button>
+              )}
+              {company.crunchbaseUrl && (
+                <button className={styles.socialIcon} title="Crunchbase" onClick={() => openExternal(company.crunchbaseUrl!)}>
+                  <Link size={16} />
+                </button>
+              )}
+            </div>
+          )
         )}
       </div>
+
+      {/* Action Row — Email / Task */}
+      <div className={styles.actionRow}>
+        <button
+          className={styles.actionBtnPrimary}
+          onClick={() => {
+            const email = keyContacts[0]?.email
+            if (email) void api.invoke(
+              IPC_CHANNELS.APP_OPEN_EXTERNAL_URL,
+              `https://mail.google.com/mail/?view=cm&tf=1&to=${encodeURIComponent(email)}`
+            )
+          }}
+          disabled={!keyContacts[0]?.email}
+          title={keyContacts[0]?.email ? `Email ${keyContacts[0].fullName}` : 'No contact email'}
+        >
+          <Mail size={14} /> Email
+        </button>
+        <button className={styles.actionBtnSecondary} onClick={() => setTaskModalOpen(true)}>
+          <CheckSquare size={14} /> Task
+        </button>
+      </div>
+
+      {taskModalOpen && (
+        <AddTaskModal
+          companyId={company.id}
+          companyName={company.canonicalName}
+          onClose={() => setTaskModalOpen(false)}
+        />
+      )}
 
       {templateIndicator && (
         <div className={styles.templateIndicator}>
@@ -1058,37 +1344,22 @@ export function CompanyPropertiesPanel({
         </div>
       )}
 
-      {show('websiteUrl', company.websiteUrl) && (
-        isEditing ? (
-          <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={true} onSave={(v) => save('websiteUrl', v)} />
-        ) : (
-          <a
-            className={styles.websiteLink}
-            href="#"
-            onClick={(e) => {
-              e.preventDefault()
-              if (company.websiteUrl) {
-                api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, company.websiteUrl).catch(console.error)
-              }
-            }}
+      {/* Enrich Profile banner — shown when new meeting data is available */}
+      {showEnrichBanner && (
+        <div className={styles.enrichBanner}>
+          <span>✨ Meeting data available</span>
+          <button
+            className={styles.enrichBannerBtn}
+            onClick={() => onEnhance?.('meetings')}
+            disabled={isLoadingEnrich}
           >
-            {company.websiteUrl}
-          </a>
-        )
+            {isLoadingEnrich
+              ? 'Loading…'
+              : `Enrich profile (${enrichMeetingCount} meeting${enrichMeetingCount !== 1 ? 's' : ''})`
+            }
+          </button>
+        </div>
       )}
-      {show('description', company.description) && (
-        isEditing ? (
-          <PropertyRow label="Description" value={company.description} type="textarea" editMode={true} onSave={(v) => save('description', v)} />
-        ) : (
-          <div className={styles.propertyWithBadge}>
-            <p className={styles.descriptionText}>{company.description}</p>
-            {fieldSources?.description && (
-              <span className={styles.sourceBadge} title={`From: ${fieldSources.description.meetingTitle}`}>📋</span>
-            )}
-          </div>
-        )
-      )}
-      <div className={styles.headerDivider} />
 
       {sectionOrder.orderedSections.map(sectionKey => {
         const baseDragProps = syncedSectionDragProps(sectionKey)
@@ -1217,15 +1488,6 @@ export function CompanyPropertiesPanel({
               <SectionHeader title="Pipeline" collapsible isCollapsed={isCollapsed('pipeline')} onToggle={() => toggleSection('pipeline')} />
               {!isCollapsed('pipeline') && (<>
               {renderHardcodedSection([
-                { key: 'pipelineStage', visible: true, render: () => (
-                  <div className={!isEditing && fieldSources?.pipelineStage ? styles.propertyWithBadge : undefined}>
-                    <PropertyRow label="Stage" value={company.pipelineStage} type="select" options={[{ value: '', label: '—' }, ...stageOptions]} editMode={isEditing} onSave={(v) => saveWithDecisionPrompt('pipelineStage', v || null)} onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined} />
-                    {!isEditing && fieldSources?.pipelineStage && <span className={styles.sourceBadge} title={`From: ${fieldSources.pipelineStage.meetingTitle}`}>📋</span>}
-                  </div>
-                )},
-                { key: 'priority', visible: true, render: () => (
-                  <PropertyRow label="Priority" value={company.priority} type="select" options={[{ value: '', label: '—' }, ...priorityOptions]} editMode={isEditing} onSave={(v) => save('priority', v)} onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined} />
-                )},
                 { key: 'sourceType', visible: show('sourceType', company.sourceType), render: () => (
                   <PropertyRow
                     label="Source Type"
@@ -1385,6 +1647,24 @@ export function CompanyPropertiesPanel({
         <button className={styles.showAllBtn} onClick={() => setShowAllFields(false)}>
           Hide empty fields
         </button>
+      )}
+
+      {/* Key Contacts — shown at bottom of sidebar */}
+      {keyContacts.length > 0 && (
+        <div className={styles.keyContactsSection}>
+          <div className={styles.keyContactsSectionLabel}>Key Contacts</div>
+          {keyContacts.map(contact => (
+            <div key={contact.id} className={styles.contactRow}>
+              <div className={styles.contactAvatar}>
+                {(contact.firstName?.[0] ?? contact.fullName?.[0] ?? '?').toUpperCase()}
+              </div>
+              <div>
+                <div className={styles.contactName}>{contact.fullName}</div>
+                {contact.title && <div className={styles.contactTitle}>{contact.title}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {createFieldOpen && (

@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
+import {
+  LayoutDashboard,
+  TrendingUp,
+  Building2,
+  Users,
+  Calendar,
+  FileText,
+  CheckSquare,
+  Users2,
+  Settings
+} from 'lucide-react'
 import styles from './Sidebar.module.css'
 import { useFeatureFlag } from '../../hooks/useFeatureFlags'
 import { useAppStore } from '../../stores/app.store'
@@ -91,14 +102,14 @@ export default function Sidebar() {
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
           end
         >
-          <span className={styles.icon}>&#127968;</span>
+          <LayoutDashboard size={16} strokeWidth={1.5} />
           Dashboard
         </NavLink>
         <NavLink
           to="/pipeline"
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
         >
-          <span className={styles.icon}>&#128202;</span>
+          <TrendingUp size={16} strokeWidth={1.5} />
           Pipeline
         </NavLink>
         {companiesEnabled && (
@@ -106,7 +117,7 @@ export default function Sidebar() {
             to="/companies"
             className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
           >
-            <span className={styles.icon}>&#127970;</span>
+            <Building2 size={16} strokeWidth={1.5} />
             Companies
           </NavLink>
         )}
@@ -115,7 +126,7 @@ export default function Sidebar() {
             to="/contacts"
             className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
           >
-            <span className={styles.icon}>&#128101;</span>
+            <Users size={16} strokeWidth={1.5} />
             Contacts
           </NavLink>
         )}
@@ -123,28 +134,28 @@ export default function Sidebar() {
           to="/meetings"
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
         >
-          <span className={styles.icon}>&#9776;</span>
+          <Calendar size={16} strokeWidth={1.5} />
           Meetings
         </NavLink>
         <NavLink
           to="/notes"
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
         >
-          <span className={styles.icon}>&#128221;</span>
+          <FileText size={16} strokeWidth={1.5} />
           Notes
         </NavLink>
         <NavLink
           to="/tasks"
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
         >
-          <span className={styles.icon}>&#9745;</span>
+          <CheckSquare size={16} strokeWidth={1.5} />
           Tasks
         </NavLink>
         <NavLink
           to="/partner-meeting"
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
         >
-          <span className={styles.icon}>&#128101;</span>
+          <Users2 size={16} strokeWidth={1.5} />
           Partner Sync
         </NavLink>
       </div>
@@ -171,7 +182,7 @@ export default function Sidebar() {
           to="/settings"
           className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
         >
-          <span className={styles.icon}>&#9881;</span>
+          <Settings size={16} strokeWidth={1.5} />
           Settings
         </NavLink>
       </div>

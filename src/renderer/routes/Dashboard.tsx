@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Video, MapPin, SlidersHorizontal } from 'lucide-react'
 import { useAppStore } from '../stores/app.store'
 import { useRecordingStore } from '../stores/recording.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
@@ -10,20 +11,19 @@ import type {
   CompanyRound,
   CompanyPipelineStage
 } from '../../shared/types/company'
+import { DEFAULT_ACTIVITY_FILTER } from '../../shared/types/dashboard'
 import type {
   DashboardActivityFilter,
   DashboardActivityItem,
-  DashboardActivityType,
   DashboardData
 } from '../../shared/types/dashboard'
-import { DEFAULT_ACTIVITY_FILTER } from '../../shared/types/dashboard'
 import type { Meeting } from '../../shared/types/meeting'
-import type { TaskListItem, TaskSummaryStats } from '../../shared/types/task'
-import CalendarBadge from '../components/meetings/CalendarBadge'
+import type { TaskListItem } from '../../shared/types/task'
 import ChatInterface from '../components/chat/ChatInterface'
-import MultiSelectFilter from '../components/common/MultiSelectFilter'
 import styles from './Dashboard.module.css'
 import { api } from '../api'
+
+// ─── Date helpers ──────────────────────────────────────────────────────────────
 
 function isWithinWeek(value: string, base: Date): boolean {
   const date = new Date(value)
@@ -72,19 +72,13 @@ function eventStillActive(event: CalendarEvent, now: Date): boolean {
   return Number.isFinite(start) && start > now.getTime()
 }
 
-const STAGES: { value: CompanyPipelineStage; label: string }[] = [
-  { value: 'screening', label: 'Screening' },
-  { value: 'diligence', label: 'Diligence' },
-  { value: 'decision', label: 'Decision' },
-  { value: 'documentation', label: 'Documentation' },
-  { value: 'pass', label: 'Pass' }
-]
+function isToday(event: CalendarEvent): boolean {
+  const today = new Date()
+  const start = new Date(event.startTime)
+  return start.toDateString() === today.toDateString()
+}
 
-const PRIORITIES: { value: CompanyPriority; label: string }[] = [
-  { value: 'high', label: 'High' },
-  { value: 'further_work', label: 'Further Work' },
-  { value: 'monitor', label: 'Monitor' }
-]
+// ─── Formatters ────────────────────────────────────────────────────────────────
 
 const ROUNDS: { value: CompanyRound; label: string }[] = [
   { value: 'pre_seed', label: 'Pre-Seed' },
@@ -94,37 +88,22 @@ const ROUNDS: { value: CompanyRound; label: string }[] = [
   { value: 'series_b', label: 'Series B' }
 ]
 
-function formatPriority(value: CompanyPriority | null): string {
-  if (!value) return '-'
-  return PRIORITIES.find((p) => p.value === value)?.label || value
-}
+const STAGES: { value: CompanyPipelineStage; label: string }[] = [
+  { value: 'screening', label: 'Screening' },
+  { value: 'diligence', label: 'Diligence' },
+  { value: 'decision', label: 'Decision' },
+  { value: 'documentation', label: 'Documentation' },
+  { value: 'pass', label: 'Pass' }
+]
 
 function formatRound(value: CompanyRound | null): string {
-  if (!value) return '-'
+  if (!value) return ''
   return ROUNDS.find((r) => r.value === value)?.label || value
 }
 
 function formatStage(value: CompanyPipelineStage | null): string {
-  if (!value) return '-'
+  if (!value) return ''
   return STAGES.find((s) => s.value === value)?.label || value
-}
-
-function formatMoney(value: number | null): string {
-  if (value == null) return '-'
-  return `$${value}M`
-}
-
-function priorityClass(value: CompanyPriority | null): string {
-  if (value === 'high') return styles.priorityHigh
-  if (value === 'further_work') return styles.priorityFurtherWork
-  if (value === 'monitor') return styles.priorityMonitor
-  return ''
-}
-
-const ACTIVITY_ICONS: Record<string, string> = {
-  meeting: '\u{1F4C5}',
-  email: '\u2709',
-  note: '\u270E'
 }
 
 function formatOccurrence(value: string): string {
@@ -142,23 +121,30 @@ function daysSinceCreated(dateStr: string): number {
   return Math.max(0, Math.floor((Date.now() - created) / (1000 * 60 * 60 * 24)))
 }
 
-function groupActivityByDate(
-  items: DashboardActivityItem[]
-): [string, DashboardActivityItem[]][] {
-  const groups = new Map<string, DashboardActivityItem[]>()
-  for (const item of items) {
-    const heading = formatDateHeading(item.occurredAt)
-    const existing = groups.get(heading)
-    if (existing) {
-      existing.push(item)
-    } else {
-      groups.set(heading, [item])
-    }
-  }
-  return Array.from(groups.entries())
+// ─── Icons & tags ──────────────────────────────────────────────────────────────
+
+const ACTIVITY_ICONS: Record<string, string> = {
+  meeting: '\u{1F4C5}',
+  email: '\u2709',
+  note: '\u270E'
 }
 
-type DashboardTab = 'pipeline' | 'tasks' | 'activity' | 'attention'
+function platformIcon(platform: string): React.ReactNode {
+  const name = platform.toLowerCase()
+  if (name.includes('zoom') || name.includes('meet') || name.includes('teams')) {
+    return <Video size={11} strokeWidth={1.5} />
+  }
+  return <MapPin size={11} strokeWidth={1.5} />
+}
+
+// Consolidated priority → tag mapping (replaces two separate functions)
+const PRIORITY_TAG_MAP: Record<CompanyPriority, { label: string; className: string }> = {
+  high:         { label: 'HIGH INTENT',  className: styles.tagHighIntent },
+  further_work: { label: 'FURTHER WORK', className: styles.tagFurtherWork },
+  monitor:      { label: 'STEADY',       className: styles.tagSteady },
+}
+
+// ─── Dashboard ─────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -166,31 +152,30 @@ export default function Dashboard() {
   const calendarEvents = useAppStore((s) => s.calendarEvents)
   const calendarConnected = useAppStore((s) => s.calendarConnected)
   const dismissedEventIds = useAppStore((s) => s.dismissedEventIds)
+  const dismissEvent = useAppStore((s) => s.dismissEvent)
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<DashboardData | null>(null)
-  const [showAllSchedule, setShowAllSchedule] = useState(false)
-  const [activeTab, setActiveTab] = useState<DashboardTab>('pipeline')
-  const [activityConfigOpen, setActivityConfigOpen] = useState(false)
-  const [activityFilter, setActivityFilter] = useState<DashboardActivityFilter>(DEFAULT_ACTIVITY_FILTER)
   const [pipelineCompanies, setPipelineCompanies] = useState<CompanySummary[]>([])
-  const [taskStats, setTaskStats] = useState<TaskSummaryStats | null>(null)
-  const [recentTasks, setRecentTasks] = useState<TaskListItem[]>([])
-  const [expandedActivityId, setExpandedActivityId] = useState<string | null>(null)
-  const [dismissedStaleIds, setDismissedStaleIds] = useState<Set<string>>(new Set())
+  const [openTasks, setOpenTasks] = useState<TaskListItem[]>([])
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const newMenuRef = useRef<HTMLDivElement>(null)
-  const [pipelineFilterStages, setPipelineFilterStages] = useState<Set<CompanyPipelineStage>>(
-    new Set<CompanyPipelineStage>(['screening', 'diligence', 'decision', 'documentation'])
-  )
-  const [pipelineFilterPriorities, setPipelineFilterPriorities] = useState<Set<CompanyPriority>>(new Set())
-  const [pipelineFilterRounds, setPipelineFilterRounds] = useState<Set<CompanyRound>>(new Set())
+  const [activityFilter, setActivityFilter] = useState<DashboardActivityFilter>(DEFAULT_ACTIVITY_FILTER)
+  const [filterOpen, setFilterOpen] = useState(false)
+  const filterRef = useRef<HTMLDivElement>(null)
+  const [dragInfo, setDragInfo] = useState<{
+    companyId: string
+    fromStage: CompanyPipelineStage
+  } | null>(null)
+  const [dragOverStage, setDragOverStage] = useState<CompanyPipelineStage | null>(null)
 
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60_000)
     return () => clearInterval(id)
   }, [])
+
   useEffect(() => {
     if (!newMenuOpen) return
     const handleClick = (e: MouseEvent) => {
@@ -201,51 +186,62 @@ export default function Dashboard() {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [newMenuOpen])
+
+  useEffect(() => {
+    if (!filterOpen) return
+    const handler = (e: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setFilterOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [filterOpen])
+
   const visibleEvents = useMemo(
     () => calendarEvents.filter((event) => !dismissedEventIds.has(event.id)),
     [calendarEvents, dismissedEventIds]
   )
+
   const scheduleEvents = useMemo(
     () => visibleEvents
       .filter((event) => isWithinWeek(event.startTime, now) && eventStillActive(event, now))
       .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()),
     [visibleEvents, now]
   )
-  const SCHEDULE_LIMIT = 5
-  const truncatedScheduleEvents = useMemo(
-    () => (showAllSchedule ? scheduleEvents : scheduleEvents.slice(0, SCHEDULE_LIMIT)),
-    [scheduleEvents, showAllSchedule]
-  )
+
   const groupedSchedule = useMemo(
-    () => groupCalendarEventsByDate(truncatedScheduleEvents),
-    [truncatedScheduleEvents]
+    () => groupCalendarEventsByDate(scheduleEvents),
+    [scheduleEvents]
   )
-  const hasMoreSchedule = scheduleEvents.length > SCHEDULE_LIMIT
+
+  const todayCount = useMemo(
+    () => scheduleEvents.filter(isToday).length,
+    [scheduleEvents]
+  )
+
+  // First future event gets the crimson "next" dot
+  const nextEventId = useMemo(
+    () => scheduleEvents.find(e => new Date(e.startTime) > now)?.id,
+    [scheduleEvents, now]
+  )
 
   const loadDashboard = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [result, pipelineData, stats, tasks] = await Promise.all([
+      const [result, pipelineData, tasks] = await Promise.all([
         api.invoke<DashboardData>(IPC_CHANNELS.DASHBOARD_GET),
         api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST),
-        api.invoke<TaskSummaryStats>(IPC_CHANNELS.TASK_SUMMARY_STATS),
         api.invoke<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, {
           status: ['open', 'in_progress'],
           limit: 5
         })
       ])
       setData(result)
+      setActivityFilter(result.activityFilter)
       setPipelineCompanies(pipelineData)
-      setTaskStats(stats)
-      setRecentTasks(tasks)
-      if (result.activityFilter) {
-        setActivityFilter(result.activityFilter)
-      }
-      try {
-        const raw = await api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'dashboardDismissedStale')
-        if (raw) setDismissedStaleIds(new Set(JSON.parse(raw) as string[]))
-      } catch { /* ignore */ }
+      setOpenTasks(tasks)
     } catch (err) {
       setError(String(err))
     } finally {
@@ -253,39 +249,21 @@ export default function Dashboard() {
     }
   }, [])
 
-  const saveActivityFilter = useCallback(async (next: DashboardActivityFilter) => {
-    setActivityFilter(next)
-    try {
-      await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'dashboardActivityFilter', JSON.stringify(next))
-      void loadDashboard()
-    } catch (err) {
-      setError(String(err))
-    }
-  }, [loadDashboard])
-
-  const toggleActivityType = useCallback((type: DashboardActivityType) => {
-    const next = { ...activityFilter }
-    if (next.types.includes(type)) {
-      next.types = next.types.filter((t) => t !== type)
-    } else {
-      next.types = [...next.types, type]
-    }
-    void saveActivityFilter(next)
-  }, [activityFilter, saveActivityFilter])
-
-  const toggleEmailCompanyFilter = useCallback((value: 'all' | 'pipeline_portfolio') => {
-    void saveActivityFilter({ ...activityFilter, emailCompanyFilter: value })
-  }, [activityFilter, saveActivityFilter])
-
   useEffect(() => {
     void loadDashboard()
   }, [loadDashboard])
 
-  useEffect(() => {
-    if (activeTab !== 'activity') {
-      setActivityConfigOpen(false)
+  const saveAndReloadFilter = useCallback(async (next: DashboardActivityFilter) => {
+    setActivityFilter(next)
+    setFilterOpen(false)
+    try {
+      await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'dashboardActivityFilter', JSON.stringify(next))
+      void loadDashboard()
+    } catch {
+      setActivityFilter(activityFilter)
+      setFilterOpen(true)
     }
-  }, [activeTab])
+  }, [loadDashboard, activityFilter])
 
   const handleRecord = useCallback(async (event?: CalendarEvent) => {
     try {
@@ -310,8 +288,6 @@ export default function Dashboard() {
     }
   }, [navigate])
 
-  const dismissEvent = useAppStore((s) => s.dismissEvent)
-
   const handlePrepareFromCalendar = useCallback(async (event: CalendarEvent) => {
     try {
       const meeting = await api.invoke<Meeting>(
@@ -334,13 +310,9 @@ export default function Dashboard() {
     dismissEvent(event.id)
   }, [dismissEvent])
 
-  const openActivity = useCallback((item: DashboardData['recentActivity'][number]) => {
+  const openActivity = useCallback((item: DashboardActivityItem) => {
     if (item.referenceType === 'meeting') {
       navigate(`/meeting/${item.referenceId}`)
-      return
-    }
-    if (item.type === 'email') {
-      setExpandedActivityId((prev) => (prev === item.id ? null : item.id))
       return
     }
     if (item.companyId) {
@@ -350,52 +322,24 @@ export default function Dashboard() {
     navigate('/companies')
   }, [navigate])
 
-  const openAttentionCompany = useCallback((companyId: string) => {
-    navigate(`/company/${companyId}`)
-  }, [navigate])
-
-  const dismissStaleCompany = useCallback((companyId: string) => {
-    setDismissedStaleIds((prev) => {
-      const next = new Set(prev)
-      next.add(companyId)
-      void api.invoke(IPC_CHANNELS.SETTINGS_SET, 'dashboardDismissedStale', JSON.stringify([...next]))
-      return next
-    })
-  }, [])
-
-  const filteredPipelineCompanies = useMemo(() => {
-    let result = pipelineCompanies
-    if (pipelineFilterStages.size > 0) result = result.filter((c) => c.pipelineStage != null && pipelineFilterStages.has(c.pipelineStage))
-    if (pipelineFilterPriorities.size > 0) result = result.filter((c) => c.priority != null && pipelineFilterPriorities.has(c.priority))
-    if (pipelineFilterRounds.size > 0) result = result.filter((c) => c.round != null && pipelineFilterRounds.has(c.round))
-    return result
-  }, [pipelineCompanies, pipelineFilterStages, pipelineFilterPriorities, pipelineFilterRounds])
-
-  if (loading && !data) {
-    return <div className={styles.page}>Loading dashboard...</div>
-  }
-
-  const visibleStaleCompanies = (data?.needsAttention.staleCompanies || [])
-    .filter((company) => !dismissedStaleIds.has(company.companyId))
-  const stalledCompanies = data?.needsAttention.stalledCompanies || []
-  const openTaskCount = (taskStats?.openCount || 0) + (taskStats?.inProgressCount || 0)
-
-  const tabCounts: Record<DashboardTab, number> = {
-    pipeline: pipelineCompanies.length,
-    tasks: openTaskCount,
-    activity: data?.recentActivity.length || 0,
-    attention: visibleStaleCompanies.length + stalledCompanies.length
-  }
-
   return (
     <div className={styles.page}>
-      <div className={styles.quickActions}>
+
+      {/* ── Header ─────────────────────────────────────────────────── */}
+      <header className={styles.header}>
+        <div>
+          <h1 className={styles.pageTitle}>Dashboard</h1>
+          <p className={styles.pageSubtitle}>
+            Focus on what matters.
+            {todayCount > 0 && ` You have ${todayCount} meeting${todayCount > 1 ? 's' : ''} today.`}
+          </p>
+        </div>
         <div className={styles.newMenuContainer} ref={newMenuRef}>
           <button
-            className={styles.secondaryButton}
+            className={styles.newRecordBtn}
             onClick={() => setNewMenuOpen((v) => !v)}
           >
-            + New
+            + New Record
           </button>
           {newMenuOpen && (
             <div className={styles.newMenuDropdown}>
@@ -426,378 +370,287 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-      </div>
+      </header>
 
       {error && <div className={styles.error}>{error}</div>}
 
-      <section className={styles.scheduleSection}>
-        <h2 className={styles.sectionTitle}>Schedule</h2>
-        {!calendarConnected && (
-          <p className={styles.empty}>Connect Google Calendar in Settings to see meeting schedule.</p>
-        )}
-        {calendarConnected && scheduleEvents.length === 0 && (
-          <p className={styles.empty}>No upcoming meetings this week.</p>
-        )}
-        {groupedSchedule.map(([heading, events]) => (
-          <div key={heading} className={styles.dateGroup}>
-            <div className={styles.dateHeader}>{heading}</div>
-            <div className={styles.eventRows}>
-              {events.map((event) => (
-                <CalendarBadge
-                  key={event.id}
-                  event={event}
-                  onRecord={handleRecord}
-                  onPrepare={handlePrepareFromCalendar}
-                  onDismiss={handleDismissEvent}
-                />
-              ))}
-            </div>
+      {/* ── Two-column body ─────────────────────────────────────────── */}
+      <div className={styles.body}>
+
+        {/* LEFT: Schedule / Timeline */}
+        <section className={styles.scheduleCol}>
+          <div className={styles.colHeader}>
+            <span className={styles.sectionLabel}>SCHEDULE</span>
+            <span className={styles.todayBadge}>TODAY</span>
           </div>
-        ))}
-        {hasMoreSchedule && (
-          <button
-            className={styles.showMoreBtn}
-            onClick={() => setShowAllSchedule((v) => !v)}
-          >
-            {showAllSchedule
-              ? 'Show fewer'
-              : `Show more (${scheduleEvents.length - SCHEDULE_LIMIT} more)`}
-          </button>
-        )}
-      </section>
 
-      <section className={styles.tabsSection}>
-        <div className={styles.tabRow}>
-          {([
-            ['pipeline', 'Pipeline'],
-            ['tasks', 'Tasks'],
-            ['activity', 'Recent Activity'],
-            ['attention', 'Needs Attention']
-          ] as [DashboardTab, string][]).map(([tab, label]) => (
-            <button
-              key={tab}
-              className={`${styles.tab} ${activeTab === tab ? styles.activeTab : ''}`}
-              onClick={() => setActiveTab(tab)}
-            >
-              <span>{label}</span>
-              {tabCounts[tab] > 0 && (
-                <span className={styles.tabCount}>{tabCounts[tab]}</span>
+          {!calendarConnected && (
+            <p className={styles.emptyMeta}>
+              Connect Google Calendar in Settings to see your schedule.
+            </p>
+          )}
+
+          {calendarConnected && scheduleEvents.length === 0 && (
+            <p className={styles.emptyMeta}>No upcoming meetings this week.</p>
+          )}
+
+          {groupedSchedule.map(([heading, events]) => (
+            <div key={heading} className={styles.timelineGroup}>
+              {heading !== 'Today' && (
+                <div className={styles.timelineDateLabel}>{heading}</div>
               )}
-            </button>
-          ))}
-        </div>
-
-        {activeTab === 'pipeline' && (
-          <div className={styles.tabPanel}>
-            <div className={styles.pipelineTableWrapper}>
-              <div className={styles.stageCounts}>
-                {STAGES.map((stage) => {
-                  const count = pipelineCompanies.filter((c) => c.pipelineStage === stage.value).length
-                  return (
-                    <div key={stage.value} className={styles.stageCountCard}>
-                      <span className={styles.stageCountLabel}>{stage.label}</span>
-                      <span className={styles.stageCountValue}>{count}</span>
-                    </div>
-                  )
-                })}
-              </div>
-              <div className={styles.pipelineFilterBar}>
-                <MultiSelectFilter
-                  options={STAGES}
-                  selected={pipelineFilterStages}
-                  onChange={setPipelineFilterStages}
-                  allLabel="All Stages"
-                  fixedLabel="Stage"
-                />
-                <MultiSelectFilter
-                  options={PRIORITIES}
-                  selected={pipelineFilterPriorities}
-                  onChange={setPipelineFilterPriorities}
-                  allLabel="All Priorities"
-                />
-                <MultiSelectFilter
-                  options={ROUNDS}
-                  selected={pipelineFilterRounds}
-                  onChange={setPipelineFilterRounds}
-                  allLabel="All Rounds"
-                />
-              </div>
-              {pipelineCompanies.length > 0 ? (
-                <table className={styles.pipelineTable}>
-                  <thead>
-                    <tr>
-                      <th>Company</th>
-                      <th>Stage</th>
-                      <th>Priority</th>
-                      <th>Round</th>
-                      <th>Post Money</th>
-                      <th>Raise</th>
-                      <th>Description</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredPipelineCompanies.map((company) => (
-                      <tr key={company.id}>
-                        <td>
-                          <button
-                            className={styles.companyLink}
-                            onClick={() => navigate(`/company/${company.id}`)}
-                          >
-                            {company.canonicalName}
-                          </button>
-                        </td>
-                        <td>{formatStage(company.pipelineStage)}</td>
-                        <td>
-                          {company.priority ? (
-                            <span className={`${styles.priorityBadge} ${priorityClass(company.priority)}`}>
-                              {formatPriority(company.priority)}
+              {events.map((event, i) => {
+                const isNext = event.id === nextEventId
+                const timeStr = `${formatOccurrence(event.startTime)} — ${formatOccurrence(event.endTime)}`
+                const attendeeCount = event.attendees?.length ?? 0
+                return (
+                  <button
+                    key={event.id}
+                    className={`${styles.timelineItem} ${isNext ? styles.timelineItemNext : ''}`}
+                    onClick={() => void handlePrepareFromCalendar(event)}
+                  >
+                    <div className={styles.timelineDot} />
+                    {i < events.length - 1 && <div className={styles.timelineLine} />}
+                    <div className={styles.timelineContent}>
+                      <span className={styles.timelineTime}>{timeStr}</span>
+                      <span className={styles.timelineTitle}>{event.title}</span>
+                      {(event.platform || attendeeCount > 0) && (
+                        <span className={styles.timelineMeta}>
+                          {event.platform && (
+                            <span className={styles.timelinePlatformIcon}>
+                              {platformIcon(event.platform)}
                             </span>
-                          ) : '-'}
-                        </td>
-                        <td>{formatRound(company.round)}</td>
-                        <td>{formatMoney(company.postMoneyValuation)}</td>
-                        <td>{formatMoney(company.raiseSize)}</td>
-                        <td className={styles.descriptionCell}>
-                          {company.description || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredPipelineCompanies.length === 0 && (
-                      <tr>
-                        <td colSpan={7} className={styles.empty}>
-                          No companies match the current filters.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              ) : (
-                <p className={styles.empty}>No companies in pipeline yet.</p>
-              )}
+                          )}
+                          {event.platform && ' '}
+                          {attendeeCount > 0 && `${attendeeCount} participant${attendeeCount > 1 ? 's' : ''}`}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
-          </div>
-        )}
+          ))}
+        </section>
 
-        {activeTab === 'tasks' && (
-          <div className={styles.tabPanel}>
-            <div className={styles.summaryList}>
-              {taskStats && (taskStats.overdueCount > 0 || taskStats.dueThisWeek > 0) && (
-                <div className={styles.taskStatsRow}>
-                  {taskStats.overdueCount > 0 && (
-                    <span className={styles.taskStatOverdue}>{taskStats.overdueCount} overdue</span>
-                  )}
-                  {taskStats.dueThisWeek > 0 && (
-                    <span className={styles.taskStatDue}>{taskStats.dueThisWeek} due this week</span>
-                  )}
-                </div>
-              )}
-              {recentTasks.map((task) => (
-                <button
-                  key={task.id}
-                  className={styles.summaryRow}
-                  onClick={() => navigate('/tasks')}
-                >
-                  <span className={styles.summaryTitleGroup}>
-                    {task.companyDomain && (
-                      <img
-                        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(task.companyDomain)}&sz=32`}
-                        alt=""
-                        className={styles.itemCompanyIcon}
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                      />
-                    )}
-                    <span className={styles.activityTitle}>{task.title}</span>
-                  </span>
-                  <span className={styles.activityMeta}>
-                    {[task.companyName || task.meetingTitle || '', `${daysSinceCreated(task.createdAt)}d`].filter(Boolean).join(' · ')}
-                  </span>
-                </button>
-              ))}
-              {recentTasks.length === 0 && (
-                <p className={styles.empty}>No open tasks.</p>
-              )}
-              {recentTasks.length > 0 && (
-                <button className={styles.showMoreBtn} onClick={() => navigate('/tasks')}>
-                  View all tasks
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        {/* RIGHT: Pipeline + Touches + Tasks */}
+        <div className={styles.rightCol}>
 
-        {activeTab === 'activity' && (
-          <div className={styles.tabPanel}>
-            <div className={styles.tabToolbar}>
-              <button
-                className={styles.configureButton}
-                onClick={() => setActivityConfigOpen((v) => !v)}
-              >
-                {activityConfigOpen ? 'Done' : 'Configure'}
+          {/* Pipeline Overview — Kanban */}
+          <section className={styles.pipelineSection}>
+            <div className={styles.sectionHeader}>
+              <span className={styles.sectionLabel}>PIPELINE OVERVIEW</span>
+              <button className={styles.viewAllBtn} onClick={() => navigate('/pipeline')}>
+                View Pipeline
               </button>
             </div>
-            {activityConfigOpen && (
-              <div className={styles.activityConfig}>
-                <div className={styles.configGroup}>
-                  <span className={styles.configLabel}>Show</span>
-                  {([
-                    ['meeting', 'Meetings'],
-                    ['email', 'Emails'],
-                    ['note', 'Notes']
-                  ] as [DashboardActivityType, string][]).map(([type, label]) => (
-                    <label key={type} className={styles.configCheckbox}>
-                      <input
-                        type="checkbox"
-                        checked={activityFilter.types.includes(type)}
-                        onChange={() => toggleActivityType(type)}
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-                {activityFilter.types.includes('email') && (
-                  <div className={styles.configGroup}>
-                    <span className={styles.configLabel}>Emails from</span>
-                    <label className={styles.configRadio}>
-                      <input
-                        type="radio"
-                        name="emailFilter"
-                        checked={activityFilter.emailCompanyFilter === 'pipeline_portfolio'}
-                        onChange={() => toggleEmailCompanyFilter('pipeline_portfolio')}
-                      />
-                      Pipeline & Portfolio
-                    </label>
-                    <label className={styles.configRadio}>
-                      <input
-                        type="radio"
-                        name="emailFilter"
-                        checked={activityFilter.emailCompanyFilter === 'all'}
-                        onChange={() => toggleEmailCompanyFilter('all')}
-                      />
-                      All companies
-                    </label>
+            <div className={styles.kanbanRow}>
+              {STAGES.map(({ value: stage }) => {
+                const companies = pipelineCompanies.filter(c => c.pipelineStage === stage)
+                const isDragTarget = dragOverStage === stage && dragInfo?.fromStage !== stage
+                return (
+                  <div
+                    key={stage}
+                    className={`${styles.kanbanCol}${isDragTarget ? ` ${styles.kanbanColDragOver}` : ''}`}
+                    onDragOver={(e) => { e.preventDefault(); setDragOverStage(stage) }}
+                    onDragLeave={() => setDragOverStage(null)}
+                    onDrop={async (e) => {
+                      e.preventDefault()
+                      if (!dragInfo || dragInfo.fromStage === stage) {
+                        setDragInfo(null)
+                        setDragOverStage(null)
+                        return
+                      }
+                      const { companyId, fromStage } = dragInfo
+                      setDragInfo(null)
+                      setDragOverStage(null)
+                      setPipelineCompanies(prev =>
+                        prev.map(c => c.id === companyId ? { ...c, pipelineStage: stage } : c)
+                      )
+                      try {
+                        await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, companyId, { pipelineStage: stage })
+                      } catch (err) {
+                        console.error('[Dashboard] Failed to update pipeline stage:', err)
+                        setPipelineCompanies(prev =>
+                          prev.map(c => c.id === companyId ? { ...c, pipelineStage: fromStage } : c)
+                        )
+                      }
+                    }}
+                  >
+                    <div className={styles.kanbanColHeader}>
+                      <span>{formatStage(stage).toUpperCase()}</span>
+                      <span className={styles.kanbanCount}>{companies.length}</span>
+                    </div>
+                    {companies.length === 0 && (
+                      <div className={styles.kanbanEmpty}>No deals</div>
+                    )}
+                    {companies.slice(0, 3).map(company => {
+                      const tag = company.priority ? PRIORITY_TAG_MAP[company.priority] : null
+                      const moneyStr = company.raiseSize ? `$${company.raiseSize}M` : null
+                      const roundStr = formatRound(company.round)
+                      const meta = [moneyStr, roundStr].filter(Boolean).join(' · ')
+                      return (
+                        <button
+                          key={company.id}
+                          className={styles.dealCard}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.effectAllowed = 'move'
+                            setDragInfo({ companyId: company.id, fromStage: stage })
+                          }}
+                          onDragEnd={() => { setDragInfo(null); setDragOverStage(null) }}
+                          onClick={() => navigate(`/company/${company.id}`)}
+                        >
+                          <span className={styles.dealName}>{company.canonicalName}</span>
+                          {meta && <span className={styles.dealMeta}>{meta}</span>}
+                          {tag && (
+                            <span className={`${styles.statusTag} ${tag.className}`}>
+                              {tag.label}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+
+          {/* Recent Touches */}
+          <section className={styles.touchesSection}>
+            <div className={styles.sectionHeader}>
+              <span className={styles.sectionLabel}>RECENT TOUCHES</span>
+              <div className={styles.filterContainer} ref={filterRef}>
+                <button
+                  className={`${styles.filterBtn} ${filterOpen ? styles.filterBtnActive : ''}`}
+                  onClick={() => setFilterOpen(v => !v)}
+                  title="Filter activity"
+                >
+                  <SlidersHorizontal size={12} strokeWidth={2} />
+                </button>
+                {filterOpen && (
+                  <div className={styles.filterDropdown}>
+                    <div className={styles.filterSection}>
+                      <span className={styles.filterLabel}>SHOW</span>
+                      <div className={styles.filterRow}>
+                        {(['meeting', 'email'] as const).map(type => {
+                          const active = activityFilter.types.includes(type)
+                          return (
+                            <button
+                              key={type}
+                              className={`${styles.filterChip} ${active ? styles.filterChipActive : ''}`}
+                              onClick={() => {
+                                const next = active
+                                  ? activityFilter.types.filter(t => t !== type)
+                                  : [...activityFilter.types, type]
+                                if (next.length === 0) return
+                                void saveAndReloadFilter({ ...activityFilter, types: next as DashboardActivityFilter['types'] })
+                              }}
+                            >
+                              {type === 'meeting' ? 'Meetings' : 'Emails'}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    {activityFilter.types.includes('email') && (
+                      <div className={styles.filterSection}>
+                        <span className={styles.filterLabel}>EMAILS FROM</span>
+                        {([
+                          { value: 'qualified', label: 'Qualified', desc: 'Portfolio, Prospect, Investors, Founders, LPs' },
+                          { value: 'all',       label: 'Everyone',  desc: 'All synced email' },
+                        ] as const).map(opt => (
+                          <button
+                            key={opt.value}
+                            className={`${styles.filterOption} ${activityFilter.emailCompanyFilter === opt.value ? styles.filterOptionActive : ''}`}
+                            onClick={() => void saveAndReloadFilter({ ...activityFilter, emailCompanyFilter: opt.value })}
+                          >
+                            <span className={styles.filterOptionLabel}>{opt.label}</span>
+                            <span className={styles.filterOptionDesc}>{opt.desc}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-            <div className={styles.activityList}>
-              {groupActivityByDate((data?.recentActivity || []).slice(0, 12)).map(([heading, items]) => (
-                <div key={heading} className={styles.activityDateGroup}>
-                  <div className={styles.activityDateHeader}>{heading}</div>
-                  {items.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`${styles.activityItemWrapper} ${expandedActivityId === item.id ? styles.activityItemExpanded : ''}`}
-                    >
-                      <button
-                        className={styles.activityRow}
-                        onClick={() => openActivity(item)}
-                      >
-                        {item.companyDomain && item.companyId && (
-                          <img
-                            src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(item.companyDomain)}&sz=32`}
-                            alt=""
-                            className={styles.activityCompanyIcon}
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                            onClick={(e) => { e.stopPropagation(); navigate(`/company/${item.companyId}`) }}
-                          />
-                        )}
-                        <span
-                          className={styles.activityIcon}
-                          style={item.type === 'email' ? { fontSize: 20 } : undefined}
-                        >
-                          {ACTIVITY_ICONS[item.type] || ''}
-                        </span>
-                        <span className={styles.activityTitle}>{item.title}</span>
-                        <span className={styles.activityMeta}>
-                          {[item.companyName, formatOccurrence(item.occurredAt)].filter(Boolean).join(' · ')}
-                        </span>
-                      </button>
-                      {expandedActivityId === item.id && item.type === 'email' && (
-                        <div className={styles.activityEmailBody}>
-                          {item.bodyText || item.snippet || '-'}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ))}
-              {data && data.recentActivity.length === 0 && (
-                <p className={styles.empty}>No activity yet.</p>
-              )}
+              <button className={styles.viewAllBtn} onClick={() => navigate('/meetings')}>
+                View All Activity
+              </button>
             </div>
-          </div>
-        )}
-
-        {activeTab === 'attention' && (
-          <div className={styles.tabPanel}>
-            <div className={styles.summaryList}>
-              {visibleStaleCompanies.length > 0 && (
-                <h3 className={styles.subTitle}>Stale Relationships</h3>
-              )}
-              {visibleStaleCompanies.slice(0, 8).map((company) => (
-                <div key={company.companyId} className={styles.attentionRowWrapper}>
-                  <button
-                    className={styles.summaryRow}
-                    onClick={() => openAttentionCompany(company.companyId)}
-                  >
-                    <span className={styles.summaryTitleGroup}>
-                      {company.companyDomain && (
-                        <img
-                          src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(company.companyDomain)}&sz=32`}
-                          alt=""
-                          className={styles.itemCompanyIcon}
-                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                        />
-                      )}
-                      <span className={styles.activityTitle}>{company.companyName}</span>
-                    </span>
-                    <span className={styles.activityMeta}>{company.daysSinceTouch}d ago</span>
-                  </button>
-                  <button
-                    className={styles.dismissBtn}
-                    onClick={() => dismissStaleCompany(company.companyId)}
-                    title="Dismiss"
-                  >
-                    &times;
-                  </button>
-                </div>
-              ))}
-              {stalledCompanies.length > 0 && (
-                <h3 className={styles.subTitle}>Stalled Pipeline</h3>
-              )}
-              {stalledCompanies.slice(0, 8).map((company) => (
-                <button
-                  key={company.companyId}
-                  className={styles.summaryRow}
-                  onClick={() => openAttentionCompany(company.companyId)}
-                >
-                  <span className={styles.summaryTitleGroup}>
-                    {company.companyDomain && (
-                      <img
-                        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(company.companyDomain)}&sz=32`}
-                        alt=""
-                        className={styles.itemCompanyIcon}
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                      />
-                    )}
-                    <span className={styles.activityTitle}>
-                      {company.companyName} · {company.pipelineStage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-                    </span>
+            {(data?.recentActivity || []).slice(0, 5).map(item => (
+              <button
+                key={item.id}
+                className={styles.touchRow}
+                onClick={() => openActivity(item)}
+              >
+                <span className={styles.touchIcon}>
+                  {item.companyDomain ? (
+                    <img
+                      src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(item.companyDomain)}&sz=32`}
+                      alt=""
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                    />
+                  ) : (
+                    ACTIVITY_ICONS[item.type] || '·'
+                  )}
+                </span>
+                <div className={styles.touchContent}>
+                  <span className={styles.touchTitle}>{item.title}</span>
+                  <span className={styles.touchMeta}>
+                    {[item.companyName, formatOccurrence(item.occurredAt)].filter(Boolean).join(' · ')}
                   </span>
-                  <span className={styles.activityMeta}>{company.daysSinceTouch}d ago</span>
-                </button>
-              ))}
-              {data && visibleStaleCompanies.length === 0 && stalledCompanies.length === 0 && (
-                <p className={styles.empty}>No items need attention.</p>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
+                </div>
+              </button>
+            ))}
+            {(!data || data.recentActivity.length === 0) && (
+              <p className={styles.emptyMeta}>No recent activity.</p>
+            )}
+          </section>
 
+          {/* Open Tasks strip */}
+          <section className={styles.tasksSection}>
+            <div className={styles.sectionHeader}>
+              <span className={styles.sectionLabel}>OPEN TASKS</span>
+              <button className={styles.viewAllBtn} onClick={() => navigate('/tasks')}>
+                View All
+              </button>
+            </div>
+            {openTasks.slice(0, 3).map(task => (
+              <button
+                key={task.id}
+                className={styles.taskRow}
+                onClick={() => navigate('/tasks')}
+              >
+                <span className={styles.touchIcon}>
+                  {task.companyDomain
+                    ? <img src={`https://www.google.com/s2/favicons?domain=${task.companyDomain}&sz=32`} alt="" />
+                    : (task.title?.[0] ?? '·').toUpperCase()
+                  }
+                </span>
+                <span className={styles.taskTitle}>{task.title}</span>
+                <span className={styles.taskMeta}>
+                  {[
+                    task.companyName || task.meetingTitle || '',
+                    `${daysSinceCreated(task.createdAt)}d`
+                  ].filter(Boolean).join(' · ')}
+                </span>
+              </button>
+            ))}
+            {openTasks.length === 0 && (
+              <p className={styles.emptyMeta}>No open tasks.</p>
+            )}
+          </section>
+
+        </div>
+      </div>
+
+      {/* ── AI Command Bar ──────────────────────────────────────────── */}
       <div className={styles.chatSection}>
         <ChatInterface compact />
       </div>
+
     </div>
   )
 }

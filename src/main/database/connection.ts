@@ -63,6 +63,8 @@ import { runRepairOwnCompanyContactsMigration } from './migrations/060-repair-ow
 import { runPartnerMeetingLinkedMeetingMigration } from './migrations/061-partner-meeting-linked-meeting'
 import { runRepairOwnerLinkedinUrlMigration } from './migrations/062-repair-owner-linkedin-url'
 import { runRemoveNotificationContactsMigration } from './migrations/063-remove-notification-contacts'
+import { runCalendarEventDedupMigration } from './migrations/064-calendar-event-dedup'
+import { runRepairImportedNoteFrontmatterMigration } from './migrations/065-repair-imported-note-frontmatter'
 
 let db: Database.Database | null = null
 
@@ -134,6 +136,8 @@ export function getDatabase(): Database.Database {
     runPartnerMeetingLinkedMeetingMigration(db)
     runRepairOwnerLinkedinUrlMigration(db)
     runRemoveNotificationContactsMigration(db)
+    runCalendarEventDedupMigration(db)
+    runRepairImportedNoteFrontmatterMigration(db)
   }
   return db
 }

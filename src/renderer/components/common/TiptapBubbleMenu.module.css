@@ -1,0 +1,31 @@
+.bubbleMenu {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #1a1a1a;
+  border-radius: 6px;
+  padding: 4px 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+
+.bubbleMenu button {
+  background: none;
+  border: none;
+  color: #e5e5e5;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.bubbleMenu button:hover {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+}
+
+.isActive {
+  background: var(--color-accent, #4f46e5);
+  color: #fff;
+}

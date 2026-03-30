@@ -1,99 +1,254 @@
 .container {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 32px 40px 0;
+  min-height: 100%;
+}
+
+/* Sticky header — mirrors MeetingDetail pattern */
+.stickyHeader {
+  position: sticky;
+  top: -24px;
+  z-index: 4;
+  background: var(--color-bg, #F7F8FA);
+  margin: -24px -24px 0;
+  padding: 24px 24px 0;
+}
+
+.back {
+  display: inline-block;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-primary, #3D7A4A);
+  margin-bottom: 16px;
+  border-radius: 4px;
+}
+.back:hover {
+  opacity: 0.75;
 }
 
 .header {
+  margin-bottom: 16px;
+}
+
+/* Title row: h2 (or input when editing) + titleActions */
+.titleRow {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
 }
 
-.backBtn {
-  background: none;
-  border: none;
-  padding: 4px 8px;
+.title {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--color-text, #1A1E24);
   cursor: pointer;
-  color: var(--color-text-secondary, #666);
-  font-size: 18px;
-  line-height: 1;
   border-radius: 4px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  transition: background 0.15s;
+  flex: 1;
+  min-width: 0;
 }
-.backBtn:hover {
-  background: var(--color-bg-secondary, #f5f5f5);
-  color: var(--color-text-primary, #111);
+.title:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
 }
 
-.meetingLink {
-  background: none;
-  border: 1px solid var(--color-border, #ddd);
-  border-radius: 5px;
-  padding: 4px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  color: var(--color-text-secondary, #888);
-  white-space: nowrap;
-}
-.meetingLink:hover {
-  background: var(--color-bg-secondary, #f5f5f5);
-  color: var(--color-text-primary, #111);
+.titlePlaceholder {
+  color: var(--color-text-tertiary, #94A0B0);
+  font-weight: 700;
 }
 
 .titleInput {
   flex: 1;
-  border: none;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--color-text, #1A1E24);
+  background: var(--color-bg, #F7F8FA);
+  border: 1px solid var(--color-primary, #3D7A4A);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin: -2px -6px;
   outline: none;
-  font-size: 22px;
-  font-weight: 600;
-  background: transparent;
-  color: var(--color-text-primary, #111);
-  padding: 0;
+  min-width: 0;
 }
 .titleInput::placeholder {
-  color: var(--color-text-tertiary, #bbb);
+  color: var(--color-text-tertiary, #94A0B0);
+  font-weight: 700;
 }
 
+.titleActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Meta row: date · folder · meeting chip */
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.timestamps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.timestamp {
+  font-size: 12px;
+  color: var(--color-text-secondary, #556170);
+  white-space: nowrap;
+}
+
+/* Folder picker */
+.folderPickerWrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.folderPickerTrigger {
+  background: none;
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--color-text-tertiary, #94A0B0);
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folderPickerTrigger:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
+  color: var(--color-text-secondary, #556170);
+}
+
+.folderPickerDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  background: var(--color-bg, #fff);
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 4px;
+  min-width: 180px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.folderPickerInput {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin-bottom: 4px;
+  outline: none;
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #1A1E24);
+}
+.folderPickerInput:focus {
+  border-color: var(--color-primary, #3D7A4A);
+}
+
+.folderPickerOption {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 5px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--color-text, #1A1E24);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folderPickerOption:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
+}
+
+.folderPickerOptionActive {
+  background: var(--color-accent-faint, #eff6ff);
+  color: var(--color-accent, #7B8FB8);
+  font-weight: 500;
+}
+
+.folderPickerOptionNew {
+  color: var(--color-primary, #3D7A4A);
+  font-style: italic;
+}
+
+/* Source meeting chip */
+.meetingChip {
+  background: none;
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #556170);
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meetingChip:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
+  color: var(--color-text, #1A1E24);
+}
+
+/* Tags and suggestion */
 .taggerRow {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .suggestionRow {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
-.contentArea {
-  flex: 1;
-  width: 100%;
-  border: none;
-  outline: none;
-  resize: none;
-  font-size: 14px;
-  line-height: 1.7;
-  background: transparent;
-  color: var(--color-text-primary, #111);
-  font-family: inherit;
-  padding: 0;
-  min-height: 200px;
+/* Pop-out button */
+.popoutBtn {
+  background: none;
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #556170);
+  white-space: nowrap;
 }
-.contentArea::placeholder {
-  color: var(--color-text-tertiary, #bbb);
+.popoutBtn:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
+  color: var(--color-text, #1A1E24);
 }
 
+/* Pin / Delete buttons */
 .pinBtn {
   background: none;
-  border: 1px solid var(--color-border, #ccc);
+  border: 1px solid var(--color-border, #D0D6DE);
   border-radius: 5px;
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
-  color: var(--color-text-secondary, #666);
+  color: var(--color-text-secondary, #556170);
   white-space: nowrap;
-  flex-shrink: 0;
 }
 .pinBtn:hover, .pinBtnActive {
   background: #fef9c3;
@@ -108,9 +263,8 @@
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
-  color: var(--color-text-secondary, #888);
+  color: var(--color-text-secondary, #556170);
   white-space: nowrap;
-  flex-shrink: 0;
 }
 .deleteBtn:hover {
   color: #dc2626;
@@ -118,15 +272,29 @@
   background: #fff5f5;
 }
 
+/* Tiptap editor — fills remaining height */
+.tiptapEditor {
+  composes: tiptapContent from '../styles/tiptap.module.css';
+  flex: 1;
+  padding: 16px 24px 24px;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-y: auto;
+}
+.tiptapEditor :global(.ProseMirror) {
+  min-height: 200px;
+  outline: none;
+}
+
+/* Footer (save error only) */
 .footer {
-  padding: 10px 0 16px;
-  margin-top: 8px;
-  border-top: 1px solid var(--color-border, #eee);
+  padding: 10px 24px 16px;
+  border-top: 1px solid var(--color-border, #D0D6DE);
 }
 
 .saveStatus {
   font-size: 12px;
-  color: var(--color-text-tertiary, #888);
+  color: var(--color-text-tertiary, #94A0B0);
 }
 .saveStatusError {
   color: #dc2626;
@@ -145,175 +313,8 @@
   align-items: center;
   justify-content: center;
   height: 200px;
-  color: var(--color-text-secondary, #888);
+  color: var(--color-text-secondary, #556170);
   font-size: 14px;
-}
-
-/* Tiptap rich text editor */
-.tiptapEditor {
-  flex: 1;
-  padding: 4px 0;
-  font-size: 14px;
-  line-height: 1.7;
-  overflow-y: auto;
-}
-.tiptapEditor :global(.ProseMirror) {
-  min-height: 200px;
-  outline: none;
-  color: var(--color-text-primary, #111);
-}
-.tiptapEditor :global(.ProseMirror p.is-editor-empty:first-child::before) {
-  content: attr(data-placeholder);
-  float: left;
-  color: var(--color-text-tertiary, #bbb);
-  pointer-events: none;
-  height: 0;
-}
-.tiptapEditor :global(.ProseMirror img) {
-  max-width: 100%;
-  border-radius: 4px;
-}
-.tiptapEditor :global(.ProseMirror a) {
-  color: var(--color-accent, #4f46e5);
-  text-decoration: underline;
-}
-.tiptapEditor :global(.ProseMirror h1) { font-size: 1.5em; font-weight: 700; margin: 0.75em 0 0.25em; }
-.tiptapEditor :global(.ProseMirror h2) { font-size: 1.25em; font-weight: 600; margin: 0.6em 0 0.2em; }
-.tiptapEditor :global(.ProseMirror h3) { font-size: 1.1em; font-weight: 600; margin: 0.5em 0 0.15em; }
-.tiptapEditor :global(.ProseMirror ul),
-.tiptapEditor :global(.ProseMirror ol) { padding-left: 1.5em; }
-.tiptapEditor :global(.ProseMirror code) {
-  background: var(--color-bg-secondary, #f5f5f5);
-  border-radius: 3px;
-  padding: 1px 4px;
-  font-size: 0.9em;
-}
-.tiptapEditor :global(.ProseMirror pre) {
-  background: var(--color-bg-secondary, #f5f5f5);
-  border-radius: 6px;
-  padding: 12px;
-  overflow-x: auto;
-}
-.tiptapEditor :global(.ProseMirror blockquote) {
-  border-left: 3px solid var(--color-border, #ddd);
-  margin: 0;
-  padding-left: 12px;
-  color: var(--color-text-secondary, #666);
-}
-.tiptapEditor :global(.ProseMirror p) { margin: 0 0 0.75em; }
-.tiptapEditor :global(.ProseMirror p:last-child) { margin-bottom: 0; }
-.tiptapEditor :global(.ProseMirror li p) { margin-bottom: 0; }
-
-/* Folder picker */
-.folderPickerWrapper {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.folderPickerTrigger {
-  background: none;
-  border: 1px solid var(--color-border, #ddd);
-  border-radius: 5px;
-  padding: 3px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  color: var(--color-text-tertiary, #aaa);
-  white-space: nowrap;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.folderPickerTrigger:hover {
-  background: var(--color-bg-secondary, #f5f5f5);
-  color: var(--color-text-secondary, #666);
-}
-
-.folderPickerDropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 100;
-  background: var(--color-bg, #fff);
-  border: 1px solid var(--color-border, #e0e0e0);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-  padding: 4px;
-  min-width: 180px;
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-.folderPickerInput {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  font-size: 12px;
-  border: 1px solid var(--color-border, #ddd);
-  border-radius: 4px;
-  padding: 5px 8px;
-  margin-bottom: 4px;
-  outline: none;
-  background: var(--color-bg, #fff);
-  color: var(--color-text, #222);
-}
-.folderPickerInput:focus {
-  border-color: var(--color-accent, #4f46e5);
-}
-
-.folderPickerOption {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 5px 8px;
-  font-size: 12px;
-  cursor: pointer;
-  border-radius: 4px;
-  color: var(--color-text, #222);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.folderPickerOption:hover {
-  background: var(--color-bg-secondary, #f5f5f5);
-}
-
-.folderPickerOptionActive {
-  background: var(--color-accent-faint, #eff6ff);
-  color: var(--color-accent, #4f46e5);
-  font-weight: 500;
-}
-
-.folderPickerOptionNew {
-  color: var(--color-accent, #4f46e5);
-  font-style: italic;
-}
-
-/* Folder breadcrumb */
-.folderBreadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 11px;
-  color: var(--color-text-tertiary, #aaa);
-  flex-shrink: 0;
-}
-.folderBreadcrumb button {
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  color: inherit;
-  font-size: inherit;
-}
-.folderBreadcrumb button:hover {
-  text-decoration: underline;
-  color: var(--color-accent, #4f46e5);
-}
-.breadcrumbSep {
-  margin: 0 2px;
-  color: var(--color-text-tertiary, #ccc);
 }
 
 .errorBoundary {
@@ -323,18 +324,18 @@
   justify-content: center;
   height: 100%;
   gap: 12px;
-  color: var(--color-text-secondary, #666);
+  color: var(--color-text-secondary, #556170);
   font-size: 14px;
 }
 .errorBoundary button {
   padding: 6px 14px;
-  border: 1px solid var(--color-border, #ddd);
+  border: 1px solid var(--color-border, #D0D6DE);
   border-radius: 6px;
   background: none;
   font-size: 13px;
   cursor: pointer;
-  color: var(--color-text-secondary, #555);
+  color: var(--color-text-secondary, #556170);
 }
 .errorBoundary button:hover {
-  background: var(--color-bg-secondary, #f5f5f5);
+  background: var(--color-bg-secondary, #EEF0F4);
 }

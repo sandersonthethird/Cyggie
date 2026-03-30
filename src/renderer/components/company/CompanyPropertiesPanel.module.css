@@ -21,13 +21,22 @@
 
 .header {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 16px 0 12px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
   position: sticky;
   top: 0;
   z-index: 10;
   background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--cv-radius);
+  margin-bottom: 4px;
+}
+
+.headerTopRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
 }
 
 .logo {
@@ -239,9 +248,15 @@
 }
 
 /* Edit / Done buttons */
-.editBtn {
+.headerBtnGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
   align-self: flex-start;
+}
+
+.editBtn {
   background: none;
   border: none;
   padding: 0;
@@ -253,6 +268,131 @@
 
 .editBtn:hover {
   opacity: 0.75;
+}
+
+/* ── Enhance dropdown ────────────────────────────────────────────────────── */
+
+.enhanceWrap {
+  position: relative;
+}
+
+.enhanceBtn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.enhanceBtn:hover {
+  background: var(--color-hover-bg);
+  color: var(--color-text);
+}
+
+.enhanceBtnSuccess {
+  background: var(--color-success-bg, #d1fae5);
+  border-color: var(--color-success, #10b981);
+  color: var(--color-success, #059669);
+}
+
+.enhanceDropdownBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+}
+
+.enhanceDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  min-width: 180px;
+}
+
+.enhanceOption {
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.enhanceOption:hover:not(:disabled) {
+  background: var(--color-hover-bg);
+}
+
+.enhanceOption:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.enhanceTimestamp {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  padding: 4px 10px 2px;
+  border-top: 1px solid var(--color-border);
+  margin-top: 2px;
+}
+
+/* ── Partner Sync status row ─────────────────────────────────────────────── */
+
+.syncStatusRow {
+  margin-top: 2px;
+}
+
+.syncStatusBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  max-width: 100%;
+  text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.syncStatusBtn:hover {
+  border-color: var(--color-accent, #6366f1);
+  background: var(--color-hover-bg);
+}
+
+.syncStatusIcon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.syncStatusText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.syncBriefPreview {
+  color: var(--color-text-muted);
+  font-size: 11px;
 }
 
 .deleteBtn {
@@ -849,3 +989,224 @@
   gap: 4px;
   padding: 4px 0;
 }
+
+/* ── Crimson Velocity: Action Row ── */
+.actionRow {
+  display: flex;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.actionBtnPrimary {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--cv-crimson);
+  color: #fff;
+  border-radius: var(--cv-radius);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+.actionBtnPrimary:hover:not(:disabled) { background: var(--cv-crimson-hover); }
+.actionBtnPrimary:disabled { opacity: 0.5; cursor: default; }
+
+.actionBtnSecondary {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: none;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--cv-radius);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.actionBtnSecondary:hover { background: var(--color-bg-secondary); }
+
+/* ── Crimson Velocity: Social Icon Row ── */
+.socialRow {
+  display: flex;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.socialIcon {
+  background: none;
+  border: none;
+  padding: 5px;
+  border-radius: 6px;
+  color: var(--cv-crimson);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.socialIcon:hover {
+  background: var(--cv-crimson-muted);
+  color: var(--cv-crimson-hover);
+}
+
+/* ── Crimson Velocity: Key Contacts ── */
+.keyContactsSection {
+  padding: 12px 0 8px;
+  border-top: 1px solid var(--color-border);
+  margin-top: 8px;
+}
+
+.keyContactsSectionLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.contactRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+
+.contactAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--cv-crimson-muted);
+  color: var(--cv-crimson);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.contactName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.contactTitle {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+/* ── AddTaskModal ────────────────────────────────────────────────────────── */
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.modal {
+  background: var(--color-bg, #fff);
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 8px;
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.18);
+}
+
+.modalTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text, #1A1E24);
+  margin-bottom: 2px;
+}
+
+.modalCompany {
+  font-size: 12px;
+  color: var(--color-text-secondary, #556170);
+  margin-bottom: 16px;
+}
+
+.modalField {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 14px;
+}
+
+.modalLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #556170);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.modalInput {
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #1A1E24);
+}
+
+.modalInput:focus {
+  border-color: var(--color-primary, #3D7A4A);
+}
+
+.modalActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.modalCancel {
+  background: none;
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #556170);
+}
+
+.modalCancel:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
+}
+
+.modalSubmit {
+  background: var(--color-primary, #3D7A4A);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modalSubmit:hover {
+  background: var(--color-primary-hover, #2E6338);
+}
+
+.modalSubmit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+

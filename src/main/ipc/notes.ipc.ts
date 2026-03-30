@@ -1,4 +1,4 @@
-import { ipcMain, dialog } from 'electron'
+import { ipcMain, dialog, BrowserWindow } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
@@ -14,6 +14,7 @@ import { convertHtmlToMarkdown } from '../utils/html-to-markdown'
 import type { ExtractedImage } from '../utils/html-to-markdown'
 import type { NoteCreateData, NoteFilterView, NoteUpdateData } from '../../shared/types/note'
 import type { ImportFormat } from '../../shared/types/note'
+import { parseFrontmatter, parseAppleNotesDate } from '../utils/frontmatter'
 
 // ---------------------------------------------------------------------------
 // Import helpers (exported for unit tests)
@@ -75,7 +76,8 @@ interface ProcessFileResult {
   skip: boolean
   error?: string
   folderPath: string     // '' for root-level files
-  fileDate: string | null  // stat.mtime.toISOString()
+  fileDate: string | null     // created_at: from frontmatter or stat.mtime
+  fileModified: string | null // updated_at: from frontmatter modified field; null if not present
 }
 
 /** Shared per-file logic used by both scan and import handlers.
@@ -85,27 +87,41 @@ export function processFile(file: string, rootFolder: string, format: ImportForm
   const stat = fs.statSync(file)
   if (stat.size > MAX_FILE_SIZE_BYTES) {
     return {
-      title: '', content: '', images: [], fingerprint: '', skip: true, folderPath: '', fileDate: null,
+      title: '', content: '', images: [], fingerprint: '', skip: true, folderPath: '', fileDate: null, fileModified: null,
       error: `${path.basename(file)}: file too large (>${MAX_FILE_SIZE_BYTES / 1024 / 1024}MB)`
     }
   }
 
-  const title = buildTitleFromPath(file, rootFolder, format)
+  let title = buildTitleFromPath(file, rootFolder, format)
   const folderPath = buildFolderPath(file, rootFolder)
-  const fileDate = stat.mtime.toISOString()
+  let fileDate: string | null = stat.mtime.toISOString()
+  let fileModified: string | null = null
   const ext = path.extname(file).toLowerCase()
 
   if (ext === '.html') {
     const html = fs.readFileSync(file, 'utf8')
     const { markdown, images } = convertHtmlToMarkdown(html)
     const trimmed = markdown.trim()
-    if (!trimmed) return { title: '', content: '', images: [], fingerprint: '', skip: true, folderPath, fileDate }
-    return { title, content: trimmed, images, fingerprint: buildFingerprint(trimmed), skip: false, folderPath, fileDate }
+    if (!trimmed) return { title: '', content: '', images: [], fingerprint: '', skip: true, folderPath, fileDate, fileModified }
+    return { title, content: trimmed, images, fingerprint: buildFingerprint(trimmed), skip: false, folderPath, fileDate, fileModified }
   }
 
-  const content = fs.readFileSync(file, 'utf8').trim()
-  if (!content) return { title: '', content: '', images: [], fingerprint: '', skip: true, folderPath, fileDate }
-  return { title, content, images: [], fingerprint: buildFingerprint(content), skip: false, folderPath, fileDate }
+  let content = fs.readFileSync(file, 'utf8').trim()
+  if (!content) return { title: '', content: '', images: [], fingerprint: '', skip: true, folderPath, fileDate, fileModified }
+
+  // Strip frontmatter and extract metadata (e.g. Apple Notes export format)
+  if (content.startsWith('---\n')) {
+    const parsed = parseFrontmatter(content)
+    if (parsed) {
+      content = parsed.body
+      if (parsed.frontmatter.created) fileDate = parseAppleNotesDate(parsed.frontmatter.created) ?? fileDate
+      if (parsed.frontmatter.modified) fileModified = parseAppleNotesDate(parsed.frontmatter.modified)
+      if (parsed.frontmatter.title && !title) title = parsed.frontmatter.title
+    }
+  }
+
+  if (!content) return { title: '', content: '', images: [], fingerprint: '', skip: true, folderPath, fileDate, fileModified }
+  return { title, content, images: [], fingerprint: buildFingerprint(content), skip: false, folderPath, fileDate, fileModified }
 }
 
 // ---------------------------------------------------------------------------
@@ -187,11 +203,11 @@ export function registerNotesHandlers(): void {
     if (!noteId) throw new Error('noteId is required')
     const note = notesRepo.getNote(noteId)
     if (!note) return null
-    return hydrateCompanionNote(note, getCurrentUserId())
+    return hydrateCompanionNote(note)
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTES_CREATE, (_event, data: NoteCreateData) => {
-    if (!data?.content?.trim() && !data?.title?.trim()) throw new Error('content is required')
+    if (!data) throw new Error('data is required')
     const userId = getCurrentUserId()
     const note = notesRepo.createNote(data, userId)
     if (note) {
@@ -208,6 +224,10 @@ export function registerNotesHandlers(): void {
       const note = notesRepo.updateNote(noteId, updates || {}, userId)
       if (note) {
         logAudit(userId, 'note', noteId, 'update', updates || {})
+        // Broadcast to all windows so timestamps stay current across pop-outs
+        BrowserWindow.getAllWindows().forEach(win => {
+          win.webContents.send(IPC_CHANNELS.NOTE_UPDATED, note)
+        })
       }
       return note
     }
@@ -243,9 +263,12 @@ export function registerNotesHandlers(): void {
     return notesRepo.listImportSources()
   })
 
-  ipcMain.handle(IPC_CHANNELS.NOTES_FOLDER_COUNTS, () => {
-    return notesRepo.getFolderCounts()
-  })
+  ipcMain.handle(
+    IPC_CHANNELS.NOTES_FOLDER_COUNTS,
+    (_event, opts: { hideClaimedMeetingNotes?: boolean } = {}) => {
+      return notesRepo.getFolderCounts(opts.hideClaimedMeetingNotes)
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.NOTES_FOLDER_CREATE, (_event, folderPath: string) => {
     const sanitized = String(folderPath ?? '').trim().replace(/[*?[\]]/g, '')
@@ -362,7 +385,8 @@ export function registerNotesHandlers(): void {
                   importSource: format,
                 },
                 userId,
-                pf.fileDate
+                pf.fileDate,
+                pf.fileModified
               )
 
               if (note) {
@@ -396,9 +420,9 @@ export function registerNotesHandlers(): void {
             // Title match first (fast, no LLM), then LLM as fallback
           const suggestion = suggestTitleEntityTag(note.title) ?? await suggestNoteTag(note.content)
             if (suggestion?.companyId) {
-              notesRepo.updateNote(noteId, { companyId: suggestion.companyId }, userId)
+              notesRepo.tagNote(noteId, { companyId: suggestion.companyId })
             } else if (suggestion?.contactId) {
-              notesRepo.updateNote(noteId, { contactId: suggestion.contactId }, userId)
+              notesRepo.tagNote(noteId, { contactId: suggestion.contactId })
             }
           } catch { /* non-fatal */ }
         }

@@ -1,4 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { EditorContent } from '@tiptap/react'
+import { useTiptapMarkdown } from '../hooks/useTiptapMarkdown'
+import { TiptapBubbleMenu } from '../components/common/TiptapBubbleMenu'
+import StarterKit from '@tiptap/starter-kit'
+import { Markdown } from '@tiptap/markdown'
+import Link from '@tiptap/extension-link'
+import Placeholder from '@tiptap/extension-placeholder'
+import { Clock } from 'lucide-react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useRecordingStore } from '../stores/recording.store'
@@ -53,6 +61,24 @@ function formatVideoTime(secs: number): string {
   const s = Math.floor(secs % 60)
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
   return `${m}:${String(s).padStart(2, '0')}`
+}
+
+function getInitials(name: string): string {
+  return name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0] ?? '').join('').toUpperCase() || '?'
+}
+
+function relativeTime(date: Date | string): string {
+  const diff = Math.round((Date.now() - new Date(date).getTime()) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`
+  return `${Math.floor(diff / 86400)} d ago`
+}
+
+function meetingStatusLabel(status: string, s: typeof styles): { label: string; className: string } {
+  if (status === 'summarized') return { label: 'SUMMARIZED', className: s.statusSummarized }
+  if (status === 'transcribed') return { label: 'TRANSCRIBED', className: s.statusTranscribed }
+  return { label: 'SCHEDULED', className: s.statusScheduled }
 }
 
 function waitForMediaReady(video: HTMLVideoElement, timeoutMs = 3000): Promise<void> {
@@ -169,11 +195,37 @@ export default function MeetingDetail() {
     summaryDraft,
     setSummaryDraft,
     handleNotesChange,
+    handleNotesChangeText,
     handleSummaryChange,
     saveNotes,
     flushNotes,
     reset: resetAutoSave,
+    lastEditedAt,
   } = useNotesAutoSave(id)
+  // Tiptap notes editor — dep [id] ensures recreation on meeting switch
+  const { editor: meetingNotesEditor, loadContent: loadNotesContent } = useTiptapMarkdown(
+    {
+      extensions: [
+        StarterKit,
+        Markdown,
+        Link.configure({ openOnClick: true }),
+        Placeholder.configure({ placeholder: 'Jot down your meeting notes...' }),
+      ],
+      editable: true,
+      onUpdate: ({ editor: ed }) => {
+        const mkd = ed.getMarkdown?.() ?? ed.getText()
+        handleNotesChangeText(mkd)
+      },
+    },
+    [id],
+  )
+
+  const wordCount = useMemo(() => {
+    const combined = `${notesDraft ?? ''} ${summaryDraft ?? ''}`.trim()
+    if (!combined) return 0
+    return combined.split(/\s+/).filter(Boolean).length
+  }, [notesDraft, summaryDraft])
+
   const [editingSummary, setEditingSummary] = useState(false)
   const summaryTextareaRef = useRef<HTMLTextAreaElement>(null)
   const startRecording = useRecordingStore((s) => s.startRecording)
@@ -193,6 +245,9 @@ export default function MeetingDetail() {
   const audioCapture = useSharedAudioCapture()
   const videoCapture = useSharedVideoCapture()
   const prevRecordingRef = useRef(false)
+  // Tracks the most-recently-requested meeting load; used to discard stale async
+  // results when the user navigates away before a load completes.
+  const loadIdRef = useRef<string | undefined>()
   const [videoPath, setVideoPath] = useState<string | null>(null)
   const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null)
   const [isVideoLoading, setIsVideoLoading] = useState(false)
@@ -476,7 +531,16 @@ export default function MeetingDetail() {
 
   const loadMeeting = useCallback(async () => {
     if (!id) return
+    loadIdRef.current = id  // mark this as the active load
+
     const result = await api.invoke<MeetingData | null>(IPC_CHANNELS.MEETING_GET, id)
+
+    // Bail if a newer load has started (user navigated away before this resolved)
+    if (loadIdRef.current !== id) {
+      console.log('[MeetingDetail] Discarding stale load result for:', id, '(current:', loadIdRef.current, ')')
+      return
+    }
+
     if (!result) {
       navigate('/meetings')
       return
@@ -485,25 +549,27 @@ export default function MeetingDetail() {
     setLocalSpeakerMap(result.meeting.speakerMap)
     setSpeakerContactMap(result.meeting.speakerContactMap ?? {})
     resetAutoSave(result.meeting.notes, result.summary)
+    loadNotesContent(result.meeting.notes ?? '')  // sets ref + triggers editor recreation → onCreate parses ✓
     setSummaryExists(!!result.summary)
     if (result.summary) setShowNotes(false)
 
     // Load tasks linked to this meeting
     api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
-      .then(setMeetingTasks)
+      .then((tasks) => { if (loadIdRef.current === id) setMeetingTasks(tasks) })
       .catch((err) => console.error('[MeetingDetail] Failed to load tasks:', err))
 
     // Ask main process for a playable recording path (includes legacy/fallback resolution).
     api.invoke<string | null>(IPC_CHANNELS.VIDEO_GET_PATH, id)
-      .then(setVideoPath)
+      .then((path) => { if (loadIdRef.current === id) setVideoPath(path) })
       .catch((err) => {
         console.error('[MeetingDetail] Failed to resolve recording path:', err)
-        setVideoPath(null)
+        if (loadIdRef.current === id) setVideoPath(null)
       })
 
     // Fetch company suggestions (with logos)
     api.invoke<CompanySuggestion[]>(IPC_CHANNELS.COMPANY_GET_SUGGESTIONS, id)
       .then((suggestions) => {
+        if (loadIdRef.current !== id) return
         const seen = new Set<string>()
         const deduped = suggestions.filter((s) => {
           const key = companySuggestionKey(s)
@@ -531,7 +597,7 @@ export default function MeetingDetail() {
         IPC_CHANNELS.CONTACT_RESOLVE_EMAILS,
         result.meeting.attendeeEmails
       )
-        .then(setAttendeeContactMap)
+        .then((map) => { if (loadIdRef.current === id) setAttendeeContactMap(map) })
         .catch(() => {})
     }
 
@@ -544,7 +610,21 @@ export default function MeetingDetail() {
         }
       }
     }
-  }, [id, navigate])
+  }, [id, navigate, loadNotesContent])
+
+  // Immediately clear stale data when navigating to a different meeting,
+  // so old content doesn't persist during the async load window.
+  useEffect(() => {
+    if (!id) return
+    setData(null)
+    setShowNotes(true)        // reset to default — loadMeeting sets false only if summary exists
+    setMeetingTasks([])
+    setVideoPath(null)
+    setCompanySuggestions([])
+    setCompanyTagSelections({})
+    setAttendeeContactMap({})
+    setSummaryExists(false)
+  }, [id])
 
   useEffect(() => {
     loadMeeting()
@@ -1384,6 +1464,13 @@ export default function MeetingDetail() {
           &larr; {backLabel}
         </button>
 
+        {isThisMeetingRecording && (
+          <div className={styles.recordingBadge}>
+            <span className={styles.recordingBadgeDot} />
+            RECORDING ACTIVE
+          </div>
+        )}
+
         <div className={styles.header}>
           <div className={styles.titleRow}>
             {editingTitle ? (
@@ -1455,39 +1542,55 @@ export default function MeetingDetail() {
             {meeting.durationSeconds && (
               <span>{Math.round(meeting.durationSeconds / 60)} min</span>
             )}
+            {!isThisMeetingRecording && (() => {
+              const { label, className } = meetingStatusLabel(meeting.status, styles)
+              return (
+                <span className={`${styles.meetingStatusBadge} ${className}`}>
+                  {label}
+                </span>
+              )
+            })()}
             <div className={styles.speakers}>
-              {meeting.attendees?.map((attendee, i) => {
-                const email = meeting.attendeeEmails?.[i]?.trim().toLowerCase() || ''
-                const resolved = attendeeContactMap[email]
-                const contactId = resolved?.id
-                const displayName = resolved?.fullName ?? attendee
-                return (
-                  <button
-                    key={`${attendee}-${i}`}
-                    className={styles.speakerChip}
-                    onClick={async () => {
-                      if (contactId) {
-                        navigate(`/contact/${contactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
-                        return
-                      }
-                      if (!email) return
-                      try {
-                        const created = await api.invoke<{ id: string }>(
-                          IPC_CHANNELS.CONTACT_CREATE,
-                          { fullName: attendee, email }
-                        )
-                        setAttendeeContactMap((prev) => ({ ...prev, [email]: { id: created.id, fullName: attendee } }))
-                        navigate(`/contact/${created.id}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
-                      } catch (err) {
-                        console.error('[MeetingDetail] Failed to create contact:', err)
-                      }
-                    }}
-                    title="View contact"
-                  >
-                    {displayName}
-                  </button>
-                )
-              })}
+              <div className={styles.attendeeAvatars}>
+                {(meeting.attendees ?? []).slice(0, 4).map((attendee, i) => {
+                  const email = meeting.attendeeEmails?.[i]?.trim().toLowerCase() || ''
+                  const resolved = attendeeContactMap[email]
+                  const contactId = resolved?.id
+                  const displayName = resolved?.fullName ?? attendee
+                  const initials = getInitials(displayName)
+                  return (
+                    <button
+                      key={`${attendee}-${i}`}
+                      className={styles.attendeeAvatar}
+                      title={displayName}
+                      onClick={async () => {
+                        if (contactId) {
+                          navigate(`/contact/${contactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
+                          return
+                        }
+                        if (!email) return
+                        try {
+                          const created = await api.invoke<{ id: string }>(
+                            IPC_CHANNELS.CONTACT_CREATE,
+                            { fullName: attendee, email }
+                          )
+                          setAttendeeContactMap((prev) => ({ ...prev, [email]: { id: created.id, fullName: attendee } }))
+                          navigate(`/contact/${created.id}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
+                        } catch (err) {
+                          console.error('[MeetingDetail] Failed to create contact:', err)
+                        }
+                      }}
+                    >
+                      {initials}
+                    </button>
+                  )
+                })}
+                {(meeting.attendees?.length ?? 0) > 4 && (
+                  <span className={styles.attendeeAvatarOverflow}>
+                    +{(meeting.attendees?.length ?? 0) - 4}
+                  </span>
+                )}
+              </div>
               {!showCompanyPicker ? (
                 <button
                   className={styles.addCompanyBtn}
@@ -1702,13 +1805,10 @@ export default function MeetingDetail() {
               </button>
             ) : null}
             {(showNotes || !hasSummary) && (
-              <textarea
-                className={styles.notesTextarea}
-                value={notesDraft}
-                onChange={handleNotesChange}
-                placeholder="Add your meeting notes here..."
-                rows={6}
-              />
+              <div className={styles.meetingNotesEditor}>
+                <EditorContent editor={meetingNotesEditor} />
+                <TiptapBubbleMenu editor={meetingNotesEditor} />
+              </div>
             )}
 
             {hasTranscript && (
@@ -1756,9 +1856,9 @@ export default function MeetingDetail() {
             )}
 
             {hasSummary && (
-              <>
+              <div className={styles.summaryCard}>
                 <div className={styles.summaryDivider}>
-                  <span>Summary</span>
+                  <span>✦ AI SUMMARY & ACTION ITEMS</span>
                 </div>
                 {isGenerating ? (
                   <>
@@ -1796,11 +1896,11 @@ export default function MeetingDetail() {
                     <ReactMarkdown>{summaryDraft}</ReactMarkdown>
                   </div>
                 )}
-              </>
+              </div>
             )}
 
             {meetingTasks.length > 0 && (
-              <div className={styles.meetingTasksSection}>
+              <div className={styles.taskCard}>
                 <div className={styles.summaryDivider}>
                   <span>Tasks ({meetingTasks.length})</span>
                 </div>
@@ -1839,9 +1939,21 @@ export default function MeetingDetail() {
               </div>
             )}
 
-            {!displaySummary && !hasTranscript && !notesDraft && (
-              <div className={styles.noContent}>
-                Jot down notes before or during your meeting. After recording, click "Enhance" to generate a summary.
+            {(notesDraft || summaryDraft) && (
+              <div className={styles.noteFooter}>
+                <div className={styles.noteFooterMeta}>
+                  <Clock size={12} strokeWidth={2} />
+                  Last edited {relativeTime(lastEditedAt ?? meeting.updatedAt)} · {wordCount} words
+                </div>
+                <div className={styles.noteFooterActions}>
+                  <button
+                    className={styles.noteFooterBtn}
+                    title="Share"
+                    onClick={() => setShareMenuOpen(true)}
+                  >
+                    ···
+                  </button>
+                </div>
               </div>
             )}
 

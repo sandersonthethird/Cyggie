@@ -15,6 +15,7 @@ import { api } from '../api'
 export function useNotesAutoSave(meetingId: string | undefined) {
   const [notesDraft, setNotesDraft] = useState('')
   const [summaryDraft, setSummaryDraft] = useState('')
+  const [lastEditedAt, setLastEditedAt] = useState<Date | null>(null)
 
   const notesDraftRef = useRef('')
   const summaryDraftRef = useRef('')
@@ -57,11 +58,23 @@ export function useNotesAutoSave(meetingId: string | undefined) {
     const text = e.target.value
     setNotesDraft(text)
     notesDraftRef.current = text
+    setLastEditedAt(new Date())
     if (notesSaveRef.current) clearTimeout(notesSaveRef.current)
     notesSaveRef.current = setTimeout(() => {
       saveNotes(text)
       notesSaveRef.current = null
     }, 500)
+  }, [saveNotes])
+
+  const handleNotesChangeText = useCallback((text: string) => {
+    setNotesDraft(text)
+    notesDraftRef.current = text
+    setLastEditedAt(new Date())
+    if (notesSaveRef.current) clearTimeout(notesSaveRef.current)
+    notesSaveRef.current = setTimeout(() => {
+      void saveNotes(text)
+      notesSaveRef.current = null
+    }, 1500)
   }, [saveNotes])
 
   const handleSummaryChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -83,6 +96,7 @@ export function useNotesAutoSave(meetingId: string | undefined) {
     notesDraftRef.current = n
     setSummaryDraft(s)
     summaryDraftRef.current = s
+    setLastEditedAt(null)
   }, [])
 
   /**
@@ -102,10 +116,12 @@ export function useNotesAutoSave(meetingId: string | undefined) {
     summaryDraft,
     setSummaryDraft,
     handleNotesChange,
+    handleNotesChangeText,
     handleSummaryChange,
     saveNotes,
     saveSummary,
     flushNotes,
     reset,
+    lastEditedAt,
   }
 }

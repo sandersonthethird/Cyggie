@@ -16,15 +16,45 @@
   padding: 24px;
 }
 
+/* Header section: title + meta row */
+.header {
+  padding: 20px 24px 0;
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text, #1A1E24);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  transition: background 0.15s;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+.title:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
+}
+
+.titlePlaceholder {
+  color: var(--color-text-tertiary, #ccc);
+  font-weight: 600;
+}
+
 .titleInput {
   font-size: 20px;
   font-weight: 600;
   border: none;
+  border-bottom: 1px solid var(--color-primary, #3D7A4A);
   outline: none;
-  padding: 24px 24px 8px;
-  color: var(--color-text-primary, #111);
+  padding: 2px 4px;
+  margin: -2px -4px 6px;
+  color: var(--color-text, #1A1E24);
   background: transparent;
-  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 .titleInput::placeholder {
   color: var(--color-text-tertiary, #ccc);
@@ -33,25 +63,167 @@
   opacity: 0.5;
 }
 
-.taggerRow {
-  padding: 0 24px 12px;
+/* Meta row: date + folder */
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.timestamps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.timestamp {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #94A0B0);
+  white-space: nowrap;
+}
+
+.popoutBtn {
+  background: none;
+  border: none;
+  padding: 2px 5px;
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 4px;
+  color: var(--color-text-tertiary, #94A0B0);
+  opacity: 0.6;
+  transition: opacity 0.1s, background 0.1s;
+  flex-shrink: 0;
+}
+.popoutBtn:hover {
+  opacity: 1;
+  background: var(--color-bg-secondary, #EEF0F4);
+  color: var(--color-text-secondary, #556170);
+}
+
+/* Folder picker */
+.folderPickerWrapper {
+  position: relative;
   flex-shrink: 0;
 }
 
+.folderPickerTrigger {
+  background: none;
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--color-text-tertiary, #94A0B0);
+  white-space: nowrap;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folderPickerTrigger:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
+  color: var(--color-text-secondary, #556170);
+}
+
+.folderPickerDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  background: var(--color-bg, #fff);
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 4px;
+  min-width: 160px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.folderPickerInput {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin-bottom: 4px;
+  outline: none;
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #1A1E24);
+}
+.folderPickerInput:focus {
+  border-color: var(--color-primary, #3D7A4A);
+}
+
+.folderPickerOption {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 5px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--color-text, #1A1E24);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folderPickerOption:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
+}
+
+.folderPickerOptionActive {
+  background: var(--color-accent-faint, #eff6ff);
+  color: var(--color-accent, #7B8FB8);
+  font-weight: 500;
+}
+
+.folderPickerOptionNew {
+  color: var(--color-primary, #3D7A4A);
+  font-style: italic;
+}
+
+.taggerRow {
+  padding: 0 24px 10px;
+  flex-shrink: 0;
+}
+
+.meetingChipRow {
+  padding: 0 24px 8px;
+  flex-shrink: 0;
+}
+
+.meetingChip {
+  background: none;
+  border: 1px solid var(--color-border, #D0D6DE);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #556170);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meetingChip:hover {
+  background: var(--color-bg-secondary, #EEF0F4);
+  color: var(--color-text, #1A1E24);
+}
+
 .editor {
+  composes: tiptapContent from '../../styles/tiptap.module.css';
   flex: 1;
   overflow-y: auto;
   padding: 0 24px 16px;
   min-height: 0;
-}
-
-/* Match NoteDetail tiptap editor styling */
-.editor :global(.tiptap) {
-  outline: none;
-  min-height: 120px;
   font-size: 14px;
   line-height: 1.6;
-  color: var(--color-text-primary, #111);
 }
 
 .stateMsg {

@@ -4,21 +4,21 @@
  * Flow:
  *   1. Mount → fire PARTNER_MEETING_GET_ACTIVE + PARTNER_MEETING_GENERATE_BRIEF in parallel
  *   2. Section auto-detected from company pipeline stage; user can change
- *   3. Brief shown pre-expanded (always editable from the start)
+ *   3. Brief shown pre-expanded (editable once AI brief loads)
  *   4. If company already in digest → pre-fills with existing data; submit = update
  *   5. If LLM fails → brief field shows blank; add is never blocked
  *
- * Section auto-detection:
- *   screening/diligence (new this week) → new_deals
- *   screening/diligence (older)         → existing_deals
- *   pass                                → passing
- *   portfolio entity_type               → portfolio_updates
- *   null/other                          → priorities
+ * Section auto-detection (mirrors determineSection() in partner-meeting.repo.ts):
+ *   portfolio entity_type  → portfolio_updates
+ *   pass                   → passing
+ *   screening              → new_deals  ("Screening")
+ *   diligence              → existing_deals ("Diligence")
+ *   null/other             → priorities
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useEditor, EditorContent } from '@tiptap/react'
+import { EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
@@ -26,31 +26,28 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { DigestSection, PartnerMeetingItem } from '../../../shared/types/partner-meeting'
 import type { CompanySummary } from '../../../shared/types/company'
 import { api } from '../../api'
+import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import styles from './AddToSyncModal.module.css'
 
-const SECTION_LABELS: Record<DigestSection, string> = {
+export const SECTION_LABELS: Record<DigestSection, string> = {
   priorities: 'Priorities',
-  new_deals: 'New Deals',
-  existing_deals: 'Existing Deals',
+  new_deals: 'Screening',
+  existing_deals: 'Diligence',
   portfolio_updates: 'Portfolio Updates',
   passing: 'Passing',
   admin: 'Admin',
   other: 'Other',
 }
 
-const ALL_SECTIONS: DigestSection[] = [
+export const ALL_SECTIONS: DigestSection[] = [
   'priorities', 'new_deals', 'existing_deals', 'portfolio_updates', 'passing', 'other',
 ]
 
 function autoDetectSection(company: CompanySummary): DigestSection {
   if (company.entityType === 'portfolio') return 'portfolio_updates'
   if (company.pipelineStage === 'pass') return 'passing'
-  if (company.pipelineStage === 'screening' || company.pipelineStage === 'diligence') {
-    const sevenDaysAgo = new Date()
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-    if (new Date(company.createdAt) >= sevenDaysAgo) return 'new_deals'
-    return 'existing_deals'
-  }
+  if (company.pipelineStage === 'screening') return 'new_deals'
+  if (company.pipelineStage === 'diligence') return 'existing_deals'
   return 'priorities'
 }
 
@@ -73,11 +70,13 @@ export function AddToSyncModal({ company, onClose, onAdded }: AddToSyncModalProp
   const [statusUpdate, setStatusUpdate] = useState('')
   const [briefLoading, setBriefLoading] = useState(false)
 
-  const briefEditor = useEditor({
+  // editable: !briefLoading keeps the field read-only while AI generates —
+  // eliminates any race condition where user edits get clobbered by the arriving brief.
+  const { editor: briefEditor, loadContent: loadBriefContent } = useTiptapMarkdown({
     extensions: [StarterKit, Markdown, Link.configure({ openOnClick: false })],
-    content: '',
+    editable: !briefLoading,
     onUpdate: ({ editor: e }) => {
-      setBriefContent(e.storage.markdown?.getMarkdown?.() ?? e.getText())
+      setBriefContent(e.getMarkdown?.() ?? e.getText())
     },
   })
 
@@ -101,7 +100,7 @@ export function AddToSyncModal({ company, onClose, onAdded }: AddToSyncModalProp
             setSection(existingItem.section)
             const existing = existingItem.brief ?? ''
             setBriefContent(existing)
-            briefEditor?.commands.setContent(existing)
+            loadBriefContent(existing)
             setStatusUpdate(existingItem.statusUpdate ?? '')
           } else {
             // Generate brief from AI
@@ -110,7 +109,7 @@ export function AddToSyncModal({ company, onClose, onAdded }: AddToSyncModalProp
               .then(result => {
                 if (!cancelled && result.brief) {
                   setBriefContent(result.brief)
-                  briefEditor?.commands.setContent(result.brief)
+                  loadBriefContent(result.brief)
                 }
               })
               .catch(() => { /* Brief failed — leave blank, don't block add */ })
@@ -126,19 +125,7 @@ export function AddToSyncModal({ company, onClose, onAdded }: AddToSyncModalProp
 
     load()
     return () => { cancelled = true }
-  }, [company.id]) // briefEditor excluded: ref-stable after mount
-
-  // Sync briefContent into editor when it loads late (AI brief arrives after editor mounts)
-  const prevBriefRef = useRef('')
-  useEffect(() => {
-    if (briefContent && briefContent !== prevBriefRef.current && briefEditor && !briefLoading) {
-      prevBriefRef.current = briefContent
-      const current = briefEditor.storage.markdown?.getMarkdown?.() ?? briefEditor.getText()
-      if (!current.trim()) {
-        briefEditor.commands.setContent(briefContent)
-      }
-    }
-  }, [briefContent, briefLoading, briefEditor])
+  }, [company.id]) // loadBriefContent excluded: stable ref
 
   const handleSubmit = useCallback(async () => {
     if (state.status !== 'ready') return

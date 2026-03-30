@@ -61,6 +61,7 @@ export const IPC_CHANNELS = {
   COMPANY_EMAIL_INGEST: 'company:email-ingest',
   COMPANY_EMAIL_INGEST_PROGRESS: 'company:email-ingest:progress',
   COMPANY_EMAIL_INGEST_CANCEL: 'company:email-ingest:cancel',
+  COMPANY_EMAIL_UNLINK: 'company:email-unlink',
   COMPANY_FILES: 'company:files',
   COMPANY_FILES_READABLE: 'company:files-readable',
   COMPANY_TIMELINE: 'company:timeline',
@@ -290,6 +291,13 @@ export const IPC_CHANNELS = {
   // Company on-demand enrichment (batched — one LLM call for all meetings)
   COMPANY_ENRICH_FROM_MEETINGS: 'company:enrich-from-meetings',
 
+  // Pitch deck ingestion (PDF or URL → LLM extraction → company profile)
+  COMPANY_PITCH_DECK_OPEN_DIALOG: 'company:pitch-deck-open-dialog',
+  COMPANY_PITCH_DECK_INGEST: 'company:pitch-deck-ingest',
+
+  // File-based company enhancement — runs VC analysis + creates note, without touching partner sync
+  COMPANY_ANALYZE_FILE: 'company:analyze-file',
+
   // Partner Meeting Digest
   PARTNER_MEETING_GET_ACTIVE: 'partner-meeting:get-active',
   PARTNER_MEETING_GET: 'partner-meeting:get',
@@ -302,6 +310,7 @@ export const IPC_CHANNELS = {
   PARTNER_MEETING_GET_SUGGESTIONS: 'partner-meeting:get-suggestions',
   PARTNER_MEETING_DISMISS_SUGGESTION: 'partner-meeting:dismiss-suggestion',
   PARTNER_MEETING_GENERATE_BRIEF: 'partner-meeting:generate-brief',
+  PARTNER_MEETING_ADD_PITCH_DECK_COMPANY: 'partner-meeting:add-pitch-deck-company',
   PARTNER_MEETING_SET_MEETING: 'partner-meeting:set-meeting',
   PARTNER_MEETING_GENERATE_RECONCILIATION: 'partner-meeting:generate-reconciliation',
   PARTNER_MEETING_RECONCILE_PROPOSAL: 'partner-meeting:reconcile-proposal',
@@ -316,7 +325,11 @@ export const IPC_CHANNELS = {
   APP_CHANGE_STORAGE_DIR: 'app:change-storage-dir',
   APP_OPEN_PATH: 'app:open-path',
   APP_PICK_FOLDER: 'app:pick-folder',
-  APP_PICK_LOGO_FILE: 'app:pick-logo-file'
+  APP_PICK_LOGO_FILE: 'app:pick-logo-file',
+  APP_OPEN_NOTE_WINDOW: 'app:open-note-window',
+
+  // Cross-window broadcasts (main → renderer)
+  NOTE_UPDATED: 'note:updated'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

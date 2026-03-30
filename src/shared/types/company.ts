@@ -185,6 +185,7 @@ export interface CompanyEmailRef {
   bodyText: string | null
   isUnread: boolean
   threadId: string | null
+  threadGroup: string  // COALESCE(thread_id, id) — used for thread-aware unlink
   providerThreadId: string | null
   threadMessageCount: number
   participants: CompanyEmailParticipantRef[]
@@ -250,6 +251,7 @@ export interface CompanyTimelineItem {
   subtitle: string | null
   referenceId: string
   referenceType: CompanyTimelineReferenceType
+  threadGroup?: string  // present when type === 'email', used for thread-aware bulk unlink
 }
 
 export type { Note as CompanyNote } from './note'

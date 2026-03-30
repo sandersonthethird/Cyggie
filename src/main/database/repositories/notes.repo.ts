@@ -174,7 +174,8 @@ export function getNote(noteId: string): Note | null {
 export function createNote(
   data: NoteCreateData & { id?: string },
   userId: string | null = null,
-  createdAt?: string | null
+  createdAt?: string | null,
+  updatedAt?: string | null
 ): Note | null {
   const db = getDatabase()
   const id = data.id ?? randomUUID()
@@ -184,7 +185,7 @@ export function createNote(
       is_pinned, created_by_user_id, updated_by_user_id, created_at, updated_at,
       folder_path, import_source
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ${createdAt ? '?' : "datetime('now')"}, datetime('now'), ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ${createdAt ? '?' : "datetime('now')"}, ${updatedAt ? '?' : "datetime('now')"}, ?, ?)
   `).run(
     id,
     data.title ?? null,
@@ -196,11 +197,31 @@ export function createNote(
     userId,
     userId,
     ...(createdAt ? [createdAt] : []),
+    ...(updatedAt ? [updatedAt] : []),
     data.folderPath ?? null,
     data.importSource ?? null,
   )
   if (result.changes === 0) return null
   return getNote(id)
+}
+
+/**
+ * Tag a note with a company or contact association WITHOUT touching updated_at.
+ * Used by auto-tagging flows to avoid clobbering the true last-modified date
+ * that was set at import time.
+ */
+export function tagNote(
+  noteId: string,
+  tag: { companyId?: string | null; contactId?: string | null }
+): void {
+  const db = getDatabase()
+  const sets: string[] = []
+  const params: unknown[] = []
+  if (tag.companyId !== undefined) { sets.push('company_id = ?'); params.push(tag.companyId) }
+  if (tag.contactId !== undefined) { sets.push('contact_id = ?'); params.push(tag.contactId) }
+  if (sets.length === 0) return
+  params.push(noteId)
+  db.prepare(`UPDATE notes SET ${sets.join(', ')} WHERE id = ?`).run(...params)
 }
 
 export function updateNote(
@@ -321,10 +342,20 @@ export function deleteFolder(path: string): void {
   tx()
 }
 
-export function getFolderCounts(): { folderPath: string | null; count: number }[] {
+export function getFolderCounts(
+  hideClaimedMeetingNotes?: boolean
+): { folderPath: string | null; count: number }[] {
   const db = getDatabase()
+  const meetingClause = hideClaimedMeetingNotes ? CLAIMED_MEETING_FILTER : ''
   return db
-    .prepare('SELECT folder_path AS folderPath, COUNT(*) as count FROM notes GROUP BY folder_path')
+    .prepare(`
+      SELECT n.folder_path AS folderPath, COUNT(*) as count
+      FROM notes n
+      WHERE 1=1
+      ${DEDUP_FILTER}
+      ${meetingClause}
+      GROUP BY n.folder_path
+    `)
     .all() as { folderPath: string | null; count: number }[]
 }
 

@@ -229,6 +229,60 @@ const ACTIVITY_SQL_EMAIL_PIPELINE_PORTFOLIO = `
   )
 `
 
+const ACTIVITY_SQL_EMAIL_QUALIFIED = `
+  SELECT
+    'email:' || em.id AS id,
+    'email' AS type,
+    COALESCE(NULLIF(TRIM(em.subject), ''), '(no subject)') AS title,
+    em.from_email AS subtitle,
+    COALESCE(em.received_at, em.sent_at, em.created_at) AS occurred_at,
+    em.id AS reference_id,
+    'email' AS reference_type,
+    (
+      SELECT l.company_id
+      FROM email_company_links l
+      WHERE l.message_id = em.id
+      ORDER BY l.confidence DESC, datetime(l.created_at) ASC
+      LIMIT 1
+    ) AS company_id,
+    em.body_text,
+    em.snippet
+  FROM email_messages em
+  WHERE em.id IN (
+    SELECT e2.id FROM email_messages e2
+    WHERE e2.thread_id IS NULL
+    UNION ALL
+    SELECT e3.id FROM (
+      SELECT e4.id, ROW_NUMBER() OVER (
+        PARTITION BY e4.thread_id
+        ORDER BY COALESCE(e4.received_at, e4.sent_at, e4.created_at) DESC
+      ) AS rn
+      FROM email_messages e4
+      WHERE e4.thread_id IS NOT NULL
+    ) e3 WHERE e3.rn = 1
+  )
+  AND (
+    EXISTS (
+      SELECT 1
+      FROM email_company_links ecl
+      JOIN org_companies oc ON oc.id = ecl.company_id
+      WHERE ecl.message_id = em.id
+        AND oc.entity_type IN ('portfolio', 'prospect')
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM email_contact_links ecl2
+      JOIN contacts c ON c.id = ecl2.contact_id
+      LEFT JOIN org_companies oc2 ON oc2.id = c.primary_company_id
+      WHERE ecl2.message_id = em.id
+        AND (
+          c.contact_type IN ('investor', 'founder')
+          OR oc2.entity_type = 'lp'
+        )
+    )
+  )
+`
+
 const ACTIVITY_SQL_NOTE = `
   SELECT
     'note:' || n.id AS id,
@@ -254,10 +308,12 @@ function getActivityFilter(): DashboardActivityFilter {
     const types = Array.isArray(parsed.types)
       ? parsed.types.filter((t) => validTypes.includes(t as DashboardActivityType))
       : DEFAULT_ACTIVITY_FILTER.types
-    const emailCompanyFilter =
-      parsed.emailCompanyFilter === 'all' || parsed.emailCompanyFilter === 'pipeline_portfolio'
-        ? parsed.emailCompanyFilter
-        : DEFAULT_ACTIVITY_FILTER.emailCompanyFilter
+    const raw = parsed.emailCompanyFilter
+    const emailCompanyFilter: DashboardActivityFilter['emailCompanyFilter'] =
+      raw === 'all' ? 'all'
+      : raw === 'qualified' ? 'qualified'
+      : raw === 'pipeline_portfolio' ? 'qualified'   // migrate legacy value
+      : DEFAULT_ACTIVITY_FILTER.emailCompanyFilter
     return { types: types as DashboardActivityType[], emailCompanyFilter }
   } catch {
     return DEFAULT_ACTIVITY_FILTER
@@ -272,8 +328,8 @@ function listRecentActivity(limit = 20): DashboardActivityItem[] {
   if (filter.types.includes('meeting')) unions.push(ACTIVITY_SQL_MEETING)
   if (filter.types.includes('email')) {
     unions.push(
-      filter.emailCompanyFilter === 'pipeline_portfolio'
-        ? ACTIVITY_SQL_EMAIL_PIPELINE_PORTFOLIO
+      filter.emailCompanyFilter === 'qualified'
+        ? ACTIVITY_SQL_EMAIL_QUALIFIED
         : ACTIVITY_SQL_EMAIL_ALL
     )
   }

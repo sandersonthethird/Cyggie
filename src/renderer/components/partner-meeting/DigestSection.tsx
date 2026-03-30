@@ -16,8 +16,8 @@ import styles from './DigestSection.module.css'
 
 const SECTION_LABELS: Record<DigestSectionId, string> = {
   priorities: 'Priorities',
-  new_deals: 'New Deals',
-  existing_deals: 'Existing Deals',
+  new_deals: 'Screening',
+  existing_deals: 'Diligence',
   portfolio_updates: 'Portfolio Updates',
   passing: 'Passing',
   admin: 'Admin',

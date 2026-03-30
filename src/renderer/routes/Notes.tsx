@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { usePicker } from '../hooks/usePicker'
@@ -51,6 +51,48 @@ const FILTERS: { label: string; value: NoteFilterView }[] = [
   { label: 'Untagged', value: 'untagged' },
   { label: 'Tagged', value: 'tagged' }
 ]
+
+interface NoteCardProps {
+  note: Note
+  index: number
+  isActive: boolean
+  isSelected: boolean
+  bulkMode: boolean
+  onCardClick: (note: Note) => void
+  onCheckbox: (e: React.MouseEvent, note: Note, index: number) => void
+}
+
+const NoteCard = memo(function NoteCard({ note, index, isActive, isSelected, bulkMode, onCardClick, onCheckbox }: NoteCardProps) {
+  const title = note.title ||
+    stripMarkdownPreview(note.content.split('\n').find(l => l.trim()) || '') ||
+    ''
+  return (
+    <div
+      className={`${styles.noteCard} ${isActive ? styles.noteCardActive : ''} ${isSelected ? styles.noteCardSelected : ''}`}
+      onClick={() => onCardClick(note)}
+    >
+      {bulkMode && (
+        <label
+          className={styles.noteCheckbox}
+          onClick={(e) => onCheckbox(e, note, index)}
+        >
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => {/* handled by label onClick */}}
+          />
+        </label>
+      )}
+      <div className={styles.noteContent}>
+        <div className={styles.noteTitle}>
+          {note.isPinned && <span className={styles.pinnedIcon}>📌</span>}
+          {title || <span className={styles.noteUntitled}>Untitled</span>}
+        </div>
+        <div className={styles.noteDate}>{formatTime(note.updatedAt)}</div>
+      </div>
+    </div>
+  )
+})
 
 export default function Notes() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -108,12 +150,13 @@ export default function Notes() {
       setFolders(folderList)
       setImportSources(sourceList)
     } catch { /* non-fatal */ }
-  }, [])
+  }, [showMeetingNotes])
 
   const fetchFolderCounts = useCallback(async () => {
     try {
       const rows = await api.invoke<{ folderPath: string | null; count: number }[]>(
-        IPC_CHANNELS.NOTES_FOLDER_COUNTS
+        IPC_CHANNELS.NOTES_FOLDER_COUNTS,
+        { hideClaimedMeetingNotes: !showMeetingNotes }
       )
       const map: Record<string, number> = { __all__: 0 }
       for (const row of rows) {
@@ -689,41 +732,20 @@ export default function Notes() {
                 const showHeader = group !== lastGroup
                 lastGroup = group
 
-                const title = note.title ||
-                  stripMarkdownPreview(note.content.split('\n').find(l => l.trim()) || '') ||
-                  ''
-                const isSelected = selectedIds.has(note.id)
-                const isActive = selectedNoteId === note.id
-
                 return (
                   <div key={note.id}>
                     {showHeader && (
                       <div className={styles.dateGroupHeader}>{group}</div>
                     )}
-                    <div
-                      className={`${styles.noteCard} ${isActive ? styles.noteCardActive : ''} ${isSelected ? styles.noteCardSelected : ''}`}
-                      onClick={() => handleCardClick(note)}
-                    >
-                      {selectedIds.size > 0 && (
-                        <label
-                          className={styles.noteCheckbox}
-                          onClick={(e) => handleCheckbox(e, note, index)}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => {/* handled by label onClick */}}
-                          />
-                        </label>
-                      )}
-                      <div className={styles.noteContent}>
-                        <div className={styles.noteTitle}>
-                          {note.isPinned && <span className={styles.pinnedIcon}>📌</span>}
-                          {title || <span className={styles.noteUntitled}>Untitled</span>}
-                        </div>
-                        <div className={styles.noteDate}>{formatTime(note.updatedAt)}</div>
-                      </div>
-                    </div>
+                    <NoteCard
+                      note={note}
+                      index={index}
+                      isActive={selectedNoteId === note.id}
+                      isSelected={selectedIds.has(note.id)}
+                      bulkMode={selectedIds.size > 0}
+                      onCardClick={handleCardClick}
+                      onCheckbox={handleCheckbox}
+                    />
                   </div>
                 )
               })

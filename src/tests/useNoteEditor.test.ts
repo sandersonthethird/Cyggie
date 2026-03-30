@@ -24,14 +24,38 @@ vi.mock('../renderer/hooks/useDebounce', () => ({
   useDebounce: <T>(value: T) => value,  // synchronous: no delay
 }))
 
-const mockEditor = {
-  commands: { setContent: vi.fn(), focus: vi.fn() },
-  setEditable: vi.fn(),
-  getText: vi.fn(() => ''),
-  storage: { markdown: { getMarkdown: vi.fn(() => '') } },
+// Shared spies — outlive individual editor instances so assertions work across
+// editor recreations (useTiptapMarkdown increments loadKey → new editor instance).
+const setContentSpy = vi.fn()
+const focusSpy = vi.fn()
+const getTextSpy = vi.fn(() => '')
+const setEditableSpy = vi.fn()
+const getMarkdownSpy = vi.fn(() => '')
+
+function makeMockEditor() {
+  return {
+    commands: { setContent: setContentSpy, focus: focusSpy },
+    setEditable: setEditableSpy,
+    getText: getTextSpy,
+    storage: { markdown: { getMarkdown: getMarkdownSpy } },
+  }
 }
+
+// Simulate useEditor's "recreate when deps change" behavior:
+// same deps → same instance; changed deps → new instance.
+const editorMap = new Map<string, ReturnType<typeof makeMockEditor>>()
+
 vi.mock('@tiptap/react', () => ({
-  useEditor: vi.fn(() => mockEditor),
+  // Recreate editor when deps change (mirrors real useEditor lifecycle);
+  // only call onCreate on genuine creation so side-effects fire exactly once.
+  useEditor: vi.fn((config, deps?: unknown[]) => {
+    const key = JSON.stringify(deps ?? [])
+    const isNew = !editorMap.has(key)
+    if (isNew) editorMap.set(key, makeMockEditor())
+    const editor = editorMap.get(key)!
+    if (isNew) config?.onCreate?.({ editor })
+    return editor
+  }),
   EditorContent: () => null,
 }))
 vi.mock('@tiptap/starter-kit', () => ({ default: {} }))
@@ -71,9 +95,8 @@ function makeNote(overrides: Record<string, unknown> = {}): Record<string, unkno
 describe('useNoteEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockEditor.commands.setContent.mockReset()
-    mockEditor.setEditable.mockReset()
-    mockEditor.storage.markdown.getMarkdown.mockReturnValue('')
+    editorMap.clear()
+    getMarkdownSpy.mockReturnValue('')
   })
 
   it('calls NOTES_GET on mount with the correct noteId', async () => {
@@ -223,5 +246,85 @@ describe('useNoteEditor', () => {
       )
       expect(deleteCalls.length).toBeGreaterThan(0)
     })
+  })
+
+  it('NOTE_UPDATED listener: updates note state when matching noteId received', async () => {
+    const note = makeNote({ content: 'Original content', title: 'Original Title' })
+    const remoteUpdate = makeNote({ content: 'Remote content', title: 'Remote Title', updatedAt: '2026-03-25T12:00:00Z' })
+    vi.mocked(api.invoke).mockResolvedValueOnce(note)
+
+    // Capture the NOTE_UPDATED listener registered via api.on
+    let noteUpdatedHandler: ((updated: unknown) => void) | null = null
+    vi.mocked(api.on).mockImplementation((channel, handler) => {
+      if (channel === IPC_CHANNELS.NOTE_UPDATED) {
+        noteUpdatedHandler = handler as (updated: unknown) => void
+      }
+      return () => {}
+    })
+
+    const { result } = renderHook(() => useNoteEditor('note-1'))
+    await waitFor(() => expect(result.current.loadState).toBe('loaded'))
+
+    // Simulate broadcast from main process
+    act(() => { noteUpdatedHandler?.(remoteUpdate) })
+
+    // note state should reflect remote update (for timestamp display)
+    await waitFor(() => {
+      expect(result.current.note?.title).toBe('Remote Title')
+    })
+
+    // No spurious NOTES_UPDATE should fire — savedRef was updated to the remote version
+    const updateCalls = vi.mocked(api.invoke).mock.calls.filter(
+      call => call[0] === IPC_CHANNELS.NOTES_UPDATE
+    )
+    expect(updateCalls).toHaveLength(0)
+  })
+
+  it('NOTE_UPDATED listener: ignores broadcasts for different noteIds', async () => {
+    const note = makeNote()
+    const otherNote = makeNote({ id: 'note-999', title: 'Someone else' })
+    vi.mocked(api.invoke).mockResolvedValueOnce(note)
+
+    let noteUpdatedHandler: ((updated: unknown) => void) | null = null
+    vi.mocked(api.on).mockImplementation((channel, handler) => {
+      if (channel === IPC_CHANNELS.NOTE_UPDATED) {
+        noteUpdatedHandler = handler as (updated: unknown) => void
+      }
+      return () => {}
+    })
+
+    const { result } = renderHook(() => useNoteEditor('note-1'))
+    await waitFor(() => expect(result.current.loadState).toBe('loaded'))
+
+    act(() => { noteUpdatedHandler?.(otherNote) })
+
+    // Note state unchanged — different noteId ignored
+    expect(result.current.note?.title).toBe('Test Note')
+  })
+
+  it('calls setContent with { contentType: "markdown" } after note loads (Approach E)', async () => {
+    const note = makeNote({ content: '## Hello\n- item one' })
+    vi.mocked(api.invoke).mockResolvedValueOnce(note)
+
+    renderHook(() => useNoteEditor('note-1'))
+
+    // Approach E: after load, useTiptapMarkdown calls loadContent → recreates editor →
+    // useEffect fires → editor.commands.setContent(markdown, { contentType: 'markdown' })
+    await waitFor(() => {
+      expect(setContentSpy).toHaveBeenCalledWith(
+        '## Hello\n- item one',
+        expect.objectContaining({ contentType: 'markdown' }),
+      )
+    })
+  })
+
+  it('setContent is not called before note has loaded', () => {
+    // NOTES_GET never resolves — simulates in-flight load
+    vi.mocked(api.invoke).mockReturnValueOnce(new Promise(() => {}))
+
+    renderHook(() => useNoteEditor('note-1'))
+
+    // Approach E: loadContent is never called until note arrives, so setContent stays quiet
+    expect(setContentSpy).not.toHaveBeenCalled()
   })
 })

@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { CompanyDetail as CompanyDetailType, CompanyMeetingRef } from '../../shared/types/company'
-import type { CompanySummaryUpdateProposal } from '../../shared/types/summary'
+import type { CompanySummaryUpdateProposal, CompanySummaryUpdateChange, CompanySummaryUpdatePayload } from '../../shared/types/summary'
 import { companyEnrichedAtKey } from '../../shared/utils/enrichment-keys'
 import { CompanyPropertiesPanel } from '../components/company/CompanyPropertiesPanel'
+import { CompanyEnhanceModal } from '../components/company/CompanyEnhanceModal'
+import type { PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import { CompanyTimeline } from '../components/company/CompanyTimeline'
 import { CompanyContacts } from '../components/company/CompanyContacts'
 import { CompanyNotes } from '../components/company/CompanyNotes'
@@ -29,10 +31,10 @@ export default function CompanyDetail() {
   const { leftWidth, dividerProps } = usePanelResize({ defaultWidth: 360 })
   const [addToSyncOpen, setAddToSyncOpen] = useState(false)
 
-  // Meetings (for enrichment)
+  // Meetings (for enrichment banner)
   const [companyMeetings, setCompanyMeetings] = useState<CompanyMeetingRef[]>([])
 
-  // Enrichment state
+  // ── Meetings-based enrichment (CRM fields only) ──────────────────────────
   const [enrichProposal, setEnrichProposal] = useState<CompanySummaryUpdateProposal | null>(null)
   const [enrichDialogOpen, setEnrichDialogOpen] = useState(false)
   const [fieldSelections, setFieldSelections] = useState<Record<string, boolean>>({})
@@ -43,6 +45,14 @@ export default function CompanyDetail() {
   const [lastEnrichedAt, setLastEnrichedAt] = useState<string | null>(() =>
     id ? localStorage.getItem(companyEnrichedAtKey(id)) : null
   )
+
+  // ── File enhancement modal ────────────────────────────────────────────────
+  const [enhanceModalOpen, setEnhanceModalOpen] = useState(false)
+  const [enhanceSource, setEnhanceSource] = useState<'pdf' | 'url' | null>(null)
+  const [enhanceJustCompleted, setEnhanceJustCompleted] = useState(false)
+  const [highlightNoteId, setHighlightNoteId] = useState<string | null>(null)
+  const [notesVersion, setNotesVersion] = useState(0)
+  const enhanceCompleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -63,6 +73,13 @@ export default function CompanyDetail() {
       .then((data) => setCompanyMeetings(Array.isArray(data) ? data : []))
       .catch(() => setCompanyMeetings([]))
   }, [id])
+
+  // Clear highlight after 3s
+  useEffect(() => {
+    if (!highlightNoteId) return
+    const t = setTimeout(() => setHighlightNoteId(null), 3000)
+    return () => clearTimeout(t)
+  }, [highlightNoteId])
 
   const summarizedMeetings = useMemo(
     () => companyMeetings.filter((m) => m.status === 'summarized'),
@@ -93,8 +110,6 @@ export default function CompanyDetail() {
 
   function handleUpdate(updates: Record<string, unknown>) {
     setCompany((prev) => prev ? { ...prev, ...updates } : prev)
-    // Increment timelineKey when pipelineStage changes so the timeline refreshes
-    // to show the auto-logged Stage Change entry
     if ('pipelineStage' in updates) {
       setTimelineKey((k) => k + 1)
     }
@@ -110,8 +125,10 @@ export default function CompanyDetail() {
         summarizedMeetings.map((m) => m.id),
         id
       )
-      if (proposal && (proposal.changes.length > 0 || (proposal.customFieldUpdates?.length ?? 0) > 0)) {
-        // Initialize all fields as selected
+      if (proposal === null) {
+        setEnrichError('Could not load enrichment — please try again')
+        setTimeout(() => setEnrichError(null), 4000)
+      } else if (proposal.changes.length > 0 || (proposal.customFieldUpdates?.length ?? 0) > 0) {
         const selections: Record<string, boolean> = {}
         for (const change of proposal.changes) {
           selections[`${id}:${change.field}`] = true
@@ -123,10 +140,11 @@ export default function CompanyDetail() {
         setEnrichProposal(proposal)
         setEnrichDialogOpen(true)
       } else {
-        // No proposals — mark as enriched so banner hides
         const enrichedAt = new Date().toISOString()
         localStorage.setItem(companyEnrichedAtKey(id), enrichedAt)
         setLastEnrichedAt(enrichedAt)
+        setEnrichSuccessMsg('Profile is already up to date')
+        setTimeout(() => setEnrichSuccessMsg(null), 3000)
       }
     } catch (err) {
       console.error('[CompanyDetail] Failed to load enrichment proposals:', err)
@@ -149,7 +167,6 @@ export default function CompanyDetail() {
 
     setIsApplyingEnrich(true)
     try {
-      // Apply selected built-in field updates
       const builtinFields = ['description', 'round', 'raiseSize', 'postMoneyValuation', 'city', 'state', 'pipelineStage'] as const
       const filteredUpdates: Record<string, unknown> = {}
       for (const field of builtinFields) {
@@ -158,7 +175,6 @@ export default function CompanyDetail() {
         }
       }
 
-      // Recompute fieldSources: only for selected built-in fields
       if (enrichProposal.updates.fieldSources) {
         try {
           const allSources = JSON.parse(enrichProposal.updates.fieldSources) as Record<string, string>
@@ -166,7 +182,6 @@ export default function CompanyDetail() {
           for (const [field, meetingId] of Object.entries(allSources)) {
             if (selectedFields.has(field)) filteredSources[field] = meetingId
           }
-          // Merge with existing fieldSources
           const existingSources: Record<string, string> = {}
           if (company?.fieldSources) {
             try {
@@ -185,7 +200,6 @@ export default function CompanyDetail() {
         await window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, id, filteredUpdates)
       }
 
-      // Apply selected custom field updates
       for (const cfu of enrichProposal.customFieldUpdates ?? []) {
         if (!selectedFields.has(cfu.label)) continue
         await window.api.invoke(
@@ -197,7 +211,6 @@ export default function CompanyDetail() {
         )
       }
 
-      // Refetch company to reflect updated values
       const updated = await window.api.invoke<CompanyDetailType>(IPC_CHANNELS.COMPANY_GET, id)
       if (updated) setCompany(updated)
 
@@ -214,7 +227,38 @@ export default function CompanyDetail() {
     }
   }, [enrichProposal, fieldSelections, id, company])
 
-  // Build proposals for the shared dialog
+  const handleEnhance = useCallback((source: 'pdf' | 'url' | 'meetings') => {
+    if (source === 'meetings') {
+      void handleEnrichFromMeetings()
+      return
+    }
+    setEnhanceSource(source)
+    setEnhanceModalOpen(true)
+  }, [handleEnrichFromMeetings])
+
+  const handleEnhanceComplete = useCallback((noteId: string | null) => {
+    setEnhanceModalOpen(false)
+    setEnhanceSource(null)
+
+    // Flash the Enhance button and update last-enhanced timestamp
+    setEnhanceJustCompleted(true)
+    if (enhanceCompleteTimerRef.current) clearTimeout(enhanceCompleteTimerRef.current)
+    enhanceCompleteTimerRef.current = setTimeout(() => setEnhanceJustCompleted(false), 3500)
+
+    if (noteId) {
+      setHighlightNoteId(noteId)
+      setNotesVersion(v => v + 1)
+      setActiveTab('notes')
+      // Refetch company to update note count badge
+      if (id) {
+        window.api.invoke<CompanyDetailType>(IPC_CHANNELS.COMPANY_GET, id)
+          .then((data) => { if (data) setCompany(data) })
+          .catch(console.error)
+      }
+    }
+  }, [id])
+
+  // Build proposals for the shared dialog (meetings enrichment)
   const dialogProposals = useMemo((): EnrichmentEntityProposal[] => {
     if (!enrichProposal || !id) return []
     const changes = [
@@ -264,8 +308,10 @@ export default function CompanyDetail() {
           showEnrichBanner={showEnrichBanner}
           enrichMeetingCount={summarizedMeetings.length}
           fieldSources={parsedFieldSources}
-          onEnrichFromMeetings={() => void handleEnrichFromMeetings()}
+          onEnhance={handleEnhance}
           isLoadingEnrich={isLoadingEnrich}
+          onOpenSync={() => setAddToSyncOpen(true)}
+          enhanceJustCompleted={enhanceJustCompleted}
         />
         {enrichSuccessMsg && (
           <div className={styles.enrichSuccess}>
@@ -304,14 +350,6 @@ export default function CompanyDetail() {
               )}
             </button>
           ))}
-          <div className={styles.tabBarSpacer} />
-          <button
-            className={styles.addToSyncBtn}
-            onClick={() => setAddToSyncOpen(true)}
-            title="Add to next Partner Sync"
-          >
-            + Partner Sync
-          </button>
         </div>
 
         {/* All tabs always mounted (CSS hide/show) to preserve CompanyMemo draft state */}
@@ -323,7 +361,7 @@ export default function CompanyDetail() {
             <CompanyContacts companyId={company.id} />
           </div>
           <div className={activeTab !== 'notes' ? styles.hidden : ''}>
-            <CompanyNotes companyId={company.id} />
+            <CompanyNotes companyId={company.id} highlightNoteId={highlightNoteId ?? undefined} refreshKey={notesVersion} />
           </div>
           <div className={activeTab !== 'decisions' ? styles.hidden : ''}>
             <CompanyDecisions companyId={company.id} />
@@ -341,6 +379,15 @@ export default function CompanyDetail() {
         <AddToSyncModal
           company={company}
           onClose={() => setAddToSyncOpen(false)}
+        />
+      )}
+
+      {company && (
+        <CompanyEnhanceModal
+          open={enhanceModalOpen}
+          company={company}
+          onClose={() => { setEnhanceModalOpen(false); setEnhanceSource(null) }}
+          onComplete={handleEnhanceComplete}
         />
       )}
 

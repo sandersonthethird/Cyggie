@@ -5,7 +5,7 @@ import * as path from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as repo from '../database/repositories/partner-meeting.repo'
 import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts } from '../database/repositories/org-company.repo'
-import { listCompanyNotes } from '../database/repositories/company-notes.repo'
+import { listCompanyNotes, createCompanyNote } from '../database/repositories/company-notes.repo'
 import { getProvider } from '../llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
@@ -13,10 +13,23 @@ import {
   generateReconciliationProposals,
   applyReconciliationProposals,
 } from '../services/partner-meeting-reconcile.service'
-import type { AddToSyncInput, UpdateItemInput, ApplyReconciliationInput } from '../../shared/types/partner-meeting'
+import type { AddToSyncInput, DigestSection, UpdateItemInput, ApplyReconciliationInput } from '../../shared/types/partner-meeting'
+import type { PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
+import { extractPartnerSyncBrief } from '../utils/pitch-deck-brief'
+import { runPitchDeckAnalysis } from '../services/pitch-deck-analysis.service'
 
 // AbortController registry for in-flight reconciliation generation
 const activeReconcileControllers = new Map<string, AbortController>()
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Maps a company's pipeline stage to the appropriate digest section. */
+function stageToDigestSection(stage: string | null): 'new_deals' | 'existing_deals' | 'portfolio_updates' | 'passing' {
+  if (stage === 'diligence' || stage === 'decision') return 'existing_deals'
+  if (stage === 'documentation') return 'portfolio_updates'
+  if (stage === 'pass') return 'passing'
+  return 'new_deals'
+}
 
 // ─── PDF Export ──────────────────────────────────────────────────────────────
 
@@ -70,10 +83,12 @@ async function generateBrief(companyId: string): Promise<string | null> {
   // ─── Build prompt ──────────────────────────────────────────────────────────
 
   const systemPrompt = [
-    'You are a VC analyst writing a pre-meeting company brief.',
-    'Use only the provided data. Be concise — 10-15 bullets total.',
-    'Format in markdown with bold section headers.',
-    'Sections: Company, Founders, Round, Traction, Risks / Questions.',
+    'You are a VC analyst writing a pre-meeting partner sync entry.',
+    'Write a SHORT summary using ONLY the provided CRM data.',
+    'Output 5-7 lines maximum. Each line must be "Field: value".',
+    'Do NOT use markdown headers, bold text, or bullet points.',
+    'Omit any line where the data is absent.',
+    'Fields (in order): Company, Founders, Round, ARR, Traction, Key Questions.',
   ].join(' ')
 
   const lines: string[] = []
@@ -197,6 +212,56 @@ export function registerPartnerMeetingIpc(): void {
     const brief = await generateBrief(companyId)
     return { brief }
   })
+
+  ipcMain.handle(IPC_CHANNELS.PARTNER_MEETING_ADD_PITCH_DECK_COMPANY,
+    async (_event, companyId: string, extractionResult: PitchDeckExtractionResult, sectionOverride?: DigestSection) => {
+      if (!companyId) throw new Error('companyId is required')
+      if (!extractionResult) throw new Error('extractionResult is required')
+
+      // Get active digest BEFORE LLM calls to minimize race window
+      const digest = repo.getActiveDigest()
+      if (!digest) {
+        console.warn('[partner-meeting] no active digest when pitch deck analysis completed, skipping sync add')
+        return null
+      }
+
+      const noteContent = await runPitchDeckAnalysis(extractionResult)
+      let brief: string | null = null
+
+      let createdNoteId: string | null = null
+      if (noteContent) {
+        const companyName = extractionResult.companyName ?? 'Unknown Company'
+        try {
+          const note = createCompanyNote(
+            { companyId, title: `Pitch Deck — ${companyName}`, content: noteContent },
+            getCurrentUserId()
+          )
+          createdNoteId = note?.id ?? null
+        } catch (err) {
+          console.error('[partner-meeting] note creation failed, continuing with addItem:', err)
+        }
+
+        brief = extractPartnerSyncBrief(noteContent)
+        if (!brief) {
+          console.warn('[partner-meeting] brief extraction returned null', {
+            companyLabel: extractionResult.companyName ?? extractionResult.sourceLabel,
+            noteContentLength: noteContent.length,
+            noteContentPreview: noteContent.slice(0, 300),
+          })
+        }
+      }
+
+      const company = getCompany(companyId)
+      const section = sectionOverride ?? stageToDigestSection(company?.pipelineStage ?? null)
+
+      repo.addItem(digest.id, {
+        companyId,
+        section,
+        brief: brief ?? null,
+      })
+      return { noteId: createdNoteId, hasBrief: brief !== null }
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.PARTNER_MEETING_SET_MEETING,
     (_event, digestId: string, meetingId: string | null) => {

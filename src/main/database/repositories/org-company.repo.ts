@@ -249,6 +249,7 @@ interface EmailMessageRow {
   body_text: string | null
   is_unread: number
   thread_id: string | null
+  thread_group: string
   provider_thread_id?: string | null
   thread_message_count: number
   participants_json: string
@@ -269,6 +270,7 @@ function mapEmailRow(row: EmailMessageRow): CompanyEmailRef {
     threadId: row.thread_id,
     providerThreadId: row.provider_thread_id ?? null,
     threadMessageCount: row.thread_message_count || 1,
+    threadGroup: row.thread_group,
     participants: parseEmailParticipants(row.participants_json),
     accountEmail: row.account_email ?? null,
   }
@@ -2069,6 +2071,7 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
         ranked.body_text,
         ranked.is_unread,
         ranked.thread_id,
+        COALESCE(ranked.thread_id, ranked.id) AS thread_group,
         ranked.thread_message_count,
         COALESCE(participants.participants_json, '[]') AS participants_json,
         ea.account_email
@@ -2225,7 +2228,8 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
     occurredAt: email.receivedAt || email.sentAt || new Date().toISOString(),
     subtitle: email.fromName ? `${email.fromName} <${email.fromEmail}>` : email.fromEmail,
     referenceId: email.id,
-    referenceType: 'email'
+    referenceType: 'email',
+    threadGroup: email.threadGroup
   }))
 
   const noteRows = db
@@ -2281,6 +2285,23 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
   return [...meetingItems, ...emailItems, ...noteItems, ...decisionItems].sort((a, b) =>
     new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()
   )
+}
+
+export function deleteCompanyEmailLinks(companyId: string, threadGroups: string[]): { deleted: number } {
+  if (threadGroups.length === 0) return { deleted: 0 }
+  const db = getDatabase()
+  const placeholders = threadGroups.map(() => '?').join(',')
+  const result = db
+    .prepare(`
+      DELETE FROM email_company_links
+      WHERE company_id = ?
+        AND message_id IN (
+          SELECT id FROM email_messages
+          WHERE COALESCE(thread_id, id) IN (${placeholders})
+        )
+    `)
+    .run(companyId, ...threadGroups)
+  return { deleted: result.changes }
 }
 
 // Known company suffix patterns for the regex fallback in fixConcatenatedCompanyNames.

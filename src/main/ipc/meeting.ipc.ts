@@ -11,7 +11,7 @@ import { renameFile as renameDriveFile } from '../drive/google-drive'
 import { extractCompaniesFromEmails, extractCompaniesFromAttendees, extractDomainFromEmail } from '../utils/company-extractor'
 import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
 import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
-import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName } from '../database/repositories/org-company.repo'
+import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName, listMeetingCompanies } from '../database/repositories/org-company.repo'
 import { upsert as upsertCompanyCache, getByDomain as getCompanyCacheByDomain } from '../database/repositories/company.repo'
 import { getDatabase } from '../database/connection'
 import type { ChatMessage, MeetingListFilter } from '../../shared/types/meeting'
@@ -367,10 +367,26 @@ export function registerMeetingHandlers(): void {
       const meeting = meetingRepo.getMeeting(meetingId)
       if (!meeting) return []
       const suggestions = getCompanySuggestionsForMeeting(meeting.attendeeEmails, meeting.companies)
-      return suggestions.map((s) => {
+      const enriched = suggestions.map((s) => {
         const id = findCompanyIdByNameOrDomain(s.name, s.domain) ?? undefined
         return id ? { ...s, id } : s
       })
+
+      // Merge in manually linked companies that aren't already represented
+      const linkedCompanies = listMeetingCompanies(meetingId)
+      const existingIds = new Set(enriched.filter((s) => s.id).map((s) => s.id))
+      for (const company of linkedCompanies) {
+        if (!existingIds.has(company.id)) {
+          enriched.push({
+            id: company.id,
+            name: company.canonicalName,
+            domain: company.primaryDomain ?? '',
+            entityType: company.entityType ?? null
+          })
+        }
+      }
+
+      return enriched
     }
   )
 

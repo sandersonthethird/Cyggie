@@ -272,7 +272,7 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks
 }
 
-function buildQueryCues(cues: CompanyIngestCues): QueryCue[] {
+export function buildQueryCues(cues: CompanyIngestCues): QueryCue[] {
   const queries: QueryCue[] = []
 
   // Prefer explicit contact emails. Domain queries are only used as a fallback
@@ -294,18 +294,6 @@ function buildQueryCues(cues: CompanyIngestCues): QueryCue[] {
         reason: `domain:${domain}`,
         confidence: 0.82,
         maxResults: MAX_EMAILS_PER_DOMAIN_QUERY
-      })
-    }
-  }
-
-  if (queries.length === 0 && cues.canonicalName.trim()) {
-    const escapedName = cues.canonicalName.replace(/"/g, '').trim()
-    if (escapedName) {
-      queries.push({
-        query: `"${escapedName}"`,
-        reason: `name:${escapedName}`,
-        confidence: 0.45,
-        maxResults: 120
       })
     }
   }
@@ -631,8 +619,18 @@ async function _ingestCompanyEmails(companyId: string, signal: AbortSignal): Pro
   const db = getDatabase()
   const cues = loadCompanyIngestCues(db, companyId)
   const queries = buildQueryCues(cues)
+
+  // Purge stale name-based links unconditionally — runs even for no-cue companies so
+  // clicking Sync on a company with no contacts/domain still clears past false positives.
+  const purgedLinkCount = db.prepare(
+    `DELETE FROM email_company_links WHERE company_id = ? AND reason LIKE 'name:%'`
+  ).run(companyId).changes
+  if (purgedLinkCount > 0) {
+    console.log(`[Company Email Ingest] Purged ${purgedLinkCount} stale name-based link(s) for company:`, companyId)
+  }
+
   if (queries.length === 0) {
-    throw new Error('No associated contacts found for this company. Add company contacts (preferred) or set a primary domain for fallback.')
+    throw new Error('No contacts or domain found for this company. Link contacts or set a primary domain to enable email sync.')
   }
 
   let accountId: string | null = null

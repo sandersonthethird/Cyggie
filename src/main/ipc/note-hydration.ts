@@ -14,7 +14,7 @@ const MAX_CONTENT_BYTES = 50_000
  * Idempotent: skips notes that already have content, or have no meeting link.
  * Persists on first hydration so subsequent opens skip the file read.
  */
-export function hydrateCompanionNote(note: Note, userId: string | null): Note {
+export function hydrateCompanionNote(note: Note): Note {
   if (!note.sourceMeetingId || note.content.trim()) return note
 
   const db = getDatabase()
@@ -33,9 +33,9 @@ export function hydrateCompanionNote(note: Note, userId: string | null): Note {
   if (!raw) return note
 
   const content = raw.slice(0, MAX_CONTENT_BYTES)
-  db.prepare(
-    'UPDATE notes SET content = ?, updated_at = ?, updated_by_user_id = ? WHERE id = ?'
-  ).run(content, new Date().toISOString(), userId, note.id)
+  // Only persist the content — this is an infrastructure read, not a user edit.
+  // updated_at must not advance here; it should only change on explicit user edits (NOTES_UPDATE).
+  db.prepare('UPDATE notes SET content = ? WHERE id = ?').run(content, note.id)
 
   return { ...note, content }
 }

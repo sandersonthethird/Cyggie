@@ -4,9 +4,14 @@
  * Data flow:
  *   mount ──► NOTES_GET ──► load note ──► populate editor + title
  *   title/content change ──► debounce 800ms ──► NOTES_UPDATE ──► onNoteUpdated?()
+ *   save ──► NOTE_UPDATED broadcast (main → all windows) ──► update note+savedRef in each window
  *   save ──► NOTES_SUGGEST_TAG (fire-and-forget, non-blocking)
  *   deleteNote() ──► NOTES_DELETE ──► onNoteDeleted?()
  *   unmount (empty note) ──► NOTES_DELETE (fire-and-forget)
+ *
+ * justLoadedRef guard: prevents TipTap's markdown normalization on load from
+ *   triggering a spurious save. The first onUpdate after loadEditorContent
+ *   silently syncs savedNoteRef to the normalized form instead of marking dirty.
  *
  * Consumers must wrap in a component with key={noteId} to reset all state
  * when the selected note changes:
@@ -15,12 +20,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
 import type { Editor } from '@tiptap/react'
+import { useTiptapMarkdown } from './useTiptapMarkdown'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useDebounce } from './useDebounce'
 import { api } from '../api'
@@ -59,9 +64,37 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
   const [suggestionDismissed, setSuggestionDismissed] = useState(false)
 
   const savedNoteRef = useRef<Note | null>(null)
-  const editorInitialized = useRef(false)
+  const justLoadedRef = useRef(false)
+  const titleDraftRef = useRef('')
+  const contentDraftRef = useRef('')
   const optsRef = useRef(opts)
   useEffect(() => { optsRef.current = opts }, [opts])
+  useEffect(() => { titleDraftRef.current = titleDraft }, [titleDraft])
+  useEffect(() => { contentDraftRef.current = contentDraft }, [contentDraft])
+
+  const { editor, loadContent: loadEditorContent } = useTiptapMarkdown(
+    {
+      extensions: [
+        StarterKit,
+        Markdown,
+        Link.configure({ openOnClick: true }),
+        Image,
+      ],
+      editable: loadState === 'loaded',  // hook's useEffect calls setEditable reactively
+      onUpdate: ({ editor: ed }) => {
+        const mkd = ed.getMarkdown?.()
+        const normalized = mkd ?? ed.getText()
+        if (justLoadedRef.current && savedNoteRef.current) {
+          // First onUpdate after load: sync baseline to TipTap's normalized form
+          // so the debounce guard sees no change and skips the save.
+          savedNoteRef.current = { ...savedNoteRef.current, content: normalized }
+          justLoadedRef.current = false
+        }
+        setContentDraft(normalized)
+      },
+    },
+    [],  // no extra deps — recreation driven by loadEditorContent
+  )
 
   // Load note on mount
   useEffect(() => {
@@ -76,35 +109,15 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
         setTitleDraft(loaded.title ?? '')
         setContentDraft(loaded.content)
         setIsPinned(loaded.isPinned)
+        justLoadedRef.current = true
+        loadEditorContent(loaded.content)  // set BEFORE setLoadState so they batch; onCreate parses ✓
+        // Safety fallback: clear justLoadedRef if onUpdate never fires
+        // (e.g. setContent('') on an already-empty editor is a no-op)
+        setTimeout(() => { justLoadedRef.current = false }, 0)
         setLoadState('loaded')
       })
       .catch(() => setLoadState('error'))
-  }, [noteId])
-
-  const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Markdown,
-      Link.configure({ openOnClick: true }),
-      Image,
-    ],
-    content: '',
-    editable: false,  // enabled once note loads
-    onUpdate: ({ editor: ed }) => {
-      const mkd = (ed.storage.markdown as { getMarkdown?: () => string } | undefined)?.getMarkdown?.()
-      const md = mkd ?? ed.getText()
-      setContentDraft(md)
-    },
-  })
-
-  // Initialize editor once note loads
-  useEffect(() => {
-    if (loadState === 'loaded' && editor && !editorInitialized.current && savedNoteRef.current) {
-      editorInitialized.current = true
-      editor.commands.setContent(savedNoteRef.current.content ?? '', false)
-      editor.setEditable(true)
-    }
-  }, [loadState, editor])
+  }, [noteId, loadEditorContent])
 
   // Debounced auto-save
   const debouncedTitle = useDebounce(titleDraft, 800)
@@ -147,6 +160,18 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
       .catch(() => { /* silent */ })
   }, [debouncedContent, suggestionDismissed]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Cross-window sync: update note state + saved baseline when another window saves
+  useEffect(() => {
+    return api.on(IPC_CHANNELS.NOTE_UPDATED, (updated: Note) => {
+      if (updated.id !== noteId) return
+      // Refresh timestamp display; update savedRef so next debounce comparison
+      // is against the latest persisted content. Do NOT reset editor content —
+      // that would discard any in-progress edits in this window.
+      setNote(updated)
+      savedNoteRef.current = updated
+    })
+  }, [noteId])
+
   const dismissSuggestion = useCallback(() => {
     setTagSuggestion(null)
     setSuggestionDismissed(true)
@@ -164,12 +189,32 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
     return () => {
       const saved = savedNoteRef.current
       if (!saved) return
-      const isEmpty = !savedNoteRef.current?.content?.trim() && !savedNoteRef.current?.title?.trim()
+      const draftTitle = titleDraftRef.current
+      const draftContent = contentDraftRef.current
+      const hasDraft = draftTitle.trim().length > 0 || draftContent.trim().length > 0
+
+      // Flush pending edits before unmount so rich-text changes persist
+      if (hasDraft) {
+        const titleChanged = draftTitle !== (saved.title ?? '')
+        const contentChanged = draftContent !== saved.content
+        if (titleChanged || contentChanged) {
+          api.invoke<Note | null>(
+            IPC_CHANNELS.NOTES_UPDATE,
+            saved.id,
+            { title: draftTitle || null, content: draftContent }
+          )
+            .then((updated) => { if (updated) optsRef.current?.onNoteUpdated?.(updated) })
+            .catch(() => { /* silent on unmount */ })
+        }
+        return
+      }
+
+      const isEmpty = !saved.content?.trim() && !(saved.title ?? '').trim()
       if (isEmpty) {
         api.invoke(IPC_CHANNELS.NOTES_DELETE, saved.id).catch(() => {/* fire-and-forget */})
       }
     }
-  }, [])  // empty deps: runs only on unmount
+  }, [noteId])  // also runs when switching notes within the same component
 
   return {
     note,

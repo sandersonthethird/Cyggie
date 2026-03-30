@@ -22,6 +22,7 @@
  *     [Actions ▾] → Delete
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
@@ -96,6 +97,8 @@ interface CompanyTableProps {
   /** Custom field values keyed by [entityId][fieldDefinitionId]. */
   customFieldValues?: Record<string, Record<string, string>>
   onRenameColumn?: (key: string, label: string) => void
+  onHideColumn?: (key: string) => void
+  onDeleteColumn?: (key: string) => Promise<void>
   onCreateField?: () => void
   onPatchCustomField?: (entityId: string, defId: string, value: string | null) => void
 }
@@ -119,6 +122,8 @@ export function CompanyTable({
   allDefs,
   customFieldValues,
   onRenameColumn,
+  onHideColumn,
+  onDeleteColumn,
   onCreateField,
   onPatchCustomField
 }: CompanyTableProps) {
@@ -177,6 +182,23 @@ export function CompanyTable({
   // ── Column rename ──────────────────────────────────────────────────────────
   const [renamingCol, setRenamingCol] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+
+  // ── Column header context menu ─────────────────────────────────────────────
+  const [headerMenu, setHeaderMenu] = useState<{
+    key: string; x: number; y: number; pendingDelete: boolean
+  } | null>(null)
+  const headerMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!headerMenu) return
+    function handle(e: MouseEvent) {
+      if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) {
+        setHeaderMenu(null)
+      }
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [headerMenu])
 
   // ── Selection ──────────────────────────────────────────────────────────────
   const [bulkDeleting, setBulkDeleting] = useState(false)
@@ -360,9 +382,8 @@ export function CompanyTable({
                 className={`${styles.headerCell} ${isName ? styles.nameCol : ''} ${col.sortable ? styles.sortable : ''} ${(col.options?.length || col.type === 'number' || col.type === 'date' || col.type === 'text') ? styles.filterableCell : ''} ${draggingKey === col.key ? styles.dragging : ''} ${dragOverKey === col.key ? styles.dragOver : ''}`}
                 onClick={() => { if (renamingCol !== col.key) handleHeaderClick(col) }}
                 onContextMenu={(e) => {
-                  if (!onRenameColumn) return
                   e.preventDefault()
-                  setRenamingCol(col.key)
+                  setHeaderMenu({ key: col.key, x: e.clientX, y: e.clientY, pendingDelete: false })
                   setRenameValue(col.label)
                 }}
                 {...getDragProps(col.key)}
@@ -624,6 +645,75 @@ export function CompanyTable({
           </div>
         </div>
       </div>
+
+      {/* Column header context menu */}
+      {headerMenu && (() => {
+        const menuCol = effectiveDefs.find((c) => c.key === headerMenu.key)
+        return createPortal(
+          <div
+            ref={headerMenuRef}
+            className={styles.headerContextMenu}
+            style={{ top: headerMenu.y, left: headerMenu.x }}
+          >
+            {headerMenu.pendingDelete ? (
+              <>
+                <div className={styles.headerMenuConfirm}>
+                  Delete &ldquo;{menuCol?.label}&rdquo;? This removes all data.
+                </div>
+                <button
+                  className={styles.headerMenuItem}
+                  onClick={() => setHeaderMenu((m) => m && { ...m, pendingDelete: false })}
+                >
+                  Cancel
+                </button>
+                <button
+                  className={`${styles.headerMenuItem} ${styles.headerMenuItemDanger}`}
+                  onClick={async () => {
+                    setHeaderMenu(null)
+                    await onDeleteColumn?.(headerMenu.key)
+                  }}
+                >
+                  Delete field
+                </button>
+              </>
+            ) : (
+              <>
+                {onRenameColumn && (
+                  <button
+                    className={styles.headerMenuItem}
+                    onClick={() => {
+                      setHeaderMenu(null)
+                      setRenamingCol(headerMenu.key)
+                    }}
+                  >
+                    Rename
+                  </button>
+                )}
+                {headerMenu.key !== 'name' && (
+                  <button
+                    className={styles.headerMenuItem}
+                    onClick={() => {
+                      onHideColumn?.(headerMenu.key)
+                      setHeaderMenu(null)
+                    }}
+                  >
+                    Hide column
+                  </button>
+                )}
+                {headerMenu.key.startsWith('custom:') && onDeleteColumn && (
+                  <button
+                    className={`${styles.headerMenuItem} ${styles.headerMenuItemDanger}`}
+                    onClick={() => setHeaderMenu((m) => m && { ...m, pendingDelete: true })}
+                  >
+                    Delete field
+                  </button>
+                )}
+              </>
+            )}
+          </div>,
+          document.body
+        )
+      })()}
 
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (

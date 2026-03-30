@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactNote, ContactTimelineItem } from '../../../shared/types/contact'
 import { useEmailSync } from '../../hooks/useEmailSync'
@@ -155,7 +156,7 @@ export function ContactTimeline({ contactId, hasEmail = true, className }: Conta
               </span>
             </div>
             <div className={styles.title}>{item.title}</div>
-            {item.subtitle && <div className={styles.subtitle}>{item.subtitle}</div>}
+            {item.subtitle && <div className={styles.subtitle}><ReactMarkdown>{item.subtitle}</ReactMarkdown></div>}
           </div>
         </div>
       ))}

@@ -1,6 +1,40 @@
 # TODOS
 
+## P3 — Notes
+
+### Tests for frontmatter utilities
+**What:** Unit tests for `parseFrontmatter()` and `parseAppleNotesDate()` in `src/main/utils/frontmatter.ts`.
+**Why:** Both functions fail silently (return null on bad input). The date format — "Friday, October 30, 2020 at 7:25:21 PM" — is non-standard and locale-sensitive. If a user's Apple Notes export uses a different locale or format variant, dates silently stay at import time with no indication anything went wrong.
+**Pros:** Pure functions — ideal for fast unit tests; ~8 cases cover the full input space.
+**Cons:** Minimal effort given existing test infra in src/tests/.
+**Context:** Added in the frontmatter repair PR (migration-065). Start in `src/tests/frontmatter.test.ts`. Cover: valid full parse, missing `modified` field, malformed closing `---`, unparseable date string, already-stripped content (no frontmatter).
+**Effort:** S
+**Priority:** P3
+**Depends on:** frontmatter repair PR merged.
+
 ## P3 — Meeting Detail
+
+### Copy AI Summary to clipboard button
+**What:** Small copy icon in the `.summaryDivider` header row next to "✦ AI SUMMARY & ACTION ITEMS". `navigator.clipboard.writeText(summaryDraft)` → brief "✓ Copied" confirmation state.
+**Why:** Partners frequently paste meeting summaries into emails/Slack. One-click copy saves the select-all + copy flow.
+**Pros:** ~15 min effort; no new state needed beyond a 1s `copied` boolean.
+**Cons:** The Share → Copy text action already covers this use case indirectly.
+**Context:** Add a `<button>` in the `.summaryDivider` flex row (right side). `const [copied, setCopied] = useState(false)`. On click: `await navigator.clipboard.writeText(summaryDraft); setCopied(true); setTimeout(() => setCopied(false), 1000)`. Style as a small ghost icon button similar to `.noteFooterBtn`. The `.summaryDivider` already has `justify-content: space-between` to accommodate a right-side action.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Meeting Detail redesign PR (summaryCard wrapper must exist — completed).
+
+### BubbleMenu shared component
+**What:** Extract the Tiptap BubbleMenu JSX (Bold/Italic/H1/H2/H3/List buttons) into a shared `<TiptapBubbleMenu editor={editor} />` component used by `NotePaneEditor`, `MeetingDetail`, and any future Tiptap surfaces.
+**Why:** After the Meeting Detail redesign, 2 files have near-identical BubbleMenu JSX. A 3rd consumer would make extraction clearly worthwhile.
+**Pros:** Single place to add/remove toolbar buttons (e.g., adding code block, link toggle).
+**Cons:** Small extra indirection; buttons may need slight variation per surface (e.g., Meeting notes may not need H3).
+**Context:** `NotePaneEditor.tsx` has a 7-button BubbleMenu. `MeetingDetail.tsx` has a 5-button variant (no H3, no code). Extract to `src/renderer/components/common/TiptapBubbleMenu.tsx` with an optional `buttons` prop for customization.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Meeting Detail redesign PR (creates the 2nd consumer — completed).
+
+---
 
 ### Speaker editing for finalized transcripts
 **What:** Allow renaming and contact-linking of transcript speakers in already-recorded (finalized) meetings.
@@ -10,6 +44,58 @@
 **Context:** This was explicitly deferred in the meeting header chips redesign PR. The live recording path now shows editable speaker chips in the transcript panel (`isThisMeetingRecording` block in `MeetingDetail.tsx`). The finalized path renders the transcript via `ReactMarkdown` with no interactive labels. Start near the `transcriptTab` section and the `localSpeakerMap` / `speakerContactMap` state.
 **Effort:** L
 **Depends on:** Meeting header chips redesign PR.
+
+---
+
+## P2 — Partner Meeting
+
+### Batch brief generation for active digest
+**What:** "Generate all briefs" button in the `PartnerMeeting` header. Loops through all active digest items where `brief = null && companyId != null`, calls `PARTNER_MEETING_GENERATE_BRIEF` + `PARTNER_MEETING_ITEM_UPDATE` for each sequentially, with a progress counter (e.g., "Generating 3/8…") and an abort button.
+**Why:** Partners with 8+ companies would need to click "✨ Generate from CRM data" 8+ times individually. A single action at the start of meeting prep is the natural UX flow.
+**Pros:** Covers the "historical imported items" case in bulk. Mirrors the Reconcile pattern already in `PartnerMeeting.tsx` (abort button, `handleConclude` guard).
+**Cons:** Multiple sequential LLM calls (~5–15s each) — needs a cancellable loading state so the user isn't blocked.
+**Context:** `PartnerMeeting.tsx` has all digest items in state. Per null-brief item: call `PARTNER_MEETING_GENERATE_BRIEF`, then `PARTNER_MEETING_ITEM_UPDATE`. Call `handleItemsChange` after each to update UI incrementally. Show "Generating 3/8…" and an abort button (AbortController pattern from `handleConclude`). Button should be hidden when all items have briefs or when there are no active items.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Single-item "✨ Generate from CRM data" button (this PR) merged.
+
+---
+
+## P3 — Partner Meeting
+
+### NewCompanyModal component tests (RTL)
+**What:** Establish React Testing Library tests for `NewCompanyModal`, covering the `addToPartnerSync` checkbox logic as the first set of cases.
+**Why:** The checkbox boolean gate (4 codepaths: deck/manual × checked/unchecked) has zero automated coverage. The most dangerous regression is the checkbox being unchecked but IPC calls still firing.
+**Pros:** RTL + vitest is straightforward with mocked `api.invoke`; once set up, all future component work in the project is testable.
+**Cons:** RTL infrastructure doesn't exist yet — ~1-2h overhead to add `@testing-library/react` + `@testing-library/user-event` alongside the existing vitest setup.
+**Context:** No React Testing Library in the project yet. The test should mock `api.invoke` at the module level and assert: (1) unchecked → neither `PARTNER_MEETING_ADD_PITCH_DECK_COMPANY` nor `PARTNER_MEETING_GET_ACTIVE` called; (2) checked + `extractedResult` → `PARTNER_MEETING_ADD_PITCH_DECK_COMPANY` called; (3) checked + no `extractedResult` → `PARTNER_MEETING_GET_ACTIVE` then `PARTNER_MEETING_ITEM_ADD` called; (4) modal reopen → checkbox resets to checked. See `src/tests/useNoteEditor.test.ts` for the existing vitest config pattern.
+**Effort:** M
+**Priority:** P3
+**Depends on:** This PR merged (checkbox must exist to test).
+
+---
+
+### URL deck → partner sync brief (untested)
+**What:** Verify that URL-sourced pitch decks produce good partner sync brief content via the new VC analysis pipeline.
+**Why:** `callLlm()` is shared between PDF and URL ingest paths, so URL decks automatically get `rawText` set and will flow through the full VC analysis pipeline. However, URL text is scraped via `document.body.innerText` from a headless BrowserWindow and may be noisier than PDF-extracted text, potentially producing poor brief quality or hallucinated fields.
+**Pros:** If it works cleanly, URL decks get the same partner sync treatment for free with no additional code.
+**Cons:** Noisy web-scraped text may produce unreliable structured fields (especially Founder LinkedIn, key metrics).
+**Context:** Test by ingesting a URL-based deck (DocSend, Pitch.com). Check: (1) partner sync brief quality, (2) company note content, (3) whether conditional fields (Location, Website, LinkedIn) are correctly omitted when absent. Add a test case to `src/tests/pitch-deck-brief.test.ts` with a mock rawText simulating web-scraped noise (e.g., nav menus, cookie banners, repeated footer text).
+**Effort:** S
+**Priority:** P3
+**Depends on:** Pitch deck → note → brief PR merged.
+
+---
+
+### Tests for runPitchDeckAnalysis vision path
+**What:** Unit tests for the new vision re-read branch in `runPitchDeckAnalysis`.
+**Why:** Three new branches have zero coverage: (1) sourceFilePath re-read → LLM with attachment, (2) both rawText + sourceFilePath absent → null, (3) readFileSync throws → null. The fix being shipped is code-only; logging alone won't catch regressions.
+**Pros:** Simple unit tests; establishes test pattern for IPC handler utilities.
+**Cons:** `runPitchDeckAnalysis` is not currently exported — would need extraction to a utility or explicit export.
+**Context:** Function lives in `src/main/ipc/partner-meeting.ipc.ts`. Export it and add 3 test cases in `src/tests/pitch-deck-analysis.test.ts`. Mock `getProvider`, `readFileSync`, and `extractPartnerSyncBrief`. Pattern: see `src/tests/useNoteEditor.test.ts` for vitest config.
+**Effort:** S
+**Priority:** P3
+**Depends on:** This PR (vision path fix) merged.
 
 ---
 
@@ -130,13 +216,27 @@
 
 ### Migrate auto-gen company enrichment to LLM
 **What:** `getVcSummaryCompanyUpdateProposals()` still uses regex-based extraction (`parseVcPitchSummary()`). Align it with the new LLM approach used by `getCompanyEnrichmentProposalsFromMeetings()`.
-**Why:** Regex extraction is brittle for varied summary formats; misses custom fields entirely; the two code paths now use different extraction strategies for the same data.
+**Why:** Regex extraction is brittle for varied summary formats; misses custom fields entirely; the three extraction strategies (regex auto-gen, meeting enrichment LLM, pitch deck ingestion LLM) use different approaches for the same goal. Unification would allow custom fields to be populated across all paths.
 **Pros:** Unified code path; custom fields populated on first summary; more robust extraction.
 **Cons:** LLM adds latency to summary generation (already has one LLM call; this adds another or requires combining them); harder to test without mocking.
-**Context:** `getVcSummaryCompanyUpdateProposals()` is called from `summary.ipc.ts` during `SUMMARY_GENERATE`. It feeds `companyUpdateProposals` in `SummaryGenerateResult`. The regex path is fast and appropriate for first-meeting auto-fill (no prior data). Full migration may be premature; consider a hybrid: regex for speed, LLM only when custom fields are defined.
+**Context:** `getVcSummaryCompanyUpdateProposals()` is called from `summary.ipc.ts` during `SUMMARY_GENERATE`. It feeds `companyUpdateProposals` in `SummaryGenerateResult`. The regex path is fast and appropriate for first-meeting auto-fill (no prior data). Full migration may be premature; consider a hybrid: regex for speed, LLM only when custom fields are defined. Note: pitch deck ingestion (`src/main/services/pitch-deck-ingestion.service.ts`) is now the third extraction strategy — the three strategies should eventually share a unified extraction pipeline.
 **Effort:** M
 **Priority:** P3
 **Depends on:** Company enrichment feature (this PR).
+
+---
+
+## P3 — Pitch Deck
+
+### Deck file storage after ingestion
+**What:** After ingesting a PDF pitch deck, save its file path to the company record so it appears in the CompanyFiles tab and can be re-ingested later for updated rounds.
+**Why:** Currently the PDF is read, extracted, then forgotten. Users who receive updated decks have no record of which PDF was last ingested, and can't easily re-run ingestion on a newer version of the same deck.
+**Pros:** Closes the loop on the ingestion workflow; makes the deck discoverable in context; enables future "re-ingest" action from CompanyFiles.
+**Cons:** File paths are device-specific — storing a local path only works on the same machine; cloud storage or a copy-into-app-folder approach would be needed for multi-device.
+**Context:** After `COMPANY_PITCH_DECK_INGEST` completes successfully with a PDF source, call a new `COMPANY_FILE_ADD_LOCAL` IPC (or extend `CompanyFiles`) to record the PDF path. The `CompanyFiles` tab (in `src/renderer/components/company/CompanyFiles.tsx`) already exists. A simple approach: add `pitchDeckPath TEXT` column to `companies` table (migration). More general approach: extend the existing company_files mechanism to store the path as a pinned file.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Pitch deck ingestion feature (this PR).
 
 ---
 
@@ -403,3 +503,57 @@
 **Effort:** S
 **Priority:** P3
 **Depends on:** Chat Context Switcher feature (this PR).
+
+---
+
+## P3 — Notes: Fix --cv-* dark mode for MeetingDetail
+
+### Add --cv-* overrides to dark mode block in globals.css
+**What:** `globals.css` defines `--cv-*` variables (e.g. `--cv-bg`, `--cv-text-primary`) used throughout `MeetingDetail.module.css`, but has no `prefers-color-scheme: dark` overrides for them — so MeetingDetail always renders with light-mode colors even in dark mode.
+**Why:** NoteDetail was intentionally kept on `--color-*` (which has dark mode overrides) to avoid this. As long as `--cv-*` lacks dark overrides, MeetingDetail is permanently light-themed in dark mode.
+**Pros:** Minimal effort; fixing it unblocks a full dark mode experience for the most-used view in the app.
+**Cons:** Need to audit all `--cv-*` usages to ensure correct dark values.
+**Context:** `globals.css` has a `@media (prefers-color-scheme: dark)` block that overrides `--color-*` variables. Add a parallel block for all `--cv-*` variables used in `MeetingDetail.module.css`. Cross-reference `src/renderer/styles/globals.css` and `src/renderer/routes/MeetingDetail.module.css` to enumerate the needed overrides.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Nothing.
+
+---
+
+## P3 — Notes: Denormalize sourceMeetingTitle onto Note type
+
+### JOIN meeting title in notes.repo.ts to eliminate secondary MEETING_GET call
+**What:** `NoteDetail.tsx` currently fires a secondary `api.invoke(MEETING_GET, sourceMeetingId)` IPC call to fetch the meeting title for the source meeting chip. The cleaner fix is to JOIN the `meetings` table in `notes.repo.ts` and include `sourceMeetingTitle` alongside the existing `companyName` / `contactName` denormalized fields.
+**Why:** The current async-fetch approach requires a try/catch and suppresses the chip on failure — fragile if the meeting was deleted. Denormalizing the title eliminates the secondary IPC call and makes the chip render synchronously from already-loaded note data.
+**Pros:** Removes async failure path; chip renders without a round-trip; consistent with how `companyName`/`contactName` are already handled; simplifies `NoteDetail.tsx`.
+**Cons:** Medium effort — requires updating the SQL query, the shared `Note` type, and the `NoteDetail` component to read `note.sourceMeetingTitle` instead of fetching it. The `suppress-on-failure` catch block in `NoteDetail.tsx` can be deleted once this lands.
+**Context:** In `src/main/database/repositories/notes.repo.ts`, the note SELECT query already LEFT JOINs `companies` and `contacts`. Add `LEFT JOIN meetings m ON m.id = n.source_meeting_id` and select `m.title AS source_meeting_title`. Add `sourceMeetingTitle: string | null` to the `Note` type in `src/shared/types/note.ts`. Update `NoteDetail.tsx` to read `note.sourceMeetingTitle` directly (remove the `useEffect` that calls `MEETING_GET` and the `sourceMeetingTitle` state).
+**Effort:** M
+**Priority:** P3
+**Depends on:** Notes UI redesign PR (creates the consumer — this PR).
+
+---
+
+## P2 — Company Enhancement
+
+### Tests for COMPANY_ANALYZE_FILE handler
+**What:** Unit/integration tests for the `COMPANY_ANALYZE_FILE` IPC handler in `company.ipc.ts` — happy path (note created), LLM returns null (`analysis_failed`), and DB throws (`note_creation_failed`).
+**Why:** The handler is the critical path for file-based company enhancement. A silent regression (LLM path, DB write, or error serialization) would leave users with no note created and no visible failure. The three error cases have distinct return shapes that need explicit coverage.
+**Pros:** Pure handler logic — easy to test with mocked `runPitchDeckAnalysis` and `createCompanyNote`; ~6 test cases cover the full input space; no new infra needed beyond the existing `src/tests/` vitest setup.
+**Cons:** Requires mocking two async functions across module boundaries.
+**Context:** Handler is at the end of `registerCompanyHandlers()` in `src/main/ipc/company.ipc.ts`. Happy path: mock `runPitchDeckAnalysis` returning a string → assert `noteId` returned. LLM null path: mock returning null → assert `{ noteId: null, error: 'analysis_failed' }`. DB throw path: mock `createCompanyNote` throwing → assert `{ noteId: null, error: 'note_creation_failed' }` and that the error is logged. Start in `src/tests/company-analyze-file.test.ts`.
+**Effort:** S
+**Priority:** P2
+**Depends on:** `COMPANY_ANALYZE_FILE` handler (this PR).
+
+---
+
+### Email source in CompanyEnhanceModal
+**What:** Add "From recent emails" as a third source option in `CompanyEnhanceModal` — fetches recent emails from the company's domain via Gmail, runs the same VC analysis pipeline, and creates a note.
+**Why:** Partners frequently have inbound email threads with portfolio companies or prospects that contain deal context (financial updates, deck attachments, meeting follow-ups). Surfacing this alongside PDF/URL sources makes "Enhance" a complete single entry point.
+**Pros:** Closes the loop on the three natural deal-info sources (file, URL, email); reuses the existing `mcp__claude_ai_Gmail__gmail_search_messages` integration and the `COMPANY_ANALYZE_FILE` pipeline.
+**Cons:** Blocked on Gmail IPC integration — `gmail_search_messages` is currently MCP-only and not wired into an Electron IPC handler; requires a new `COMPANY_ENHANCE_FROM_EMAIL` channel + email extraction service.
+**Context:** `CompanyEnhanceModal` source picker is in `src/renderer/components/company/PitchDeckSourceInput.tsx`. The "From emails" option would add a step for email thread selection (query by company domain or name), then pass selected thread content as `rawText` to the same `runPitchDeckAnalysis` used by the PDF/URL path. Gmail search is available via `mcp__claude_ai_Gmail__gmail_search_messages` — the IPC bridge work is the blocker. Start by wiring a `GMAIL_SEARCH` IPC channel in `src/main/ipc/` that calls the Gmail MCP tool.
+**Effort:** L
+**Priority:** P2
+**Depends on:** Gmail IPC bridge (not yet started); `COMPANY_ANALYZE_FILE` handler (this PR).

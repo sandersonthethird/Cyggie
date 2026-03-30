@@ -29,19 +29,24 @@ export class ClaudeProvider implements LLMProvider {
     userPrompt: string,
     attachments?: ChatAttachment[]
   ): Anthropic.MessageParam['content'] {
-    const imageAtts = (attachments ?? []).filter((a) => a.type === 'image')
-    if (imageAtts.length === 0) return userPrompt
+    const atts = (attachments ?? []).filter((a) => a.type === 'image' || a.type === 'pdf')
+    if (atts.length === 0) return userPrompt
 
     const blocks: Anthropic.ContentBlockParam[] = []
-    for (const img of imageAtts) {
-      blocks.push({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
-          data: img.data
-        }
-      })
+    for (const att of atts) {
+      if (att.type === 'pdf') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: att.data } } as any)
+      } else {
+        blocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: att.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+            data: att.data
+          }
+        })
+      }
     }
     blocks.push({ type: 'text', text: userPrompt })
     return blocks

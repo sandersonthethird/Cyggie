@@ -28,7 +28,20 @@
   --header-height: 52px;
   --titlebar-height: 38px;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+
+  /* Crimson Velocity Design System */
+  --cv-bg: #F9FAFB;
+  --cv-card: #FFFFFF;
+  --cv-crimson: #B91C1C;
+  --cv-crimson-hover: #991B1B;
+  --cv-crimson-muted: #FEF2F2;
+  --cv-text: #111827;
+  --cv-text-meta: #6B7280;
+  --cv-border: rgba(0, 0, 0, 0.06);
+  --cv-radius: 8px;
+  --cv-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --cv-shadow-lg: 0 4px 16px rgba(0,0,0,0.1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -107,3 +120,6 @@ mark.markActive {
   outline: 2px solid var(--color-primary);
   outline-offset: -1px;
 }
+
+/* Tailwind utilities — Pipeline view only consumes these */
+@import "tailwindcss/utilities";

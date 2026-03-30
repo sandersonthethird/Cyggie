@@ -43,12 +43,12 @@ export interface DashboardData {
 
 export interface DashboardActivityFilter {
   types: DashboardActivityType[]
-  emailCompanyFilter: 'all' | 'pipeline_portfolio'
+  emailCompanyFilter: 'all' | 'qualified'
 }
 
 export const DEFAULT_ACTIVITY_FILTER: DashboardActivityFilter = {
   types: ['meeting', 'email'],
-  emailCompanyFilter: 'pipeline_portfolio'
+  emailCompanyFilter: 'qualified'
 }
 
 export interface DashboardCalendarCompanyContext {

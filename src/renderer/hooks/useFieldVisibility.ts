@@ -39,7 +39,7 @@ export function computeShowField(
   if (hiddenFields.includes(key)) return false
   const hasValue = Array.isArray(value)
     ? value.length > 0
-    : (value !== null && value !== undefined && value !== '')
+    : (value !== null && value !== undefined && value !== '' && value !== '-' && value !== '—')
   if (hasValue) return true
   if ((isEditing || showAllFields) && addedFields.includes(key)) return true
   if (showAllFields) return true

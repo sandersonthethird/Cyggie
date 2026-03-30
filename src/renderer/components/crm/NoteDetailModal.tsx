@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import { Markdown } from '@tiptap/markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanyNote } from '../../../shared/types/company'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { useDebounce } from '../../hooks/useDebounce'
+import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import styles from './NoteDetailModal.module.css'
 import { api } from '../../api'
 
@@ -30,6 +34,16 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
   const [confirmDelete, setConfirmDelete] = useState(false)
   const savedNoteRef = useRef<CompanyNote | null>(null)
 
+  const { editor, loadContent } = useTiptapMarkdown({
+    extensions: [StarterKit, Markdown],
+    onUpdate: ({ editor: e }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mkd = (e as any).getMarkdown?.()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setContentDraft(mkd ?? (e as any).getText?.() ?? '')
+    }
+  }, [noteId])
+
   useEffect(() => {
     window.api
       .invoke<CompanyNote | null>(IPC_CHANNELS.COMPANY_NOTES_GET, noteId)
@@ -39,13 +53,14 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
         } else {
           savedNoteRef.current = note
           setTitleDraft(note.title ?? '')
-          setContentDraft(note.content)
+          setContentDraft(note.content)  // baseline for spurious-save guard
+          loadContent(note.content)       // populates the editor with parsed markdown
           setIsPinned(note.isPinned)
           setState({ status: 'loaded', note })
         }
       })
       .catch(() => setState({ status: 'error' }))
-  }, [noteId])
+  }, [noteId, loadContent])
 
   // Debounced auto-save
   const debouncedTitle = useDebounce(titleDraft, 800)
@@ -141,24 +156,6 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
     }
   }, [noteId, onDeleted, onClose])
 
-  const contentRef = useRef<HTMLTextAreaElement>(null)
-
-  // Auto-resize textarea
-  function handleContentChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    setContentDraft(e.target.value)
-    const el = e.target
-    el.style.height = 'auto'
-    el.style.height = el.scrollHeight + 'px'
-  }
-
-  // Resize on load
-  useEffect(() => {
-    if (contentRef.current) {
-      contentRef.current.style.height = 'auto'
-      contentRef.current.style.height = contentRef.current.scrollHeight + 'px'
-    }
-  }, [state.status])
-
   return createPortal(
     <>
       <div className={styles.overlay} onClick={handleClose}>
@@ -200,14 +197,9 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
           )}
           {state.status === 'loaded' && (
             <div className={styles.bodyArea}>
-              <textarea
-                ref={contentRef}
-                className={`${styles.contentArea} ${saveError ? styles.saveError : ''}`}
-                value={contentDraft}
-                onChange={handleContentChange}
-                placeholder="Write a note…"
-                rows={1}
-              />
+              <div className={`${styles.editorContent} ${saveError ? styles.saveError : ''}`}>
+                <EditorContent editor={editor} />
+              </div>
             </div>
           )}
 

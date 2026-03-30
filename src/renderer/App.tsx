@@ -13,7 +13,6 @@ import Tasks from './routes/Tasks'
 import Notes from './routes/Notes'
 import NoteDetail, { NoteDetailLoaded } from './routes/NoteDetail'
 import LiveRecording from './routes/LiveRecording'
-import Templates from './routes/Templates'
 import Settings from './routes/Settings'
 import PartnerMeeting from './routes/PartnerMeeting'
 import { useCalendar } from './hooks/useCalendar'
@@ -88,32 +87,40 @@ function NotificationListener() {
 }
 
 export default function App() {
+  const isPopOut = new URLSearchParams(window.location.search).get('popout') === 'true'
   return (
     <HashRouter>
       <AudioCaptureProvider>
-        <CalendarInit />
         <PreferencesInit />
-        <NotificationPermissionInit />
-        <NotificationListener />
+        {!isPopOut && <CalendarInit />}
+        {!isPopOut && <NotificationPermissionInit />}
+        {!isPopOut && <NotificationListener />}
         <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/meetings" element={<MeetingList />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/notes" element={<Notes />} />
-            <Route path="/note/new" element={<NoteDetail />} />
-            <Route path="/note/:id" element={<NoteDetailLoaded />} />
-            <Route path="/recording" element={<LiveRecording />} />
-            <Route path="/pipeline" element={<Pipeline />} />
-            <Route path="/meeting/:id" element={<MeetingDetail />} />
-            <Route path="/companies" element={<Companies />} />
-            <Route path="/company/:companyId" element={<CompanyDetail />} />
-            <Route path="/contacts" element={<Contacts />} />
-            <Route path="/contact/:contactId" element={<ContactDetail />} />
-            <Route path="/templates" element={<Templates />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/partner-meeting" element={<PartnerMeeting />} />
-          </Route>
+          {isPopOut ? (
+            <>
+              <Route path="/note/new" element={<NoteDetail />} />
+              <Route path="/note/:id" element={<NoteDetailLoaded />} />
+              <Route path="*" element={null} />
+            </>
+          ) : (
+            <Route element={<Layout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/meetings" element={<MeetingList />} />
+              <Route path="/tasks" element={<Tasks />} />
+              <Route path="/notes" element={<Notes />} />
+              <Route path="/note/new" element={<NoteDetail />} />
+              <Route path="/note/:id" element={<NoteDetailLoaded />} />
+              <Route path="/recording" element={<LiveRecording />} />
+              <Route path="/pipeline" element={<Pipeline />} />
+              <Route path="/meeting/:id" element={<MeetingDetail />} />
+              <Route path="/companies" element={<Companies />} />
+              <Route path="/company/:companyId" element={<CompanyDetail />} />
+              <Route path="/contacts" element={<Contacts />} />
+              <Route path="/contact/:contactId" element={<ContactDetail />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/partner-meeting" element={<PartnerMeeting />} />
+            </Route>
+          )}
         </Routes>
       </AudioCaptureProvider>
     </HashRouter>

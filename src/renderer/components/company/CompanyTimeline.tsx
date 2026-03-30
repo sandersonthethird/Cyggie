@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanyNote, CompanyTimelineItem } from '../../../shared/types/company'
 import { useEmailSync } from '../../hooks/useEmailSync'
@@ -39,6 +40,8 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
   const [loaded, setLoaded] = useState(false)
   const [selectedItem, setSelectedItem] = useState<CompanyTimelineItem | null>(null)
   const [filter, setFilter] = useState<TimelineFilter>('all')
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedThreadGroups, setSelectedThreadGroups] = useState<Set<string>>(new Set())
 
   const {
     isSyncing,
@@ -65,10 +68,39 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
   }, [companyId, loaded])
 
   function handleClick(item: CompanyTimelineItem) {
+    if (selectMode && item.type === 'email' && item.threadGroup) {
+      const tg = item.threadGroup
+      setSelectedThreadGroups((prev) => {
+        const next = new Set(prev)
+        next.has(tg) ? next.delete(tg) : next.add(tg)
+        return next
+      })
+      return
+    }
     if (item.type === 'meeting') {
       navigate(`/meeting/${item.referenceId}`)
     } else {
       setSelectedItem(item)
+    }
+  }
+
+  function handleToggleSelectMode() {
+    if (selectMode) {
+      setSelectedThreadGroups(new Set())
+    }
+    setSelectMode((prev) => !prev)
+  }
+
+  async function handleBulkDelete() {
+    const threadGroups = [...selectedThreadGroups]
+    if (threadGroups.length === 0) return
+    try {
+      await window.api.invoke(IPC_CHANNELS.COMPANY_EMAIL_UNLINK, companyId, threadGroups)
+      setItems((prev) => prev.filter((i) => !i.threadGroup || !selectedThreadGroups.has(i.threadGroup)))
+      setSelectedThreadGroups(new Set())
+      setSelectMode(false)
+    } catch (err) {
+      console.error('[CompanyTimeline] bulk delete failed', err)
     }
   }
 
@@ -117,6 +149,7 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
 
   const syncResultMsg = getSyncResultMsg()
   const visibleItems = filter === 'all' ? items : items.filter((i) => i.type === filter)
+  const hasEmails = loaded && items.some((i) => i.type === 'email')
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
@@ -151,10 +184,22 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
           {isSyncing && (
             <button className={styles.cancelBtn} onClick={handleCancel}>Cancel</button>
           )}
+          {hasEmails && !isSyncing && (
+            <button className={styles.selectBtn} onClick={handleToggleSelectMode}>
+              {selectMode ? 'Cancel' : 'Select'}
+            </button>
+          )}
           {syncResultMsg && !isSyncing && (
             <span className={styles.syncMsg}>{syncResultMsg}</span>
           )}
           {syncError && <span className={styles.syncError}>{syncError}</span>}
+        </div>
+      )}
+      {selectMode && selectedThreadGroups.size > 0 && (
+        <div className={styles.bulkActionRow}>
+          <button className={styles.bulkDeleteBtn} onClick={handleBulkDelete}>
+            Delete {selectedThreadGroups.size} email{selectedThreadGroups.size !== 1 ? 's' : ''}
+          </button>
         </div>
       )}
       {!loaded && <div className={styles.loading}>Loading…</div>}
@@ -164,27 +209,34 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
       {loaded && items.length > 0 && visibleItems.length === 0 && (
         <div className={styles.empty}>No {filter}s found.</div>
       )}
-      {visibleItems.map((item) => (
-        <div
-          key={item.id}
-          className={`${styles.item} ${styles[item.type]} ${styles.clickable}`}
-          onClick={() => handleClick(item)}
-        >
-          <div className={styles.dot} />
-          <div className={styles.content}>
-            <div className={styles.itemHeader}>
-              <span className={styles.typeLabel}>{TYPE_LABEL[item.type] ?? item.type}</span>
-              <span className={styles.date}>
-                {new Date(item.occurredAt).toLocaleDateString(undefined, {
-                  month: 'short', day: 'numeric', year: 'numeric'
-                })}
-              </span>
+      {visibleItems.map((item) => {
+        const isSelected = item.type === 'email' && !!item.threadGroup && selectedThreadGroups.has(item.threadGroup)
+        return (
+          <div
+            key={item.id}
+            className={`${styles.item} ${styles[item.type]} ${styles.clickable} ${isSelected ? styles.emailSelected : ''}`}
+            onClick={() => handleClick(item)}
+            aria-checked={selectMode && item.type === 'email' ? isSelected : undefined}
+          >
+            {selectMode && item.type === 'email' && (
+              <div className={styles.checkbox}>{isSelected ? '✓' : ''}</div>
+            )}
+            <div className={styles.dot} />
+            <div className={styles.content}>
+              <div className={styles.itemHeader}>
+                <span className={styles.typeLabel}>{TYPE_LABEL[item.type] ?? item.type}</span>
+                <span className={styles.date}>
+                  {new Date(item.occurredAt).toLocaleDateString(undefined, {
+                    month: 'short', day: 'numeric', year: 'numeric'
+                  })}
+                </span>
+              </div>
+              <div className={styles.title}>{item.title}</div>
+              {item.subtitle && <div className={styles.subtitle}><ReactMarkdown>{item.subtitle}</ReactMarkdown></div>}
             </div>
-            <div className={styles.title}>{item.title}</div>
-            {item.subtitle && <div className={styles.subtitle}>{item.subtitle}</div>}
           </div>
-        </div>
-      ))}
+        )
+      })}
 
       {selectedItem?.type === 'email' && (
         <EmailDetailModal

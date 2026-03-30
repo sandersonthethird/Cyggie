@@ -272,35 +272,35 @@ describe('partner-meeting.repo', () => {
 
   describe('determineSection', () => {
     it('admin item (no company) → admin', () => {
-      expect(determineSection(null, null, null, null)).toBe('admin')
+      expect(determineSection(null, null, null)).toBe('admin')
     })
 
     it('portfolio company → portfolio_updates', () => {
-      expect(determineSection('co1', 'portfolio', null, null)).toBe('portfolio_updates')
+      expect(determineSection('co1', 'portfolio', null)).toBe('portfolio_updates')
     })
 
     it('pass stage → passing', () => {
-      expect(determineSection('co1', 'prospect', 'pass', null)).toBe('passing')
+      expect(determineSection('co1', 'prospect', 'pass')).toBe('passing')
     })
 
-    it('screening + created within 7 days → new_deals', () => {
-      const recentDate = new Date()
-      recentDate.setDate(recentDate.getDate() - 2)
-      expect(determineSection('co1', 'prospect', 'screening', recentDate.toISOString())).toBe('new_deals')
+    it('screening stage → new_deals', () => {
+      expect(determineSection('co1', 'prospect', 'screening')).toBe('new_deals')
     })
 
-    it('diligence + created 3 weeks ago → existing_deals', () => {
-      const oldDate = new Date()
-      oldDate.setDate(oldDate.getDate() - 21)
-      expect(determineSection('co1', 'prospect', 'diligence', oldDate.toISOString())).toBe('existing_deals')
+    it('diligence stage → existing_deals', () => {
+      expect(determineSection('co1', 'prospect', 'diligence')).toBe('existing_deals')
     })
 
     it('no pipeline stage → priorities', () => {
-      expect(determineSection('co1', 'prospect', null, null)).toBe('priorities')
+      expect(determineSection('co1', 'prospect', null)).toBe('priorities')
     })
 
     it('unknown stage → priorities', () => {
-      expect(determineSection('co1', 'prospect', 'someunknown', null)).toBe('priorities')
+      expect(determineSection('co1', 'prospect', 'someunknown')).toBe('priorities')
+    })
+
+    it('decision stage → priorities', () => {
+      expect(determineSection('co1', 'prospect', 'decision')).toBe('priorities')
     })
   })
 

@@ -1,9 +1,10 @@
+import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import NewCompanyModal from '../components/company/NewCompanyModal'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type {
   CompanySummary,
-  CompanyEntityType,
   CompanyPipelineStage,
   CompanyPriority,
   CompanyRound
@@ -19,18 +20,6 @@ import { usePreferencesStore } from '../stores/preferences.store'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../utils/customFieldUtils'
 import styles from './Pipeline.module.css'
 import { api } from '../api'
-
-const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
-  { value: 'unknown', label: 'Unknown' },
-  { value: 'prospect', label: 'Prospect' },
-  { value: 'portfolio', label: 'Portfolio' },
-  { value: 'pass', label: 'Pass' },
-  { value: 'vc_fund', label: 'Investor' },
-  { value: 'customer', label: 'Customer' },
-  { value: 'partner', label: 'Partner' },
-  { value: 'vendor', label: 'Vendor' },
-  { value: 'other', label: 'Other' }
-]
 
 const STAGES: { value: CompanyPipelineStage; label: string }[] = [
   { value: 'screening', label: 'Screening' },
@@ -59,6 +48,12 @@ const STAGE_ORDER = Object.fromEntries(STAGES.map((s, i) => [s.value, i]))
 const PRIORITY_ORDER = Object.fromEntries(PRIORITIES.map((p, i) => [p.value, i]))
 const ROUND_ORDER = Object.fromEntries(ROUNDS.map((r, i) => [r.value, i]))
 
+const PRIORITY_LABELS: Record<string, string> = {
+  high:         'High',
+  further_work: 'Further Work',
+  monitor:      'Monitor',
+}
+
 /** Pure sort function — exported for unit testing */
 export function sortCompanies(
   companies: CompanySummary[],
@@ -83,7 +78,7 @@ export function sortCompanies(
       case 'postMoney': {
         const aV = a.postMoneyValuation, bV = b.postMoneyValuation
         if (aV == null && bV == null) break
-        if (aV == null) return 1   // null always last — bypass direction multiplier
+        if (aV == null) return 1
         if (bV == null) return -1
         cmp = aV - bV
         break
@@ -91,7 +86,7 @@ export function sortCompanies(
       case 'raiseSize': {
         const aV = a.raiseSize, bV = b.raiseSize
         if (aV == null && bV == null) break
-        if (aV == null) return 1   // null always last
+        if (aV == null) return 1
         if (bV == null) return -1
         cmp = aV - bV
         break
@@ -103,7 +98,7 @@ export function sortCompanies(
 
 function formatPriority(value: CompanyPriority | null): string {
   if (!value) return '-'
-  return PRIORITIES.find((p) => p.value === value)?.label || value
+  return PRIORITY_LABELS[value] ?? value
 }
 
 function formatRound(value: CompanyRound | null): string {
@@ -120,6 +115,13 @@ const PRIORITY_STYLE: Record<string, string> = {
   high:         styles.priorityHigh,
   further_work: styles.priorityFurtherWork,
   monitor:      styles.priorityMonitor,
+}
+
+// Left-border color class per priority (applied to card wrapper)
+const CARD_PRIORITY_STYLE: Record<string, string> = {
+  high:         styles.cardBorderHigh,
+  further_work: styles.cardBorderFurtherWork,
+  monitor:      styles.cardBorderMonitor,
 }
 
 const STAGE_STYLE: Record<string, string> = {
@@ -198,13 +200,138 @@ function formatLastTouch(value: string | null): string {
   return `${days}d ago`
 }
 
-
 const DEFAULT_PASS_EXPIRY_DAYS = 30
 
 function passExpiryCutoff(days: number): string {
   const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
   return d.toISOString().slice(0, 10)
 }
+
+// ── KpiCard ────────────────────────────────────────────────────────────────
+
+interface KpiCardProps {
+  title: string
+  value: number
+  subtitle: string
+  crimson?: boolean
+}
+
+function KpiCard({ title, value, subtitle, crimson }: KpiCardProps) {
+  return (
+    <div className={styles.kpiCard}>
+      <div className={styles.kpiTitle}>{title}</div>
+      <div className={`${styles.kpiValue} ${crimson ? styles.kpiValueCrimson : ''}`}>{value}</div>
+      <div className={styles.kpiSubtitle}>{subtitle}</div>
+    </div>
+  )
+}
+
+// ── AddDealModal ───────────────────────────────────────────────────────────
+
+interface AddDealModalProps {
+  onClose: () => void
+  onCreated: () => void
+}
+
+function AddDealModal({ onClose, onCreated }: AddDealModalProps) {
+  const [name, setName] = useState('')
+  const [stage, setStage] = useState<CompanyPipelineStage>('screening')
+  const [priority, setPriority] = useState<CompanyPriority>('high')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!name.trim()) return
+    setSubmitting(true)
+    setError(null)
+    let created: CompanySummary | null = null
+    try {
+      created = await api.invoke<CompanySummary>(IPC_CHANNELS.COMPANY_CREATE, { canonicalName: name.trim() })
+    } catch {
+      setError('Failed to create company.')
+      setSubmitting(false)
+      return
+    }
+    // Best-effort: assign stage + priority — if this fails the company still exists
+    try {
+      await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, created.id, { pipelineStage: stage, priority })
+    } catch {
+      // company exists; user can set stage/priority manually
+    }
+    onCreated()
+    onClose()
+  }
+
+  return createPortal(
+    <div
+      className={styles.modalBackdrop}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className={styles.modal}>
+        <div className={styles.modalTitle}>New Deal</div>
+        <form onSubmit={(e) => void handleSubmit(e)}>
+          <div className={styles.modalField}>
+            <label className={styles.modalLabel}>Company Name</label>
+            <input
+              autoFocus
+              className={styles.modalInput}
+              placeholder="e.g. Acme Corp"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={submitting}
+            />
+          </div>
+          <div className={styles.modalField}>
+            <label className={styles.modalLabel}>Initial Stage</label>
+            <select
+              className={styles.modalInput}
+              value={stage}
+              onChange={(e) => setStage(e.target.value as CompanyPipelineStage)}
+              disabled={submitting}
+            >
+              <option value="screening">Screening</option>
+              <option value="diligence">Diligence</option>
+              <option value="decision">Decision</option>
+              <option value="documentation">Documentation</option>
+            </select>
+          </div>
+          <div className={styles.modalField}>
+            <label className={styles.modalLabel}>Priority</label>
+            <select
+              className={styles.modalInput}
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as CompanyPriority)}
+              disabled={submitting}
+            >
+              <option value="high">High</option>
+              <option value="further_work">Further Work</option>
+              <option value="monitor">Monitor</option>
+            </select>
+          </div>
+          {error && <div className={styles.modalError}>{error}</div>}
+          <div className={styles.modalActions}>
+            <button type="button" className={styles.modalCancel} onClick={onClose} disabled={submitting}>
+              Cancel
+            </button>
+            <button type="submit" className={styles.modalSubmit} disabled={submitting || !name.trim()}>
+              {submitting ? 'Creating…' : 'Create Deal'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+// ── Pipeline ───────────────────────────────────────────────────────────────
 
 export default function Pipeline() {
   const navigate = useNavigate()
@@ -226,18 +353,19 @@ export default function Pipeline() {
   const [passExpiryDays, setPassExpiryDays] = useState(DEFAULT_PASS_EXPIRY_DAYS)
   const [dragCompanyId, setDragCompanyId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [createDefaultStage, setCreateDefaultStage] = useState<CompanyPipelineStage | undefined>(undefined)
+  const [createInitialPdfPath, setCreateInitialPdfPath] = useState<string | undefined>(undefined)
   const [addToSyncCompany, setAddToSyncCompany] = useState<CompanySummary | null>(null)
-  const [createName, setCreateName] = useState('')
-  const [createDomain, setCreateDomain] = useState('')
-  const [createDescription, setCreateDescription] = useState('')
-  const [createCity, setCreateCity] = useState('')
-  const [createState, setCreateState] = useState('')
-  const [createEntityType, setCreateEntityType] = useState<CompanyEntityType>('unknown')
-  const [createPipelineStage, setCreatePipelineStage] = useState<CompanyPipelineStage | ''>('screening')
-  const [createPriority, setCreatePriority] = useState<CompanyPriority | ''>('')
-  const [createRound, setCreateRound] = useState<CompanyRound | ''>('')
-  const [createPostMoney, setCreatePostMoney] = useState('')
-  const [createRaiseSize, setCreateRaiseSize] = useState('')
+  const [fileDropTargetStage, setFileDropTargetStage] = useState<CompanyPipelineStage | null>(null)
+
+  // View toggle — persisted to preferences
+  const [view, setView] = useState<'board' | 'table'>(() =>
+    getJSON<'board' | 'table'>('cyggie:pipeline-view', 'board')
+  )
+  useEffect(() => { setJSON('cyggie:pipeline-view', view) }, [view]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // AddDeal modal
+  const [addDealOpen, setAddDealOpen] = useState(false)
 
   // Table filters — persisted to preferences. Default excludes 'pass'.
   const [filterStages, setFilterStages] = useState<Set<CompanyPipelineStage>>(() => {
@@ -286,7 +414,6 @@ export default function Pipeline() {
     }
   }, [passExpiryDays])
 
-  // Load pass expiry preference once on mount
   useEffect(() => {
     api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL)
       .then((all) => {
@@ -300,48 +427,23 @@ export default function Pipeline() {
     void loadData()
   }, [loadData])
 
-  const resetCreateForm = useCallback(() => {
-    setCreateName('')
-    setCreateDomain('')
-    setCreateDescription('')
-    setCreateCity('')
-    setCreateState('')
-    setCreateEntityType('unknown')
-    setCreatePipelineStage('screening')
-    setCreatePriority('')
-    setCreateRound('')
-    setCreatePostMoney('')
-    setCreateRaiseSize('')
+  const openCreate = useCallback((stage?: CompanyPipelineStage, pdfPath?: string) => {
+    setCreateDefaultStage(stage)
+    setCreateInitialPdfPath(pdfPath)
+    setShowCreate(true)
   }, [])
 
-  const createCompany = useCallback(async () => {
-    if (!createName.trim()) return
-    try {
-      const created = await api.invoke<CompanySummary>(
-        IPC_CHANNELS.COMPANY_CREATE,
-        {
-          canonicalName: createName.trim(),
-          description: createDescription.trim() || null,
-          primaryDomain: createDomain.trim() || null,
-          entityType: createEntityType
-        }
-      )
-      await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, created.id, {
-        city: createCity.trim() || null,
-        state: createState.trim() || null,
-        pipelineStage: (createPipelineStage || null) as CompanyPipelineStage | null,
-        priority: (createPriority || null) as CompanyPriority | null,
-        round: (createRound || null) as CompanyRound | null,
-        postMoneyValuation: createPostMoney.trim() ? Number(createPostMoney) : null,
-        raiseSize: createRaiseSize.trim() ? Number(createRaiseSize) : null
-      })
-      resetCreateForm()
-      setShowCreate(false)
-      await loadData()
-    } catch (err) {
-      setError(String(err))
-    }
-  }, [createName, createDescription, createDomain, createCity, createState, createEntityType, createPipelineStage, createPriority, createRound, createPostMoney, createRaiseSize, resetCreateForm, loadData])
+  const closeCreate = useCallback(() => {
+    setShowCreate(false)
+    setCreateDefaultStage(undefined)
+    setCreateInitialPdfPath(undefined)
+  }, [])
+
+  const handleCompanyCreated = useCallback(async (company: CompanySummary) => {
+    closeCreate()
+    await loadData()
+    navigate(`/company/${company.id}`)
+  }, [closeCreate, loadData, navigate])
 
   const updateCompanyField = useCallback(async (
     companyId: string,
@@ -411,310 +513,338 @@ export default function Pipeline() {
     return result
   }, [companies, filterStages, filterPriorities, filterRounds, filterQuery, sortColumn, sortDirection])
 
+  // KPI: all non-pass companies, unaffected by filter state
+  const allActiveCompanies = useMemo(() =>
+    companies.filter(c => c.pipelineStage !== 'pass'),
+  [companies])
+
+  const kpiStats = useMemo(() => ({
+    total:     allActiveCompanies.length,
+    diligence: allActiveCompanies.filter(c => c.pipelineStage === 'diligence').length,
+    decision:  allActiveCompanies.filter(c => c.pipelineStage === 'decision').length,
+  }), [allActiveCompanies])
+
   if (loading && companies.length === 0) {
     return <div className={styles.page}>Loading pipeline...</div>
   }
 
   return (
     <div className={styles.page}>
-      <div className={styles.headerRow}>
-        <h1 className={styles.title}>Pipeline</h1>
-        <input
-          className={styles.headerSearch}
-          placeholder="Search companies…"
-          value={filterQuery}
-          onChange={(e) => setFilterQuery(e.target.value)}
-        />
-        <button
-          className={styles.primaryButton}
-          onClick={() => setShowCreate((v) => !v)}
-        >
-          + Company
-        </button>
+      {/* Top bar */}
+      <div className={styles.topBar}>
+        <h1 className={styles.pageTitle}>Active Pipeline</h1>
+        <div className={styles.topBarActions}>
+          <input
+            className={styles.headerSearch}
+            placeholder="Search companies…"
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+          />
+          <MultiSelectFilter
+            options={stageOptions}
+            selected={filterStages}
+            onChange={setFilterStages}
+            allLabel="All"
+            fixedLabel="Stage"
+            variant="header"
+            portal
+          />
+          <MultiSelectFilter
+            options={priorityOptions}
+            selected={filterPriorities}
+            onChange={setFilterPriorities}
+            allLabel="All"
+            fixedLabel="Priority"
+            variant="header"
+            portal
+          />
+          <MultiSelectFilter
+            options={roundOptions}
+            selected={filterRounds}
+            onChange={setFilterRounds}
+            allLabel="All"
+            fixedLabel="Round"
+            variant="header"
+            portal
+          />
+          <div className={styles.viewToggle}>
+            <button
+              className={view === 'board' ? styles.viewToggleActive : styles.viewToggleInactive}
+              onClick={() => setView('board')}
+            >
+              Kanban
+            </button>
+            <button
+              className={view === 'table' ? styles.viewToggleActive : styles.viewToggleInactive}
+              onClick={() => setView('table')}
+            >
+              Table
+            </button>
+          </div>
+          <button className={styles.addDealBtn} onClick={() => setAddDealOpen(true)}>
+            + Deal
+          </button>
+        </div>
       </div>
 
-      {showCreate && (
-        <div className={styles.createCard}>
-          <div className={styles.createFormGrid}>
-            <div className={styles.createFieldFull}>
-              <label className={styles.createLabel}>Company Name</label>
-              <input className={styles.createInput} value={createName} onChange={(e) => setCreateName(e.target.value)} autoFocus />
-            </div>
-            <div>
-              <label className={styles.createLabel}>Domain</label>
-              <input className={styles.createInput} placeholder="e.g. acme.com" value={createDomain} onChange={(e) => setCreateDomain(e.target.value)} />
-            </div>
-            <div>
-              <label className={styles.createLabel}>City</label>
-              <input className={styles.createInput} value={createCity} onChange={(e) => setCreateCity(e.target.value)} />
-            </div>
-            <div>
-              <label className={styles.createLabel}>State</label>
-              <input className={styles.createInput} placeholder="e.g. CA" value={createState} onChange={(e) => setCreateState(e.target.value)} />
-            </div>
-            <div className={styles.createFieldFull}>
-              <label className={styles.createLabel}>Description</label>
-              <textarea className={styles.createTextarea} value={createDescription} onChange={(e) => setCreateDescription(e.target.value)} />
-            </div>
-            <div>
-              <label className={styles.createLabel}>Entity Type</label>
-              <select className={styles.createSelect} value={createEntityType} onChange={(e) => setCreateEntityType(e.target.value as CompanyEntityType)}>
-                {ENTITY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={styles.createLabel}>Pipeline Stage</label>
-              <select className={styles.createSelect} value={createPipelineStage} onChange={(e) => setCreatePipelineStage(e.target.value as CompanyPipelineStage | '')}>
-                <option value="">None</option>
-                {STAGES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={styles.createLabel}>Priority</label>
-              <select className={styles.createSelect} value={createPriority} onChange={(e) => setCreatePriority(e.target.value as CompanyPriority | '')}>
-                <option value="">None</option>
-                {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={styles.createLabel}>Round</label>
-              <select className={styles.createSelect} value={createRound} onChange={(e) => setCreateRound(e.target.value as CompanyRound | '')}>
-                <option value="">None</option>
-                {ROUNDS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={styles.createLabel}>Post Money ($M)</label>
-              <input className={styles.createInput} type="number" step="0.1" value={createPostMoney} onChange={(e) => setCreatePostMoney(e.target.value)} />
-            </div>
-            <div>
-              <label className={styles.createLabel}>Raise Size ($M)</label>
-              <input className={styles.createInput} type="number" step="0.1" value={createRaiseSize} onChange={(e) => setCreateRaiseSize(e.target.value)} />
-            </div>
-          </div>
-          <div className={styles.createActions}>
-            <button className={styles.primaryButton} onClick={() => void createCompany()} disabled={!createName.trim()}>Create</button>
-            <button className={styles.linkButton} onClick={() => { setShowCreate(false); resetCreateForm() }}>Cancel</button>
-          </div>
-        </div>
+      {/* KPI row — always visible, uses all non-pass companies */}
+      <div className={styles.kpiRow}>
+        <KpiCard title="Active Deals"       value={kpiStats.total}     subtitle="Across all active stages" />
+        <KpiCard title="In Diligence"       value={kpiStats.diligence} subtitle="In active diligence" />
+        <KpiCard title="Requiring Decision" value={kpiStats.decision}  subtitle="Awaiting partner review"
+                 crimson={kpiStats.decision > 0} />
+      </div>
+
+      <NewCompanyModal
+        open={showCreate}
+        defaultStage={createDefaultStage}
+        initialPdfPath={createInitialPdfPath}
+        onCreated={(company) => void handleCompanyCreated(company)}
+        onClose={closeCreate}
+      />
+
+      {addDealOpen && (
+        <AddDealModal
+          onClose={() => setAddDealOpen(false)}
+          onCreated={() => void loadData()}
+        />
       )}
 
       {error && <div className={styles.error}>{error}</div>}
 
-      <div className={styles.board}>
-        {STAGES.map((stage) => {
-          const stageCompanies = companies.filter((c) => c.pipelineStage === stage.value)
-          return (
-            <div
-              key={stage.value}
-              className={styles.column}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={() => {
-                if (!dragCompanyId) return
-                void moveToStage(dragCompanyId, stage.value)
-                setDragCompanyId(null)
-              }}
-            >
-              <div className={styles.columnHeader}>
-                <span className={styles.columnTitle}>{stage.label}</span>
-                <span className={styles.countBadge}>{stageCompanies.length}</span>
+      {/* Kanban board — shows all companies, unaffected by filters */}
+      {view === 'board' && (
+        <div className={styles.board}>
+          {STAGES.map((stage) => {
+            const stageCompanies = companies.filter((c) => c.pipelineStage === stage.value)
+            return (
+              <div
+                key={stage.value}
+                className={`${styles.column} ${fileDropTargetStage === stage.value ? styles.fileDropTarget : ''}`}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  if (e.dataTransfer.types.includes('Files')) {
+                    setFileDropTargetStage(stage.value)
+                  }
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                    setFileDropTargetStage(null)
+                  }
+                }}
+                onDrop={(e) => {
+                  setFileDropTargetStage(null)
+                  const file = e.dataTransfer.files[0]
+                  if (file && file.name.toLowerCase().endsWith('.pdf')) {
+                    const filePath = (file as unknown as { path?: string }).path
+                    if (filePath) {
+                      openCreate(stage.value, filePath)
+                      return
+                    }
+                  }
+                  if (!dragCompanyId) return
+                  void moveToStage(dragCompanyId, stage.value)
+                  setDragCompanyId(null)
+                }}
+              >
+                <div className={styles.columnHeader}>
+                  <span className={styles.columnTitle}>{stage.label}</span>
+                  <span className={styles.countBadge}>{stageCompanies.length}</span>
+                </div>
+                <div className={styles.columnBody}>
+                  {stageCompanies.map((company) => (
+                    <div
+                      key={company.id}
+                      className={`${styles.companyCard} ${company.priority ? (CARD_PRIORITY_STYLE[company.priority] ?? '') : ''}`}
+                      draggable
+                      onDragStart={() => setDragCompanyId(company.id)}
+                      onClick={() => navigate(`/company/${company.id}`)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/company/${company.id}`) }}
+                    >
+                      <div className={styles.cardName}>{company.canonicalName}</div>
+                      {company.description && (
+                        <p className={styles.cardDesc}>{company.description}</p>
+                      )}
+                      <div className={styles.cardTags}>
+                        {company.raiseSize != null && (
+                          <span className={styles.cardTag}>{formatMoney(company.raiseSize)} Raise</span>
+                        )}
+                        {company.postMoneyValuation != null && (
+                          <span className={styles.cardTag}>{formatMoney(company.postMoneyValuation)} Post</span>
+                        )}
+                      </div>
+                      <div className={styles.cardLastTouch}>{formatLastTouch(company.lastTouchpoint)}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className={styles.columnBody}>
-                {stageCompanies.map((company) => (
-                  <div
-                    key={company.id}
-                    className={styles.companyCard}
-                    draggable
-                    onDragStart={() => setDragCompanyId(company.id)}
-                  >
+            )
+          })}
+        </div>
+      )}
+
+      {/* Table view — uses filteredCompanies */}
+      {view === 'table' && (
+        <div className={styles.tableWrapper}>
+          <table className={styles.pipelineTable}>
+            <thead>
+              <tr>
+                <th className={`${styles.companyColumn} ${styles.sortableTh}`} onClick={() => handleSort('name')}>
+                  Company {sortIcon('name')}
+                </th>
+                <th>
+                  <div className={styles.thHeaderWithFilter}>
+                    <MultiSelectFilter
+                      options={stageOptions}
+                      selected={filterStages}
+                      onChange={setFilterStages}
+                      allLabel="All"
+                      fixedLabel="Stage"
+                      variant="header"
+                      portal
+                    />
+                    <button className={styles.sortBtn} onClick={() => handleSort('stage')} type="button">
+                      {sortIcon('stage')}
+                    </button>
+                  </div>
+                </th>
+                <th>
+                  <div className={styles.thHeaderWithFilter}>
+                    <MultiSelectFilter
+                      options={priorityOptions}
+                      selected={filterPriorities}
+                      onChange={setFilterPriorities}
+                      allLabel="All"
+                      fixedLabel="Priority"
+                      variant="header"
+                      portal
+                    />
+                    <button className={styles.sortBtn} onClick={() => handleSort('priority')} type="button">
+                      {sortIcon('priority')}
+                    </button>
+                  </div>
+                </th>
+                <th>
+                  <div className={styles.thHeaderWithFilter}>
+                    <MultiSelectFilter
+                      options={roundOptions}
+                      selected={filterRounds}
+                      onChange={setFilterRounds}
+                      allLabel="All"
+                      fixedLabel="Round"
+                      variant="header"
+                      portal
+                    />
+                    <button className={styles.sortBtn} onClick={() => handleSort('round')} type="button">
+                      {sortIcon('round')}
+                    </button>
+                  </div>
+                </th>
+                <th className={styles.sortableTh} onClick={() => handleSort('raiseSize')}>
+                  Raise Size {sortIcon('raiseSize')}
+                </th>
+                <th className={styles.sortableTh} onClick={() => handleSort('postMoney')}>
+                  Post Money {sortIcon('postMoney')}
+                </th>
+                <th>Description</th>
+                <th>Last Touch</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredCompanies.map((company) => (
+                <tr key={company.id}>
+                  <td className={styles.companyColumn}>
                     <button
-                      className={styles.cardNameButton}
+                      className={styles.companyLink}
                       onClick={() => navigate(`/company/${company.id}`)}
                     >
                       {company.canonicalName}
                     </button>
-                    <div className={styles.cardBadges}>
-                      {company.priority && (
-                        <span className={`${styles.priorityBadge} ${PRIORITY_STYLE[company.priority] ?? ''}`}>
-                          {formatPriority(company.priority)}
-                        </span>
-                      )}
-                      {company.round && (
-                        <span className={`${styles.roundBadge} ${ROUND_STYLE[company.round] ?? ''}`}>
-                          {formatRound(company.round)}
-                        </span>
-                      )}
-                    </div>
-                    <div className={styles.cardMeta}>
-                      {formatLastTouch(company.lastTouchpoint)}
-                    </div>
-                    {(company.postMoneyValuation != null || company.raiseSize != null) && (
-                      <div className={styles.cardMeta}>
-                        {company.postMoneyValuation != null && `Val: ${formatMoney(company.postMoneyValuation)}`}
-                        {company.postMoneyValuation != null && company.raiseSize != null && ' · '}
-                        {company.raiseSize != null && `Raise: ${formatMoney(company.raiseSize)}`}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+                    <button
+                      className={styles.addToSyncBtn}
+                      onClick={(e) => { e.stopPropagation(); setAddToSyncCompany(company) }}
+                      title="Add to Partner Sync"
+                    >
+                      + Sync
+                    </button>
+                  </td>
+                  <td>
+                    <ChipDropdownCell
+                      value={company.pipelineStage}
+                      options={stageOptions}
+                      colorMap={STAGE_STYLE}
+                      onChange={(v) => void updateCompanyField(company.id, 'pipelineStage', v)}
+                      onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
+                    />
+                  </td>
+                  <td>
+                    <ChipDropdownCell
+                      value={company.priority}
+                      options={priorityOptions}
+                      colorMap={PRIORITY_STYLE}
+                      onChange={(v) => void updateCompanyField(company.id, 'priority', v)}
+                      onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
+                    />
+                  </td>
+                  <td>
+                    <ChipDropdownCell
+                      value={company.round}
+                      options={roundOptions}
+                      colorMap={ROUND_STYLE}
+                      onChange={(v) => void updateCompanyField(company.id, 'round', v)}
+                      onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className={styles.cellInput}
+                      type="number"
+                      step="0.1"
+                      placeholder="-"
+                      value={company.raiseSize ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value.trim()
+                        void updateCompanyField(company.id, 'raiseSize', val ? Number(val) : null)
+                      }}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className={styles.cellInput}
+                      type="number"
+                      step="0.1"
+                      placeholder="-"
+                      value={company.postMoneyValuation ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value.trim()
+                        void updateCompanyField(company.id, 'postMoneyValuation', val ? Number(val) : null)
+                      }}
+                    />
+                  </td>
+                  <td className={styles.descriptionCell}>
+                    {company.description || '-'}
+                  </td>
+                  <td className={styles.lastTouchCell}>
+                    {formatLastTouch(company.lastTouchpoint)}
+                  </td>
+                </tr>
+              ))}
+              {filteredCompanies.length === 0 && (
+                <tr>
+                  <td colSpan={8} className={styles.empty}>
+                    {companies.length === 0
+                      ? 'No companies in pipeline yet. Click + Deal to add one.'
+                      : 'No companies match the current filters.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      <div className={styles.tableWrapper}>
-        <table className={styles.pipelineTable}>
-          <thead>
-            <tr>
-              <th className={`${styles.companyColumn} ${styles.sortableTh}`} onClick={() => handleSort('name')}>
-                Company {sortIcon('name')}
-              </th>
-              <th>
-                <div className={styles.thHeaderWithFilter}>
-                  <MultiSelectFilter
-                    options={priorityOptions}
-                    selected={filterPriorities}
-                    onChange={setFilterPriorities}
-                    allLabel="All"
-                    fixedLabel="Priority"
-                    variant="header"
-                    portal
-                  />
-                  <button className={styles.sortBtn} onClick={() => handleSort('priority')} type="button">
-                    {sortIcon('priority')}
-                  </button>
-                </div>
-              </th>
-              <th>
-                <div className={styles.thHeaderWithFilter}>
-                  <MultiSelectFilter
-                    options={stageOptions}
-                    selected={filterStages}
-                    onChange={setFilterStages}
-                    allLabel="All"
-                    fixedLabel="Stage"
-                    variant="header"
-                    portal
-                  />
-                  <button className={styles.sortBtn} onClick={() => handleSort('stage')} type="button">
-                    {sortIcon('stage')}
-                  </button>
-                </div>
-              </th>
-              <th>
-                <div className={styles.thHeaderWithFilter}>
-                  <MultiSelectFilter
-                    options={roundOptions}
-                    selected={filterRounds}
-                    onChange={setFilterRounds}
-                    allLabel="All"
-                    fixedLabel="Round"
-                    variant="header"
-                    portal
-                  />
-                  <button className={styles.sortBtn} onClick={() => handleSort('round')} type="button">
-                    {sortIcon('round')}
-                  </button>
-                </div>
-              </th>
-              <th className={styles.sortableTh} onClick={() => handleSort('postMoney')}>
-                Post Money {sortIcon('postMoney')}
-              </th>
-              <th className={styles.sortableTh} onClick={() => handleSort('raiseSize')}>
-                Raise Size {sortIcon('raiseSize')}
-              </th>
-              <th>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredCompanies.map((company) => (
-              <tr key={company.id}>
-                <td className={styles.companyColumn}>
-                  <button
-                    className={styles.companyLink}
-                    onClick={() => navigate(`/company/${company.id}`)}
-                  >
-                    {company.canonicalName}
-                  </button>
-                  <button
-                    className={styles.addToSyncBtn}
-                    onClick={(e) => { e.stopPropagation(); setAddToSyncCompany(company) }}
-                    title="Add to Partner Sync"
-                  >
-                    + Sync
-                  </button>
-                </td>
-                <td>
-                  <ChipDropdownCell
-                    value={company.priority}
-                    options={priorityOptions}
-                    colorMap={PRIORITY_STYLE}
-                    onChange={(v) => void updateCompanyField(company.id, 'priority', v)}
-                    onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
-                  />
-                </td>
-                <td>
-                  <ChipDropdownCell
-                    value={company.pipelineStage}
-                    options={stageOptions}
-                    colorMap={STAGE_STYLE}
-                    onChange={(v) => void updateCompanyField(company.id, 'pipelineStage', v)}
-                    onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
-                  />
-                </td>
-                <td>
-                  <ChipDropdownCell
-                    value={company.round}
-                    options={roundOptions}
-                    colorMap={ROUND_STYLE}
-                    onChange={(v) => void updateCompanyField(company.id, 'round', v)}
-                    onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
-                  />
-                </td>
-                <td>
-                  <input
-                    className={styles.cellInput}
-                    type="number"
-                    step="0.1"
-                    placeholder="-"
-                    value={company.postMoneyValuation ?? ''}
-                    onChange={(e) => {
-                      const val = e.target.value.trim()
-                      void updateCompanyField(company.id, 'postMoneyValuation', val ? Number(val) : null)
-                    }}
-                  />
-                </td>
-                <td>
-                  <input
-                    className={styles.cellInput}
-                    type="number"
-                    step="0.1"
-                    placeholder="-"
-                    value={company.raiseSize ?? ''}
-                    onChange={(e) => {
-                      const val = e.target.value.trim()
-                      void updateCompanyField(company.id, 'raiseSize', val ? Number(val) : null)
-                    }}
-                  />
-                </td>
-                <td className={styles.descriptionCell}>
-                  {company.description || '-'}
-                </td>
-              </tr>
-            ))}
-            {filteredCompanies.length === 0 && (
-              <tr>
-                <td colSpan={7} className={styles.empty}>
-                  {companies.length === 0
-                    ? 'No companies in pipeline yet. Add one above.'
-                    : 'No companies match the current filters.'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
       <div className={styles.chatSection}>
         <ChatInterface compact />
       </div>

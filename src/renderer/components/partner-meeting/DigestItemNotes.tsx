@@ -7,26 +7,34 @@
  *
  * Expanded state:
  *   Live TipTap editor. onBlur → flush save → collapse.
- *   Debounce 800ms auto-saves while typing.
+ *   Debounce 800ms auto-saves while typing (only when hasEdited=true).
  *
  * State machine:
- *   collapsed ──► click ──► expanded (TipTap mounted)
+ *   collapsed ──► click ──► isLoadingRef=true ──► loadContent(content)
+ *                                │                       │
+ *                                │              TipTap onUpdate: setDraft(md)
+ *                                │              markEdited() BLOCKED (isLoadingRef)
+ *                                │                       │
+ *                                │              setTimeout → isLoadingRef=false
  *                                │
- *                           blur/collapse ──► flush save ──► collapsed
+ *                       user types ──► markEdited() → hasEdited=true
+ *                                │         └─► debounce 800ms ──► onSave(content)
  *                                │
- *                        debounce 800ms ──► onSave(content)
+ *                       blur/collapse ──► flushSave ──► collapsed
+ *                                         (saves only if hasEdited=true)
  *
  * Used in: CompanyDigestItem (brief + meeting notes), AdminDigestItem (meeting notes).
  * Keeps at most 1-2 live TipTap instances active across the page (each item collapses on blur).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useEditor, EditorContent } from '@tiptap/react'
+import { EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
 import ReactMarkdown from 'react-markdown'
-import { useDebounce } from '../../hooks/useDebounce'
+import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
+import { useDigestItemAutoSave } from '../../hooks/useDigestItemAutoSave'
 import styles from './DigestItemNotes.module.css'
 
 interface DigestItemNotesProps {
@@ -38,50 +46,42 @@ interface DigestItemNotesProps {
 
 export function DigestItemNotes({ content, placeholder = 'Click to add notes…', disabled = false, onSave }: DigestItemNotesProps) {
   const [expanded, setExpanded] = useState(false)
-  const [draft, setDraft] = useState(content ?? '')
   const containerRef = useRef<HTMLDivElement>(null)
-  const debouncedDraft = useDebounce(draft, 800)
-  const draftRef = useRef(draft)
-  draftRef.current = draft  // always current — avoids stale closure in onCreate
 
-  // Sync content changes from parent (e.g., carry-over load) into local draft
-  useEffect(() => {
-    if (!expanded) {
-      setDraft(content ?? '')
-    }
-  }, [content, expanded])
+  // Auto-save state machine: dirty tracking prevents wiping DB briefs set externally
+  const { draft, setDraft, markEdited, flushSave } = useDigestItemAutoSave({
+    content,
+    onSave,
+    expanded,
+  })
 
-  // Auto-save when debounced draft changes (only while expanded)
-  const latestOnSave = useRef(onSave)
-  latestOnSave.current = onSave
+  // Guards markEdited() from firing during programmatic loadContent calls
+  const isLoadingRef = useRef(false)
 
+  const { editor, loadContent } = useTiptapMarkdown({
+    extensions: [
+      StarterKit,
+      Markdown,
+      Link.configure({ openOnClick: false }),
+    ],
+    editable: !disabled,
+    onUpdate: ({ editor: e }) => {
+      const md = e.getMarkdown?.() ?? e.getText()
+      setDraft(md)
+      if (!isLoadingRef.current) markEdited()  // blocked during programmatic loads
+    },
+  })
+
+  // Load content prop into editor when user expands (use prop directly, not stale draft)
   useEffect(() => {
     if (expanded) {
-      latestOnSave.current(debouncedDraft)
+      isLoadingRef.current = true
+      loadContent(content ?? '')
+      const tid = setTimeout(() => { isLoadingRef.current = false }, 0)
+      return () => clearTimeout(tid)
     }
-  }, [debouncedDraft, expanded])
-
-  const editor = useEditor(
-    {
-      extensions: [
-        StarterKit,
-        Markdown,
-        Link.configure({ openOnClick: false }),
-      ],
-      content: null,           // set via onCreate so @tiptap/markdown parses properly
-      editable: !disabled,
-      onCreate: ({ editor: e }) => {
-        if (draftRef.current) {
-          e.commands.setContent(draftRef.current)
-        }
-      },
-      onUpdate: ({ editor: e }) => {
-        const md = e.storage.markdown?.getMarkdown?.() ?? e.getText()
-        setDraft(md)
-      },
-    },
-    [expanded] // re-initialize when toggled
-  )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded])  // intentionally omit content: only load on expand transition
 
   // Focus on mount
   useEffect(() => {
@@ -92,12 +92,11 @@ export function DigestItemNotes({ content, placeholder = 'Click to add notes…'
 
   const collapse = useCallback(() => {
     if (editor) {
-      const md = editor.storage.markdown?.getMarkdown?.() ?? editor.getText()
-      setDraft(md)
-      latestOnSave.current(md)
+      const md = editor.getMarkdown?.() ?? editor.getText()
+      flushSave(md)  // only saves if user has edited since last expand
     }
     setExpanded(false)
-  }, [editor])
+  }, [editor, flushSave])
 
   // Collapse when clicking outside the container
   useEffect(() => {

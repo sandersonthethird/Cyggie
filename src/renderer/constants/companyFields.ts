@@ -6,8 +6,8 @@ export type { HardcodedFieldDef }
  * All hideable hardcoded fields for companies, in their default section order.
  * Powers the Add Field picker (not section rendering — panels keep hardcoded blocks).
  *
- * NOTE: Only includes fields rendered via show() + HideableRow. Excludes always-visible
- * fields: pipelineStage (visible: true), priority (visible: true).
+ * NOTE: Only includes fields rendered via show() + HideableRow. pipelineStage and
+ * priority are header-chip-only fields (not in sections) so they are excluded here.
  *
  * NOTE: When adding a new hardcoded field to CompanyPropertiesPanel, add it here too.
  */

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanyDecisionLog, CompanyNote } from '../../../shared/types/company'
 import { NoteDetailModal } from '../crm/NoteDetailModal'
@@ -6,10 +7,13 @@ import { DecisionLogModal } from '../crm/DecisionLogModal'
 import styles from './CompanyNotes.module.css'
 import { api } from '../../api'
 import { usePinToggle } from '../../hooks/usePinToggle'
+import { stripMarkdownPreview } from '../../utils/format'
 
 interface CompanyNotesProps {
   companyId: string
   className?: string
+  highlightNoteId?: string | null
+  refreshKey?: number
 }
 
 const DECISION_ACCENT: Record<string, string> = {
@@ -167,7 +171,7 @@ function DecisionLogSection({ companyId, onDecisionSaved }: DecisionLogSectionPr
   )
 }
 
-export function CompanyNotes({ companyId, className }: CompanyNotesProps) {
+export function CompanyNotes({ companyId, className, highlightNoteId, refreshKey }: CompanyNotesProps) {
   const [notes, setNotes] = useState<CompanyNote[]>([])
   const [loaded, setLoaded] = useState(false)
   const [newContent, setNewContent] = useState('')
@@ -176,6 +180,9 @@ export function CompanyNotes({ companyId, className }: CompanyNotesProps) {
   const [focused, setFocused] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { togglePin, togglingIds } = usePinToggle<CompanyNote>(IPC_CHANNELS.COMPANY_NOTES_UPDATE, setNotes)
+
+  // Reset loaded state when a new note is created externally (e.g. from Enhance modal)
+  useEffect(() => { setLoaded(false) }, [refreshKey])
 
   useEffect(() => {
     if (loaded) return
@@ -275,19 +282,19 @@ export function CompanyNotes({ companyId, className }: CompanyNotesProps) {
         const nl = content.indexOf('\n')
         const firstLine = nl >= 0 ? content.slice(0, nl) : content
         const explicitTitle = note.title?.trim()
-        const title = explicitTitle || firstLine
+        const title = explicitTitle || stripMarkdownPreview(firstLine)
         const body = explicitTitle
           ? (nl >= 0 && firstLine.trim() === explicitTitle
             ? content.slice(nl + 1).trim()
             : content.trim())
           : (nl >= 0 ? content.slice(nl + 1).trim() : '')
         return (
-          <div key={note.id} className={`${styles.note} ${note.isPinned ? styles.notePinned : ''}`} onClick={() => setSelectedNoteId(note.id)}>
+          <div key={note.id} className={`${styles.note} ${note.isPinned ? styles.notePinned : ''} ${note.id === highlightNoteId ? styles.noteHighlight : ''}`} onClick={() => setSelectedNoteId(note.id)}>
             <div className={styles.noteTitleRow}>
               <div className={styles.noteTitle}>{title}</div>
               {note.isPinned && <span className={styles.pinnedBadge}>📌 Pinned</span>}
             </div>
-            {body && <div className={styles.noteBody}>{body}</div>}
+            {body && <div className={styles.noteBody}><ReactMarkdown>{body.slice(0, 400)}</ReactMarkdown></div>}
             <div className={styles.noteMeta}>
               <span>{new Date(note.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
               <div className={styles.noteMetaActions}>

@@ -28,6 +28,7 @@ import { registerContactChatHandlers } from './contact-chat.ipc'
 import { registerCompanyDecisionHandlers } from './company-decision.ipc'
 import { registerNotesHandlers } from './notes.ipc'
 import { registerPartnerMeetingIpc } from './partner-meeting.ipc'
+import { registerWindowHandlers } from './window.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -60,4 +61,5 @@ export function registerAllHandlers(): void {
   registerCompanyDecisionHandlers()
   registerNotesHandlers()
   registerPartnerMeetingIpc()
+  registerWindowHandlers()
 }

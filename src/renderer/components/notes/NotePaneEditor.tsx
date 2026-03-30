@@ -9,14 +9,18 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { EditorContent } from '@tiptap/react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useNoteEditor } from '../../hooks/useNoteEditor'
+import { useEditableTitle } from '../../hooks/useEditableTitle'
 import { NoteTagger } from './NoteTagger'
 import { TagSuggestionBanner } from './TagSuggestionBanner'
+import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
 import { api } from '../../api'
 import styles from './NotePaneEditor.module.css'
 import type { Note, TagSuggestion } from '../../../shared/types/note'
+import type { Meeting } from '../../../shared/types/meeting'
 
 interface Props {
   noteId: string | null
@@ -49,6 +53,7 @@ interface InnerProps {
 }
 
 function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProps) {
+  const navigate = useNavigate()
   const {
     note,
     loadState,
@@ -63,11 +68,27 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
     deleteNote,
   } = useNoteEditor(noteId, { onNoteUpdated, onNoteDeleted })
 
+  const {
+    editingTitle,
+    titleRef,
+    handleTitleClick,
+    handleTitleBlur,
+    handleTitleKeyDown,
+  } = useEditableTitle(titleDraft, setTitleDraft)
+
   const savedNoteRef = useRef<Note | null>(null)
   useEffect(() => { if (note) savedNoteRef.current = note }, [note])
 
   const [localNote, setLocalNote] = useState<Note | null>(null)
   useEffect(() => { if (note) setLocalNote(note) }, [note])
+
+  const [sourceMeetingTitle, setSourceMeetingTitle] = useState<string | null>(null)
+  useEffect(() => {
+    if (!localNote?.sourceMeetingId) return
+    api.invoke<Meeting>(IPC_CHANNELS.MEETING_GET, localNote.sourceMeetingId)
+      .then((meeting) => setSourceMeetingTitle(meeting.title))
+      .catch(() => setSourceMeetingTitle(null))
+  }, [localNote?.sourceMeetingId])
 
   const handleTagCompany = useCallback(async (companyId: string | null) => {
     const n = savedNoteRef.current
@@ -100,6 +121,42 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
     dismissSuggestion()
   }, [dismissSuggestion, onNoteUpdated])
 
+  // Folder picker state
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
+  const [availableFolders, setAvailableFolders] = useState<string[]>([])
+  const [folderInput, setFolderInput] = useState('')
+  const folderPickerRef = useRef<HTMLDivElement>(null)
+
+  const openFolderPicker = useCallback(async () => {
+    const folders = await api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_FOLDERS)
+    setAvailableFolders(folders)
+    setFolderInput('')
+    setFolderPickerOpen(true)
+  }, [])
+
+  const handleSetFolder = useCallback(async (folderPath: string | null) => {
+    const n = savedNoteRef.current
+    if (!n) return
+    setFolderPickerOpen(false)
+    try {
+      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, n.id, { folderPath })
+      if (updated) { savedNoteRef.current = updated; setLocalNote(updated); onNoteUpdated(updated) }
+    } catch (err) {
+      console.error('Failed to set folder', err)
+    }
+  }, [onNoteUpdated])
+
+  useEffect(() => {
+    if (!folderPickerOpen) return
+    const handler = (e: MouseEvent) => {
+      if (folderPickerRef.current && !folderPickerRef.current.contains(e.target as Node)) {
+        setFolderPickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [folderPickerOpen])
+
   const handlePinToggle = useCallback(async () => {
     const n = savedNoteRef.current
     if (!n) return
@@ -119,17 +176,117 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
 
   return (
     <div className={styles.container}>
-      {/* Title */}
-      <input
-        className={styles.titleInput}
-        placeholder="Untitled"
-        value={titleDraft}
-        onChange={(e) => setTitleDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); editor?.commands.focus() }
-        }}
-        disabled={loadState === 'loading'}
-      />
+      {/* Header: title + meta row */}
+      <div className={styles.header}>
+        {editingTitle ? (
+          <input
+            ref={titleRef}
+            className={styles.titleInput}
+            placeholder="Untitled"
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={handleTitleBlur}
+            onKeyDown={(e) => handleTitleKeyDown(e, () => editor?.commands.focus())}
+            disabled={loadState === 'loading'}
+          />
+        ) : (
+          <h2
+            className={styles.title}
+            onClick={handleTitleClick}
+            title="Click to rename"
+          >
+            {titleDraft || <span className={styles.titlePlaceholder}>Untitled</span>}
+          </h2>
+        )}
+
+        {localNote && (
+          <div className={styles.meta}>
+            <div className={styles.timestamps}>
+              {localNote.createdAt && (
+                <span className={styles.timestamp}>
+                  Created {new Date(localNote.createdAt).toLocaleString(undefined, {
+                    month: 'numeric', day: 'numeric', year: 'numeric',
+                    hour: 'numeric', minute: '2-digit'
+                  })}
+                </span>
+              )}
+              {localNote.updatedAt && (
+                <span className={styles.timestamp}>
+                  Edited {new Date(localNote.updatedAt).toLocaleString(undefined, {
+                    month: 'numeric', day: 'numeric', year: 'numeric',
+                    hour: 'numeric', minute: '2-digit'
+                  })}
+                </span>
+              )}
+            </div>
+
+            <button
+              className={styles.popoutBtn}
+              title="Open in new window"
+              onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_NOTE_WINDOW, localNote.id)}
+            >
+              ⤢
+            </button>
+
+            <div className={styles.folderPickerWrapper} ref={folderPickerRef}>
+              <button
+                className={styles.folderPickerTrigger}
+                onClick={() => folderPickerOpen ? setFolderPickerOpen(false) : void openFolderPicker()}
+                title={localNote.folderPath ?? 'No folder assigned'}
+              >
+                {localNote.folderPath ? localNote.folderPath.split('/').pop() : 'No folder'}
+              </button>
+              {folderPickerOpen && (() => {
+                const filteredFolders = availableFolders.filter(f =>
+                  f.toLowerCase().includes(folderInput.toLowerCase())
+                )
+                const exactMatch = filteredFolders.some(
+                  f => f.toLowerCase() === folderInput.trim().toLowerCase()
+                )
+                return (
+                  <div className={styles.folderPickerDropdown}>
+                    <input
+                      autoFocus
+                      className={styles.folderPickerInput}
+                      placeholder="Folder name…"
+                      value={folderInput}
+                      onChange={e => setFolderInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          const trimmed = folderInput.trim()
+                          if (trimmed) void handleSetFolder(trimmed)
+                          else if (filteredFolders.length > 0) void handleSetFolder(filteredFolders[0])
+                        }
+                        if (e.key === 'Escape') setFolderPickerOpen(false)
+                      }}
+                    />
+                    <button className={styles.folderPickerOption} onClick={() => void handleSetFolder(null)}>
+                      None
+                    </button>
+                    {filteredFolders.map(f => (
+                      <button
+                        key={f}
+                        className={`${styles.folderPickerOption} ${f === localNote.folderPath ? styles.folderPickerOptionActive : ''}`}
+                        onClick={() => void handleSetFolder(f)}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                    {folderInput.trim() && !exactMatch && (
+                      <button
+                        className={`${styles.folderPickerOption} ${styles.folderPickerOptionNew}`}
+                        onClick={() => void handleSetFolder(folderInput.trim())}
+                      >
+                        Create "{folderInput.trim()}"
+                      </button>
+                    )}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Tagger row */}
       {localNote && (
@@ -145,6 +302,19 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
         </div>
       )}
 
+      {/* Source meeting link */}
+      {localNote?.sourceMeetingId && sourceMeetingTitle && (
+        <div className={styles.meetingChipRow}>
+          <button
+            className={styles.meetingChip}
+            onClick={() => navigate(`/meeting/${localNote.sourceMeetingId}`)}
+            title="View source meeting"
+          >
+            📋 {sourceMeetingTitle} →
+          </button>
+        </div>
+      )}
+
       {/* Tag suggestion banner */}
       {tagSuggestion && !localNote?.companyId && !localNote?.contactId && (
         <TagSuggestionBanner
@@ -156,8 +326,12 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
 
       {/* Editor */}
       {(loadState === 'loaded' || loadState === 'loading') && (
-        <EditorContent editor={editor} className={styles.editor} />
+        <div className={styles.editor}>
+          <EditorContent editor={editor} />
+        </div>
       )}
+      <TiptapBubbleMenu editor={editor} />
+
       {loadState === 'notFound' && (
         <div className={styles.stateMsg}>Note not found.</div>
       )}
@@ -165,7 +339,7 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
         <div className={styles.stateMsg}>Failed to load note.</div>
       )}
 
-      {/* Footer */}
+      {/* Footer: save status + pin + delete */}
       <div className={styles.footer}>
         <span className={`${styles.saveStatus} ${saveStatus === 'error' ? styles.saveStatusError : ''}`}>
           {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'error' ? 'Save failed' : ''}

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactNote } from '../../../shared/types/contact'
 import { ContactNoteDetailModal } from '../crm/ContactNoteDetailModal'
 import styles from './ContactNotes.module.css'
 import { api } from '../../api'
 import { usePinToggle } from '../../hooks/usePinToggle'
+import { stripMarkdownPreview } from '../../utils/format'
 
 interface ContactNotesProps {
   contactId: string
@@ -114,7 +116,7 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
         const nl = content.indexOf('\n')
         const firstLine = nl >= 0 ? content.slice(0, nl) : content
         const explicitTitle = note.title?.trim()
-        const title = explicitTitle || firstLine
+        const title = explicitTitle || stripMarkdownPreview(firstLine)
         const body = explicitTitle
           ? (nl >= 0 && firstLine.trim() === explicitTitle
             ? content.slice(nl + 1).trim()
@@ -130,7 +132,7 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
               <div className={styles.noteTitle}>{title}</div>
               {note.isPinned && <span className={styles.pinnedBadge}>📌 Pinned</span>}
             </div>
-            {body && <div className={styles.noteBody}>{body}</div>}
+            {body && <div className={styles.noteBody}><ReactMarkdown>{body.slice(0, 400)}</ReactMarkdown></div>}
             <div className={styles.noteMeta}>
               <span>{new Date(note.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
               <div className={styles.noteMetaActions}>

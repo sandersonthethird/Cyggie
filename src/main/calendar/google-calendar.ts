@@ -3,40 +3,44 @@ import { getOAuth2Client, isCalendarConnected } from './google-auth'
 import { detectMeetingLink } from './meeting-detector'
 import type { CalendarEvent } from '../../shared/types/calendar'
 
+/** Map a raw Google Calendar API item to a CalendarEvent. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapGoogleEvent(item: any): CalendarEvent {
+  const detected = detectMeetingLink({
+    conferenceData: item.conferenceData as CalendarEventConferenceData,
+    description: item.description,
+    location: item.location,
+    hangoutLink: item.hangoutLink
+  })
+
+  const selfAttendee = (item.attendees || []).find((a: { self?: boolean }) => a.self)
+  const selfName = selfAttendee?.displayName || selfAttendee?.email || null
+
+  const nonSelfAttendees = (item.attendees || []).filter((a: { self?: boolean }) => !a.self)
+  const attendees = nonSelfAttendees
+    .map((a: { displayName?: string; email?: string }) => a.displayName || a.email || 'Unknown')
+  const attendeeEmails = nonSelfAttendees
+    .map((a: { email?: string }) => a.email || '')
+    .filter(Boolean)
+
+  return {
+    id: item.id || '',
+    title: item.summary || 'Untitled Event',
+    startTime: item.start?.dateTime || item.start?.date || '',
+    endTime: item.end?.dateTime || item.end?.date || '',
+    selfName,
+    attendees,
+    attendeeEmails,
+    meetingUrl: detected?.url || null,
+    platform: detected?.platform || null,
+    description: item.description || null
+  }
+}
+
 /** Map raw Google Calendar API items to CalendarEvent objects. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapGoogleEvents(items: any[]): CalendarEvent[] {
-  return items.map((item) => {
-    const detected = detectMeetingLink({
-      conferenceData: item.conferenceData as CalendarEventConferenceData,
-      description: item.description,
-      location: item.location,
-      hangoutLink: item.hangoutLink
-    })
-
-    const selfAttendee = (item.attendees || []).find((a: { self?: boolean }) => a.self)
-    const selfName = selfAttendee?.displayName || selfAttendee?.email || null
-
-    const nonSelfAttendees = (item.attendees || []).filter((a: { self?: boolean }) => !a.self)
-    const attendees = nonSelfAttendees
-      .map((a: { displayName?: string; email?: string }) => a.displayName || a.email || 'Unknown')
-    const attendeeEmails = nonSelfAttendees
-      .map((a: { email?: string }) => a.email || '')
-      .filter(Boolean)
-
-    return {
-      id: item.id || '',
-      title: item.summary || 'Untitled Event',
-      startTime: item.start?.dateTime || item.start?.date || '',
-      endTime: item.end?.dateTime || item.end?.date || '',
-      selfName,
-      attendees,
-      attendeeEmails,
-      meetingUrl: detected?.url || null,
-      platform: detected?.platform || null,
-      description: item.description || null
-    }
-  })
+  return items.map(mapGoogleEvent)
 }
 
 /**
@@ -71,6 +75,31 @@ export async function getUpcomingEvents(hoursAhead = 24): Promise<CalendarEvent[
   } catch (err) {
     console.error('Failed to fetch calendar events:', err)
     return []
+  }
+}
+
+/**
+ * Fetch a specific calendar event by ID.
+ * Used when the caller already knows the calendarEventId (prevents overlap mixups).
+ */
+export async function getEventById(eventId: string): Promise<CalendarEvent | null> {
+  if (!isCalendarConnected()) return null
+
+  const auth = getOAuth2Client()
+  if (!auth) return null
+
+  const calendar = google.calendar({ version: 'v3', auth })
+
+  try {
+    const response = await calendar.events.get({
+      calendarId: 'primary',
+      eventId
+    })
+    if (!response.data) return null
+    return mapGoogleEvent(response.data)
+  } catch (err) {
+    console.error('Failed to fetch calendar event by id:', err)
+    return null
   }
 }
 

@@ -44,9 +44,25 @@
   margin-top: 5px;
 }
 
-.meeting .dot { background: var(--color-primary); }
+.meeting .dot { background: var(--cv-crimson); }
 .email .dot { background: var(--color-accent); }
 .note .dot { background: var(--color-warning); }
+
+/* Crimson vertical connector line between meeting items */
+.meeting::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 18px;
+  bottom: -10px;
+  width: 2px;
+  background: var(--cv-crimson);
+  opacity: 0.2;
+}
+
+.meeting:last-child::before {
+  display: none;
+}
 
 .content {
   flex: 1;
@@ -111,9 +127,9 @@
 }
 
 .filterActive {
-  background: var(--color-bg-secondary);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  background: var(--cv-crimson-muted);
+  border-color: var(--cv-crimson);
+  color: var(--cv-crimson);
 }
 
 .syncRow {
@@ -193,4 +209,60 @@
 .progressMsg {
   font-size: 11px;
   color: var(--color-text-tertiary);
+}
+
+.selectBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.selectBtn:hover {
+  color: var(--color-text-secondary);
+}
+
+.bulkActionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.bulkDeleteBtn {
+  background: none;
+  border: 1px solid var(--cv-crimson);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--cv-crimson);
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+}
+
+.bulkDeleteBtn:hover {
+  background: var(--cv-crimson-muted);
+}
+
+.emailSelected {
+  background: var(--cv-crimson-muted) !important;
+}
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--cv-crimson);
+  margin-top: 3px;
+  background: var(--color-bg);
 }

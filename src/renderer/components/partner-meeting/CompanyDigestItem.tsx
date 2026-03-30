@@ -2,6 +2,7 @@
  * CompanyDigestItem — a single company entry in a digest section.
  *
  * Fields:
+ *   - [▾/▶] collapse toggle (new_deals, existing_deals, portfolio_updates only)
  *   - Company name (links to company profile)
  *   - Stage chip (inline-editable → updates CRM; item stays in current section)
  *   - Company Brief: lazy-mount TipTap via DigestItemNotes (collapsed by default)
@@ -53,9 +54,9 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
   const [stage, setStage] = useState<string | null>(item.pipelineStage)
   const [stageOpen, setStageOpen] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
-  const [briefCollapsed, setBriefCollapsed] = useState(true)
-  const [editingStatus, setEditingStatus] = useState(false)
-  const [statusDraft, setStatusDraft] = useState(item.statusUpdate ?? '')
+  const [itemCollapsed, setItemCollapsed] = useState(false)
+  const [generatingBrief, setGeneratingBrief] = useState(false)
+  const [briefGenError, setBriefGenError] = useState(false)
 
   const saveField = useCallback(async (field: Partial<Parameters<typeof api.invoke>[1]>) => {
     try {
@@ -82,16 +83,35 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
     saveField({ isDiscussed: !item.isDiscussed })
   }, [item.isDiscussed, saveField])
 
-  const handleStatusBlur = useCallback(() => {
-    setEditingStatus(false)
-    saveField({ statusUpdate: statusDraft || null })
-  }, [statusDraft, saveField])
-
   const handleRemove = useCallback(() => {
     api.invoke(IPC_CHANNELS.PARTNER_MEETING_ITEM_DELETE, item.id)
       .then(() => onRemove(item.id))
       .catch(err => console.error('[CompanyDigestItem] remove failed:', err))
   }, [item.id, onRemove])
+
+  const handleGenerateBrief = useCallback(async () => {
+    if (!item.companyId) return
+    setGeneratingBrief(true)
+    setBriefGenError(false)
+    try {
+      const { brief } = await api.invoke<{ brief: string | null }>(
+        IPC_CHANNELS.PARTNER_MEETING_GENERATE_BRIEF,
+        item.companyId
+      )
+      if (brief) {
+        await saveField({ brief })
+      } else {
+        setBriefGenError(true)
+        setTimeout(() => setBriefGenError(false), 3000)
+      }
+    } catch (err) {
+      console.error('[CompanyDigestItem] brief generation failed:', err)
+      setBriefGenError(true)
+      setTimeout(() => setBriefGenError(false), 3000)
+    } finally {
+      setGeneratingBrief(false)
+    }
+  }, [item.companyId, saveField])
 
   const handleStageChange = useCallback(async (newStage: CompanyPipelineStage) => {
     if (!item.companyId) return
@@ -124,6 +144,15 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
     <div className={`${styles.item} ${item.isDiscussed ? styles.discussed : ''}`}>
       <div className={styles.topRow}>
         <div className={styles.nameArea}>
+          {(item.section === 'new_deals' || item.section === 'existing_deals' || item.section === 'portfolio_updates') && (
+            <button
+              className={styles.collapseToggle}
+              onClick={() => setItemCollapsed(v => !v)}
+              title={itemCollapsed ? 'Expand' : 'Collapse'}
+            >
+              {itemCollapsed ? '▶' : '▾'}
+            </button>
+          )}
           {item.carryOver && <span className={styles.carryBadge} title="Carried over from last week">↩</span>}
           <button
             className={styles.companyLink}
@@ -173,48 +202,29 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
         </div>
       </div>
 
-      {/* Company brief — collapsed by default; hidden for archived items with no brief */}
-      {(!disabled || item.brief) && (
-        <div className={styles.section}>
+      {/* Generate brief button — active items only, shown when brief is absent */}
+      {!disabled && !item.brief && !itemCollapsed && (
+        <div className={styles.briefGenArea}>
           <button
-            className={styles.sectionToggle}
-            onClick={() => setBriefCollapsed(v => !v)}
+            className={styles.briefGenBtn}
+            onClick={handleGenerateBrief}
+            disabled={generatingBrief}
+            title="Generate a brief from CRM data (contacts, meetings, notes)"
           >
-            {briefCollapsed ? '▶' : '▾'} Company Brief
+            {generatingBrief ? '✨ Generating…' : '✨ Generate from CRM data'}
           </button>
-          {!briefCollapsed && (
-            <DigestItemNotes
-              content={item.brief}
-              placeholder="Add a company brief…"
-              disabled={disabled}
-              onSave={handleBriefSave}
-            />
-          )}
+          {briefGenError && <span className={styles.briefGenError}>⚠ Failed</span>}
         </div>
       )}
 
-      {/* Status update — hidden for archived items with no data */}
-      {(!disabled || statusDraft) && (
-        <div className={styles.section}>
-          <div className={styles.sectionLabel}>This week</div>
-          {editingStatus && !disabled ? (
-            <textarea
-              className={styles.statusTextarea}
-              value={statusDraft}
-              autoFocus
-              onChange={e => setStatusDraft(e.target.value)}
-              onBlur={handleStatusBlur}
-              rows={2}
-            />
-          ) : (
-            <div
-              className={`${styles.statusText} ${!disabled ? styles.clickable : ''}`}
-              onClick={() => { if (!disabled) setEditingStatus(true) }}
-            >
-              {statusDraft || <span className={styles.placeholder}>Click to add…</span>}
-            </div>
-          )}
-        </div>
+      {/* Company brief — inline below name row; hidden for archived items with no brief */}
+      {(!disabled || item.brief) && !itemCollapsed && (
+        <DigestItemNotes
+          content={item.brief}
+          placeholder="Add a company brief…"
+          disabled={disabled}
+          onSave={handleBriefSave}
+        />
       )}
 
       {/* Meeting notes */}

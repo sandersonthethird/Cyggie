@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, dialog } from 'electron'
 import { existsSync } from 'fs'
 import { readdir, stat } from 'fs/promises'
 import { join, extname, basename, resolve as resolvePath } from 'path'
@@ -22,6 +22,10 @@ import type {
 } from '../../shared/types/company'
 import { ingestCompanyEmails, cancelCompanyEmailIngest } from '../services/company-email-ingest.service'
 import { getCompanyEnrichmentProposalsFromMeetings } from '../services/company-summary-sync.service'
+import { extractFromPdf, extractFromUrl, PitchDeckError } from '../services/pitch-deck-ingestion.service'
+import { runPitchDeckAnalysis } from '../services/pitch-deck-analysis.service'
+import { createCompanyNote } from '../database/repositories/company-notes.repo'
+import type { PitchDeckIngestPayload, PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 import { getCurrentUserId } from '../security/current-user'
@@ -57,7 +61,12 @@ function hasFuzzyKeyOverlap(left: string, right: string): boolean {
   const b = right.trim()
   if (!a || !b) return false
   if (a === b) return true
-  if (a.length < 5 || b.length < 5) return false
+  if (a.length < 5 || b.length < 5) {
+    // For short strings, use startsWith to avoid mid-string false positives
+    // (e.g. "amma" should NOT match "gamma", but SHOULD match "ammadeck")
+    if (Math.min(a.length, b.length) < 3) return false
+    return a.startsWith(b) || b.startsWith(a)
+  }
   return a.includes(b) || b.includes(a)
 }
 
@@ -607,6 +616,11 @@ export function registerCompanyHandlers(): void {
     return { cancelled: true }
   })
 
+  ipcMain.handle(IPC_CHANNELS.COMPANY_EMAIL_UNLINK, (_event, companyId: string, threadGroups: string[]) => {
+    if (!companyId || !Array.isArray(threadGroups) || threadGroups.length === 0) return { deleted: 0 }
+    return companyRepo.deleteCompanyEmailLinks(companyId, threadGroups)
+  })
+
   ipcMain.handle(IPC_CHANNELS.COMPANY_FILES, async (_event, companyId: string, browsePath?: string) => {
     const empty = { companyRoot: null as string | null, files: [] as CompanyDriveFileRef[] }
     try {
@@ -734,6 +748,115 @@ export function registerCompanyHandlers(): void {
       } catch (err) {
         console.error('[Company Enrich] IPC handler failed:', err)
         return null
+      }
+    }
+  )
+
+  // ---------------------------------------------------------------------------
+  // Pitch deck ingestion
+  // ---------------------------------------------------------------------------
+
+  // Opens a native file picker filtered to PDFs. Returns the selected path or null.
+  ipcMain.handle(IPC_CHANNELS.COMPANY_PITCH_DECK_OPEN_DIALOG, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Select Pitch Deck PDF',
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    return result.filePaths[0]
+  })
+
+  // Ingests a PDF or URL, runs LLM extraction, optionally checks for existing company.
+  // Returns PitchDeckIngestResult: { result, existingMatch? } | { error }
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_PITCH_DECK_INGEST,
+    async (_event, payload: PitchDeckIngestPayload) => {
+      const { source, companyId } = payload
+      try {
+        const provider = getProvider()
+
+        let result
+        if (source.type === 'pdf') {
+          result = await extractFromPdf(source.path, provider)
+        } else {
+          result = await extractFromUrl(source.url, { email: source.email, password: source.password }, provider)
+        }
+
+        // Save DocSend email to settings if provided (URL path only)
+        if (source.type === 'url' && source.email) {
+          settingsRepo.setSetting('pitchDeckEmail', source.email)
+        }
+
+        // If enriching an existing company, skip dedup
+        if (companyId) {
+          return { result }
+        }
+
+        // Dedup check for new company creation
+        const name   = result.companyName?.trim() ?? null
+        const domain = result.domain?.trim() ?? null
+        if (name) {
+          const existingId = companyRepo.findCompanyIdByNameOrDomain(name, domain)
+          if (existingId) {
+            const existing = companyRepo.getCompany(existingId)
+            if (existing) {
+              return {
+                result,
+                existingMatch: { companyId: existingId, companyName: existing.canonicalName },
+              }
+            }
+          }
+        }
+
+        return { result }
+      } catch (err) {
+        if (err instanceof PitchDeckError) {
+          console.warn('[PitchDeck] ingestion failed', { code: err.code, message: err.message })
+          return { error: err.message }
+        }
+        console.error('[PitchDeck] unexpected IPC error', err)
+        return { error: 'An unexpected error occurred — please try again' }
+      }
+    }
+  )
+
+  // ---------------------------------------------------------------------------
+  // File-based company analysis
+  // Runs VC pitch analysis + creates a company note WITHOUT touching partner sync.
+  // The renderer decides separately whether to also call PARTNER_MEETING_ITEM_ADD.
+  // ---------------------------------------------------------------------------
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_ANALYZE_FILE,
+    async (_event, companyId: string, extractionResult: PitchDeckExtractionResult) => {
+      if (!companyId) throw new Error('companyId is required')
+      if (!extractionResult) throw new Error('extractionResult is required')
+
+      console.log('[company:analyze-file] starting analysis', {
+        companyId,
+        companyName: extractionResult.companyName,
+        sourceLabel: extractionResult.sourceLabel,
+      })
+
+      try {
+        const noteContent = await runPitchDeckAnalysis(extractionResult)
+        if (!noteContent) {
+          console.warn('[company:analyze-file] LLM returned null', { companyId })
+          return { noteId: null, error: 'analysis_failed' }
+        }
+
+        const companyName = extractionResult.companyName ?? 'Unknown'
+        const userId = getCurrentUserId()
+        const note = createCompanyNote(
+          { companyId, title: `File Analysis — ${companyName}`, content: noteContent },
+          userId
+        )
+
+        console.log('[company:analyze-file] note created', { companyId, noteId: note?.id })
+        return { noteId: note?.id ?? null, noteCreatedAt: note?.createdAt ?? new Date().toISOString() }
+      } catch (err) {
+        console.error('[company:analyze-file] failed', { companyId, err })
+        return { noteId: null, error: 'note_creation_failed' }
       }
     }
   )
