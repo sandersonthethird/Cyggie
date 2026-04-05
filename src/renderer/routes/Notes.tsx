@@ -729,7 +729,7 @@ export default function Notes() {
             ) : (
               notes.map((note, index) => {
                 const group = getDateGroup(note.updatedAt)
-                const showHeader = group !== lastGroup
+                const showHeader = !debouncedQuery && group !== lastGroup
                 lastGroup = group
 
                 return (
