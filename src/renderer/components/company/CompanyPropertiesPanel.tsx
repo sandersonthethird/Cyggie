@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useRef, useState, type ReactNode, type HTMLAttributes } from 'react'
-import { Globe, Share2, AtSign, Link, Mail, CheckSquare } from 'lucide-react'
+import { Share2, AtSign, Link, Mail, CheckSquare } from 'lucide-react'
 import { useCustomFieldSection } from '../../hooks/useCustomFieldSection'
 import { useHeaderChipOrder } from '../../hooks/useHeaderChipOrder'
 import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
@@ -290,6 +290,8 @@ export function CompanyPropertiesPanel({
   const backLabel = (location.state as { backLabel?: string } | null)?.backLabel ?? 'Back'
   const [isEditing, setIsEditing] = useState(false)
   const [showAllFields, setShowAllFields] = useState(false)
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false)
+  const [descriptionClamped, setDescriptionClamped] = useState(false)
   const [nameDraft, setNameDraft] = useState(company.canonicalName)
   const [customFields, setCustomFields] = useState<CustomFieldWithValue[]>([])
   const [latestDecision, setLatestDecision] = useState<CompanyDecisionLog | null>(null)
@@ -300,6 +302,11 @@ export function CompanyPropertiesPanel({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [taskModalOpen, setTaskModalOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [mergePickerOpen, setMergePickerOpen] = useState(false)
+  const [mergeQuery, setMergeQuery] = useState('')
+  const [mergeResults, setMergeResults] = useState<{ id: string; name: string }[]>([])
+  const [mergeTarget, setMergeTarget] = useState<{ id: string; name: string } | null>(null)
+  const [merging, setMerging] = useState(false)
   const [nameError, setNameError] = useState<string | null>(null)
   const [createFieldOpen, setCreateFieldOpen] = useState(false)
   const [createFieldSection, setCreateFieldSection] = useState<string | undefined>(undefined)
@@ -324,6 +331,7 @@ export function CompanyPropertiesPanel({
   const [templateIndicator, setTemplateIndicator] = useState(false)
   const sessionChanges = useRef(false)
   const prevEntityType = useRef(company.entityType)
+  const descriptionRef = useRef<HTMLParagraphElement>(null)
   const markChanged = useCallback(() => { sessionChanges.current = true }, [])
 
   const { getJSON, setJSON } = usePreferencesStore()
@@ -569,6 +577,33 @@ export function CompanyPropertiesPanel({
     if (!defsLoaded) loadDefs()
   }, [defsLoaded, loadDefs])
 
+  // Reset description expanded state when navigating to a different company
+  useEffect(() => {
+    setDescriptionExpanded(false)
+  }, [company.id])
+
+  // Detect whether description text overflows its 3-line clamp.
+  // Early return when expanded: don't measure (no clamp CSS applied),
+  // and don't reset descriptionClamped — we need it true to show "less".
+  //
+  // State machine:
+  //   company.id changes ──▶ descriptionExpanded=false ──▶ effect re-runs ──▶ re-measures
+  //   panel resize (collapsed) ──▶ ResizeObserver fires ──▶ re-measures
+  //   user clicks "more" ──▶ descriptionExpanded=true ──▶ effect skips (early return)
+  //   user clicks "less" ──▶ descriptionExpanded=false ──▶ effect re-runs ──▶ re-measures ✓
+  //   isEditing goes false ──▶ <p> remounts ──▶ effect re-runs ──▶ re-measures ✓
+  useEffect(() => {
+    if (descriptionExpanded) return
+    if (isEditing) return
+    const el = descriptionRef.current
+    if (!el) return
+    const check = () => setDescriptionClamped(el.scrollHeight > el.clientHeight + 1)
+    check()
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [company.description, descriptionExpanded, isEditing])
+
   useEffect(() => {
     if (!defsLoaded) return
     window.api
@@ -715,6 +750,35 @@ export function CompanyPropertiesPanel({
     } finally {
       setDeleting(false)
       setConfirmDelete(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!mergePickerOpen) return
+    api.invoke<{ id: string; canonicalName: string }[]>(IPC_CHANNELS.COMPANY_LIST, {
+      query: mergeQuery || undefined,
+      limit: 10,
+      view: 'all',
+    })
+      .then(res => setMergeResults(
+        (res ?? [])
+          .filter(c => c.id !== company.id)
+          .map(c => ({ id: c.id, name: c.canonicalName }))
+      ))
+      .catch(() => setMergeResults([]))
+  }, [mergeQuery, mergePickerOpen, company.id])
+
+  async function handleMergeInto() {
+    if (!mergeTarget || merging) return
+    setMerging(true)
+    try {
+      await api.invoke(IPC_CHANNELS.COMPANY_MERGE, mergeTarget.id, company.id)
+      navigate(`/company/${mergeTarget.id}`)
+    } catch (err) {
+      console.error('[CompanyPropertiesPanel] merge failed:', err)
+    } finally {
+      setMerging(false)
+      setMergeTarget(null)
     }
   }
 
@@ -1226,10 +1290,27 @@ export function CompanyPropertiesPanel({
           isEditing ? (
             <PropertyRow label="Description" value={company.description} type="textarea" editMode={true} onSave={(v) => save('description', v)} />
           ) : (
-            <div className={styles.propertyWithBadge}>
-              <p className={styles.descriptionText}>{company.description}</p>
-              {fieldSources?.description && (
-                <span className={styles.sourceBadge} title={`From: ${fieldSources.description.meetingTitle}`}>📋</span>
+            <div className={styles.descriptionWrapper}>
+              <div className={styles.propertyWithBadge}>
+                <p
+                  ref={descriptionRef}
+                  className={descriptionExpanded ? styles.descriptionText : styles.descriptionTextClamped}
+                >
+                  {company.description}
+                </p>
+                {fieldSources?.description && (
+                  <span className={styles.sourceBadge} title={`From: ${fieldSources.description.meetingTitle}`}>📋</span>
+                )}
+              </div>
+              {descriptionClamped && !descriptionExpanded && (
+                <button className={styles.descriptionToggleBtn} onClick={() => setDescriptionExpanded(true)}>
+                  more
+                </button>
+              )}
+              {descriptionExpanded && (
+                <button className={styles.descriptionToggleBtn} onClick={() => setDescriptionExpanded(false)}>
+                  less
+                </button>
               )}
             </div>
           )
@@ -1237,17 +1318,10 @@ export function CompanyPropertiesPanel({
 
         {/* Social links inside header card */}
         {isEditing ? (
-          show('websiteUrl', company.websiteUrl) && (
-            <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={true} onSave={(v) => save('websiteUrl', v)} />
-          )
+          <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={true} onSave={(v) => save('websiteUrl', v)} />
         ) : (
           (company.websiteUrl || company.linkedinCompanyUrl || company.twitterHandle || company.crunchbaseUrl || company.angellistUrl) && (
             <div className={styles.socialRow}>
-              {company.websiteUrl && (
-                <button className={styles.socialIcon} title={company.websiteUrl} onClick={() => openExternal(company.websiteUrl!)}>
-                  <Globe size={16} />
-                </button>
-              )}
               {company.linkedinCompanyUrl && (
                 <button className={styles.socialIcon} title="LinkedIn" onClick={() => openExternal(company.linkedinCompanyUrl!)}>
                   <Share2 size={16} />
@@ -1688,12 +1762,52 @@ export function CompanyPropertiesPanel({
       {isEditing && (
         <div className={styles.deleteSection}>
           <button
+            className={styles.mergeBtn}
+            onClick={() => { setMergeQuery(''); setMergePickerOpen(true) }}
+          >
+            Merge into…
+          </button>
+          <button
             className={styles.deleteBtn}
             onClick={() => setConfirmDelete(true)}
             disabled={deleting}
           >
             Delete Company
           </button>
+        </div>
+      )}
+
+      {mergePickerOpen && (
+        <div className={styles.mergePickerOverlay} onClick={() => setMergePickerOpen(false)}>
+          <div className={styles.mergePicker} onClick={e => e.stopPropagation()}>
+            <p className={styles.mergePickerTitle}>
+              Merge &ldquo;{company.canonicalName}&rdquo; into:
+            </p>
+            <input
+              autoFocus
+              className={styles.mergePickerInput}
+              placeholder="Search companies…"
+              value={mergeQuery}
+              onChange={e => setMergeQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Escape' && setMergePickerOpen(false)}
+            />
+            <div className={styles.mergePickerList}>
+              {mergeResults.map(r => (
+                <button
+                  key={r.id}
+                  className={styles.mergePickerOption}
+                  onClick={() => { setMergeTarget(r); setMergePickerOpen(false) }}
+                >
+                  {r.name}
+                </button>
+              ))}
+              {mergeResults.length === 0 && (
+                <span className={styles.mergePickerEmpty}>
+                  {mergeQuery ? 'No companies found' : 'Start typing to search…'}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1735,6 +1849,16 @@ export function CompanyPropertiesPanel({
         variant="danger"
         onConfirm={handleDeleteCompany}
         onCancel={() => setConfirmDelete(false)}
+      />
+
+      <ConfirmDialog
+        open={!!mergeTarget}
+        title="Merge companies?"
+        message={`Merge "${company.canonicalName}" into "${mergeTarget?.name ?? ''}"? All meetings, contacts, and notes will be relinked and this company will be deleted.`}
+        confirmLabel={merging ? 'Merging…' : 'Merge'}
+        variant="danger"
+        onConfirm={handleMergeInto}
+        onCancel={() => setMergeTarget(null)}
       />
     </div>
   )

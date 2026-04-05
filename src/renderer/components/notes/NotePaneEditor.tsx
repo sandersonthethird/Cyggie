@@ -14,6 +14,8 @@ import { EditorContent } from '@tiptap/react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useNoteEditor } from '../../hooks/useNoteEditor'
 import { useEditableTitle } from '../../hooks/useEditableTitle'
+import { useFindInPage } from '../../hooks/useFindInPage'
+import FindBar from '../common/FindBar'
 import { NoteTagger } from './NoteTagger'
 import { TagSuggestionBanner } from './TagSuggestionBanner'
 import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
@@ -59,6 +61,7 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
     loadState,
     titleDraft,
     setTitleDraft,
+    contentDraft,
     editor,
     saveStatus,
     isPinned,
@@ -67,6 +70,22 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
     dismissSuggestion,
     deleteNote,
   } = useNoteEditor(noteId, { onNoteUpdated, onNoteDeleted })
+
+  const [findOpen, setFindOpen] = useState(false)
+  const {
+    query: findQuery,
+    setQuery: setFindQuery,
+    matchCount,
+    activeMatchIndex,
+    goToNext,
+    goToPrev,
+    highlightedContent,
+  } = useFindInPage({
+    text: contentDraft,
+    isOpen: findOpen,
+    onOpen: () => setFindOpen(true),
+    onClose: () => setFindOpen(false),
+  })
 
   const {
     editingTitle,
@@ -288,6 +307,18 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
         )}
       </div>
 
+      {findOpen && (
+        <FindBar
+          query={findQuery}
+          onQueryChange={setFindQuery}
+          matchCount={matchCount}
+          activeMatchIndex={activeMatchIndex}
+          onNext={goToNext}
+          onPrev={goToPrev}
+          onClose={() => setFindOpen(false)}
+        />
+      )}
+
       {/* Tagger row */}
       {localNote && (
         <div className={styles.taggerRow}>
@@ -327,10 +358,14 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
       {/* Editor */}
       {(loadState === 'loaded' || loadState === 'loading') && (
         <div className={styles.editor}>
-          <EditorContent editor={editor} />
+          {findOpen && findQuery ? (
+            <div className={styles.findPreview}>{highlightedContent}</div>
+          ) : (
+            <EditorContent editor={editor} />
+          )}
         </div>
       )}
-      <TiptapBubbleMenu editor={editor} />
+      {!findOpen && <TiptapBubbleMenu editor={editor} />}
 
       {loadState === 'notFound' && (
         <div className={styles.stateMsg}>Note not found.</div>

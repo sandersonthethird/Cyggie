@@ -1,5 +1,33 @@
 # TODOS
 
+## P3 — Companies
+
+### Memo version history UI
+**What:** Make the version chip (`v2`, `v3`…) in `CompanyMemo` interactive — clicking it opens a panel or dropdown listing all past `InvestmentMemoVersion` rows, with a "Restore" button per entry.
+**Why:** The version counter is already displayed but non-interactive. With auto-save creating a new version on every edit session, users have no way to browse or recover an earlier draft if they want to revert a generation run or a bad edit.
+**Pros:** Completes the versioning story end-to-end; pairs naturally with the AI generation flow where you want to compare the AI draft against a previous version.
+**Cons:** Requires a new `INVESTMENT_MEMO_LIST_VERSIONS` IPC + repo query; the restore action is a write (saves a new version with old content) to avoid mutating history.
+**Context:** Start in `src/renderer/components/company/CompanyMemo.tsx`. The version chip is already rendered at line ~71 (`<span className={styles.version}>v{memo.latestVersionNumber}</span>`). Make it a `<button>` that opens a `MemoVersionHistoryPanel` (or inline dropdown). List versions via `INVESTMENT_MEMO_LIST_VERSIONS`; restore by calling `INVESTMENT_MEMO_SAVE_VERSION` with the old version's `contentMarkdown`. The `CompanyMemo` `handleSaved` callback already handles updating read view state.
+**Effort:** L
+**Priority:** P3
+**Depends on:** Memo edit modal PR (this work) merged.
+
+---
+
+## P3 — Contacts
+
+### Undo merge
+**What:** 10-second undo window after a manual merge closes, letting the user restore the deleted contact(s).
+**Why:** Manual merge is a one-way door today. A mis-merge (wrong keep contact, accidental trigger) forces manual contact recreation with no recovery path.
+**Pros:** Safety net that removes the hesitation around using the merge feature; follows established undo patterns.
+**Cons:** Requires snapshotting source contact rows client-side before calling merge (or a server-side soft-delete), plus a new `CONTACT_RESTORE` IPC to recreate deleted contacts.
+**Context:** Added in the manual merge PR (Merge Contacts feature). The `mergeContactsIntoOne` function in `contact.repo.ts` deletes source contacts atomically. Simplest client-side approach: snapshot the `mergeDialogContacts` array (all `ContactSummary` rows) before calling `handleMerge`, store as `mergeUndoSnapshot`. After close, show a 10-second undo toast (`undoTimerRef` pattern from `ContactTable`). On undo click, call `CONTACT_RESTORE` with the snapshot rows. The restore IPC would need to handle re-creating a contact with the original `id` or accept a new ID and re-link meetings/emails.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Manual merge feature (this PR) merged.
+
+---
+
 ## P3 — Notes
 
 ### Tests for frontmatter utilities
@@ -96,6 +124,20 @@
 **Effort:** S
 **Priority:** P3
 **Depends on:** This PR (vision path fix) merged.
+
+---
+
+## P3 — Memo
+
+### Memo version history UI
+**What:** Version history panel for investment memos — list prior versions, preview content, restore a version.
+**Why:** Users can't recover or review previous AI-generated or manually-edited versions. The `v{n}` badge implies history exists but there's no way to access it. After generating a bad memo, users have no rollback path.
+**Pros:** Completes the versioning story end-to-end; the DB already stores all versions with timestamps and change notes.
+**Cons:** Non-trivial UI — needs version list, preview, and restore action; requires a new IPC channel to fetch version list.
+**Context:** `investment_memo_versions` table has all data (id, memo_id, version_number, content_markdown, change_note, created_by, created_at). Check if `INVESTMENT_MEMO_GET_VERSIONS` channel exists in `src/main/ipc/investment-memo.ipc.ts` or add one. UI: click the `v{n}` badge in `CompanyMemo.tsx` toolbar to open a version list (dropdown or side panel), show timestamp + change note per entry, click to preview, button to restore (saves as new version). Start in `CompanyMemo.tsx` + `investment-memo.ipc.ts`.
+**Effort:** M
+**Priority:** P3
+**Depends on:** This PR merged (version is saved on generate; version number is tracked on memo state).
 
 ---
 
@@ -237,6 +279,20 @@
 **Effort:** M
 **Priority:** P3
 **Depends on:** Pitch deck ingestion feature (this PR).
+
+---
+
+## P3 — Integrations
+
+### Drive scope revocation
+**What:** IPC to revoke individual Drive scopes (Uploads or Files) without disconnecting all of Google Calendar.
+**Why:** Currently users who grant Drive access by mistake have no recovery path except full Calendar disconnect. Drive Uploads and Drive Files toggles are permanently disabled once ON.
+**Pros:** Completes the Drive UX — every toggle becomes genuinely reversible.
+**Cons:** Complex: Google OAuth doesn't support revoking individual scopes from a token. Would require re-auth with a reduced scope list and token replacement, or calling the token revocation endpoint and forcing re-connect.
+**Context:** `google-auth.ts` stores granted scopes in `google_calendar_granted_scopes`. A "revoke Drive" flow would need to re-run `runAuthorizationFlow` with only `calendar.readonly` scopes (dropping `drive.file`), replacing the existing token. The IPC surface would need a `DRIVE_REVOKE` channel in `calendar.ipc.ts`. The Drive Uploads and Drive Files sub-row toggles in `IntegrationsPanel.tsx` currently show `disabled` with a `title` tooltip: "Revoke by disconnecting Google Calendar".
+**Effort:** L
+**Priority:** P3
+**Depends on:** IntegrationsPanel redesign PR merged.
 
 ---
 
@@ -547,6 +603,16 @@
 **Depends on:** `COMPANY_ANALYZE_FILE` handler (this PR).
 
 ---
+
+### DropdownButton shared component + table CSS extraction
+**What:** Create `src/renderer/components/common/DropdownButton.tsx` as a shared portal+click-outside dropdown base. Refactor `ColumnPicker.tsx` and `GroupByPicker.tsx` to use it. Extract shared table CSS (group headers, sort badges, add-row styles) into `src/renderer/styles/table-shared.module.css`.
+**Why:** Three separate components (`ColumnPicker`, `GroupByPicker`, contact/company header context menus) duplicate the same portal+click-outside pattern. Group header styles, sort badge, and add-row styles are duplicated across `CompanyTable.module.css` and `ContactTable.module.css`.
+**Pros:** Single implementation for portal+click-outside; future table features only need one file touched.
+**Cons:** Refactoring `ColumnPicker` is regression-prone — it's battle-tested. CSS consolidation requires touching both table modules.
+**Context:** Deferred from the "world-class CRM table" PR (multi-sort, grouping, SmartFilters, scope tabs) to reduce diff size. `GroupByPicker` was built self-contained and is the reference implementation for the refactor. Styles to extract: `.groupHeaderRow`, `.groupToggle`, `.groupChip`, `.groupCount`, `.sortBadge`, `.dataCell`, `.addRow`, `.addRowCell`, `.addRowInput`.
+**Effort:** M
+**Priority:** P3
+**Depends on:** World-class CRM table PR merged.
 
 ### Email source in CompanyEnhanceModal
 **What:** Add "From recent emails" as a third source option in `CompanyEnhanceModal` — fetches recent emails from the company's domain via Gmail, runs the same VC analysis pipeline, and creates a note.

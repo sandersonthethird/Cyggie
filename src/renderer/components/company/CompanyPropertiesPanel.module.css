@@ -420,9 +420,100 @@
 .deleteSection {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   padding-top: 16px;
   border-top: 1px solid var(--color-bg-tertiary);
   margin-top: 16px;
+}
+
+.mergeBtn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mergeBtn:hover {
+  background: var(--color-bg-secondary);
+}
+
+.mergePickerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.mergePicker {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mergePickerTitle {
+  font-size: 13px;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.mergePickerInput {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  box-sizing: border-box;
+  outline: none;
+}
+
+.mergePickerInput:focus {
+  border-color: var(--color-primary);
+}
+
+.mergePickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mergePickerOption {
+  text-align: left;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.mergePickerOption:hover {
+  background: var(--color-bg-secondary);
+}
+
+.mergePickerEmpty {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding: 4px 10px;
 }
 
 .doneBtn {
@@ -543,12 +634,50 @@
   text-decoration: underline;
 }
 
-.descriptionText {
+/* Shared base for description display variants */
+.descriptionText,
+.descriptionTextClamped {
   font-size: 12px;
   color: var(--color-text-secondary);
-  padding: 4px 0 10px;
   margin: 0;
   line-height: 1.55;
+}
+
+/* Expanded state — full height, bottom padding */
+.descriptionText {
+  padding: 4px 0 10px;
+}
+
+/* Collapsed state — 3-line clamp, no bottom padding (toggle button provides it) */
+.descriptionTextClamped {
+  padding: 4px 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.descriptionWrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.descriptionToggleBtn {
+  background: none;
+  border: none;
+  padding: 2px 0 10px;
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-align: left;
+  line-height: 1.55;
+  transition: color 0.12s;
+}
+
+.descriptionToggleBtn:hover {
+  color: var(--color-text-secondary);
 }
 
 .headerDivider {
@@ -733,7 +862,7 @@
 /* ── Property row wrapper for badge ── */
 .propertyWithBadge {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 4px;
 }
 

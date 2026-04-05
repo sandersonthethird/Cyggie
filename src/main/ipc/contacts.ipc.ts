@@ -121,10 +121,15 @@ export function registerContactHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.CONTACT_SET_COMPANY,
-    (_event, contactId: string, companyName: string) => {
+    (_event, contactId: string, companyName: string | null) => {
       if (!contactId?.trim()) throw new Error('contactId is required')
-      if (!companyName?.trim()) throw new Error('Company name is required')
       const userId = getCurrentUserId()
+
+      if (!companyName?.trim()) {
+        const updated = contactRepo.setContactPrimaryCompany(contactId, null, userId)
+        logAudit(userId, 'contact', contactId, 'update', { primaryCompanyId: null })
+        return updated
+      }
 
       const company = companyRepo.getOrCreateCompanyByName(companyName, userId)
       const updated = contactRepo.setContactPrimaryCompany(contactId, company.id, userId)

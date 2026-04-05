@@ -26,24 +26,62 @@ function applyInlineFormatting(escaped: string): string {
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
 }
 
+// Maps DB round values (e.g. 'series_a') to human-readable labels (e.g. 'Series A')
+const ROUND_LABELS: Record<string, string> = {
+  pre_seed: 'Pre-Seed',
+  seed: 'Seed',
+  seed_extension: 'Seed Extension',
+  series_a: 'Series A',
+  series_b: 'Series B',
+}
+
+/** Returns the human-readable label for a round DB value, or the raw value if unknown. */
+export function roundLabel(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  return ROUND_LABELS[raw] ?? raw
+}
+
 export interface MemoHeaderParams {
-  logoDataUrl?: string | null
+  logoDataUrl?: string | null        // firm logo (left)
+  companyLogoDataUrl?: string | null // company logo (right)
   title: string
   date: string
 }
 
-function buildHeaderHtml(header: MemoHeaderParams): string {
-  const logoCell = header.logoDataUrl
+export function buildHeaderHtml(header: MemoHeaderParams): string {
+  const hasAnyLogo = !!(header.logoDataUrl || header.companyLogoDataUrl)
+
+  if (!hasAnyLogo) {
+    // Single-column fallback (no logos)
+    return `<table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+    <tr><td style="vertical-align:middle;text-align:left;padding:0;">
+      <div style="font-size:17px;font-weight:700;color:#111827;">${escapeHtml(header.title)}</div>
+      <div style="font-size:13px;color:#6b7280;margin-top:4px;">${escapeHtml(header.date)}</div>
+    </td></tr>
+  </table>
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin-bottom:24px;" />`
+  }
+
+  // 3-column layout: firm logo (left, 80px) | title+date (center) | company logo (right, 80px)
+  const leftCell = header.logoDataUrl
     ? `<td style="width:80px;vertical-align:middle;padding:0 16px 0 0;">
         <img src="${header.logoDataUrl}" style="width:72px;height:72px;object-fit:contain;" />
       </td>`
-    : ''
-  const titleCell = `<td style="vertical-align:middle;text-align:${header.logoDataUrl ? 'center' : 'left'};padding:0;">
+    : `<td style="width:80px;"></td>`
+
+  const centerCell = `<td style="vertical-align:middle;text-align:center;padding:0;">
       <div style="font-size:17px;font-weight:700;color:#111827;">${escapeHtml(header.title)}</div>
       <div style="font-size:13px;color:#6b7280;margin-top:4px;">${escapeHtml(header.date)}</div>
     </td>`
+
+  const rightCell = header.companyLogoDataUrl
+    ? `<td style="width:80px;vertical-align:middle;padding:0 0 0 16px;">
+        <img src="${header.companyLogoDataUrl}" style="width:72px;height:72px;object-fit:contain;" />
+      </td>`
+    : `<td style="width:80px;"></td>`
+
   return `<table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
-    <tr>${logoCell}${titleCell}</tr>
+    <tr>${leftCell}${centerCell}${rightCell}</tr>
   </table>
   <hr style="border:none;border-top:1px solid #e5e7eb;margin-bottom:24px;" />`
 }
@@ -52,26 +90,23 @@ export function buildMemoDocTitle(
   companyName: string,
   companyDetails?: {
     round?: string | null
-    raiseSize?: number | null
     postMoneyValuation?: number | null
   }
 ): string {
-  if (!companyDetails?.round && !companyDetails?.raiseSize && !companyDetails?.postMoneyValuation) {
-    return companyName
-  }
   const parts: string[] = []
-  if (companyDetails?.raiseSize) {
-    const raise = (companyDetails.raiseSize / 1_000_000).toFixed(1).replace(/\.0$/, '')
-    parts.push(`$${raise}M Investment`)
-  }
   if (companyDetails?.postMoneyValuation) {
-    const val = (companyDetails.postMoneyValuation / 1_000_000).toFixed(1).replace(/\.0$/, '')
-    const roundStr = companyDetails?.round ? ` ${companyDetails.round}` : ''
-    parts.push(`$${val}M Post Money${roundStr}`)
+    const val = companyDetails.postMoneyValuation.toFixed(1).replace(/\.0$/, '')
+    const label = roundLabel(companyDetails.round)
+    const roundStr = label ? ` ${label}` : ''
+    parts.push(`$${val}M Post-Money${roundStr} Round`)
   } else if (companyDetails?.round) {
-    parts.push(companyDetails.round)
+    const label = roundLabel(companyDetails.round)
+    parts.push(`${label} Round`)
   }
-  return parts.length > 0 ? `${companyName} - ${parts.join(' in ')}` : companyName
+  const suffix = parts.length > 0
+    ? ` - Proposed Investment in ${parts.join(' ')}`
+    : ' - Proposed Investment'
+  return `${companyName}${suffix}`
 }
 
 function formatMonthYear(date: Date): string {
@@ -148,9 +183,9 @@ export async function exportMemoMarkdownToPdf(params: {
   versionNumber: number
   contentMarkdown: string
   logoDataUrl?: string | null
+  companyLogoDataUrl?: string | null
   companyDetails?: {
     round?: string | null
-    raiseSize?: number | null
     postMoneyValuation?: number | null
   }
 }): Promise<{ absolutePath: string; filename: string }> {
@@ -159,13 +194,15 @@ export async function exportMemoMarkdownToPdf(params: {
   const filename = `${safeCompany} - ${safeTitle} - v${params.versionNumber}.pdf`
   const absolutePath = join(getMemosDir(), filename)
 
-  const header: MemoHeaderParams | undefined = params.logoDataUrl
-    ? {
-        logoDataUrl: params.logoDataUrl,
-        title: buildMemoDocTitle(params.companyName, params.companyDetails),
-        date: formatMonthYear(new Date())
-      }
-    : undefined
+  const header: MemoHeaderParams | undefined =
+    (params.logoDataUrl || params.companyLogoDataUrl)
+      ? {
+          logoDataUrl: params.logoDataUrl,
+          companyLogoDataUrl: params.companyLogoDataUrl,
+          title: buildMemoDocTitle(params.companyName, params.companyDetails),
+          date: formatMonthYear(new Date())
+        }
+      : undefined
 
   const html = markdownToHtml(params.contentMarkdown, header)
 

@@ -14,6 +14,7 @@ import type { UserProfile } from '../../shared/types/user'
 import type { ImportFormat } from '../../shared/types/note'
 import styles from './Settings.module.css'
 import { CustomFieldsSettings } from '../components/settings/CustomFieldsSettings'
+import { IntegrationsPanel } from '../components/settings/IntegrationsPanel'
 import TemplatesPanel from './Templates'
 import { ImportModal } from '../components/settings/ImportModal'
 import { api } from '../api'
@@ -181,6 +182,8 @@ export default function Settings() {
   const [driveFilesGranting, setDriveFilesGranting] = useState(false)
   const [driveError, setDriveError] = useState('')
   const [driveFilesExpanded, setDriveFilesExpanded] = useState(false)
+  const [calendarAccountEmail, setCalendarAccountEmail] = useState<string | null>(null)
+  const [gmailAccountEmail, setGmailAccountEmail] = useState<string | null>(null)
   const [editingThresholds, setEditingThresholds] = useState(false)
   const [editingTranscription, setEditingTranscription] = useState(false)
 
@@ -197,6 +200,18 @@ export default function Settings() {
     setGmailConnected(
       gmailConnectedResult.status === 'fulfilled' ? gmailConnectedResult.value : false
     )
+  }, [])
+
+  const refreshAccountEmails = useCallback(async () => {
+    try {
+      const result = await api.invoke<{ calendarEmail: string | null; gmailEmail: string | null }>(
+        IPC_CHANNELS.GOOGLE_ACCOUNT_EMAILS
+      )
+      setCalendarAccountEmail(result?.calendarEmail ?? null)
+      setGmailAccountEmail(result?.gmailEmail ?? null)
+    } catch {
+      // Non-fatal — email badges will be absent
+    }
   }, [])
 
   useEffect(() => {
@@ -257,11 +272,12 @@ export default function Settings() {
         }
       } finally {
         await refreshGoogleScopes()
+        await refreshAccountEmails()
         setInitialLoad(false)
       }
     }
     load()
-  }, [refreshGoogleScopes])
+  }, [refreshGoogleScopes, refreshAccountEmails])
 
   // Auto-navigate new users to the AI tab when setup is needed, and open relevant edit sections
   useEffect(() => {
@@ -470,17 +486,19 @@ export default function Settings() {
     try {
       await connect(googleClientId.trim(), googleClientSecret.trim())
       await refreshGoogleScopes()
+      await refreshAccountEmails()
     } catch (err) {
       setCalendarError(String(err))
     } finally {
       setCalendarConnecting(false)
     }
-  }, [googleClientId, googleClientSecret, connect, refreshGoogleScopes])
+  }, [googleClientId, googleClientSecret, connect, refreshGoogleScopes, refreshAccountEmails])
 
   const handleDisconnectCalendar = useCallback(async () => {
     await disconnect()
     await refreshGoogleScopes()
-  }, [disconnect, refreshGoogleScopes])
+    await refreshAccountEmails()
+  }, [disconnect, refreshGoogleScopes, refreshAccountEmails])
 
   const handleReauthorizeGoogleScopes = useCallback(async () => {
     setDriveGranting(true)
@@ -518,17 +536,19 @@ export default function Settings() {
         googleClientSecret.trim()
       )
       await refreshGoogleScopes()
+      await refreshAccountEmails()
     } catch (err) {
       setGmailError(String(err))
     } finally {
       setGmailConnecting(false)
     }
-  }, [googleClientId, googleClientSecret, refreshGoogleScopes])
+  }, [googleClientId, googleClientSecret, refreshGoogleScopes, refreshAccountEmails])
 
   const handleDisconnectGmail = useCallback(async () => {
     await api.invoke(IPC_CHANNELS.GMAIL_DISCONNECT)
     await refreshGoogleScopes()
-  }, [refreshGoogleScopes])
+    await refreshAccountEmails()
+  }, [refreshGoogleScopes, refreshAccountEmails])
 
   const handleRunContactOnboarding = useCallback(async () => {
     setContactOnboardingRunning(true)
@@ -1093,139 +1113,33 @@ export default function Settings() {
 
       {activeTab === 'integrations' && (
         <>
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Google Calendar</h3>
-        {calendarConnected ? (
-          <div className={styles.field}>
-            <div className={styles.connectedRow}>
-              <span className={styles.connectedBadge}>Connected</span>
-              <button className={styles.disconnectBtn} onClick={handleDisconnectCalendar}>
-                Disconnect
-              </button>
-            </div>
-            <p className={styles.hint}>
-              Calendar events power meeting prep and attendee context.
-            </p>
-          </div>
-        ) : (
-          <>
-            <p className={styles.hint} style={{ marginBottom: 12 }}>
-              Create OAuth credentials in the{' '}
-              <a
-                href="https://console.cloud.google.com/apis/credentials"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Google Cloud Console
-              </a>
-              . Enable the <strong>Calendar API</strong> and <strong>Drive API</strong>,
-              then create a Desktop OAuth client.
-            </p>
-            <p className={styles.hint} style={{ marginBottom: 12 }}>
-              The Google permissions dialog branding comes from your Google Cloud OAuth consent screen. If it shows
-              <strong> EchoVault</strong>, update the OAuth app name to <strong>Cyggie</strong> in Google Cloud or use a
-              Client ID from the correct project.
-            </p>
-            <div className={styles.field}>
-              <label className={styles.label}>Client ID</label>
-              <input
-                className={styles.input}
-                value={googleClientId}
-                onChange={(e) => setGoogleClientId(e.target.value)}
-                placeholder="your-app.apps.googleusercontent.com"
-              />
-            </div>
-            <div className={styles.field}>
-              <label className={styles.label}>Client Secret (optional for PKCE)</label>
-              <input
-                type="password"
-                className={styles.input}
-                value={googleClientSecret}
-                onChange={(e) => setGoogleClientSecret(e.target.value)}
-                placeholder="Optional"
-              />
-            </div>
-            {calendarError && <p className={styles.error}>{calendarError}</p>}
-            <button
-              className={styles.connectBtn}
-              onClick={handleConnectCalendar}
-              disabled={calendarConnecting}
-            >
-              {calendarConnecting ? 'Connecting...' : 'Connect Google Calendar'}
-            </button>
-          </>
-        )}
-      </section>
-
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Gmail</h3>
-        {gmailConnected ? (
-          <div className={styles.field}>
-            <div className={styles.connectedRow}>
-              <span className={styles.connectedBadge}>Connected</span>
-              <button className={styles.disconnectBtn} onClick={handleDisconnectGmail}>
-                Disconnect
-              </button>
-            </div>
-            <p className={styles.hint}>
-              Used for company email ingest. This connection requests only
-              {' '}<strong>View your email messages and settings</strong>.
-            </p>
-          </div>
-        ) : (
-          <>
-            <p className={styles.hint} style={{ marginBottom: 12 }}>
-              Grant Gmail access for company-specific email ingest. This request only asks for
-              {' '}<strong>View your email messages and settings</strong>.
-            </p>
-            <p className={styles.hint} style={{ marginBottom: 12 }}>
-              Gmail uses the same Google OAuth credentials configured above.
-            </p>
-            {gmailError && <p className={styles.error}>{gmailError}</p>}
-            <button
-              className={styles.connectBtn}
-              onClick={handleConnectGmail}
-              disabled={gmailConnecting}
-            >
-              {gmailConnecting ? 'Connecting...' : 'Grant Gmail Access'}
-            </button>
-          </>
-        )}
-        {gmailConnected && (
-          <div className={styles.inlineFieldRow} style={{ marginTop: 12 }}>
-            <span className={styles.inlineFieldLabel}>Auto-sync emails on open</span>
-            <select
-              className={styles.inlineSelect}
-              value={settings.autoSyncEmails ? 'on' : 'off'}
-              onChange={(e) => setSettings({ ...settings, autoSyncEmails: e.target.value === 'on' })}
-            >
-              <option value="on">On</option>
-              <option value="off">Off</option>
-            </select>
-          </div>
-        )}
-      </section>
-
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Google Drive</h3>
-        <p className={styles.hint} style={{ marginBottom: 12 }}>
-          Drive Uploads lets Cyggie save meeting files to your Drive. Drive Files allows browsing
-          company folders in Company Detail &gt; Files. Both permissions use the Google OAuth
-          credentials configured in Google Calendar above.
-        </p>
-        <div className={styles.scopeStatusRow}>
-          <span
-            className={`${styles.scopePill} ${hasDriveScope ? styles.scopeGranted : styles.scopeMissing}`}
-          >
-            Drive Uploads: {hasDriveScope ? 'Granted' : 'Missing'}
-          </span>
-          <span
-            className={`${styles.scopePill} ${hasDriveFilesScope ? styles.scopeGranted : styles.scopeMissing}`}
-          >
-            Drive Files: {hasDriveFilesScope ? 'Granted' : 'Missing'}
-          </span>
-        </div>
-      </section>
+          <IntegrationsPanel
+            calendarConnected={calendarConnected}
+            calendarConnecting={calendarConnecting}
+            calendarError={calendarError}
+            googleClientId={googleClientId}
+            googleClientSecret={googleClientSecret}
+            onGoogleClientIdChange={setGoogleClientId}
+            onGoogleClientSecretChange={setGoogleClientSecret}
+            onConnectCalendar={handleConnectCalendar}
+            onDisconnectCalendar={handleDisconnectCalendar}
+            gmailConnected={gmailConnected}
+            gmailConnecting={gmailConnecting}
+            gmailError={gmailError}
+            onConnectGmail={handleConnectGmail}
+            onDisconnectGmail={handleDisconnectGmail}
+            autoSyncEmails={settings.autoSyncEmails}
+            onAutoSyncChange={(v) => setSettings({ ...settings, autoSyncEmails: v })}
+            hasDriveScope={hasDriveScope}
+            hasDriveFilesScope={hasDriveFilesScope}
+            driveGranting={driveGranting}
+            driveFilesGranting={driveFilesGranting}
+            driveError={driveError}
+            onGrantDriveUploads={handleReauthorizeGoogleScopes}
+            onGrantDriveFiles={handleGrantDriveFilesAccess}
+            calendarAccountEmail={calendarAccountEmail}
+            gmailAccountEmail={gmailAccountEmail}
+          />
 
       {/* Transcripts & Summaries */}
       <section className={styles.section}>

@@ -354,6 +354,67 @@ export function addItem(digestId: string, input: AddToSyncInput): PartnerMeeting
   }
 }
 
+/**
+ * Fire-and-forget: adds (or re-sections) a company in the active digest when a decision is logged.
+ *
+ * - No active digest: returns immediately (does not create one).
+ * - New company: inserts with statusUpdate pre-filled from the decision description.
+ * - Existing company: upserts to update section (stage may have changed); preserves statusUpdate.
+ * - Company not found in org_companies: warns + no-ops.
+ * - Any DB error: caught and logged, never propagates.
+ *
+ * Data flow:
+ *   active digest? ──► check existing item ──► get company row
+ *        │                    │                       │
+ *        ▼                    ▼                       ▼
+ *   [none → return]   [null → pre-fill]      [null → warn+return]
+ *                     [found → null SU]
+ *                             │
+ *                             ▼
+ *                      determineSection()
+ *                             │
+ *                      [null stage, non-portfolio → 'passing']
+ *                             │
+ *                             ▼
+ *                      addItem() upsert
+ */
+export function autoAddDecisionToDigest(companyId: string, statusUpdate: string): void {
+  try {
+    const db = getDatabase()
+
+    // Do NOT create a digest if none exists — stage changes should not have that side effect
+    const digestRow = db
+      .prepare(`SELECT id FROM partner_meeting_digests WHERE status = 'active' LIMIT 1`)
+      .get() as { id: string } | undefined
+    if (!digestRow) return
+
+    const digestId = digestRow.id
+
+    // Preserve user-typed statusUpdate for existing items; pre-fill for new ones
+    const existing = db
+      .prepare(`SELECT id FROM partner_meeting_items WHERE digest_id = ? AND company_id = ? LIMIT 1`)
+      .get(digestId, companyId) as { id: string } | undefined
+    const resolvedStatusUpdate = existing ? null : statusUpdate
+
+    const companyRow = db
+      .prepare(`SELECT entity_type, pipeline_stage FROM org_companies WHERE id = ? LIMIT 1`)
+      .get(companyId) as { entity_type: string | null; pipeline_stage: string | null } | undefined
+    if (!companyRow) {
+      console.warn('[partner-meeting] autoAddDecisionToDigest: company not found', companyId)
+      return
+    }
+
+    let section = determineSection(companyId, companyRow.entity_type, companyRow.pipeline_stage)
+    // Pipeline exit (stage=null, non-portfolio) → 'passing', not 'priorities'
+    if (companyRow.pipeline_stage === null && section === 'priorities') section = 'passing'
+
+    addItem(digestId, { companyId, section, statusUpdate: resolvedStatusUpdate })
+    console.log('[partner-meeting] autoAdd: companyId=%s section=%s existing=%s', companyId, section, !!existing)
+  } catch (err) {
+    console.error('[partner-meeting] autoAddDecisionToDigest failed:', err)
+  }
+}
+
 export function updateItem(itemId: string, input: UpdateItemInput): PartnerMeetingItem | null {
   const db = getDatabase()
   const now = new Date().toISOString()

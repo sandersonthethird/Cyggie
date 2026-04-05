@@ -1,10 +1,12 @@
 
 import { getProvider } from './provider-factory'
-const MEMO_SYSTEM_PROMPT = `You are an experienced venture capital analyst writing investment memos for an investment committee. Write in a professional but direct tone — be specific, data-driven, and opinionated. Avoid vague platitudes.
+import { buildMemoDocTitle, roundLabel } from '../services/memo-export.service'
+
+const MEMO_SYSTEM_PROMPT_TEMPLATE = `You are an experienced venture capital analyst writing investment memos for an investment committee. Write in a professional but direct tone — be specific, data-driven, and opinionated. Avoid vague platitudes.
 
 Your task is to write a comprehensive investment memo based on the information provided. Use the following section structure exactly:
 
-# [Company Name] Investment Memo
+###TITLE###
 
 ## Executive Summary
 2-3 sentences in paragraph form covering:
@@ -58,6 +60,9 @@ CRITICAL INSTRUCTIONS:
 - If existing memo content is provided, incorporate and improve upon it rather than starting from scratch.
 - Output clean markdown only. No preamble or commentary.`
 
+export function buildMemoSystemPrompt(titleLine: string): string {
+  return MEMO_SYSTEM_PROMPT_TEMPLATE.replace('###TITLE###', titleLine)
+}
 
 function truncateForContext(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text
@@ -85,6 +90,10 @@ export interface MemoGenerateInput {
   files?: Array<{ name: string; content: string }>
 }
 
+function buildTitleLine(companyName: string, details: MemoGenerateInput['companyDetails']): string {
+  return `# ${buildMemoDocTitle(companyName, details)}`
+}
+
 export async function generateMemo(
   input: MemoGenerateInput,
   onProgress?: (chunk: string) => void
@@ -102,9 +111,9 @@ export async function generateMemo(
   if (input.companyDetails.city || input.companyDetails.state) {
     detailParts.push(`Location: ${[input.companyDetails.city, input.companyDetails.state].filter(Boolean).join(', ')}`)
   }
-  if (input.companyDetails.round) detailParts.push(`Round: ${input.companyDetails.round}`)
-  if (input.companyDetails.raiseSize) detailParts.push(`Raise: $${(input.companyDetails.raiseSize / 1_000_000).toFixed(1)}M`)
-  if (input.companyDetails.postMoneyValuation) detailParts.push(`Post-money: $${(input.companyDetails.postMoneyValuation / 1_000_000).toFixed(1)}M`)
+  if (input.companyDetails.round) detailParts.push(`Round: ${roundLabel(input.companyDetails.round) ?? input.companyDetails.round}`)
+  if (input.companyDetails.raiseSize) detailParts.push(`Raise: $${input.companyDetails.raiseSize.toFixed(1)}M`)
+  if (input.companyDetails.postMoneyValuation) detailParts.push(`Post-money: $${input.companyDetails.postMoneyValuation.toFixed(1)}M`)
   if (input.companyDetails.stage) detailParts.push(`Stage: ${input.companyDetails.stage}`)
   if (input.companyDetails.industries?.length) detailParts.push(`Industries: ${input.companyDetails.industries.join(', ')}`)
   if (input.companyDetails.themes?.length) detailParts.push(`Themes: ${input.companyDetails.themes.join(', ')}`)
@@ -185,5 +194,6 @@ export async function generateMemo(
   }
 
   const userPrompt = parts.join('\n')
-  return provider.generateSummary(MEMO_SYSTEM_PROMPT, userPrompt, onProgress)
+  const titleLine = buildTitleLine(input.companyName, input.companyDetails)
+  return provider.generateSummary(buildMemoSystemPrompt(titleLine), userPrompt, onProgress)
 }

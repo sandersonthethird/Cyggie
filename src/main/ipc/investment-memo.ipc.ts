@@ -13,6 +13,28 @@ import * as meetingRepo from '../database/repositories/meeting.repo'
 import { readSummary, readTranscript, readLocalFile } from '../storage/file-manager'
 import { generateMemo } from '../llm/memo-generator'
 import { basename } from 'path'
+import { getCredential } from '../security/credentials'
+import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
+import type { MemoShareResponse, MemoRevokeResponse } from '../../shared/types/web-share'
+
+/**
+ * Fetches a company favicon and returns it as a base64 data URL.
+ * Used for PDF/GDoc exports where HTML is loaded as a data: URL and
+ * cannot reference external resources directly.
+ * Returns null on timeout (3s), non-OK response, or any network error.
+ */
+async function fetchLogoAsDataUrl(domain: string): Promise<string | null> {
+  try {
+    const url = `https://www.google.com/s2/favicons?sz=128&domain=${domain}`
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) })
+    if (!res.ok) return null
+    const buffer = Buffer.from(await res.arrayBuffer())
+    const mime = res.headers.get('content-type') ?? 'image/png'
+    return `data:${mime};base64,${buffer.toString('base64')}`
+  } catch {
+    return null
+  }
+}
 
 export function registerInvestmentMemoHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_GET_OR_CREATE, (_event, companyId: string) => {
@@ -82,15 +104,18 @@ export function registerInvestmentMemoHandlers(): void {
     }
 
     const logoDataUrl = getSetting('brandingLogoDataUrl') || null
+    const companyLogoDataUrl = company.primaryDomain
+      ? await fetchLogoAsDataUrl(company.primaryDomain)
+      : null
     const exported = await exportMemoMarkdownToPdf({
       companyName: company.canonicalName,
       memoTitle: memo.title,
       versionNumber: latest.versionNumber,
       contentMarkdown: latest.contentMarkdown,
       logoDataUrl,
+      companyLogoDataUrl,
       companyDetails: {
         round: company.round,
-        raiseSize: company.raiseSize,
         postMoneyValuation: company.postMoneyValuation
       }
     })
@@ -131,15 +156,18 @@ export function registerInvestmentMemoHandlers(): void {
     if (!company) throw new Error('Company not found')
 
     const logoDataUrl = getSetting('brandingLogoDataUrl') || null
+    const companyLogoDataUrl = company.primaryDomain
+      ? await fetchLogoAsDataUrl(company.primaryDomain)
+      : null
     const result = await exportMemoToGoogleDoc({
       companyName: company.canonicalName,
       memoTitle: memo.title,
       versionNumber: latest.versionNumber,
       contentMarkdown: latest.contentMarkdown,
       logoDataUrl,
+      companyLogoDataUrl,
       companyDetails: {
         round: company.round,
-        raiseSize: company.raiseSize,
         postMoneyValuation: company.postMoneyValuation
       }
     })
@@ -289,6 +317,103 @@ export function registerInvestmentMemoHandlers(): void {
       source: 'llm_generate'
     })
 
-    return { success: true, content: generated }
+    return { success: true, contentMarkdown: generated, version }
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.INVESTMENT_MEMO_SHARE_LINK,
+    async (_event, memoId: string): Promise<MemoShareResponse> => {
+      if (!memoId) return { success: false, error: 'no_content', message: 'memoId is required.' }
+
+      const memo = memoRepo.getMemo(memoId)
+      if (!memo) return { success: false, error: 'upload_failed', message: 'Memo not found.' }
+
+      const latest = memoRepo.getMemoLatestVersion(memo.id)
+      if (!latest?.contentMarkdown?.trim()) {
+        return { success: false, error: 'no_content', message: 'Memo has no content to share.' }
+      }
+
+      const claudeApiKey = getCredential('claudeApiKey')
+      if (!claudeApiKey) {
+        return {
+          success: false,
+          error: 'no_api_key',
+          message: 'Claude API key not configured. Set it in Settings.',
+        }
+      }
+
+      const company = companyRepo.getCompany(memo.companyId)
+      const companyName = company?.canonicalName ?? 'Unknown Company'
+      const logoUrl = getSetting('brandingLogoDataUrl') || null
+      // Web share uses plain favicon URL (not base64) — the browser loads it directly
+      const companyLogoUrl = company?.primaryDomain
+        ? `https://www.google.com/s2/favicons?sz=128&domain=${company.primaryDomain}`
+        : null
+
+      try {
+        const response = await fetch(`${WEB_SHARE_API_URL}/api/memo-share`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${WEB_SHARE_API_SECRET}`,
+          },
+          body: JSON.stringify({
+            title: memo.title,
+            companyName,
+            contentMarkdown: latest.contentMarkdown,
+            claudeApiKey,
+            logoUrl,
+            companyLogoUrl,
+          }),
+          signal: AbortSignal.timeout(15000),
+        })
+
+        if (!response.ok) {
+          const errText = await response.text()
+          return { success: false, error: 'upload_failed', message: `Server error: ${errText}` }
+        }
+
+        const result = await response.json()
+        return { success: true, url: result.url, token: result.token }
+      } catch (err) {
+        return {
+          success: false,
+          error: 'network_error',
+          message: `Failed to create share: ${err instanceof Error ? err.message : String(err)}`,
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.INVESTMENT_MEMO_REVOKE_SHARE,
+    async (_event, token: string): Promise<MemoRevokeResponse> => {
+      if (!token) return { success: false, error: 'revoke_failed', message: 'token is required.' }
+
+      try {
+        const response = await fetch(`${WEB_SHARE_API_URL}/api/memo-share`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${WEB_SHARE_API_SECRET}`,
+          },
+          body: JSON.stringify({ token }),
+          signal: AbortSignal.timeout(10000),
+        })
+
+        if (!response.ok) {
+          const errText = await response.text()
+          return { success: false, error: 'revoke_failed', message: `Server error: ${errText}` }
+        }
+
+        return { success: true }
+      } catch (err) {
+        return {
+          success: false,
+          error: 'network_error',
+          message: `Failed to revoke share: ${err instanceof Error ? err.message : String(err)}`,
+        }
+      }
+    }
+  )
 }

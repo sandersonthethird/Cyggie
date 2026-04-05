@@ -384,6 +384,7 @@ export default function Dashboard() {
             <span className={styles.todayBadge}>TODAY</span>
           </div>
 
+          <div className={styles.scheduleScroll}>
           {!calendarConnected && (
             <p className={styles.emptyMeta}>
               Connect Google Calendar in Settings to see your schedule.
@@ -431,6 +432,7 @@ export default function Dashboard() {
               })}
             </div>
           ))}
+          </div>
         </section>
 
         {/* RIGHT: Pipeline + Touches + Tasks */}
@@ -579,6 +581,7 @@ export default function Dashboard() {
                 View All Activity
               </button>
             </div>
+            <div className={styles.touchesScroll}>
             {(data?.recentActivity || []).slice(0, 5).map(item => (
               <button
                 key={item.id}
@@ -607,6 +610,7 @@ export default function Dashboard() {
             {(!data || data.recentActivity.length === 0) && (
               <p className={styles.emptyMeta}>No recent activity.</p>
             )}
+            </div>
           </section>
 
           {/* Open Tasks strip */}
@@ -617,6 +621,7 @@ export default function Dashboard() {
                 View All
               </button>
             </div>
+            <div className={styles.tasksScroll}>
             {openTasks.slice(0, 3).map(task => (
               <button
                 key={task.id}
@@ -641,6 +646,7 @@ export default function Dashboard() {
             {openTasks.length === 0 && (
               <p className={styles.emptyMeta}>No open tasks.</p>
             )}
+            </div>
           </section>
 
         </div>

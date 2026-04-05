@@ -4,9 +4,7 @@ import { getCredential } from '../security/credentials'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
 import type { WebShareResponse } from '../../shared/types/web-share'
-
-const WEB_SHARE_API_URL = 'https://cyggie.vercel.app'
-const WEB_SHARE_API_SECRET = import.meta.env.MAIN_VITE_SHARE_SECRET || ''
+import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
 
 export function registerWebShareHandlers(): void {
   ipcMain.handle(

@@ -8,6 +8,7 @@ import * as companyRepo from '../database/repositories/org-company.repo'
 import { upsert as upsertCompanyCache } from '../database/repositories/company.repo'
 import * as contactRepo from '../database/repositories/contact.repo'
 import { createCompanyDecisionLog } from '../database/repositories/company-decision-log.repo'
+import { autoAddDecisionToDigest } from '../database/repositories/partner-meeting.repo'
 import { getDatabase } from '../database/connection'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import * as settingsRepo from '../database/repositories/settings.repo'
@@ -377,6 +378,11 @@ export function registerCompanyHandlers(): void {
         currentStage = row?.pipeline_stage ?? null
       }
 
+      // Auto-clear priority when moving to Pass
+      if (newStage === 'pass') {
+        remaining = { ...remaining, priority: null }
+      }
+
       const updated = companyRepo.updateCompany(companyId, remaining, userId)
 
       if (updated) {
@@ -407,6 +413,9 @@ export function registerCompanyHandlers(): void {
             }, userId)
           })()
           console.log('[company.ipc] Stage Change logged: companyId=%s, from=%s to=%s', companyId, currentStage, newStage)
+          // Note: CSV imports call companyRepo.updateCompany() directly, bypassing this IPC handler,
+          // so bulk imports do not trigger auto-add to the digest.
+          autoAddDecisionToDigest(companyId, rationaleMsg)
         } catch (err) {
           console.error('[company.ipc] Failed to log stage change:', err)
         }
@@ -423,7 +432,25 @@ export function registerCompanyHandlers(): void {
         throw new Error('Both targetCompanyId and sourceCompanyId are required')
       }
       const userId = getCurrentUserId()
+      const db = getDatabase()
+
+      // Capture names before the merge deletes the source row
+      const sourceRow = db
+        .prepare('SELECT canonical_name FROM org_companies WHERE id = ? LIMIT 1')
+        .get(sourceCompanyId) as { canonical_name: string } | undefined
+      const targetRow = db
+        .prepare('SELECT canonical_name FROM org_companies WHERE id = ? LIMIT 1')
+        .get(targetCompanyId) as { canonical_name: string } | undefined
+
       const result = companyRepo.mergeCompanies(targetCompanyId, sourceCompanyId)
+
+      // Remap any domain-cache entries that pointed to the old company name
+      // (e.g. angellist.com → "Wellfound" becomes angellist.com → "AngelList")
+      if (sourceRow && targetRow) {
+        db.prepare('UPDATE companies SET display_name = ? WHERE display_name = ?')
+          .run(targetRow.canonical_name, sourceRow.canonical_name)
+      }
+
       logAudit(userId, 'company', targetCompanyId, 'update', {
         mergedFrom: sourceCompanyId,
         relinked: result.relinked

@@ -1,0 +1,38 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-card-bg);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+
+.pill:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-hover, var(--color-primary));
+  color: var(--color-text);
+}
+
+.pillActive {
+  background: var(--color-accent-pale, rgba(79, 142, 247, 0.1));
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.pillActive:hover {
+  background: var(--color-accent-pale, rgba(79, 142, 247, 0.15));
+}

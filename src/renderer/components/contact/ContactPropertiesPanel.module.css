@@ -802,6 +802,11 @@
   gap: 4px;
 }
 
+.companyEditWrapper {
+  position: relative;
+  display: inline-block;
+}
+
 .priorCompanyEntry {
   position: relative;
   display: flex;

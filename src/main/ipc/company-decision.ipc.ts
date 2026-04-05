@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as decisionRepo from '../database/repositories/company-decision-log.repo'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
+import { autoAddDecisionToDigest } from '../database/repositories/partner-meeting.repo'
 import type { CompanyDecisionLog } from '../../shared/types/company'
 
 export function registerCompanyDecisionHandlers(): void {
@@ -46,6 +47,9 @@ export function registerCompanyDecisionHandlers(): void {
       const userId = getCurrentUserId()
       const log = decisionRepo.createCompanyDecisionLog(data, userId)
       logAudit(userId, 'company_decision_log', log.id, 'create', data)
+      const rationaleText = (data.rationale ?? []).filter(Boolean).join('; ')
+      const statusUpdate = rationaleText ? `${data.decisionType}: ${rationaleText}` : data.decisionType
+      autoAddDecisionToDigest(data.companyId, statusUpdate)
       return log
     }
   )

@@ -44,6 +44,7 @@ interface UseNoteEditorResult {
   loadState: LoadState
   titleDraft: string
   setTitleDraft: (v: string) => void
+  contentDraft: string
   editor: Editor | null
   saveStatus: SaveStatus
   isPinned: boolean
@@ -221,6 +222,7 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
     loadState,
     titleDraft,
     setTitleDraft,
+    contentDraft,
     editor,
     saveStatus,
     isPinned,

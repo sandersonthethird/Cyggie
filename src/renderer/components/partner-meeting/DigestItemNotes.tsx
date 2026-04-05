@@ -57,6 +57,9 @@ export function DigestItemNotes({ content, placeholder = 'Click to add notes…'
 
   // Guards markEdited() from firing during programmatic loadContent calls
   const isLoadingRef = useRef(false)
+  // Guards onUpdate from firing during TipTap editor initialization (before user expands)
+  const expandedRef = useRef(false)
+  expandedRef.current = expanded
 
   const { editor, loadContent } = useTiptapMarkdown({
     extensions: [
@@ -66,6 +69,7 @@ export function DigestItemNotes({ content, placeholder = 'Click to add notes…'
     ],
     editable: !disabled,
     onUpdate: ({ editor: e }) => {
+      if (!expandedRef.current) return  // TipTap fires onUpdate on init — ignore until user expands
       const md = e.getMarkdown?.() ?? e.getText()
       setDraft(md)
       if (!isLoadingRef.current) markEdited()  // blocked during programmatic loads

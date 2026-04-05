@@ -11,9 +11,11 @@ interface Message {
 interface ChatPanelProps {
   token: string
   meetingTitle: string
+  apiPath?: string
+  showHeader?: boolean
 }
 
-export default function ChatPanel({ token, meetingTitle }: ChatPanelProps) {
+export default function ChatPanel({ token, meetingTitle, apiPath = '/api/chat', showHeader = true }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -47,7 +49,7 @@ export default function ChatPanel({ token, meetingTitle }: ChatPanelProps) {
     setMessages((prev) => [...prev, userMessage])
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(apiPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -98,7 +100,7 @@ export default function ChatPanel({ token, meetingTitle }: ChatPanelProps) {
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, token, messages])
+  }, [input, isLoading, token, messages, apiPath])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -109,11 +111,13 @@ export default function ChatPanel({ token, meetingTitle }: ChatPanelProps) {
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-          Ask about this meeting
-        </h2>
-      </div>
+      {showHeader && (
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+            Ask about this meeting
+          </h2>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && !isLoading && (

@@ -44,6 +44,7 @@ import {
 } from './companyColumns'
 import { executeBulkEdit } from '../crm/tableUtils'
 import type { RangeValue } from '../crm/tableUtils'
+import type { VirtualRow } from '../../hooks/useGroupedRows'
 import { chipStyle } from '../../utils/colorChip'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
@@ -74,9 +75,13 @@ type BulkFieldKey = (typeof BULK_EDIT_FIELDS)[number]['key']
 
 interface CompanyTableProps {
   companies: CompanySummary[]
+  /** Mixed virtual rows — group headers + data rows. Provided by useGroupedRows in parent. */
+  rows: VirtualRow<CompanySummary>[]
+  groupBy: string | null
+  onToggleGroup: (groupKey: string) => void
   loading: boolean
   sort: SortState
-  onSort: (key: string, dir: 'asc' | 'desc') => void
+  onSort: (key: string, shiftHeld: boolean) => void
   onPatch: (id: string, patch: Record<string, unknown>) => void
   onBulkDelete: (ids: string[]) => void
   onCreateInline: (name: string) => Promise<void>
@@ -105,6 +110,9 @@ interface CompanyTableProps {
 
 export function CompanyTable({
   companies,
+  rows,
+  groupBy,
+  onToggleGroup,
   loading,
   sort,
   onSort,
@@ -289,10 +297,9 @@ export function CompanyTable({
   }
 
   // ── Sort ───────────────────────────────────────────────────────────────────
-  function handleHeaderClick(col: ColumnDef) {
+  function handleHeaderClick(col: ColumnDef, e: React.MouseEvent) {
     if (!col.sortable) return
-    const newDir = sort.key === col.key && sort.dir === 'asc' ? 'desc' : 'asc'
-    onSort(col.key, newDir)
+    onSort(col.key, e.shiftKey)
   }
 
   // ── Inline save ────────────────────────────────────────────────────────────
@@ -326,9 +333,9 @@ export function CompanyTable({
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const rowVirtualizer = useVirtualizer({
-    count: companies.length,
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: (i) => rows[i]?.type === 'group' ? 36 : ROW_HEIGHT,
     overscan: 6
   })
 
@@ -373,14 +380,16 @@ export function CompanyTable({
           {mergedVisibleCols.map((col) => {
             const isName = col.key === 'name'
             const effectiveW = colWidths[col.key] ?? col.width
-            const isSorted = sort.key === col.key
+            const sortIdx = sort.findIndex((s) => s.key === col.key)
+            const isSorted = sortIdx >= 0
+            const sortDir = isSorted ? sort[sortIdx].dir : null
             const canPin = isPinnable(col)
             const isPinned = canPin && summaryKeys.includes(col.key)
             return (
               <div
                 key={col.key}
                 className={`${styles.headerCell} ${isName ? styles.nameCol : ''} ${col.sortable ? styles.sortable : ''} ${(col.options?.length || col.type === 'number' || col.type === 'date' || col.type === 'text') ? styles.filterableCell : ''} ${draggingKey === col.key ? styles.dragging : ''} ${dragOverKey === col.key ? styles.dragOver : ''}`}
-                onClick={() => { if (renamingCol !== col.key) handleHeaderClick(col) }}
+                onClick={(e) => { if (renamingCol !== col.key) handleHeaderClick(col, e) }}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   setHeaderMenu({ key: col.key, x: e.clientX, y: e.clientY, pendingDelete: false })
@@ -407,7 +416,10 @@ export function CompanyTable({
                 ) : col.label}
                 {col.sortable && (
                   isSorted
-                    ? <span className={styles.sortArrow}>{sort.dir === 'asc' ? ' ▲' : ' ▼'}</span>
+                    ? <span className={styles.sortArrow}>
+                        {sortDir === 'asc' ? ' ▲' : ' ▼'}
+                        {sort.length > 1 && <sup className={styles.sortBadge}>{sortIdx + 1}</sup>}
+                      </span>
                     : <span className={styles.sortArrowHint}>↕</span>
                 )}
                 {canPin && (
@@ -494,8 +506,36 @@ export function CompanyTable({
           )}
 
           {virtualRows.map((vrow) => {
-            const company = companies[vrow.index]
-            if (!company) return null
+            const row = rows[vrow.index]
+            if (!row) return null
+
+            const absoluteStyle: React.CSSProperties = {
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              transform: `translateY(${vrow.start}px)`
+            }
+
+            // ── Group header row ──────────────────────────────────────────────
+            if (row.type === 'group') {
+              return (
+                <div
+                  key={`group:${row.value ?? '__null__'}`}
+                  className={styles.groupHeaderRow}
+                  style={absoluteStyle}
+                  onClick={() => onToggleGroup(row.value ?? '__null__')}
+                >
+                  <span className={styles.groupToggle}>{row.isCollapsed ? '▶' : '▼'}</span>
+                  <span className={styles.groupChip} style={chipStyle(row.label)}>{row.label}</span>
+                  <span className={styles.groupCount}>{row.count}</span>
+                </div>
+              )
+            }
+
+            // ── Data row ─────────────────────────────────────────────────────
+            const company = row.item
+            const dataIndex = row.dataIndex
             const isSelected = selectedIds.has(company.id)
 
             return (
@@ -504,11 +544,7 @@ export function CompanyTable({
                 className={`${styles.dataRow} ${isSelected ? styles.selected : ''}`}
                 style={{
                   gridTemplateColumns: gridCols,
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  transform: `translateY(${vrow.start}px)`
+                  ...absoluteStyle
                 }}
               >
                 {/* Checkbox */}
@@ -517,7 +553,7 @@ export function CompanyTable({
                     type="checkbox"
                     className={styles.checkboxInput}
                     checked={isSelected}
-                    onChange={(e) => toggleSelect(company.id, vrow.index, (e.nativeEvent as MouseEvent).shiftKey)}
+                    onChange={(e) => toggleSelect(company.id, dataIndex, (e.nativeEvent as MouseEvent).shiftKey)}
                     onClick={(e) => e.stopPropagation()}
                   />
                 </div>
@@ -547,19 +583,34 @@ export function CompanyTable({
                 {mergedVisibleCols.slice(1).map((col, relIdx) => {
                   const colIdx = relIdx + 1
                   const fieldKey = col.field as keyof CompanySummary
-                  const isCellFocused = editCell?.rowIdx === vrow.index && editCell?.colIdx === colIdx
+                  const isCellFocused = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
                   const customFieldId = col.key.startsWith('custom:') ? col.key.slice(7) : null
                   const cellValue = customFieldId
                     ? (customFieldValues?.[company.id]?.[customFieldId] ?? null)
                     : col.field ? (company[fieldKey] as string | null) : null
                   const isCustomSelect = !!customFieldId && col.type === 'select'
 
+                  // When groupBy is active: scan mode — all cells navigate to detail
+                  if (groupBy) {
+                    return (
+                      <div
+                        key={col.key}
+                        className={isCustomSelect ? styles.chipCell : styles.dataCell}
+                        onClick={() => navigate(`/company/${company.id}`)}
+                      >
+                        {isCustomSelect && cellValue ? (
+                          <span className={styles.chip} style={chipStyle(cellValue)}>{cellValue}</span>
+                        ) : (!isCustomSelect ? cellValue : null)}
+                      </div>
+                    )
+                  }
+
                   if (isCustomSelect && !isCellFocused) {
                     return (
                       <div
                         key={col.key}
                         className={styles.chipCell}
-                        onClick={() => handleStartEdit(vrow.index, colIdx)}
+                        onClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
                         {cellValue ? (
                           <span className={styles.chip} style={chipStyle(cellValue)}>
@@ -576,8 +627,8 @@ export function CompanyTable({
                       value={cellValue}
                       col={col}
                       isFocused={isCellFocused}
-                      onStartEdit={() => handleStartEdit(vrow.index, colIdx)}
-                      onEndEdit={(dir) => handleEndEdit(vrow.index, colIdx, dir ?? null)}
+                      onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
+                      onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
                       onAddOption={
                         col.type === 'select'
                           ? async (newOption) => {

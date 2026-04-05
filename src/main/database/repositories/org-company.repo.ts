@@ -2259,7 +2259,7 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
 
   const decisionRows = db
     .prepare(`
-      SELECT id, decision_type, decision_date, decision_owner
+      SELECT id, decision_type, decision_date, decision_owner, rationale_json
       FROM company_decision_logs
       WHERE company_id = ?
       ORDER BY decision_date DESC
@@ -2270,17 +2270,38 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
     decision_type: string
     decision_date: string
     decision_owner: string | null
+    rationale_json: string | null
   }>
-  const decisionItems: CompanyTimelineItem[] = decisionRows.map((d) => ({
-    id: `decision:${d.id}`,
-    type: 'decision',
-    title: d.decision_type,
-    // Append T12:00:00Z to date-only strings to avoid midnight UTC timezone drift
-    occurredAt: d.decision_date.includes('T') ? d.decision_date : `${d.decision_date}T12:00:00Z`,
-    subtitle: d.decision_owner ?? null,
-    referenceId: d.id,
-    referenceType: 'company_decision_log'
-  }))
+  const decisionItems: CompanyTimelineItem[] = decisionRows.map((d) => {
+    let title = d.decision_type
+    if (d.decision_type === 'Stage Change' || d.decision_type === 'Pipeline Exit') {
+      try {
+        const rationaleArr: string[] = d.rationale_json ? JSON.parse(d.rationale_json) : []
+        const msg = rationaleArr[0] ?? ''
+        const stageMatch = msg.match(/^Moved from (.+) to (.+)$/)
+        if (stageMatch) {
+          title = `${stageMatch[1]} → ${stageMatch[2]}`
+        } else {
+          const exitMatch = msg.match(/^Removed from pipeline \(was: (.+)\)$/)
+          if (exitMatch) {
+            title = `${exitMatch[1]} → Exited`
+          }
+        }
+      } catch {
+        // fall back to decision_type
+      }
+    }
+    return {
+      id: `decision:${d.id}`,
+      type: 'decision',
+      title,
+      // Append T12:00:00Z to date-only strings to avoid midnight UTC timezone drift
+      occurredAt: d.decision_date.includes('T') ? d.decision_date : `${d.decision_date}T12:00:00Z`,
+      subtitle: d.decision_owner ?? null,
+      referenceId: d.id,
+      referenceType: 'company_decision_log'
+    }
+  })
 
   return [...meetingItems, ...emailItems, ...noteItems, ...decisionItems].sort((a, b) =>
     new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()

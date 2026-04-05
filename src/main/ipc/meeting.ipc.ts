@@ -402,7 +402,8 @@ export function registerMeetingHandlers(): void {
     if (!trimmed) {
       throw new Error('URL is required')
     }
-    const parsed = new URL(trimmed)
+    const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+    const parsed = new URL(withProtocol)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error('Only http(s) URLs are allowed')
     }

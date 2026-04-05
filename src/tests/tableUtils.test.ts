@@ -85,27 +85,44 @@ describe('sortRows', () => {
   ]
 
   it('sorts strings ascending', () => {
-    const sort: SortState = { key: 'name', dir: 'asc' }
+    const sort: SortState = [{ key: 'name', dir: 'asc' }]
     const result = sortRows(rows, sort, DEFS)
     expect(result.map((r) => r.name)).toEqual(['Alpha', 'Zeta', null])
   })
 
   it('sorts strings descending', () => {
-    const sort: SortState = { key: 'name', dir: 'desc' }
+    const sort: SortState = [{ key: 'name', dir: 'desc' }]
     const result = sortRows(rows, sort, DEFS)
     expect(result.map((r) => r.name)).toEqual(['Zeta', 'Alpha', null])
   })
 
   it('sorts numbers ascending, nulls last', () => {
-    const sort: SortState = { key: 'score', dir: 'asc' }
+    const sort: SortState = [{ key: 'score', dir: 'asc' }]
     const result = sortRows(rows, sort, DEFS)
     expect(result.map((r) => r.score)).toEqual([10, 20, 30])
   })
 
   it('returns original array unchanged when key not found', () => {
-    const sort: SortState = { key: 'nonexistent', dir: 'asc' }
+    const sort: SortState = [{ key: 'nonexistent', dir: 'asc' }]
     const result = sortRows(rows, sort, DEFS)
     expect(result).toEqual(rows)
+  })
+
+  it('empty sort array returns items unchanged', () => {
+    const result = sortRows(rows, [], DEFS)
+    expect(result).toEqual(rows)
+  })
+
+  it('multi-sort: uses second key as tiebreaker', () => {
+    const tied = [
+      { name: 'Alice', score: 20 },
+      { name: 'Alice', score: 10 },
+      { name: 'Bob',   score: 30 }
+    ]
+    const sort: SortState = [{ key: 'name', dir: 'asc' }, { key: 'score', dir: 'asc' }]
+    const result = sortRows(tied, sort, DEFS)
+    // Both Alices come first; lower score first within the group
+    expect(result.map((r) => r.score)).toEqual([10, 20, 30])
   })
 })
 

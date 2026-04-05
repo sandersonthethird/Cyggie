@@ -216,9 +216,9 @@ export async function exportMemoToGoogleDoc(params: {
   versionNumber: number
   contentMarkdown: string
   logoDataUrl?: string | null
+  companyLogoDataUrl?: string | null
   companyDetails?: {
     round?: string | null
-    raiseSize?: number | null
     postMoneyValuation?: number | null
   }
 }): Promise<{ docId: string; webViewLink: string }> {
@@ -237,13 +237,15 @@ export async function exportMemoToGoogleDoc(params: {
   await verifyDriveAccess(drive)
   const memoFolder = await ensureMemosFolder(drive)
 
-  const header: MemoHeaderParams | undefined = params.logoDataUrl
-    ? {
-        logoDataUrl: params.logoDataUrl,
-        title: buildMemoDocTitle(params.companyName, params.companyDetails),
-        date: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-      }
-    : undefined
+  const header: MemoHeaderParams | undefined =
+    (params.logoDataUrl || params.companyLogoDataUrl)
+      ? {
+          logoDataUrl: params.logoDataUrl,
+          companyLogoDataUrl: params.companyLogoDataUrl,
+          title: buildMemoDocTitle(params.companyName, params.companyDetails),
+          date: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        }
+      : undefined
   const html = markdownToHtml(params.contentMarkdown, header)
   const docName = `${params.companyName} - ${params.memoTitle} (v${params.versionNumber})`
 

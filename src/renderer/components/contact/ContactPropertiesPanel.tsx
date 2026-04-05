@@ -151,6 +151,10 @@ export function ContactPropertiesPanel({
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
   const [editingFieldLabel, setEditingFieldLabel] = useState('')
   const [addFieldDropdownSection, setAddFieldDropdownSection] = useState<string | undefined>(undefined)
+  // Primary company edit state
+  const [companyDraft, setCompanyDraft] = useState(contact.primaryCompany?.canonicalName ?? '')
+  const [companyAutocomplete, setCompanyAutocomplete] = useState<CompanySummary[] | null>(null)
+  const companyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Prior Company multi-value state
   const [priorCompanyDrafts, setPriorCompanyDrafts] = useState<PriorCompanyEntry[]>(() => parsePriorCompanies(contact.previousCompanies))
   const [priorCompanyAutocomplete, setPriorCompanyAutocomplete] = useState<{ index: number; results: CompanySummary[] } | null>(null)
@@ -359,6 +363,7 @@ export function ContactPropertiesPanel({
     if (isEditing) {
       setFirstNameDraft(contact.firstName ?? '')
       setLastNameDraft(contact.lastName ?? '')
+      setCompanyDraft(contact.primaryCompany?.canonicalName ?? '')
       setPriorCompanyDrafts(parsePriorCompanies(contact.previousCompanies))
       setTimeout(() => firstNameInputRef.current?.focus(), 0)
     }
@@ -381,6 +386,32 @@ export function ContactPropertiesPanel({
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [isEditing])
+
+  function handleCompanyInput(value: string) {
+    setCompanyDraft(value)
+    setCompanyAutocomplete(null)
+    if (companyDebounceRef.current) clearTimeout(companyDebounceRef.current)
+    if (value.trim().length < 1) return
+    companyDebounceRef.current = setTimeout(async () => {
+      try {
+        const results = await api.invoke<CompanySummary[]>(IPC_CHANNELS.COMPANY_LIST, { query: value.trim(), limit: 6 })
+        setCompanyAutocomplete(results ?? [])
+      } catch { /* ignore */ }
+    }, 200)
+  }
+
+  async function saveCompany(name: string) {
+    const trimmed = name.trim()
+    if (trimmed === (contact.primaryCompany?.canonicalName ?? '')) return
+    const prevCompany = contact.primaryCompany
+    try {
+      const updated = await api.invoke<ContactDetail>(IPC_CHANNELS.CONTACT_SET_COMPANY, contact.id, trimmed || null)
+      onUpdate(updated)
+    } catch (e) {
+      console.error('[ContactPropertiesPanel] saveCompany failed:', e)
+      setCompanyDraft(prevCompany?.canonicalName ?? '')
+    }
+  }
 
   function handlePriorCompanyInput(index: number, value: string) {
     setPriorCompanyDrafts(prev => prev.map((e, i) => i === index ? value : e))
@@ -799,15 +830,47 @@ export function ContactPropertiesPanel({
             {contact.title && fieldSources?.title && (
               <span className={styles.sourceBadge} title={`From: ${fieldSources.title.meetingTitle}`}>📋</span>
             )}
-            {contact.title && contact.primaryCompany && <span className={styles.sep}>@</span>}
-            {contact.primaryCompany && (
-              <button
-                className={styles.companyLink}
-                onClick={() => navigate(`/company/${contact.primaryCompany!.id}`, { state: { backLabel: contact.fullName } })}
-              >
-                {contact.primaryCompany.canonicalName}
-              </button>
-            )}
+            {contact.title && contact.primaryCompany && !isEditing && <span className={styles.sep}>@</span>}
+            {isEditing ? (
+              <div className={styles.companyEditWrapper}>
+                <input
+                  className={styles.priorCompanyInput}
+                  value={companyDraft}
+                  placeholder="Company"
+                  onChange={(e) => handleCompanyInput(e.target.value)}
+                  onBlur={() => {
+                    setTimeout(() => setCompanyAutocomplete(null), 150)
+                    void saveCompany(companyDraft)
+                  }}
+                />
+                {companyAutocomplete && companyAutocomplete.length > 0 && (
+                  <div className={styles.priorCompanyAutocomplete}>
+                    {companyAutocomplete.map(c => (
+                      <div
+                        key={c.id}
+                        className={styles.priorCompanyAutocompleteItem}
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          setCompanyDraft(c.canonicalName)
+                          setCompanyAutocomplete(null)
+                          void saveCompany(c.canonicalName)
+                        }}
+                      >{c.canonicalName}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : contact.primaryCompany ? (
+              <>
+                {contact.title && <span className={styles.sep}>@</span>}
+                <button
+                  className={styles.companyLink}
+                  onClick={() => navigate(`/company/${contact.primaryCompany!.id}`, { state: { backLabel: contact.fullName } })}
+                >
+                  {contact.primaryCompany.canonicalName}
+                </button>
+              </>
+            ) : null}
           </div>
           <div
             className={`${styles.headerBadge} ${isEditing && dragOverSection === 'summary' ? styles.dropTarget : ''}`}

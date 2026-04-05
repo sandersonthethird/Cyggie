@@ -5,7 +5,9 @@ import {
   authorizeDriveFiles,
   disconnect,
   isCalendarConnected,
-  storeGoogleClientCredentials
+  storeGoogleClientCredentials,
+  getCalendarAccountEmail,
+  getGmailAccountEmail
 } from '../calendar/google-auth'
 import {
   getUpcomingEvents,
@@ -73,6 +75,11 @@ export function registerCalendarHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.CALENDAR_IS_CONNECTED, () => {
     return isCalendarConnected()
   })
+
+  ipcMain.handle(IPC_CHANNELS.GOOGLE_ACCOUNT_EMAILS, () => ({
+    calendarEmail: getCalendarAccountEmail(),
+    gmailEmail: getGmailAccountEmail()
+  }))
 
   // Check if already connected on startup and begin polling
   const connected = isCalendarConnected()

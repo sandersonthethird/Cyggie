@@ -109,10 +109,13 @@ export function applyTextFilter<T extends Record<string, unknown>>(
   )
 }
 
-export interface SortState {
+export interface SortKey {
   key: string
   dir: 'asc' | 'desc'
 }
+
+/** Multi-column sort state — ordered from primary to tiebreaker. */
+export type SortState = SortKey[]
 
 // ─── Column config ────────────────────────────────────────────────────────────
 
@@ -199,33 +202,43 @@ export function createColumnWidthsHelper(storageKey: string): {
 // ─── Sort ─────────────────────────────────────────────────────────────────────
 
 /**
- * Client-side sort for any row type. Nulls always sort last regardless of direction.
- * Uses the column def to determine the field key and value type.
+ * Client-side multi-column sort for any row type.
+ * Keys are evaluated in order (primary → tiebreaker). Nulls always sort last.
+ * If sort array is empty, rows are returned unchanged.
  */
 export function sortRows<T extends Record<string, unknown>>(
   rows: T[],
-  sort: SortState,
+  sort: SortKey[],
   defs: ColumnDef[]
 ): T[] {
-  const col = defs.find((c) => c.key === sort.key)
-  if (!col || !col.field) return rows
+  if (sort.length === 0) return rows
 
-  const field = col.field as keyof T
-  const dir = sort.dir === 'asc' ? 1 : -1
+  // Pre-resolve column defs for each sort key — skip keys with no matching def or field
+  const resolved = sort.flatMap((sk) => {
+    const col = defs.find((c) => c.key === sk.key)
+    if (!col || !col.field) return []
+    return [{ field: col.field as keyof T, dir: sk.dir === 'asc' ? 1 : -1 }]
+  })
+  if (resolved.length === 0) return rows
 
   return [...rows].sort((a, b) => {
-    const av = a[field]
-    const bv = b[field]
+    for (const { field, dir } of resolved) {
+      const av = a[field]
+      const bv = b[field]
 
-    if (av == null && bv == null) return 0
-    if (av == null) return 1
-    if (bv == null) return -1
+      if (av == null && bv == null) continue
+      if (av == null) return 1
+      if (bv == null) return -1
 
-    if (typeof av === 'number' && typeof bv === 'number') {
-      return (av - bv) * dir
+      let cmp: number
+      if (typeof av === 'number' && typeof bv === 'number') {
+        cmp = av - bv
+      } else {
+        cmp = String(av).localeCompare(String(bv))
+      }
+      if (cmp !== 0) return cmp * dir
     }
-
-    return String(av).localeCompare(String(bv)) * dir
+    return 0
   })
 }
 

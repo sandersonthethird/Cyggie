@@ -518,3 +518,139 @@
   text-overflow: ellipsis;
   max-width: 100%;
 }
+
+/* ── Group header row (full-width, flex layout, absolute positioned) ── */
+.groupHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: 36px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-bg-tertiary);
+  background: var(--color-card-bg);
+  user-select: none;
+}
+
+.groupHeaderRow:hover {
+  background: var(--color-bg-secondary);
+}
+
+.groupToggle {
+  font-size: 9px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.groupChip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.groupCount {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Sort priority badge (multi-sort indicator) ── */
+.sortBadge {
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--color-primary);
+  vertical-align: super;
+  margin-left: 1px;
+}
+
+/* ── Generic data cell (scan-mode when groupBy active) ── */
+.dataCell {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  height: 100%;
+  font-size: 13px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+/* ── Add row ── */
+.addRow {
+  display: grid;
+  height: 36px;
+  border-bottom: 1px solid var(--color-bg-tertiary);
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  min-width: 100%;
+}
+
+.addRow:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+.addRowCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  grid-column: 2;
+}
+
+.addRowInput {
+  width: 100%;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  color: var(--color-text);
+  font-family: inherit;
+  padding: 0;
+}
+
+.addRowInput::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* ── Column header context menu ── */
+.headerContextMenu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  min-width: 160px;
+}
+
+.headerMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.headerMenuItem:hover { background: var(--color-bg-secondary); }
+
+.headerMenuItemDanger { color: var(--color-danger, #e53e3e); }
+
+.headerMenuConfirm {
+  padding: 6px 10px 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  max-width: 220px;
+}

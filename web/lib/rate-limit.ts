@@ -1,16 +1,17 @@
 import { getDb } from './db'
-import { rateLimits } from '../drizzle/schema'
+import { rateLimits, memoRateLimits } from '../drizzle/schema'
 import { eq, sql } from 'drizzle-orm'
 
 const DAILY_LIMIT = 50
 
-export async function checkRateLimit(
-  token: string
-): Promise<{ allowed: boolean; remaining: number }> {
+type RateLimitTable = typeof rateLimits | typeof memoRateLimits
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function runRateLimitCheck(token: string, table: any): Promise<{ allowed: boolean; remaining: number }> {
   const today = new Date().toISOString().split('T')[0]
 
   const result = await getDb()
-    .insert(rateLimits)
+    .insert(table)
     .values({
       token,
       chatCountDay: 1,
@@ -18,21 +19,29 @@ export async function checkRateLimit(
       totalQueries: 1,
     })
     .onConflictDoUpdate({
-      target: rateLimits.token,
+      target: table.token,
       set: {
         chatCountDay: sql`CASE
-          WHEN ${rateLimits.lastReset} < ${today} THEN 1
-          ELSE ${rateLimits.chatCountDay} + 1
+          WHEN ${table.lastReset} < ${today} THEN 1
+          ELSE ${table.chatCountDay} + 1
         END`,
         lastReset: sql`CASE
-          WHEN ${rateLimits.lastReset} < ${today} THEN ${today}::date
-          ELSE ${rateLimits.lastReset}
+          WHEN ${table.lastReset} < ${today} THEN ${today}::date
+          ELSE ${table.lastReset}
         END`,
-        totalQueries: sql`${rateLimits.totalQueries} + 1`,
+        totalQueries: sql`${table.totalQueries} + 1`,
       },
     })
-    .returning({ chatCountDay: rateLimits.chatCountDay })
+    .returning({ chatCountDay: table.chatCountDay })
 
   const count = result[0]?.chatCountDay ?? 0
   return { allowed: count <= DAILY_LIMIT, remaining: Math.max(0, DAILY_LIMIT - count) }
+}
+
+export async function checkRateLimit(token: string): Promise<{ allowed: boolean; remaining: number }> {
+  return runRateLimitCheck(token, rateLimits as RateLimitTable)
+}
+
+export async function checkMemoRateLimit(token: string): Promise<{ allowed: boolean; remaining: number }> {
+  return runRateLimitCheck(token, memoRateLimits as RateLimitTable)
 }

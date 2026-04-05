@@ -153,7 +153,6 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
               {itemCollapsed ? '▶' : '▾'}
             </button>
           )}
-          {item.carryOver && <span className={styles.carryBadge} title="Carried over from last week">↩</span>}
           <button
             className={styles.companyLink}
             onClick={() => navigate(`/company/${item.companyId}`)}

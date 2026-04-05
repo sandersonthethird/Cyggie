@@ -13,6 +13,7 @@
  *   → EditableCell onSave → parent patches contacts[]
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
@@ -29,6 +30,7 @@ import {
   type ColumnDef,
   type SortState
 } from './contactColumns'
+import type { VirtualRow } from '../../hooks/useGroupedRows'
 import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
 import { useEditCellNav } from '../../hooks/useEditCellNav'
@@ -51,11 +53,16 @@ const ROW_HEIGHT = 38
 
 interface ContactTableProps {
   contacts: ContactSummary[]
+  /** Mixed virtual rows — group headers + data rows. Provided by useGroupedRows in parent. */
+  rows: VirtualRow<ContactSummary>[]
+  groupBy: string | null
+  onToggleGroup: (groupKey: string) => void
   loading: boolean
   sort: SortState
-  onSort: (key: string, dir: 'asc' | 'desc') => void
+  onSort: (key: string, shiftHeld: boolean) => void
   onPatch: (id: string, patch: Record<string, unknown>) => void
   onBulkDelete: (ids: string[]) => void
+  onCreateInline?: (fullName: string) => Promise<void>
   /** Lifted from internal state — parent (Contacts.tsx) owns this for saved views. */
   visibleKeys: string[]
   onVisibleKeysChange: (keys: string[]) => void
@@ -73,17 +80,29 @@ interface ContactTableProps {
   /** Custom field values keyed by [entityId][fieldDefinitionId]. */
   customFieldValues?: Record<string, Record<string, string>>
   onRenameColumn?: (key: string, label: string) => void
+  onHideColumn?: (key: string) => void
+  onDeleteColumn?: (key: string) => Promise<void>
   onCreateField?: () => void
   onPatchCustomField?: (entityId: string, defId: string, value: string | null) => void
+  /** Fires whenever row selection changes — used by parent to gate Actions dropdown items. */
+  onSelectionChange?: (ids: Set<string>) => void
+  /** Fires when user clicks Merge in the bulk action bar (requires 2+ selected). */
+  onMerge?: (ids: string[]) => void
+  /** Increment to imperatively clear row selection (e.g. after a merge). */
+  clearSelectionTrigger?: number
 }
 
 export function ContactTable({
   contacts,
+  rows,
+  groupBy,
+  onToggleGroup,
   loading,
   sort,
   onSort,
   onPatch,
   onBulkDelete,
+  onCreateInline,
   visibleKeys,
   onVisibleKeysChange,
   columnFilters,
@@ -95,8 +114,13 @@ export function ContactTable({
   allDefs,
   customFieldValues,
   onRenameColumn,
+  onHideColumn,
+  onDeleteColumn,
   onCreateField,
-  onPatchCustomField
+  onPatchCustomField,
+  onSelectionChange,
+  onMerge,
+  clearSelectionTrigger
 }: ContactTableProps) {
   const navigate = useNavigate()
   const { getJSON, setJSON } = usePreferencesStore()
@@ -203,6 +227,15 @@ export function ContactTable({
     (idx) => scrollToRowRef.current(idx),
     getEditCell
   )
+
+  useEffect(() => {
+    onSelectionChange?.(selectedIds)
+  }, [selectedIds, onSelectionChange])
+
+  useEffect(() => {
+    if (!clearSelectionTrigger) return  // 0 or undefined → no-op on mount
+    setSelectedIds(new Set())
+  }, [clearSelectionTrigger, setSelectedIds])
 
   function setUndoWithTimer(action: UndoAction) {
     clearTimeout(undoTimerRef.current)
@@ -311,11 +344,44 @@ export function ContactTable({
     }
   }
 
+  // ── Column header context menu ─────────────────────────────────────────────
+  const [headerMenu, setHeaderMenu] = useState<{
+    key: string; x: number; y: number; pendingDelete: boolean
+  } | null>(null)
+  const headerMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!headerMenu) return
+    function handle(e: MouseEvent) {
+      if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) {
+        setHeaderMenu(null)
+      }
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [headerMenu])
+
   // ── Sort ───────────────────────────────────────────────────────────────────
-  function handleHeaderClick(col: ColumnDef) {
+  function handleHeaderClick(col: ColumnDef, e: React.MouseEvent) {
     if (!col.sortable) return
-    const newDir = sort.key === col.key && sort.dir === 'asc' ? 'desc' : 'asc'
-    onSort(col.key, newDir)
+    onSort(col.key, e.shiftKey)
+  }
+
+  // ── Inline add row ─────────────────────────────────────────────────────────
+  const [addingRow, setAddingRow] = useState(false)
+  const [addName, setAddName] = useState('')
+  const addInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (addingRow) addInputRef.current?.focus()
+  }, [addingRow])
+
+  async function handleAddRowSubmit() {
+    const name = addName.trim()
+    if (!name) { setAddingRow(false); return }
+    setAddName('')
+    setAddingRow(false)
+    await onCreateInline?.(name)
   }
 
   // ── Inline save ────────────────────────────────────────────────────────────
@@ -382,9 +448,9 @@ export function ContactTable({
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const rowVirtualizer = useVirtualizer({
-    count: contacts.length,
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: (i) => rows[i]?.type === 'group' ? 36 : ROW_HEIGHT,
     overscan: 6
   })
 
@@ -454,18 +520,19 @@ export function ContactTable({
           {mergedVisibleCols.map((col) => {
             const isName = col.key === 'name'
             const effectiveW = colWidths[col.key] ?? col.width
-            const isSorted = sort.key === col.key
+            const sortIdx = sort.findIndex((s) => s.key === col.key)
+            const isSorted = sortIdx >= 0
+            const sortDir = isSorted ? sort[sortIdx].dir : null
             const canPin = isPinnable(col)
             const isPinned = canPin && summaryKeys.includes(col.key)
             return (
               <div
                 key={col.key}
                 className={`${styles.headerCell} ${isName ? styles.nameCol : ''} ${col.sortable ? styles.sortable : ''} ${(col.options?.length || col.type === 'number' || col.type === 'date' || col.type === 'text') ? styles.filterableCell : ''} ${draggingKey === col.key ? styles.dragging : ''} ${dragOverKey === col.key ? styles.dragOver : ''}`}
-                onClick={() => { if (renamingCol !== col.key) handleHeaderClick(col) }}
+                onClick={(e) => { if (renamingCol !== col.key) handleHeaderClick(col, e) }}
                 onContextMenu={(e) => {
-                  if (!onRenameColumn) return
                   e.preventDefault()
-                  setRenamingCol(col.key)
+                  setHeaderMenu({ key: col.key, x: e.clientX, y: e.clientY, pendingDelete: false })
                   setRenameValue(col.label)
                 }}
                 {...getDragProps(col.key)}
@@ -489,7 +556,10 @@ export function ContactTable({
                 ) : col.label}
                 {col.sortable && (
                   isSorted
-                    ? <span className={styles.sortArrow}>{sort.dir === 'asc' ? ' ▲' : ' ▼'}</span>
+                    ? <span className={styles.sortArrow}>
+                        {sortDir === 'asc' ? ' ▲' : ' ▼'}
+                        {sort.length > 1 && <sup className={styles.sortBadge}>{sortIdx + 1}</sup>}
+                      </span>
                     : <span className={styles.sortArrowHint}>↕</span>
                 )}
                 {canPin && (
@@ -576,8 +646,36 @@ export function ContactTable({
           )}
 
           {virtualRows.map((vrow) => {
-            const contact = contacts[vrow.index]
-            if (!contact) return null
+            const row = rows[vrow.index]
+            if (!row) return null
+
+            const absoluteStyle: React.CSSProperties = {
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              transform: `translateY(${vrow.start}px)`
+            }
+
+            // ── Group header row ──────────────────────────────────────────────
+            if (row.type === 'group') {
+              return (
+                <div
+                  key={`group:${row.value ?? '__null__'}`}
+                  className={styles.groupHeaderRow}
+                  style={absoluteStyle}
+                  onClick={() => onToggleGroup(row.value ?? '__null__')}
+                >
+                  <span className={styles.groupToggle}>{row.isCollapsed ? '▶' : '▼'}</span>
+                  <span className={styles.groupChip} style={chipStyle(row.label)}>{row.label}</span>
+                  <span className={styles.groupCount}>{row.count}</span>
+                </div>
+              )
+            }
+
+            // ── Data row ─────────────────────────────────────────────────────
+            const contact = row.item
+            const dataIndex = row.dataIndex
             const isSelected = selectedIds.has(contact.id)
             const isBulkFillTarget = bulkFillActive && isSelected
 
@@ -587,11 +685,7 @@ export function ContactTable({
                 className={`${styles.dataRow} ${isSelected ? styles.selected : ''} ${isBulkFillTarget ? styles.pendingBulkFill : ''}`}
                 style={{
                   gridTemplateColumns: gridCols,
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  transform: `translateY(${vrow.start}px)`
+                  ...absoluteStyle
                 }}
               >
                 {/* Checkbox */}
@@ -600,7 +694,7 @@ export function ContactTable({
                     type="checkbox"
                     className={styles.checkboxInput}
                     checked={isSelected}
-                    onChange={(e) => toggleSelect(contact.id, vrow.index, (e.nativeEvent as MouseEvent).shiftKey)}
+                    onChange={(e) => toggleSelect(contact.id, dataIndex, (e.nativeEvent as MouseEvent).shiftKey)}
                     onClick={(e) => e.stopPropagation()}
                   />
                 </div>
@@ -621,7 +715,7 @@ export function ContactTable({
                 {/* Remaining columns */}
                 {mergedVisibleCols.slice(1).map((col, relIdx) => {
                   const colIdx = relIdx + 1
-                  const isCellFocused = editCell?.rowIdx === vrow.index && editCell?.colIdx === colIdx
+                  const isCellFocused = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
                   const fieldKey = col.field as keyof ContactSummary
                   const customFieldId = col.key.startsWith('custom:') ? col.key.slice(7) : null
                   const cellValue = customFieldId
@@ -629,12 +723,27 @@ export function ContactTable({
                     : col.field ? (contact[fieldKey] as string | null) : null
                   const isCustomSelect = !!customFieldId && col.type === 'select'
 
+                  // When groupBy is active: scan mode — all cells navigate to detail
+                  if (groupBy) {
+                    return (
+                      <div
+                        key={col.key}
+                        className={isCustomSelect ? styles.chipCell : styles.dataCell}
+                        onClick={() => navigate(`/contact/${contact.id}`)}
+                      >
+                        {isCustomSelect && cellValue ? (
+                          <span className={styles.chip} style={chipStyle(cellValue)}>{cellValue}</span>
+                        ) : (!isCustomSelect ? cellValue : null)}
+                      </div>
+                    )
+                  }
+
                   if (isCustomSelect && !isCellFocused) {
                     return (
                       <div
                         key={col.key}
                         className={styles.chipCell}
-                        onClick={() => handleStartEdit(vrow.index, colIdx)}
+                        onClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
                         {cellValue ? (
                           <span className={styles.chip} style={chipStyle(cellValue)}>
@@ -651,8 +760,8 @@ export function ContactTable({
                       value={cellValue}
                       col={col}
                       isFocused={isCellFocused}
-                      onStartEdit={() => handleStartEdit(vrow.index, colIdx)}
-                      onEndEdit={(dir) => handleEndEdit(vrow.index, colIdx, dir ?? null)}
+                      onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
+                      onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
                       onAddOption={
                         col.type === 'select'
                           ? async (newOption) => {
@@ -691,7 +800,106 @@ export function ContactTable({
             )
           })}
         </div>
+
+        {/* Inline add row */}
+        {onCreateInline && (
+          <div
+            className={styles.addRow}
+            style={{ gridTemplateColumns: gridCols }}
+            onClick={() => { if (!addingRow) setAddingRow(true) }}
+          >
+            <div /> {/* checkbox spacer */}
+            <div className={styles.addRowCell}>
+              {addingRow ? (
+                <input
+                  ref={addInputRef}
+                  className={styles.addRowInput}
+                  placeholder="Full name…"
+                  value={addName}
+                  onChange={(e) => setAddName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); void handleAddRowSubmit() }
+                    if (e.key === 'Escape') { setAddingRow(false); setAddName('') }
+                  }}
+                  onBlur={() => { if (!addName.trim()) { setAddingRow(false) } }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <>+ Add a contact</>
+              )}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Column header context menu */}
+      {headerMenu && (() => {
+        const menuCol = effectiveDefs.find((c) => c.key === headerMenu.key)
+        return createPortal(
+          <div
+            ref={headerMenuRef}
+            className={styles.headerContextMenu}
+            style={{ top: headerMenu.y, left: headerMenu.x }}
+          >
+            {headerMenu.pendingDelete ? (
+              <>
+                <div className={styles.headerMenuConfirm}>
+                  Delete &ldquo;{menuCol?.label}&rdquo;? This removes all data.
+                </div>
+                <button
+                  className={styles.headerMenuItem}
+                  onClick={() => setHeaderMenu((m) => m && { ...m, pendingDelete: false })}
+                >
+                  Cancel
+                </button>
+                <button
+                  className={`${styles.headerMenuItem} ${styles.headerMenuItemDanger}`}
+                  onClick={async () => {
+                    setHeaderMenu(null)
+                    await onDeleteColumn?.(headerMenu.key)
+                  }}
+                >
+                  Delete field
+                </button>
+              </>
+            ) : (
+              <>
+                {onRenameColumn && (
+                  <button
+                    className={styles.headerMenuItem}
+                    onClick={() => {
+                      setHeaderMenu(null)
+                      setRenamingCol(headerMenu.key)
+                    }}
+                  >
+                    Rename
+                  </button>
+                )}
+                {headerMenu.key !== 'name' && (
+                  <button
+                    className={styles.headerMenuItem}
+                    onClick={() => {
+                      onHideColumn?.(headerMenu.key)
+                      setHeaderMenu(null)
+                    }}
+                  >
+                    Hide column
+                  </button>
+                )}
+                {headerMenu.key.startsWith('custom:') && onDeleteColumn && (
+                  <button
+                    className={`${styles.headerMenuItem} ${styles.headerMenuItemDanger}`}
+                    onClick={() => setHeaderMenu((m) => m && { ...m, pendingDelete: true })}
+                  >
+                    Delete field
+                  </button>
+                )}
+              </>
+            )}
+          </div>,
+          document.body
+        )
+      })()}
 
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
@@ -762,6 +970,17 @@ export function ContactTable({
               </div>
             )}
           </div>
+
+          {/* Merge button — only when 2+ selected and parent supports it */}
+          {selectedIds.size >= 2 && onMerge && (
+            <button
+              className={styles.bulkMenuBtn}
+              onClick={() => onMerge(Array.from(selectedIds))}
+              disabled={bulkDeleting || bulkEditing}
+            >
+              Merge {selectedIds.size}
+            </button>
+          )}
 
           {/* Delete button */}
           <button

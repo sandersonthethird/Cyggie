@@ -10,10 +10,18 @@ import { ViewsBar } from '../components/crm/ViewsBar'
 import { CreateCustomFieldModal } from '../components/crm/CreateCustomFieldModal'
 import {
   CONTACT_COLUMN_DEFS,
+  CONTACT_GROUPABLE_FIELDS,
+  CONTACT_SCOPE_LABELS,
+  CONTACT_SCOPE_TO_TYPE,
   loadContactColumnConfig,
   saveContactColumnConfig,
-  filterContacts
+  filterContacts,
+  type ContactScope
 } from '../components/contact/contactColumns'
+import { useGroupedRows } from '../hooks/useGroupedRows'
+import { GroupByPicker } from '../components/crm/GroupByPicker'
+import { SmartFilters } from '../components/crm/SmartFilters'
+import type { FilterPreset } from '../components/crm/SmartFilters'
 import type {
   ContactSummary,
   ContactSyncResult,
@@ -25,13 +33,14 @@ import type {
   ContactDuplicateGroup
 } from '../../shared/types/contact'
 import { sortRows, buildCustomFieldColumnDefs } from '../components/crm/tableUtils'
-import type { SortState } from '../components/crm/tableUtils'
+import type { SortState, SortKey } from '../components/crm/tableUtils'
 import { useTableFilters } from '../hooks/useTableFilters'
 import { useCustomFieldValues } from '../hooks/useCustomFieldValues'
 import { useCustomFieldStore } from '../stores/custom-fields.store'
 import type { CustomFieldDefinition } from '../../shared/types/custom-fields'
 import styles from './Contacts.module.css'
 import { api } from '../api'
+import { selectMergeKeepId } from '../utils/contactMerge'
 
 // ─── Helpers (dedup dialog only) ──────────────────────────────────────────────
 
@@ -94,6 +103,33 @@ function normalizeSortKey(value: string | null | undefined): string {
 // Must be a stable module-level const (passed to useTableFilters as fieldToParamMap).
 const CONTACT_FIELD_TO_PARAM: Record<string, string> = { contactType: 'type' }
 
+// ─── Smart filter presets ──────────────────────────────────────────────────────
+const get30DaysAgo = () => {
+  const d = new Date()
+  d.setDate(d.getDate() - 30)
+  return d.toISOString().slice(0, 10)
+}
+const getStartOfWeek = () => {
+  const d = new Date()
+  d.setDate(d.getDate() - d.getDay())
+  return d.toISOString().slice(0, 10)
+}
+
+const CONTACT_PRESETS: FilterPreset[] = [
+  {
+    id: 'no-touch-30',
+    label: 'No touch in 30 days',
+    getParams: () => ({ lastTouchpoint_max: get30DaysAgo() }),
+    paramKeys: ['lastTouchpoint_max']
+  },
+  {
+    id: 'added-this-week',
+    label: 'Added this week',
+    getParams: () => ({ createdAt_min: getStartOfWeek() }),
+    paramKeys: ['createdAt_min']
+  }
+]
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Contacts() {
@@ -138,6 +174,15 @@ export default function Contacts() {
   const [dedupEditCompany, setDedupEditCompany] = useState('')
   const [savingDedupContact, setSavingDedupContact] = useState(false)
   const [dedupResult, setDedupResult] = useState<ContactDedupApplyResult | null>(null)
+
+  // ── Manual merge ──────────────────────────────────────────────────────────
+  const [tableSelectedIds, setTableSelectedIds] = useState<Set<string>>(new Set())
+  const [mergeDialogContacts, setMergeDialogContacts] = useState<ContactSummary[] | null>(null)
+  const [mergeKeepId, setMergeKeepId] = useState<string | null>(null)
+  const [mergingContacts, setMergingContacts] = useState(false)
+  const [mergeError, setMergeError] = useState<string | null>(null)
+  const [mergeSuccessMessage, setMergeSuccessMessage] = useState<string | null>(null)
+  const [mergeCount, setMergeCount] = useState(0)
 
   // ── Columns + sort + filter (lifted for ViewsBar) ─────────────────────────
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => loadContactColumnConfig())
@@ -188,12 +233,28 @@ export default function Contacts() {
     setCreateFieldOpen(false)
   }
 
-  const rawSortKey = searchParams.get('sortKey') ?? ''
-  const rawSortDir = searchParams.get('sortDir') ?? ''
-  const sort: SortState = {
-    key: CONTACT_COLUMN_DEFS.some((c) => c.key === rawSortKey) ? rawSortKey : 'name',
-    dir: rawSortDir === 'desc' ? 'desc' : 'asc'
-  }
+  const sort = useMemo<SortState>(() => {
+    const raw = searchParams.get('sort')
+    if (raw) {
+      const parsed = raw.split(',').filter(p => p.includes(':')).map(p => {
+        const [key, d] = p.split(':')
+        return { key, dir: d === 'asc' ? 'asc' : 'desc' } as SortKey
+      })
+      if (parsed.length > 0) return parsed
+    }
+    // Legacy fallback — preserves existing saved views
+    return [{
+      key: searchParams.get('sortKey') || 'name',
+      dir: (searchParams.get('sortDir') || 'asc') as 'asc' | 'desc'
+    }]
+  }, [searchParams])
+
+  // ── Grouping ──────────────────────────────────────────────────────────────
+  const groupBy = searchParams.get('groupBy') || null
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+
+  // ── Scope tabs ────────────────────────────────────────────────────────────
+  const scope = (searchParams.get('scope') || 'all') as ContactScope
 
   // ── Column / range / text filters — URL-driven via shared hook ──────────────
   const {
@@ -217,12 +278,69 @@ export default function Contacts() {
     setSearchParams(next)
   }, [searchParams, setSearchParams])
 
-  const handleSort = useCallback((key: string, dir: 'asc' | 'desc') => {
-    const next = new URLSearchParams(searchParams)
-    next.set('sortKey', key)
-    next.set('sortDir', dir)
-    setSearchParams(next)
-  }, [searchParams, setSearchParams])
+  const handleSort = useCallback((key: string, shiftHeld: boolean) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      const existing = sort.findIndex((s) => s.key === key)
+      let newSort: SortKey[]
+      if (shiftHeld) {
+        newSort = existing >= 0 ? sort.filter(s => s.key !== key) : [...sort, { key, dir: 'asc' }]
+      } else {
+        if (existing >= 0) {
+          const prevDir = sort[existing].dir
+          newSort = [{ key, dir: prevDir === 'asc' ? 'desc' : 'asc' }]
+        } else {
+          newSort = [{ key, dir: 'asc' }]
+        }
+      }
+      if (newSort.length === 0) newSort = [{ key: 'name', dir: 'asc' }]
+      next.set('sort', newSort.map(s => `${s.key}:${s.dir}`).join(','))
+      next.delete('sortKey')
+      next.delete('sortDir')
+      return next
+    })
+  }, [setSearchParams, sort])
+
+  const handleSetGroupBy = useCallback((key: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (key) { next.set('groupBy', key) } else { next.delete('groupBy') }
+      return next
+    })
+    setCollapsedGroups(new Set())
+  }, [setSearchParams])
+
+  const handleToggleGroup = useCallback((groupKey: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(groupKey)) { next.delete(groupKey) } else { next.add(groupKey) }
+      return next
+    })
+  }, [])
+
+  const handleHideColumn = useCallback((key: string) => {
+    const next = visibleKeys.filter(k => k !== key)
+    setVisibleKeys(next)
+    saveContactColumnConfig(next)
+  }, [visibleKeys])
+
+  const handleDeleteColumn = useCallback(async (key: string) => {
+    if (!key.startsWith('custom:')) return
+    const r = await api.invoke<{ success: boolean }>(IPC_CHANNELS.CUSTOM_FIELD_DELETE_DEFINITION, key.slice(7))
+    if (!r.success) { console.warn('[deleteColumn] failed'); return }
+    const next = visibleKeys.filter(k => k !== key)
+    setVisibleKeys(next)
+    saveContactColumnConfig(next)
+    await refreshCustomFields()
+  }, [visibleKeys, refreshCustomFields])
+
+  const handleSetScope = useCallback((s: ContactScope) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (s === 'all') { next.delete('scope') } else { next.set('scope', s) }
+      return next
+    })
+  }, [setSearchParams])
 
   // ── Data load ─────────────────────────────────────────────────────────────
   const loadContacts = useCallback(async (searchQuery: string) => {
@@ -246,6 +364,23 @@ export default function Contacts() {
       setLoading(false)
     }
   }, [contactsEnabled])
+
+  const handleCreateInline = useCallback(async (fullName: string) => {
+    const tokens = fullName.trim().split(/\s+/)
+    const firstName = tokens.slice(0, -1).join(' ') || tokens[0] || ''
+    const lastName = tokens.length > 1 ? tokens[tokens.length - 1] : ''
+    try {
+      const created = await api.invoke<ContactSummary>(IPC_CHANNELS.CONTACT_CREATE, {
+        fullName: fullName.trim(),
+        firstName,
+        lastName
+      })
+      await loadContacts(query)
+      navigate(`/contact/${created.id}`)
+    } catch (e) {
+      console.error('[createInline] failed', e)
+    }
+  }, [loadContacts, query, navigate])
 
   // ── Dedup callbacks ───────────────────────────────────────────────────────
   const reviewDuplicates = useCallback(async (triggeredByRun = false) => {
@@ -441,6 +576,55 @@ export default function Contacts() {
     }
   }, [dedupActionsByGroup, dedupGroups, dedupKeepByGroup, dedupSelectedByGroup, loadContacts, query])
 
+  // ── Manual merge callbacks ────────────────────────────────────────────────
+  const openMergeDialog = useCallback((ids: string[]) => {
+    // Snapshot from full contacts array (not the filtered view) so selected
+    // IDs are always resolvable even if a filter hides them after selection.
+    const selected = contacts.filter((c) => ids.includes(c.id))
+    if (selected.length < 2) return
+    setMergeDialogContacts(selected)
+    setMergeKeepId(selectMergeKeepId(selected))
+    setMergeError(null)
+    setMergeSuccessMessage(null)
+  }, [contacts])
+
+  const handleMerge = useCallback(async () => {
+    if (!mergeDialogContacts || !mergeKeepId || mergingContacts) return
+    setMergingContacts(true)
+    setMergeError(null)
+    try {
+      const contactIds = mergeDialogContacts.map((c) => c.id)
+      const groupKey = `manual:${[...contactIds].sort().join('-').slice(0, 50)}`
+      const decision: ContactDedupDecision = {
+        groupKey,
+        action: 'merge',
+        keepContactId: mergeKeepId,
+        contactIds
+      }
+      const result = await api.invoke<ContactDedupApplyResult>(
+        IPC_CHANNELS.CONTACT_DEDUP_APPLY,
+        [decision]
+      )
+      if (result.failures.length > 0) {
+        setMergeError(`Merge failed: ${result.failures[0].reason}`)
+        return
+      }
+      const keptContact = mergeDialogContacts.find((c) => c.id === mergeKeepId)
+      setMergeDialogContacts(null)
+      setMergeCount((n) => n + 1)
+      setMergeSuccessMessage(`Merged into ${keptContact?.fullName ?? 'contact'}`)
+      try {
+        await loadContacts(query)
+      } catch {
+        setError('Merge succeeded, but the contact list could not be refreshed. Please reload.')
+      }
+    } catch (err) {
+      setMergeError(String(err))
+    } finally {
+      setMergingContacts(false)
+    }
+  }, [mergeDialogContacts, mergeKeepId, mergingContacts, loadContacts, query])
+
   // ── Sync / enrich callbacks ───────────────────────────────────────────────
   const syncContacts = useCallback(async () => {
     if (!contactsEnabled) return
@@ -565,11 +749,14 @@ export default function Contacts() {
   }, [actionsOpen])
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const filteredContacts = useMemo(
-    () => sortRows(filterContacts(contacts, columnFilters, rangeFilters, textFilters) as Record<string, unknown>[], sort, CONTACT_COLUMN_DEFS) as ContactSummary[],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [contacts, columnFilters, rangeFilters, textFilters, sort.key, sort.dir]
-  )
+  const filteredContacts = useMemo(() => {
+    let items = filterContacts(contacts, columnFilters, rangeFilters, textFilters) as ContactSummary[]
+    const typeFilter = CONTACT_SCOPE_TO_TYPE[scope]
+    if (typeFilter) items = items.filter(c => c.contactType === typeFilter)
+    return sortRows(items as Record<string, unknown>[], sort, CONTACT_COLUMN_DEFS) as ContactSummary[]
+  }, [contacts, columnFilters, rangeFilters, textFilters, sort, scope])
+
+  const groupedRows = useGroupedRows(filteredContacts as Record<string, unknown>[], groupBy, CONTACT_GROUPABLE_FIELDS, collapsedGroups)
 
   const dedupEditActive = Boolean(editingDedupContactId) || savingDedupContact
 
@@ -625,53 +812,123 @@ export default function Contacts() {
           {dedupResult.failures.length > 0 ? `, failures: ${dedupResult.failures.length}` : ''}
         </span>
       )}
+      {mergeSuccessMessage && (
+        <span className={styles.statusBanner}>
+          {mergeSuccessMessage}
+          <button
+            className={styles.statusBannerDismiss}
+            onClick={() => setMergeSuccessMessage(null)}
+            type="button"
+          >
+            ✕
+          </button>
+        </span>
+      )}
 
       {/* ── Toolbar ── */}
       <div className={styles.toolbarRow}>
-        <div className={styles.actionsDropdown} ref={actionsRef}>
-          <button
-            className={styles.actionsBtn}
-            onClick={() => setActionsOpen((v) => !v)}
-            disabled={busy}
-          >
-            Actions &#9662;
-          </button>
-          {actionsOpen && (
-            <div className={styles.actionsMenu}>
-              <button
-                className={styles.actionsMenuItem}
-                onClick={() => { void syncContacts(); setActionsOpen(false) }}
-                disabled={busy}
-              >
-                {syncing ? 'Syncing...' : 'Sync from Meetings'}
-              </button>
-              <button
-                className={styles.actionsMenuItem}
-                onClick={() => { void enrichContacts(); setActionsOpen(false) }}
-                disabled={busy}
-              >
-                {enriching ? 'Enriching...' : 'Enrich Contacts'}
-              </button>
-              <button
-                className={styles.actionsMenuItem}
-                onClick={() => { void enrichContacts(true); setActionsOpen(false) }}
-                disabled={busy}
-              >
-                Enrich with Web Lookup
-              </button>
-              <button
-                className={styles.actionsMenuItem}
-                onClick={() => { void reviewDuplicates(false); setActionsOpen(false) }}
-                disabled={busy}
-              >
-                {checkingDuplicates ? 'Checking...' : 'Review Duplicates'}
-              </button>
-            </div>
-          )}
+        <div className={styles.scopeRow}>
+          {(Object.keys(CONTACT_SCOPE_LABELS) as ContactScope[]).map((s) => (
+            <button
+              key={s}
+              className={`${styles.scopeButton} ${scope === s ? styles.activeScope : ''}`}
+              onClick={() => handleSetScope(s)}
+            >
+              {CONTACT_SCOPE_LABELS[s]}
+            </button>
+          ))}
         </div>
-        <button className={styles.newBtn} onClick={openCreateForm}>
-          + Contact
-        </button>
+        <div className={styles.headerActions}>
+          <div className={styles.actionsDropdown} ref={actionsRef}>
+            <button
+              className={styles.actionsBtn}
+              onClick={() => setActionsOpen((v) => !v)}
+              disabled={busy}
+            >
+              Actions &#9662;
+            </button>
+            {actionsOpen && (
+              <div className={styles.actionsMenu}>
+                <button
+                  className={styles.actionsMenuItem}
+                  onClick={() => { void syncContacts(); setActionsOpen(false) }}
+                  disabled={busy}
+                >
+                  {syncing ? 'Syncing...' : 'Sync from Meetings'}
+                </button>
+                <button
+                  className={styles.actionsMenuItem}
+                  onClick={() => { void enrichContacts(); setActionsOpen(false) }}
+                  disabled={busy}
+                >
+                  {enriching ? 'Enriching...' : 'Enrich Contacts'}
+                </button>
+                <button
+                  className={styles.actionsMenuItem}
+                  onClick={() => { void enrichContacts(true); setActionsOpen(false) }}
+                  disabled={busy}
+                >
+                  Enrich with Web Lookup
+                </button>
+                <button
+                  className={styles.actionsMenuItem}
+                  onClick={() => { void reviewDuplicates(false); setActionsOpen(false) }}
+                  disabled={busy}
+                >
+                  {checkingDuplicates ? 'Checking...' : 'Review Duplicates'}
+                </button>
+                <div className={styles.actionsMenuSeparator} />
+                <button
+                  className={styles.actionsMenuItem}
+                  onClick={() => { openMergeDialog(Array.from(tableSelectedIds)); setActionsOpen(false) }}
+                  disabled={busy || tableSelectedIds.size < 2}
+                >
+                  {tableSelectedIds.size < 2 ? 'Merge Contacts (select 2+)' : `Merge ${tableSelectedIds.size} Contacts`}
+                </button>
+              </div>
+            )}
+          </div>
+          <button className={styles.newBtn} onClick={openCreateForm}>
+            + Contact
+          </button>
+        </div>
+      </div>
+
+      {/* ── Toolbar row 2: GroupBy + Clear sort + SmartFilters ── */}
+      <div className={styles.toolbarRow2}>
+        <GroupByPicker
+          value={groupBy}
+          fields={CONTACT_GROUPABLE_FIELDS}
+          onChange={handleSetGroupBy}
+        />
+        {sort.length > 1 && (
+          <button
+            className={styles.clearSortBtn}
+            onClick={() => {
+              setSearchParams((prev) => {
+                const next = new URLSearchParams(prev)
+                next.set('sort', `${sort[0].key}:${sort[0].dir}`)
+                return next
+              })
+            }}
+          >
+            Clear multi-sort
+          </button>
+        )}
+        <SmartFilters
+          presets={CONTACT_PRESETS}
+          searchParams={searchParams}
+          onApply={(params) => setSearchParams((prev) => {
+            const next = new URLSearchParams(prev)
+            Object.entries(params).forEach(([k, v]) => next.set(k, v))
+            return next
+          })}
+          onClear={(keys) => setSearchParams((prev) => {
+            const next = new URLSearchParams(prev)
+            keys.forEach(k => next.delete(k))
+            return next
+          })}
+        />
       </div>
 
       {/* ── Saved views bar ── */}
@@ -847,11 +1104,15 @@ export default function Contacts() {
       ) : (
         <ContactTable
           contacts={filteredContacts}
+          rows={groupedRows}
+          groupBy={groupBy}
+          onToggleGroup={handleToggleGroup}
           loading={loading}
           sort={sort}
           onSort={handleSort}
           onPatch={handlePatch}
           onBulkDelete={handleBulkDelete}
+          onCreateInline={handleCreateInline}
           visibleKeys={visibleKeys}
           onVisibleKeysChange={setVisibleKeys}
           columnFilters={columnFilters}
@@ -863,8 +1124,13 @@ export default function Contacts() {
           allDefs={allDefs}
           customFieldValues={customFieldValues}
           onRenameColumn={handleRenameColumn}
+          onHideColumn={handleHideColumn}
+          onDeleteColumn={handleDeleteColumn}
           onCreateField={() => setCreateFieldOpen(true)}
           onPatchCustomField={patchCustomField}
+          onSelectionChange={setTableSelectedIds}
+          onMerge={(ids) => openMergeDialog(ids)}
+          clearSelectionTrigger={mergeCount}
         />
       )}
 
@@ -1119,6 +1385,83 @@ export default function Contacts() {
                   {applyingDedup ? 'Applying...' : 'Apply Actions'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Merge dialog ── */}
+      {mergeDialogContacts && createPortal(
+        <div className={styles.mergeOverlay} onClick={() => { if (!mergingContacts) setMergeDialogContacts(null) }}>
+          <div className={styles.mergeDialog} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.mergeHeader}>
+              <h3 className={styles.mergeTitle}>Merge Contacts</h3>
+              <button
+                className={styles.dedupCloseButton}
+                onClick={() => setMergeDialogContacts(null)}
+                type="button"
+                disabled={mergingContacts}
+              >
+                Close
+              </button>
+            </div>
+            <p className={styles.mergeSubtitle}>
+              Choose the record to keep. All meetings, emails, and data from the others will be merged into it.
+            </p>
+            <div className={styles.mergeContactList}>
+              {mergeDialogContacts.map((contact) => {
+                const isKeep = contact.id === mergeKeepId
+                return (
+                  <label key={contact.id} className={`${styles.mergeContactRow} ${isKeep ? styles.mergeContactRowKeep : ''}`}>
+                    <input
+                      type="radio"
+                      name="mergeKeep"
+                      value={contact.id}
+                      checked={isKeep}
+                      onChange={() => setMergeKeepId(contact.id)}
+                      disabled={mergingContacts}
+                      className={styles.mergeContactRadio}
+                    />
+                    <div className={styles.mergeContactInfo}>
+                      <div className={styles.mergeContactName}>
+                        {contact.fullName}
+                        {isKeep && <span className={styles.mergeRecommendedBadge}>Recommended</span>}
+                      </div>
+                      <div className={styles.mergeContactMeta}>
+                        <span>{contact.email ?? '—'}</span>
+                        <span className={styles.mergeMetaDot}>·</span>
+                        <span>{contact.primaryCompanyName ?? '—'}</span>
+                        <span className={styles.mergeMetaDot}>·</span>
+                        <span>{contact.meetingCount} meeting{contact.meetingCount !== 1 ? 's' : ''}</span>
+                        <span className={styles.mergeMetaDot}>·</span>
+                        <span>{contact.emailCount} email{contact.emailCount !== 1 ? 's' : ''}</span>
+                      </div>
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+            {mergeError && (
+              <p className={styles.mergeError}>{mergeError}</p>
+            )}
+            <div className={styles.mergeActions}>
+              <button
+                className={styles.dedupCancelButton}
+                onClick={() => setMergeDialogContacts(null)}
+                type="button"
+                disabled={mergingContacts}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.mergeConfirmButton}
+                onClick={() => void handleMerge()}
+                type="button"
+                disabled={mergingContacts || !mergeKeepId}
+              >
+                {mergingContacts ? 'Merging...' : `Merge ${mergeDialogContacts.length} Contacts`}
+              </button>
             </div>
           </div>
         </div>,

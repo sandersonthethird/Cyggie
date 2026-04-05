@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { CompanyDecisionLog, CompanyNote } from '../../../shared/types/company'
+import type { CompanyNote } from '../../../shared/types/company'
 import { NoteDetailModal } from '../crm/NoteDetailModal'
-import { DecisionLogModal } from '../crm/DecisionLogModal'
 import styles from './CompanyNotes.module.css'
 import { api } from '../../api'
 import { usePinToggle } from '../../hooks/usePinToggle'
@@ -14,161 +13,6 @@ interface CompanyNotesProps {
   className?: string
   highlightNoteId?: string | null
   refreshKey?: number
-}
-
-const DECISION_ACCENT: Record<string, string> = {
-  'Investment Approved': styles.accentGreen,
-  'Increase Allocation': styles.accentGreen,
-  'Follow-on': styles.accentGreen,
-  'Pass': styles.accentRed,
-  'Write-Off': styles.accentAmber,
-}
-
-function decisionAccentClass(type: string): string {
-  return DECISION_ACCENT[type] ?? styles.accentGrey
-}
-
-function formatDecisionDate(dateStr: string): string {
-  // dateStr is ISO date "2026-03-14"
-  const [year, month] = dateStr.split('-')
-  const d = new Date(Number(year), Number(month) - 1, 1)
-  return d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
-}
-
-interface DecisionLogSectionProps {
-  companyId: string
-  onDecisionSaved?: (log: CompanyDecisionLog) => void
-}
-
-function DecisionLogSection({ companyId, onDecisionSaved }: DecisionLogSectionProps) {
-  const [decisions, setDecisions] = useState<CompanyDecisionLog[]>([])
-  const [loaded, setLoaded] = useState(false)
-  const [editLogId, setEditLogId] = useState<string | null>(null)
-  const [showCreate, setShowCreate] = useState(false)
-
-  useEffect(() => {
-    api.invoke<CompanyDecisionLog[]>(IPC_CHANNELS.COMPANY_DECISION_LOG_LIST, companyId)
-      .then((data) => setDecisions(Array.isArray(data) ? data : []))
-      .catch(console.error)
-      .finally(() => setLoaded(true))
-  }, [companyId])
-
-  function handleSaved(log: CompanyDecisionLog) {
-    setDecisions((prev) => {
-      const existing = prev.findIndex((d) => d.id === log.id)
-      if (existing >= 0) {
-        return prev.map((d) => (d.id === log.id ? log : d))
-      }
-      return [log, ...prev]
-    })
-    setEditLogId(null)
-    setShowCreate(false)
-    onDecisionSaved?.(log)
-  }
-
-  function handleDeleted(logId: string) {
-    setDecisions((prev) => prev.filter((d) => d.id !== logId))
-    setEditLogId(null)
-  }
-
-  // Arc: ordered chronologically (ASC), truncated to first + ... + last 2 if > 5
-  const arcItems = [...decisions].sort((a, b) =>
-    a.decisionDate.localeCompare(b.decisionDate)
-  )
-  const showArc = arcItems.length >= 2
-  let arcDisplay = arcItems
-  if (arcItems.length > 5) {
-    arcDisplay = [arcItems[0], { ...arcItems[0], id: '__ellipsis__', decisionType: '…' }, ...arcItems.slice(-2)]
-  }
-
-  return (
-    <div className={styles.decisionSection}>
-      <div className={styles.decisionHeader}>
-        <span className={styles.decisionSectionLabel}>Decision Log</span>
-        <button
-          className={styles.addDecisionBtn}
-          onClick={() => setShowCreate(true)}
-        >
-          + Add Decision
-        </button>
-      </div>
-
-      {/* History arc */}
-      {showArc && (
-        <div className={styles.decisionArc}>
-          {arcDisplay.map((d, i) => (
-            <span key={d.id} className={styles.arcItem}>
-              {i > 0 && <span className={styles.arcArrow}>→</span>}
-              <span className={`${styles.arcChip} ${d.id === '__ellipsis__' ? '' : decisionAccentClass(d.decisionType)}`}>
-                <span className={styles.arcChipType}>{d.decisionType}</span>
-                {d.id !== '__ellipsis__' && (
-                  <span className={styles.arcChipDate}>{formatDecisionDate(d.decisionDate)}</span>
-                )}
-              </span>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Empty state */}
-      {loaded && decisions.length === 0 && (
-        <button
-          className={styles.decisionEmpty}
-          onClick={() => setShowCreate(true)}
-        >
-          Log your first decision →
-        </button>
-      )}
-
-      {/* Decision cards (most recent first) */}
-      {decisions.map((d) => (
-        <div key={d.id} className={`${styles.decisionCard} ${decisionAccentClass(d.decisionType)}`}>
-          <div className={styles.decisionCardTop}>
-            <span className={styles.decisionTypeBadge}>{d.decisionType}</span>
-            <span className={styles.decisionCardDate}>{d.decisionDate}</span>
-          </div>
-          <div className={styles.decisionCardMeta}>
-            {d.decisionOwner && <span>{d.decisionOwner}</span>}
-            {d.amountApproved && <span>{d.amountApproved}</span>}
-            {d.targetOwnership && (
-              <span>{d.targetOwnership}{d.moreIfPossible ? ' (more if possible)' : ''}</span>
-            )}
-          </div>
-          {d.structure && (
-            <div className={styles.decisionCardStructure}>{d.structure}</div>
-          )}
-          <div className={styles.decisionCardActions}>
-            <button
-              className={styles.decisionEditBtn}
-              onClick={() => setEditLogId(d.id)}
-            >
-              Edit
-            </button>
-          </div>
-        </div>
-      ))}
-
-      {/* Create modal */}
-      {showCreate && (
-        <DecisionLogModal
-          companyId={companyId}
-          onClose={() => setShowCreate(false)}
-          onSaved={handleSaved}
-        />
-      )}
-
-      {/* Edit modal */}
-      {editLogId && (
-        <DecisionLogModal
-          companyId={companyId}
-          logId={editLogId}
-          onClose={() => setEditLogId(null)}
-          onSaved={handleSaved}
-          onDeleted={handleDeleted}
-        />
-      )}
-    </div>
-  )
 }
 
 export function CompanyNotes({ companyId, className, highlightNoteId, refreshKey }: CompanyNotesProps) {
@@ -237,10 +81,6 @@ export function CompanyNotes({ companyId, className, highlightNoteId, refreshKey
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
-      {/* Decision Log section at top */}
-      <DecisionLogSection companyId={companyId} />
-
-      <div className={styles.notesDivider} />
 
       <div className={styles.newNote}>
         <textarea

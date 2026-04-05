@@ -11,11 +11,13 @@ import {
   applyTextFilter,
   type ColumnDef,
   type RangeValue,
+  type SortKey,
   type SortState
 } from '../crm/tableUtils'
+import type { GroupableField } from '../company/companyColumns'
 
 // Re-export shared types
-export type { ColumnDef, RangeValue, SortState }
+export type { ColumnDef, GroupableField, RangeValue, SortKey, SortState }
 
 // ─── Option arrays ────────────────────────────────────────────────────────────
 
@@ -171,6 +173,12 @@ export const CONTACT_DEFAULT_VISIBLE_KEYS = CONTACT_COLUMN_DEFS
   .filter((c) => c.defaultVisible)
   .map((c) => c.key)
 
+// ─── Groupable fields ─────────────────────────────────────────────────────────
+
+export const CONTACT_GROUPABLE_FIELDS: GroupableField[] = [
+  { key: 'contactType', label: 'Type', order: CONTACT_TYPES.map((t) => t.value) },
+]
+
 // ─── localStorage helpers (delegate to tableUtils) ────────────────────────────
 
 const COLUMNS_KEY = 'cyggie:contact-table-columns'
@@ -222,7 +230,15 @@ export interface ContactListFilter {
   sortBy?: ContactSortBy
 }
 
-export type ContactScope = 'all'
+export type ContactScope = 'all' | 'investors' | 'founders' | 'operators'
+
+export const CONTACT_SCOPE_LABELS: Record<ContactScope, string> = {
+  all: 'All', investors: 'Investors', founders: 'Founders', operators: 'Operators'
+}
+
+export const CONTACT_SCOPE_TO_TYPE: Record<ContactScope, string | null> = {
+  all: null, investors: 'investor', founders: 'founder', operators: 'operator'
+}
 
 export function buildContactFilter(
   _scope: ContactScope,

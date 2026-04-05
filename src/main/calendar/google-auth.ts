@@ -7,9 +7,13 @@ import { getCredential, storeCredential } from '../security/credentials'
 
 const CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
-  'https://www.googleapis.com/auth/drive.file'
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/userinfo.email'
 ]
-const GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+const GMAIL_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/userinfo.email'
+]
 const DRIVE_FILES_SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly']
 
 const CALENDAR_READONLY_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
@@ -26,6 +30,8 @@ const GMAIL_TOKEN_KEY = 'google_gmail_tokens'
 const DRIVE_FILES_TOKEN_KEY = 'google_drive_files_tokens'
 const CLIENT_ID_KEY = 'google_client_id'
 const CLIENT_SECRET_KEY = 'google_client_secret'
+const CALENDAR_ACCOUNT_EMAIL_KEY = 'google_calendar_account_email'
+const GMAIL_ACCOUNT_EMAIL_KEY = 'google_gmail_account_email'
 
 interface TokenData {
   access_token: string
@@ -39,6 +45,7 @@ interface OAuthFlowConfig {
   tokenKey: string
   grantedScopesKey: string
   successTitle: string
+  emailKey?: string  // optional — Drive Files flow passes undefined, skips email fetch
 }
 
 let legacyScopesMigrated = false
@@ -228,6 +235,17 @@ async function runAuthorizationFlow(config: OAuthFlowConfig): Promise<void> {
           storeCredential(grantedScopesKey, scopes.join(' '))
         }
 
+        if (config.emailKey) {
+          try {
+            oauth2Client.setCredentials(tokens)
+            const oauth2Api = google.oauth2({ version: 'v2', auth: oauth2Client })
+            const { data } = await oauth2Api.userinfo.get()
+            if (data.email) storeCredential(config.emailKey, data.email)
+          } catch {
+            // Non-fatal — email badge will be absent for this session
+          }
+        }
+
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end(
           `<html><body><h2>${successTitle}</h2><p>You can close this window and return to Cyggie.</p></body></html>`
@@ -328,7 +346,8 @@ export async function authorize(): Promise<void> {
     scopes: CALENDAR_SCOPES,
     tokenKey: CALENDAR_TOKEN_KEY,
     grantedScopesKey: CALENDAR_GRANTED_SCOPES_KEY,
-    successTitle: 'Calendar connected!'
+    successTitle: 'Calendar connected!',
+    emailKey: CALENDAR_ACCOUNT_EMAIL_KEY
   })
 }
 
@@ -337,7 +356,8 @@ export async function authorizeGmail(): Promise<void> {
     scopes: GMAIL_SCOPES,
     tokenKey: GMAIL_TOKEN_KEY,
     grantedScopesKey: GMAIL_GRANTED_SCOPES_KEY,
-    successTitle: 'Gmail connected!'
+    successTitle: 'Gmail connected!',
+    emailKey: GMAIL_ACCOUNT_EMAIL_KEY
   })
 }
 
@@ -356,12 +376,22 @@ export function disconnect(): void {
   storeCredential(CALENDAR_GRANTED_SCOPES_KEY, '')
   storeCredential(DRIVE_FILES_TOKEN_KEY, '')
   storeCredential(DRIVE_FILES_GRANTED_SCOPES_KEY, '')
+  storeCredential(CALENDAR_ACCOUNT_EMAIL_KEY, '')
 }
 
 export function disconnectGmail(): void {
   ensureLegacyScopeMigration()
   storeCredential(GMAIL_TOKEN_KEY, '')
   storeCredential(GMAIL_GRANTED_SCOPES_KEY, '')
+  storeCredential(GMAIL_ACCOUNT_EMAIL_KEY, '')
+}
+
+export function getCalendarAccountEmail(): string | null {
+  return getCredential(CALENDAR_ACCOUNT_EMAIL_KEY) || null
+}
+
+export function getGmailAccountEmail(): string | null {
+  return getCredential(GMAIL_ACCOUNT_EMAIL_KEY) || null
 }
 
 export function storeGoogleClientCredentials(clientId: string, clientSecret: string): void {

@@ -16,11 +16,21 @@ import {
   applyTextFilter,
   type ColumnDef,
   type RangeValue,
+  type SortKey,
   type SortState
 } from '../crm/tableUtils'
 
 // Re-export shared types so existing imports keep working
-export type { ColumnDef, RangeValue, SortState }
+export type { ColumnDef, RangeValue, SortKey, SortState }
+
+// ─── Groupable field definition ───────────────────────────────────────────────
+
+export interface GroupableField {
+  key: string
+  label: string
+  /** Ordered list of values — groups appear in this order; null/"No value" always last. */
+  order: string[]
+}
 
 // ─── Option arrays ────────────────────────────────────────────────────────────
 
@@ -320,6 +330,15 @@ export const DEFAULT_VISIBLE_KEYS = COLUMN_DEFS
   .filter((c) => c.defaultVisible)
   .map((c) => c.key)
 
+// ─── Groupable fields ─────────────────────────────────────────────────────────
+
+export const COMPANY_GROUPABLE_FIELDS: GroupableField[] = [
+  { key: 'entityType',    label: 'Type',     order: ENTITY_TYPES.map((e) => e.value) },
+  { key: 'pipelineStage', label: 'Stage',    order: STAGES.map((s) => s.value) },
+  { key: 'priority',      label: 'Priority', order: PRIORITIES.map((p) => p.value) },
+  { key: 'round',         label: 'Round',    order: ROUNDS.map((r) => r.value) },
+]
+
 // ─── localStorage helpers (delegate to tableUtils) ────────────────────────────
 
 const COLUMNS_KEY = 'cyggie:company-table-columns'
@@ -365,25 +384,15 @@ export function filterCompanies(
 
 // ─── URL → IPC filter builder ─────────────────────────────────────────────────
 
-export type CompanyScope = 'all' | 'prospects' | 'vc_fund' | 'unknown' | 'hidden'
-
 export function buildUrlFilter(
-  scope: CompanyScope,
   query: string,
   sortBy: CompanySortBy
 ): CompanyListFilter {
-  const filter: CompanyListFilter = {
+  return {
     query: query.trim() || undefined,
     limit: 400,
     view: 'all',
     includeStats: true,
     sortBy
   }
-
-  if (scope === 'prospects') filter.entityTypes = ['prospect']
-  else if (scope === 'vc_fund') filter.entityTypes = ['vc_fund']
-  else if (scope === 'unknown') filter.entityTypes = ['unknown']
-  else if (scope === 'hidden') filter.view = 'hidden'
-
-  return filter
 }

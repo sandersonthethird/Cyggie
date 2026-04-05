@@ -48,6 +48,7 @@ const {
   getSuggestions,
   dismissSuggestion,
   determineSection,
+  autoAddDecisionToDigest,
 } = await import('../main/database/repositories/partner-meeting.repo')
 
 const { currentDigestTuesday } = await import('../main/utils/digest-week')
@@ -438,6 +439,72 @@ describe('partner-meeting.repo', () => {
       const dismissed = JSON.parse(row.dismissed_suggestions)
       expect(dismissed.filter((id: string) => id === 'co1').length).toBe(1)
     })
+  })
+})
+
+// ─── autoAddDecisionToDigest ──────────────────────────────────────────────────
+
+describe('autoAddDecisionToDigest', () => {
+  beforeEach(() => {
+    testDb = buildDb()
+    getActiveDigest()  // ensure an active digest exists
+  })
+
+  it('no-ops silently when no active digest exists', () => {
+    // Archive the digest so none is active
+    const digest = getActiveDigest()
+    testDb.prepare(`UPDATE partner_meeting_digests SET status = 'archived' WHERE id = ?`).run(digest.id)
+    insertCompany(testDb, 'c0', { pipelineStage: 'screening' })
+    autoAddDecisionToDigest('c0', 'anything')
+    // Re-create a fresh digest to check — company should not be in it
+    const fresh = getActiveDigest()
+    expect(fresh.items?.find(i => i.companyId === 'c0')).toBeUndefined()
+  })
+
+  it('inserts a new company with statusUpdate and correct section', () => {
+    insertCompany(testDb, 'c1', { pipelineStage: 'diligence' })
+    autoAddDecisionToDigest('c1', 'Stage Change: Moved from screening to diligence')
+    const digest = getActiveDigest()
+    const item = digest.items?.find(i => i.companyId === 'c1')
+    expect(item).toBeDefined()
+    expect(item?.section).toBe('existing_deals')
+    expect(item?.statusUpdate).toBe('Stage Change: Moved from screening to diligence')
+  })
+
+  it('upserts existing company: updates section, preserves statusUpdate', () => {
+    insertCompany(testDb, 'c2', { pipelineStage: 'screening' })
+    autoAddDecisionToDigest('c2', 'Initial add')
+    // Simulate stage change to diligence
+    testDb.prepare(`UPDATE org_companies SET pipeline_stage = 'diligence' WHERE id = 'c2'`).run()
+    // Set a custom statusUpdate the user typed
+    const digest = getActiveDigest()
+    const item = digest.items?.find(i => i.companyId === 'c2')
+    expect(item).toBeDefined()
+    testDb.prepare(`UPDATE partner_meeting_items SET status_update = 'User typed notes' WHERE id = ?`).run(item!.id)
+    // Trigger autoAdd again (stage changed)
+    autoAddDecisionToDigest('c2', 'Moved from screening to diligence')
+    const updated = getActiveDigest()
+    const updatedItem = updated.items?.find(i => i.companyId === 'c2')
+    expect(updatedItem?.section).toBe('existing_deals')         // section updated
+    expect(updatedItem?.statusUpdate).toBe('User typed notes')  // preserved
+  })
+
+  it('no-ops silently if company does not exist in org_companies', () => {
+    autoAddDecisionToDigest('nonexistent-id', 'anything')
+    const digest = getActiveDigest()
+    expect(digest.items?.find(i => i.companyId === 'nonexistent-id')).toBeUndefined()
+  })
+
+  it('places a pipeline-exited company (stage=null) in passing section', () => {
+    insertCompany(testDb, 'c3', { pipelineStage: null })
+    autoAddDecisionToDigest('c3', 'Removed from pipeline')
+    const digest = getActiveDigest()
+    const item = digest.items?.find(i => i.companyId === 'c3')
+    expect(item?.section).toBe('passing')
+  })
+
+  it('does not throw when companyId is empty string', () => {
+    expect(() => autoAddDecisionToDigest('', 'test')).not.toThrow()
   })
 })
 

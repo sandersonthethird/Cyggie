@@ -34,6 +34,9 @@ export const IPC_CHANNELS = {
   GMAIL_DISCONNECT: 'gmail:disconnect',
   GMAIL_IS_CONNECTED: 'gmail:is-connected',
 
+  // Google account
+  GOOGLE_ACCOUNT_EMAILS: 'google:account-emails',
+
   // Search
   SEARCH_QUERY: 'search:query',
   SEARCH_ADVANCED: 'search:advanced',
@@ -181,6 +184,8 @@ export const IPC_CHANNELS = {
   INVESTMENT_MEMO_EXPORT_GOOGLE_DOC: 'investment-memo:export-google-doc',
   INVESTMENT_MEMO_GENERATE: 'investment-memo:generate',
   INVESTMENT_MEMO_GENERATE_PROGRESS: 'investment-memo:generate-progress',
+  INVESTMENT_MEMO_SHARE_LINK: 'investment-memo:share-link',
+  INVESTMENT_MEMO_REVOKE_SHARE: 'investment-memo:revoke-share',
 
   // Speaker rename
   MEETING_RENAME_SPEAKERS: 'meeting:rename-speakers',

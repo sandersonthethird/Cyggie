@@ -532,3 +532,63 @@
   text-overflow: ellipsis;
   max-width: 100%;
 }
+
+/* ── Group header row (full-width, flex layout, absolute positioned) ── */
+.groupHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: 36px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-bg-tertiary);
+  background: var(--color-card-bg);
+  user-select: none;
+}
+
+.groupHeaderRow:hover {
+  background: var(--color-bg-secondary);
+}
+
+.groupToggle {
+  font-size: 9px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.groupChip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.groupCount {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Sort priority badge (multi-sort indicator) ── */
+.sortBadge {
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--color-primary);
+  vertical-align: super;
+  margin-left: 1px;
+}
+
+/* ── Generic data cell (non-editable, scan-mode when groupBy active) ── */
+.dataCell {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  height: 100%;
+  font-size: 13px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}

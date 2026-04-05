@@ -11,6 +11,7 @@ import { ViewsBar } from '../components/crm/ViewsBar'
 import { CreateCustomFieldModal } from '../components/crm/CreateCustomFieldModal'
 import {
   COLUMN_DEFS,
+  COMPANY_GROUPABLE_FIELDS,
   ENTITY_TYPES,
   STAGES,
   PRIORITIES,
@@ -19,10 +20,13 @@ import {
   filterCompanies,
   loadColumnConfig,
   saveColumnConfig,
-  type CompanyScope,
+  type SortKey,
   type SortState
 } from '../components/company/companyColumns'
 import { sortRows, buildCustomFieldColumnDefs } from '../components/crm/tableUtils'
+import { useGroupedRows } from '../hooks/useGroupedRows'
+import { GroupByPicker } from '../components/crm/GroupByPicker'
+import { SmartFilters, type FilterPreset } from '../components/crm/SmartFilters'
 import { useTableFilters } from '../hooks/useTableFilters'
 import { useCustomFieldValues } from '../hooks/useCustomFieldValues'
 import { useCustomFieldStore } from '../stores/custom-fields.store'
@@ -37,13 +41,18 @@ import type {
 import styles from './Companies.module.css'
 import { api } from '../api'
 
-const SCOPE_LABELS: Record<CompanyScope, string> = {
-  all: 'All Orgs',
-  prospects: 'Prospects',
-  vc_fund: 'Investors',
-  unknown: 'Unknown',
-  hidden: 'Hidden',
-}
+// ─── Smart filter presets ────────────────────────────────────────────────────
+
+const get30DaysAgo = () => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10) }
+const getStartOfWeek = () => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return d.toISOString().slice(0, 10) }
+const getToday = () => new Date().toISOString().slice(0, 10)
+
+const COMPANY_PRESETS: FilterPreset[] = [
+  { id: 'no-touch-30',    label: 'No touch in 30d', getParams: () => ({ lastTouchpoint_max: get30DaysAgo() }), paramKeys: ['lastTouchpoint_max'] },
+  { id: 'high-priority',  label: 'High priority',   getParams: () => ({ priority: 'high' }),                   paramKeys: ['priority'] },
+  { id: 'needs-followup', label: 'Needs follow-up',  getParams: () => ({ nextFollowupDate_min: '2000-01-01', nextFollowupDate_max: getToday() }), paramKeys: ['nextFollowupDate_min', 'nextFollowupDate_max'] },
+  { id: 'added-this-week',label: 'Added this week', getParams: () => ({ createdAt_min: getStartOfWeek() }),    paramKeys: ['createdAt_min'] },
+]
 
 // ─── Helpers (dedup dialog only) ──────────────────────────────────────────────
 
@@ -100,12 +109,29 @@ export default function Companies() {
 
   // ── URL-derived state ───────────────────────────────────────────────────────
   const query = (searchParams.get('q') || '').trim()
-  const scope = (searchParams.get('scope') || 'all') as CompanyScope
   const showCreate = searchParams.get('new') === '1'
-  const sort: SortState = {
-    key: searchParams.get('sortKey') || 'lastTouchpoint',
-    dir: (searchParams.get('sortDir') || 'desc') as 'asc' | 'desc'
-  }
+  const groupBy = searchParams.get('groupBy') || null
+
+  // Multi-column sort — new format: ?sort=key:dir,key:dir
+  // Legacy fallback: ?sortKey=...&sortDir=... for saved views
+  const sort = useMemo<SortState>(() => {
+    const raw = searchParams.get('sort')
+    if (raw) {
+      const parsed = raw.split(',')
+        .filter((p) => p.includes(':'))
+        .map((p) => {
+          const [key, d] = p.split(':')
+          return { key, dir: d === 'asc' ? 'asc' : 'desc' } as SortKey
+        })
+      if (parsed.length > 0) return parsed
+    }
+    return [{
+      key: searchParams.get('sortKey') || 'lastTouchpoint',
+      dir: (searchParams.get('sortDir') || 'desc') as 'asc' | 'desc'
+    }]
+  }, [searchParams])
+
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
   // ── Column visibility (lifted from CompanyTable so ViewsBar can control it) ─
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => loadColumnConfig())
@@ -215,18 +241,6 @@ export default function Companies() {
 
 
   // ── URL helpers ─────────────────────────────────────────────────────────────
-  const setScope = useCallback(
-    (s: CompanyScope) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev)
-        next.set('scope', s)
-        next.delete('type') // scope already constrains entityType
-        return next
-      })
-    },
-    [setSearchParams]
-  )
-
   const openCreateForm = useCallback(() => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
@@ -244,27 +258,75 @@ export default function Companies() {
   }, [setSearchParams])
 
   const handleSort = useCallback(
-    (key: string, dir: 'asc' | 'desc') => {
+    (key: string, shiftHeld: boolean) => {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev)
-        next.set('sortKey', key)
-        next.set('sortDir', dir)
+        const existing = sort.findIndex((s) => s.key === key)
+
+        let newSort: SortKey[]
+        if (shiftHeld) {
+          if (existing >= 0) {
+            // Shift+click existing: remove this key from the sort
+            newSort = sort.filter((s) => s.key !== key)
+          } else {
+            // Shift+click new: append
+            newSort = [...sort, { key, dir: 'asc' }]
+          }
+        } else {
+          if (existing >= 0) {
+            // No shift, key already in array: toggle direction, drop others
+            const prevDir = sort[existing].dir
+            newSort = [{ key, dir: prevDir === 'asc' ? 'desc' : 'asc' }]
+          } else {
+            // No shift, new key: replace
+            newSort = [{ key, dir: 'asc' }]
+          }
+        }
+        if (newSort.length === 0) newSort = [{ key: 'lastTouchpoint', dir: 'desc' }]
+
+        // Write new format, remove legacy params
+        next.set('sort', newSort.map((s) => `${s.key}:${s.dir}`).join(','))
+        next.delete('sortKey')
+        next.delete('sortDir')
         return next
       })
+    },
+    [setSearchParams, sort]
+  )
+
+  const handleSetGroupBy = useCallback(
+    (key: string | null) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        if (key) next.set('groupBy', key)
+        else next.delete('groupBy')
+        return next
+      })
+      // Reset collapsed groups when changing group-by
+      setCollapsedGroups(new Set())
     },
     [setSearchParams]
   )
 
+  const handleToggleGroup = useCallback((groupKey: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(groupKey)) next.delete(groupKey)
+      else next.add(groupKey)
+      return next
+    })
+  }, [])
+
   // ── Fetch ───────────────────────────────────────────────────────────────────
   // Map sort key to the two backend-supported sort modes
-  const backendSortBy = sort.key === 'name' ? ('name' as const) : ('recent_touch' as const)
+  const backendSortBy = sort[0]?.key === 'name' ? ('name' as const) : ('recent_touch' as const)
 
   const fetchCompanies = useCallback(async () => {
     if (!companiesEnabled) return
     setLoading(true)
     setError(null)
     try {
-      const filter = buildUrlFilter(scope, query, backendSortBy)
+      const filter = buildUrlFilter(query, backendSortBy)
       const results = await api.invoke<CompanySummary[]>(IPC_CHANNELS.COMPANY_LIST, filter)
       setCompanies(results)
     } catch (err) {
@@ -272,7 +334,7 @@ export default function Companies() {
     } finally {
       setLoading(false)
     }
-  }, [companiesEnabled, scope, query, backendSortBy])
+  }, [companiesEnabled, query, backendSortBy])
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => {
@@ -286,15 +348,14 @@ export default function Companies() {
   }, [fetchCompanies])
 
   // ── Derived display list ─────────────────────────────────────────────────────
-  // searchParams captures all filter/sort URL state — no need to list individually
   const displayCompanies = useMemo(() => {
-    const sortKey = searchParams.get('sortKey') || 'lastTouchpoint'
-    const sortDir = (searchParams.get('sortDir') || 'desc') as 'asc' | 'desc'
     const filtered = filterCompanies(companies, columnFilters, rangeFilters, textFilters)
-    if (BACKEND_SORT_KEYS.has(sortKey)) return filtered
-    return sortRows(filtered, { key: sortKey, dir: sortDir }, COLUMN_DEFS)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companies, columnFilters, rangeFilters, textFilters, searchParams])
+    // Short-circuit: if primary sort is backend-sorted and no secondary sorts, skip client sort
+    if (BACKEND_SORT_KEYS.has(sort[0]?.key ?? '') && sort.length === 1) return filtered
+    return sortRows(filtered, sort, COLUMN_DEFS)
+  }, [companies, columnFilters, rangeFilters, textFilters, sort])
+
+  const groupedRows = useGroupedRows(displayCompanies, groupBy, COMPANY_GROUPABLE_FIELDS, collapsedGroups)
 
   const dedupActionableGroups = dedupGroups
     ? dedupGroups.filter((group) => {
@@ -474,19 +535,7 @@ export default function Companies() {
           {dedupResult.failures.length > 0 ? `, failures: ${dedupResult.failures.length}` : ''}
         </span>
       )}
-      {/* Header: scope tabs + new button */}
       <div className={styles.header}>
-        <div className={styles.scopeRow}>
-          {(Object.keys(SCOPE_LABELS) as CompanyScope[]).map((s) => (
-            <button
-              key={s}
-              className={`${styles.scopeButton} ${scope === s ? styles.activeScope : ''}`}
-              onClick={() => setScope(s)}
-            >
-              {SCOPE_LABELS[s]}
-            </button>
-          ))}
-        </div>
         <div className={styles.headerActions}>
           <div className={styles.actionsDropdown} ref={actionsRef}>
             <button
@@ -522,6 +571,43 @@ export default function Companies() {
           setVisibleKeys(columns)
         }}
       />
+
+      {/* Toolbar row 2: group-by picker + clear sort + smart filters */}
+      <div className={styles.toolbarRow2}>
+        <GroupByPicker
+          value={groupBy}
+          fields={COMPANY_GROUPABLE_FIELDS}
+          onChange={handleSetGroupBy}
+        />
+        {sort.length > 1 && (
+          <button
+            className={styles.clearSortBtn}
+            onClick={() => setSearchParams((prev) => {
+              const next = new URLSearchParams(prev)
+              next.delete('sort')
+              next.delete('sortKey')
+              next.delete('sortDir')
+              return next
+            })}
+          >
+            Clear sort ✕
+          </button>
+        )}
+        <SmartFilters
+          presets={COMPANY_PRESETS}
+          searchParams={searchParams}
+          onApply={(params) => setSearchParams((prev) => {
+            const next = new URLSearchParams(prev)
+            Object.entries(params).forEach(([k, v]) => next.set(k, v))
+            return next
+          })}
+          onClear={(keys) => setSearchParams((prev) => {
+            const next = new URLSearchParams(prev)
+            keys.forEach((k) => next.delete(k))
+            return next
+          })}
+        />
+      </div>
 
       {/* Filter chips row — dynamically generated from all active filters */}
       {activeFilterCount > 0 && (
@@ -595,6 +681,9 @@ export default function Companies() {
       {/* Table — flex: 1 fills remaining height */}
       <CompanyTable
         companies={displayCompanies}
+        rows={groupedRows}
+        groupBy={groupBy}
+        onToggleGroup={handleToggleGroup}
         loading={loading}
         sort={sort}
         onSort={handleSort}

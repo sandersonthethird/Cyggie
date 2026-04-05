@@ -146,13 +146,71 @@ function firstMeaningfulLine(summary: string): string | null {
   return null
 }
 
-function extractDescription(summary: string): string | null {
+const EXEC_SUBLABEL_STOP_RE =
+  /\b(?:founders?|team|status|stage|sector|round|recommendation|ask|thesis|concerns?|strengths?|location|city|website|product|market|traction|revenue|arr|mrr|valuation|raise|check\s+size|memo)\s*:/i
+
+/**
+ * Looks for an explicit "Description: <value>" sub-label in an executive summary
+ * string that has already been processed by extractSection() (markdown stripped,
+ * lines space-joined, bounded to ~700 chars).
+ *
+ * Two-strategy extraction:
+ *
+ *   executive string
+ *         │
+ *         ▼
+ *   Strategy 1: sentence-split on [.!?]
+ *   ┌──────────────────────────────────────────────────┐
+ *   │  for each sentence:                              │
+ *   │    starts with "Description:"? ──YES──▶ extract  │
+ *   │                                   clip at STOP   │
+ *   │                                   return value   │
+ *   │    else: continue loop                           │
+ *   └───────────────────┬──────────────────────────────┘
+ *                       │ loop exhausted (null)
+ *                       ▼
+ *   Strategy 2: substring search (handles no-period sub-labels)
+ *   ┌──────────────────────────────────────────────────┐
+ *   │  /\bdescription\s*:\s*(.+)/i.exec(executive)     │
+ *   │    match? ──YES──▶ clip at STOP ──▶ return value │
+ *   │    no match ──▶ return null                      │
+ *   └──────────────────────────────────────────────────┘
+ *
+ * Returns null if no "Description:" sub-label is found.
+ */
+function extractDescriptionSubLabel(executive: string): string | null {
+  // Strategy 1: sentence-split (works when sub-labels end with periods)
+  const sentences = executive.split(/(?<=[.!?])\s+/)
+  for (const sentence of sentences) {
+    if (!/^description\s*:/i.test(sentence)) continue
+    const value = normalizeWhitespace(sentence.replace(/^description\s*:\s*/i, ''))
+    if (!value) continue
+    const stopMatch = EXEC_SUBLABEL_STOP_RE.exec(value)
+    return stopMatch ? normalizeWhitespace(value.slice(0, stopMatch.index)) : value
+  }
+
+  // Strategy 2: substring search (handles no-period sub-labels or Description not first)
+  const match = /\bdescription\s*:\s*(.+)/i.exec(executive)
+  if (match) {
+    const value = normalizeWhitespace(match[1])
+    if (!value) return null
+    const stopMatch = EXEC_SUBLABEL_STOP_RE.exec(value)
+    return stopMatch ? normalizeWhitespace(value.slice(0, stopMatch.index)) : value
+  }
+
+  return null
+}
+
+export function extractDescription(summary: string): string | null {
   const executive = extractSection(summary, ['executive summary'])
   const overview = extractSection(summary, ['company overview'])
   const source = executive || overview || firstMeaningfulLine(summary)
   if (!source) return null
 
-  const cleaned = normalizeWhitespace(
+  // Prefer explicit "Description:" sub-label when an executive summary exists
+  const subLabel = executive ? extractDescriptionSubLabel(executive) : null
+
+  const cleaned = subLabel ?? normalizeWhitespace(
     source.replace(/^((company overview)|(executive summary))\s*[:\-–—]\s*/i, '')
   )
   if (!cleaned || cleaned.length < 16) return null
