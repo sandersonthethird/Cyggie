@@ -76,6 +76,7 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
             <div className={styles.name}>
               {contact.fullName}
               {contact.isPrimary && <span className={styles.primary}>primary</span>}
+              {contact.isPastEmployee && <span className={styles.pastEmployee}>past</span>}
             </div>
             {contact.title && <div className={styles.title}>{contact.title}</div>}
             {contact.email && <div className={styles.email}>{contact.email}</div>}

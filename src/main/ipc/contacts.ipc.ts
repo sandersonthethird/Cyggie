@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as companyRepo from '../database/repositories/org-company.repo'
@@ -8,10 +8,15 @@ import {
   enrichContactsViaWebLookup,
   mergeContactEnrichmentResults
 } from '../services/contact-web-enrichment'
+import {
+  enrichContactFromLinkedIn,
+  enrichContactsFromLinkedInBatch,
+} from '../services/linkedin-enrichment.service'
 import { getContactSummaryUpdateProposalsFromMeetingId } from '../services/contact-summary-sync.service'
 import { getProvider } from '../llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
+import { LinkedInEnrichError } from '../../shared/types/contact'
 import type {
   ContactEnrichmentOptions,
   ContactSortBy,
@@ -26,6 +31,10 @@ function toErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message
   return String(err)
 }
+
+// In-flight guards for LinkedIn enrichment
+let linkedinEnrichInFlight = false
+let linkedinBatchAbortController: AbortController | null = null
 
 export function registerContactHandlers(): void {
   ipcMain.handle(
@@ -251,6 +260,76 @@ export function registerContactHandlers(): void {
       return result
     }
   )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN,
+    async (_event, contactId: string) => {
+      if (!contactId?.trim()) return { success: false, errorCode: 'invalid_input', message: 'contactId is required' }
+      if (linkedinEnrichInFlight) {
+        return { success: false, errorCode: 'in_flight', message: 'LinkedIn enrichment already in progress' }
+      }
+      linkedinEnrichInFlight = true
+      try {
+        const result = await enrichContactFromLinkedIn(contactId, getCurrentUserId())
+        logAudit(getCurrentUserId(), 'contact', contactId, 'update', { action: 'enrich-linkedin', ...result.summary })
+        return { success: true, contact: result.contact, summary: result.summary }
+      } catch (err) {
+        if (err instanceof LinkedInEnrichError) {
+          return { success: false, errorCode: err.code, message: err.message }
+        }
+        return { success: false, errorCode: 'unknown', message: toErrorMessage(err) }
+      } finally {
+        linkedinEnrichInFlight = false
+      }
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_LINKEDIN_OPEN_LOGIN, () => {
+    const win = new BrowserWindow({
+      show: true,
+      width: 1000,
+      height: 700,
+      title: 'Sign in to LinkedIn — Cyggie',
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        // NOTE: no partition — must share default session so LinkedIn cookies persist
+      },
+    })
+    win.loadURL('https://www.linkedin.com/login').catch(() => { /* ignore */ })
+    win.webContents.on('did-navigate', (_e, url) => {
+      if (!url.includes('/login') && !url.includes('/checkpoint')) {
+        setTimeout(() => { try { win.close() } catch { /* already closed */ } }, 2000)
+      }
+    })
+    return { opened: true }
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN_BATCH,
+    async (event, { contactIds }: { contactIds: string[] }) => {
+      if (!Array.isArray(contactIds) || contactIds.length === 0) {
+        return { enriched: 0, failed: 0, loginRequired: false, paused: false }
+      }
+      linkedinBatchAbortController = new AbortController()
+      const userId = getCurrentUserId()
+      const result = await enrichContactsFromLinkedInBatch(
+        contactIds,
+        userId,
+        linkedinBatchAbortController.signal,
+        (current, total, progress) => {
+          event.sender.send(IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN_BATCH_PROGRESS, { current, total, ...progress })
+        }
+      )
+      logAudit(userId, 'contact', 'linkedin-batch', 'update', result)
+      return result
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN_BATCH_CANCEL, () => {
+    linkedinBatchAbortController?.abort()
+    return { cancelled: true }
+  })
 
   ipcMain.handle(
     IPC_CHANNELS.CONTACT_ONBOARD_FROM_EMAIL,

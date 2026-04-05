@@ -99,6 +99,12 @@ export interface ContactDetail extends ContactSummary {
   proudPortfolioCompanies: string | null
   noteCount: number
   fieldSources: string | null
+  // LinkedIn enrichment fields
+  workHistory: string | null          // JSON: LinkedInWorkEntry[]
+  educationHistory: string | null     // JSON: LinkedInEducationEntry[]
+  linkedinHeadline: string | null
+  linkedinSkills: string | null       // JSON: string[]
+  linkedinEnrichedAt: string | null
 }
 
 export type { Note as ContactNote } from './note'
@@ -255,4 +261,53 @@ export interface ContactDecisionLog {
   nextSteps: import('./company').DecisionNextStep[]
   createdAt: string
   updatedAt: string
+}
+
+// ── LinkedIn enrichment types ─────────────────────────────────────────────
+
+export interface LinkedInWorkEntry {
+  company: string
+  title: string
+  startDate?: string | null   // "YYYY-MM" or "YYYY"
+  endDate?: string | null
+  isCurrent: boolean
+  description?: string | null
+  companyId?: string | null   // Cyggie org_companies.id if auto-linked
+}
+
+export interface LinkedInEducationEntry {
+  school: string
+  degree?: string | null
+  field?: string | null
+  startYear?: number | null
+  endYear?: number | null
+}
+
+export interface LinkedInEnrichmentResult {
+  contact: ContactDetail
+  summary: {
+    positionCount: number
+    schoolCount: number
+    skillCount: number
+    companiesLinked: number
+  }
+}
+
+// Keeps isPastEmployee out of the shared ContactSummary type
+export type CompanyContactEntry = ContactSummary & { isPastEmployee: boolean }
+
+export type LinkedInEnrichErrorCode =
+  | 'no_linkedin_url'
+  | 'login_required'
+  | 'profile_load_failed'
+  | 'profile_timeout'
+  | 'llm_failed'
+  | 'llm_bad_json'
+  | 'no_data'
+
+export class LinkedInEnrichError extends Error {
+  constructor(public readonly code: LinkedInEnrichErrorCode, message: string) {
+    super(message)
+    this.name = 'LinkedInEnrichError'
+  }
 }

@@ -563,7 +563,26 @@ export function registerCompanyHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_CONTACTS, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
-    return companyRepo.listCompanyContacts(companyId)
+    const current = companyRepo.listCompanyContacts(companyId).map((c) => ({ ...c, isPastEmployee: false }))
+    const past = contactRepo.listPastEmployeeContacts(companyId)
+    // Dedup by id — current employee entry wins
+    const seen = new Set(current.map((c) => c.id))
+    const pastMapped = past
+      .filter((c) => !seen.has(c.id))
+      .map((c) => ({
+        id: c.id,
+        fullName: c.fullName,
+        email: c.email,
+        title: c.title,
+        contactType: c.contactType,
+        linkedinUrl: c.linkedinUrl,
+        isPrimary: false,
+        isPastEmployee: true,
+        meetingCount: c.meetingCount,
+        lastInteractedAt: c.lastTouchpoint ?? null,
+        updatedAt: c.updatedAt,
+      }))
+    return [...current, ...pastMapped]
   })
 
   ipcMain.handle(

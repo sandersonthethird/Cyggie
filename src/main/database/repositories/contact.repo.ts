@@ -51,7 +51,8 @@ import type {
   ContactDuplicateSummary,
   ContactDedupDecision,
   ContactDedupApplyResult,
-  ContactDedupAction
+  ContactDedupAction,
+  CompanyContactEntry
 } from '../../../shared/types/contact'
 
 interface ContactRow {
@@ -97,6 +98,11 @@ interface ContactRow {
   investment_sector_focus?: string | null
   proud_portfolio_companies?: string | null
   field_sources?: string | null
+  work_history?: string | null
+  education_history?: string | null
+  linkedin_headline?: string | null
+  linkedin_skills?: string | null
+  linkedin_enriched_at?: string | null
 }
 
 export interface ContactEmailOnboardingCandidate {
@@ -1222,6 +1228,11 @@ const CONTACT_UPDATABLE_FIELDS = {
   investmentSectorFocus: 'investment_sector_focus',
   proudPortfolioCompanies: 'proud_portfolio_companies',
   fieldSources: 'field_sources',
+  workHistory: 'work_history',
+  educationHistory: 'education_history',
+  linkedinHeadline: 'linkedin_headline',
+  linkedinSkills: 'linkedin_skills',
+  linkedinEnrichedAt: 'linkedin_enriched_at',
 } as const
 
 type ContactUpdatableKey = keyof typeof CONTACT_UPDATABLE_FIELDS
@@ -1664,6 +1675,11 @@ export function getContact(contactId: string): ContactDetail | null {
         c.investment_sector_focus,
         c.proud_portfolio_companies,
         c.field_sources,
+        c.work_history,
+        c.education_history,
+        c.linkedin_headline,
+        c.linkedin_skills,
+        c.linkedin_enriched_at,
         c.created_at,
         c.updated_at,
         oc.canonical_name AS primary_company_name,
@@ -1775,6 +1791,11 @@ export function getContact(contactId: string): ContactDetail | null {
     investmentSectorFocus: row.investment_sector_focus ?? null,
     proudPortfolioCompanies: row.proud_portfolio_companies ?? null,
     fieldSources: row.field_sources ?? null,
+    workHistory: row.work_history ?? null,
+    educationHistory: row.education_history ?? null,
+    linkedinHeadline: row.linkedin_headline ?? null,
+    linkedinSkills: row.linkedin_skills ?? null,
+    linkedinEnrichedAt: row.linkedin_enriched_at ?? null,
     noteCount: (() => {
       try {
         const countRow = db.prepare('SELECT COUNT(*) as count FROM notes WHERE contact_id = ?').get(contactId) as { count: number } | undefined
@@ -2525,6 +2546,30 @@ export function enrichContactsByIds(
   }
 
   return enrichContactCandidates(db, contacts, userId)
+}
+
+/**
+ * Find contacts whose work_history JSON contains an entry with companyId matching the given company,
+ * excluding contacts who are currently employed there (primary_company_id = companyId).
+ *
+ * NOTE: Uses (IS NULL OR !=) instead of plain != to handle SQL NULL semantics correctly.
+ *   Plain != evaluates to NULL (not TRUE) when primary_company_id IS NULL, silently dropping
+ *   contacts with no current company.
+ *
+ * NOTE: Full table scan on work_history JSON — acceptable at VC scale (<5k contacts).
+ *   See TODOS.md if index needed later.
+ */
+export function listPastEmployeeContacts(companyId: string): CompanyContactEntry[] {
+  const db = getDatabase()
+  console.time('[PastEmployees] listPastEmployeeContacts')
+  const rows = db.prepare(`
+    SELECT DISTINCT c.*
+    FROM contacts c, json_each(c.work_history) jw
+    WHERE json_extract(jw.value, '$.companyId') = ?
+      AND (c.primary_company_id IS NULL OR c.primary_company_id != ?)
+  `).all(companyId, companyId) as ContactRow[]
+  console.timeEnd('[PastEmployees] listPastEmployeeContacts')
+  return rows.map((row) => ({ ...rowToContactSummary(row), isPastEmployee: true }))
 }
 
 /** Given a list of emails, return a map of lowercase email -> { id, fullName } for any that match a known contact. */

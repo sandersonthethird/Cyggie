@@ -6,7 +6,7 @@ import { useFieldVisibility } from '../../hooks/useFieldVisibility'
 import { useSectionOrder } from '../../hooks/useSectionOrder'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { ContactDetail } from '../../../shared/types/contact'
+import type { ContactDetail, LinkedInWorkEntry, LinkedInEducationEntry } from '../../../shared/types/contact'
 import type { CompanySummary } from '../../../shared/types/company'
 import type { CustomFieldWithValue, CustomFieldValue } from '../../../shared/types/custom-fields'
 import { CONTACT_SECTIONS } from '../../../shared/types/custom-fields'
@@ -113,6 +113,23 @@ function priorCompanyName(entry: PriorCompanyEntry): string {
   return typeof entry === 'string' ? entry : entry.name
 }
 
+function parseLinkedInJson<T>(raw: string | null | undefined): T[] {
+  if (!raw) return []
+  try { return JSON.parse(raw) as T[] } catch { return [] }
+}
+
+function formatRelativeTime(isoString: string | null | undefined): string {
+  if (!isoString) return ''
+  const ms = Date.now() - new Date(isoString).getTime()
+  const minutes = Math.floor(ms / 60_000)
+  if (minutes < 2) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
 function formatPinnedValue(value: unknown, type: string, options?: { value: string; label: string }[]): string | null {
   if (value == null || value === '') return null
   if (options) {
@@ -148,6 +165,8 @@ export function ContactPropertiesPanel({
   const [createFieldOpen, setCreateFieldOpen] = useState(false)
   const [createFieldSection, setCreateFieldSection] = useState<string | undefined>(undefined)
   const [deleting, setDeleting] = useState(false)
+  const [linkedinEnriching, setLinkedinEnriching] = useState(false)
+  const [linkedinError, setLinkedinError] = useState<{ code: string; message: string } | null>(null)
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
   const [editingFieldLabel, setEditingFieldLabel] = useState('')
   const [addFieldDropdownSection, setAddFieldDropdownSection] = useState<string | undefined>(undefined)
@@ -520,6 +539,35 @@ export function ContactPropertiesPanel({
     sessionChanges.current = false
   }
 
+  async function handleLinkedInEnrich() {
+    if (linkedinEnriching) return
+    setLinkedinEnriching(true)
+    setLinkedinError(null)
+    try {
+      const result = await api.invoke<{
+        success: boolean
+        errorCode?: string
+        message?: string
+        contact?: ContactDetail
+        summary?: { positionCount: number; schoolCount: number; skillCount: number; companiesLinked: number }
+      }>(IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN, contact.id)
+      if (result.success && result.contact) {
+        onUpdate(result.contact)
+      } else {
+        setLinkedinError({ code: result.errorCode ?? 'unknown', message: result.message ?? 'Enrichment failed' })
+      }
+    } catch (err) {
+      setLinkedinError({ code: 'unknown', message: String(err) })
+    } finally {
+      setLinkedinEnriching(false)
+    }
+  }
+
+  async function handleLinkedInOpenLogin() {
+    await api.invoke(IPC_CHANNELS.CONTACT_LINKEDIN_OPEN_LOGIN)
+    setLinkedinError(null)
+  }
+
   async function handleDeleteContact() {
     if (deleting) return
     setDeleting(true)
@@ -760,6 +808,11 @@ export function ContactPropertiesPanel({
     return renderPinnedChip(id)
   }
 
+  // LinkedIn enrichment data parsed from JSON columns
+  const liWorkEntries = parseLinkedInJson<LinkedInWorkEntry>(contact.workHistory)
+  const liEduEntries = parseLinkedInJson<LinkedInEducationEntry>(contact.educationHistory)
+  const liSkills = parseLinkedInJson<string>(contact.linkedinSkills)
+
   // Count of explicitly-hidden fields + empty hardcoded fields (Change 6)
   const hiddenFieldCount = !isEditing && !showAllFields ? (
     hiddenFields.length +
@@ -872,6 +925,9 @@ export function ContactPropertiesPanel({
               </>
             ) : null}
           </div>
+          {contact.linkedinHeadline && !isEditing && (
+            <div className={styles.linkedinHeadline}>{contact.linkedinHeadline}</div>
+          )}
           <div
             className={`${styles.headerBadge} ${isEditing && dragOverSection === 'summary' ? styles.dropTarget : ''}`}
             {...(isEditing ? syncedSectionDragProps('summary') : {})}
@@ -1282,6 +1338,99 @@ export function ContactPropertiesPanel({
           default: return null
         }
       })}
+
+      {contact.linkedinUrl && (
+        <div className={styles.linkedinEnrichRow}>
+          {contact.linkedinEnrichedAt && !linkedinError && (
+            <span className={styles.linkedinEnrichedAgo}>
+              Refreshed {formatRelativeTime(contact.linkedinEnrichedAt)}
+            </span>
+          )}
+          {linkedinError?.code === 'login_required' ? (
+            <>
+              <span className={styles.linkedinErrorMsg}>LinkedIn sign-in required</span>
+              <button className={styles.linkedinLoginBtn} onClick={() => void handleLinkedInOpenLogin()}>
+                Sign in to LinkedIn
+              </button>
+              <button
+                className={styles.linkedinEnrichBtn}
+                onClick={() => void handleLinkedInEnrich()}
+                disabled={linkedinEnriching}
+              >
+                {linkedinEnriching ? 'Enriching…' : 'Try again'}
+              </button>
+            </>
+          ) : (
+            <>
+              {linkedinError && (
+                <span className={styles.linkedinErrorMsg} title={linkedinError.message}>
+                  Enrichment failed
+                </span>
+              )}
+              <button
+                className={styles.linkedinEnrichBtn}
+                onClick={() => void handleLinkedInEnrich()}
+                disabled={linkedinEnriching}
+              >
+                {linkedinEnriching
+                  ? 'Enriching…'
+                  : contact.linkedinEnrichedAt
+                    ? 'Re-enrich from LinkedIn'
+                    : 'Enrich from LinkedIn'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {liWorkEntries.length > 0 && (
+        <div className={styles.linkedinSection}>
+          <SectionHeader title="Work History" />
+          {liWorkEntries.map((e, i) => (
+            <div key={i} className={styles.linkedinWorkEntry}>
+              <div className={styles.linkedinEntryTitle}>{e.title}</div>
+              <div className={styles.linkedinEntryCompany}>
+                {e.companyId ? (
+                  <button
+                    className={styles.linkedinCompanyLink}
+                    onClick={() => navigate(`/company/${e.companyId}`, { state: { backLabel: contact.fullName } })}
+                  >
+                    {e.company}
+                  </button>
+                ) : e.company}
+              </div>
+              <div className={styles.linkedinEntryDates}>
+                {[e.startDate, e.isCurrent ? 'Present' : e.endDate].filter(Boolean).join(' – ')}
+              </div>
+              {e.description && <div className={styles.linkedinEntryDesc}>{e.description}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {liEduEntries.length > 0 && (
+        <div className={styles.linkedinSection}>
+          <SectionHeader title="Education" />
+          {liEduEntries.map((e, i) => (
+            <div key={i} className={styles.linkedinEduEntry}>
+              <div className={styles.linkedinEntryTitle}>{e.school}</div>
+              {(e.degree || e.field) && (
+                <div className={styles.linkedinEntryCompany}>{[e.degree, e.field].filter(Boolean).join(', ')}</div>
+              )}
+              {(e.startYear || e.endYear) && (
+                <div className={styles.linkedinEntryDates}>{[e.startYear, e.endYear].filter(Boolean).join(' – ')}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {liSkills.length > 0 && (
+        <div className={styles.linkedinSection}>
+          <SectionHeader title="Skills" />
+          <div className={styles.linkedinSkillsList}>{liSkills.join(' · ')}</div>
+        </div>
+      )}
 
       {hiddenFieldCount > 0 && (
         <button className={styles.showAllBtn} onClick={() => setShowAllFields(true)}>

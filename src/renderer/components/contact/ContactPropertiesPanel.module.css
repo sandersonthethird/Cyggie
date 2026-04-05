@@ -894,3 +894,116 @@
 .priorCompanyViewEntry {
   color: var(--color-text-primary);
 }
+
+/* ── LinkedIn enrichment ─────────────────────────────────────────────────── */
+
+.linkedinHeadline {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+  font-style: italic;
+}
+
+.linkedinEnrichRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--color-bg-tertiary);
+  margin-top: 4px;
+}
+
+.linkedinEnrichedAgo {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  flex: 1;
+}
+
+.linkedinErrorMsg {
+  font-size: 12px;
+  color: var(--color-danger, #c0392b);
+}
+
+.linkedinEnrichBtn {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: opacity 0.12s;
+}
+.linkedinEnrichBtn:hover:not(:disabled) { opacity: 0.75; }
+.linkedinEnrichBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.linkedinLoginBtn {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.linkedinLoginBtn:hover { opacity: 0.85; }
+
+.linkedinSection {
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--color-bg-tertiary);
+}
+
+.linkedinWorkEntry,
+.linkedinEduEntry {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-bg-tertiary);
+}
+.linkedinWorkEntry:last-child,
+.linkedinEduEntry:last-child {
+  border-bottom: none;
+}
+
+.linkedinEntryTitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.linkedinEntryCompany {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-top: 1px;
+}
+
+.linkedinEntryDates {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 1px;
+}
+
+.linkedinEntryDesc {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.linkedinCompanyLink {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+}
+.linkedinCompanyLink:hover { opacity: 0.75; }
+
+.linkedinSkillsList {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  padding: 4px 0;
+}

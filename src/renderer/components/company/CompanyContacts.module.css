@@ -55,6 +55,17 @@
   letter-spacing: 0.04em;
 }
 
+.pastEmployee {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  border-radius: 8px;
+  padding: 1px 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .title {
   font-size: 11px;
   color: var(--color-text-secondary);

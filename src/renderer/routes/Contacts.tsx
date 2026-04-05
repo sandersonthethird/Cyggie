@@ -149,6 +149,12 @@ export default function Contacts() {
   const [enrichmentResult, setEnrichmentResult] = useState<ContactEnrichmentResult | null>(null)
   const [actionsOpen, setActionsOpen] = useState(false)
   const actionsRef = useRef<HTMLDivElement>(null)
+  // ── LinkedIn batch enrichment ─────────────────────────────────────────────
+  const [linkedinBatchProgress, setLinkedinBatchProgress] = useState<{
+    current: number
+    total: number
+    lastContactId?: string
+  } | null>(null)
 
   // ── Create form ───────────────────────────────────────────────────────────
   const [newFirstName, setNewFirstName] = useState('')
@@ -667,6 +673,36 @@ export default function Contacts() {
     }
   }, [contactsEnabled, loadContacts, query, reviewDuplicates])
 
+  // ── LinkedIn batch enrichment ─────────────────────────────────────────────
+  const handleLinkedinBatchEnrich = useCallback(async () => {
+    const contactIds = contacts.filter((c) => c.linkedinUrl).map((c) => c.id)
+    if (contactIds.length === 0) return
+    setLinkedinBatchProgress({ current: 0, total: contactIds.length })
+
+    // Listen for progress events; api.on() returns an unsubscribe function
+    const unsubscribe = api.on(
+      IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN_BATCH_PROGRESS,
+      (data: unknown) => {
+        const progress = data as { current: number; total: number; contactId?: string }
+        setLinkedinBatchProgress({ current: progress.current, total: progress.total, lastContactId: progress.contactId })
+      }
+    )
+
+    try {
+      await api.invoke(IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN_BATCH, { contactIds })
+      await loadContacts(query)
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      unsubscribe()
+      setLinkedinBatchProgress(null)
+    }
+  }, [contacts, loadContacts, query])
+
+  const handleLinkedinBatchCancel = useCallback(async () => {
+    await api.invoke(IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN_BATCH_CANCEL)
+  }, [])
+
   // ── Create contact ────────────────────────────────────────────────────────
   const handleCreateContact = async () => {
     if (!newFirstName.trim() || !newLastName.trim()) return
@@ -778,7 +814,7 @@ export default function Contacts() {
       }).length
     : 0
 
-  const busy = syncing || enriching || checkingDuplicates || applyingDedup
+  const busy = syncing || enriching || checkingDuplicates || applyingDedup || linkedinBatchProgress !== null
 
   if (!flagsLoading && !contactsEnabled) {
     return (
@@ -823,6 +859,21 @@ export default function Contacts() {
             ✕
           </button>
         </span>
+      )}
+
+      {linkedinBatchProgress && (
+        <div className={styles.statusBanner}>
+          <span>
+            Enriching from LinkedIn: {linkedinBatchProgress.current} of {linkedinBatchProgress.total}
+          </span>
+          <button
+            className={styles.statusBannerDismiss}
+            onClick={() => void handleLinkedinBatchCancel()}
+            type="button"
+          >
+            Cancel
+          </button>
+        </div>
       )}
 
       {/* ── Toolbar ── */}
@@ -876,6 +927,15 @@ export default function Contacts() {
                   disabled={busy}
                 >
                   {checkingDuplicates ? 'Checking...' : 'Review Duplicates'}
+                </button>
+                <button
+                  className={styles.actionsMenuItem}
+                  onClick={() => { void handleLinkedinBatchEnrich(); setActionsOpen(false) }}
+                  disabled={busy || linkedinBatchProgress !== null || contacts.filter((c) => c.linkedinUrl).length === 0}
+                >
+                  {linkedinBatchProgress
+                    ? `Enriching from LinkedIn (${linkedinBatchProgress.current}/${linkedinBatchProgress.total})…`
+                    : 'Enrich from LinkedIn'}
                 </button>
                 <div className={styles.actionsMenuSeparator} />
                 <button

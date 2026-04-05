@@ -169,6 +169,7 @@ export interface CompanyContactRef {
   contactType: string | null
   linkedinUrl: string | null
   isPrimary: boolean
+  isPastEmployee?: boolean
   meetingCount: number
   lastInteractedAt: string | null
   updatedAt: string

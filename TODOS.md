@@ -623,3 +623,31 @@
 **Effort:** L
 **Priority:** P2
 **Depends on:** Gmail IPC bridge (not yet started); `COMPANY_ANALYZE_FILE` handler (this PR).
+
+---
+
+## P3 — Contacts (LinkedIn Enrichment)
+
+### Past employee index for listPastEmployeeContacts
+**What:** If `listPastEmployeeContacts()` becomes slow at scale, add a generated SQLite column or a separate `contact_company_history` junction table to enable an index on the companyId field.
+**Why:** The current `json_each(work_history)` query does a full table scan. At <5k contacts + in-process SQLite, it's fast enough today. A console.time log in the code will surface if it becomes a problem.
+**Pros:** Enables O(log n) lookup for past employees instead of full scan.
+**Cons:** Generated columns require SQLite 3.31+ (available in modern Electron). A junction table requires migration complexity and a trigger or app-level sync to keep in sync with `work_history`.
+**Context:** `listPastEmployeeContacts()` in `src/main/database/repositories/contact.repo.ts`. The timing log added in the LinkedIn enrichment PR is the signal: if p99 > 50ms, add an index. Consider a `contact_work_company_ids` TEXT column with a space-separated list of companyIds, maintained on `work_history` write. Then index that column and use a LIKE query.
+**Effort:** M
+**Priority:** P3
+**Depends on:** LinkedIn enrichment PR (this work) merged. Only worth doing if the timing log shows a problem.
+
+---
+
+## P2 — Contacts (LinkedIn Enrichment)
+
+### Past employer filter in Contacts table
+**What:** A "Past employer" filter in the Contacts route that finds all contacts who have a given company anywhere in their `work_history` — both by `companyId` (for Cyggie-linked companies) and by company name text (for unlinked companies).
+**Why:** Reference checks and warm intro mapping — "who in my network worked at this founder's prior company?" This is the highest-leverage use of the work_history data built in the LinkedIn enrichment PR.
+**Pros:** Directly enables the warm intro / reference check workflow. The `work_history` data is already there; the query is a `json_each` on the `company` text field (case-insensitive). Catches unlinked employers too.
+**Cons:** Without a FTS5 index on `work_history`, this is a full table scan — fine at <5k contacts. A FTS5 index would require the notes-fts5 pattern (trigger-maintained virtual table) for production scale.
+**Context:** Add as a filter chip in the Contacts toolbar (alongside existing "Type" and "Stage" filters). Query: `SELECT DISTINCT c.id FROM contacts c, json_each(c.work_history) jw WHERE lower(json_extract(jw.value, '$.company')) LIKE lower('%' || ? || '%')`. Also support filtering by companyId for the "open Sequoia → see who worked there" flow. Start in `src/renderer/routes/Contacts.tsx` and add a corresponding IPC channel `CONTACT_LIST_BY_PAST_EMPLOYER`.
+**Effort:** M
+**Priority:** P2
+**Depends on:** LinkedIn enrichment PR (this work) merged. Past employees in Company contacts tab (this PR) is related but separate.

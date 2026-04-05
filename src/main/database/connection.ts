@@ -65,6 +65,7 @@ import { runRepairOwnerLinkedinUrlMigration } from './migrations/062-repair-owne
 import { runRemoveNotificationContactsMigration } from './migrations/063-remove-notification-contacts'
 import { runCalendarEventDedupMigration } from './migrations/064-calendar-event-dedup'
 import { runRepairImportedNoteFrontmatterMigration } from './migrations/065-repair-imported-note-frontmatter'
+import { runContactLinkedinFieldsMigration } from './migrations/066-contact-linkedin-fields'
 
 let db: Database.Database | null = null
 
@@ -138,6 +139,7 @@ export function getDatabase(): Database.Database {
     runRemoveNotificationContactsMigration(db)
     runCalendarEventDedupMigration(db)
     runRepairImportedNoteFrontmatterMigration(db)
+    runContactLinkedinFieldsMigration(db)
   }
   return db
 }
