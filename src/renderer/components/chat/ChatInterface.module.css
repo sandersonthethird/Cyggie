@@ -151,12 +151,12 @@
   outline: none;
   min-height: 42px;
   max-height: 120px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1), 0 1px 4px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.13), 0 1px 4px rgba(0, 0, 0, 0.07);
   transition: box-shadow 0.15s;
 }
 
 .input:focus {
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15), 0 1px 4px rgba(0, 0, 0, 0.09);
 }
 
 .input::placeholder {
@@ -238,22 +238,43 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
   pointer-events: none;
 }
 
-.floatingPanel {
+/*
+ * Unified widget shell — always mounted so the textarea DOM node is never
+ * destroyed (preserves focus/cursor across expand/collapse).
+ *
+ * State machine:
+ *   collapsed  →  just input bar (pill appearance)
+ *   expanded   →  floatingPanel slides open above input area
+ *
+ * No overflow:hidden here — that would clip the context dropdown.
+ * Border-radius is applied per-child instead.
+ */
+.floatingWidget {
   width: 620px;
   max-width: calc(100% - 40px);
-  max-height: 55vh;
   background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border);
   border-radius: 16px;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.10);
+  pointer-events: all;
   display: flex;
   flex-direction: column;
+}
+
+.floatingPanel {
+  max-height: 0;
   overflow: hidden;
-  pointer-events: all;
-  border: 1px solid var(--color-border);
+  transition: max-height 200ms ease;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px 16px 0 0;
+}
+
+.floatingWidgetExpanded .floatingPanel {
+  max-height: 55vh;
 }
 
 .floatingPanelHeader {
@@ -318,6 +339,37 @@
   flex-shrink: 0;
 }
 
+.floatingInputArea {
+  flex-shrink: 0;
+  border-radius: 0 0 16px 16px;
+}
+
+.floatingWidgetExpanded .floatingInputArea {
+  border-top: 1px solid var(--color-border);
+}
+
+/* When panel is hidden, input area rounds all corners (pill appearance) */
+.floatingWidget:not(.floatingWidgetExpanded) .floatingInputArea {
+  border-radius: 16px;
+}
+
+/* Widget provides the shadow — remove the input's own */
+.floatingWidget .input {
+  box-shadow: none;
+  background: transparent;
+}
+
+.floatingWidget .input:focus {
+  box-shadow: none;
+}
+
+/* dropZone fills the widget width */
+.floatingWidget .dropZone {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
 .floatingInputRow {
   position: relative;
   display: flex;
@@ -325,6 +377,20 @@
   flex-shrink: 0;
   width: 100%;
   pointer-events: all;
+}
+
+/* Thread indicator dot — shown when messages exist but panel is collapsed */
+.threadBadge {
+  position: absolute;
+  right: 54px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  pointer-events: none;
+  flex-shrink: 0;
 }
 
 /* ── Drag & drop zone ───────────────────────────────────────── */

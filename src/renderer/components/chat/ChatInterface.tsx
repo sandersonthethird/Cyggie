@@ -149,6 +149,18 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
     return unsub
   }, [isLoading])
 
+  // Escape collapses the floating panel
+  useEffect(() => {
+    if (!floating) return
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape' && floatingPanelOpen) {
+        setFloatingPanelOpen(false)
+      }
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [floating, floatingPanelOpen])
+
   // Close context dropdown on click outside
   useEffect(() => {
     if (!contextDropdownOpen) return
@@ -353,6 +365,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
     [handleSubmit]
   )
 
+  const hasThread = messages.length > 0
   const defaultPlaceholder = 'Ask anything…'
   const containerClass = fillHeight ? `${styles.container} ${styles.fillHeight}` : styles.container
 
@@ -434,6 +447,9 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
           disabled={isLoading}
           rows={1}
         />
+        {floating && hasThread && !floatingPanelOpen && (
+          <span className={styles.threadBadge} aria-hidden />
+        )}
         <button
           className={`${styles.sendBtn} ${isLoading ? styles.stopBtn : ''}`}
           onClick={isLoading ? handleStop : handleSubmit}
@@ -449,7 +465,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
     const showPanel = floatingPanelOpen && (messages.length > 0 || isLoading)
     return createPortal(
       <div className={styles.floatingRoot}>
-        {showPanel && (
+        <div className={`${styles.floatingWidget} ${showPanel ? styles.floatingWidgetExpanded : ''}`}>
           <div className={styles.floatingPanel}>
             <div className={styles.floatingPanelHeader}>
               <div className={styles.floatingPanelTitleWrap}>
@@ -497,9 +513,9 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
               <button
                 className={styles.floatingPanelClose}
                 onClick={() => setFloatingPanelOpen(false)}
-                title="Minimize"
+                title="Collapse"
               >
-                ✕
+                ▾
               </button>
             </div>
             <div className={styles.floatingMessages}>
@@ -507,8 +523,10 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
             </div>
             {error && <div className={`${styles.error} ${styles.floatingError}`}>{error}</div>}
           </div>
-        )}
-        {makeInputSection(styles.floatingInputRow)}
+          <div className={styles.floatingInputArea}>
+            {makeInputSection(styles.floatingInputRow)}
+          </div>
+        </div>
       </div>,
       document.body
     )
