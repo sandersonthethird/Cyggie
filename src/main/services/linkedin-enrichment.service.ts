@@ -236,7 +236,7 @@ Return JSON with exactly these fields:
 
   let rawText: string
   try {
-    rawText = await provider.complete(systemPrompt, userPrompt)
+    rawText = await provider.generateSummary(systemPrompt, userPrompt)
   } catch (err) {
     throw new LinkedInEnrichError('llm_failed', `LLM call failed: ${String(err)}`)
   }

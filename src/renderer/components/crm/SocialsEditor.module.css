@@ -10,7 +10,24 @@
   align-items: center;
 }
 
-.networkInput {
+.networkSelect {
+  width: 110px;
+  flex-shrink: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  color: var(--color-text);
+  background: var(--color-card-bg);
+  outline: none;
+  cursor: pointer;
+}
+
+.networkSelect:focus {
+  border-color: var(--color-primary);
+}
+
+.customNetworkInput {
   width: 90px;
   flex-shrink: 0;
   padding: 4px 6px;
@@ -22,7 +39,7 @@
   outline: none;
 }
 
-.networkInput:focus {
+.customNetworkInput:focus {
   border-color: var(--color-primary);
 }
 

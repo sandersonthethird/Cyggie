@@ -224,6 +224,7 @@
   min-height: 0;
   font-size: 14px;
   line-height: 1.6;
+  cursor: text;
 }
 
 .stateMsg {

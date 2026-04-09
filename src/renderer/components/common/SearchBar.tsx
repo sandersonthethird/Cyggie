@@ -24,7 +24,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
   const searchQuery = useAppStore((s) => s.searchQuery)
   const setSearchQuery = useAppStore((s) => s.setSearchQuery)
   const setSearchFilter = useAppStore((s) => s.setSearchFilter)
-  const [categorized, setCategorized] = useState<CategorizedSuggestions>({ people: [], companies: [], meetings: [], notes: [] })
+  const [categorized, setCategorized] = useState<CategorizedSuggestions>({ people: [], companies: [], contacts: [], meetings: [], notes: [] })
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [activeSuggestion, setActiveSuggestion] = useState(-1)
   const suggestRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -50,9 +50,10 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
   const entityQuery = (searchParams.get('q') || '').trim()
 
   const flatItems = useMemo(() => {
-    const items: { type: 'person' | 'company' | 'meeting' | 'note'; label: string; id?: string; domain?: string }[] = []
+    const items: { type: 'person' | 'company' | 'contact' | 'meeting' | 'note'; label: string; id?: string; domain?: string }[] = []
     for (const name of categorized.people) items.push({ type: 'person', label: name })
     for (const c of categorized.companies) items.push({ type: 'company', label: c.name, domain: c.domain })
+    for (const ct of categorized.contacts) items.push({ type: 'contact', label: ct.label, id: ct.id })
     for (const m of categorized.meetings) items.push({ type: 'meeting', label: m.title, id: m.id })
     for (const n of categorized.notes) items.push({ type: 'note', label: n.label, id: n.id })
     return items
@@ -86,15 +87,20 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
   useEffect(() => {
     if (suggestRef.current) clearTimeout(suggestRef.current)
     if (value.trim().length < 2) {
-      setCategorized({ people: [], companies: [], meetings: [], notes: [] })
+      setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [] })
       setShowSuggestions(false)
       return
     }
     suggestRef.current = setTimeout(async () => {
       try {
         const results = await api.invoke<CategorizedSuggestions>(IPC_CHANNELS.SEARCH_CATEGORIZED, value)
-        setCategorized(results)
-        const hasResults = results.people.length > 0 || results.companies.length > 0 || results.meetings.length > 0 || results.notes.length > 0
+        const contactNameSet = new Set(results.contacts.map((c) => normalizeLookup(c.label)))
+        const dedupedResults = {
+          ...results,
+          people: results.people.filter((name) => !contactNameSet.has(normalizeLookup(name))),
+        }
+        setCategorized(dedupedResults)
+        const hasResults = dedupedResults.people.length > 0 || results.companies.length > 0 || results.contacts.length > 0 || results.meetings.length > 0 || results.notes.length > 0
         setShowSuggestions(hasResults)
         if (hasResults) setShowFilterPanel(false)
         setActiveSuggestion(-1)
@@ -121,11 +127,16 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
 
   const handleSuggestionSelect = useCallback(async (item: typeof flatItems[number]) => {
     setShowSuggestions(false)
-    setCategorized({ people: [], companies: [], meetings: [], notes: [] })
+    setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [] })
     setActiveSuggestion(-1)
     setValue(item.label)
     setSearchQuery(item.label)
     setSearchFilter(null)
+
+    if (item.type === 'contact' && item.id) {
+      navigate(`/contact/${item.id}`)
+      return
+    }
 
     if (item.type === 'note' && item.id) {
       navigate(`/note/${item.id}`)
@@ -341,6 +352,27 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
                         />
                       )}
                       {company.name}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {categorized.contacts.length > 0 && (
+              <div className={styles.suggestionSection}>
+                <div className={styles.sectionHeader}>Contacts</div>
+                {categorized.contacts.map((ct) => {
+                  const i = idx++
+                  return (
+                    <div
+                      key={`contact-${ct.id}`}
+                      className={`${styles.suggestionItem} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
+                      onMouseDown={() => { void handleSuggestionSelect({ type: 'contact', label: ct.label, id: ct.id }) }}
+                      onMouseEnter={() => setActiveSuggestion(i)}
+                    >
+                      {ct.label}
+                      {ct.context && (
+                        <span className={styles.suggestionContext}> · {ct.context}</span>
+                      )}
                     </div>
                   )
                 })}

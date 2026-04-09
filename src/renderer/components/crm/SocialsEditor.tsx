@@ -11,6 +11,27 @@ interface SocialEntry {
   url: string
 }
 
+const PRESET_NETWORKS = ['LinkedIn', 'Twitter/X', 'GitHub', 'Instagram', 'Facebook', 'YouTube']
+
+const URL_TO_NETWORK: Record<string, string> = {
+  'linkedin.com': 'LinkedIn',
+  'twitter.com': 'Twitter/X',
+  'x.com': 'Twitter/X',
+  'github.com': 'GitHub',
+  'instagram.com': 'Instagram',
+  'facebook.com': 'Facebook',
+  'youtube.com': 'YouTube',
+}
+
+function detectNetwork(url: string): string | null {
+  try {
+    const host = new URL(url).hostname.replace('www.', '')
+    return URL_TO_NETWORK[host] ?? null
+  } catch {
+    return null
+  }
+}
+
 function parseJson(raw: string | null): SocialEntry[] {
   if (!raw) return []
   try {
@@ -51,6 +72,27 @@ export function SocialsEditor({ value, onSave }: SocialsEditorProps) {
     setEntries(next)
   }
 
+  // Mirrors removeEntry() pattern: construct next inline and call save(next) to avoid
+  // stale React state. Must NOT call updateEntry() then save(entries).
+  function handleNetworkChange(index: number, newNetwork: string) {
+    const next = entries.map((e, i) =>
+      i === index ? { ...e, network: newNetwork === 'Other' ? '' : newNetwork } : e
+    )
+    setEntries(next)
+    save(next)
+  }
+
+  function handleUrlChange(index: number, val: string) {
+    const entry = entries[index]
+    const detectedNetwork = entry.network === '' ? detectNetwork(val) : null
+    const next = entries.map((e, i) =>
+      i === index
+        ? { ...e, url: val, ...(detectedNetwork ? { network: detectedNetwork } : {}) }
+        : e
+    )
+    setEntries(next)
+  }
+
   function removeEntry(index: number) {
     const next = entries.filter((_, i) => i !== index)
     setEntries(next)
@@ -67,27 +109,46 @@ export function SocialsEditor({ value, onSave }: SocialsEditorProps) {
 
   return (
     <div className={styles.root}>
-      {entries.map((entry, i) => (
-        <div key={i} className={styles.entry}>
-          <input
-            className={styles.networkInput}
-            placeholder="Network"
-            value={entry.network}
-            onChange={(e) => updateEntry(i, 'network', e.target.value)}
-            onBlur={handleBlur}
-          />
-          <input
-            className={styles.urlInput}
-            placeholder="URL"
-            value={entry.url}
-            onChange={(e) => updateEntry(i, 'url', e.target.value)}
-            onBlur={handleBlur}
-          />
-          <button className={styles.removeBtn} onClick={() => removeEntry(i)} title="Remove">
-            ×
-          </button>
-        </div>
-      ))}
+      {entries.map((entry, i) => {
+        const isPreset = PRESET_NETWORKS.includes(entry.network)
+        const selectValue = entry.network === '' ? '' : isPreset ? entry.network : 'Other'
+        const showCustomInput = selectValue === 'Other'
+
+        return (
+          <div key={i} className={styles.entry}>
+            <select
+              className={styles.networkSelect}
+              value={selectValue}
+              onChange={(e) => handleNetworkChange(i, e.target.value)}
+            >
+              <option value="" disabled>Network</option>
+              {PRESET_NETWORKS.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+              <option value="Other">Other</option>
+            </select>
+            {showCustomInput && (
+              <input
+                className={styles.customNetworkInput}
+                placeholder="Network name"
+                value={entry.network}
+                onChange={(e) => updateEntry(i, 'network', e.target.value)}
+                onBlur={handleBlur}
+              />
+            )}
+            <input
+              className={styles.urlInput}
+              placeholder="URL"
+              value={entry.url}
+              onChange={(e) => handleUrlChange(i, e.target.value)}
+              onBlur={handleBlur}
+            />
+            <button className={styles.removeBtn} onClick={() => removeEntry(i)} title="Remove">
+              ×
+            </button>
+          </div>
+        )
+      })}
       <button className={styles.addBtn} onClick={addEntry} disabled={saving}>
         + Add social
       </button>

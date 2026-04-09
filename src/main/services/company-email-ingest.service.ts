@@ -630,6 +630,13 @@ async function _ingestCompanyEmails(companyId: string, signal: AbortSignal): Pro
   }
 
   if (queries.length === 0) {
+    // Check whether contacts are linked but just missing email addresses, so we can give a clearer message.
+    const linkedContactCount = (db.prepare(
+      `SELECT COUNT(*) AS cnt FROM org_company_contacts WHERE company_id = ?`
+    ).get(companyId) as { cnt: number }).cnt
+    if (linkedContactCount > 0) {
+      throw new Error('Linked contacts have no email addresses. Add an email to at least one contact, or set a primary domain on this company, to enable email sync.')
+    }
     throw new Error('No contacts or domain found for this company. Link contacts or set a primary domain to enable email sync.')
   }
 

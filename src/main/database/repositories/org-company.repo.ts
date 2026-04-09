@@ -589,14 +589,16 @@ export function listPipelineCompanies(filter?: {
     params.push(like, like)
   }
   if (filter?.passExpiryBefore) {
-    // Exclude pass-stage companies whose most recent Pass decision is older than the cutoff.
-    // Companies with no Pass decision log are kept (MAX returns NULL, NULL < x is false).
+    // Exclude pass-stage companies moved to pass more than N days ago.
+    // Stage changes are auto-logged as 'Stage Change'; the most recent one for a pass-stage
+    // company is when it entered pass. Companies with no stage-change log are kept (NULL < x
+    // is false in SQLite).
     conditions.push(`NOT (
       c.pipeline_stage = 'pass'
       AND (
         SELECT MAX(cdl.decision_date)
         FROM company_decision_logs cdl
-        WHERE cdl.company_id = c.id AND cdl.decision_type = 'Pass'
+        WHERE cdl.company_id = c.id AND cdl.decision_type = 'Stage Change'
       ) < ?
     )`)
     params.push(filter.passExpiryBefore)

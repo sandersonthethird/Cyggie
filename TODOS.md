@@ -1,5 +1,19 @@
 # TODOS
 
+## P3 — AI Chat
+
+### Global chat search observability
+**What:** Log which search strategy (Strategy 0 AND co-person, Strategy 1 FTS, Strategy 2 title, Strategy 3 speaker) surfaced each meeting in `queryGlobal`.
+**Why:** Currently there's no way to understand why specific meetings were or weren't returned. When users report "it didn't find the right meeting", the only recourse is guessing which strategy failed.
+**Pros:** Makes future search quality regressions diagnosable without code changes. ~10 lines.
+**Cons:** Logging in the main process goes to stdout/electron log — not visible in the renderer without additional tooling.
+**Context:** In `src/main/llm/chat.ts`, `queryGlobal` collects results from 4 strategies into `searchResults[]`. Tagging each entry with its source strategy (e.g., `strategy: 'and-person' | 'fts' | 'title' | 'speaker'`) and logging the final 15 in a `console.debug` call (dev only, guarded by `process.env.NODE_ENV === 'development'`) would give full visibility. The `searchResults` type would need a `strategy` field.
+**Effort:** S
+**Priority:** P3
+**Depends on:** None.
+
+---
+
 ## P3 — Companies
 
 ### Memo version history UI

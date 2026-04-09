@@ -76,6 +76,7 @@ export interface CompanySuggestion {
 export interface CategorizedSuggestions {
   people: string[]
   companies: CompanySuggestion[]
+  contacts: { id: string; label: string; context?: string }[]
   meetings: { id: string; title: string }[]
   notes: { id: string; label: string; context?: string }[]
 }

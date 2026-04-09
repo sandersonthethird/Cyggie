@@ -27,7 +27,8 @@ const STOP_WORDS = new Set([
   'could', 'should', 'can', 'may', 'might', 'shall', 'there', 'then',
   'than', 'also', 'just', 'very', 'really', 'some', 'any', 'all',
   'each', 'every', 'both', 'few', 'more', 'most', 'other', 'such',
-  'only', 'same', 'tell', 'know', 'think', 'said'
+  'only', 'same', 'tell', 'know', 'think', 'said',
+  'find', 'show', 'list', 'give', 'search', 'between', 'meeting', 'meetings', 'attended', 'together'
 ])
 
 /** Extract meaningful keywords from a natural language question */
@@ -74,6 +75,23 @@ export function searchBySpeaker(keywords: string[], limit = 10): { id: string; t
     .prepare(
       `SELECT id, title, date FROM meetings
        WHERE ${conditions.join(' OR ')}
+       ORDER BY date DESC LIMIT ?`
+    )
+    .all(...params, limit) as { id: string; title: string; date: string }[]
+}
+
+/** Search meetings where ALL provided names appear in speaker/attendee fields (AND logic) */
+export function searchByAllSpeakers(names: string[], limit = 20): { id: string; title: string; date: string }[] {
+  const db = getDatabase()
+  if (names.length < 2) return []
+
+  const conditions = names.map(() => '(speaker_map LIKE ? OR attendees LIKE ?)')
+  const params = names.flatMap((k) => [`%${k}%`, `%${k}%`])
+
+  return db
+    .prepare(
+      `SELECT id, title, date FROM meetings
+       WHERE ${conditions.join(' AND ')}
        ORDER BY date DESC LIMIT ?`
     )
     .all(...params, limit) as { id: string; title: string; date: string }[]
@@ -792,7 +810,40 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     .sort((a, b) => a.name.localeCompare(b.name))
     .slice(0, limit)
 
-  // 4. Notes: FTS5 prefix search with inline company/contact context
+  // 4. Contacts: name or email match (same try/catch pattern as notes FTS below)
+  let contactSuggestions: { id: string; label: string; context?: string }[] = []
+  try {
+    const contactRows = db
+      .prepare(`
+        SELECT c.id, c.full_name,
+               oc.canonical_name AS company_name,
+               c.title AS job_title
+        FROM contacts c
+        LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
+        WHERE c.full_name IS NOT NULL
+          AND (c.full_name LIKE ? OR c.email LIKE ?)
+        ORDER BY c.full_name
+        LIMIT ?
+      `)
+      .all(`%${prefix}%`, `%${prefix}%`, limit) as {
+        id: string
+        full_name: string
+        company_name: string | null
+        job_title: string | null
+      }[]
+
+    contactSuggestions = contactRows.map((c) => ({
+      id: c.id,
+      label: c.full_name,
+      context: c.job_title && c.company_name
+        ? `${c.job_title} · ${c.company_name}`
+        : (c.company_name ?? c.job_title ?? undefined),
+    }))
+  } catch {
+    // DB error — return no contacts, other sections unaffected
+  }
+
+  // 5. Notes: FTS5 prefix search with inline company/contact context
   let noteSuggestions: { id: string; label: string; context?: string }[] = []
   const ftsQuery = sanitizeFtsQuery(prefix)
   if (ftsQuery) {
@@ -834,6 +885,7 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
   return {
     people: [...people].sort().slice(0, limit),
     companies: companySuggestions,
+    contacts: contactSuggestions,
     meetings: meetingRows,
     notes: noteSuggestions,
   }

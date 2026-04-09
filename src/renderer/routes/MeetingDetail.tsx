@@ -687,20 +687,22 @@ export default function MeetingDetail() {
   const handleOpenCompanyDetail = useCallback(async (company: CompanySuggestion) => {
     if (!id) return
     try {
+      const suggestionKey = companySuggestionKey(company)
+      const currentEntityType = companyTagSelections[suggestionKey] ?? company.entityType ?? 'unknown'
       const resolved = await api.invoke<{ id: string }>(
         IPC_CHANNELS.COMPANY_TAG_FROM_MEETING,
         id,
         {
           canonicalName: company.name,
           primaryDomain: company.domain || null,
-          entityType: company.entityType || 'unknown'
+          entityType: currentEntityType
         }
       )
       navigate(`/company/${resolved.id}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
     } catch (err) {
       console.error('[MeetingDetail] Failed to open company detail:', err)
     }
-  }, [id, navigate])
+  }, [id, navigate, data, companyTagSelections])
 
 
   const handleStartRecording = useCallback(async () => {

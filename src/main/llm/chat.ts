@@ -2,7 +2,7 @@ import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { getProvider } from './provider-factory'
 import * as meetingRepo from '../database/repositories/meeting.repo'
-import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker } from '../database/repositories/search.repo'
+import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker, searchByAllSpeakers } from '../database/repositories/search.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
 import type { ChatAttachment } from '../../shared/types/chat'
 
@@ -134,11 +134,28 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
   const seenIds = new Set<string>()
   const searchResults: { meetingId: string; title: string; date: string; snippet: string; rank: number }[] = []
 
+  // Extract capitalized words that survived stop-word filtering — likely person names
+  const keywordSet = new Set(keywords)
+  const potentialNames = (question.match(/\b[A-Z][a-z]{1,}\b/g) ?? [])
+    .filter(n => keywordSet.has(n.toLowerCase()))
+    .map(n => n.toLowerCase())
+
+  // Strategy 0: AND-based attendee co-occurrence — prioritize meetings where ALL named people appear
+  if (potentialNames.length >= 2) {
+    const coAttendeeMatches = searchByAllSpeakers(potentialNames, 20)
+    for (const m of coAttendeeMatches) {
+      if (!seenIds.has(m.id)) {
+        seenIds.add(m.id)
+        searchResults.push({ meetingId: m.id, title: m.title, date: m.date, snippet: '', rank: 0 })
+      }
+    }
+  }
+
   // Strategy 1: OR-based FTS search — find meetings containing ANY keyword
   if (keywords.length > 0) {
     try {
       const orQuery = buildOrQuery(keywords)
-      const ftsResults = searchMeetings(orQuery, 10, true)
+      const ftsResults = searchMeetings(orQuery, 20, true)
       for (const r of ftsResults) {
         if (!seenIds.has(r.meetingId)) {
           seenIds.add(r.meetingId)
@@ -152,7 +169,7 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
 
   // Strategy 2: Title search — catches meetings whose title matches but may not be FTS-indexed
   if (keywords.length > 0) {
-    const titleMatches = searchByTitle(keywords, 10)
+    const titleMatches = searchByTitle(keywords, 20)
     for (const m of titleMatches) {
       if (!seenIds.has(m.id)) {
         seenIds.add(m.id)
@@ -163,7 +180,7 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
 
   // Strategy 3: Speaker/attendee name search
   if (keywords.length > 0) {
-    const speakerMatches = searchBySpeaker(keywords, 10)
+    const speakerMatches = searchBySpeaker(keywords, 20)
     for (const m of speakerMatches) {
       if (!seenIds.has(m.id)) {
         seenIds.add(m.id)
@@ -179,7 +196,7 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
   // Build context from relevant meetings
   const contextParts: string[] = []
 
-  for (const result of searchResults.slice(0, 8)) {
+  for (const result of searchResults.slice(0, 15)) {
     const meeting = meetingRepo.getMeeting(result.meetingId)
     if (!meeting) continue
 
@@ -187,6 +204,9 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
     parts.push(`### "${meeting.title}" (${new Date(meeting.date).toLocaleDateString()})`)
     if (meeting.speakerMap && Object.keys(meeting.speakerMap).length > 0) {
       parts.push(`Participants: ${Object.values(meeting.speakerMap).join(', ')}`)
+    }
+    if (meeting.attendees && meeting.attendees.length > 0) {
+      parts.push(`Attendee emails: ${meeting.attendees.join(', ')}`)
     }
     parts.push('')
 

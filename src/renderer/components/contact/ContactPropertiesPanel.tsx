@@ -143,6 +143,19 @@ function formatPinnedValue(value: unknown, type: string, options?: { value: stri
   }
 }
 
+function filteredOtherSocials(otherSocials: string | null, linkedinUrl: string | null): string | null {
+  if (!linkedinUrl || !otherSocials) return otherSocials
+  try {
+    const obj = JSON.parse(otherSocials) as Record<string, string>
+    const filtered = Object.fromEntries(
+      Object.entries(obj).filter(([k]) => k.toLowerCase() !== 'linkedin')
+    )
+    return Object.keys(filtered).length > 0 ? JSON.stringify(filtered) : null
+  } catch {
+    return otherSocials
+  }
+}
+
 export function ContactPropertiesPanel({
   contact,
   lastTouchpoint,
@@ -483,6 +496,20 @@ export function ContactPropertiesPanel({
       )
     } catch (err) {
       console.error('[ContactPropertiesPanel] saveEmail failed:', err)
+    }
+  }
+
+  async function addEmail(email: string) {
+    const isFirst = contact.emails.length === 0
+    try {
+      await withOptimisticUpdate(
+        () => onUpdate({ emails: [...contact.emails, email], ...(isFirst ? { email } : {}) }),
+        () => window.api.invoke(IPC_CHANNELS.CONTACT_ADD_EMAIL, contact.id, email),
+        () => onUpdate({ emails: contact.emails, ...(isFirst ? { email: contact.email } : {}) }),
+        (updated) => onUpdate(updated),
+      )
+    } catch (err) {
+      console.error('[ContactPropertiesPanel] addEmail failed:', err)
     }
   }
 
@@ -883,7 +910,6 @@ export function ContactPropertiesPanel({
             {contact.title && fieldSources?.title && (
               <span className={styles.sourceBadge} title={`From: ${fieldSources.title.meetingTitle}`}>📋</span>
             )}
-            {contact.title && contact.primaryCompany && !isEditing && <span className={styles.sep}>@</span>}
             {isEditing ? (
               <div className={styles.companyEditWrapper}>
                 <input
@@ -1080,6 +1106,24 @@ export function ContactPropertiesPanel({
                   )}
                 </div>
               ))}
+              {isEditing && (
+                <div className={styles.emailRow}>
+                  <input
+                    key={`new-email-${contact.emails.length}`}
+                    className={styles.emailInput}
+                    defaultValue=""
+                    type="email"
+                    placeholder="Add email…"
+                    onBlur={(e) => {
+                      const val = e.target.value.trim()
+                      if (val) void addEmail(val)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    }}
+                  />
+                </div>
+              )}
               {renderHardcodedSection([
                 { key: 'phone', visible: showField('phone', contact.phone), render: () => (
                   <HideableRow fieldKey="phone" isEmpty={!contact.phone}>
@@ -1089,7 +1133,7 @@ export function ContactPropertiesPanel({
                     </div>
                   </HideableRow>
                 )},
-                { key: 'linkedinUrl', visible: showField('linkedinUrl', contact.linkedinUrl), render: () => (
+                { key: 'linkedinUrl', visible: isEditing || showField('linkedinUrl', contact.linkedinUrl), render: () => (
                   <HideableRow fieldKey="linkedinUrl" isEmpty={!contact.linkedinUrl}>
                     <div className={styles.propertyWithBadge}>
                       <PropertyRow label="LinkedIn" value={contact.linkedinUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinUrl', v)} />
@@ -1237,7 +1281,7 @@ export function ContactPropertiesPanel({
                 <>
                   <div className={styles.socialsLabel}>Other Socials</div>
                   <SocialsEditor
-                    value={contact.otherSocials}
+                    value={filteredOtherSocials(contact.otherSocials, contact.linkedinUrl)}
                     onSave={(json) => save('otherSocials', json)}
                   />
                 </>
@@ -1364,7 +1408,13 @@ export function ContactPropertiesPanel({
             <>
               {linkedinError && (
                 <span className={styles.linkedinErrorMsg} title={linkedinError.message}>
-                  Enrichment failed
+                  {linkedinError.code === 'no_data' ? 'No profile data found' :
+                   linkedinError.code === 'profile_timeout' ? 'Profile load timed out' :
+                   linkedinError.code === 'profile_load_failed' ? 'Failed to load profile' :
+                   linkedinError.code === 'llm_failed' ? 'Extraction failed' :
+                   linkedinError.code === 'llm_bad_json' ? 'Extraction failed' :
+                   linkedinError.code === 'no_linkedin_url' ? 'No LinkedIn URL set' :
+                   'Enrichment failed'}
                 </span>
               )}
               <button

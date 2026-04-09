@@ -275,8 +275,10 @@ export function registerContactHandlers(): void {
         return { success: true, contact: result.contact, summary: result.summary }
       } catch (err) {
         if (err instanceof LinkedInEnrichError) {
+          console.error(`[LinkedIn Enrich] ${err.code}:`, err.message)
           return { success: false, errorCode: err.code, message: err.message }
         }
+        console.error('[LinkedIn Enrich] Unexpected error:', err)
         return { success: false, errorCode: 'unknown', message: toErrorMessage(err) }
       } finally {
         linkedinEnrichInFlight = false
