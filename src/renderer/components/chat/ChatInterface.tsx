@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+
+// Stable plugin array — used on every ReactMarkdown instance to ensure GFM
+// features (tables, strikethrough, task lists) are consistently enabled.
+const MARKDOWN_PLUGINS = [remarkGfm]
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatStore } from '../../stores/chat.store'
 import styles from './ChatInterface.module.css'
@@ -124,6 +129,11 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
   const [isLoading, setIsLoading] = useState(false)
   const [streamedContent, setStreamedContent] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // Floating widget state machine:
+  //   collapsed → input pill at bottom of content area
+  //   expanded  → centered modal over dimmed backdrop (left=sidebar-width)
+  //   Opened by: handleSubmit, onFocus (messages exist)
+  //   Closed by: ✕ button, Escape key, backdrop click
   const [floatingPanelOpen, setFloatingPanelOpen] = useState(false)
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
@@ -405,7 +415,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
           </span>
           <div className={styles.messageContent}>
             {msg.role === 'assistant'
-              ? <ReactMarkdown>{msg.content}</ReactMarkdown>
+              ? <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>{msg.content}</ReactMarkdown>
               : <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>}
           </div>
         </div>
@@ -415,7 +425,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
         <div className={styles.message}>
           <span className={`${styles.messageRole} ${styles.assistant}`}>AI</span>
           <div className={`${styles.messageContent} ${styles.streaming}`}>
-            <ReactMarkdown>{streamedContent}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>{streamedContent}</ReactMarkdown>
           </div>
         </div>
       )}
@@ -497,8 +507,14 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
   if (floating) {
     const showPanel = floatingPanelOpen && (messages.length > 0 || isLoading)
     return createPortal(
-      <div className={styles.floatingRoot}>
-        <div className={`${styles.floatingWidget} ${showPanel ? styles.floatingWidgetExpanded : ''}`}>
+      <div
+        className={`${styles.floatingRoot} ${showPanel ? styles.floatingRootExpanded : ''}`}
+        onClick={showPanel ? () => setFloatingPanelOpen(false) : undefined}
+      >
+        <div
+          className={`${styles.floatingWidget} ${showPanel ? styles.floatingWidgetExpanded : ''}`}
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className={styles.floatingPanel}>
             <div className={styles.floatingPanelHeader}>
               <div className={styles.floatingPanelTitleWrap}>
@@ -546,9 +562,9 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
               <button
                 className={styles.floatingPanelClose}
                 onClick={() => setFloatingPanelOpen(false)}
-                title="Collapse"
+                title="Close"
               >
-                ▾
+                ✕
               </button>
             </div>
             <div className={styles.floatingMessages}>

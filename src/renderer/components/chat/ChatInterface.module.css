@@ -124,6 +124,39 @@
   margin: 8px 0;
 }
 
+/* ── Tables ─────────────────────────────────────────────────── */
+
+.messageContent table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 8px 0 12px;
+}
+
+.messageContent th,
+.messageContent td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.messageContent th {
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-tertiary);
+  border-bottom: 2px solid var(--color-border, #e5e7eb);
+}
+
+.messageContent tr:last-child td {
+  border-bottom: none;
+}
+
+.messageContent tbody tr:hover {
+  background: var(--color-bg-secondary, #f9fafb);
+}
+
 .messageContent.streaming {
   opacity: 0.9;
 }
@@ -241,6 +274,16 @@
   pointer-events: none;
 }
 
+/* Modal state: full-height backdrop over the content area (sidebar stays accessible) */
+.floatingRoot.floatingRootExpanded {
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+  justify-content: center;
+  pointer-events: all;
+}
+
 /*
  * Unified widget shell — always mounted so the textarea DOM node is never
  * destroyed (preserves focus/cursor across expand/collapse).
@@ -253,15 +296,21 @@
  * Border-radius is applied per-child instead.
  */
 .floatingWidget {
-  width: 620px;
+  width: 560px;
   max-width: calc(100% - 40px);
-  background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border);
+  background: #ffffff;  /* explicit white — never transparent, never overridden by --color-surface */
+  border: 1px solid rgba(0, 0, 0, 0.18);
   border-radius: 16px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.10);
   pointer-events: all;
   display: flex;
   flex-direction: column;
+}
+
+/* Modal mode: wider and taller when panel is open */
+.floatingRoot.floatingRootExpanded .floatingWidget {
+  width: 620px;
+  max-height: 75vh;
 }
 
 .floatingPanel {
@@ -275,6 +324,11 @@
 
 .floatingWidgetExpanded .floatingPanel {
   max-height: 55vh;
+}
+
+/* In modal mode the panel can use more vertical space */
+.floatingRoot.floatingRootExpanded .floatingWidgetExpanded .floatingPanel {
+  max-height: calc(75vh - 64px);
 }
 
 .floatingPanelHeader {
@@ -356,7 +410,7 @@
 /* Widget provides the shadow — remove the input's own */
 .floatingWidget .input {
   box-shadow: none;
-  background: transparent;
+  /* No background override — input inherits from widget shell (white) */
 }
 
 .floatingWidget .input:focus {
@@ -518,12 +572,16 @@
   border: 1px solid var(--color-border, #e5e7eb);
   border-radius: 20px;
   margin-bottom: 4px;
+  align-self: flex-start; /* prevents flex parent from stretching to full width */
 }
 
 .entityChipLabel {
   font-size: 12px;
   color: var(--color-text-secondary, #666);
   white-space: nowrap;
+  max-width: 240px; /* caps long entity names */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .entityChipDismiss {

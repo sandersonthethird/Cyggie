@@ -1,5 +1,19 @@
 # TODOS
 
+## P2 — AI Chat
+
+### Contextual suggested questions in chat
+**What:** Show 3 contextual AI suggestions when user focuses the chat input (before they type anything).
+**Why:** Lowers friction — users see what they can ask; matches the design mockup.
+**Pros:** High engagement lift; suggestions can be pre-generated when the page loads.
+**Cons:** Requires per-context suggestion generation (LLM call on first focus).
+**Context:** Add `suggestionsState` to `ChatInterface`, fire an IPC call on first focus if suggestions are empty. Show a `SuggestionsList` inside the widget before the panel opens (i.e., when the input is focused but no question has been asked yet). Suggestions should be context-aware — different for a company page vs. meeting detail vs. dashboard.
+**Effort:** L
+**Priority:** P2
+**Depends on:** Chat modal redesign (this PR) merged first.
+
+---
+
 ## P3 — AI Chat
 
 ### Global chat search observability
