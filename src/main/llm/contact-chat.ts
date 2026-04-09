@@ -1,10 +1,9 @@
-import { BrowserWindow } from 'electron'
-import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as contactNotesRepo from '../database/repositories/contact-notes.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { readSummary, readTranscript } from '../storage/file-manager'
 import { getProvider } from './provider-factory'
+import { sendProgress } from './send-progress'
 
 let contactChatAbortController: AbortController | null = null
 
@@ -13,12 +12,6 @@ export function abortContactChat(): void {
   contactChatAbortController = null
 }
 
-
-function sendProgress(text: string): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send(IPC_CHANNELS.CHAT_PROGRESS, text)
-  }
-}
 
 const SYSTEM_PROMPT = `You are a helpful CRM assistant.
 You answer questions about a specific contact using all available context:

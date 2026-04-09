@@ -1,11 +1,10 @@
-import { BrowserWindow } from 'electron'
-import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { getFlaggedFileIds } from '../database/repositories/company-file-flags.repo'
 import { readSummary, readTranscript, readLocalFile } from '../storage/file-manager'
 import { basename } from 'path'
 import { getProvider } from './provider-factory'
+import { sendProgress } from './send-progress'
 
 let companyChatAbortController: AbortController | null = null
 
@@ -14,12 +13,6 @@ export function abortCompanyChat(): void {
   companyChatAbortController = null
 }
 
-
-function sendProgress(text: string): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send(IPC_CHANNELS.CHAT_PROGRESS, text)
-  }
-}
 
 const SYSTEM_PROMPT = `You are a helpful research assistant for a venture capital firm.
 You answer questions about a specific portfolio company using all available context:
