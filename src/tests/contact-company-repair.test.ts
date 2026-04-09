@@ -49,7 +49,8 @@ function buildRepairDb(): Database.Database {
     CREATE TABLE org_companies (
       id TEXT PRIMARY KEY,
       canonical_name TEXT NOT NULL DEFAULT '',
-      primary_domain TEXT
+      primary_domain TEXT,
+      normalized_name TEXT UNIQUE
     );
     CREATE TABLE contacts (
       id TEXT PRIMARY KEY,
@@ -119,16 +120,99 @@ function buildEnrichDb(): Database.Database {
       alias_type TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE email_company_links (
+      message_id TEXT NOT NULL,
+      company_id TEXT NOT NULL,
+      PRIMARY KEY (message_id, company_id)
+    );
+    CREATE TABLE notes (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      content TEXT NOT NULL DEFAULT '',
+      company_id TEXT,
+      contact_id TEXT,
+      is_pinned INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE industries (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE org_company_industries (
+      company_id TEXT NOT NULL,
+      industry_id TEXT NOT NULL,
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (company_id, industry_id)
+    );
+    CREATE TABLE org_company_themes (
+      company_id TEXT NOT NULL,
+      theme_id TEXT NOT NULL,
+      relevance_score REAL NOT NULL DEFAULT 0,
+      PRIMARY KEY (company_id, theme_id)
+    );
+    CREATE TABLE themes (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL
+    );
+    CREATE TABLE company_investors (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL,
+      investor_company_id TEXT NOT NULL,
+      investor_type TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
     -- Additional columns org_companies needs for createOrgCompany
   `)
   db.exec(`
     -- Expand org_companies to full schema for createOrgCompany writes
-    ALTER TABLE org_companies ADD COLUMN normalized_name TEXT;
+    ALTER TABLE org_companies ADD COLUMN description TEXT;
     ALTER TABLE org_companies ADD COLUMN website_url TEXT;
+    ALTER TABLE org_companies ADD COLUMN city TEXT;
+    ALTER TABLE org_companies ADD COLUMN state TEXT;
+    ALTER TABLE org_companies ADD COLUMN stage TEXT;
+    ALTER TABLE org_companies ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+    ALTER TABLE org_companies ADD COLUMN crm_provider TEXT;
+    ALTER TABLE org_companies ADD COLUMN crm_company_id TEXT;
     ALTER TABLE org_companies ADD COLUMN entity_type TEXT NOT NULL DEFAULT 'unknown';
     ALTER TABLE org_companies ADD COLUMN include_in_companies_view INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE org_companies ADD COLUMN classification_source TEXT NOT NULL DEFAULT 'auto';
     ALTER TABLE org_companies ADD COLUMN classification_confidence REAL;
+    ALTER TABLE org_companies ADD COLUMN priority TEXT;
+    ALTER TABLE org_companies ADD COLUMN post_money_valuation REAL;
+    ALTER TABLE org_companies ADD COLUMN raise_size REAL;
+    ALTER TABLE org_companies ADD COLUMN round TEXT;
+    ALTER TABLE org_companies ADD COLUMN pipeline_stage TEXT;
+    ALTER TABLE org_companies ADD COLUMN founding_year INTEGER;
+    ALTER TABLE org_companies ADD COLUMN employee_count_range TEXT;
+    ALTER TABLE org_companies ADD COLUMN hq_address TEXT;
+    ALTER TABLE org_companies ADD COLUMN linkedin_company_url TEXT;
+    ALTER TABLE org_companies ADD COLUMN twitter_handle TEXT;
+    ALTER TABLE org_companies ADD COLUMN crunchbase_url TEXT;
+    ALTER TABLE org_companies ADD COLUMN angellist_url TEXT;
+    ALTER TABLE org_companies ADD COLUMN sector TEXT;
+    ALTER TABLE org_companies ADD COLUMN target_customer TEXT;
+    ALTER TABLE org_companies ADD COLUMN business_model TEXT;
+    ALTER TABLE org_companies ADD COLUMN product_stage TEXT;
+    ALTER TABLE org_companies ADD COLUMN revenue_model TEXT;
+    ALTER TABLE org_companies ADD COLUMN arr REAL;
+    ALTER TABLE org_companies ADD COLUMN burn_rate REAL;
+    ALTER TABLE org_companies ADD COLUMN runway_months REAL;
+    ALTER TABLE org_companies ADD COLUMN last_funding_date TEXT;
+    ALTER TABLE org_companies ADD COLUMN total_funding_raised REAL;
+    ALTER TABLE org_companies ADD COLUMN lead_investor TEXT;
+    ALTER TABLE org_companies ADD COLUMN co_investors TEXT;
+    ALTER TABLE org_companies ADD COLUMN source_type TEXT;
+    ALTER TABLE org_companies ADD COLUMN source_entity_type TEXT;
+    ALTER TABLE org_companies ADD COLUMN source_entity_id TEXT;
+    ALTER TABLE org_companies ADD COLUMN relationship_owner TEXT;
+    ALTER TABLE org_companies ADD COLUMN deal_source TEXT;
+    ALTER TABLE org_companies ADD COLUMN warm_intro_source TEXT;
+    ALTER TABLE org_companies ADD COLUMN referral_contact_id TEXT;
+    ALTER TABLE org_companies ADD COLUMN next_followup_date TEXT;
+    ALTER TABLE org_companies ADD COLUMN field_sources TEXT;
+    ALTER TABLE org_companies ADD COLUMN created_by_user_id TEXT;
+    ALTER TABLE org_companies ADD COLUMN updated_by_user_id TEXT;
     ALTER TABLE org_companies ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'));
     ALTER TABLE org_companies ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));
   `)

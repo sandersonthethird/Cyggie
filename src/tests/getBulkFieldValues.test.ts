@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { runCustomFieldDefinitionsMigration } from '../main/database/migrations/039-custom-field-definitions'
 import { runCustomFieldValuesMigration } from '../main/database/migrations/040-custom-field-values'
+import { runCustomFieldSectionMigration } from '../main/database/migrations/049-custom-field-section'
 
 let testDb: Database.Database
 
@@ -23,6 +24,7 @@ function makeTestDb(): Database.Database {
   `)
   runCustomFieldDefinitionsMigration(db)
   runCustomFieldValuesMigration(db)
+  runCustomFieldSectionMigration(db)
   return db
 }
 

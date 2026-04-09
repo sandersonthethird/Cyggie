@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { runUnifiedNotesMigration } from '../main/database/migrations/052-unified-notes'
 import { runNotesFts5Migration } from '../main/database/migrations/054-notes-fts5'
+import { runNotesFolderPathMigration } from '../main/database/migrations/057-notes-folder-path'
 
 let testDb: Database.Database
 
@@ -44,6 +45,7 @@ function buildDb(): Database.Database {
     );
   `)
   runUnifiedNotesMigration(db)
+  runNotesFolderPathMigration(db)
   runNotesFts5Migration(db)
   return db
 }
@@ -73,6 +75,7 @@ describe('migration 054 — notes FTS5', () => {
       CREATE TABLE companies (domain TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '');
     `)
     runUnifiedNotesMigration(db)
+    runNotesFolderPathMigration(db)
     // Insert a note BEFORE running FTS5 migration
     db.prepare(`
       INSERT INTO notes (id, title, content, is_pinned, created_at, updated_at)

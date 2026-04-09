@@ -53,6 +53,22 @@ function makeDb(): Database.Database {
       id TEXT PRIMARY KEY,
       full_name TEXT
     );
+
+    CREATE TABLE email_threads (
+      id TEXT PRIMARY KEY,
+      provider_thread_id TEXT,
+      account_id TEXT,
+      subject TEXT,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE email_accounts (
+      id TEXT PRIMARY KEY,
+      account_email TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
   return db
 }

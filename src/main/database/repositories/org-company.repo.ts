@@ -130,7 +130,9 @@ function getRegistrableDomain(domain: string): string {
   const tld = labels[labels.length - 1]
   const secondLevel = labels[labels.length - 2]
   if (tld.length === 2 && COMMON_SECOND_LEVEL_TLDS.has(secondLevel) && labels.length >= 3) {
-  return labels.slice(-3).join('.')
+    return labels.slice(-3).join('.')
+  }
+  return labels.slice(-2).join('.')
 }
 
 const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
@@ -158,8 +160,6 @@ function compareDuplicateCompanies(a: CompanyDuplicateSummary, b: CompanyDuplica
   const bName = (b.canonicalName || '').trim().toLowerCase()
   if (aName !== bName) return aName.localeCompare(bName)
   return a.id.localeCompare(b.id)
-}
-  return labels.slice(-2).join('.')
 }
 
 function getDomainLookupCandidates(domain: string): string[] {

@@ -43,11 +43,14 @@ vi.mock('../main/database/connection', () => ({
 const mockGetContact = vi.fn()
 const mockUpdateContact = vi.fn()
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
-  getContact: (...args: unknown[]) => mockGetContact(...args),
-  updateContact: (...args: unknown[]) => mockUpdateContact(...args),
-  listPastEmployeeContacts: vi.fn(),
-}))
+vi.mock('../main/database/repositories/contact.repo', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../main/database/repositories/contact.repo')>()
+  return {
+    ...actual,
+    getContact: (...args: unknown[]) => mockGetContact(...args),
+    updateContact: (...args: unknown[]) => mockUpdateContact(...args),
+  }
+})
 
 // ─── Mock org-company repo ────────────────────────────────────────────────────
 
@@ -64,6 +67,7 @@ const mockLLMComplete = vi.fn()
 vi.mock('../main/llm/provider-factory', () => ({
   getProvider: vi.fn().mockReturnValue({
     complete: (...args: unknown[]) => mockLLMComplete(...args),
+    generateSummary: (...args: unknown[]) => mockLLMComplete(...args),
     isConfigured: vi.fn().mockReturnValue(true),
   }),
 }))
@@ -107,6 +111,7 @@ function makeSuccessLLMResponse(overrides: Record<string, unknown> = {}): string
 
 const makeMockProvider = (response: string) => ({
   complete: vi.fn().mockResolvedValue(response),
+  generateSummary: vi.fn().mockResolvedValue(response),
   isConfigured: vi.fn().mockReturnValue(true),
 })
 
@@ -470,6 +475,10 @@ describe('listPastEmployeeContacts', () => {
           crm_contact_id TEXT,
           crm_provider TEXT,
           work_history TEXT,
+          education_history TEXT,
+          linkedin_headline TEXT,
+          linkedin_skills TEXT,
+          linkedin_enriched_at TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );

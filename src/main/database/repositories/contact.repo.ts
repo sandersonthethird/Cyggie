@@ -3123,7 +3123,7 @@ export function listSuspectedDuplicateContacts(limitGroups = 30): ContactDuplica
       SELECT DISTINCT normalized_name
       FROM contacts
       WHERE normalized_name IS NOT NULL AND TRIM(normalized_name) <> ''
-        AND id NOT IN (${exactGroupedIds.size > 0 ? [...exactGroupedIds].map(() => '?').join(', ') : 'SELECT NULL'})
+        ${exactGroupedIds.size > 0 ? `AND id NOT IN (${[...exactGroupedIds].map(() => '?').join(', ')})` : ''}
     `)
     .all(...exactGroupedIds) as Array<{ normalized_name: string }>
 

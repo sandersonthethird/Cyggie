@@ -19,12 +19,15 @@ function makeContact(overrides: Partial<ContactSummary>): ContactSummary {
     fullName: 'Test User',
     firstName: 'Test',
     lastName: 'User',
+    normalizedName: 'test user',
     email: null,
     title: null,
     contactType: null,
     primaryCompanyId: null,
     primaryCompanyName: null,
     linkedinUrl: null,
+    crmContactId: null,
+    crmProvider: null,
     lastTouchpoint: null,
     meetingCount: 0,
     emailCount: 0,
@@ -81,19 +84,19 @@ describe('sortContacts', () => {
   ]
 
   it('sorts by fullName ascending', () => {
-    const sort: SortState = { key: 'name', dir: 'asc' }
+    const sort: SortState = [{ key: 'name', dir: 'asc' }]
     const result = sortContacts(contacts, sort, CONTACT_COLUMN_DEFS)
     expect(result.map((c) => c.id)).toEqual(['2', '3', '1'])
   })
 
   it('sorts by fullName descending', () => {
-    const sort: SortState = { key: 'name', dir: 'desc' }
+    const sort: SortState = [{ key: 'name', dir: 'desc' }]
     const result = sortContacts(contacts, sort, CONTACT_COLUMN_DEFS)
     expect(result.map((c) => c.id)).toEqual(['1', '3', '2'])
   })
 
   it('sorts by meetingCount ascending', () => {
-    const sort: SortState = { key: 'meetingCount', dir: 'asc' }
+    const sort: SortState = [{ key: 'meetingCount', dir: 'asc' }]
     const result = sortContacts(contacts, sort, CONTACT_COLUMN_DEFS)
     expect(result.map((c) => c.id)).toEqual(['2', '1', '3'])
   })

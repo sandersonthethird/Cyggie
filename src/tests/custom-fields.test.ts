@@ -119,7 +119,7 @@ describe('createFieldDefinition', () => {
     ).toThrow(/invalid field_key/i)
   })
 
-  it('rejects duplicate field_key for same entity_type', () => {
+  it('auto-renames duplicate field_key for same entity_type', () => {
     createFieldDefinition({
       entityType: 'company',
       fieldKey: 'sector',
@@ -130,18 +130,17 @@ describe('createFieldDefinition', () => {
       showInList: false,
       sortOrder: 0
     })
-    expect(() =>
-      createFieldDefinition({
-        entityType: 'company',
-        fieldKey: 'sector',
-        label: 'Sector 2',
-        fieldType: 'text',
-        optionsJson: null,
-        isRequired: false,
-        showInList: false,
-        sortOrder: 1
-      })
-    ).toThrow()
+    const def2 = createFieldDefinition({
+      entityType: 'company',
+      fieldKey: 'sector',
+      label: 'Sector 2',
+      fieldType: 'text',
+      optionsJson: null,
+      isRequired: false,
+      showInList: false,
+      sortOrder: 1
+    })
+    expect(def2.fieldKey).toBe('sector_2')
   })
 
   it('allows same field_key for different entity_types', () => {

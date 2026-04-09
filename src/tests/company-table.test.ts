@@ -105,34 +105,34 @@ describe('sortRows', () => {
   ]
 
   it('sorts ascending by text field', () => {
-    const result = sortRows(companies, { key: 'name', dir: 'asc' }, COLUMN_DEFS)
+    const result = sortRows(companies, [{ key: 'name', dir: 'asc' }], COLUMN_DEFS)
     expect(result.map((c) => c.canonicalName)).toEqual(['Apple', 'Mango', 'Zebra'])
   })
 
   it('sorts descending by text field', () => {
-    const result = sortRows(companies, { key: 'name', dir: 'desc' }, COLUMN_DEFS)
+    const result = sortRows(companies, [{ key: 'name', dir: 'desc' }], COLUMN_DEFS)
     expect(result.map((c) => c.canonicalName)).toEqual(['Zebra', 'Mango', 'Apple'])
   })
 
   it('sorts ascending by number field', () => {
-    const result = sortRows(companies, { key: 'raiseSize', dir: 'asc' }, COLUMN_DEFS)
+    const result = sortRows(companies, [{ key: 'raiseSize', dir: 'asc' }], COLUMN_DEFS)
     expect(result.map((c) => c.raiseSize)).toEqual([5, 10, null])
   })
 
   it('sorts null values last regardless of direction', () => {
-    const asc = sortRows(companies, { key: 'raiseSize', dir: 'asc' }, COLUMN_DEFS)
-    const desc = sortRows(companies, { key: 'raiseSize', dir: 'desc' }, COLUMN_DEFS)
+    const asc = sortRows(companies, [{ key: 'raiseSize', dir: 'asc' }], COLUMN_DEFS)
+    const desc = sortRows(companies, [{ key: 'raiseSize', dir: 'desc' }], COLUMN_DEFS)
     expect(asc[asc.length - 1].raiseSize).toBeNull()
     expect(desc[desc.length - 1].raiseSize).toBeNull()
   })
 
   it('returns original order for unknown sort key', () => {
-    const result = sortRows(companies, { key: 'nonexistent', dir: 'asc' }, COLUMN_DEFS)
+    const result = sortRows(companies, [{ key: 'nonexistent', dir: 'asc' }], COLUMN_DEFS)
     expect(result).toEqual(companies)
   })
 
   it('returns empty array when input is empty', () => {
-    const result = sortRows([], { key: 'name', dir: 'asc' }, COLUMN_DEFS)
+    const result = sortRows([], [{ key: 'name', dir: 'asc' }], COLUMN_DEFS)
     expect(result).toEqual([])
   })
 })
@@ -224,33 +224,23 @@ describe('filterCompanies — generic filters', () => {
 // ── buildUrlFilter ────────────────────────────────────────────────────────────
 
 describe('buildUrlFilter', () => {
-  it('scope=all produces no entityTypes constraint', () => {
-    const filter = buildUrlFilter('all', '', 'recent_touch')
+  it('produces no entityTypes constraint', () => {
+    const filter = buildUrlFilter('', 'recent_touch')
     expect(filter.entityTypes).toBeUndefined()
   })
 
-  it('scope=prospects constrains entityTypes to prospect', () => {
-    const filter = buildUrlFilter('prospects', '', 'recent_touch')
-    expect(filter.entityTypes).toEqual(['prospect'])
-  })
-
-  it('scope=vc_fund constrains entityTypes to vc_fund', () => {
-    const filter = buildUrlFilter('vc_fund', '', 'recent_touch')
-    expect(filter.entityTypes).toEqual(['vc_fund'])
-  })
-
   it('passes query through trimmed', () => {
-    const filter = buildUrlFilter('all', '  acme  ', 'recent_touch')
+    const filter = buildUrlFilter('  acme  ', 'recent_touch')
     expect(filter.query).toBe('acme')
   })
 
   it('empty query produces undefined query field', () => {
-    const filter = buildUrlFilter('all', '', 'recent_touch')
+    const filter = buildUrlFilter('', 'recent_touch')
     expect(filter.query).toBeUndefined()
   })
 
   it('passes sortBy to filter', () => {
-    const filter = buildUrlFilter('all', '', 'name')
+    const filter = buildUrlFilter('', 'name')
     expect(filter.sortBy).toBe('name')
   })
 })

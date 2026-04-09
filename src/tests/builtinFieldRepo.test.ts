@@ -22,6 +22,7 @@ const {
 function makeTestDb(): Database.Database {
   const db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
+  db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`)
   db.exec(`
     CREATE TABLE IF NOT EXISTS contacts (
       id TEXT PRIMARY KEY,

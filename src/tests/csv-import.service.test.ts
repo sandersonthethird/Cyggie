@@ -24,7 +24,7 @@ import { tmpdir } from 'os'
 // ─── Mock: LLM provider ──────────────────────────────────────────────────────
 
 const mockGenerateSummary = vi.fn()
-vi.mock('../main/llm/summarizer', () => ({
+vi.mock('../main/llm/provider-factory', () => ({
   getProvider: () => ({ generateSummary: mockGenerateSummary })
 }))
 
@@ -43,6 +43,7 @@ vi.mock('../main/database/connection', () => ({
 const mockCreateContact = vi.fn()
 const mockUpdateContact = vi.fn()
 const mockResolveContactsByEmails = vi.fn().mockReturnValue({})
+const mockResolveContactsByNormalizedNames = vi.fn().mockReturnValue({})
 const mockGetContactsByIds = vi.fn().mockReturnValue({})
 const mockSetContactPrimaryCompany = vi.fn()
 
@@ -50,6 +51,7 @@ vi.mock('../main/database/repositories/contact.repo', () => ({
   createContact: (...args: unknown[]) => mockCreateContact(...args),
   updateContact: (...args: unknown[]) => mockUpdateContact(...args),
   resolveContactsByEmails: (...args: unknown[]) => mockResolveContactsByEmails(...args),
+  resolveContactsByNormalizedNames: (...args: unknown[]) => mockResolveContactsByNormalizedNames(...args),
   getContactsByIds: (...args: unknown[]) => mockGetContactsByIds(...args),
   setContactPrimaryCompany: (...args: unknown[]) => mockSetContactPrimaryCompany(...args)
 }))
@@ -133,6 +135,7 @@ beforeEach(() => {
   testDb = makeTestDb()
   vi.clearAllMocks()
   mockResolveContactsByEmails.mockReturnValue({})
+  mockResolveContactsByNormalizedNames.mockReturnValue({})
   mockGetContactsByIds.mockReturnValue({})
   mockGetCompaniesByNormalizedNames.mockReturnValue({})
 })
@@ -333,6 +336,10 @@ describe('runImport — contacts only', () => {
       id: `contact-${data.fullName}`,
       ...data
     }))
+    // Pre-insert a known contact for the duplicate-detection test
+    testDb.prepare(`INSERT OR IGNORE INTO contacts (id, email, full_name) VALUES (?, ?, ?)`).run(
+      'existing-contact-id', 'existing@example.com', 'Alice'
+    )
   })
 
   it('creates contacts without company lookup', async () => {

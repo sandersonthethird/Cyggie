@@ -178,6 +178,65 @@ function buildDb(): Database.Database {
     CREATE TABLE contacts (
       id TEXT PRIMARY KEY,
       full_name TEXT NOT NULL,
+      primary_company_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE meetings (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      date TEXT,
+      status TEXT,
+      speaker_map TEXT NOT NULL DEFAULT '{}',
+      attendees TEXT,
+      attendee_emails TEXT
+    );
+
+    CREATE TABLE meeting_company_links (
+      meeting_id TEXT NOT NULL,
+      company_id TEXT NOT NULL,
+      PRIMARY KEY (meeting_id, company_id)
+    );
+
+    CREATE TABLE email_messages (
+      id TEXT PRIMARY KEY,
+      from_email TEXT NOT NULL DEFAULT '',
+      received_at TEXT,
+      sent_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE email_company_links (
+      message_id TEXT NOT NULL,
+      company_id TEXT NOT NULL,
+      PRIMARY KEY (message_id, company_id)
+    );
+
+    CREATE TABLE email_message_participants (
+      message_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      email TEXT NOT NULL,
+      display_name TEXT,
+      contact_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (message_id, role, email)
+    );
+
+    CREATE TABLE org_company_contacts (
+      company_id TEXT NOT NULL,
+      contact_id TEXT NOT NULL,
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (company_id, contact_id)
+    );
+
+    CREATE TABLE notes (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      content TEXT NOT NULL DEFAULT '',
+      company_id TEXT,
+      contact_id TEXT,
+      is_pinned INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -473,6 +532,12 @@ describe('enrichment — industries normalization', () => {
 
   beforeEach(() => {
     testDb = buildDb()
+    // Insert a company so the real getCompany() can find it in testDb
+    insertCompany(testDb, 'co1', 'Acme Corp')
+    // Insert FinTech industry so getCompany returns industries: ['FinTech'] for the "no change" test
+    const indId = 'ind-fintech'
+    testDb.prepare(`INSERT OR IGNORE INTO industries (id, name) VALUES (?, ?)`).run(indId, 'FinTech')
+    testDb.prepare(`INSERT OR IGNORE INTO org_company_industries (company_id, industry_id, is_primary) VALUES (?, ?, ?)`).run('co1', indId, 1)
     vi.doMock('../main/database/repositories/org-company.repo', () => ({
       getCompany: (...args: unknown[]) => mockGetCompany(...args),
       updateCompanyIndustries: vi.fn(),
