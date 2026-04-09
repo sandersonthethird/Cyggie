@@ -508,6 +508,47 @@
   color: #fff;
 }
 
+/* Entity scope chip (dismissible pill shown above textarea on company/contact pages) */
+.entityChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  background: var(--color-bg-secondary, #f3f4f6);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 20px;
+  margin-bottom: 4px;
+}
+
+.entityChipLabel {
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+  white-space: nowrap;
+}
+
+.entityChipDismiss {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--color-text-tertiary, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+  padding: 0;
+}
+
+.entityChipDismiss:hover {
+  background: var(--color-danger, #ef4444);
+  color: #fff;
+}
+
 /* Context chip + dropdown */
 .contextChipWrap {
   position: relative;

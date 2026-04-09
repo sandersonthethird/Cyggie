@@ -102,7 +102,19 @@ function parseChatError(errStr: string): string {
 }
 
 export default function ChatInterface({ meetingId, meetingIds, companyId, contactId, entityName, contextOptions, placeholder, fillHeight = false, compact = false, floating = false }: ChatInterfaceProps) {
-  const contextId = companyId ? `company:${companyId}` : contactId ? `contact:${contactId}` : meetingIds ? 'search-results' : (meetingId ?? 'global')
+  const [expandedToGlobal, setExpandedToGlobal] = useState(false)
+
+  // Context chip state machine:
+  //   entity page (chip shown) → expandedToGlobal=false → entity-scoped query
+  //   chip × clicked           → expandedToGlobal=true  → CHAT_QUERY_ALL
+  //   no entity IDs (Dashboard/Tasks/etc.) → always CHAT_QUERY_ALL
+  const showContextChip = !!(companyId || contactId) && !expandedToGlobal
+
+  const contextId = expandedToGlobal ? 'global-all'
+    : companyId ? `company:${companyId}`
+    : contactId ? `contact:${contactId}`
+    : meetingIds ? 'search-results'
+    : meetingId ?? 'global-all'
 
   const storedMessages = useChatStore((s) => s.conversations[contextId]?.messages)
   const messages = useMemo(() => storedMessages ?? EMPTY_MESSAGES, [storedMessages])
@@ -248,7 +260,11 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
   }, [addAttachments])
 
   const handleStop = useCallback(() => {
-    if (contextOptions && activeContext !== 'meeting') {
+    // expandedToGlobal must be checked FIRST — chip dismiss switches to CHAT_QUERY_ALL
+    // even when companyId/contactId are still set on the entity page.
+    if (expandedToGlobal || (!companyId && !contactId && !meetingId)) {
+      api.invoke(IPC_CHANNELS.CHAT_ABORT_ALL)
+    } else if (contextOptions && activeContext !== 'meeting') {
       if (activeContext.type === 'company') {
         api.invoke(IPC_CHANNELS.COMPANY_CHAT_ABORT)
       } else {
@@ -261,7 +277,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
     } else {
       api.invoke(IPC_CHANNELS.CHAT_ABORT)
     }
-  }, [contextOptions, activeContext, companyId, contactId])
+  }, [expandedToGlobal, contextOptions, activeContext, companyId, contactId, meetingId])
 
   const handleSubmit = useCallback(async () => {
     if ((!input.trim() && attachments.length === 0) || isLoading) return
@@ -297,7 +313,15 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
 
     try {
       let response: string
-      if (contextOptions && activeContext !== 'meeting') {
+      // expandedToGlobal MUST be checked first — the chip dismiss switches to CHAT_QUERY_ALL
+      // even when companyId/contactId are still set on entity pages.
+      // Also catches Dashboard/Tasks/etc. where no entity IDs are present.
+      if (expandedToGlobal || (!companyId && !contactId && !meetingId && !meetingIds)) {
+        response = await api.invoke<string>(
+          IPC_CHANNELS.CHAT_QUERY_ALL,
+          { question, attachments: ipcAttachments }
+        )
+      } else if (contextOptions && activeContext !== 'meeting') {
         if (activeContext.type === 'company') {
           response = await api.invoke<string>(IPC_CHANNELS.COMPANY_CHAT_QUERY, { companyId: activeContext.id, question })
         } else {
@@ -320,15 +344,13 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
           question,
           ipcAttachments
         )
-      } else if (meetingId) {
+      } else {
         response = await api.invoke<string>(
           IPC_CHANNELS.CHAT_QUERY_MEETING,
-          meetingId,
+          meetingId!,
           question,
           ipcAttachments
         )
-      } else {
-        response = await api.invoke<string>(IPC_CHANNELS.CHAT_QUERY_GLOBAL, question, ipcAttachments)
       }
 
       addMessage(contextId, { role: 'assistant', content: response })
@@ -353,7 +375,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
       setIsLoading(false)
       setStreamedContent('')
     }
-  }, [input, attachments, isLoading, meetingId, meetingIds, companyId, contactId, contextId, addMessage, floating, contextOptions, activeContext])
+  }, [input, attachments, isLoading, meetingId, meetingIds, companyId, contactId, contextId, addMessage, floating, contextOptions, activeContext, expandedToGlobal])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -432,6 +454,17 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
       onDrop={handleDrop}
     >
       {isDragOver && <div className={styles.dropOverlay}>Drop files or screenshots here</div>}
+      {showContextChip && (
+        <div className={styles.entityChip}>
+          <span className={styles.entityChipLabel}>{entityName || 'This entity'}</span>
+          <button
+            className={styles.entityChipDismiss}
+            onClick={() => setExpandedToGlobal(true)}
+            aria-label="Expand to all meetings and CRM data"
+            title="Expand to search all meetings and CRM data"
+          >×</button>
+        </div>
+      )}
       {attachmentChips}
       <div className={rowClass}>
         <textarea
