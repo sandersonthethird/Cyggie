@@ -221,8 +221,9 @@ export const IPC_CHANNELS = {
   // AI Chat
   MEETING_SAVE_CHAT: 'meeting:save-chat',
   CHAT_QUERY_MEETING: 'chat:query-meeting',
-  CHAT_QUERY_GLOBAL: 'chat:query-global',
   CHAT_QUERY_SEARCH_RESULTS: 'chat:query-search-results',
+  CHAT_QUERY_ALL: 'chat:query-all',
+  CHAT_ABORT_ALL: 'chat:abort-all',
   CHAT_PROGRESS: 'chat:progress',
   CHAT_ABORT: 'chat:abort',
 

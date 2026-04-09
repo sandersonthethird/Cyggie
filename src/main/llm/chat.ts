@@ -1,6 +1,5 @@
-import { BrowserWindow } from 'electron'
-import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { getProvider } from './provider-factory'
+import { sendProgress } from './send-progress'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker, searchByAllSpeakers } from '../database/repositories/search.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
@@ -13,26 +12,7 @@ export function abortChat(): void {
   chatAbortController = null
 }
 
-
-function sendProgress(text: string): void {
-  const windows = BrowserWindow.getAllWindows()
-  for (const win of windows) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(IPC_CHANNELS.CHAT_PROGRESS, text)
-    }
-  }
-}
-
-function sendClear(): void {
-  const windows = BrowserWindow.getAllWindows()
-  for (const win of windows) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(IPC_CHANNELS.CHAT_PROGRESS, null)
-    }
-  }
-}
-
-function injectTextAttachments(question: string, attachments: ChatAttachment[]): string {
+export function injectTextAttachments(question: string, attachments: ChatAttachment[]): string {
   const textAtts = attachments.filter((a) => a.type === 'text')
   if (textAtts.length === 0) return question
   const sections = textAtts
@@ -45,13 +25,6 @@ const MEETING_SYSTEM_PROMPT = `You are a helpful assistant that answers question
 You have access to the full transcript, any user notes, and the AI-generated summary (if available).
 Answer questions accurately based on what was discussed in the meeting.
 If the information isn't in the transcript, say so.
-Be concise but thorough. Use bullet points when listing multiple items.`
-
-const GLOBAL_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about the user's meeting transcripts.
-You have access to relevant excerpts from multiple meetings.
-Answer questions accurately based on the content provided.
-Always cite which meeting the information comes from using the format: "In [Meeting Title] (Date):".
-If the information isn't in any of the provided excerpts, say so.
 Be concise but thorough. Use bullet points when listing multiple items.`
 
 const SEARCH_RESULTS_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about the user's meeting search results.
@@ -129,7 +102,10 @@ User question: ${enhancedQuestion}`
   return result
 }
 
-export async function queryGlobal(question: string, attachments: ChatAttachment[] = []): Promise<string> {
+// buildMeetingContext runs the 4-strategy meeting search and assembles a markdown context
+// string for use in queryAll(). Returns '' if no meetings match — callers should proceed
+// with other context sources rather than treating this as an error.
+export function buildMeetingContext(question: string): string {
   const keywords = extractKeywords(question)
   const seenIds = new Set<string>()
   const searchResults: { meetingId: string; title: string; date: string; snippet: string; rank: number }[] = []
@@ -189,9 +165,7 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
     }
   }
 
-  if (searchResults.length === 0) {
-    return 'I couldn\'t find any meetings related to your question. Try rephrasing your question or check that you have recorded meetings with transcripts.'
-  }
+  if (searchResults.length === 0) return ''
 
   // Build context from relevant meetings
   const contextParts: string[] = []
@@ -210,7 +184,6 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
     }
     parts.push('')
 
-    // Include summary if available (concise, high-signal)
     if (meeting.summaryPath) {
       const summary = readSummary(meeting.summaryPath)
       if (summary) {
@@ -220,14 +193,12 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
       }
     }
 
-    // Include notes if present
     if (meeting.notes) {
       parts.push('**Notes:**')
       parts.push(meeting.notes)
       parts.push('')
     }
 
-    // Include transcript excerpt
     if (meeting.transcriptPath) {
       const transcript = readTranscript(meeting.transcriptPath)
       if (transcript) {
@@ -235,7 +206,6 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
         let excerpt = transcript
 
         if (transcript.length > excerptLength) {
-          // Try to find the matching content and include context around it
           if (result.snippet) {
             const snippetText = result.snippet.replace(/<mark>|<\/mark>/g, '').replace(/\.\.\./g, '')
             const matchIndex = transcript.toLowerCase().indexOf(snippetText.toLowerCase().substring(0, 50))
@@ -266,30 +236,7 @@ export async function queryGlobal(question: string, attachments: ChatAttachment[
     }
   }
 
-  if (contextParts.length === 0) {
-    return 'I found some matching meetings but couldn\'t read their content. Please check that the transcript files exist.'
-  }
-
-  const context = contextParts.join('\n')
-
-  const enhancedQuestion = injectTextAttachments(question, attachments)
-  const imageAtts = attachments.filter((a) => a.type === 'image')
-
-  const userPrompt = `Here are relevant excerpts from the user's meetings:
-
-${context}
-
----
-
-User question: ${enhancedQuestion}
-
-Please answer based on the meeting excerpts above. Cite the meeting title and date when referencing specific information.`
-
-  const provider = getProvider()
-  chatAbortController = new AbortController()
-  const result = await provider.generateSummary(GLOBAL_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
-  chatAbortController = null
-  return result
+  return contextParts.join('\n')
 }
 
 export async function querySearchResults(meetingIds: string[], question: string, attachments: ChatAttachment[] = []): Promise<string> {
@@ -322,14 +269,12 @@ export async function querySearchResults(meetingIds: string[], question: string,
       }
     }
 
-    // Include notes if present
     if (meeting.notes) {
       parts.push('**Notes:**')
       parts.push(meeting.notes)
       parts.push('')
     }
 
-    // Include transcript excerpt if no summary, or a shorter one if summary exists
     if (meeting.transcriptPath) {
       const transcript = readTranscript(meeting.transcriptPath)
       if (transcript) {

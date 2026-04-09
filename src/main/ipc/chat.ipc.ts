@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { queryMeeting, queryGlobal, querySearchResults, abortChat } from '../llm/chat'
+import { queryMeeting, querySearchResults, abortChat } from '../llm/chat'
 import type { ChatAttachment } from '../../shared/types/chat'
 
 export function registerChatHandlers(): void {
@@ -17,13 +17,6 @@ export function registerChatHandlers(): void {
       return queryMeeting(meetingId, question.trim(), attachments)
     }
   )
-
-  ipcMain.handle(IPC_CHANNELS.CHAT_QUERY_GLOBAL, async (_event, question: string, attachments?: ChatAttachment[]) => {
-    if (!question) {
-      throw new Error('Question is required')
-    }
-    return queryGlobal(question.trim(), attachments)
-  })
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_QUERY_SEARCH_RESULTS,
