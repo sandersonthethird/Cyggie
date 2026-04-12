@@ -17,6 +17,7 @@ export default async function SharedNotePage({ params }: PageProps) {
       title: sharedNotes.title,
       contentMarkdown: sharedNotes.contentMarkdown,
       createdAt: sharedNotes.createdAt,
+      logoUrl: sharedNotes.logoUrl,
       isActive: sharedNotes.isActive,
       expiresAt: sharedNotes.expiresAt,
     })
@@ -36,9 +37,11 @@ export default async function SharedNotePage({ params }: PageProps) {
 
   return (
     <NoteSharePage
+      token={note.token}
       title={note.title}
       contentMarkdown={note.contentMarkdown}
       createdAt={note.createdAt.toISOString()}
+      logoUrl={note.logoUrl ?? null}
     />
   )
 }

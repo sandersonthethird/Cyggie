@@ -21,6 +21,7 @@ export default async function SharedMeetingPage({ params }: PageProps) {
       attendees: sharedMeetings.attendees,
       summary: sharedMeetings.summary,
       notes: sharedMeetings.notes,
+      logoUrl: sharedMeetings.logoUrl,
       isActive: sharedMeetings.isActive,
       expiresAt: sharedMeetings.expiresAt,
     })
@@ -48,6 +49,7 @@ export default async function SharedMeetingPage({ params }: PageProps) {
       attendees={meeting.attendees as string[] | null}
       summary={meeting.summary}
       notes={meeting.notes}
+      logoUrl={meeting.logoUrl ?? null}
     />
   )
 }

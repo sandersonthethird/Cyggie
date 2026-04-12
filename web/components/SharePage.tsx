@@ -1,8 +1,9 @@
 'use client'
 
-import Image from 'next/image'
 import SummaryPanel from './SummaryPanel'
-import ChatPanel from './ChatPanel'
+import SharedHeader from './SharedHeader'
+import SharedFooter from './SharedFooter'
+import FloatingChatWidget from './FloatingChatWidget'
 
 interface SharePageProps {
   token: string
@@ -13,6 +14,7 @@ interface SharePageProps {
   attendees: string[] | null
   summary: string | null
   notes: string | null
+  logoUrl: string | null
 }
 
 export default function SharePage({
@@ -24,32 +26,46 @@ export default function SharePage({
   attendees,
   summary,
   notes,
+  logoUrl,
 }: SharePageProps) {
   return (
-    <div className="flex h-screen bg-white dark:bg-gray-950">
-      <div className="w-[200px] flex-shrink-0 p-6">
-        <Image
-          src="/logo.png"
-          alt="Cyggie Meeting Intelligence"
-          width={160}
-          height={87}
-          priority
-        />
-      </div>
-      <div className="flex-1 overflow-y-auto border-r border-gray-200 dark:border-gray-800 p-8">
-        <SummaryPanel
-          title={title}
-          date={date}
-          durationSeconds={durationSeconds}
-          speakerMap={speakerMap}
-          attendees={attendees}
-          summary={summary}
-          notes={notes}
-        />
-      </div>
-      <div className="w-[560px] flex-shrink-0 flex flex-col">
-        <ChatPanel token={token} meetingTitle={title} />
-      </div>
+    <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'flex', flexDirection: 'column' }}>
+      <SharedHeader label="Shared Meeting Note" logoUrl={logoUrl ?? undefined} />
+
+      <main style={{ flex: 1, padding: '32px 24px 100px' }}>
+        <article style={{
+          maxWidth: 840,
+          margin: '0 auto',
+          background: '#fff',
+          borderRadius: 12,
+          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+          padding: '40px 48px',
+        }}>
+          <SummaryPanel
+            title={title}
+            date={date}
+            durationSeconds={durationSeconds}
+            speakerMap={speakerMap}
+            attendees={attendees}
+            summary={summary}
+            notes={notes}
+          />
+          <div style={{
+            marginTop: 40,
+            paddingTop: 16,
+            borderTop: '1px solid #e5e7eb',
+            textAlign: 'center',
+            fontSize: 12,
+            color: '#d1d5db',
+            letterSpacing: '0.03em',
+          }}>
+            Powered by Cyggie
+          </div>
+        </article>
+      </main>
+
+      <SharedFooter />
+      <FloatingChatWidget token={token} apiPath="/api/chat" placeholder="Ask about this meeting…" />
     </div>
   )
 }

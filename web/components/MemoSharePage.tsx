@@ -2,7 +2,9 @@
 
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import ChatPanel from './ChatPanel'
+import SharedHeader from './SharedHeader'
+import SharedFooter from './SharedFooter'
+import FloatingChatWidget from './FloatingChatWidget'
 
 interface MemoSharePageProps {
   token: string
@@ -19,57 +21,45 @@ export default function MemoSharePage({
   companyName,
   contentMarkdown,
   logoUrl,
-  companyLogoUrl,
 }: MemoSharePageProps) {
   return (
-    <div className="flex flex-col h-screen bg-white dark:bg-gray-950">
-      {/* Header: firm logo left | title center | company logo right */}
-      <div className="flex items-center gap-3 px-8 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
-        {/* Firm logo (left) */}
-        {logoUrl ? (
-          <img
-            src={logoUrl}
-            alt="Firm logo"
-            className="h-8 w-8 rounded object-contain flex-shrink-0"
-          />
-        ) : (
-          <div className="h-8 w-8 flex-shrink-0" />
-        )}
+    <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'flex', flexDirection: 'column' }}>
+      <SharedHeader label={`${companyName} — Memo`} logoUrl={logoUrl ?? undefined} />
 
-        {/* Title + company name (center, flex fill) */}
-        <div className="flex-1 min-w-0 text-center">
-          <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate">{title}</h1>
-          <p className="text-xs text-gray-500 dark:text-gray-400">{companyName}</p>
-        </div>
+      <main style={{ flex: 1, padding: '32px 24px 100px' }}>
+        <article style={{
+          maxWidth: 840,
+          margin: '0 auto',
+          background: '#fff',
+          borderRadius: 12,
+          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+          padding: '40px 48px',
+        }}>
+          <header style={{ marginBottom: 32, paddingBottom: 20, borderBottom: '1px solid #e5e7eb' }}>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: '0 0 6px' }}>{title}</h1>
+            <p style={{ fontSize: 13, color: '#9ca3af', margin: 0 }}>{companyName}</p>
+          </header>
 
-        {/* Company logo (right) */}
-        {companyLogoUrl ? (
-          <img
-            src={companyLogoUrl}
-            alt={`${companyName} logo`}
-            className="h-8 w-8 rounded object-contain flex-shrink-0"
-          />
-        ) : (
-          <div className="h-8 w-8 flex-shrink-0" />
-        )}
-      </div>
+          <div className="summary-markdown">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentMarkdown}</ReactMarkdown>
+          </div>
 
-      {/* Memo content — scrollable */}
-      <div className="flex-1 overflow-y-auto px-8 py-6 min-h-0">
-        <div className="max-w-3xl mx-auto summary-markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentMarkdown}</ReactMarkdown>
-        </div>
-      </div>
+          <div style={{
+            marginTop: 40,
+            paddingTop: 16,
+            borderTop: '1px solid #e5e7eb',
+            textAlign: 'center',
+            fontSize: 12,
+            color: '#d1d5db',
+            letterSpacing: '0.03em',
+          }}>
+            Powered by Cyggie
+          </div>
+        </article>
+      </main>
 
-      {/* Chat bar pinned to bottom */}
-      <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800" style={{ maxHeight: '45vh' }}>
-        <ChatPanel
-          token={token}
-          meetingTitle={title}
-          apiPath="/api/memo-chat"
-          showHeader={false}
-        />
-      </div>
+      <SharedFooter />
+      <FloatingChatWidget token={token} apiPath="/api/memo-chat" placeholder="Ask about this memo…" />
     </div>
   )
 }

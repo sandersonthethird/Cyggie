@@ -25,6 +25,7 @@ export const sharedMeetings = pgTable(
     transcript: text('transcript').notNull(),
     notes: text('notes'),
     apiKeyEnc: text('api_key_enc').notNull(),
+    logoUrl: varchar('logo_url', { length: 2000 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     isActive: boolean('is_active').notNull().default(true),
@@ -81,9 +82,21 @@ export const sharedNotes = pgTable(
     token: varchar('token', { length: 12 }).unique().notNull(),
     title: varchar('title', { length: 500 }).notNull(),
     contentMarkdown: text('content_markdown').notNull(),
+    apiKeyEnc: text('api_key_enc'),
+    logoUrl: varchar('logo_url', { length: 2000 }),
+    chatCount: integer('chat_count').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     isActive: boolean('is_active').notNull().default(true),
   },
   (table) => [index('idx_shared_notes_token').on(table.token)]
 )
+
+export const noteRateLimits = pgTable('note_rate_limits', {
+  token: varchar('token', { length: 12 })
+    .primaryKey()
+    .references(() => sharedNotes.token, { onDelete: 'cascade' }),
+  chatCountDay: integer('chat_count_day').notNull().default(0),
+  lastReset: date('last_reset').notNull().defaultNow(),
+  totalQueries: integer('total_queries').notNull().default(0),
+})

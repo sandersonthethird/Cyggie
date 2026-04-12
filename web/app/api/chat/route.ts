@@ -4,6 +4,7 @@ import { sharedMeetings } from '../../../drizzle/schema'
 import { eq, and } from 'drizzle-orm'
 import { decryptApiKey } from '../../../lib/crypto'
 import { checkRateLimit } from '../../../lib/rate-limit'
+import { createClaudeSSEResponse } from '../../../lib/sse-stream'
 
 export const runtime = 'edge'
 
@@ -130,46 +131,9 @@ export async function POST(request: Request) {
     },
   ]
 
-  const encoder = new TextEncoder()
-  const readable = new ReadableStream({
-    async start(controller) {
-      try {
-        const stream = await client.messages.create({
-          model: 'claude-sonnet-4-5-20250929',
-          max_tokens: 4096,
-          stream: true,
-          system: SYSTEM_PROMPT,
-          messages,
-        })
-        for await (const event of stream) {
-          if (
-            event.type === 'content_block_delta' &&
-            event.delta.type === 'text_delta'
-          ) {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ text: event.delta.text })}\n\n`)
-            )
-          }
-        }
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-      } catch (err) {
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({ error: err instanceof Error ? err.message : 'Stream error' })}\n\n`
-          )
-        )
-      } finally {
-        controller.close()
-      }
-    },
-  })
-
-  return new Response(readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-      'X-RateLimit-Remaining': String(remaining),
-    },
-  })
+  return createClaudeSSEResponse(
+    client,
+    { model: 'claude-sonnet-4-6', system: SYSTEM_PROMPT, messages },
+    remaining
+  )
 }

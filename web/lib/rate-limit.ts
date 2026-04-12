@@ -1,10 +1,10 @@
 import { getDb } from './db'
-import { rateLimits, memoRateLimits } from '../drizzle/schema'
-import { eq, sql } from 'drizzle-orm'
+import { rateLimits, memoRateLimits, noteRateLimits } from '../drizzle/schema'
+import { sql } from 'drizzle-orm'
 
 const DAILY_LIMIT = 50
 
-type RateLimitTable = typeof rateLimits | typeof memoRateLimits
+type RateLimitTable = typeof rateLimits | typeof memoRateLimits | typeof noteRateLimits
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function runRateLimitCheck(token: string, table: any): Promise<{ allowed: boolean; remaining: number }> {
@@ -44,4 +44,8 @@ export async function checkRateLimit(token: string): Promise<{ allowed: boolean;
 
 export async function checkMemoRateLimit(token: string): Promise<{ allowed: boolean; remaining: number }> {
   return runRateLimitCheck(token, memoRateLimits as RateLimitTable)
+}
+
+export async function checkNoteRateLimit(token: string): Promise<{ allowed: boolean; remaining: number }> {
+  return runRateLimitCheck(token, noteRateLimits as RateLimitTable)
 }

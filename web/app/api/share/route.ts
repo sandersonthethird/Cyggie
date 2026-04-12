@@ -13,6 +13,7 @@ interface ShareRequest {
   transcript: string
   notes: string | null
   claudeApiKey: string
+  logoUrl?: string | null
   expiresInDays?: number
 }
 
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
     transcript: body.transcript,
     notes: body.notes,
     apiKeyEnc,
+    logoUrl: body.logoUrl ?? null,
     expiresAt,
   })
 

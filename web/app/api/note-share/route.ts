@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getDb } from '../../../lib/db'
-import { sharedNotes } from '../../../drizzle/schema'
-import { generateToken } from '../../../lib/crypto'
+import { sharedNotes, noteRateLimits } from '../../../drizzle/schema'
+import { encryptApiKey, generateToken } from '../../../lib/crypto'
 import { eq } from 'drizzle-orm'
 
 interface NoteShareRequest {
   title: string
   contentMarkdown: string
+  claudeApiKey: string
+  logoUrl?: string | null
   expiresInDays?: number
 }
 
@@ -35,6 +37,20 @@ export async function POST(request: Request) {
     )
   }
 
+  if (!body.claudeApiKey?.trim()) {
+    return NextResponse.json(
+      { error: 'Missing required field: claudeApiKey' },
+      { status: 400 }
+    )
+  }
+
+  let apiKeyEnc: string
+  try {
+    apiKeyEnc = await encryptApiKey(body.claudeApiKey)
+  } catch {
+    return NextResponse.json({ error: 'Failed to encrypt API key' }, { status: 500 })
+  }
+
   const expiresInDays = body.expiresInDays
   const expiresAt = expiresInDays != null
     ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000)
@@ -49,6 +65,8 @@ export async function POST(request: Request) {
         token,
         title: body.title,
         contentMarkdown: body.contentMarkdown,
+        apiKeyEnc,
+        logoUrl: body.logoUrl ?? null,
         expiresAt,
       })
       break
@@ -60,6 +78,15 @@ export async function POST(request: Request) {
       }
     }
   }
+
+  // Pre-create rate limit row (matches memo-share pattern)
+  const today = new Date().toISOString().split('T')[0]
+  await getDb().insert(noteRateLimits).values({
+    token,
+    chatCountDay: 0,
+    lastReset: today,
+    totalQueries: 0,
+  })
 
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://cyggie.vercel.app'
   const url = `${baseUrl}/n/${token}`

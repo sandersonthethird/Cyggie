@@ -1,14 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { getDb } from '../../../lib/db'
-import { sharedMemos } from '../../../drizzle/schema'
+import { sharedNotes } from '../../../drizzle/schema'
 import { eq, and } from 'drizzle-orm'
 import { decryptApiKey } from '../../../lib/crypto'
-import { checkMemoRateLimit } from '../../../lib/rate-limit'
+import { checkNoteRateLimit } from '../../../lib/rate-limit'
 import { createClaudeSSEResponse } from '../../../lib/sse-stream'
 
 export const runtime = 'edge'
 
-const SYSTEM_PROMPT = `You are a helpful investment analyst assistant. You have access to an investment memo provided between <memo> tags. Answer questions accurately based only on the memo content. If the answer isn't in the memo, say so clearly. Do not speculate beyond what the memo states.`
+const SYSTEM_PROMPT = `You are a helpful assistant. You have access to a note provided between <note> tags. Answer questions accurately based only on the note content. If the answer isn't in the note, say so clearly.`
 
 interface ChatRequest {
   token: string
@@ -36,26 +36,36 @@ export async function POST(request: Request) {
 
   const rows = await getDb()
     .select()
-    .from(sharedMemos)
-    .where(and(eq(sharedMemos.token, body.token), eq(sharedMemos.isActive, true)))
+    .from(sharedNotes)
+    .where(and(eq(sharedNotes.token, body.token), eq(sharedNotes.isActive, true)))
     .limit(1)
 
-  const memo = rows[0]
-  if (!memo) {
+  const note = rows[0]
+  if (!note) {
     return new Response(JSON.stringify({ error: 'Share not found or inactive' }), {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  if (memo.expiresAt && new Date(memo.expiresAt) < new Date()) {
+  if (note.expiresAt && new Date(note.expiresAt) < new Date()) {
     return new Response(JSON.stringify({ error: 'This share link has expired' }), {
       status: 410,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  const { allowed, remaining } = await checkMemoRateLimit(body.token)
+  if (!note.apiKeyEnc) {
+    return new Response(
+      JSON.stringify({
+        error:
+          'This note was shared before AI chat was available. Please re-share the note to enable chat.',
+      }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+
+  const { allowed, remaining } = await checkNoteRateLimit(body.token)
   if (!allowed) {
     return new Response(
       JSON.stringify({ error: 'Daily chat limit reached. Please try again tomorrow.' }),
@@ -71,7 +81,7 @@ export async function POST(request: Request) {
 
   let apiKey: string
   try {
-    apiKey = await decryptApiKey(memo.apiKeyEnc)
+    apiKey = await decryptApiKey(note.apiKeyEnc)
   } catch {
     return new Response(JSON.stringify({ error: 'Failed to decrypt API key' }), {
       status: 500,
@@ -81,7 +91,7 @@ export async function POST(request: Request) {
 
   const client = new Anthropic({ apiKey })
 
-  const userContent = `<memo>\n# ${memo.title}\nCompany: ${memo.companyName}\n\n${memo.contentMarkdown}\n</memo>\n\n---\n\nQuestion: ${body.question}`
+  const userContent = `<note>\n# ${note.title}\n\n${note.contentMarkdown}\n</note>\n\n---\n\nQuestion: ${body.question}`
 
   const messages: Anthropic.MessageParam[] = [
     ...(body.history || []).map((m) => ({
