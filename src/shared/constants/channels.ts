@@ -95,6 +95,10 @@ export const IPC_CHANNELS = {
   CONTACT_ENRICH_LINKEDIN_BATCH: 'contact:enrich-linkedin-batch',
   CONTACT_ENRICH_LINKEDIN_BATCH_PROGRESS: 'contact:linkedin-batch-progress',
   CONTACT_ENRICH_LINKEDIN_BATCH_CANCEL: 'contact:enrich-linkedin-batch-cancel',
+  CONTACT_FIND_LINKEDIN_URL: 'contact:find-linkedin-url',
+  CONTACT_FIND_LINKEDIN_URL_BATCH: 'contact:find-linkedin-url-batch',
+  CONTACT_FIND_LINKEDIN_URL_BATCH_CANCEL: 'contact:find-linkedin-url-batch-cancel',
+  CONTACT_FIND_LINKEDIN_URL_BATCH_PROGRESS: 'contact:find-linkedin-url-batch-progress',
   CONTACT_ONBOARD_FROM_EMAIL: 'contact:onboard-from-email',
   CONTACT_ONBOARD_PROGRESS: 'contact:onboard-progress',
   CONTACT_RESOLVE_EMAILS: 'contact:resolve-emails',
@@ -244,6 +248,7 @@ export const IPC_CHANNELS = {
 
   // Web Share
   WEB_SHARE_CREATE: 'web-share:create',
+  WEB_SHARE_CREATE_NOTE: 'web-share:create-note',
 
   // Video recording
   VIDEO_START: 'video:start',

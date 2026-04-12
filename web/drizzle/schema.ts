@@ -73,3 +73,17 @@ export const memoRateLimits = pgTable('memo_rate_limits', {
   lastReset: date('last_reset').notNull().defaultNow(),
   totalQueries: integer('total_queries').notNull().default(0),
 })
+
+export const sharedNotes = pgTable(
+  'shared_notes',
+  {
+    id: serial('id').primaryKey(),
+    token: varchar('token', { length: 12 }).unique().notNull(),
+    title: varchar('title', { length: 500 }).notNull(),
+    contentMarkdown: text('content_markdown').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    isActive: boolean('is_active').notNull().default(true),
+  },
+  (table) => [index('idx_shared_notes_token').on(table.token)]
+)

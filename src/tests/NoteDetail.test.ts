@@ -51,6 +51,17 @@ vi.mock('../renderer/components/common/TiptapBubbleMenu', () => ({
   TiptapBubbleMenu: () => null,
 }))
 
+vi.mock('../renderer/hooks/useNoteShareMenu', () => ({
+  useNoteShareMenu: vi.fn(() => ({
+    shareMenuOpen: false,
+    setShareMenuOpen: vi.fn(),
+    shareMenuRef: { current: null },
+    canShare: false,
+    handleCopyText: vi.fn(),
+    handleWebShare: vi.fn(),
+  })),
+}))
+
 vi.mock('@tiptap/react', () => ({
   useEditor: vi.fn(() => null),
   EditorContent: () => null,
@@ -98,6 +109,7 @@ function makeLoadedHookState(overrides: Record<string, unknown> = {}) {
     saveStatus: 'saved',
     isPinned: false,
     setIsPinned: vi.fn(),
+    contentDraft: '',
     tagSuggestion: null,
     dismissSuggestion: vi.fn(),
     deleteNote: vi.fn(),

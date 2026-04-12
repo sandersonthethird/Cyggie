@@ -117,6 +117,79 @@
   gap: 8px;
 }
 
+.footerLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meetingLinkBtn {
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--color-primary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.meetingLinkBtn:hover {
+  background: rgba(var(--color-primary-rgb, 59, 130, 246), 0.08);
+}
+
+.shareWrapper {
+  position: relative;
+}
+
+.shareBtn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.shareBtn:hover {
+  background: var(--color-bg-secondary);
+}
+
+.shareMenu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  right: 0;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  min-width: 140px;
+  z-index: 100;
+}
+
+.shareMenuItem {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.shareMenuItem:hover {
+  background: var(--color-bg-secondary);
+}
+
+.shareMenuItem:disabled {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
 .pinBtn {
   background: none;
   border: 1px solid var(--color-border);
@@ -168,4 +241,12 @@
   padding: 20px 16px;
   color: var(--color-text-tertiary);
   font-size: 13px;
+}
+
+.findPreview {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text);
 }

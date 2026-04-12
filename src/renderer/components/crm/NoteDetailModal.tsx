@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import { EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
@@ -8,6 +9,9 @@ import type { CompanyNote } from '../../../shared/types/company'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { useDebounce } from '../../hooks/useDebounce'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
+import { useFindInPage } from '../../hooks/useFindInPage'
+import { useNoteShareMenu } from '../../hooks/useNoteShareMenu'
+import FindBar from '../common/FindBar'
 import styles from './NoteDetailModal.module.css'
 import { api } from '../../api'
 
@@ -25,6 +29,7 @@ type State =
   | { status: 'loaded'; note: CompanyNote }
 
 export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteDetailModalProps) {
+  const navigate = useNavigate()
   const [state, setState] = useState<State>({ status: 'loading' })
   const [titleDraft, setTitleDraft] = useState('')
   const [contentDraft, setContentDraft] = useState('')
@@ -33,6 +38,20 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
   const [deleteError, setDeleteError] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const savedNoteRef = useRef<CompanyNote | null>(null)
+
+  const [findOpen, setFindOpen] = useState(false)
+
+  const {
+    shareMenuOpen,
+    setShareMenuOpen,
+    shareMenuRef,
+    canShare,
+    handleCopyText,
+    handleWebShare,
+  } = useNoteShareMenu(
+    state.status === 'loaded' ? state.note.id : null,
+    contentDraft
+  )
 
   const { editor, loadContent } = useTiptapMarkdown({
     extensions: [StarterKit, Markdown],
@@ -43,6 +62,20 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
       setContentDraft(mkd ?? (e as any).getText?.() ?? '')
     }
   }, [noteId])
+
+  const {
+    query: findQuery,
+    setQuery: setFindQuery,
+    matchCount,
+    activeMatchIndex,
+    goToNext,
+    goToPrev,
+  } = useFindInPage({
+    text: contentDraft,
+    isOpen: findOpen,
+    onOpen: () => setFindOpen(true),
+    onClose: () => setFindOpen(false),
+  })
 
   useEffect(() => {
     window.api
@@ -116,9 +149,13 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleClose()
+      if (e.key === 'Escape') {
+        // Let find bar close first; FindBar's onKeyDown calls stopPropagation,
+        // so this only fires when find is already closed.
+        if (!findOpen) handleClose()
+      }
     },
-    [handleClose]
+    [findOpen, handleClose]
   )
 
   useEffect(() => {
@@ -197,6 +234,18 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
           )}
           {state.status === 'loaded' && (
             <div className={styles.bodyArea}>
+              {/* FindBar floats at top of body, zero-height so it doesn't shift content */}
+              {findOpen && (
+                <FindBar
+                  query={findQuery}
+                  onQueryChange={setFindQuery}
+                  matchCount={matchCount}
+                  activeMatchIndex={activeMatchIndex}
+                  onNext={goToNext}
+                  onPrev={goToPrev}
+                  onClose={() => setFindOpen(false)}
+                />
+              )}
               <div className={`${styles.editorContent} ${saveError ? styles.saveError : ''}`}>
                 <EditorContent editor={editor} />
               </div>
@@ -206,14 +255,46 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
           {/* Footer */}
           {state.status === 'loaded' && (
             <div className={styles.footer}>
-              <button
-                className={`${styles.pinBtn} ${isPinned ? styles.pinned : ''}`}
-                onClick={handlePinToggle}
-                title={isPinned ? 'Unpin note' : 'Pin note'}
-              >
-                {isPinned ? '📌 Pinned' : '📋 Pin'}
-              </button>
+              <div className={styles.footerLeft}>
+                <button
+                  className={`${styles.pinBtn} ${isPinned ? styles.pinned : ''}`}
+                  onClick={handlePinToggle}
+                  title={isPinned ? 'Unpin note' : 'Pin note'}
+                >
+                  {isPinned ? '📌 Pinned' : '📋 Pin'}
+                </button>
+                {state.note.sourceMeetingId && (
+                  <button
+                    className={styles.meetingLinkBtn}
+                    onClick={() => { navigate(`/meeting/${state.note.sourceMeetingId}`); onClose() }}
+                  >
+                    Open Meeting →
+                  </button>
+                )}
+              </div>
               <div className={styles.footerRight}>
+                <div ref={shareMenuRef} className={styles.shareWrapper}>
+                  <button
+                    className={styles.shareBtn}
+                    onClick={() => setShareMenuOpen(v => !v)}
+                  >
+                    Share ▾
+                  </button>
+                  {shareMenuOpen && (
+                    <div className={styles.shareMenu}>
+                      <button className={styles.shareMenuItem} onClick={handleCopyText}>
+                        Copy text
+                      </button>
+                      <button
+                        className={styles.shareMenuItem}
+                        onClick={handleWebShare}
+                        disabled={!canShare}
+                      >
+                        Share to web
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {deleteError && (
                   <span className={styles.deleteError}>Failed to delete note.</span>
                 )}

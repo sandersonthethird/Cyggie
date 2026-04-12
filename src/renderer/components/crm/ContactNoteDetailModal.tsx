@@ -1,9 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
+import { EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import { Markdown } from '@tiptap/markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactNote } from '../../../shared/types/contact'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { useDebounce } from '../../hooks/useDebounce'
+import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
+import { useFindInPage } from '../../hooks/useFindInPage'
+import { useNoteShareMenu } from '../../hooks/useNoteShareMenu'
+import FindBar from '../common/FindBar'
 import styles from './ContactNoteDetailModal.module.css'
 import { api } from '../../api'
 
@@ -21,6 +29,7 @@ type State =
   | { status: 'loaded'; note: ContactNote }
 
 export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: ContactNoteDetailModalProps) {
+  const navigate = useNavigate()
   const [state, setState] = useState<State>({ status: 'loading' })
   const [titleDraft, setTitleDraft] = useState('')
   const [contentDraft, setContentDraft] = useState('')
@@ -29,6 +38,44 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
   const [deleteError, setDeleteError] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const savedNoteRef = useRef<ContactNote | null>(null)
+
+  const [findOpen, setFindOpen] = useState(false)
+
+  const {
+    shareMenuOpen,
+    setShareMenuOpen,
+    shareMenuRef,
+    canShare,
+    handleCopyText,
+    handleWebShare,
+  } = useNoteShareMenu(
+    state.status === 'loaded' ? state.note.id : null,
+    contentDraft
+  )
+
+  const { editor, loadContent } = useTiptapMarkdown({
+    extensions: [StarterKit, Markdown],
+    onUpdate: ({ editor: e }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mkd = (e as any).getMarkdown?.()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setContentDraft(mkd ?? (e as any).getText?.() ?? '')
+    }
+  }, [noteId])
+
+  const {
+    query: findQuery,
+    setQuery: setFindQuery,
+    matchCount,
+    activeMatchIndex,
+    goToNext,
+    goToPrev,
+  } = useFindInPage({
+    text: contentDraft,
+    isOpen: findOpen,
+    onOpen: () => setFindOpen(true),
+    onClose: () => setFindOpen(false),
+  })
 
   useEffect(() => {
     window.api
@@ -40,12 +87,13 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
           savedNoteRef.current = note
           setTitleDraft(note.title ?? '')
           setContentDraft(note.content)
+          loadContent(note.content)
           setIsPinned(note.isPinned)
           setState({ status: 'loaded', note })
         }
       })
       .catch(() => setState({ status: 'error' }))
-  }, [noteId])
+  }, [noteId, loadContent])
 
   // Debounced auto-save
   const debouncedTitle = useDebounce(titleDraft, 800)
@@ -101,9 +149,11 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleClose()
+      if (e.key === 'Escape') {
+        if (!findOpen) handleClose()
+      }
     },
-    [handleClose]
+    [findOpen, handleClose]
   )
 
   useEffect(() => {
@@ -139,22 +189,6 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
       setDeleteError(true)
     }
   }, [noteId, onDeleted, onClose])
-
-  const contentRef = useRef<HTMLTextAreaElement>(null)
-
-  function handleContentChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    setContentDraft(e.target.value)
-    const el = e.target
-    el.style.height = 'auto'
-    el.style.height = el.scrollHeight + 'px'
-  }
-
-  useEffect(() => {
-    if (contentRef.current) {
-      contentRef.current.style.height = 'auto'
-      contentRef.current.style.height = contentRef.current.scrollHeight + 'px'
-    }
-  }, [state.status])
 
   return createPortal(
     <>
@@ -195,27 +229,65 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
           )}
           {state.status === 'loaded' && (
             <div className={styles.bodyArea}>
-              <textarea
-                ref={contentRef}
-                className={`${styles.contentArea} ${saveError ? styles.saveError : ''}`}
-                value={contentDraft}
-                onChange={handleContentChange}
-                placeholder="Write a note…"
-                rows={1}
-              />
+              {findOpen && (
+                <FindBar
+                  query={findQuery}
+                  onQueryChange={setFindQuery}
+                  matchCount={matchCount}
+                  activeMatchIndex={activeMatchIndex}
+                  onNext={goToNext}
+                  onPrev={goToPrev}
+                  onClose={() => setFindOpen(false)}
+                />
+              )}
+              <div className={`${styles.editorContent} ${saveError ? styles.saveError : ''}`}>
+                <EditorContent editor={editor} />
+              </div>
             </div>
           )}
 
           {state.status === 'loaded' && (
             <div className={styles.footer}>
-              <button
-                className={`${styles.pinBtn} ${isPinned ? styles.pinned : ''}`}
-                onClick={handlePinToggle}
-                title={isPinned ? 'Unpin note' : 'Pin note'}
-              >
-                {isPinned ? '📌 Pinned' : '📋 Pin'}
-              </button>
+              <div className={styles.footerLeft}>
+                <button
+                  className={`${styles.pinBtn} ${isPinned ? styles.pinned : ''}`}
+                  onClick={handlePinToggle}
+                  title={isPinned ? 'Unpin note' : 'Pin note'}
+                >
+                  {isPinned ? '📌 Pinned' : '📋 Pin'}
+                </button>
+                {state.note.sourceMeetingId && (
+                  <button
+                    className={styles.meetingLinkBtn}
+                    onClick={() => { navigate(`/meeting/${state.note.sourceMeetingId}`); onClose() }}
+                  >
+                    Open Meeting →
+                  </button>
+                )}
+              </div>
               <div className={styles.footerRight}>
+                <div ref={shareMenuRef} className={styles.shareWrapper}>
+                  <button
+                    className={styles.shareBtn}
+                    onClick={() => setShareMenuOpen(v => !v)}
+                  >
+                    Share ▾
+                  </button>
+                  {shareMenuOpen && (
+                    <div className={styles.shareMenu}>
+                      <button className={styles.shareMenuItem} onClick={handleCopyText}>
+                        Copy text
+                      </button>
+                      <button
+                        className={styles.shareMenuItem}
+                        onClick={handleWebShare}
+                        disabled={!canShare}
+                      >
+                        Share to web
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {deleteError && (
                   <span className={styles.deleteError}>Failed to delete note.</span>
                 )}

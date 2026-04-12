@@ -8,13 +8,18 @@
  *   - useDebounce → pass-through (no debounce delay) so save effects fire immediately
  *   - @tiptap/react → EditorContent stub (no DOM rendering)
  *   - ConfirmDialog → stub
+ *   - react-router-dom → stub useNavigate
+ *   - useNoteShareMenu → stub returning controllable state
  *
  * Coverage:
- *   load:        note fetch → loadContent called with note.content
- *   title:       note title rendered in header input
- *   edit→save:   onUpdate fires → contentDraft updated → COMPANY_NOTES_UPDATE called
- *   close flush: handleClose with unsaved content → COMPANY_NOTES_UPDATE called
- *   save error:  COMPANY_NOTES_UPDATE rejects → saveError class on editor wrapper
+ *   load:           note fetch → loadContent called with note.content
+ *   title:          note title rendered in header input
+ *   edit→save:      onUpdate fires → contentDraft updated → COMPANY_NOTES_UPDATE called
+ *   close flush:    handleClose with unsaved content → COMPANY_NOTES_UPDATE called
+ *   save error:     COMPANY_NOTES_UPDATE rejects → saveError class on editor wrapper
+ *   open meeting:   sourceMeetingId set → "Open Meeting →" button visible, click navigates
+ *   no meeting:     sourceMeetingId null → "Open Meeting →" not rendered
+ *   share menu:     Share ▾ button always visible; menu items rendered when open
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -22,6 +27,11 @@ import { render, screen, waitFor, act, cleanup, fireEvent } from '@testing-libra
 import React from 'react'
 
 // --- Mocks ---
+
+const navigateMock = vi.fn()
+vi.mock('react-router-dom', () => ({
+  useNavigate: vi.fn(() => navigateMock),
+}))
 
 const loadContentMock = vi.fn()
 let capturedOnUpdate: ((args: { editor: unknown }) => void) | undefined
@@ -46,6 +56,35 @@ vi.mock('../renderer/components/common/ConfirmDialog', () => ({
   default: () => null,
 }))
 
+// Stub useFindInPage / FindBar to avoid side effects
+vi.mock('../renderer/hooks/useFindInPage', () => ({
+  useFindInPage: vi.fn(() => ({
+    query: '', setQuery: vi.fn(), matchCount: 0, activeMatchIndex: 0,
+    goToNext: vi.fn(), goToPrev: vi.fn(),
+  })),
+}))
+vi.mock('../renderer/components/common/FindBar', () => ({ default: () => null }))
+
+// Stub useNoteShareMenu so share tests can control state directly
+let shareMenuOpenState = false
+const setShareMenuOpenMock = vi.fn((updater: boolean | ((v: boolean) => boolean)) => {
+  shareMenuOpenState = typeof updater === 'function' ? updater(shareMenuOpenState) : updater
+})
+const handleCopyTextMock = vi.fn()
+const handleWebShareMock = vi.fn()
+const shareMenuRefMock = { current: null }
+
+vi.mock('../renderer/hooks/useNoteShareMenu', () => ({
+  useNoteShareMenu: vi.fn(() => ({
+    shareMenuOpen: shareMenuOpenState,
+    setShareMenuOpen: setShareMenuOpenMock,
+    shareMenuRef: shareMenuRefMock,
+    canShare: true,
+    handleCopyText: handleCopyTextMock,
+    handleWebShare: handleWebShareMock,
+  })),
+}))
+
 const invokeMock = vi.fn()
 Object.defineProperty(window, 'api', {
   value: { invoke: invokeMock },
@@ -60,6 +99,7 @@ vi.mock('../renderer/api', () => ({
 
 const { NoteDetailModal } = await import('../renderer/components/crm/NoteDetailModal')
 const { IPC_CHANNELS } = await import('../shared/constants/channels')
+const { useNoteShareMenu } = await import('../renderer/hooks/useNoteShareMenu')
 
 // --- Helpers ---
 
@@ -107,6 +147,7 @@ describe('NoteDetailModal — Tiptap integration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     capturedOnUpdate = undefined
+    shareMenuOpenState = false
   })
 
   afterEach(() => {
@@ -186,5 +227,41 @@ describe('NoteDetailModal — Tiptap integration', () => {
       const wrapper = document.querySelector('[class*="editorContent"]')
       expect(wrapper?.className).toMatch(/saveError/)
     })
+  })
+
+  it('renders "Open Meeting →" button when sourceMeetingId is set', async () => {
+    renderModal({ sourceMeetingId: 'meeting-99' })
+    await waitFor(() => screen.getByDisplayValue('Pitch Deck — Amma'))
+    expect(screen.getByText('Open Meeting →')).toBeTruthy()
+  })
+
+  it('does not render "Open Meeting →" when sourceMeetingId is null', async () => {
+    renderModal({ sourceMeetingId: null })
+    await waitFor(() => screen.getByDisplayValue('Pitch Deck — Amma'))
+    expect(screen.queryByText('Open Meeting →')).toBeNull()
+  })
+
+  it('navigates to meeting and closes modal when "Open Meeting →" is clicked', async () => {
+    const { onClose } = renderModal({ sourceMeetingId: 'meeting-99' })
+    await waitFor(() => screen.getByText('Open Meeting →'))
+
+    // Avoid triggering the auto-save flush from handleClose
+    invokeMock.mockResolvedValue(null)
+    fireEvent.click(screen.getByText('Open Meeting →'))
+
+    expect(navigateMock).toHaveBeenCalledWith('/meeting/meeting-99')
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('renders "Share ▾" button when note is loaded', async () => {
+    renderModal()
+    await waitFor(() => screen.getByDisplayValue('Pitch Deck — Amma'))
+    expect(screen.getByText('Share ▾')).toBeTruthy()
+  })
+
+  it('passes noteId and contentDraft to useNoteShareMenu', async () => {
+    renderModal()
+    await waitFor(() => expect(loadContentMock).toHaveBeenCalled())
+    expect(vi.mocked(useNoteShareMenu)).toHaveBeenCalledWith(NOTE.id, expect.any(String))
   })
 })

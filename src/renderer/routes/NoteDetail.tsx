@@ -32,6 +32,8 @@ import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useNoteEditor } from '../hooks/useNoteEditor'
+import { useNoteShareMenu } from '../hooks/useNoteShareMenu'
+import { TABLE_EXTENSIONS } from '../lib/tiptap-extensions'
 import { useEditableTitle } from '../hooks/useEditableTitle'
 import { NoteTagger } from '../components/notes/NoteTagger'
 import { TagSuggestionBanner } from '../components/notes/TagSuggestionBanner'
@@ -99,6 +101,7 @@ function NoteDetailNewInner() {
       Markdown,
       Link.configure({ openOnClick: true }),
       Image,
+      ...TABLE_EXTENSIONS,
     ],
     content: '',
     onUpdate: ({ editor: ed }) => {
@@ -186,6 +189,7 @@ function NoteDetailLoadedInner() {
     titleDraft,
     setTitleDraft,
     editor,
+    contentDraft,
     saveStatus,
     isPinned,
     setIsPinned,
@@ -210,6 +214,15 @@ function NoteDetailLoadedInner() {
 
   const [localNote, setLocalNote] = useState<Note | null>(null)
   useEffect(() => { if (note) setLocalNote(note) }, [note])
+
+  const {
+    shareMenuOpen,
+    setShareMenuOpen,
+    shareMenuRef,
+    canShare,
+    handleCopyText,
+    handleWebShare,
+  } = useNoteShareMenu(localNote?.id ?? null, contentDraft)
 
   // Fetch source meeting title once when localNote has a sourceMeetingId
   useEffect(() => {
@@ -379,6 +392,28 @@ function NoteDetailLoadedInner() {
                 >
                   {isPinned ? '📌 Pinned' : 'Pin'}
                 </button>
+                <div ref={shareMenuRef} className={styles.shareWrapper}>
+                  <button
+                    className={styles.shareBtn}
+                    onClick={() => setShareMenuOpen(v => !v)}
+                  >
+                    Share ▾
+                  </button>
+                  {shareMenuOpen && (
+                    <div className={styles.shareMenu}>
+                      <button className={styles.shareMenuItem} onClick={handleCopyText}>
+                        Copy text
+                      </button>
+                      <button
+                        className={styles.shareMenuItem}
+                        onClick={handleWebShare}
+                        disabled={!canShare}
+                      >
+                        Share to web
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <button className={styles.deleteBtn} onClick={handleDelete}>
                   Delete
                 </button>
