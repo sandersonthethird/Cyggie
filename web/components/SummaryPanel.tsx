@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface SummaryPanelProps {
   title: string
@@ -64,7 +65,7 @@ export default function SummaryPanel({
             Summary
           </h2>
           <div className="summary-markdown text-sm text-gray-800 dark:text-gray-200 leading-relaxed max-w-none">
-            <ReactMarkdown>{summary}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
           </div>
         </div>
       ) : (

@@ -1,6 +1,7 @@
 'use client'
 
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import ChatPanel from './ChatPanel'
 
 interface MemoSharePageProps {
@@ -55,8 +56,8 @@ export default function MemoSharePage({
 
       {/* Memo content — scrollable */}
       <div className="flex-1 overflow-y-auto px-8 py-6 min-h-0">
-        <div className="max-w-3xl mx-auto prose prose-sm dark:prose-invert prose-headings:font-semibold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg">
-          <ReactMarkdown>{contentMarkdown}</ReactMarkdown>
+        <div className="max-w-3xl mx-auto summary-markdown">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentMarkdown}</ReactMarkdown>
         </div>
       </div>
 

@@ -150,3 +150,10 @@ body {
     background: rgba(255, 255, 255, 0.03);
   }
 }
+
+/* Note-share heading style — red left border matching desktop app */
+.note-markdown h1,
+.note-markdown h2 {
+  border-left: 3px solid #B91C1C;
+  padding-left: 10px;
+}

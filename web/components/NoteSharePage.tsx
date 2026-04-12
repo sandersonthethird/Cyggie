@@ -1,6 +1,7 @@
 'use client'
 
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface NoteSharePageProps {
   title: string
@@ -22,8 +23,8 @@ export default function NoteSharePage({ title, contentMarkdown, createdAt }: Not
           <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-1">{title}</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">{formattedDate}</p>
         </header>
-        <div className="prose prose-sm dark:prose-invert prose-headings:font-semibold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg max-w-none">
-          <ReactMarkdown>{contentMarkdown}</ReactMarkdown>
+        <div className="summary-markdown note-markdown">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentMarkdown}</ReactMarkdown>
         </div>
       </div>
     </div>
