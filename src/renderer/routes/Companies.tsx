@@ -5,7 +5,6 @@ import NewCompanyModal from '../components/company/NewCompanyModal'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
-import ChatInterface from '../components/chat/ChatInterface'
 import { CompanyTable } from '../components/company/CompanyTable'
 import { ViewsBar } from '../components/crm/ViewsBar'
 import { CreateCustomFieldModal } from '../components/crm/CreateCustomFieldModal'
@@ -876,10 +875,6 @@ export default function Companies() {
         document.body
       )}
 
-      {/* Chat bar — pinned below table */}
-      <div className={styles.chatSection}>
-        <ChatInterface compact />
-      </div>
     </div>
   )
 }

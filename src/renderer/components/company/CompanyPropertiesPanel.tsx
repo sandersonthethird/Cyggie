@@ -327,9 +327,10 @@ export function CompanyPropertiesPanel({
   const headerBadgesRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  const [showApplyPrompt, setShowApplyPrompt] = useState(false)
+  const [sessionNewFields, setSessionNewFields] = useState<string[] | null>(null)
   const [templateIndicator, setTemplateIndicator] = useState(false)
   const sessionChanges = useRef(false)
+  const sessionAddedFields = useRef<string[]>([])
   const prevEntityType = useRef(company.entityType)
   const descriptionRef = useRef<HTMLParagraphElement>(null)
   const markChanged = useCallback(() => { sessionChanges.current = true }, [])
@@ -706,26 +707,30 @@ export function CompanyPropertiesPanel({
       const value = company[key as keyof CompanyDetail]
       return value === null || value === undefined || (typeof value === 'string' && value.trim() === '')
     })
+    // Compute newly-added fields BEFORE cleanupOnDone (reads stable closure value),
+    // manually excluding empty keys that cleanupOnDone is about to strip.
+    const newlyAdded = fieldVisibility.addedFields
+      .filter(f => !sessionAddedFields.current.includes(f))
+      .filter(f => !emptyKeys.includes(f))
     fieldVisibility.cleanupOnDone(emptyKeys)
-    // If layout was changed, prompt: "Apply to all [Type]?" or "Just this company"
+    // If layout was changed, prompt: "Apply to all?" or "Just this company"
     if (sessionChanges.current) {
-      setShowApplyPrompt(true)
+      setSessionNewFields(newlyAdded)
     } else {
       setIsEditing(false)
     }
   }
 
   function handleApplyToAll() {
-    const profileKey = company.entityType ?? 'unknown'
     for (const baseKey of LAYOUT_PREF_BASE_KEYS) {
-      propagateLayoutPref(getJSON, setJSON, baseKey, company.id, profileKey)
+      propagateLayoutPref(getJSON, setJSON, baseKey, company.id, null)
     }
-    setShowApplyPrompt(false)
+    setSessionNewFields(null)
     setIsEditing(false)
   }
 
   function handleJustThisCompany() {
-    setShowApplyPrompt(false)
+    setSessionNewFields(null)
     setIsEditing(false)
   }
 
@@ -1206,11 +1211,23 @@ export function CompanyPropertiesPanel({
         </div>
         {isEditing ? (
           <div className={styles.editActions}>
-            {showApplyPrompt ? (
+            {sessionNewFields !== null ? (
               <div className={styles.applyPrompt}>
-                <span>Default for all <strong>{ENTITY_LABELS[company.entityType ?? ''] ?? 'companies'}</strong>?</span>
-                <button className={styles.applyAllBtn} onClick={handleApplyToAll}>Apply to all</button>
-                <button className={styles.applyOneBtn} onClick={handleJustThisCompany}>Just this one</button>
+                {(() => {
+                  function fieldLabel(key: string): string {
+                    if (key.startsWith('custom:')) {
+                      const id = key.slice(7)
+                      return customFields.find(f => f.id === id)?.label ?? key
+                    }
+                    return COLUMN_DEFS.find(d => d.key === key)?.label ?? key
+                  }
+                  const promptPrefix = sessionNewFields.length > 0
+                    ? `Show ${sessionNewFields.map(fieldLabel).join(', ')} on`
+                    : 'Apply layout changes to'
+                  return <span>{promptPrefix} <strong>all companies</strong>?</span>
+                })()}
+                <button className={styles.applyAllBtn} onClick={handleApplyToAll}>All companies</button>
+                <button className={styles.applyOneBtn} onClick={handleJustThisCompany}>Just {company.canonicalName}</button>
               </div>
             ) : (
               <>
@@ -1221,6 +1238,28 @@ export function CompanyPropertiesPanel({
           </div>
         ) : (
           <div className={styles.headerBtnGroup}>
+            {/* Icon-only Email/Task — sticky, always visible alongside Enhance/Edit */}
+            <button
+              className={styles.headerIconBtn}
+              onClick={() => {
+                const email = keyContacts[0]?.email
+                if (email) void api.invoke(
+                  IPC_CHANNELS.APP_OPEN_EXTERNAL_URL,
+                  `https://mail.google.com/mail/?view=cm&tf=1&to=${encodeURIComponent(email)}`
+                )
+              }}
+              disabled={!keyContacts[0]?.email}
+              title={keyContacts[0]?.email ? `Email ${keyContacts[0].fullName}` : 'No contact email'}
+            >
+              <Mail size={14} />
+            </button>
+            <button
+              className={styles.headerIconBtn}
+              onClick={() => setTaskModalOpen(true)}
+              title="Add task"
+            >
+              <CheckSquare size={14} />
+            </button>
             {onEnhance && (
               <div className={styles.enhanceWrap}>
                 <button
@@ -1256,7 +1295,10 @@ export function CompanyPropertiesPanel({
                 )}
               </div>
             )}
-            <button className={styles.editBtn} onClick={() => setIsEditing(true)}>Edit</button>
+            <button className={styles.editBtn} onClick={() => {
+              sessionAddedFields.current = [...fieldVisibility.addedFields]
+              setIsEditing(true)
+            }}>Edit</button>
           </div>
         )}
         </div>{/* end headerTopRow */}
@@ -1340,27 +1382,6 @@ export function CompanyPropertiesPanel({
             </div>
           )
         )}
-      </div>
-
-      {/* Action Row — Email / Task */}
-      <div className={styles.actionRow}>
-        <button
-          className={styles.actionBtnPrimary}
-          onClick={() => {
-            const email = keyContacts[0]?.email
-            if (email) void api.invoke(
-              IPC_CHANNELS.APP_OPEN_EXTERNAL_URL,
-              `https://mail.google.com/mail/?view=cm&tf=1&to=${encodeURIComponent(email)}`
-            )
-          }}
-          disabled={!keyContacts[0]?.email}
-          title={keyContacts[0]?.email ? `Email ${keyContacts[0].fullName}` : 'No contact email'}
-        >
-          <Mail size={14} /> Email
-        </button>
-        <button className={styles.actionBtnSecondary} onClick={() => setTaskModalOpen(true)}>
-          <CheckSquare size={14} /> Task
-        </button>
       </div>
 
       {taskModalOpen && (

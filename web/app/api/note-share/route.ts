@@ -9,6 +9,8 @@ interface NoteShareRequest {
   contentMarkdown: string
   claudeApiKey: string
   logoUrl?: string | null
+  firmName?: string | null
+  brandColor?: string | null
   expiresInDays?: number
 }
 
@@ -67,6 +69,8 @@ export async function POST(request: Request) {
         contentMarkdown: body.contentMarkdown,
         apiKeyEnc,
         logoUrl: body.logoUrl ?? null,
+        firmName: body.firmName ?? null,
+        brandColor: body.brandColor ?? null,
         expiresAt,
       })
       break

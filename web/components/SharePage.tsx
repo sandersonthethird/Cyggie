@@ -15,6 +15,8 @@ interface SharePageProps {
   summary: string | null
   notes: string | null
   logoUrl: string | null
+  firmName: string | null
+  brandColor: string | null
 }
 
 export default function SharePage({
@@ -27,10 +29,16 @@ export default function SharePage({
   summary,
   notes,
   logoUrl,
+  firmName,
+  brandColor,
 }: SharePageProps) {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'flex', flexDirection: 'column' }}>
-      <SharedHeader label="Shared Meeting Note" logoUrl={logoUrl ?? undefined} />
+      <SharedHeader
+        label={firmName || 'Shared Meeting Note'}
+        logoUrl={logoUrl ?? undefined}
+        labelColor={brandColor ?? undefined}
+      />
 
       <main style={{ flex: 1, padding: '32px 24px 100px' }}>
         <article style={{

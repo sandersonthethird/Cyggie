@@ -8,26 +8,17 @@ import remarkGfm from 'remark-gfm'
 const MARKDOWN_PLUGINS = [remarkGfm]
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatStore } from '../../stores/chat.store'
+import type { ContextOption } from '../../../shared/types/chat'
 import styles from './ChatInterface.module.css'
 import { api } from '../../api'
 
-export interface ContextOption {
-  type: 'company' | 'contact'
-  id: string
-  name: string
-}
+export type { ContextOption }
 
 interface ChatInterfaceProps {
-  meetingId?: string // If provided, queries single meeting. Otherwise queries all meetings.
-  meetingIds?: string[] // If provided, queries these specific meetings (search results).
-  companyId?: string // If provided, queries company context (meetings, emails, files).
-  contactId?: string // If provided, queries contact context (meetings, emails, notes).
-  entityName?: string // Display name shown in context label (company/contact name).
-  contextOptions?: ContextOption[] // If provided, shows a context switcher chip in floating mode.
+  meetingId?: string        // If provided, queries single meeting. Otherwise queries all meetings.
+  meetingIds?: string[]     // If provided, queries these specific meetings (search results).
+  contextOptions?: ContextOption[] // If provided, shows a context switcher chip.
   placeholder?: string
-  fillHeight?: boolean // If true, container expands to fill available space
-  compact?: boolean // If true, hides empty state text — just shows the input bar
-  floating?: boolean // If true, renders as a fixed bottom bar with a pop-up overlay for responses
 }
 
 interface PendingAttachment {
@@ -106,41 +97,65 @@ function parseChatError(errStr: string): string {
   return 'Something went wrong. Please try again.'
 }
 
-export default function ChatInterface({ meetingId, meetingIds, companyId, contactId, entityName, contextOptions, placeholder, fillHeight = false, compact = false, floating = false }: ChatInterfaceProps) {
-  const [expandedToGlobal, setExpandedToGlobal] = useState(false)
+export default function ChatInterface({ meetingId, meetingIds, contextOptions, placeholder }: ChatInterfaceProps) {
+  // Floating widget state machine:
+  //   COLLAPSED → pill fixed at bottom of screen
+  //               pointer-events: none on root, all on widget
+  //               bg content fully visible and accessible
+  //   EXPANDED  → panel grows UPWARD above input bar
+  //               NO backdrop, NO centering, NO width change
+  //               bg content still fully visible and accessible
+  //   Opened by: handleSubmit, onFocus (messages exist)
+  //   Closed by: ⌄ button (minimize), ✕ button (minimize + clear),
+  //              Escape key, click outside widget (minimize, no clear)
+  //              All close paths work even during streaming.
+  //
+  //   Escape / click-outside priority:
+  //     contextDropdownOpen=true  → close dropdown only, panel stays
+  //     contextDropdownOpen=false → close panel (minimize)
+  //
+  //   ✕ button (when streaming): calls handleStop() first to abort,
+  //     clears streamedContentRef.current to prevent orphan partial message,
+  //     then clearConversation(contextId)
+  const [floatingPanelOpen, setFloatingPanelOpen] = useState(false)
 
-  // Context chip state machine:
-  //   entity page (chip shown) → expandedToGlobal=false → entity-scoped query
-  //   chip × clicked           → expandedToGlobal=true  → CHAT_QUERY_ALL
-  //   no entity IDs (Dashboard/Tasks/etc.) → always CHAT_QUERY_ALL
-  const showContextChip = !!(companyId || contactId) && !expandedToGlobal
+  // activeContext: which entity scope is active in the context chip dropdown.
+  // Syncs via useEffect when meetingId/contextOptions change (navigation).
+  const [activeContext, setActiveContext] = useState<'meeting' | ContextOption>('meeting')
+  const [contextDropdownOpen, setContextDropdownOpen] = useState(false)
 
-  const contextId = expandedToGlobal ? 'global-all'
-    : companyId ? `company:${companyId}`
-    : contactId ? `contact:${contactId}`
+  // Sync activeContext when page context changes (e.g., navigating to a new entity page).
+  // Without this, activeContext stays stale after navigation.
+  useEffect(() => {
+    if (!meetingId && contextOptions?.[0]) {
+      setActiveContext(contextOptions[0])    // default to entity on detail pages
+    } else if (!meetingId) {
+      setActiveContext('meeting')            // reset to Global on list pages
+    }
+    // meetingId case: keep 'meeting' (This meeting is the correct default)
+  }, [meetingId, contextOptions])
+
+  // contextId: key for the chat.store conversations map.
+  // Derived from activeContext when an entity option is selected; otherwise from meetingId/meetingIds.
+  const contextId = activeContext !== 'meeting'
+    ? `${activeContext.type}:${activeContext.id}`
     : meetingIds ? 'search-results'
     : meetingId ?? 'global-all'
 
   const storedMessages = useChatStore((s) => s.conversations[contextId]?.messages)
   const messages = useMemo(() => storedMessages ?? EMPTY_MESSAGES, [storedMessages])
   const addMessage = useChatStore((s) => s.addMessage)
+  const clearConversation = useChatStore((s) => s.clearConversation)
 
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [streamedContent, setStreamedContent] = useState('')
   const [error, setError] = useState<string | null>(null)
-  // Floating widget state machine:
-  //   collapsed → input pill at bottom of content area
-  //   expanded  → centered modal over dimmed backdrop (left=sidebar-width)
-  //   Opened by: handleSubmit, onFocus (messages exist)
-  //   Closed by: ✕ button, Escape key, backdrop click
-  const [floatingPanelOpen, setFloatingPanelOpen] = useState(false)
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
-  const [activeContext, setActiveContext] = useState<'meeting' | ContextOption>('meeting')
-  const [contextDropdownOpen, setContextDropdownOpen] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const widgetRef = useRef<HTMLDivElement>(null)
   const dragCounterRef = useRef(0)
   const contextDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -171,17 +186,21 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
     return unsub
   }, [isLoading])
 
-  // Escape collapses the floating panel
+  // Escape: close dropdown first, then modal on second press
   useEffect(() => {
-    if (!floating) return
     function handleEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape' && floatingPanelOpen) {
+      if (e.key !== 'Escape') return
+      if (contextDropdownOpen) {
+        setContextDropdownOpen(false)
+        return
+      }
+      if (floatingPanelOpen) {
         setFloatingPanelOpen(false)
       }
     }
     document.addEventListener('keydown', handleEscape)
     return () => document.removeEventListener('keydown', handleEscape)
-  }, [floating, floatingPanelOpen])
+  }, [contextDropdownOpen, floatingPanelOpen])
 
   // Close context dropdown on click outside
   useEffect(() => {
@@ -195,11 +214,30 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [contextDropdownOpen])
 
+  // Click outside widget: mirrors Escape priority — close dropdown first, then minimize panel.
+  // Uses floatingPanelOpen/isLoading/messages directly (showPanel is derived below JSX scope).
+  useEffect(() => {
+    if (!(floatingPanelOpen && (messages.length > 0 || isLoading))) return
+    function handleClickOutside(e: MouseEvent) {
+      if (widgetRef.current && !widgetRef.current.contains(e.target as Node)) {
+        if (contextDropdownOpen) {
+          setContextDropdownOpen(false)
+        } else {
+          setFloatingPanelOpen(false)
+        }
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [floatingPanelOpen, messages.length, isLoading, contextDropdownOpen])
+
   function handleContextSwitch(next: 'meeting' | ContextOption) {
     if (next === activeContext || (next !== 'meeting' && activeContext !== 'meeting' && next.id === activeContext.id)) return
     setActiveContext(next)
     setContextDropdownOpen(false)
-    const label = next === 'meeting' ? 'This meeting' : `All ${next.name} meetings`
+    const label = next === 'meeting'
+      ? (meetingId ? 'This meeting' : 'Global')
+      : `All ${next.name} meetings`
     addMessage(contextId, { role: 'system' as const, content: `Context: ${label}` })
   }
 
@@ -270,24 +308,18 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
   }, [addAttachments])
 
   const handleStop = useCallback(() => {
-    // expandedToGlobal must be checked FIRST — chip dismiss switches to CHAT_QUERY_ALL
-    // even when companyId/contactId are still set on the entity page.
-    if (expandedToGlobal || (!companyId && !contactId && !meetingId)) {
-      api.invoke(IPC_CHANNELS.CHAT_ABORT_ALL)
-    } else if (contextOptions && activeContext !== 'meeting') {
+    if (activeContext !== 'meeting') {
       if (activeContext.type === 'company') {
         api.invoke(IPC_CHANNELS.COMPANY_CHAT_ABORT)
       } else {
         api.invoke(IPC_CHANNELS.CONTACT_CHAT_ABORT)
       }
-    } else if (companyId) {
-      api.invoke(IPC_CHANNELS.COMPANY_CHAT_ABORT)
-    } else if (contactId) {
-      api.invoke(IPC_CHANNELS.CONTACT_CHAT_ABORT)
-    } else {
+    } else if (meetingId) {
       api.invoke(IPC_CHANNELS.CHAT_ABORT)
+    } else {
+      api.invoke(IPC_CHANNELS.CHAT_ABORT_ALL)
     }
-  }, [expandedToGlobal, contextOptions, activeContext, companyId, contactId, meetingId])
+  }, [activeContext, meetingId])
 
   const handleSubmit = useCallback(async () => {
     if ((!input.trim() && attachments.length === 0) || isLoading) return
@@ -319,33 +351,17 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
 
     addMessage(contextId, { role: 'user', content: displayContent })
     setIsLoading(true)
-    if (floating) setFloatingPanelOpen(true)
+    setFloatingPanelOpen(true)
 
     try {
       let response: string
-      // expandedToGlobal MUST be checked first — the chip dismiss switches to CHAT_QUERY_ALL
-      // even when companyId/contactId are still set on entity pages.
-      // Also catches Dashboard/Tasks/etc. where no entity IDs are present.
-      if (expandedToGlobal || (!companyId && !contactId && !meetingId && !meetingIds)) {
+      if (activeContext !== 'meeting') {
+        // Entity context selected via dropdown
         response = await api.invoke<string>(
-          IPC_CHANNELS.CHAT_QUERY_ALL,
-          { question, attachments: ipcAttachments }
-        )
-      } else if (contextOptions && activeContext !== 'meeting') {
-        if (activeContext.type === 'company') {
-          response = await api.invoke<string>(IPC_CHANNELS.COMPANY_CHAT_QUERY, { companyId: activeContext.id, question })
-        } else {
-          response = await api.invoke<string>(IPC_CHANNELS.CONTACT_CHAT_QUERY, { contactId: activeContext.id, question })
-        }
-      } else if (companyId) {
-        response = await api.invoke<string>(
-          IPC_CHANNELS.COMPANY_CHAT_QUERY,
-          { companyId, question }
-        )
-      } else if (contactId) {
-        response = await api.invoke<string>(
-          IPC_CHANNELS.CONTACT_CHAT_QUERY,
-          { contactId, question }
+          activeContext.type === 'company' ? IPC_CHANNELS.COMPANY_CHAT_QUERY : IPC_CHANNELS.CONTACT_CHAT_QUERY,
+          activeContext.type === 'company'
+            ? { companyId: activeContext.id, question }
+            : { contactId: activeContext.id, question }
         )
       } else if (meetingIds) {
         response = await api.invoke<string>(
@@ -354,12 +370,17 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
           question,
           ipcAttachments
         )
-      } else {
+      } else if (meetingId) {
         response = await api.invoke<string>(
           IPC_CHANNELS.CHAT_QUERY_MEETING,
-          meetingId!,
+          meetingId,
           question,
           ipcAttachments
+        )
+      } else {
+        response = await api.invoke<string>(
+          IPC_CHANNELS.CHAT_QUERY_ALL,
+          { question, attachments: ipcAttachments }
         )
       }
 
@@ -385,7 +406,7 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
       setIsLoading(false)
       setStreamedContent('')
     }
-  }, [input, attachments, isLoading, meetingId, meetingIds, companyId, contactId, contextId, addMessage, floating, contextOptions, activeContext, expandedToGlobal])
+  }, [input, attachments, isLoading, meetingId, meetingIds, contextId, addMessage, contextOptions, activeContext])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -398,8 +419,13 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
   )
 
   const hasThread = messages.length > 0
-  const defaultPlaceholder = 'Ask anything…'
-  const containerClass = fillHeight ? `${styles.container} ${styles.fillHeight}` : styles.container
+
+  // Context-aware placeholder — derived from props, no extra store subscription
+  const defaultPlaceholder = useMemo(() => {
+    if (contextOptions?.[0]) return `Ask about ${contextOptions[0].name}…`
+    if (meetingId) return 'Ask about this meeting…'
+    return 'Ask anything…'
+  }, [contextOptions, meetingId])
 
   const messagesContent = (
     <>
@@ -454,158 +480,124 @@ export default function ChatInterface({ meetingId, meetingIds, companyId, contac
     </div>
   )
 
-  // Shared drop zone + input row builder
-  const makeInputSection = (rowClass: string) => (
-    <div
-      className={`${styles.dropZone} ${isDragOver ? styles.dragOver : ''}`}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
-      {isDragOver && <div className={styles.dropOverlay}>Drop files or screenshots here</div>}
-      {showContextChip && (
-        <div className={styles.entityChip}>
-          <span className={styles.entityChipLabel}>{entityName || 'This entity'}</span>
-          <button
-            className={styles.entityChipDismiss}
-            onClick={() => setExpandedToGlobal(true)}
-            aria-label="Expand to all meetings and CRM data"
-            title="Expand to search all meetings and CRM data"
-          >×</button>
-        </div>
-      )}
-      {attachmentChips}
-      <div className={rowClass}>
-        <textarea
-          ref={textareaRef}
-          className={styles.input}
-          data-chat-shortcut="true"
-          value={input}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          onFocus={() => { if (floating && messages.length > 0) setFloatingPanelOpen(true) }}
-          placeholder={placeholder || defaultPlaceholder}
-          disabled={isLoading}
-          rows={1}
-        />
-        {floating && hasThread && !floatingPanelOpen && (
-          <span className={styles.threadBadge} aria-hidden />
-        )}
-        <button
-          className={`${styles.sendBtn} ${isLoading ? styles.stopBtn : ''}`}
-          onClick={isLoading ? handleStop : handleSubmit}
-          disabled={!isLoading && !input.trim() && attachments.length === 0}
-        >
-          {isLoading ? '\u25A0' : 'Ask'}
-        </button>
-      </div>
-    </div>
-  )
+  // Context chip label: "This meeting" when on a meeting page, "Global" otherwise
+  const meetingLabel = meetingId ? 'This meeting' : 'Global'
 
-  if (floating) {
-    const showPanel = floatingPanelOpen && (messages.length > 0 || isLoading)
-    return createPortal(
+  const showPanel = floatingPanelOpen && (messages.length > 0 || isLoading)
+
+  return createPortal(
+    <div className={styles.floatingRoot}>
       <div
-        className={`${styles.floatingRoot} ${showPanel ? styles.floatingRootExpanded : ''}`}
-        onClick={showPanel ? () => setFloatingPanelOpen(false) : undefined}
+        ref={widgetRef}
+        className={`${styles.floatingWidget} ${showPanel ? styles.floatingWidgetExpanded : ''}`}
       >
-        <div
-          className={`${styles.floatingWidget} ${showPanel ? styles.floatingWidgetExpanded : ''}`}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className={styles.floatingPanel}>
-            <div className={styles.floatingPanelHeader}>
-              <div className={styles.floatingPanelTitleWrap}>
-                <span className={styles.floatingPanelTitle}>Ask AI</span>
-                {meetingId ? (
-                  <div className={styles.contextChipWrap} ref={contextDropdownRef}>
-                    <button
-                      className={styles.contextChip}
-                      onClick={() => contextOptions?.length ? setContextDropdownOpen(v => !v) : undefined}
-                      aria-haspopup={contextOptions?.length ? 'listbox' : undefined}
-                    >
-                      {activeContext === 'meeting'
-                        ? 'This meeting'
-                        : `All ${activeContext.name} meetings`}
-                      {contextOptions?.length ? <span className={styles.contextChevron}>▾</span> : null}
-                    </button>
-                    {contextDropdownOpen && contextOptions && (
-                      <div className={styles.contextDropdown} role="listbox">
+        <div className={styles.floatingPanel}>
+          <div className={styles.floatingPanelHeader}>
+            <div className={styles.floatingPanelTitleWrap}>
+              <span className={styles.floatingPanelTitle}>Ask AI</span>
+              {(meetingId || contextOptions?.length) ? (
+                <div className={styles.contextChipWrap} ref={contextDropdownRef}>
+                  <button
+                    className={styles.contextChip}
+                    onClick={() => contextOptions?.length ? setContextDropdownOpen(v => !v) : undefined}
+                    aria-haspopup={contextOptions?.length ? 'listbox' : undefined}
+                  >
+                    {activeContext === 'meeting'
+                      ? meetingLabel
+                      : `All ${activeContext.name} meetings`}
+                    {contextOptions?.length ? <span className={styles.contextChevron}>▾</span> : null}
+                  </button>
+                  {contextDropdownOpen && contextOptions && (
+                    <div className={styles.contextDropdown} role="listbox">
+                      <button
+                        className={`${styles.contextDropdownItem} ${activeContext === 'meeting' ? styles.contextDropdownItemActive : ''}`}
+                        onClick={() => handleContextSwitch('meeting')}
+                      >
+                        {meetingLabel}
+                      </button>
+                      {contextOptions.map(opt => (
                         <button
-                          className={`${styles.contextDropdownItem} ${activeContext === 'meeting' ? styles.contextDropdownItemActive : ''}`}
-                          onClick={() => handleContextSwitch('meeting')}
+                          key={opt.id}
+                          className={`${styles.contextDropdownItem} ${activeContext !== 'meeting' && (activeContext as ContextOption).id === opt.id ? styles.contextDropdownItemActive : ''}`}
+                          onClick={() => handleContextSwitch(opt)}
                         >
-                          This meeting
+                          {opt.type === 'company' ? '🏢' : '👤'} All {opt.name} meetings
                         </button>
-                        {contextOptions.map(opt => (
-                          <button
-                            key={opt.id}
-                            className={`${styles.contextDropdownItem} ${activeContext !== 'meeting' && (activeContext as ContextOption).id === opt.id ? styles.contextDropdownItemActive : ''}`}
-                            onClick={() => handleContextSwitch(opt)}
-                          >
-                            {opt.type === 'company' ? '🏢' : '👤'} All {opt.name} meetings
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : (companyId || contactId) && entityName ? (
-                  <span className={styles.contextLabel}>
-                    {entityName} · {companyId ? 'meetings, emails & files' : 'meetings, emails & notes'}
-                  </span>
-                ) : (!companyId && !contactId && !meetingId && !meetingIds) ? (
-                  <span className={styles.contextLabel}>All meetings</span>
-                ) : null}
-              </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+            <div className={styles.floatingPanelActions}>
               <button
                 className={styles.floatingPanelClose}
                 onClick={() => setFloatingPanelOpen(false)}
+                title="Minimize"
+              >
+                ⌄
+              </button>
+              <button
+                className={styles.floatingPanelClose}
+                onClick={() => {
+                  if (isLoading) {
+                    handleStop()
+                    streamedContentRef.current = '' // prevent partial re-add after abort
+                  }
+                  setStreamedContent('')
+                  setFloatingPanelOpen(false)
+                  clearConversation(contextId)
+                }}
                 title="Close"
               >
                 ✕
               </button>
             </div>
-            <div className={styles.floatingMessages}>
-              {messagesContent}
+          </div>
+          <div className={styles.floatingMessages}>
+            {messagesContent}
+          </div>
+          {error && <div className={`${styles.error} ${styles.floatingError}`}>{error}</div>}
+        </div>
+        <div className={styles.floatingInputArea}>
+          <div
+            className={`${styles.dropZone} ${isDragOver ? styles.dragOver : ''}`}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            {isDragOver && <div className={styles.dropOverlay}>Drop files or screenshots here</div>}
+            {attachmentChips}
+            <div className={styles.floatingInputRow}>
+              <textarea
+                ref={textareaRef}
+                className={styles.input}
+                data-chat-shortcut="true"
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onFocus={() => { if (messages.length > 0) setFloatingPanelOpen(true) }}
+                placeholder={placeholder || defaultPlaceholder}
+                disabled={isLoading}
+                rows={1}
+              />
+              {hasThread && !floatingPanelOpen && (
+                <span className={styles.threadBadge} aria-hidden />
+              )}
+              <button
+                className={`${styles.sendBtn} ${isLoading ? styles.stopBtn : ''}`}
+                onClick={isLoading ? handleStop : handleSubmit}
+                disabled={!isLoading && !input.trim() && attachments.length === 0}
+              >
+                {isLoading ? '\u25A0' : 'Ask'}
+              </button>
             </div>
-            {error && <div className={`${styles.error} ${styles.floatingError}`}>{error}</div>}
-          </div>
-          <div className={styles.floatingInputArea}>
-            {makeInputSection(styles.floatingInputRow)}
           </div>
         </div>
-      </div>,
-      document.body
-    )
-  }
-
-  return (
-    <div className={containerClass}>
-      {messages.length > 0 && (
-        <div className={styles.messages}>
-          {messagesContent}
-        </div>
-      )}
-
-      {!compact && messages.length === 0 && !isLoading && (
-        <div className={styles.emptyState}>
-          {companyId
-            ? `Ask questions about ${entityName ?? 'this company'} — meetings, emails & files.`
-            : contactId
-              ? `Ask questions about ${entityName ?? 'this contact'} — meetings, emails & notes.`
-              : meetingIds
-                ? 'Ask questions across the meetings in your search results.'
-                : meetingId
-                  ? 'Ask questions about this meeting\'s transcript and notes.'
-                  : 'Ask questions across all your meeting transcripts.'}
-        </div>
-      )}
-
-      {error && <div className={styles.error}>{error}</div>}
-
-      {makeInputSection(styles.inputRow)}
-    </div>
+      </div>
+    </div>,
+    document.body
   )
 }

@@ -96,6 +96,16 @@ export function useNotesAutoSave(meetingId: string | undefined) {
     }, 500)
   }, [saveSummary])
 
+  const handleSummaryChangeText = useCallback((text: string) => {
+    setSummaryDraft(text)
+    summaryDraftRef.current = text
+    if (summarySaveRef.current) clearTimeout(summarySaveRef.current)
+    summarySaveRef.current = setTimeout(() => {
+      void saveSummary(text)
+      summarySaveRef.current = null
+    }, 1500)
+  }, [saveSummary])
+
   /** Call after meeting data loads to seed initial draft state. */
   const reset = useCallback((notes: string | null, summary: string | null) => {
     const n = notes || ''
@@ -128,6 +138,7 @@ export function useNotesAutoSave(meetingId: string | undefined) {
     handleNotesChange,
     handleNotesChangeText,
     handleSummaryChange,
+    handleSummaryChangeText,
     saveNotes,
     saveSummary,
     flushNotes,

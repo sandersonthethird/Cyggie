@@ -26,6 +26,7 @@ import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
 import type { Editor } from '@tiptap/react'
 import { useTiptapMarkdown } from './useTiptapMarkdown'
+import { TABLE_EXTENSIONS } from '../lib/tiptap-extensions'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useDebounce } from './useDebounce'
 import { api } from '../api'
@@ -80,6 +81,7 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
         Markdown,
         Link.configure({ openOnClick: true }),
         Image,
+        ...TABLE_EXTENSIONS,
       ],
       editable: loadState === 'loaded',  // hook's useEffect calls setEditable reactively
       onUpdate: ({ editor: ed }) => {

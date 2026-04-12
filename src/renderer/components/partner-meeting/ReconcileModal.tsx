@@ -20,7 +20,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import { Markdown } from '@tiptap/markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import type {
   ReconcileProposal,
   ApplyReconciliationInput,
@@ -262,11 +266,10 @@ export function ReconcileModal({
                           <span>Add note: <em>{p.noteTitle}</em></span>
                         </label>
                         {card.applyNote && (
-                          <textarea
-                            className={styles.noteTextarea}
-                            value={card.noteContent}
-                            onChange={e => updateCard(p.companyId, { noteContent: e.target.value })}
-                            rows={6}
+                          <NoteCardEditor
+                            key={p.companyId}
+                            initialContent={card.noteContent}
+                            onChange={md => updateCard(p.companyId, { noteContent: md })}
                           />
                         )}
                       </div>
@@ -361,6 +364,35 @@ export function ReconcileModal({
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// NoteCardEditor — one TipTap instance per proposal card.
+// initialContent must be card.noteContent (perCard state), not p.noteContent (original proposal),
+// so edits are preserved when a card is collapsed and re-expanded.
+interface NoteCardEditorProps {
+  initialContent: string
+  onChange: (markdown: string) => void
+}
+
+function NoteCardEditor({ initialContent, onChange }: NoteCardEditorProps) {
+  const { editor, loadContent } = useTiptapMarkdown({
+    extensions: [StarterKit, Markdown],
+    onUpdate: ({ editor: e }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mkd = (e as any).getMarkdown?.() ?? ''
+      onChange(mkd)
+    },
+  }, [])
+
+  useEffect(() => {
+    loadContent(initialContent)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className={styles.noteEditor}>
+      <EditorContent editor={editor} />
     </div>
   )
 }

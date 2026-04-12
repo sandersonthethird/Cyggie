@@ -9,6 +9,7 @@ import * as contactRepo from '../database/repositories/contact.repo'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import { enrichCompany } from './company-enrichment'
 import { extractDomainFromEmail, humanizeDomainName } from '../utils/company-extractor'
+import { normalizeLinkedinUrl } from '../database/repositories/contact-utils'
 
 const LINKEDIN_URL_RE = /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/[^\s<>"')]+/gi
 const TITLE_HINT_RE = /\b(ceo|cto|cfo|coo|chief|founder|co-founder|partner|principal|associate|director|manager|vice president|vp|head|lead|president)\b/i
@@ -26,26 +27,6 @@ interface WebContactGuess {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function normalizeLinkedinUrl(value: string | null | undefined): string | null {
-  if (!value) return null
-  let normalized = value.trim()
-  if (!normalized) return null
-  normalized = normalized.replace(/[)\].,;:!?]+$/, '')
-  normalized = normalized.replace(/^http:\/\//i, 'https://')
-  if (!/linkedin\.com/i.test(normalized)) return null
-
-  const queryIndex = normalized.indexOf('?')
-  if (queryIndex > 0) normalized = normalized.slice(0, queryIndex)
-  const hashIndex = normalized.indexOf('#')
-  if (hashIndex > 0) normalized = normalized.slice(0, hashIndex)
-
-  if (!/^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/.+/i.test(normalized)) {
-    return null
-  }
-
-  return normalized
 }
 
 function htmlToText(html: string): string {
@@ -97,7 +78,9 @@ function pickBestLinkedinUrl(contact: ContactDetail, urls: string[]): string | n
   })
   if (slugHit) return slugHit
 
-  return ranked[0] || null
+  // Only return a URL if it's a personal profile (/in/) — never return a /company/ page
+  const anyPersonalProfile = ranked.find((url) => /\/in\//i.test(url))
+  return anyPersonalProfile || null
 }
 
 function inferTitleFromPages(contact: ContactDetail, pages: PageSnapshot[]): string | null {
@@ -293,6 +276,35 @@ export function mergeContactEnrichmentResults(
     webLookups: base.webLookups + web.webLookups,
     skipped: base.skipped + web.skipped
   }
+}
+
+/**
+ * Attempt to find a contact's LinkedIn URL by scraping their company's website.
+ * Returns the URL if found, null otherwise. Free — no external API calls.
+ *
+ *   contact
+ *     │
+ *     ▼
+ *   inferDomain()  →  null? → return null
+ *     │
+ *     ▼
+ *   fetchCompanyPages()
+ *     │
+ *     ▼
+ *   extractLinkedinUrlsFromHtml() → pickBestLinkedinUrl()
+ *     │
+ *     ▼
+ *   string | null
+ */
+export async function findLinkedInUrlFromWeb(contact: ContactDetail): Promise<string | null> {
+  if (contact.linkedinUrl) return contact.linkedinUrl
+  const domain = inferDomain(contact)
+  if (!domain) return null
+  const pages = await fetchCompanyPages(domain)
+  if (pages.length === 0) return null
+  const allHtml = pages.map((p) => p.html).join('\n')
+  const urls = extractLinkedinUrlsFromHtml(allHtml)
+  return pickBestLinkedinUrl(contact, urls)
 }
 
 export async function enrichContactsViaWebLookup(

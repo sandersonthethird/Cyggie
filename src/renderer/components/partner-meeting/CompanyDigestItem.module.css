@@ -147,16 +147,23 @@
 }
 
 .stageChip {
-  font-size: 11px;
-  padding: 2px 8px;
+  font-size: 12px;
+  padding: 2px 10px;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
   font-weight: 500;
-  background: var(--color-hover-bg);
-  color: var(--color-text-secondary);
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-text);
   white-space: nowrap;
 }
+
+/* Stage chip color classes — sourced from --chip-* vars in globals.css */
+.chipScreening     { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.chipDiligence     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.chipDecision      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.chipDocumentation { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.chipPass          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 .stageChip:hover {
   filter: brightness(0.95);
@@ -182,7 +189,7 @@
   font-size: 12px;
   padding: 4px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   text-align: left;
   font-weight: 500;

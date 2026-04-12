@@ -19,7 +19,6 @@ import type {
 } from '../../shared/types/dashboard'
 import type { Meeting } from '../../shared/types/meeting'
 import type { TaskListItem } from '../../shared/types/task'
-import ChatInterface from '../components/chat/ChatInterface'
 import styles from './Dashboard.module.css'
 import { api } from '../api'
 
@@ -652,10 +651,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── AI Command Bar ──────────────────────────────────────────── */}
-      <div className={styles.chatSection}>
-        <ChatInterface compact />
-      </div>
 
     </div>
   )

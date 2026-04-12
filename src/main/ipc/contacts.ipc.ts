@@ -13,6 +13,12 @@ import {
   enrichContactsFromLinkedInBatch,
 } from '../services/linkedin-enrichment.service'
 import { getContactSummaryUpdateProposalsFromMeetingId } from '../services/contact-summary-sync.service'
+import {
+  findLinkedInUrlWithCascade,
+  findLinkedInUrlsForContactsBatch,
+  ExaDiscoveryError,
+} from '../services/exa-linkedin-discovery.service'
+import { getCredential } from '../security/credentials'
 import { getProvider } from '../llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
@@ -34,6 +40,7 @@ function toErrorMessage(err: unknown): string {
 
 // In-flight guards for LinkedIn enrichment
 let linkedinEnrichInFlight = false
+let exaBatchAbortController: AbortController | null = null
 let linkedinBatchAbortController: AbortController | null = null
 
 export function registerContactHandlers(): void {
@@ -330,6 +337,69 @@ export function registerContactHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN_BATCH_CANCEL, () => {
     linkedinBatchAbortController?.abort()
+    return { cancelled: true }
+  })
+
+  // ---------------------------------------------------------------------------
+  // Exa LinkedIn URL discovery
+  // ---------------------------------------------------------------------------
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_FIND_LINKEDIN_URL, async (_event, contactId: string) => {
+    if (!contactId?.trim()) return { success: false, errorCode: 'invalid_input', message: 'contactId is required' }
+    const exaApiKey = getCredential('exaApiKey')
+    if (!exaApiKey) return { success: false, errorCode: 'no_exa_key', message: 'Add an Exa API key in Settings → AI & Transcription' }
+    const contact = contactRepo.getContact(contactId)
+    if (!contact) return { success: false, errorCode: 'not_found', message: 'Contact not found' }
+    if (contact.linkedinUrl) {
+      return { success: true, foundUrl: contact.linkedinUrl, contactName: contact.fullName, alreadyHadUrl: true }
+    }
+    const userId = getCurrentUserId()
+    try {
+      const foundUrl = await findLinkedInUrlWithCascade(contact, exaApiKey)
+      logAudit(userId, 'contact', contactId, 'update', { action: 'find-linkedin-url', found: !!foundUrl })
+      return { success: true, foundUrl, contactName: contact.fullName, alreadyHadUrl: false }
+    } catch (err) {
+      if (err instanceof ExaDiscoveryError) {
+        return { success: false, errorCode: err.code, message: err.message }
+      }
+      return { success: false, errorCode: 'unknown', message: toErrorMessage(err) }
+    }
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_FIND_LINKEDIN_URL_BATCH,
+    async (event, { contactIds }: { contactIds: string[] }) => {
+      if (!Array.isArray(contactIds) || contactIds.length === 0) {
+        return { success: true, found: 0, notFound: 0, skipped: 0, results: [] }
+      }
+      const exaApiKey = getCredential('exaApiKey')
+      if (!exaApiKey) return { success: false, errorCode: 'no_exa_key', message: 'Add an Exa API key in Settings → AI & Transcription' }
+      exaBatchAbortController = new AbortController()
+      const userId = getCurrentUserId()
+      try {
+        const result = await findLinkedInUrlsForContactsBatch(
+          contactIds,
+          exaApiKey,
+          exaBatchAbortController.signal,
+          (progress) => {
+            event.sender.send(IPC_CHANNELS.CONTACT_FIND_LINKEDIN_URL_BATCH_PROGRESS, progress)
+          },
+          userId
+        )
+        return { success: true, ...result }
+      } catch (err) {
+        if (err instanceof ExaDiscoveryError) {
+          return { success: false, errorCode: err.code, message: err.message }
+        }
+        return { success: false, errorCode: 'unknown', message: toErrorMessage(err) }
+      } finally {
+        exaBatchAbortController = null
+      }
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_FIND_LINKEDIN_URL_BATCH_CANCEL, () => {
+    exaBatchAbortController?.abort()
     return { cancelled: true }
   })
 

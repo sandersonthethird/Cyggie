@@ -206,23 +206,15 @@
   flex-shrink: 0;
 }
 
-.noteTextarea {
-  width: 100%;
-  box-sizing: border-box;
-  font-size: 12px;
-  font-family: inherit;
-  padding: 8px 10px;
+.noteEditor {
+  composes: tiptapContent from '../../styles/tiptap.module.css';
+  min-height: 80px;
+  font-size: 13px;
+  line-height: 1.6;
   border: 1px solid var(--color-border);
   border-radius: 6px;
+  padding: 6px 10px;
   background: var(--color-bg, #fff);
-  color: var(--color-text);
-  resize: vertical;
-  line-height: 1.5;
-}
-
-.noteTextarea:focus {
-  outline: none;
-  border-color: var(--color-accent, #6366f1);
 }
 
 .fieldChips {
@@ -260,15 +252,15 @@
 
 .categoryBadge {
   font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 2px 10px;
+  border-radius: 8px;
   flex-shrink: 0;
   font-weight: 500;
 }
 
-.cat_action_item { background: #dbeafe; color: #1e40af; }
-.cat_decision    { background: #dcfce7; color: #166534; }
-.cat_follow_up   { background: #fef9c3; color: #854d0e; }
+.cat_action_item { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.cat_decision    { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.cat_follow_up   { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
 
 .assignee {
   color: var(--color-text-muted);

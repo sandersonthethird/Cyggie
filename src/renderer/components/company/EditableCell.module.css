@@ -63,28 +63,28 @@
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
 /* Stage badges */
-.stage-screening   { background: rgba(150,150,150,0.15); color: #666; }
-.stage-diligence   { background: rgba(var(--color-primary-rgb, 59,130,246),0.15); color: var(--color-primary); }
-.stage-decision    { background: rgba(232,160,32,0.15); color: #b37a00; }
-.stage-documentation { background: rgba(20,180,160,0.15); color: #0a8a7a; }
-.stage-pass        { background: rgba(220,60,60,0.15); color: #b02020; }
+.stage-screening     { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.stage-diligence     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.stage-decision      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.stage-documentation { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.stage-pass          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 /* Type badges */
-.type-prospect     { background: rgba(var(--color-primary-rgb, 59,130,246),0.15); color: var(--color-primary); }
-.type-portfolio    { background: rgba(52,199,89,0.15); color: #187a3a; }
-.type-vc_fund      { background: rgba(140,82,220,0.15); color: #7040a0; }
-.type-pass         { background: rgba(220,60,60,0.15); color: #b02020; }
-.type-customer     { background: rgba(20,180,160,0.15); color: #0a8a7a; }
-.type-partner      { background: rgba(150,150,150,0.15); color: #555; }
-.type-vendor       { background: rgba(150,150,150,0.15); color: #555; }
+.type-prospect  { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.type-portfolio { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.type-vc_fund   { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.type-pass      { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.type-customer  { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.type-partner   { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.type-vendor    { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
 .type-other        { background: rgba(150,150,150,0.15); color: #555; }
 .type-unknown      { background: rgba(150,150,150,0.1); color: var(--color-text-tertiary); }
 

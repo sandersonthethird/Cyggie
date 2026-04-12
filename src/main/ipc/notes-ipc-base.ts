@@ -54,7 +54,7 @@ export function registerEntityNotesIpc(config: EntityNotesIpcConfig): void {
     if (!noteId) throw new Error('noteId is required')
     const note = repo.get(noteId)
     if (!note) return null
-    return hydrateCompanionNote(note, getCurrentUserId())
+    return hydrateCompanionNote(note)
   })
 
   ipcMain.handle(

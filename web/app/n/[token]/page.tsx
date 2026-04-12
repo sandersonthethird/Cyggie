@@ -18,6 +18,8 @@ export default async function SharedNotePage({ params }: PageProps) {
       contentMarkdown: sharedNotes.contentMarkdown,
       createdAt: sharedNotes.createdAt,
       logoUrl: sharedNotes.logoUrl,
+      firmName: sharedNotes.firmName,
+      brandColor: sharedNotes.brandColor,
       isActive: sharedNotes.isActive,
       expiresAt: sharedNotes.expiresAt,
     })
@@ -42,6 +44,8 @@ export default async function SharedNotePage({ params }: PageProps) {
       contentMarkdown={note.contentMarkdown}
       createdAt={note.createdAt.toISOString()}
       logoUrl={note.logoUrl ?? null}
+      firmName={note.firmName ?? null}
+      brandColor={note.brandColor ?? null}
     />
   )
 }

@@ -34,6 +34,12 @@ vi.mock('../main/database/repositories/meeting.repo', () => ({
   getMeeting: vi.fn(),
 }))
 
+// hydrateCompanionNote: default to identity so existing tests pass unchanged
+const hydrateCompanionNoteMock = vi.fn(<T>(note: T) => note)
+vi.mock('../main/ipc/note-hydration', () => ({
+  hydrateCompanionNote: hydrateCompanionNoteMock,
+}))
+
 vi.mock('../main/security/credentials', () => ({
   getCredential: vi.fn(),
 }))
@@ -178,5 +184,42 @@ describe('WEB_SHARE_CREATE_NOTE IPC handler', () => {
     expect(result.success).toBe(false)
     expect(result.error).toBe('network_error')
     expect(result.message).toContain('Connection refused')
+  })
+
+  it('hydrates a companion note with empty DB content and shares it', async () => {
+    const emptyCompanionNote = { id: 'note-2', title: 'OPSA Meeting', content: '', sourceMeetingId: 'mtg-1' }
+    const hydratedNote = { ...emptyCompanionNote, content: '## Summary\n\nStrong quarter.' }
+    getNoteMock.mockReturnValue(emptyCompanionNote)
+    hydrateCompanionNoteMock.mockReturnValueOnce(hydratedNote)
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true, token: 'tok-hydrate', url: 'https://cyggie.vercel.app/n/tok-hydrate' }),
+    } as Response)
+
+    const handler = capturedNoteShareHandler!
+    const result = await handler(null, 'note-2') as { success: boolean; url: string }
+    expect(result.success).toBe(true)
+    expect(result.url).toBe('https://cyggie.vercel.app/n/tok-hydrate')
+    expect(hydrateCompanionNoteMock).toHaveBeenCalledWith(emptyCompanionNote)
+
+    // Verify the hydrated content (not the empty string) was sent to the API
+    const callBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)
+    expect(callBody.contentMarkdown).toBe('## Summary\n\nStrong quarter.')
+    fetchSpy.mockRestore()
+  })
+
+  it('returns upload_failed when hydrateCompanionNote cannot populate an empty note', async () => {
+    const emptyNote = { id: 'note-3', title: 'No file', content: '', sourceMeetingId: null }
+    getNoteMock.mockReturnValue(emptyNote)
+    // hydration is a no-op (no sourceMeetingId) — identity mock returns note unchanged
+    hydrateCompanionNoteMock.mockReturnValueOnce(emptyNote)
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+    const handler = capturedNoteShareHandler!
+    const result = await handler(null, 'note-3') as { success: boolean; error: string }
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('upload_failed')
+    expect(fetchSpy).not.toHaveBeenCalled()
+    fetchSpy.mockRestore()
   })
 })

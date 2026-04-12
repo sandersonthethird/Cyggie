@@ -472,23 +472,23 @@ tr:hover .addToSyncBtn {
   white-space: nowrap;
 }
 
-.priorityHigh         { background: #FEF2F2; color: #B91C1C; }
-.priorityFurtherWork  { background: #FFFBEB; color: #92400E; }
-.priorityMonitor      { background: #F3F4F6; color: #374151; }
+.priorityHigh         { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.priorityFurtherWork  { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.priorityMonitor      { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 /* Stage chip colors */
-.chipScreening     { background: #EFF6FF; color: #1D4ED8; }
-.chipDiligence     { background: #F5F3FF; color: #6D28D9; }
-.chipDecision      { background: #FFF7ED; color: #C2410C; }
-.chipDocumentation { background: #ECFDF5; color: #065F46; }
-.chipPass          { background: #F3F4F6; color: #6B7280; }
+.chipScreening     { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.chipDiligence     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.chipDecision      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.chipDocumentation { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.chipPass          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
-/* Round chip colors */
-.chipPreSeed       { background: #fef9c3; color: #713f12; }
-.chipSeed          { background: #d1fae5; color: #065f46; }
-.chipSeedExtension { background: #a7f3d0; color: #064e3b; }
-.chipSeriesA       { background: #dbeafe; color: #1e40af; }
-.chipSeriesB       { background: #e0e7ff; color: #312e81; }
+/* Round chip colors — all neutral (metadata) */
+.chipPreSeed       { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipSeed          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipSeedExtension { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipSeriesA       { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipSeriesB       { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 /* Chip-style dropdown cell */
 .chipCell {
@@ -496,13 +496,13 @@ tr:hover .addToSyncBtn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
-  background: #F3F4F6;
-  color: var(--cv-text-muted);
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-text);
   cursor: pointer;
   user-select: none;
   width: max-content;
@@ -537,19 +537,19 @@ tr:hover .addToSyncBtn {
 }
 
 /* ChipDropdownCell color overrides — must come after .chipCell */
-.chipCell.priorityHigh         { background: #FEF2F2; color: #B91C1C; }
-.chipCell.priorityFurtherWork  { background: #FFFBEB; color: #92400E; }
-.chipCell.priorityMonitor      { background: #F3F4F6; color: #374151; }
-.chipCell.chipScreening        { background: #EFF6FF; color: #1D4ED8; }
-.chipCell.chipDiligence        { background: #F5F3FF; color: #6D28D9; }
-.chipCell.chipDecision         { background: #FFF7ED; color: #C2410C; }
-.chipCell.chipDocumentation    { background: #ECFDF5; color: #065F46; }
-.chipCell.chipPass             { background: #F3F4F6; color: #6B7280; }
-.chipCell.chipPreSeed          { background: #fef9c3; color: #713f12; }
-.chipCell.chipSeed             { background: #d1fae5; color: #065f46; }
-.chipCell.chipSeedExtension    { background: #a7f3d0; color: #064e3b; }
-.chipCell.chipSeriesA          { background: #dbeafe; color: #1e40af; }
-.chipCell.chipSeriesB          { background: #e0e7ff; color: #312e81; }
+.chipCell.priorityHigh         { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.chipCell.priorityFurtherWork  { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.chipCell.priorityMonitor      { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipCell.chipScreening        { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.chipCell.chipDiligence        { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.chipCell.chipDecision         { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.chipCell.chipDocumentation    { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.chipCell.chipPass             { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipCell.chipPreSeed          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipCell.chipSeed             { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipCell.chipSeedExtension    { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipCell.chipSeriesA          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipCell.chipSeriesB          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 /* ── AddDealModal ────────────────────────────────────────────────────────── */
 

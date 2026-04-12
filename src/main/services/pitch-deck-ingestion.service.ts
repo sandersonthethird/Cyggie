@@ -214,6 +214,21 @@ function parseExtractionResult(
     sourceLabel,
   }
 
+  // Per-round plausibility caps (in millions USD) — same thresholds as company-summary-sync.service.ts.
+  // Applied after round validation so result.round is already CompanyRound | null.
+  const ROUND_FINANCIAL_LIMITS: Partial<Record<CompanyRound, { maxRaise: number; maxPostMoney: number }>> = {
+    pre_seed:       { maxRaise: 15,   maxPostMoney: 112   },
+    seed:           { maxRaise: 45,   maxPostMoney: 375   },
+    seed_extension: { maxRaise: 75,   maxPostMoney: 750   },
+    series_a:       { maxRaise: 150,  maxPostMoney: 2250  },
+    series_b:       { maxRaise: 750,  maxPostMoney: 15000 },
+  }
+  const limits = result.round ? ROUND_FINANCIAL_LIMITS[result.round] : null
+  if (limits) {
+    if (result.raiseSize != null && result.raiseSize > limits.maxRaise) result.raiseSize = null
+    if (result.postMoneyValuation != null && result.postMoneyValuation > limits.maxPostMoney) result.postMoneyValuation = null
+  }
+
   const allNull = (
     result.companyName === null &&
     result.description === null &&

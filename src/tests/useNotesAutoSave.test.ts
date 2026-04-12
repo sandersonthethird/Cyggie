@@ -247,4 +247,58 @@ describe('useNotesAutoSave', () => {
     })
     expect(result.current.lastEditedAt).not.toBeNull()
   })
+
+  it('handleSummaryChangeText updates summaryDraft', () => {
+    const { result } = renderHook(() => useNotesAutoSave('meeting-1'))
+    act(() => {
+      result.current.handleSummaryChangeText('new summary')
+    })
+    expect(result.current.summaryDraft).toBe('new summary')
+  })
+
+  it('handleSummaryChangeText debounces save by 1500ms', async () => {
+    vi.mocked(api.invoke).mockResolvedValue(undefined)
+    const { result } = renderHook(() => useNotesAutoSave('meeting-1'))
+
+    act(() => {
+      result.current.handleSummaryChangeText('hello summary')
+    })
+    expect(api.invoke).not.toHaveBeenCalled()
+
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    expect(api.invoke).toHaveBeenCalledWith(IPC_CHANNELS.MEETING_SAVE_SUMMARY, 'meeting-1', 'hello summary')
+  })
+
+  it('handleSummaryChangeText does not save when meetingId is undefined', async () => {
+    vi.mocked(api.invoke).mockResolvedValue(undefined)
+    const { result } = renderHook(() => useNotesAutoSave(undefined))
+
+    act(() => {
+      result.current.handleSummaryChangeText('some summary')
+      vi.advanceTimersByTime(2000)
+    })
+    expect(api.invoke).not.toHaveBeenCalled()
+  })
+
+  it('handleSummaryChangeText rapid calls debounce — only last value is saved', async () => {
+    vi.mocked(api.invoke).mockResolvedValue(undefined)
+    const { result } = renderHook(() => useNotesAutoSave('meeting-1'))
+
+    act(() => {
+      result.current.handleSummaryChangeText('first')
+      vi.advanceTimersByTime(500)
+      result.current.handleSummaryChangeText('second')
+      vi.advanceTimersByTime(500)
+      result.current.handleSummaryChangeText('final')
+    })
+    expect(api.invoke).not.toHaveBeenCalled()
+
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    expect(api.invoke).toHaveBeenCalledTimes(1)
+    expect(api.invoke).toHaveBeenCalledWith(IPC_CHANNELS.MEETING_SAVE_SUMMARY, 'meeting-1', 'final')
+  })
 })

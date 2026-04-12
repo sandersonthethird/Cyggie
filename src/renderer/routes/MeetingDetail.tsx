@@ -6,16 +6,18 @@ import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
+import remarkGfm from 'remark-gfm'
+import { TABLE_EXTENSIONS } from '../lib/tiptap-extensions'
 import { Clock } from 'lucide-react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useRecordingStore } from '../stores/recording.store'
 import { useSharedAudioCapture, useSharedVideoCapture } from '../contexts/AudioCaptureContext'
-import { useFindInPage } from '../hooks/useFindInPage'
+import { useFindInPage, injectFindMarks } from '../hooks/useFindInPage'
 import FindBar from '../components/common/FindBar'
-import ChatInterface, { type ContextOption } from '../components/chat/ChatInterface'
 import ConfirmDialog from '../components/common/ConfirmDialog'
 import { useChatStore } from '../stores/chat.store'
+import type { ContextOption } from '../../shared/types/chat'
 import type { Meeting, CompanySuggestion } from '../../shared/types/meeting'
 import type { CompanyEntityType, CompanySummary } from '../../shared/types/company'
 import type { ContactSummary } from '../../shared/types/contact'
@@ -42,6 +44,32 @@ import ReactMarkdown from 'react-markdown'
 import styles from './MeetingDetail.module.css'
 import { api } from '../api'
 import { useNotesAutoSave } from '../hooks/useNotesAutoSave'
+
+/**
+ * Normalises AI-generated summary markdown so ReactMarkdown renders it correctly.
+ *
+ * Problems fixed:
+ *  1. Unicode bullets (•) before **bold** text break CommonMark's emphasis parser
+ *     (closing ** is not right-flanking when followed by punctuation like ':').
+ *     Fix: replace "• " with "- " so standard list syntax is used.
+ *  2. Empty headings ("## \n") from AI render as a bare crimson bar with no text.
+ *     Fix: strip lines that are only a heading marker with no content.
+ *  3. Multiple consecutive blank lines create stacked empty <p> elements with margin.
+ *     Fix: collapse runs of 2+ blank lines to a single blank line.
+ */
+function preprocessSummaryMarkdown(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      // Convert Unicode bullet → GFM list item
+      if (/^[•·]\s/.test(line)) return '- ' + line.replace(/^[•·]\s+/, '')
+      // Drop empty heading lines (e.g. "## " or "### " with nothing after)
+      if (/^#{1,6}\s*$/.test(line)) return ''
+      return line
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+}
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600)
@@ -196,12 +224,16 @@ export default function MeetingDetail() {
     setSummaryDraft,
     handleNotesChange,
     handleNotesChangeText,
-    handleSummaryChange,
+    handleSummaryChangeText,
     saveNotes,
     flushNotes,
     reset: resetAutoSave,
     lastEditedAt,
   } = useNotesAutoSave(id)
+  const [editingSummary, setEditingSummary] = useState(false)
+  // Reset edit mode when switching meetings
+  useEffect(() => { setEditingSummary(false) }, [id])
+
   // Tiptap notes editor — dep [id] ensures recreation on meeting switch
   const { editor: meetingNotesEditor, loadContent: loadNotesContent } = useTiptapMarkdown(
     {
@@ -209,6 +241,7 @@ export default function MeetingDetail() {
         StarterKit,
         Markdown,
         Link.configure({ openOnClick: true }),
+        ...TABLE_EXTENSIONS,
         Placeholder.configure({ placeholder: 'Jot down your meeting notes...' }),
       ],
       editable: true,
@@ -220,14 +253,38 @@ export default function MeetingDetail() {
     [id],
   )
 
+  // Tiptap summary editor — dep [id] ensures recreation on meeting switch
+  const { editor: summaryEditor, loadContent: loadSummaryContent } = useTiptapMarkdown(
+    {
+      extensions: [
+        StarterKit,
+        Markdown,
+        Link.configure({ openOnClick: true }),
+        ...TABLE_EXTENSIONS,
+        Placeholder.configure({ placeholder: 'Summary content...' }),
+      ],
+      editable: editingSummary,
+      onUpdate: ({ editor: ed }) => {
+        handleSummaryChangeText(ed.getMarkdown?.() ?? ed.getText())
+      },
+      onBlur: () => setEditingSummary(false),
+    },
+    [id],
+  )
+
+  // Load content into Tiptap and focus when entering edit mode
+  useEffect(() => {
+    if (editingSummary) {
+      loadSummaryContent(summaryDraft ?? '')
+      setTimeout(() => summaryEditor?.commands.focus(), 0)
+    }
+  }, [editingSummary]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const wordCount = useMemo(() => {
     const combined = `${notesDraft ?? ''} ${summaryDraft ?? ''}`.trim()
     if (!combined) return 0
     return combined.split(/\s+/).filter(Boolean).length
   }, [notesDraft, summaryDraft])
-
-  const [editingSummary, setEditingSummary] = useState(false)
-  const summaryTextareaRef = useRef<HTMLTextAreaElement>(null)
   const startRecording = useRecordingStore((s) => s.startRecording)
   const stopRecording = useRecordingStore((s) => s.stopRecording)
   const pauseRecording = useRecordingStore((s) => s.pauseRecording)
@@ -995,7 +1052,8 @@ export default function MeetingDetail() {
 
   const handleGenerateSummary = useCallback(async () => {
     if (!id || !selectedTemplateId || isGenerating) return
-    // Save any pending notes first
+    // Close summary editor if open, then save any pending notes
+    setEditingSummary(false)
     await flushNotes()
     setIsGenerating(true)
     setStreamedSummary('')
@@ -1394,6 +1452,7 @@ export default function MeetingDetail() {
   const handleWebShare = useCallback(async () => {
     if (!id) return
     setShareMenuOpen(false)
+    await flushNotes()
     try {
       const result = await api.invoke<WebShareResponse>(
         IPC_CHANNELS.WEB_SHARE_CREATE,
@@ -1409,7 +1468,34 @@ export default function MeetingDetail() {
       console.error('Failed to create web share:', err)
       alert('Failed to create web share.')
     }
-  }, [id])
+  }, [id, flushNotes])
+
+  // Register this meeting as the chat page context so the global floating chat
+  // shows entity-scoped options (meeting + linked companies/contacts) while on this page.
+  const setPageContext = useChatStore((s) => s.setPageContext)
+  useEffect(() => {
+    if (!data?.meeting) return
+    const seenContactIds = new Set<string>()
+    const contextOptions: ContextOption[] = [
+      ...(data?.linkedCompanies ?? []).map(c => ({ type: 'company' as const, id: c.id, name: c.name })),
+      ...Object.entries(speakerContactMap)
+        .filter(([, contactId]) => {
+          if (!contactId || seenContactIds.has(contactId)) return false
+          seenContactIds.add(contactId)
+          return true
+        })
+        .map(([idx, contactId]) => ({
+          type: 'contact' as const,
+          id: contactId as string,
+          name: localSpeakerMap[Number(idx)] || 'Contact'
+        }))
+    ]
+    setPageContext({
+      meetingId: data.meeting.id,
+      contextOptions: contextOptions.length > 0 ? contextOptions : undefined
+    })
+    return () => setPageContext(null)
+  }, [data?.meeting?.id, data?.linkedCompanies, speakerContactMap, localSpeakerMap, setPageContext])
 
   // Only show recording UI if THIS meeting is the one being recorded
   const isThisMeetingRecording = isRecording && recordingMeetingId === id
@@ -1417,7 +1503,7 @@ export default function MeetingDetail() {
   const displaySummary = isGenerating ? streamedSummary : summaryDraft
   const hasSummary = isGenerating ? !!streamedSummary : summaryExists
   const searchableText = activeTab === 'notes'
-    ? (displaySummary || '')
+    ? preprocessSummaryMarkdown(displaySummary || '')
     : (data?.transcript || '')
 
   const {
@@ -1425,9 +1511,9 @@ export default function MeetingDetail() {
     setQuery: setFindQuery,
     matchCount,
     activeMatchIndex,
+    matches: findMatches,
     goToNext,
     goToPrev,
-    highlightedContent
   } = useFindInPage({
     text: searchableText,
     isOpen: findOpen,
@@ -1508,7 +1594,7 @@ export default function MeetingDetail() {
                 >
                   Stop Meeting
                 </button>
-              ) : (!isRecording && !autoStoppedMeetingIds.has(meeting.id) && (meeting.status === 'transcribed' || meeting.status === 'summarized')) && (
+              ) : (!isRecording && (meeting.status === 'transcribed' || meeting.status === 'summarized')) && (
                 <button className={styles.recordBtn} onClick={handleContinueRecording}>
                   Continue Recording
                 </button>
@@ -1870,32 +1956,24 @@ export default function MeetingDetail() {
                       </div>
                     )}
                     <div className={styles.markdown}>
-                      <ReactMarkdown>{streamedSummary}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {injectFindMarks(preprocessSummaryMarkdown(streamedSummary), findMatches, activeMatchIndex)}
+                      </ReactMarkdown>
                     </div>
                   </>
-                ) : findOpen && findQuery ? (
-                  <div className={styles.markdown}>
-                    {highlightedContent}
-                  </div>
                 ) : editingSummary ? (
-                  <textarea
-                    ref={summaryTextareaRef}
-                    className={styles.summaryTextarea}
-                    value={summaryDraft}
-                    onChange={handleSummaryChange}
-                    onBlur={() => setEditingSummary(false)}
-                    placeholder="Summary content..."
-                  />
+                  <div className={styles.summaryEditor}>
+                    <EditorContent editor={summaryEditor} />
+                  </div>
                 ) : (
                   <div
                     className={styles.markdown}
-                    onClick={() => {
-                      setEditingSummary(true)
-                      setTimeout(() => summaryTextareaRef.current?.focus(), 0)
-                    }}
-                    title="Click to edit"
+                    onClick={() => { if (!findOpen) setEditingSummary(true) }}
+                    title={findOpen ? undefined : 'Click to edit'}
                   >
-                    <ReactMarkdown>{summaryDraft}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {injectFindMarks(preprocessSummaryMarkdown(summaryDraft ?? ''), findMatches, activeMatchIndex)}
+                    </ReactMarkdown>
                   </div>
                 )}
               </div>
@@ -1965,7 +2043,7 @@ export default function MeetingDetail() {
           <div className={styles.transcriptTab}>
             {transcript && (
               <div className={styles.markdown}>
-                {findOpen && findQuery ? highlightedContent : transcript}
+                {injectFindMarks(transcript ?? '', findMatches, activeMatchIndex)}
               </div>
             )}
             {isThisMeetingRecording && (
@@ -2257,32 +2335,6 @@ export default function MeetingDetail() {
         )}
       </div>
 
-      {hasTranscript && (() => {
-        const seenContactIds = new Set<string>()
-        const contextOptions: ContextOption[] = [
-          ...(data?.linkedCompanies ?? []).map(c => ({
-            type: 'company' as const, id: c.id, name: c.name
-          })),
-          ...Object.entries(speakerContactMap)
-            .filter(([, contactId]) => {
-              if (!contactId || seenContactIds.has(contactId)) return false
-              seenContactIds.add(contactId)
-              return true
-            })
-            .map(([idx, contactId]) => ({
-              type: 'contact' as const,
-              id: contactId as string,
-              name: localSpeakerMap[Number(idx)] || 'Contact'
-            }))
-        ]
-        return (
-          <ChatInterface
-            meetingId={meeting.id}
-            floating={true}
-            contextOptions={contextOptions.length > 0 ? contextOptions : undefined}
-          />
-        )
-      })()}
 
       <ConfirmDialog
         open={deleteDialogOpen}

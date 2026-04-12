@@ -5,6 +5,7 @@ import { useState } from 'react'
 interface SharedHeaderProps {
   label: string
   logoUrl?: string
+  labelColor?: string
 }
 
 const BTN_STYLE: React.CSSProperties = {
@@ -21,7 +22,7 @@ const BTN_STYLE: React.CSSProperties = {
   cursor: 'pointer',
 }
 
-export default function SharedHeader({ label, logoUrl }: SharedHeaderProps) {
+export default function SharedHeader({ label, logoUrl, labelColor = '#374151' }: SharedHeaderProps) {
   const [copied, setCopied] = useState(false)
   const [showFallback, setShowFallback] = useState(false)
 
@@ -45,7 +46,7 @@ export default function SharedHeader({ label, logoUrl }: SharedHeaderProps) {
         zIndex: 50,
         background: '#fff',
         borderBottom: '1px solid #e5e7eb',
-        height: 64,
+        height: 72,
         display: 'flex',
         alignItems: 'center',
         padding: '0 24px',
@@ -59,10 +60,10 @@ export default function SharedHeader({ label, logoUrl }: SharedHeaderProps) {
         <img
           src={logoUrl || '/logo.png'}
           alt="Logo"
-          style={{ height: 32, objectFit: 'contain', flexShrink: 0 }}
+          style={{ height: 56, objectFit: 'contain', flexShrink: 0 }}
         />
         <div style={{ width: 1, height: 24, background: '#e5e7eb', flexShrink: 0 }} />
-        <span style={{ fontSize: 14, fontWeight: 500, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: labelColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {label}
         </span>
       </div>

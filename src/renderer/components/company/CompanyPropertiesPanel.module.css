@@ -109,12 +109,11 @@
 }
 
 .badge {
-  font-size: 11px;
-  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 10px;
   border-radius: 8px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
+  border: none;
   cursor: pointer;
   animation: chipIn 0.15s ease;
 }
@@ -142,31 +141,31 @@
 }
 
 /* ── Chip colors ── */
-.chipProspect      { background: #dbeafe; color: #1e40af; border-color: transparent; }
-.chipPortfolio     { background: #d1fae5; color: #065f46; border-color: transparent; }
-.chipPass          { background: #e5e7eb; color: #374151; border-color: transparent; }
-.chipVcFund        { background: #ede9fe; color: #4c1d95; border-color: transparent; }
-.chipLp            { background: #f3e8ff; color: #6b21a8; border-color: transparent; }
-.chipCustomer      { background: #ccfbf1; color: #134e4a; border-color: transparent; }
-.chipPartner       { background: #e0e7ff; color: #312e81; border-color: transparent; }
-.chipVendor        { background: #fef3c7; color: #92400e; border-color: transparent; }
-.chipUnknown       { background: #f3f4f6; color: #6b7280; border-color: transparent; }
-.chipOther         { background: #f3f4f6; color: #6b7280; border-color: transparent; }
+.chipProspect      { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.chipPortfolio     { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.chipPass          { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.chipVcFund        { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.chipLp            { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.chipCustomer      { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.chipPartner       { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.chipVendor        { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
+.chipUnknown       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.chipOther         { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
 
-.chipScreening     { background: #dbeafe; color: #1e40af; border-color: transparent; }
-.chipDiligence     { background: #ede9fe; color: #4c1d95; border-color: transparent; }
-.chipDecision      { background: #ffedd5; color: #9a3412; border-color: transparent; }
-.chipDocumentation { background: #ccfbf1; color: #0f766e; border-color: transparent; }
+.chipScreening     { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.chipDiligence     { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
+.chipDecision      { background: var(--chip-error-bg);    color: var(--chip-error-text); }
+.chipDocumentation { background: var(--chip-success-bg);  color: var(--chip-success-text); }
 
-.priorityHigh        { background: #d4edda; color: #155724; border-color: transparent; }
-.priorityFurtherWork { background: #fff3cd; color: #856404; border-color: transparent; }
-.priorityMonitor     { background: #f8d7da; color: #721c24; border-color: transparent; }
+.priorityHigh        { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.priorityFurtherWork { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.priorityMonitor     { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
-.chipPreSeed       { background: #fef9c3; color: #713f12; border-color: transparent; }
-.chipSeed          { background: #d1fae5; color: #065f46; border-color: transparent; }
-.chipSeedExtension { background: #a7f3d0; color: #064e3b; border-color: transparent; }
-.chipSeriesA       { background: #dbeafe; color: #1e40af; border-color: transparent; }
-.chipSeriesB       { background: #e0e7ff; color: #312e81; border-color: transparent; }
+.chipPreSeed       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.chipSeed          { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.chipSeedExtension { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.chipSeriesA       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.chipSeriesB       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
 
 /* ── Configure summary button + popover wrapper ── */
 .configureWrap {
@@ -247,7 +246,7 @@
   color: var(--color-primary);
 }
 
-/* Edit / Done buttons */
+/* Edit / Done buttons + icon action buttons */
 .headerBtnGroup {
   display: flex;
   align-items: center;
@@ -255,6 +254,23 @@
   flex-shrink: 0;
   align-self: flex-start;
 }
+
+.headerIconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+}
+.headerIconBtn:hover:not(:disabled) { background: var(--color-hover-bg); color: var(--color-text); }
+.headerIconBtn:disabled { opacity: 0.4; cursor: default; }
 
 .editBtn {
   background: none;
@@ -1118,48 +1134,6 @@
   gap: 4px;
   padding: 4px 0;
 }
-
-/* ── Crimson Velocity: Action Row ── */
-.actionRow {
-  display: flex;
-  gap: 8px;
-  padding: 10px 0;
-}
-
-.actionBtnPrimary {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: var(--cv-crimson);
-  color: #fff;
-  border-radius: var(--cv-radius);
-  padding: 8px 14px;
-  font-size: 13px;
-  font-weight: 600;
-  border: none;
-  cursor: pointer;
-}
-.actionBtnPrimary:hover:not(:disabled) { background: var(--cv-crimson-hover); }
-.actionBtnPrimary:disabled { opacity: 0.5; cursor: default; }
-
-.actionBtnSecondary {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: none;
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: var(--cv-radius);
-  padding: 8px 14px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.actionBtnSecondary:hover { background: var(--color-bg-secondary); }
 
 /* ── Crimson Velocity: Social Icon Row ── */
 .socialRow {

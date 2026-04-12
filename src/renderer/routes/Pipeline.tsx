@@ -10,7 +10,6 @@ import type {
   CompanyRound
 } from '../../shared/types/company'
 import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
-import ChatInterface from '../components/chat/ChatInterface'
 import MultiSelectFilter from '../components/common/MultiSelectFilter'
 import { DecisionLogModal } from '../components/crm/DecisionLogModal'
 import { AddOptionInlineInput } from '../components/crm/AddOptionInlineInput'
@@ -29,10 +28,10 @@ const STAGES: { value: CompanyPipelineStage; label: string }[] = [
   { value: 'pass', label: 'Pass' }
 ]
 
-const PRIORITIES: { value: CompanyPriority; label: string; color: string }[] = [
-  { value: 'high', label: 'High', color: '#2d8a4e' },
-  { value: 'further_work', label: 'Further Work', color: '#c49a0b' },
-  { value: 'monitor', label: 'Monitor', color: '#c0392b' }
+const PRIORITIES: { value: CompanyPriority; label: string }[] = [
+  { value: 'high', label: 'High' },
+  { value: 'further_work', label: 'Further Work' },
+  { value: 'monitor', label: 'Monitor' }
 ]
 
 const ROUNDS: { value: CompanyRound; label: string }[] = [
@@ -844,10 +843,6 @@ export default function Pipeline() {
           </table>
         </div>
       )}
-
-      <div className={styles.chatSection}>
-        <ChatInterface compact />
-      </div>
 
       {pendingDecisionCompany && (
         <DecisionLogModal

@@ -33,13 +33,12 @@ const STAGE_LABELS: Record<string, string> = {
 
 const STAGE_OPTIONS: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
 
-// keep in sync with chipScreening/chipDiligence/etc. in CompanyPropertiesPanel.module.css
-const STAGE_COLORS: Record<string, { bg: string; color: string }> = {
-  screening:     { bg: '#dbeafe', color: '#1e40af' },
-  diligence:     { bg: '#ede9fe', color: '#4c1d95' },
-  decision:      { bg: '#ffedd5', color: '#9a3412' },
-  documentation: { bg: '#ccfbf1', color: '#0f766e' },
-  pass:          { bg: '#e5e7eb', color: '#374151' },
+const STAGE_CLASS: Record<string, string> = {
+  screening:     styles.chipScreening,
+  diligence:     styles.chipDiligence,
+  decision:      styles.chipDecision,
+  documentation: styles.chipDocumentation,
+  pass:          styles.chipPass,
 }
 
 interface CompanyDigestItemProps {
@@ -164,8 +163,7 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
         {item.companyId && !disabled && (
           <div ref={stageRef} className={styles.stageChipWrap}>
             <button
-              className={styles.stageChip}
-              style={stage ? { background: STAGE_COLORS[stage]?.bg, color: STAGE_COLORS[stage]?.color } : {}}
+              className={`${styles.stageChip} ${stage ? (STAGE_CLASS[stage] ?? '') : ''}`}
               onClick={() => setStageOpen(v => !v)}
             >
               {STAGE_LABELS[stage ?? ''] ?? '—'}
@@ -175,8 +173,7 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
                 {STAGE_OPTIONS.map(s => (
                   <button
                     key={s}
-                    className={styles.stageOption}
-                    style={{ background: STAGE_COLORS[s]?.bg, color: STAGE_COLORS[s]?.color }}
+                    className={`${styles.stageOption} ${STAGE_CLASS[s] ?? ''}`}
                     onClick={() => handleStageChange(s)}
                   >
                     {STAGE_LABELS[s]}

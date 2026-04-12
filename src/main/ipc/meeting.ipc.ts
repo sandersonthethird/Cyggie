@@ -5,6 +5,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import * as settingsRepo from '../database/repositories/settings.repo'
 import { readTranscript, readSummary, updateTranscriptContent, updateSummaryContent, deleteTranscript, deleteSummary, deleteRecording, renameTranscript, renameSummary, renameRecording } from '../storage/file-manager'
+import { recoverSummaryFromCompanionNote } from '../services/meeting-summary-recovery'
 import { removeFromIndex } from '../database/repositories/search.repo'
 import { getStoragePath, setStoragePath } from '../storage/paths'
 import { renameFile as renameDriveFile } from '../drive/google-drive'
@@ -65,7 +66,7 @@ export function registerMeetingHandlers(): void {
     if (!meeting) return null
 
     const transcript = meeting.transcriptPath ? readTranscript(meeting.transcriptPath) : null
-    const summary = meeting.summaryPath ? readSummary(meeting.summaryPath) : null
+    let summary = meeting.summaryPath ? readSummary(meeting.summaryPath) : null
 
     const db = getDatabase()
     const linkedCompanies = db
@@ -77,6 +78,11 @@ export function registerMeetingHandlers(): void {
         ORDER BY c.canonical_name
       `)
       .all(id) as { id: string; name: string }[]
+
+    // Recover summary from companion notes if the summary file is missing.
+    if (!summary && meeting.status === 'summarized') {
+      summary = recoverSummaryFromCompanionNote(meeting)
+    }
 
     return { meeting, transcript, summary, linkedCompanies }
   })

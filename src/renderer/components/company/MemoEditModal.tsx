@@ -25,6 +25,7 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { InvestmentMemoVersion, InvestmentMemoWithLatest } from '../../../shared/types/company'
 import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
+import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
 import { useDebounce } from '../../hooks/useDebounce'
 import { useFindInPage } from '../../hooks/useFindInPage'
 import FindBar from '../common/FindBar'
@@ -73,7 +74,6 @@ function MemoEditModalInner({ memo, onSaved, onClose, initialFindQuery }: MemoEd
     activeMatchIndex,
     goToNext,
     goToPrev,
-    highlightedContent,
   } = useFindInPage({
     text: contentDraft,
     isOpen: findOpen,
@@ -89,7 +89,7 @@ function MemoEditModalInner({ memo, onSaved, onClose, initialFindQuery }: MemoEd
   }, [setFindQuery]) // setFindQuery is a stable useState setter — effectively runs once
 
   const { editor, loadContent } = useTiptapMarkdown({
-    extensions: [StarterKit, Markdown, Link],
+    extensions: [StarterKit, Markdown, Link, ...TABLE_EXTENSIONS],
     onUpdate: ({ editor: e }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mkd = (e as any).getMarkdown?.() ?? ''
@@ -194,17 +194,13 @@ function MemoEditModalInner({ memo, onSaved, onClose, initialFindQuery }: MemoEd
           />
         )}
 
-        {/* Editor */}
+        {/* Editor — always visible; FindBar floats on top */}
         <div className={styles.body}>
-          {findOpen && findQuery ? (
-            <div className={styles.findPreview}>{highlightedContent}</div>
-          ) : (
-            <div className={styles.editorContent}>
-              <EditorContent editor={editor} />
-            </div>
-          )}
+          <div className={styles.editorContent}>
+            <EditorContent editor={editor} />
+          </div>
         </div>
-        {!findOpen && <TiptapBubbleMenu editor={editor} />}
+        <TiptapBubbleMenu editor={editor} />
       </div>
     </div>,
     document.body

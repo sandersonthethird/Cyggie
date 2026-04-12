@@ -4,6 +4,9 @@ import { useNavigate } from 'react-router-dom'
 import { EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
+import Link from '@tiptap/extension-link'
+import Image from '@tiptap/extension-image'
+import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactNote } from '../../../shared/types/contact'
 import ConfirmDialog from '../common/ConfirmDialog'
@@ -54,7 +57,13 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
   )
 
   const { editor, loadContent } = useTiptapMarkdown({
-    extensions: [StarterKit, Markdown],
+    extensions: [
+      StarterKit,
+      Markdown,
+      Link.configure({ openOnClick: true }),
+      Image,
+      ...TABLE_EXTENSIONS,
+    ],
     onUpdate: ({ editor: e }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mkd = (e as any).getMarkdown?.()
@@ -105,6 +114,7 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
     const titleChanged = debouncedTitle !== (saved.title ?? '')
     const contentChanged = debouncedContent !== saved.content
     if (!titleChanged && !contentChanged) return
+    if (!debouncedContent.trim() && !debouncedTitle.trim()) return  // never overwrite with blank
 
     window.api
       .invoke<ContactNote | null>(

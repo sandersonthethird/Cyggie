@@ -14,6 +14,8 @@ interface ShareRequest {
   notes: string | null
   claudeApiKey: string
   logoUrl?: string | null
+  firmName?: string | null
+  brandColor?: string | null
   expiresInDays?: number
 }
 
@@ -55,6 +57,8 @@ export async function POST(request: Request) {
     notes: body.notes,
     apiKeyEnc,
     logoUrl: body.logoUrl ?? null,
+    firmName: body.firmName ?? null,
+    brandColor: body.brandColor ?? null,
     expiresAt,
   })
 

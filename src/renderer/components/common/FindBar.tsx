@@ -60,8 +60,8 @@ export default function FindBar({
   }
 
   return (
-    <div className={styles.findBarWrapper}>
-      <div className={styles.findBar}>
+    <div className={styles.root}>
+      <div className={styles.inputBox}>
         <input
           ref={inputRef}
           className={styles.findInput}
@@ -88,10 +88,10 @@ export default function FindBar({
         >
           &#9660;
         </button>
-        <button className={styles.closeBtn} onClick={onClose} title="Close (Escape)">
-          &#10005;
-        </button>
       </div>
+      <button className={styles.closeBtn} onClick={onClose} title="Close (Escape)">
+        &#10005;
+      </button>
     </div>
   )
 }

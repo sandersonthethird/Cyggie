@@ -9,7 +9,6 @@ import { useChatStore } from '../stores/chat.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import MeetingCard from '../components/meetings/MeetingCard'
 import CalendarBadge from '../components/meetings/CalendarBadge'
-import ChatInterface from '../components/chat/ChatInterface'
 import EmptyState from '../components/common/EmptyState'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import type { Meeting } from '../../shared/types/meeting'
@@ -84,6 +83,7 @@ export default function MeetingList() {
   const dismissEvent = useAppStore((s) => s.dismissEvent)
   const startRecording = useRecordingStore((s) => s.startRecording)
   const clearConversation = useChatStore((s) => s.clearConversation)
+  const setPageContext = useChatStore((s) => s.setPageContext)
   const [showAllUpcoming, setShowAllUpcoming] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false)
@@ -188,11 +188,20 @@ export default function MeetingList() {
 
   const showUpcoming = calendarConnected && visibleCalendarEvents.length > 0 && !hasSearch
 
-  // Clear search chat when results change
+  // Clear search chat when results change; push meetingIds to page context when searching
   const searchResultIds = useMemo(() => searchResults.map((r) => r.meetingId), [searchResults])
   useEffect(() => {
     clearConversation('search-results')
   }, [searchResultIds, clearConversation])
+
+  useEffect(() => {
+    if (hasSearch && !isSearching && searchResults.length > 0) {
+      setPageContext({ meetingIds: searchResultIds })
+    } else {
+      setPageContext(null)
+    }
+    return () => setPageContext(null)
+  }, [hasSearch, isSearching, searchResultIds, setPageContext])
 
   // Flatten grouped items into a virtual-friendly list of headers + meeting rows
   const virtualRows = useMemo<VirtualRow[]>(() => {
@@ -384,13 +393,6 @@ export default function MeetingList() {
         </div>
       )}
 
-      <div className={styles.chatSection}>
-        {hasSearch && !isSearching && searchResults.length > 0 ? (
-          <ChatInterface meetingIds={searchResultIds} />
-        ) : (
-          <ChatInterface compact />
-        )}
-      </div>
     </div>
   )
 }

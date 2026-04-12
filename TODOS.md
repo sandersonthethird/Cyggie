@@ -7,10 +7,10 @@
 **Why:** Lowers friction — users see what they can ask; matches the design mockup.
 **Pros:** High engagement lift; suggestions can be pre-generated when the page loads.
 **Cons:** Requires per-context suggestion generation (LLM call on first focus).
-**Context:** Add `suggestionsState` to `ChatInterface`, fire an IPC call on first focus if suggestions are empty. Show a `SuggestionsList` inside the widget before the panel opens (i.e., when the input is focused but no question has been asked yet). Suggestions should be context-aware — different for a company page vs. meeting detail vs. dashboard.
+**Context:** Add `suggestionsState` to `ChatInterface`, fire an IPC call on first focus if suggestions are empty. Show a `SuggestionsList` inside the widget before the panel opens (i.e., when the input is focused but no question has been asked yet). Suggestions should be context-aware — different for a company page vs. meeting detail vs. dashboard. The current entity context is available via `useChatStore().pageContext` — use `pageContext.contextOptions[0]` for entity pages, `pageContext.meetingId` for meeting detail, and `null` pageContext for dashboard/global.
 **Effort:** L
 **Priority:** P2
-**Depends on:** Chat modal redesign (this PR) merged first.
+**Depends on:** Chat modal redesign (floating-everywhere migration) merged first.
 
 ---
 
@@ -679,3 +679,29 @@
 **Effort:** M
 **Priority:** P2
 **Depends on:** LinkedIn enrichment PR (this work) merged. Past employees in Company contacts tab (this PR) is related but separate.
+
+---
+
+## P3 — Web Share
+
+### Dark mode on web share pages
+**What:** Add dark mode support to the redesigned share pages (`/s/[token]`, `/n/[token]`, `/m/[token]`) — shared header, card, footer, and floating chat widget all respond to `prefers-color-scheme: dark`.
+**Why:** The current share pages use `style=""` inline styles with hardcoded white/gray hex values, so they do not adapt to dark mode even though the rest of the web app has dark mode stubs in `globals.css`.
+**Pros:** Polished experience for users on dark OS/browser themes; consistent with the existing `summary-markdown` dark mode CSS in `globals.css`.
+**Cons:** Requires converting share-page components from inline styles to CSS modules (or Tailwind `dark:` classes), which is a moderate refactor. The floating widget is portal-mounted, so a global CSS class-based approach (e.g., `[data-theme="dark"]`) or CSS custom properties would be cleaner than media queries inside inline styles.
+**Context:** Added in the web share redesign PR. Start with `SharedHeader`, `SharedFooter`, and `FloatingChatWidget` in `web/components/`. The card layout in `SharePage`, `NoteSharePage`, and `MemoSharePage` uses inline `background: '#fff'` and `background: '#f9fafb'` — these are the main values to convert. The `summary-markdown` dark mode rules in `globals.css` are a good reference for the pattern.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Web share redesign PR merged.
+
+---
+
+### File attachments in FloatingChatWidget
+**What:** Allow users to attach files (images, PDFs) to questions in the floating chat widget on share pages, forwarding them to Claude as vision/document content.
+**Why:** Users sharing meeting notes or memos may want to ask questions in context of an attached document (e.g., "compare this transcript to the attached term sheet"). Claude supports vision and document inputs natively.
+**Pros:** Significant capability uplift for power users; Claude's multimodal API is already in use elsewhere.
+**Cons:** Requires file upload to a temporary store (or base64 inlining for small files); file size limits, format validation, and security review for the upload endpoint. The floating widget's fixed-position layout needs a file chip row without breaking the pill aesthetic.
+**Context:** Added in the web share redesign PR. Start in `web/components/FloatingChatWidget.tsx`. The SSE chat routes (`/api/chat`, `/api/memo-chat`, `/api/note-chat`) would need to accept an `attachments` array and forward content blocks to the Anthropic SDK `messages.create` call. The `createClaudeSSEResponse` utility in `web/lib/sse-stream.ts` currently only handles text messages — extend the `messages` param type or add a separate `contentBlocks` param.
+**Effort:** L
+**Priority:** P3
+**Depends on:** Web share redesign PR merged.

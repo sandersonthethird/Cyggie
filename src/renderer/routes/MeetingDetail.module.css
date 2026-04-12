@@ -768,30 +768,16 @@
   color: var(--cv-text-meta);
 }
 
-.summaryTextarea {
+.summaryEditor {
+  composes: tiptapContent from '../styles/tiptap.module.css';
   width: 100%;
   min-height: 200px;
-  flex: 1;
   padding: 12px;
-  font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.6;
-  color: var(--cv-text);
   background: var(--cv-card);
-  border: 1px solid var(--cv-border);
+  border: 1px solid var(--cv-crimson);
   border-radius: var(--cv-radius);
-  outline: none;
-  resize: vertical;
-  transition: border-color 0.15s;
-  white-space: pre-wrap;
-}
-
-.summaryTextarea:focus {
-  border-color: var(--cv-crimson);
-}
-
-.summaryTextarea::placeholder {
-  color: var(--cv-text-meta);
 }
 
 .enhanceBar {
@@ -1709,21 +1695,12 @@
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.07em;
-  border-radius: 4px;
+  border-radius: 8px;
   padding: 2px 7px;
 }
-.statusSummarized {
-  background: #D1FAE5;
-  color: #065F46;
-}
-.statusTranscribed {
-  background: #FEF3C7;
-  color: #92400E;
-}
-.statusScheduled {
-  background: #F3F4F6;
-  color: #6B7280;
-}
+.statusSummarized  { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.statusTranscribed { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
+.statusScheduled   { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
 
 /* ── Summary / Task cards ───────────────────────────────── */
 .summaryCard,
@@ -1738,7 +1715,7 @@
   margin-top: 0;
 }
 .summaryCard .markdown,
-.summaryCard .summaryTextarea,
+.summaryCard .summaryEditor,
 .summaryCard .summaryPhase,
 .taskCard .meetingTaskRow,
 .taskCard .meetingTasksViewAll {

@@ -14,7 +14,7 @@ import { ContactTimeline } from '../components/contact/ContactTimeline'
 import { ContactDecisions } from '../components/contact/ContactDecisions'
 import { EnrichmentProposalDialog } from '../components/enrichment/EnrichmentProposalDialog'
 import type { EnrichmentEntityProposal } from '../components/enrichment/EnrichmentProposalDialog'
-import ChatInterface from '../components/chat/ChatInterface'
+import { useChatStore } from '../stores/chat.store'
 import { usePanelResize } from '../hooks/usePanelResize'
 import { mergeContactProposals } from '../../shared/utils/contact-proposal-utils'
 import styles from './ContactDetail.module.css'
@@ -39,6 +39,9 @@ export default function ContactDetail() {
     if (!id) return null
     return localStorage.getItem(contactEnrichedAtKey(id))
   })
+  const [exaApiKey, setExaApiKey] = useState('')
+
+  const setPageContext = useChatStore((s) => s.setPageContext)
 
   useEffect(() => {
     if (!id) return
@@ -50,6 +53,21 @@ export default function ContactDetail() {
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [id])
+
+  useEffect(() => {
+    window.api
+      .invoke<string>(IPC_CHANNELS.SETTINGS_GET, 'exaApiKey')
+      .then((v) => setExaApiKey(v ?? ''))
+      .catch(() => { /* ignore — button will simply stay hidden */ })
+  }, [])
+
+  // Register this contact as the chat page context so the global floating chat
+  // shows entity-scoped options while on this page.
+  useEffect(() => {
+    if (!contact) return
+    setPageContext({ contextOptions: [{ type: 'contact', id: contact.id, name: contact.fullName }] })
+    return () => setPageContext(null)
+  }, [contact?.id, contact?.fullName, setPageContext])
 
   // Fetch past 90 days of calendar events to include in-person/unrecorded meetings
   useEffect(() => {
@@ -335,6 +353,7 @@ export default function ContactDetail() {
           fieldSources={parsedFieldSources}
           onEnrichFromMeetings={() => void handleEnrichFromMeetings()}
           isLoadingEnrich={isLoadingEnrich}
+          exaApiKey={exaApiKey}
         />
         {enrichSuccessMsg && (
           <div className={styles.enrichSuccess}>
@@ -347,13 +366,6 @@ export default function ContactDetail() {
           </div>
         )}
       </div>
-
-      <ChatInterface
-        floating
-        contactId={contact.id}
-        entityName={contact.fullName}
-        placeholder={`Ask about ${contact.fullName}…`}
-      />
 
       {/* Resizable divider */}
       <div className={styles.divider} {...dividerProps} />

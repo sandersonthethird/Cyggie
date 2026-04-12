@@ -16,7 +16,7 @@ import { CompanyFiles } from '../components/company/CompanyFiles'
 import { CompanyDecisions } from '../components/company/CompanyDecisions'
 import { EnrichmentProposalDialog } from '../components/enrichment/EnrichmentProposalDialog'
 import type { EnrichmentEntityProposal } from '../components/enrichment/EnrichmentProposalDialog'
-import ChatInterface from '../components/chat/ChatInterface'
+import { useChatStore } from '../stores/chat.store'
 import { usePanelResize } from '../hooks/usePanelResize'
 import styles from './CompanyDetail.module.css'
 
@@ -54,6 +54,8 @@ export default function CompanyDetail() {
   const [notesVersion, setNotesVersion] = useState(0)
   const enhanceCompleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const setPageContext = useChatStore((s) => s.setPageContext)
+
   useEffect(() => {
     if (!id) return
     setLastEnrichedAt(localStorage.getItem(companyEnrichedAtKey(id)))
@@ -64,6 +66,14 @@ export default function CompanyDetail() {
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [id])
+
+  // Register this company as the chat page context so the global floating chat
+  // shows entity-scoped options while on this page.
+  useEffect(() => {
+    if (!company) return
+    setPageContext({ contextOptions: [{ type: 'company', id: company.id, name: company.canonicalName }] })
+    return () => setPageContext(null)
+  }, [company?.id, company?.canonicalName, setPageContext])
 
   // Fetch meetings when id or company loads
   useEffect(() => {
@@ -324,13 +334,6 @@ export default function CompanyDetail() {
           </div>
         )}
       </div>
-
-      <ChatInterface
-        floating
-        companyId={company.id}
-        entityName={company.canonicalName}
-        placeholder={`Ask about ${company.canonicalName}…`}
-      />
 
       {/* Resizable divider */}
       <div className={styles.divider} {...dividerProps} />

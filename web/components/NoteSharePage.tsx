@@ -12,9 +12,11 @@ interface NoteSharePageProps {
   contentMarkdown: string
   createdAt: string
   logoUrl: string | null
+  firmName: string | null
+  brandColor: string | null
 }
 
-export default function NoteSharePage({ token, title, contentMarkdown, createdAt, logoUrl }: NoteSharePageProps) {
+export default function NoteSharePage({ token, title, contentMarkdown, createdAt, logoUrl, firmName, brandColor }: NoteSharePageProps) {
   const formattedDate = new Date(createdAt).toLocaleDateString(undefined, {
     year: 'numeric',
     month: 'long',
@@ -23,7 +25,11 @@ export default function NoteSharePage({ token, title, contentMarkdown, createdAt
 
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'flex', flexDirection: 'column' }}>
-      <SharedHeader label="Shared Note" logoUrl={logoUrl ?? undefined} />
+      <SharedHeader
+        label={firmName || 'Shared Note'}
+        logoUrl={logoUrl ?? undefined}
+        labelColor={brandColor ?? undefined}
+      />
 
       <main style={{ flex: 1, padding: '32px 24px 100px' }}>
         <article style={{

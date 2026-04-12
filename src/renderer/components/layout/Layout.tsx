@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useMatch, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
+import ChatInterface from '../chat/ChatInterface'
 import { useAppStore } from '../../stores/app.store'
 import { useRecordingStore } from '../../stores/recording.store'
+import { useChatStore } from '../../stores/chat.store'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import type { Meeting } from '../../../shared/types/meeting'
@@ -20,6 +22,7 @@ export default function Layout() {
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingMeetingId = useRecordingStore((s) => s.meetingId)
   const startRecordingStore = useRecordingStore((s) => s.startRecording)
+  const pageContext = useChatStore((s) => s.pageContext)
   const meetingMatch = useMatch('/meeting/:id')
   const [bannerEvent, setBannerEvent] = useState<CalendarEvent | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState<Set<string>>(new Set())
@@ -166,6 +169,11 @@ export default function Layout() {
           <div className={styles.content}>
             <Outlet />
           </div>
+          <ChatInterface
+            meetingId={pageContext?.meetingId}
+            meetingIds={pageContext?.meetingIds}
+            contextOptions={pageContext?.contextOptions}
+          />
         </div>
       </div>
       {bannerEvent && (

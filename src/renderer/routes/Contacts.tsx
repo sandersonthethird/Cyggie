@@ -4,7 +4,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
-import ChatInterface from '../components/chat/ChatInterface'
 import { ContactTable } from '../components/contact/ContactTable'
 import { ViewsBar } from '../components/crm/ViewsBar'
 import { CreateCustomFieldModal } from '../components/crm/CreateCustomFieldModal'
@@ -155,6 +154,16 @@ export default function Contacts() {
     total: number
     lastContactId?: string
   } | null>(null)
+
+  // ── Exa LinkedIn URL backfill ─────────────────────────────────────────────
+  type ExaBatchEntry = { contactId: string; contactName: string; foundUrl: string | null }
+  const [exaApiKey, setExaApiKey] = useState('')
+  const [exaBatchRunning, setExaBatchRunning] = useState(false)
+  const [exaBatchProgress, setExaBatchProgress] = useState<{ current: number; total: number } | null>(null)
+  const [exaBatchResults, setExaBatchResults] = useState<ExaBatchEntry[] | null>(null)
+  const [exaReviewChecked, setExaReviewChecked] = useState<Record<string, boolean>>({})
+  const [exaEnriching, setExaEnriching] = useState(false)
+  const [exaError, setExaError] = useState<string | null>(null)
 
   // ── Create form ───────────────────────────────────────────────────────────
   const [newFirstName, setNewFirstName] = useState('')
@@ -703,6 +712,91 @@ export default function Contacts() {
     await api.invoke(IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN_BATCH_CANCEL)
   }, [])
 
+  // ── Exa LinkedIn URL backfill ─────────────────────────────────────────────
+  const handleExaBackfill = useCallback(async () => {
+    const contactIds = contacts.filter((c) => !c.linkedinUrl).map((c) => c.id)
+    if (contactIds.length === 0) return
+    setExaBatchRunning(true)
+    setExaBatchProgress({ current: 0, total: contactIds.length })
+    setExaBatchResults(null)
+    setExaError(null)
+
+    const unsubscribe = api.on(
+      IPC_CHANNELS.CONTACT_FIND_LINKEDIN_URL_BATCH_PROGRESS,
+      (data: unknown) => {
+        const p = data as { current: number; total: number }
+        setExaBatchProgress({ current: p.current, total: p.total })
+      }
+    )
+
+    try {
+      const result = await api.invoke<{
+        success: boolean
+        errorCode?: string
+        found: number
+        notFound: number
+        skipped: number
+        results: ExaBatchEntry[]
+      }>(IPC_CHANNELS.CONTACT_FIND_LINKEDIN_URL_BATCH, { contactIds })
+
+      if (!result.success) {
+        setExaError(
+          result.errorCode === 'no_exa_key' ? 'Add Exa API key in Settings' :
+          result.errorCode === 'exa_auth' ? 'Invalid Exa API key — check Settings' :
+          'Backfill failed'
+        )
+        return
+      }
+
+      const withUrls = result.results.filter((r) => r.foundUrl !== null)
+      if (withUrls.length === 0) {
+        setExaError(`No LinkedIn URLs found for ${result.notFound} contact${result.notFound !== 1 ? 's' : ''}`)
+        return
+      }
+
+      const initialChecked: Record<string, boolean> = {}
+      for (const r of withUrls) { initialChecked[r.contactId] = true }
+      setExaReviewChecked(initialChecked)
+      setExaBatchResults(result.results)
+    } catch (err) {
+      setExaError(String(err))
+    } finally {
+      unsubscribe()
+      setExaBatchProgress(null)
+      setExaBatchRunning(false)
+    }
+  }, [contacts])
+
+  const handleExaBatchCancel = useCallback(async () => {
+    await api.invoke(IPC_CHANNELS.CONTACT_FIND_LINKEDIN_URL_BATCH_CANCEL)
+  }, [])
+
+  const handleExaEnrichSelected = useCallback(async () => {
+    if (!exaBatchResults) return
+    setExaEnriching(true)
+    setExaError(null)
+
+    const toEnrich = exaBatchResults.filter(
+      (r) => r.foundUrl && exaReviewChecked[r.contactId]
+    )
+
+    // Save LinkedIn URLs
+    for (const r of toEnrich) {
+      await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, r.contactId, { linkedinUrl: r.foundUrl })
+    }
+
+    // Run batch enrichment
+    const contactIds = toEnrich.map((r) => r.contactId)
+    if (contactIds.length > 0) {
+      await api.invoke(IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN_BATCH, { contactIds })
+    }
+
+    await loadContacts(query)
+    setExaBatchResults(null)
+    setExaReviewChecked({})
+    setExaEnriching(false)
+  }, [exaBatchResults, exaReviewChecked, loadContacts, query])
+
   // ── Create contact ────────────────────────────────────────────────────────
   const handleCreateContact = async () => {
     if (!newFirstName.trim() || !newLastName.trim()) return
@@ -784,6 +878,20 @@ export default function Contacts() {
     return () => document.removeEventListener('mousedown', handler)
   }, [actionsOpen])
 
+  useEffect(() => {
+    api.invoke<string>(IPC_CHANNELS.SETTINGS_GET, 'exaApiKey')
+      .then((v) => setExaApiKey(v ?? ''))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (exaBatchRunning) {
+        void api.invoke(IPC_CHANNELS.CONTACT_FIND_LINKEDIN_URL_BATCH_CANCEL)
+      }
+    }
+  }, [exaBatchRunning])
+
   // ── Derived ───────────────────────────────────────────────────────────────
   const filteredContacts = useMemo(() => {
     let items = filterContacts(contacts, columnFilters, rangeFilters, textFilters) as ContactSummary[]
@@ -814,7 +922,7 @@ export default function Contacts() {
       }).length
     : 0
 
-  const busy = syncing || enriching || checkingDuplicates || applyingDedup || linkedinBatchProgress !== null
+  const busy = syncing || enriching || checkingDuplicates || applyingDedup || linkedinBatchProgress !== null || exaBatchRunning
 
   if (!flagsLoading && !contactsEnabled) {
     return (
@@ -872,6 +980,34 @@ export default function Contacts() {
             type="button"
           >
             Cancel
+          </button>
+        </div>
+      )}
+
+      {exaBatchRunning && exaBatchProgress && (
+        <div className={styles.statusBanner}>
+          <span>
+            Finding LinkedIn URLs: {exaBatchProgress.current} of {exaBatchProgress.total}
+          </span>
+          <button
+            className={styles.statusBannerDismiss}
+            onClick={() => void handleExaBatchCancel()}
+            type="button"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {exaError && (
+        <div className={styles.statusBanner}>
+          <span>{exaError}</span>
+          <button
+            className={styles.statusBannerDismiss}
+            onClick={() => setExaError(null)}
+            type="button"
+          >
+            ✕
           </button>
         </div>
       )}
@@ -937,6 +1073,17 @@ export default function Contacts() {
                     ? `Enriching from LinkedIn (${linkedinBatchProgress.current}/${linkedinBatchProgress.total})…`
                     : 'Enrich from LinkedIn'}
                 </button>
+                {exaApiKey && (
+                  <button
+                    className={styles.actionsMenuItem}
+                    onClick={() => { void handleExaBackfill(); setActionsOpen(false) }}
+                    disabled={busy || contacts.filter((c) => !c.linkedinUrl).length === 0}
+                  >
+                    {exaBatchRunning
+                      ? `Finding LinkedIn URLs (${exaBatchProgress?.current ?? 0}/${exaBatchProgress?.total ?? 0})…`
+                      : 'Backfill LinkedIn URLs'}
+                  </button>
+                )}
                 <div className={styles.actionsMenuSeparator} />
                 <button
                   className={styles.actionsMenuItem}
@@ -1528,9 +1675,83 @@ export default function Contacts() {
         document.body
       )}
 
-      <div className={styles.chatSection}>
-        <ChatInterface compact />
-      </div>
+      {/* ── Exa LinkedIn review dialog ── */}
+      {exaBatchResults && createPortal(
+        <div className={styles.mergeOverlay} onClick={() => { if (!exaEnriching) { setExaBatchResults(null); setExaReviewChecked({}) } }}>
+          <div className={styles.mergeDialog} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.mergeHeader}>
+              <h3 className={styles.mergeTitle}>
+                LinkedIn URLs Found: {exaBatchResults.filter((r) => r.foundUrl).length} of {exaBatchResults.length} contacts
+              </h3>
+              <button
+                className={styles.dedupCloseButton}
+                onClick={() => { setExaBatchResults(null); setExaReviewChecked({}) }}
+                disabled={exaEnriching}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+            <div className={styles.mergeContactList}>
+              {exaBatchResults.map((r) => (
+                <div key={r.contactId} className={styles.mergeContactRow}>
+                  {r.foundUrl ? (
+                    <label className={styles.mergeContactLabel} style={{ cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={exaReviewChecked[r.contactId] ?? false}
+                        onChange={(e) => setExaReviewChecked((prev) => ({ ...prev, [r.contactId]: e.target.checked }))}
+                        disabled={exaEnriching}
+                        style={{ marginRight: 8, flexShrink: 0 }}
+                      />
+                      <div>
+                        <div className={styles.mergeContactName}>{r.contactName}</div>
+                        <a
+                          href={r.foundUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ fontSize: 12, color: 'var(--color-primary)' }}
+                        >
+                          {r.foundUrl.replace('https://', '')}
+                        </a>
+                      </div>
+                    </label>
+                  ) : (
+                    <div className={styles.mergeContactLabel} style={{ opacity: 0.5 }}>
+                      <span style={{ marginRight: 8, width: 16, display: 'inline-block' }}>—</span>
+                      <span className={styles.mergeContactName}>{r.contactName}</span>
+                      <span style={{ fontSize: 12, marginLeft: 8 }}>not found</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className={styles.mergeActions}>
+              <button
+                className={styles.dedupCancelButton}
+                onClick={() => { setExaBatchResults(null); setExaReviewChecked({}) }}
+                type="button"
+                disabled={exaEnriching}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.mergeConfirmButton}
+                onClick={() => void handleExaEnrichSelected()}
+                type="button"
+                disabled={exaEnriching || Object.values(exaReviewChecked).every((v) => !v)}
+              >
+                {exaEnriching
+                  ? 'Saving & enriching…'
+                  : `Enrich selected (${Object.values(exaReviewChecked).filter(Boolean).length})`}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
     </div>
   )
 }

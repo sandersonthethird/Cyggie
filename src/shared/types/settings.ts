@@ -20,6 +20,7 @@ export interface AppSettings {
   theme: 'system' | 'light' | 'dark'
   brandingLogoDataUrl: string
   autoSyncEmails: boolean
+  exaApiKey: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -41,5 +42,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   companyLocalFilesRoot: '',
   theme: 'system',
   brandingLogoDataUrl: '',
-  autoSyncEmails: true
+  autoSyncEmails: true,
+  exaApiKey: ''
 }

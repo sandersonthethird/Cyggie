@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
+import remarkGfm from 'remark-gfm'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { InvestmentMemoVersion, InvestmentMemoWithLatest } from '../../../shared/types/company'
 import { MemoEditModal } from './MemoEditModal'
-import { useFindInPage } from '../../hooks/useFindInPage'
+import { useFindInPage, injectFindMarks } from '../../hooks/useFindInPage'
 import FindBar from '../common/FindBar'
 import styles from './CompanyMemo.module.css'
 import { api } from '../../api'
@@ -51,9 +52,9 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     setQuery: setFindQuery,
     matchCount,
     activeMatchIndex,
+    matches: findMatches,
     goToNext,
     goToPrev,
-    highlightedContent,
   } = useFindInPage({
     text: memo?.latestVersion?.contentMarkdown ?? '',
     isOpen: findOpen,
@@ -264,10 +265,10 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
       <div className={styles.preview}>
         {generating ? (
           <pre className={styles.progressText}>{progressText || 'Starting generation…'}</pre>
-        ) : findOpen && findQuery ? (
-          <div className={styles.findPreview}>{highlightedContent}</div>
         ) : memo?.latestVersion?.contentMarkdown ? (
-          <ReactMarkdown rehypePlugins={[rehypeRaw]}>{memo.latestVersion.contentMarkdown}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+            {injectFindMarks(memo.latestVersion.contentMarkdown, findMatches, activeMatchIndex)}
+          </ReactMarkdown>
         ) : (
           <div className={styles.empty}>No memo content yet. Click Edit or Generate with AI to get started.</div>
         )}

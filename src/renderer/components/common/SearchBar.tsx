@@ -236,7 +236,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
       setSearchParams(next)
     }
     clearAdvancedFilters()
-    setCategorized({ people: [], companies: [], meetings: [], notes: [] })
+    setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [] })
     setShowSuggestions(false)
     setShowFilterPanel(false)
   }, [

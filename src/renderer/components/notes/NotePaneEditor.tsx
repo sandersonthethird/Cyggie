@@ -79,7 +79,6 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
     activeMatchIndex,
     goToNext,
     goToPrev,
-    highlightedContent,
   } = useFindInPage({
     text: contentDraft,
     isOpen: findOpen,
@@ -359,14 +358,10 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
       {(loadState === 'loaded' || loadState === 'loading') && (
         // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
         <div className={styles.editor} onClick={() => editor?.commands.focus()}>
-          {findOpen && findQuery ? (
-            <div className={styles.findPreview}>{highlightedContent}</div>
-          ) : (
-            <EditorContent editor={editor} />
-          )}
+          <EditorContent editor={editor} />
         </div>
       )}
-      {!findOpen && <TiptapBubbleMenu editor={editor} />}
+      <TiptapBubbleMenu editor={editor} />
 
       {loadState === 'notFound' && (
         <div className={styles.stateMsg}>Note not found.</div>

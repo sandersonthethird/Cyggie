@@ -99,3 +99,27 @@
   pointer-events: none;
   height: 0;
 }
+
+.tiptapContent :global(.ProseMirror table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.tiptapContent :global(.ProseMirror th) {
+  background: #F3F4F6;
+  font-weight: 600;
+  text-align: left;
+  border: 1px solid var(--cv-border);
+  padding: 6px 10px;
+}
+
+.tiptapContent :global(.ProseMirror td) {
+  border: 1px solid var(--cv-border);
+  padding: 6px 10px;
+}
+
+.tiptapContent :global(.ProseMirror tr:nth-child(even) td) {
+  background: var(--cv-bg);
+}

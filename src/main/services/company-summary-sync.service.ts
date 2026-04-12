@@ -22,7 +22,7 @@ export interface MeetingContext {
   attendeeEmails: string[] | null
 }
 
-interface ParsedVcSummaryFields {
+export interface ParsedVcSummaryFields {
   description: string | null
   round: CompanyRound | null
   raiseSize: number | null
@@ -445,12 +445,31 @@ function selectTargetCompanies(companies: CompanySummary[], summary: string): Co
   return explicitMatches.length === 1 ? explicitMatches : []
 }
 
-function buildProposalForCompany(
+// Per-round plausibility caps (in millions USD). Deliberately generous to minimize false
+// positives — only rejects clearly impossible values (e.g. $2000M for a pre-seed company).
+// Values that exceed the cap for their round are silently nulled before building a proposal.
+const ROUND_FINANCIAL_LIMITS: Partial<Record<CompanyRound, { maxRaise: number; maxPostMoney: number }>> = {
+  pre_seed:       { maxRaise: 15,   maxPostMoney: 112   },
+  seed:           { maxRaise: 45,   maxPostMoney: 375   },
+  seed_extension: { maxRaise: 75,   maxPostMoney: 750   },
+  series_a:       { maxRaise: 150,  maxPostMoney: 2250  },
+  series_b:       { maxRaise: 750,  maxPostMoney: 15000 },
+}
+
+export function buildProposalForCompany(
   company: CompanySummary,
   parsed: ParsedVcSummaryFields
 ): CompanySummaryUpdateProposal | null {
   const updates: CompanySummaryUpdatePayload = {}
   const changes: CompanySummaryUpdateChange[] = []
+
+  // Use the round extracted from this meeting, or fall back to the company's stored round
+  const effectiveRound = parsed.round ?? company.round ?? null
+  const limits = effectiveRound ? ROUND_FINANCIAL_LIMITS[effectiveRound] : null
+  const checkedRaiseSize = limits && parsed.raiseSize != null && parsed.raiseSize > limits.maxRaise
+    ? null : parsed.raiseSize
+  const checkedPostMoney = limits && parsed.postMoneyValuation != null && parsed.postMoneyValuation > limits.maxPostMoney
+    ? null : parsed.postMoneyValuation
 
   if (isDifferentText(parsed.description, company.description)) {
     updates.description = parsed.description
@@ -460,16 +479,16 @@ function buildProposalForCompany(
     updates.round = parsed.round
     changes.push({ field: 'round', from: company.round, to: parsed.round })
   }
-  if (isDifferentNumber(parsed.raiseSize, company.raiseSize)) {
-    updates.raiseSize = parsed.raiseSize
-    changes.push({ field: 'raiseSize', from: company.raiseSize, to: parsed.raiseSize })
+  if (isDifferentNumber(checkedRaiseSize, company.raiseSize)) {
+    updates.raiseSize = checkedRaiseSize
+    changes.push({ field: 'raiseSize', from: company.raiseSize, to: checkedRaiseSize })
   }
-  if (isDifferentNumber(parsed.postMoneyValuation, company.postMoneyValuation)) {
-    updates.postMoneyValuation = parsed.postMoneyValuation
+  if (isDifferentNumber(checkedPostMoney, company.postMoneyValuation)) {
+    updates.postMoneyValuation = checkedPostMoney
     changes.push({
       field: 'postMoneyValuation',
       from: company.postMoneyValuation,
-      to: parsed.postMoneyValuation
+      to: checkedPostMoney
     })
   }
   if (isDifferentText(parsed.city, company.city)) {

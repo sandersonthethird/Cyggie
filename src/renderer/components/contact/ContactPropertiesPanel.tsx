@@ -59,6 +59,7 @@ interface ContactPropertiesPanelProps {
   fieldSources?: Record<string, { meetingId: string; meetingTitle: string }>
   onEnrichFromMeetings?: () => void
   isLoadingEnrich?: boolean
+  exaApiKey?: string
 }
 
 function LastTouchBadge({ lastTouchpoint }: { lastTouchpoint: string | null | undefined }) {
@@ -164,7 +165,8 @@ export function ContactPropertiesPanel({
   enrichMeetingCount,
   fieldSources,
   onEnrichFromMeetings,
-  isLoadingEnrich
+  isLoadingEnrich,
+  exaApiKey = ''
 }: ContactPropertiesPanelProps) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -180,6 +182,9 @@ export function ContactPropertiesPanel({
   const [deleting, setDeleting] = useState(false)
   const [linkedinEnriching, setLinkedinEnriching] = useState(false)
   const [linkedinError, setLinkedinError] = useState<{ code: string; message: string } | null>(null)
+  const [isSearchingLinkedIn, setIsSearchingLinkedIn] = useState(false)
+  const [linkedInFoundUrl, setLinkedInFoundUrl] = useState<string | null>(null)
+  const [showLinkedInConfirm, setShowLinkedInConfirm] = useState(false)
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
   const [editingFieldLabel, setEditingFieldLabel] = useState('')
   const [addFieldDropdownSection, setAddFieldDropdownSection] = useState<string | undefined>(undefined)
@@ -193,8 +198,9 @@ export function ContactPropertiesPanel({
   const priorCompanyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const firstNameInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  const [showApplyPrompt, setShowApplyPrompt] = useState(false)
+  const [sessionNewFields, setSessionNewFields] = useState<string[] | null>(null)
   const sessionChanges = useRef(false)
+  const sessionAddedFields = useRef<string[]>([])
   const markChanged = useCallback(() => { sessionChanges.current = true }, [])
 
   const { getJSON, setJSON } = usePreferencesStore()
@@ -537,9 +543,14 @@ export function ContactPropertiesPanel({
       const value = contact[key as keyof ContactDetail]
       return value === null || value === undefined || (typeof value === 'string' && value.trim() === '')
     })
+    // Compute newly-added fields BEFORE cleanupOnDone (reads stable closure value),
+    // manually excluding empty keys that cleanupOnDone is about to strip.
+    const newlyAdded = fieldVisibility.addedFields
+      .filter(f => !sessionAddedFields.current.includes(f))
+      .filter(f => !emptyKeys.includes(f))
     fieldVisibility.cleanupOnDone(emptyKeys)
     if (sessionChanges.current) {
-      setShowApplyPrompt(true)
+      setSessionNewFields(newlyAdded)
     } else {
       setIsEditing(false)
     }
@@ -549,12 +560,12 @@ export function ContactPropertiesPanel({
     for (const baseKey of LAYOUT_PREF_BASE_KEYS) {
       propagateLayoutPref(getJSON, setJSON, baseKey, contact.id, null)
     }
-    setShowApplyPrompt(false)
+    setSessionNewFields(null)
     setIsEditing(false)
   }
 
   function handleJustThisContact() {
-    setShowApplyPrompt(false)
+    setSessionNewFields(null)
     setIsEditing(false)
   }
 
@@ -593,6 +604,52 @@ export function ContactPropertiesPanel({
   async function handleLinkedInOpenLogin() {
     await api.invoke(IPC_CHANNELS.CONTACT_LINKEDIN_OPEN_LOGIN)
     setLinkedinError(null)
+  }
+
+  async function handleFindOnLinkedIn() {
+    if (isSearchingLinkedIn || linkedinEnriching) return
+    setIsSearchingLinkedIn(true)
+    setLinkedinError(null)
+    try {
+      const result = await api.invoke<{
+        success: boolean
+        foundUrl: string | null
+        contactName: string
+        alreadyHadUrl?: boolean
+        errorCode?: string
+        message?: string
+      }>(IPC_CHANNELS.CONTACT_FIND_LINKEDIN_URL, contact.id)
+      if (!result.success) {
+        setLinkedinError({ code: result.errorCode ?? 'unknown', message: result.message ?? 'Search failed' })
+      } else if (result.alreadyHadUrl) {
+        void handleLinkedInEnrich()
+      } else if (result.foundUrl) {
+        setLinkedInFoundUrl(result.foundUrl)
+        setShowLinkedInConfirm(true)
+      } else {
+        setLinkedinError({ code: 'not_found', message: 'No LinkedIn profile found for this contact' })
+      }
+    } catch (err) {
+      setLinkedinError({ code: 'unknown', message: String(err) })
+    } finally {
+      setIsSearchingLinkedIn(false)
+    }
+  }
+
+  async function handleConfirmLinkedInUrl() {
+    if (!linkedInFoundUrl) return
+    setShowLinkedInConfirm(false)
+    await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { linkedinUrl: linkedInFoundUrl })
+    onUpdate({ ...contact, linkedinUrl: linkedInFoundUrl })
+    const enrichResult = await api.invoke<{ success: boolean; errorCode?: string }>(
+      IPC_CHANNELS.CONTACT_ENRICH_LINKEDIN, contact.id
+    )
+    if (enrichResult?.errorCode === 'in_flight') {
+      setLinkedinError({ code: 'in_flight', message: 'LinkedIn URL saved — enrichment is busy, try again shortly' })
+    } else if (enrichResult?.success === false) {
+      setLinkedinError({ code: enrichResult.errorCode ?? 'unknown', message: 'Enrichment failed' })
+    }
+    setLinkedInFoundUrl(null)
   }
 
   async function handleDeleteContact() {
@@ -738,7 +795,7 @@ export function ContactPropertiesPanel({
     })
   }
 
-  function HideableRow({ fieldKey, isEmpty, children }: { fieldKey: string; isEmpty?: boolean; children: ReactNode }) {
+  function HideableRow({ fieldKey, isEmpty, children, onHide }: { fieldKey: string; isEmpty?: boolean; children: ReactNode; onHide?: () => void }) {
     const isHidden = hiddenFields.includes(fieldKey)
     return (
       <div className={`${styles.hideable} ${isHidden ? styles.fieldHidden : ''}`}>
@@ -750,6 +807,7 @@ export function ContactPropertiesPanel({
                 className={styles.hideBtn}
                 title="Hide field"
                 onClick={() => {
+                  onHide?.()
                   if (isEmpty && fieldVisibility.addedFields.includes(fieldKey)) {
                     fieldVisibility.removeFromAddedFields(fieldKey)
                   } else {
@@ -1006,11 +1064,23 @@ export function ContactPropertiesPanel({
         </div>
         {isEditing ? (
           <div className={styles.editActions}>
-            {showApplyPrompt ? (
+            {sessionNewFields !== null ? (
               <div className={styles.applyPrompt}>
-                <span>Default for all contacts?</span>
-                <button className={styles.applyAllBtn} onClick={handleApplyToAll}>Apply to all</button>
-                <button className={styles.applyOneBtn} onClick={handleJustThisContact}>Just this one</button>
+                {(() => {
+                  function fieldLabel(key: string): string {
+                    if (key.startsWith('custom:')) {
+                      const id = key.slice(7)
+                      return customFields.find(f => f.id === id)?.label ?? key
+                    }
+                    return CONTACT_COLUMN_DEFS.find(d => d.key === key)?.label ?? key
+                  }
+                  const promptPrefix = sessionNewFields.length > 0
+                    ? `Show ${sessionNewFields.map(fieldLabel).join(', ')} on`
+                    : 'Apply layout changes to'
+                  return <span>{promptPrefix} <strong>all contacts</strong>?</span>
+                })()}
+                <button className={styles.applyAllBtn} onClick={handleApplyToAll}>All contacts</button>
+                <button className={styles.applyOneBtn} onClick={handleJustThisContact}>Just {contact.fullName}</button>
               </div>
             ) : (
               <>
@@ -1020,7 +1090,10 @@ export function ContactPropertiesPanel({
             )}
           </div>
         ) : (
-          <button className={styles.editBtn} onClick={() => setIsEditing(true)}>Edit</button>
+          <button className={styles.editBtn} onClick={() => {
+            sessionAddedFields.current = [...fieldVisibility.addedFields]
+            setIsEditing(true)
+          }}>Edit</button>
         )}
       </div>
 
@@ -1134,7 +1207,7 @@ export function ContactPropertiesPanel({
                   </HideableRow>
                 )},
                 { key: 'linkedinUrl', visible: isEditing || showField('linkedinUrl', contact.linkedinUrl), render: () => (
-                  <HideableRow fieldKey="linkedinUrl" isEmpty={!contact.linkedinUrl}>
+                  <HideableRow fieldKey="linkedinUrl" isEmpty={!contact.linkedinUrl} onHide={contact.linkedinUrl ? () => { void save('linkedinUrl', null) } : undefined}>
                     <div className={styles.propertyWithBadge}>
                       <PropertyRow label="LinkedIn" value={contact.linkedinUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinUrl', v)} />
                       {fieldSources?.linkedinUrl && <span className={styles.sourceBadge} title={`From: ${fieldSources.linkedinUrl.meetingTitle}`}>📋</span>}
@@ -1414,6 +1487,8 @@ export function ContactPropertiesPanel({
                    linkedinError.code === 'llm_failed' ? 'Extraction failed' :
                    linkedinError.code === 'llm_bad_json' ? 'Extraction failed' :
                    linkedinError.code === 'no_linkedin_url' ? 'No LinkedIn URL set' :
+                   linkedinError.code === 'not_found' ? 'No LinkedIn profile found' :
+                   linkedinError.code === 'in_flight' ? linkedinError.message :
                    'Enrichment failed'}
                 </span>
               )}
@@ -1427,6 +1502,56 @@ export function ContactPropertiesPanel({
                   : contact.linkedinEnrichedAt
                     ? 'Re-enrich from LinkedIn'
                     : 'Enrich from LinkedIn'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {!contact.linkedinUrl && exaApiKey && (
+        <div className={styles.linkedinEnrichRow}>
+          {showLinkedInConfirm && linkedInFoundUrl ? (
+            <div className={styles.linkedinConfirmModal}>
+              <span className={styles.linkedinConfirmTitle}>LinkedIn profile found</span>
+              <a
+                className={styles.linkedinConfirmUrl}
+                href={linkedInFoundUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {linkedInFoundUrl.replace('https://', '')}
+              </a>
+              <div className={styles.linkedinConfirmActions}>
+                <button
+                  className={styles.linkedinEnrichBtn}
+                  onClick={() => void handleConfirmLinkedInUrl()}
+                >
+                  Use this profile
+                </button>
+                <button
+                  className={styles.linkedinCancelBtn}
+                  onClick={() => { setShowLinkedInConfirm(false); setLinkedInFoundUrl(null) }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {linkedinError && (
+                <span className={styles.linkedinErrorMsg} title={linkedinError.message}>
+                  {linkedinError.code === 'not_found' ? 'No LinkedIn profile found' :
+                   linkedinError.code === 'no_exa_key' ? 'Add Exa API key in Settings' :
+                   linkedinError.code === 'exa_auth' ? 'Invalid Exa API key' :
+                   'Search failed'}
+                </span>
+              )}
+              <button
+                className={styles.linkedinEnrichBtn}
+                onClick={() => void handleFindOnLinkedIn()}
+                disabled={isSearchingLinkedIn || linkedinEnriching}
+              >
+                {isSearchingLinkedIn ? 'Searching…' : 'Find on LinkedIn'}
               </button>
             </>
           )}

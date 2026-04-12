@@ -93,6 +93,7 @@ interface SettingsState {
   companyDriveRootFolder: string
   companyLocalFilesRoot: string
   autoSyncEmails: boolean
+  exaApiKey: string
 }
 
 export default function Settings() {
@@ -120,10 +121,11 @@ export default function Settings() {
     defaultMaxSpeakers: '',
     companyDriveRootFolder: '',
     companyLocalFilesRoot: '',
-    autoSyncEmails: true
+    autoSyncEmails: true,
+    exaApiKey: ''
   })
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false)
-  const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai'>('claude')
+  const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai' | 'exa'>('claude')
   const [apiKeyDraft, setApiKeyDraft] = useState('')
   const [showApiKeyDraft, setShowApiKeyDraft] = useState(false)
   const [isSavingKey, setIsSavingKey] = useState(false)
@@ -140,6 +142,8 @@ export default function Settings() {
   const [editingProfile, setEditingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
   const [brandingLogoDataUrl, setBrandingLogoDataUrl] = useState('')
+  const [brandingFirmName, setBrandingFirmName] = useState('')
+  const [brandingPrimaryColor, setBrandingPrimaryColor] = useState('#374151')
   const [staleRelationshipDays, setStaleRelationshipDays] = useState('21')
   const [stalledPipelineDays, setStalledPipelineDays] = useState('21')
   const [passExpiryDays, setPassExpiryDays] = useState('30')
@@ -240,12 +244,15 @@ export default function Settings() {
             defaultMaxSpeakers: all.defaultMaxSpeakers || '',
             companyDriveRootFolder: all.companyDriveRootFolder || '',
             companyLocalFilesRoot: all.companyLocalFilesRoot || '',
-            autoSyncEmails: all.autoSyncEmails !== 'false'
+            autoSyncEmails: all.autoSyncEmails !== 'false',
+            exaApiKey: all.exaApiKey || ''
           })
           setStaleRelationshipDays(all.dashboardStaleRelationshipDays || '21')
           setStalledPipelineDays(all.dashboardStalledPipelineDays || '21')
           setPassExpiryDays(all.pipelinePassExpiryDays || '30')
           setBrandingLogoDataUrl(all.brandingLogoDataUrl || '')
+          setBrandingFirmName(all.brandingFirmName || '')
+          setBrandingPrimaryColor(all.brandingPrimaryColor || '#374151')
         }
 
         if (currentPathResult.status === 'fulfilled') {
@@ -760,8 +767,39 @@ export default function Settings() {
       <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Branding</h3>
         <p className={styles.hint}>
-          Upload your firm logo. It will appear in the sidebar and at the top of exported memos.
+          Firm name, brand color, and logo appear in the header of all shared pages.
         </p>
+
+        <div className={styles.field}>
+          <label className={styles.label}>Firm Name</label>
+          <input
+            className={styles.input}
+            type="text"
+            placeholder="e.g. Red Swan Ventures"
+            value={brandingFirmName}
+            onChange={(e) => setBrandingFirmName(e.target.value)}
+            onBlur={async () => {
+              await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'brandingFirmName', brandingFirmName)
+            }}
+          />
+        </div>
+
+        <div className={styles.field}>
+          <label className={styles.label}>Brand Color</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="color"
+              value={brandingPrimaryColor}
+              onChange={async (e) => {
+                setBrandingPrimaryColor(e.target.value)
+                await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'brandingPrimaryColor', e.target.value)
+              }}
+              style={{ width: 40, height: 32, padding: 2, border: '1px solid #d1d5db', borderRadius: 6, cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: 12, color: '#6b7280', fontFamily: 'monospace' }}>{brandingPrimaryColor}</span>
+          </div>
+        </div>
+
         <div className={styles.brandingLogoRow}>
           {brandingLogoDataUrl ? (
             <img src={brandingLogoDataUrl} alt="Firm logo" className={styles.brandingLogoPreview} />
@@ -1107,6 +1145,39 @@ export default function Settings() {
             </div>
           </>
         )}
+
+        <div className={styles.field} style={{ marginTop: 24 }}>
+          <label className={styles.label}>Exa API Key</label>
+          <p className={styles.profileMeta} style={{ marginBottom: 8 }}>
+            Used to discover LinkedIn URLs for contacts. Optional — only needed for LinkedIn backfill.
+          </p>
+          <div className={styles.apiKeyRow}>
+            <span className={styles.apiKeyMask}>
+              {settings.exaApiKey ? '••••••••' : <span style={{ color: 'var(--color-text-secondary)' }}>Not configured</span>}
+            </span>
+            <button
+              className={styles.connectBtn}
+              onClick={() => {
+                setApiKeyModalProvider('exa')
+                setApiKeyDraft('')
+                setApiKeyModalOpen(true)
+              }}
+            >
+              {settings.exaApiKey ? 'Change key' : 'Add key'}
+            </button>
+            {settings.exaApiKey && (
+              <button
+                className={styles.connectBtn}
+                onClick={async () => {
+                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'exaApiKey', '')
+                  setSettings((prev) => ({ ...prev, exaApiKey: '' }))
+                }}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
       </section>
         </>
       )}
@@ -1598,7 +1669,7 @@ export default function Settings() {
         >
           <div className={styles.apiKeyDialog} onClick={(e) => e.stopPropagation()}>
             <h2 className={styles.apiKeyDialogTitle}>
-              {apiKeyModalProvider === 'openai' ? 'Update OpenAI API Key' : 'Update Claude API Key'}
+              {apiKeyModalProvider === 'openai' ? 'Update OpenAI API Key' : apiKeyModalProvider === 'exa' ? 'Update Exa API Key' : 'Update Claude API Key'}
             </h2>
             <div className={styles.apiKeyInputRow}>
               <input
@@ -1607,7 +1678,7 @@ export default function Settings() {
                 autoFocus
                 value={apiKeyDraft}
                 onChange={(e) => { setApiKeyDraft(e.target.value); setTestKeyStatus(null) }}
-                placeholder={apiKeyModalProvider === 'openai' ? 'sk-...' : 'sk-ant-api03-…'}
+                placeholder={apiKeyModalProvider === 'openai' ? 'sk-...' : apiKeyModalProvider === 'exa' ? 'Paste Exa API key…' : 'sk-ant-api03-…'}
               />
               <button
                 className={styles.apiKeyToggle}
@@ -1622,13 +1693,15 @@ export default function Settings() {
               </div>
             )}
             <div className={styles.apiKeyDialogActions}>
-              <button
-                className={styles.connectBtn}
-                onClick={() => handleTestKey(apiKeyModalProvider, apiKeyDraft)}
-                disabled={isTesting || !apiKeyDraft}
-              >
-                {isTesting ? 'Testing…' : 'Test key'}
-              </button>
+              {apiKeyModalProvider !== 'exa' && (
+                <button
+                  className={styles.connectBtn}
+                  onClick={() => handleTestKey(apiKeyModalProvider as 'claude' | 'openai', apiKeyDraft)}
+                  disabled={isTesting || !apiKeyDraft}
+                >
+                  {isTesting ? 'Testing…' : 'Test key'}
+                </button>
+              )}
               <button
                 className={styles.connectBtn}
                 onClick={() => { setApiKeyModalOpen(false); setTestKeyStatus(null) }}
@@ -1640,14 +1713,20 @@ export default function Settings() {
                 disabled={isSavingKey || !apiKeyDraft}
                 onClick={async () => {
                   setIsSavingKey(true)
-                  const result = await handleTestKey(apiKeyModalProvider, apiKeyDraft)
-                  if (result.ok) {
-                    const settingKey = apiKeyModalProvider === 'openai' ? 'openAiApiKey' : 'claudeApiKey'
-                    const trimmed = apiKeyDraft.trim()
-                    await api.invoke(IPC_CHANNELS.SETTINGS_SET, settingKey, trimmed)
-                    setSettings((prev) => ({ ...prev, [settingKey]: trimmed }))
+                  const trimmed = apiKeyDraft.trim()
+                  if (apiKeyModalProvider === 'exa') {
+                    await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'exaApiKey', trimmed)
+                    setSettings((prev) => ({ ...prev, exaApiKey: trimmed }))
                     setApiKeyModalOpen(false)
-                    setTestKeyStatus(null)
+                  } else {
+                    const result = await handleTestKey(apiKeyModalProvider, apiKeyDraft)
+                    if (result.ok) {
+                      const settingKey = apiKeyModalProvider === 'openai' ? 'openAiApiKey' : 'claudeApiKey'
+                      await api.invoke(IPC_CHANNELS.SETTINGS_SET, settingKey, trimmed)
+                      setSettings((prev) => ({ ...prev, [settingKey]: trimmed }))
+                      setApiKeyModalOpen(false)
+                      setTestKeyStatus(null)
+                    }
                   }
                   setIsSavingKey(false)
                 }}

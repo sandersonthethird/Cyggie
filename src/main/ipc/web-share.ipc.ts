@@ -3,9 +3,12 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { getCredential } from '../security/credentials'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import * as notesRepo from '../database/repositories/notes.repo'
+import { hydrateCompanionNote } from './note-hydration'
 import { readTranscript, readSummary } from '../storage/file-manager'
+import { recoverSummaryFromCompanionNote } from '../services/meeting-summary-recovery'
 import type { WebShareResponse } from '../../shared/types/web-share'
 import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
+import { getSetting } from '../database/repositories/settings.repo'
 
 export function registerWebShareHandlers(): void {
   ipcMain.handle(
@@ -42,7 +45,10 @@ export function registerWebShareHandlers(): void {
         }
       }
 
-      const summary = meeting.summaryPath ? readSummary(meeting.summaryPath) : null
+      let summary = meeting.summaryPath ? readSummary(meeting.summaryPath) : null
+      if (!summary && meeting.status === 'summarized') {
+        summary = recoverSummaryFromCompanionNote(meeting)
+      }
 
       try {
         const response = await fetch(`${WEB_SHARE_API_URL}/api/share`, {
@@ -61,6 +67,9 @@ export function registerWebShareHandlers(): void {
             transcript,
             notes: meeting.notes,
             claudeApiKey,
+            logoUrl: getSetting('brandingLogoDataUrl') || null,
+            firmName: getSetting('brandingFirmName') || null,
+            brandColor: getSetting('brandingPrimaryColor') || null,
           }),
         })
 
@@ -93,15 +102,26 @@ export function registerWebShareHandlers(): void {
         return { success: false, error: 'upload_failed', message: 'Note not found.' }
       }
 
-      if (!note.content?.trim()) {
+      const claudeApiKey = getCredential('claudeApiKey')
+      if (!claudeApiKey) {
         return {
           success: false,
-          error: 'upload_failed',
-          message: 'Cannot share an empty note.',
+          error: 'no_api_key',
+          message: 'Claude API key not configured. Set it in Settings.',
         }
       }
 
       try {
+        const hydrated = hydrateCompanionNote(note)
+
+        if (!hydrated.content?.trim()) {
+          return {
+            success: false,
+            error: 'upload_failed',
+            message: 'Cannot share an empty note.',
+          }
+        }
+
         const response = await fetch(`${WEB_SHARE_API_URL}/api/note-share`, {
           method: 'POST',
           headers: {
@@ -109,8 +129,12 @@ export function registerWebShareHandlers(): void {
             Authorization: `Bearer ${WEB_SHARE_API_SECRET}`,
           },
           body: JSON.stringify({
-            title: note.title || 'Untitled',
-            contentMarkdown: note.content,
+            title: hydrated.title || 'Untitled',
+            contentMarkdown: hydrated.content,
+            claudeApiKey,
+            logoUrl: getSetting('brandingLogoDataUrl') || null,
+            firmName: getSetting('brandingFirmName') || null,
+            brandColor: getSetting('brandingPrimaryColor') || null,
           }),
         })
 

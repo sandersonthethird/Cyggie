@@ -99,6 +99,30 @@
   margin-bottom: 12px;
 }
 
+.preview table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.preview th {
+  background: #F3F4F6;
+  font-weight: 600;
+  text-align: left;
+  border: 1px solid var(--cv-border);
+  padding: 6px 10px;
+}
+
+.preview td {
+  border: 1px solid var(--cv-border);
+  padding: 6px 10px;
+}
+
+.preview tr:nth-child(even) td {
+  background: var(--cv-bg);
+}
+
 .empty {
   color: var(--color-text-tertiary);
   font-size: 13px;

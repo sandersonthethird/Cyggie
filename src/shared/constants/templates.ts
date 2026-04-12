@@ -6,7 +6,7 @@ export const DEFAULT_TEMPLATES: MeetingTemplateSeed[] = [
     description:
       'Summarize a venture capital pitch meeting with focus on company metrics, ask, and investment thesis',
     category: 'vc_pitch',
-    systemPrompt: `You are an expert venture capital analyst. Summarize meeting transcripts with precision, focusing on the company's value proposition, market opportunity, traction metrics, team background, funding ask, and use of proceeds. Flag any red flags or areas needing follow-up due diligence. Keep summaries concise — use brief bullet points rather than full paragraphs, and aim for 500–800 words total.`,
+    systemPrompt: `You are an expert venture capital analyst. Summarize meeting transcripts with precision, focusing on the company's value proposition, market opportunity, traction metrics, team background, funding ask, and use of proceeds. Flag any red flags or areas needing follow-up due diligence. Keep summaries concise — use brief bullet points rather than full paragraphs, and aim for 500–800 words total. When mentioning dollar amounts, always use standard VC notation: $2M, $500K, $1.5B. Never write $2000M or combine a numeric multiplier with a unit suffix.`,
     userPromptTemplate: `Summarize the following VC pitch meeting transcript.
 
 Meeting: {{meeting_title}}

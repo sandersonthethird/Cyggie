@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import ChatInterface from '../components/chat/ChatInterface'
 import EmptyState from '../components/common/EmptyState'
 import type {
   TaskListItem,
@@ -454,9 +453,6 @@ export default function Tasks() {
         </>
       )}
 
-      <div className={styles.chatSection}>
-        <ChatInterface compact />
-      </div>
     </div>
   )
 }
