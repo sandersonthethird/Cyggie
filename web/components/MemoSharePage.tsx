@@ -13,6 +13,8 @@ interface MemoSharePageProps {
   contentMarkdown: string
   logoUrl: string | null
   companyLogoUrl: string | null
+  firmName: string | null
+  brandColor: string | null
 }
 
 export default function MemoSharePage({
@@ -21,10 +23,16 @@ export default function MemoSharePage({
   companyName,
   contentMarkdown,
   logoUrl,
+  firmName,
+  brandColor,
 }: MemoSharePageProps) {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'flex', flexDirection: 'column' }}>
-      <SharedHeader label={`${companyName} — Memo`} logoUrl={logoUrl ?? undefined} />
+      <SharedHeader
+        label={firmName ? `${firmName} — Memo` : `${companyName} — Memo`}
+        logoUrl={logoUrl ?? undefined}
+        labelColor={brandColor ?? undefined}
+      />
 
       <main style={{ flex: 1, padding: '32px 24px 100px' }}>
         <article style={{

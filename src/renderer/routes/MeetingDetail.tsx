@@ -16,6 +16,7 @@ import { useSharedAudioCapture, useSharedVideoCapture } from '../contexts/AudioC
 import { useFindInPage, injectFindMarks } from '../hooks/useFindInPage'
 import FindBar from '../components/common/FindBar'
 import ConfirmDialog from '../components/common/ConfirmDialog'
+import { useNotice } from '../components/common/NoticeModal'
 import { useChatStore } from '../stores/chat.store'
 import type { ContextOption } from '../../shared/types/chat'
 import type { Meeting, CompanySuggestion } from '../../shared/types/meeting'
@@ -193,6 +194,7 @@ export default function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const notice = useNotice()
   const backLabel = 'Back'
   const [data, setData] = useState<MeetingData | null>(null)
   const [activeTab, setActiveTab] = useState<'notes' | 'transcript' | 'recording'>('notes')
@@ -1423,52 +1425,56 @@ export default function MeetingDetail() {
       )
       if (result.success) {
         await navigator.clipboard.writeText(result.url)
-        alert('Drive link copied to clipboard.')
+        notice.show({ variant: 'success', title: 'Drive link copied to clipboard', url: result.url })
       } else {
-        alert(result.message)
+        notice.show({ variant: 'error', title: 'Failed to get link', message: result.message })
       }
     } catch (err) {
       console.error('Failed to get Drive link:', err)
-      alert('Failed to get shareable link.')
+      notice.show({ variant: 'error', title: 'Failed to get shareable link' })
     }
-  }, [id])
+  }, [id, notice])
 
   const handleCopyText = useCallback(async () => {
     setShareMenuOpen(false)
     const text = activeTab === 'transcript' ? data?.transcript : summaryDraft
     if (!text) {
-      alert('No content to copy.')
+      notice.show({ variant: 'error', title: 'No content to copy' })
       return
     }
     try {
       await navigator.clipboard.writeText(text)
-      alert('Copied to clipboard.')
+      notice.show({ variant: 'success', title: 'Copied to clipboard' })
     } catch (err) {
       console.error('Failed to copy text:', err)
-      alert('Failed to copy to clipboard.')
+      notice.show({ variant: 'error', title: 'Failed to copy to clipboard' })
     }
-  }, [activeTab, data, summaryDraft])
+  }, [activeTab, data, summaryDraft, notice])
 
+  const isCreatingShareRef = useRef(false)
   const handleWebShare = useCallback(async () => {
-    if (!id) return
+    if (!id || isCreatingShareRef.current) return
+    isCreatingShareRef.current = true
     setShareMenuOpen(false)
-    await flushNotes()
     try {
+      await flushNotes()
       const result = await api.invoke<WebShareResponse>(
         IPC_CHANNELS.WEB_SHARE_CREATE,
         id
       )
       if (result.success) {
         await navigator.clipboard.writeText(result.url)
-        alert(`Web share link copied to clipboard:\n${result.url}`)
+        notice.show({ variant: 'success', title: 'Web share link copied to clipboard', url: result.url })
       } else {
-        alert(result.message)
+        notice.show({ variant: 'error', title: 'Failed to create web share', message: result.message })
       }
     } catch (err) {
       console.error('Failed to create web share:', err)
-      alert('Failed to create web share.')
+      notice.show({ variant: 'error', title: 'Failed to create web share' })
+    } finally {
+      isCreatingShareRef.current = false
     }
-  }, [id, flushNotes])
+  }, [id, flushNotes, notice])
 
   // Register this meeting as the chat page context so the global floating chat
   // shows entity-scoped options (meeting + linked companies/contacts) while on this page.

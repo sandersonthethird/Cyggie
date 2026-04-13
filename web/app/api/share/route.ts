@@ -45,29 +45,37 @@ export async function POST(request: Request) {
   const expiresInDays = body.expiresInDays ?? 30
   const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000)
 
-  await getDb().insert(sharedMeetings).values({
-    token,
-    title: body.title,
-    date: new Date(body.date),
-    durationSeconds: body.durationSeconds,
-    speakerMap: body.speakerMap ?? {},
-    attendees: body.attendees,
-    summary: body.summary,
-    transcript: body.transcript,
-    notes: body.notes,
-    apiKeyEnc,
-    logoUrl: body.logoUrl ?? null,
-    firmName: body.firmName ?? null,
-    brandColor: body.brandColor ?? null,
-    expiresAt,
-  })
+  try {
+    await getDb().insert(sharedMeetings).values({
+      token,
+      title: body.title,
+      date: new Date(body.date),
+      durationSeconds: body.durationSeconds,
+      speakerMap: body.speakerMap ?? {},
+      attendees: body.attendees,
+      summary: body.summary,
+      transcript: body.transcript,
+      notes: body.notes,
+      apiKeyEnc,
+      logoUrl: body.logoUrl ?? null,
+      firmName: body.firmName ?? null,
+      brandColor: body.brandColor ?? null,
+      expiresAt,
+    })
+  } catch {
+    return NextResponse.json({ error: 'Failed to create share' }, { status: 500 })
+  }
 
-  await getDb().insert(rateLimits).values({
-    token,
-    chatCountDay: 0,
-    lastReset: new Date().toISOString().split('T')[0],
-    totalQueries: 0,
-  })
+  try {
+    await getDb().insert(rateLimits).values({
+      token,
+      chatCountDay: 0,
+      lastReset: new Date().toISOString().split('T')[0],
+      totalQueries: 0,
+    })
+  } catch {
+    return NextResponse.json({ error: 'Failed to create rate limit record' }, { status: 500 })
+  }
 
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://cyggie.vercel.app'
   const url = `${baseUrl}/s/${token}`

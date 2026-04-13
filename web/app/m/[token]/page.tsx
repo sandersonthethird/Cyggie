@@ -18,6 +18,8 @@ export default async function SharedMemoPage({ params }: PageProps) {
       companyName: sharedMemos.companyName,
       contentMarkdown: sharedMemos.contentMarkdown,
       logoUrl: sharedMemos.logoUrl,
+      firmName: sharedMemos.firmName,
+      brandColor: sharedMemos.brandColor,
       companyLogoUrl: sharedMemos.companyLogoUrl,
       isActive: sharedMemos.isActive,
       expiresAt: sharedMemos.expiresAt,
@@ -43,6 +45,8 @@ export default async function SharedMemoPage({ params }: PageProps) {
       companyName={memo.companyName}
       contentMarkdown={memo.contentMarkdown}
       logoUrl={memo.logoUrl ?? null}
+      firmName={memo.firmName ?? null}
+      brandColor={memo.brandColor ?? null}
       companyLogoUrl={memo.companyLogoUrl ?? null}
     />
   )

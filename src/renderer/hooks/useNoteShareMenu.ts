@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { WebShareResponse } from '../../shared/types/web-share'
 import { api } from '../api'
+import { useNotice } from '../components/common/NoticeModal'
 
 export function useNoteShareMenu(noteId: string | null, contentDraft: string) {
   const [shareMenuOpen, setShareMenuOpen] = useState(false)
   const shareMenuRef = useRef<HTMLDivElement>(null)
+  const notice = useNotice()
 
   const canShare = !!contentDraft.trim()
 
@@ -24,9 +26,9 @@ export function useNoteShareMenu(noteId: string | null, contentDraft: string) {
   const handleCopyText = useCallback(() => {
     setShareMenuOpen(false)
     navigator.clipboard.writeText(contentDraft).catch(() => {
-      alert('Failed to copy text to clipboard.')
+      notice.show({ variant: 'error', title: 'Failed to copy text to clipboard' })
     })
-  }, [contentDraft])
+  }, [contentDraft, notice])
 
   const handleWebShare = useCallback(async () => {
     if (!noteId) return
@@ -35,14 +37,14 @@ export function useNoteShareMenu(noteId: string | null, contentDraft: string) {
       const result = await api.invoke<WebShareResponse>(IPC_CHANNELS.WEB_SHARE_CREATE_NOTE, noteId)
       if (result.success && result.url) {
         await navigator.clipboard.writeText(result.url)
-        alert('Share link copied to clipboard!')
+        notice.show({ variant: 'success', title: 'Share link copied to clipboard', url: result.url })
       } else {
-        alert(result.message ?? 'Failed to create share link.')
+        notice.show({ variant: 'error', title: 'Failed to create share link', message: result.message })
       }
     } catch {
-      alert('Failed to create share link.')
+      notice.show({ variant: 'error', title: 'Failed to create share link' })
     }
-  }, [noteId])
+  }, [noteId, notice])
 
   return {
     shareMenuOpen,

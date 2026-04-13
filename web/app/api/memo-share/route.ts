@@ -10,6 +10,8 @@ interface MemoShareRequest {
   contentMarkdown: string
   claudeApiKey: string
   logoUrl?: string | null
+  firmName?: string | null
+  brandColor?: string | null
   companyLogoUrl?: string | null
   expiresInDays?: number
 }
@@ -60,6 +62,8 @@ export async function POST(request: Request) {
         companyName: body.companyName,
         contentMarkdown: body.contentMarkdown,
         logoUrl: body.logoUrl ?? null,
+        firmName: body.firmName ?? null,
+        brandColor: body.brandColor ?? null,
         companyLogoUrl: body.companyLogoUrl ?? null,
         apiKeyEnc,
         expiresAt,
@@ -74,12 +78,16 @@ export async function POST(request: Request) {
     }
   }
 
-  await getDb().insert(memoRateLimits).values({
-    token,
-    chatCountDay: 0,
-    lastReset: new Date().toISOString().split('T')[0],
-    totalQueries: 0,
-  })
+  try {
+    await getDb().insert(memoRateLimits).values({
+      token,
+      chatCountDay: 0,
+      lastReset: new Date().toISOString().split('T')[0],
+      totalQueries: 0,
+    })
+  } catch {
+    return NextResponse.json({ error: 'Failed to create rate limit record' }, { status: 500 })
+  }
 
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://cyggie.vercel.app'
   const url = `${baseUrl}/m/${token}`

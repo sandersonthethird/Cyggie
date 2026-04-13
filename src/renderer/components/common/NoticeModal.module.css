@@ -1,0 +1,154 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.modal {
+  background: var(--cv-card);
+  border-radius: 12px;
+  box-shadow: var(--cv-shadow-lg);
+  padding: 32px 28px 0;
+  max-width: 400px;
+  width: calc(100% - 48px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: scaleUp 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+@keyframes scaleUp {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Icon circle ─────────────────────────────────────────────────────────── */
+
+.iconWrap {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--cv-crimson-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-bottom: 16px;
+}
+
+/* ── Text ────────────────────────────────────────────────────────────────── */
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cv-text);
+  text-align: center;
+  margin: 0 0 16px;
+  line-height: 1.4;
+}
+
+.message {
+  font-size: 13px;
+  color: var(--cv-text-meta);
+  text-align: center;
+  margin: -8px 0 16px;
+  line-height: 1.5;
+}
+
+/* ── URL strip ───────────────────────────────────────────────────────────── */
+
+.urlStrip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  width: 100%;
+  margin-bottom: 16px;
+  min-width: 0;
+  color: var(--cv-text-meta);
+}
+
+.urlText {
+  font-size: 12px;
+  font-family: var(--font-sans);
+  color: var(--cv-text-meta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+/* ── OK button ───────────────────────────────────────────────────────────── */
+
+.okButton {
+  width: 100%;
+  padding: 11px;
+  background: var(--cv-crimson);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-bottom: 16px;
+}
+
+.okButton:hover {
+  background: var(--cv-crimson-hover);
+}
+
+.okButton:focus-visible {
+  outline: 2px solid var(--cv-crimson);
+  outline-offset: 2px;
+}
+
+/* ── Branding ────────────────────────────────────────────────────────────── */
+
+.branding {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  color: var(--cv-text-meta);
+  opacity: 0.55;
+  margin-bottom: 20px;
+  text-transform: uppercase;
+}
+
+/* ── Auto-dismiss progress bar ───────────────────────────────────────────── */
+/*
+ * Keyed on openCount in JSX so React remounts this element on every show(),
+ * restarting the @keyframes animation even if the modal was already open.
+ */
+.progressBar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  width: 100%;
+  background: var(--cv-crimson);
+  transform-origin: left;
+  animation: drain 3s linear forwards;
+}
+
+@keyframes drain {
+  from { width: 100%; }
+  to   { width: 0%; }
+}

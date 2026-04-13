@@ -85,12 +85,16 @@ export async function POST(request: Request) {
 
   // Pre-create rate limit row (matches memo-share pattern)
   const today = new Date().toISOString().split('T')[0]
-  await getDb().insert(noteRateLimits).values({
-    token,
-    chatCountDay: 0,
-    lastReset: today,
-    totalQueries: 0,
-  })
+  try {
+    await getDb().insert(noteRateLimits).values({
+      token,
+      chatCountDay: 0,
+      lastReset: today,
+      totalQueries: 0,
+    })
+  } catch {
+    return NextResponse.json({ error: 'Failed to create rate limit record' }, { status: 500 })
+  }
 
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://cyggie.vercel.app'
   const url = `${baseUrl}/n/${token}`

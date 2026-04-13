@@ -10,6 +10,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import MeetingCard from '../components/meetings/MeetingCard'
 import CalendarBadge from '../components/meetings/CalendarBadge'
 import EmptyState from '../components/common/EmptyState'
+import { useNotice } from '../components/common/NoticeModal'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import type { Meeting } from '../../shared/types/meeting'
 import type { DriveShareResponse } from '../../shared/types/drive'
@@ -74,6 +75,7 @@ type VirtualRow =
 
 export default function MeetingList() {
   const navigate = useNavigate()
+  const notice = useNotice()
   const { meetings, deleteMeeting } = useMeetings()
   const { searchQuery, searchResults, isSearching, hasFilters } = useSearch()
   const calendarEvents = useAppStore((s) => s.calendarEvents)
@@ -341,11 +343,11 @@ export default function MeetingList() {
                         if (result.success) {
                           await navigator.clipboard.writeText(result.url)
                         } else {
-                          alert(result.message)
+                          notice.show({ variant: 'error', title: 'Failed to get link', message: result.message })
                         }
                       } catch (err) {
                         console.error('Failed to get Drive link:', err)
-                        alert('Failed to get shareable link.')
+                        notice.show({ variant: 'error', title: 'Failed to get shareable link' })
                       }
                     }}
                   />

@@ -19,6 +19,7 @@ import { useCalendar } from './hooks/useCalendar'
 import { useRecordingStore } from './stores/recording.store'
 import { usePreferencesStore } from './stores/preferences.store'
 import { AudioCaptureProvider } from './contexts/AudioCaptureContext'
+import { NoticeModalProvider } from './components/common/NoticeModal'
 import { IPC_CHANNELS } from '../shared/constants/channels'
 import { api } from './api'
 
@@ -89,6 +90,7 @@ function NotificationListener() {
 export default function App() {
   const isPopOut = new URLSearchParams(window.location.search).get('popout') === 'true'
   return (
+    <NoticeModalProvider>
     <HashRouter>
       <AudioCaptureProvider>
         <PreferencesInit />
@@ -124,5 +126,6 @@ export default function App() {
         </Routes>
       </AudioCaptureProvider>
     </HashRouter>
+    </NoticeModalProvider>
   )
 }

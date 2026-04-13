@@ -345,6 +345,8 @@ export function registerInvestmentMemoHandlers(): void {
       const company = companyRepo.getCompany(memo.companyId)
       const companyName = company?.canonicalName ?? 'Unknown Company'
       const logoUrl = getSetting('brandingLogoDataUrl') || null
+      const firmName = getSetting('brandingFirmName') || null
+      const brandColor = getSetting('brandingPrimaryColor') || null
       // Web share uses plain favicon URL (not base64) — the browser loads it directly
       const companyLogoUrl = company?.primaryDomain
         ? `https://www.google.com/s2/favicons?sz=128&domain=${company.primaryDomain}`
@@ -363,6 +365,8 @@ export function registerInvestmentMemoHandlers(): void {
             contentMarkdown: latest.contentMarkdown,
             claudeApiKey,
             logoUrl,
+            firmName,
+            brandColor,
             companyLogoUrl,
           }),
           signal: AbortSignal.timeout(15000),
