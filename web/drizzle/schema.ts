@@ -28,6 +28,7 @@ export const sharedMeetings = pgTable(
     logoUrl: text('logo_url'),
     firmName: varchar('firm_name', { length: 200 }),
     brandColor: varchar('brand_color', { length: 20 }),
+    companies: jsonb('companies').$type<Array<{ name: string; logoUrl: string | null }>>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     isActive: boolean('is_active').notNull().default(true),

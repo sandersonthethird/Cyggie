@@ -16,6 +16,7 @@ interface ShareRequest {
   logoUrl?: string | null
   firmName?: string | null
   brandColor?: string | null
+  companies?: Array<{ name: string; logoUrl: string | null }> | null
   expiresInDays?: number
 }
 
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
       logoUrl: body.logoUrl ?? null,
       firmName: body.firmName ?? null,
       brandColor: body.brandColor ?? null,
+      companies: body.companies ?? null,
       expiresAt,
     })
   } catch {

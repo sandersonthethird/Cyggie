@@ -9,6 +9,7 @@ import { recoverSummaryFromCompanionNote } from '../services/meeting-summary-rec
 import type { WebShareResponse } from '../../shared/types/web-share'
 import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
 import { getSetting } from '../database/repositories/settings.repo'
+import { listMeetingCompanies } from '../database/repositories/org-company.repo'
 
 export function registerWebShareHandlers(): void {
   ipcMain.handle(
@@ -50,6 +51,28 @@ export function registerWebShareHandlers(): void {
         summary = recoverSummaryFromCompanionNote(meeting)
       }
 
+      // Fetch linked companies with their favicon URLs
+      const linkedCompanies = listMeetingCompanies(meeting.id)
+      const companies = await Promise.all(
+        linkedCompanies.map(async (c) => {
+          let logoUrl: string | null = null
+          if (c.primaryDomain) {
+            try {
+              const faviconUrl = `https://www.google.com/s2/favicons?sz=128&domain=${c.primaryDomain}`
+              const res = await fetch(faviconUrl, { signal: AbortSignal.timeout(3000) })
+              if (res.ok) {
+                const buffer = Buffer.from(await res.arrayBuffer())
+                const mime = res.headers.get('content-type') ?? 'image/png'
+                logoUrl = `data:${mime};base64,${buffer.toString('base64')}`
+              }
+            } catch {
+              // favicon fetch failed — show company name without logo
+            }
+          }
+          return { name: c.canonicalName, logoUrl }
+        })
+      )
+
       try {
         const response = await fetch(`${WEB_SHARE_API_URL}/api/share`, {
           method: 'POST',
@@ -70,6 +93,7 @@ export function registerWebShareHandlers(): void {
             logoUrl: getSetting('brandingLogoDataUrl') || null,
             firmName: getSetting('brandingFirmName') || null,
             brandColor: getSetting('brandingPrimaryColor') || null,
+            companies,
           }),
         })
 

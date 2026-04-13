@@ -9,6 +9,7 @@ interface SummaryPanelProps {
   attendees: string[] | null
   summary: string | null
   notes: string | null
+  companies?: Array<{ name: string; logoUrl: string | null }> | null
 }
 
 export default function SummaryPanel({
@@ -19,6 +20,7 @@ export default function SummaryPanel({
   attendees,
   summary,
   notes,
+  companies,
 }: SummaryPanelProps) {
   const formattedDate = new Date(date).toLocaleString()
   const durationMin = durationSeconds ? Math.round(durationSeconds / 60) : null
@@ -30,10 +32,24 @@ export default function SummaryPanel({
         {title}
       </h1>
 
-      <div className="flex flex-wrap gap-4 text-sm text-gray-500 dark:text-gray-400 mb-6">
+      <div className="flex flex-wrap gap-4 text-sm text-gray-500 dark:text-gray-400 mb-4">
         <span>{formattedDate}</span>
         {durationMin && <span>{durationMin} min</span>}
       </div>
+
+      {companies && companies.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
+          {companies.map((company, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#f3f4f6', borderRadius: 8 }}>
+              {company.logoUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={company.logoUrl} alt="" style={{ width: 20, height: 20, objectFit: 'contain', borderRadius: 3 }} />
+              )}
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>{company.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {speakerEntries.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-6">

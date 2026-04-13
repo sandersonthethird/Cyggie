@@ -19,6 +19,7 @@ export default function TestMeetingSharePage() {
       logoUrl={null}
       firmName={null}
       brandColor={null}
+      companies={null}
     />
   )
 }

@@ -24,6 +24,7 @@ export default async function SharedMeetingPage({ params }: PageProps) {
       logoUrl: sharedMeetings.logoUrl,
       firmName: sharedMeetings.firmName,
       brandColor: sharedMeetings.brandColor,
+      companies: sharedMeetings.companies,
       isActive: sharedMeetings.isActive,
       expiresAt: sharedMeetings.expiresAt,
     })
@@ -54,6 +55,7 @@ export default async function SharedMeetingPage({ params }: PageProps) {
       logoUrl={meeting.logoUrl ?? null}
       firmName={meeting.firmName ?? null}
       brandColor={meeting.brandColor ?? null}
+      companies={(meeting.companies as Array<{ name: string; logoUrl: string | null }> | null) ?? null}
     />
   )
 }

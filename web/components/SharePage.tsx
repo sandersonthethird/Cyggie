@@ -17,6 +17,7 @@ interface SharePageProps {
   logoUrl: string | null
   firmName: string | null
   brandColor: string | null
+  companies: Array<{ name: string; logoUrl: string | null }> | null
 }
 
 export default function SharePage({
@@ -31,6 +32,7 @@ export default function SharePage({
   logoUrl,
   firmName,
   brandColor,
+  companies,
 }: SharePageProps) {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'flex', flexDirection: 'column' }}>
@@ -57,6 +59,7 @@ export default function SharePage({
             attendees={attendees}
             summary={summary}
             notes={notes}
+            companies={companies}
           />
           <div style={{
             marginTop: 40,
