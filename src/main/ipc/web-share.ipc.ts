@@ -10,6 +10,34 @@ import type { WebShareResponse } from '../../shared/types/web-share'
 import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
 import { getSetting } from '../database/repositories/settings.repo'
 import { listMeetingCompanies } from '../database/repositories/org-company.repo'
+import { getDatabase } from '../database/connection'
+
+/**
+ * Builds a speakerMap with contact display names resolved.
+ * Falls back to the raw speakerMap label if no contact is linked.
+ *
+ * raw speakerMap:    { "0": "alice@example.com", "1": "bob@example.com" }
+ * resolved:          { "0": "Alice Smith",        "1": "Bob Jones"       }
+ */
+function resolvedSpeakerMap(meetingId: string, rawMap: Record<string, string>): Record<string, string> {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      SELECT l.speaker_index, c.full_name
+      FROM meeting_speaker_contact_links l
+      JOIN contacts c ON c.id = l.contact_id
+      WHERE l.meeting_id = ?
+    `)
+    .all(meetingId) as { speaker_index: number; full_name: string }[]
+
+  const resolved = { ...rawMap }
+  for (const row of rows) {
+    if (row.full_name) {
+      resolved[String(row.speaker_index)] = row.full_name
+    }
+  }
+  return resolved
+}
 
 export function registerWebShareHandlers(): void {
   ipcMain.handle(
@@ -84,7 +112,7 @@ export function registerWebShareHandlers(): void {
             title: meeting.title,
             date: meeting.date,
             durationSeconds: meeting.durationSeconds,
-            speakerMap: meeting.speakerMap,
+            speakerMap: resolvedSpeakerMap(meetingId, meeting.speakerMap as Record<string, string>),
             attendees: meeting.attendees,
             summary,
             transcript,
