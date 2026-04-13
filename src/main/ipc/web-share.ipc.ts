@@ -14,14 +14,19 @@ import { getDatabase } from '../database/connection'
 
 /**
  * Builds a speakerMap with contact display names resolved.
- * Falls back to the raw speakerMap label if no contact is linked.
+ * Two-pass strategy:
+ *   1. meeting_speaker_contact_links → full_name (speaker index based)
+ *   2. For remaining email-valued entries: contacts.email → full_name
  *
  * raw speakerMap:    { "0": "alice@example.com", "1": "bob@example.com" }
  * resolved:          { "0": "Alice Smith",        "1": "Bob Jones"       }
  */
 function resolvedSpeakerMap(meetingId: string, rawMap: Record<string, string>): Record<string, string> {
   const db = getDatabase()
-  const rows = db
+  const resolved = { ...rawMap }
+
+  // Pass 1: speaker-contact links (explicit user assignments)
+  const linked = db
     .prepare(`
       SELECT l.speaker_index, c.full_name
       FROM meeting_speaker_contact_links l
@@ -29,13 +34,25 @@ function resolvedSpeakerMap(meetingId: string, rawMap: Record<string, string>): 
       WHERE l.meeting_id = ?
     `)
     .all(meetingId) as { speaker_index: number; full_name: string }[]
+  for (const row of linked) {
+    if (row.full_name) resolved[String(row.speaker_index)] = row.full_name
+  }
 
-  const resolved = { ...rawMap }
-  for (const row of rows) {
-    if (row.full_name) {
-      resolved[String(row.speaker_index)] = row.full_name
+  // Pass 2: email-valued entries not yet resolved — look up by email
+  const emails = Object.entries(resolved)
+    .filter(([, v]) => v.includes('@'))
+    .map(([, v]) => v)
+  if (emails.length > 0) {
+    const placeholders = emails.map(() => '?').join(', ')
+    const byEmail = db
+      .prepare(`SELECT email, full_name FROM contacts WHERE email IN (${placeholders})`)
+      .all(...emails) as { email: string; full_name: string }[]
+    const nameByEmail = Object.fromEntries(byEmail.map((r) => [r.email, r.full_name]))
+    for (const [idx, val] of Object.entries(resolved)) {
+      if (val.includes('@') && nameByEmail[val]) resolved[idx] = nameByEmail[val]
     }
   }
+
   return resolved
 }
 
@@ -134,7 +151,7 @@ export function registerWebShareHandlers(): void {
           }
         }
 
-        const result = await response.json()
+        const result = await response.json() as { url: string; token: string }
         return { success: true, url: result.url, token: result.token }
       } catch (err) {
         return {
@@ -199,7 +216,7 @@ export function registerWebShareHandlers(): void {
           }
         }
 
-        const result = await response.json()
+        const result = await response.json() as { url: string; token: string }
         return { success: true, url: result.url, token: result.token }
       } catch (err) {
         return {
