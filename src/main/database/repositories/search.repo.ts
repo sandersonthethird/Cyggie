@@ -688,9 +688,12 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
   }
 
   // 2. Companies: direct prefix matches from the companies cache table
+  // No per-source LIMIT — the final .slice(0, limit) below caps output.
+  // A per-source LIMIT would silently drop org_companies results when the
+  // cache table fills all slots alphabetically before them.
   const cachedCompanyRows = db
-    .prepare('SELECT domain, display_name FROM companies WHERE display_name LIKE ? LIMIT ?')
-    .all(`%${prefix}%`, limit) as { domain: string; display_name: string }[]
+    .prepare('SELECT domain, display_name FROM companies WHERE display_name LIKE ?')
+    .all(`%${prefix}%`) as { domain: string; display_name: string }[]
 
   for (const row of cachedCompanyRows) {
     if (!companyMap.has(row.domain)) {
@@ -700,8 +703,8 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
 
   // Also search org_companies (the main company entity table)
   const orgCompanyRows = db
-    .prepare('SELECT id, canonical_name, primary_domain FROM org_companies WHERE canonical_name LIKE ? LIMIT ?')
-    .all(`%${prefix}%`, limit) as { id: string; canonical_name: string; primary_domain: string | null }[]
+    .prepare('SELECT id, canonical_name, primary_domain FROM org_companies WHERE canonical_name LIKE ?')
+    .all(`%${prefix}%`) as { id: string; canonical_name: string; primary_domain: string | null }[]
 
   for (const row of orgCompanyRows) {
     const key = row.primary_domain || row.id
@@ -710,10 +713,11 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     }
   }
 
-  // Also check companies column in meetings for names not yet in cache
+  // Also check companies column in meetings for names not yet in cache.
+  // LIKE filter pushed to SQLite to avoid scanning every meeting row in JS.
   const meetingCompanyRows = db
-    .prepare('SELECT companies FROM meetings WHERE companies IS NOT NULL')
-    .all() as { companies: string }[]
+    .prepare('SELECT companies FROM meetings WHERE companies IS NOT NULL AND companies LIKE ?')
+    .all(`%${prefix}%`) as { companies: string }[]
 
   for (const row of meetingCompanyRows) {
     try {

@@ -225,6 +225,34 @@ describe('getCategorizedSuggestions — notes section', () => {
   })
 })
 
+// ── Regression: org_companies not dropped when cache fills all slots ──────────
+//
+// Before fix: both company queries used LIMIT 5. If the companies cache table
+// returned 5 matches alphabetically before an org_company entry, the final
+// .slice(0,5) cut the org_company out entirely.
+//
+// After fix: per-source LIMITs removed; all matching candidates compete in the
+// final sort+slice.
+describe('getCategorizedSuggestions — org_company not cut by cache limit', () => {
+  beforeEach(() => {
+    testDb = buildDb()
+  })
+
+  it('includes org_company when 5 cache companies precede it alphabetically', () => {
+    testDb.exec(`
+      INSERT INTO companies VALUES ('a.vc', 'Aardvark Capital');
+      INSERT INTO companies VALUES ('b.vc', 'Bowery Capital');
+      INSERT INTO companies VALUES ('c.vc', 'Browder Capital');
+      INSERT INTO companies VALUES ('d.vc', 'Cannage Capital');
+      INSERT INTO companies VALUES ('e.vc', 'Carbon Capital');
+      INSERT INTO org_companies VALUES ('uuid-1', 'Capital Corp', NULL);
+    `)
+    const result = getCategorizedSuggestions('capital', 5)
+    const names = result.companies.map((c) => c.name)
+    expect(names).toContain('Capital Corp')
+  })
+})
+
 describe('searchNotes (notes.repo)', () => {
   beforeEach(() => {
     testDb = buildDb()

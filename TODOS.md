@@ -1,5 +1,47 @@
 # TODOS
 
+## P3 — Contacts
+
+### Talent Pipeline: AI-suggested stage progressions
+**What:** When a contact's `talentPipeline === 'identified'` and `meetingCount >= 3`, show a dismissible nudge in the Relationship section: "↑ Move to Exploring?"
+**Why:** Surfaces stale stage tracking — you may have moved to regular catch-up calls but forgotten to update the stage. Makes the pipeline self-maintaining.
+**Pros:** No extra IPC; `meetingCount` + `lastTouchpoint` are already on `ContactDetail`. ~30 lines of conditional JSX + localStorage for dismissal. Thresholds: `identified` → suggest `exploring` after 3 meetings; `exploring` → suggest `ideating` if `lastTouchpoint` > 90 days old (they've likely decided).
+**Cons:** Threshold (3 meetings / 90 days) is arbitrary; per-contact dismissal requires localStorage keyed by `contact.id`.
+**Context:** Render a dismissible chip just above the Talent Pipeline `PropertyRow` in the Relationship section of `ContactPropertiesPanel.tsx`. `meetingCount` and `lastTouchpoint` come from `ContactDetail` (already in scope). Dismissal stored in `localStorage` as `cyggie:talent-pipeline-nudge-dismissed:${contactId}` (JSON timestamp). Clear dismissal when user changes stage.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Talent Pipeline field PR (migration 068) merged.
+
+---
+
+## P2 — Contacts
+
+### Contact profile enrichment from notes and emails
+**What:** Add "📝 From notes" and "✉️ From emails" options to the Enhance dropdown on Contact Detail (parallel to the company implementation in the "enhance from notes/emails" PR).
+**Why:** Users want to enrich contacts the same way they enrich companies — from note content and email snippets. Contact notes often contain rich title/role/location data; emails carry company affiliation and seniority signals.
+**Pros:** Full parity between company and contact enrichment; the data sources (`listContactNotes`, `listContactEmails`) already exist.
+**Cons:** Contact fields differ from company (title, investorStage, fundSize, linkedinUrl, etc.) — requires a separate `buildContactEnrichmentProposal` helper with its own LLM prompt and diff logic. Also non-trivial: existing contact enrichment from meetings lives in the IPC handler, not a service file — the pattern diverges from companies. UI also diverges: `ContactPropertiesPanel` uses `onEnrichFromMeetings` (a direct callback), not the `onEnhance(source)` dropdown pattern. Both the IPC organization and the UI pattern would need to align with the company implementation before this is clean to build.
+**Context:** `listContactNotes(contactId)` in `src/main/database/repositories/contact-notes.repo.ts`, `listContactEmails(contactId)` in `src/main/database/repositories/contact.repo.ts`. Start by extracting contact field diff logic from `contacts.ipc.ts` into `contact-summary-sync.service.ts` (analogous to `company-summary-sync.service.ts`). Then add `CONTACT_ENRICH_FROM_NOTES` and `CONTACT_ENRICH_FROM_EMAILS` IPC channels. UI: align `ContactPropertiesPanel` to the `onEnhance(source)` dropdown pattern before adding new sources.
+**Effort:** L
+**Priority:** P2
+**Depends on:** Company "enhance from notes/emails" PR merged.
+
+---
+
+## P2 — Dashboard
+
+### Recent Touches: date range filter
+**What:** Date range picker (7d / 30d / 90d / custom) as a 4th section in the filter panel.
+**Why:** Users reviewing a specific period (e.g. last week's deal flow) can't constrain by date; the list always shows the most recent 20 items.
+**Pros:** Natural extension of the new multi-section filter — `DashboardActivityFilter.dateRange` field + `WHERE datetime(occurred_at) >= ?` SQL clause. Presets (7d/30d/90d) cover most use cases without a custom date picker.
+**Cons:** Custom date UI adds complexity; preset options may be sufficient without it.
+**Context:** The `listRecentActivity()` function in `src/main/database/repositories/dashboard.repo.ts` builds UNION SQL from per-type fragments. Adding a date clause would go in the final ORDER BY wrapper (currently `SELECT * FROM (...) ORDER BY occurred_at DESC LIMIT ?`). The filter panel in `src/renderer/routes/Dashboard.tsx` already has the three-section chip pattern to follow — add a 4th `.filterSection` with preset chips. `DashboardActivityFilter` in `src/shared/types/dashboard.ts` would gain an optional `dateRange: '7d' | '30d' | '90d' | null` field (null = no date constraint).
+**Effort:** M
+**Priority:** P2
+**Depends on:** Dashboard activity filter panel (merged).
+
+---
+
 ## P2 — AI Chat
 
 ### Contextual suggested questions in chat
@@ -29,6 +71,18 @@
 ---
 
 ## P3 — Companies
+
+### Companies table: server-side pagination
+**What:** Replace the full-fetch architecture in Companies.tsx with server-side pagination (cursor- or offset-based) + virtual scrolling in the table.
+**Why:** Currently `fetchCompanies()` fetches ALL companies in one query (no limit, as of the 2026-04-14 limit-removal fix). `baseCompanySelect` uses LEFT JOIN aggregates for meeting_count, email_count, note_count, contact_count, and last_touchpoint — O(n) in company count. At 760 companies today this is fast. At 5000+ it will become perceptible (<500ms today; could hit 2–5s at 5k).
+**Pros:** Correct at true scale; opens the door for infinite scroll or page-based navigation. Filtering and sorting would move to the backend, eliminating the client-side JS filter pass.
+**Cons:** Requires moving columnFilters, rangeFilters, and textFilters to the backend query (currently all client-side). The filter URL param → server query translation layer is non-trivial. The Companies table currently supports multi-field sort client-side; server-side would need to replicate `buildCompanyOrderBy` for all sort keys.
+**Context:** `buildUrlFilter` in `src/renderer/components/company/companyColumns.ts` now passes no limit (view: 'all'). `listCompanies` in `src/main/database/repositories/org-company.repo.ts` skips LIMIT/OFFSET when limit is undefined. The full client-side filter chain is `filterCompanies → applySelectFilter → applyRangeFilter → applyTextFilter` in `src/renderer/components/crm/tableUtils.ts`. Start by adding `entityTypes`, `pipelineStage`, and `priority` server-side filter params to `CompanyListFilter`, then update `buildUrlFilter` to pass them when active. Pagination can follow as a second step.
+**Effort:** XL
+**Priority:** P3
+**Depends on:** None. Can be done incrementally — start with server-side entityType/stage/priority filtering (high value, lower effort) before tackling pagination.
+
+---
 
 ### Memo version history UI
 **What:** Make the version chip (`v2`, `v3`…) in `CompanyMemo` interactive — clicking it opens a panel or dropdown listing all past `InvestmentMemoVersion` rows, with a "Restore" button per entry.

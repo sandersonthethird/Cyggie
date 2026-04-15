@@ -66,6 +66,8 @@ import { runRemoveNotificationContactsMigration } from './migrations/063-remove-
 import { runCalendarEventDedupMigration } from './migrations/064-calendar-event-dedup'
 import { runRepairImportedNoteFrontmatterMigration } from './migrations/065-repair-imported-note-frontmatter'
 import { runContactLinkedinFieldsMigration } from './migrations/066-contact-linkedin-fields'
+import { runRepairCompanyViewFlagMigration } from './migrations/067-repair-company-view-flag'
+import { runContactTalentPipelineMigration } from './migrations/068-contact-talent-pipeline'
 
 let db: Database.Database | null = null
 
@@ -140,6 +142,8 @@ export function getDatabase(): Database.Database {
     runCalendarEventDedupMigration(db)
     runRepairImportedNoteFrontmatterMigration(db)
     runContactLinkedinFieldsMigration(db)
+    runRepairCompanyViewFlagMigration(db)
+    runContactTalentPipelineMigration(db)
   }
   return db
 }

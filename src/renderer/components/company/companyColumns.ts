@@ -7,6 +7,7 @@ import type {
   CompanySummary,
   CompanySortBy
 } from '../../../shared/types/company'
+import { ENTITY_TYPE_OPTIONS } from '../../../shared/types/company'
 import {
   createColumnConfigLoader,
   saveColumnConfig as saveColumnConfigBase,
@@ -34,18 +35,7 @@ export interface GroupableField {
 
 // ─── Option arrays ────────────────────────────────────────────────────────────
 
-export const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
-  { value: 'unknown', label: 'Unknown' },
-  { value: 'prospect', label: 'Prospect' },
-  { value: 'portfolio', label: 'Portfolio' },
-  { value: 'pass', label: 'Pass' },
-  { value: 'vc_fund', label: 'Investor' },
-  { value: 'lp', label: 'LP' },
-  { value: 'customer', label: 'Customer' },
-  { value: 'partner', label: 'Partner' },
-  { value: 'vendor', label: 'Vendor' },
-  { value: 'other', label: 'Other' }
-]
+export const ENTITY_TYPES = ENTITY_TYPE_OPTIONS
 
 export const STAGES: { value: CompanyPipelineStage; label: string }[] = [
   { value: 'screening', label: 'Screening' },
@@ -388,9 +378,11 @@ export function buildUrlFilter(
   query: string,
   sortBy: CompanySortBy
 ): CompanyListFilter {
+  // No limit — view: 'all' means all companies. baseCompanySelect uses LEFT JOINs
+  // (not correlated subqueries) so this is O(n) and fast in SQLite at current scale.
+  // See TODOS.md "Companies table: server-side pagination" for the long-term fix.
   return {
     query: query.trim() || undefined,
-    limit: 400,
     view: 'all',
     includeStats: true,
     sortBy

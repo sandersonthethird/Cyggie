@@ -84,6 +84,11 @@ interface CompanyRow {
   referral_contact_id: string | null
   next_followup_date: string | null
   field_sources: string | null
+  // Portfolio fields from migration 045
+  investment_size: string | null
+  ownership_pct: string | null
+  followon_investment_size: string | null
+  total_invested: string | null
 }
 
 export interface CompanyMergeResult {
@@ -333,7 +338,11 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     warmIntroSource: row.warm_intro_source ?? null,
     referralContactId: row.referral_contact_id ?? null,
     nextFollowupDate: row.next_followup_date ?? null,
-    fieldSources: row.field_sources ?? null
+    fieldSources: row.field_sources ?? null,
+    investmentSize: row.investment_size ?? null,
+    ownershipPct: row.ownership_pct ?? null,
+    followonInvestmentSize: row.followon_investment_size ?? null,
+    totalInvested: row.total_invested ?? null,
   }
 }
 
@@ -403,7 +412,11 @@ function baseCompanySelect(whereClause = ''): string {
       c.warm_intro_source,
       c.referral_contact_id,
       c.next_followup_date,
-      NULL AS field_sources
+      NULL AS field_sources,
+      c.investment_size,
+      c.ownership_pct,
+      c.followon_investment_size,
+      c.total_invested
     FROM org_companies c
     LEFT JOIN (
       SELECT
@@ -545,17 +558,18 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-  const limit = filter?.limit ?? 200
+  const limit = filter?.limit        // undefined = no limit (returns all matching rows)
   const offset = filter?.offset ?? 0
+  const paginate = limit !== undefined
   const includeStats = filter?.includeStats === true
 
   const rows = db
     .prepare(
       `${includeStats ? baseCompanySelect(where) : baseCompanySelectLight(where)}
        ${buildCompanyOrderBy(filter?.sortBy, includeStats)}
-       LIMIT ? OFFSET ?`
+       ${paginate ? 'LIMIT ? OFFSET ?' : ''}`
     )
-    .all(...params, limit, offset) as CompanyRow[]
+    .all(...(paginate ? [...params, limit, offset] : params)) as CompanyRow[]
 
   return rows.map(rowToCompanySummary)
 }
@@ -702,7 +716,8 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         meetingCount: 0, noteCount: 0, emailCount: 0,
         createdAt: '', updatedAt: '',
         industries: [], themes: [],
-        sourceEntityName: nullStr, coInvestorsList: [], priorInvestorsList: [], coInvestedIn: []
+        sourceEntityName: nullStr, coInvestorsList: [], priorInvestorsList: [], coInvestedIn: [],
+        fieldSources: nullStr
       } satisfies CompanyDetail
     }
   }
@@ -834,7 +849,7 @@ export function createCompany(data: {
   const normalizedName = normalizeCompanyName(canonicalName)
   const normalizedPrimaryDomain = normalizeDomain(data.primaryDomain ?? null)
   const entityType = normalizeEntityType(data.entityType ?? 'unknown')
-  const includeInCompaniesView = data.includeInCompaniesView ?? (entityType === 'prospect')
+  const includeInCompaniesView = data.includeInCompaniesView ?? (entityType !== 'unknown')
   const classificationSource = data.classificationSource ?? 'manual'
   const classificationConfidence =
     data.classificationConfidence === undefined ? 1 : data.classificationConfidence
@@ -942,6 +957,10 @@ const COMPANY_UPDATABLE_FIELDS = {
   round: 'round',
   pipelineStage: 'pipeline_stage',
   fieldSources: 'field_sources',
+  investmentSize: 'investment_size',
+  ownershipPct: 'ownership_pct',
+  followonInvestmentSize: 'followon_investment_size',
+  totalInvested: 'total_invested',
 } as const
 
 type CompanyUpdatableKey = keyof typeof COMPANY_UPDATABLE_FIELDS
@@ -1198,7 +1217,7 @@ export function upsertCompanyClassification(data: {
 
   const existingId = findCompanyIdByNameOrDomain(companyName, data.primaryDomain ?? null)
   const entityType = normalizeEntityType(data.entityType)
-  const includeInCompaniesView = data.includeInCompaniesView ?? (entityType === 'prospect')
+  const includeInCompaniesView = data.includeInCompaniesView ?? (entityType !== 'unknown')
   const classificationSource = data.classificationSource ?? 'manual'
   const classificationConfidence =
     data.classificationConfidence === undefined ? 1 : data.classificationConfidence
