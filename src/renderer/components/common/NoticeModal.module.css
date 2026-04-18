@@ -145,7 +145,7 @@
   width: 100%;
   background: var(--cv-crimson);
   transform-origin: left;
-  animation: drain 3s linear forwards;
+  animation: drain 5s linear forwards;
 }
 
 @keyframes drain {

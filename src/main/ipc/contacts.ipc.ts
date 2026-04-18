@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as contactRepo from '../database/repositories/contact.repo'
+import { generateKeyTakeaways } from '../llm/contact-key-takeaways'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import * as contactDecisionLogRepo from '../database/repositories/contact-decision-log.repo'
 import { ingestContactEmails, cancelContactEmailIngest } from '../services/company-email-ingest.service'
@@ -605,6 +606,34 @@ export function registerContactHandlers(): void {
     } catch (err) {
       console.error('[Contact AutoFill] On-demand enrichment failed:', err)
       return []
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTACT_KEY_TAKEAWAYS_GENERATE, async (_event, contactId: string) => {
+    if (!contactId) throw new Error('contactId is required')
+
+    const sendKtProgress = (payload: { contactId: string; chunk: string } | null): void => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.CONTACT_KEY_TAKEAWAYS_PROGRESS, payload)
+        }
+      }
+    }
+
+    try {
+      const generated = await generateKeyTakeaways(contactId, (chunk) => {
+        sendKtProgress({ contactId, chunk })
+      })
+
+      sendKtProgress(null) // completion sentinel
+
+      contactRepo.updateContact(contactId, { keyTakeaways: generated }, getCurrentUserId())
+      console.log('[KT] Generated and saved for contact:', contactId)
+      return { success: true, contactId, keyTakeaways: generated }
+    } catch (err) {
+      console.error('[KT] Generation failed for contact:', contactId, err)
+      sendKtProgress(null) // ensure sentinel fires on error too
+      throw err
     }
   })
 

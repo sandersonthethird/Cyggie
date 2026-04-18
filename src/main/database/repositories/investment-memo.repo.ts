@@ -4,6 +4,7 @@ import { getSetting } from './settings.repo'
 import type {
   InvestmentMemo,
   InvestmentMemoVersion,
+  InvestmentMemoVersionSummary,
   InvestmentMemoWithLatest
 } from '../../../shared/types/company'
 
@@ -221,6 +222,33 @@ export function listMemoVersions(memoId: string): InvestmentMemoVersion[] {
     `)
     .all(memoId) as MemoVersionRow[]
   return rows.map(rowToMemoVersion)
+}
+
+export function listMemoVersionsSummary(memoId: string): InvestmentMemoVersionSummary[] {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      SELECT id, memo_id, version_number, change_note, created_by, created_at
+      FROM investment_memo_versions
+      WHERE memo_id = ?
+      ORDER BY version_number DESC
+    `)
+    .all(memoId) as Array<{
+      id: string
+      memo_id: string
+      version_number: number
+      change_note: string | null
+      created_by: string | null
+      created_at: string
+    }>
+  return rows.map((row) => ({
+    id: row.id,
+    memoId: row.memo_id,
+    versionNumber: row.version_number,
+    changeNote: row.change_note,
+    createdBy: row.created_by,
+    createdAt: row.created_at
+  }))
 }
 
 export function getMemoLatestVersion(memoId: string): InvestmentMemoVersion | null {

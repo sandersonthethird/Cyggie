@@ -15,6 +15,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { extractPartnerSyncBrief } from '../main/utils/pitch-deck-brief'
+import { ENTITY_TYPE_OPTIONS } from '../shared/types/company'
 
 const FULL_NOTE = `## Partner Sync Summary
 
@@ -116,5 +117,22 @@ describe('extractPartnerSyncBrief', () => {
     const result = extractPartnerSyncBrief(withColon)
     expect(result).toContain('Company: Delta Co')
     expect(result).not.toContain('Full Analysis')
+  })
+})
+
+describe('ENTITY_TYPE_OPTIONS', () => {
+  it('includes portfolio', () => {
+    expect(ENTITY_TYPE_OPTIONS.map(t => t.value)).toContain('portfolio')
+  })
+
+  it('does not include legacy invalid value startup', () => {
+    expect(ENTITY_TYPE_OPTIONS.map(t => t.value)).not.toContain('startup')
+  })
+
+  it('all values are valid CompanyEntityType members', () => {
+    const validValues = ['prospect', 'portfolio', 'pass', 'vc_fund', 'lp', 'customer', 'partner', 'vendor', 'other', 'unknown']
+    ENTITY_TYPE_OPTIONS.forEach(t => {
+      expect(validValues).toContain(t.value)
+    })
   })
 })

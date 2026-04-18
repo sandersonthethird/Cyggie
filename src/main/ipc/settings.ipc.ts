@@ -5,7 +5,7 @@ import * as settingsRepo from '../database/repositories/settings.repo'
 import { backfillMeetingSummaryNotes } from '../services/meeting-notes-backfill.service'
 import { getCurrentUserId } from '../security/current-user'
 
-const ENCRYPTED_KEYS = new Set(['deepgramApiKey', 'claudeApiKey', 'openAiApiKey', 'exaApiKey'])
+const ENCRYPTED_KEYS = new Set(['deepgramApiKey', 'claudeApiKey', 'openAiApiKey', 'exaApiKey', 'webShareApiKey'])
 
 export function registerSettingsHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, (_event, key: string) => {

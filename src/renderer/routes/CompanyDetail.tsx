@@ -18,6 +18,7 @@ import { EnrichmentProposalDialog } from '../components/enrichment/EnrichmentPro
 import type { EnrichmentEntityProposal } from '../components/enrichment/EnrichmentProposalDialog'
 import { useChatStore } from '../stores/chat.store'
 import { usePanelResize } from '../hooks/usePanelResize'
+import layoutStyles from './TwoColumnLayout.module.css'
 import styles from './CompanyDetail.module.css'
 
 type CompanyTab = 'timeline' | 'contacts' | 'notes' | 'memo' | 'files' | 'decisions'
@@ -237,14 +238,52 @@ export default function CompanyDetail() {
     }
   }, [enrichProposal, fieldSelections, id, company])
 
-  const handleEnhance = useCallback((source: 'pdf' | 'url' | 'meetings') => {
+  const handleEnrichFromSource = useCallback(async (channel: string, errorContext: string) => {
+    if (!id) return
+    setIsLoadingEnrich(true)
+    setEnrichError(null)
+    try {
+      const proposal = await window.api.invoke<CompanySummaryUpdateProposal | null>(channel, id)
+      if (proposal === null) {
+        setEnrichError(`Could not analyze ${errorContext} — please try again`)
+        setTimeout(() => setEnrichError(null), 4000)
+      } else if (proposal.changes.length > 0 || (proposal.customFieldUpdates?.length ?? 0) > 0) {
+        const selections: Record<string, boolean> = {}
+        for (const change of proposal.changes) selections[`${id}:${change.field}`] = true
+        for (const cfu of proposal.customFieldUpdates ?? []) selections[`${id}:${cfu.label}`] = true
+        setFieldSelections(selections)
+        setEnrichProposal(proposal)
+        setEnrichDialogOpen(true)
+      } else {
+        // do NOT update lastEnrichedAt — that gates the meetings banner only
+        setEnrichSuccessMsg('Profile is already up to date')
+        setTimeout(() => setEnrichSuccessMsg(null), 3000)
+      }
+    } catch (err) {
+      console.error(`[CompanyDetail] Failed to load enrichment from ${errorContext}:`, err)
+      setEnrichError(`Could not analyze ${errorContext} — please try again`)
+      setTimeout(() => setEnrichError(null), 4000)
+    } finally {
+      setIsLoadingEnrich(false)
+    }
+  }, [id])
+
+  const handleEnhance = useCallback((source: 'pdf' | 'url' | 'meetings' | 'notes' | 'emails') => {
     if (source === 'meetings') {
       void handleEnrichFromMeetings()
       return
     }
+    if (source === 'notes') {
+      void handleEnrichFromSource(IPC_CHANNELS.COMPANY_ENRICH_FROM_NOTES, 'notes')
+      return
+    }
+    if (source === 'emails') {
+      void handleEnrichFromSource(IPC_CHANNELS.COMPANY_ENRICH_FROM_EMAILS, 'emails')
+      return
+    }
     setEnhanceSource(source)
     setEnhanceModalOpen(true)
-  }, [handleEnrichFromMeetings])
+  }, [handleEnrichFromMeetings, handleEnrichFromSource])
 
   const handleEnhanceComplete = useCallback((noteId: string | null) => {
     setEnhanceModalOpen(false)
@@ -289,10 +328,10 @@ export default function CompanyDetail() {
   }, [enrichProposal, id])
 
   if (loading) {
-    return <div className={styles.loading}>Loading…</div>
+    return <div className={layoutStyles.loading}>Loading…</div>
   }
   if (!company) {
-    return <div className={styles.notFound}>Company not found.</div>
+    return <div className={layoutStyles.notFound}>Company not found.</div>
   }
 
   const tabs: Array<{ key: CompanyTab; label: string; badge?: number }> = [
@@ -309,9 +348,9 @@ export default function CompanyDetail() {
   ]
 
   return (
-    <div className={styles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr` }}>
+    <div className={layoutStyles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr` }}>
       {/* Left panel — properties */}
-      <div className={styles.leftPanel}>
+      <div className={layoutStyles.leftPanel}>
         <CompanyPropertiesPanel
           company={company}
           onUpdate={handleUpdate}
@@ -336,43 +375,43 @@ export default function CompanyDetail() {
       </div>
 
       {/* Resizable divider */}
-      <div className={styles.divider} {...dividerProps} />
+      <div className={layoutStyles.divider} {...dividerProps} />
 
       {/* Right panel — tabs */}
-      <div className={styles.rightPanel}>
-        <div className={styles.tabBar}>
+      <div className={layoutStyles.rightPanel}>
+        <div className={layoutStyles.tabBar}>
           {tabs.map((tab) => (
             <button
               key={tab.key}
-              className={`${styles.tabBtn} ${activeTab === tab.key ? styles.tabActive : ''}`}
+              className={`${layoutStyles.tabBtn} ${activeTab === tab.key ? layoutStyles.tabActive : ''}`}
               onClick={() => setActiveTab(tab.key)}
             >
               {tab.label}
               {tab.badge != null && tab.badge > 0 && (
-                <span className={styles.tabBadge}>{tab.badge}</span>
+                <span className={layoutStyles.tabBadge}>{tab.badge}</span>
               )}
             </button>
           ))}
         </div>
 
         {/* All tabs always mounted (CSS hide/show) to preserve CompanyMemo draft state */}
-        <div className={styles.tabContent}>
-          <div className={activeTab !== 'timeline' ? styles.hidden : ''}>
+        <div className={layoutStyles.tabContent}>
+          <div className={activeTab !== 'timeline' ? layoutStyles.hidden : ''}>
             <CompanyTimeline companyId={company.id} refreshKey={timelineKey} />
           </div>
-          <div className={activeTab !== 'contacts' ? styles.hidden : ''}>
+          <div className={activeTab !== 'contacts' ? layoutStyles.hidden : ''}>
             <CompanyContacts companyId={company.id} />
           </div>
-          <div className={activeTab !== 'notes' ? styles.hidden : ''}>
+          <div className={activeTab !== 'notes' ? layoutStyles.hidden : ''}>
             <CompanyNotes companyId={company.id} highlightNoteId={highlightNoteId ?? undefined} refreshKey={notesVersion} />
           </div>
-          <div className={activeTab !== 'decisions' ? styles.hidden : ''}>
+          <div className={activeTab !== 'decisions' ? layoutStyles.hidden : ''}>
             <CompanyDecisions companyId={company.id} />
           </div>
-          <div className={activeTab !== 'memo' ? styles.hidden : ''}>
+          <div className={activeTab !== 'memo' ? layoutStyles.hidden : ''}>
             <CompanyMemo companyId={company.id} />
           </div>
-          <div className={activeTab !== 'files' ? styles.hidden : ''}>
+          <div className={activeTab !== 'files' ? layoutStyles.hidden : ''}>
             <CompanyFiles companyId={company.id} />
           </div>
         </div>

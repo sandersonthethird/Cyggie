@@ -539,50 +539,53 @@
   position: relative;
 }
 
-.filterBtn {
+.filterTextBtn {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  border: 1px solid var(--cv-border);
-  background: transparent;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--cv-text-meta);
+  background: transparent;
+  border: none;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  padding: 0;
+  transition: color 0.12s;
+  font-family: var(--font-sans);
 }
 
-.filterBtn:hover,
-.filterBtnActive {
-  background: var(--cv-crimson-muted);
+.filterTextBtn:hover,
+.filterTextBtnOpen {
+  color: var(--cv-text);
+}
+
+.filterTextBtnFiltered {
   color: var(--cv-crimson);
-  border-color: var(--cv-crimson);
 }
 
 .filterDropdown {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 220px;
+  width: 230px;
   background: var(--cv-card);
   border: 1px solid var(--cv-border);
   border-radius: var(--cv-radius);
   box-shadow: var(--cv-shadow-lg);
   z-index: 20;
-  padding: 8px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .filterSection {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
-.filterLabel {
+.filterSectionLabel {
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -590,14 +593,14 @@
   padding: 0 2px;
 }
 
-.filterRow {
+.filterChips {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
 .filterChip {
-  flex: 1;
-  padding: 5px 8px;
+  padding: 4px 8px;
   font-size: 11px;
   font-weight: 500;
   color: var(--cv-text-meta);
@@ -622,40 +625,4 @@
 .filterChipActive:hover {
   background: var(--cv-crimson-hover);
   color: #fff;
-}
-
-.filterOption {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  width: 100%;
-  padding: 6px 8px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.12s;
-  font-family: var(--font-sans);
-}
-
-.filterOption:hover {
-  background: #F3F4F6;
-}
-
-.filterOptionActive {
-  background: var(--cv-crimson-muted);
-  border-color: var(--cv-crimson);
-}
-
-.filterOptionLabel {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--cv-text);
-}
-
-.filterOptionDesc {
-  font-size: 10px;
-  color: var(--cv-text-meta);
-  line-height: 1.3;
 }

@@ -1,6 +1,12 @@
 import type { PipelineSummaryItem, StalledPipelineCompany } from './pipeline'
+import type { CompanyPipelineStage, CompanyEntityType } from './company'
 
 export type DashboardActivityType = 'meeting' | 'email' | 'note'
+
+export type DashboardEntityTypeFilter = Extract<
+  CompanyEntityType,
+  'portfolio' | 'lp' | 'vc_fund' | 'prospect'
+>
 
 export interface DashboardActivityItem {
   id: string
@@ -43,12 +49,14 @@ export interface DashboardData {
 
 export interface DashboardActivityFilter {
   types: DashboardActivityType[]
-  emailCompanyFilter: 'all' | 'qualified'
+  pipelineStages: CompanyPipelineStage[] | null   // null = no stage filter (show all)
+  entityTypes: DashboardEntityTypeFilter[] | null  // null = no entity type filter (show all)
 }
 
 export const DEFAULT_ACTIVITY_FILTER: DashboardActivityFilter = {
   types: ['meeting', 'email'],
-  emailCompanyFilter: 'qualified'
+  pipelineStages: null,
+  entityTypes: null
 }
 
 export interface DashboardCalendarCompanyContext {

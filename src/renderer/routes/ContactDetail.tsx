@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { ContactDetail as ContactDetailType, ContactMeetingRef } from '../../shared/types/contact'
 import type { ContactSummaryUpdateProposal } from '../../shared/types/summary'
@@ -7,6 +7,7 @@ import type { SetCustomFieldValueInput } from '../../shared/types/custom-fields'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import { contactEnrichedAtKey } from '../../shared/utils/enrichment-keys'
 import { ContactPropertiesPanel } from '../components/contact/ContactPropertiesPanel'
+import NewCompanyModal from '../components/company/NewCompanyModal'
 import { ContactMeetings } from '../components/contact/ContactMeetings'
 import { ContactEmails } from '../components/contact/ContactEmails'
 import { ContactNotes } from '../components/contact/ContactNotes'
@@ -17,12 +18,16 @@ import type { EnrichmentEntityProposal } from '../components/enrichment/Enrichme
 import { useChatStore } from '../stores/chat.store'
 import { usePanelResize } from '../hooks/usePanelResize'
 import { mergeContactProposals } from '../../shared/utils/contact-proposal-utils'
+import layoutStyles from './TwoColumnLayout.module.css'
 import styles from './ContactDetail.module.css'
 
 type ContactTab = 'timeline' | 'meetings' | 'emails' | 'notes' | 'decisions'
 
 export default function ContactDetail() {
   const { contactId: id } = useParams<{ contactId: string }>()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const backLabel = (location.state as { backLabel?: string } | null)?.backLabel ?? 'Back'
   const [contact, setContact] = useState<ContactDetailType | null>(null)
   const [loading, setLoading] = useState(true)
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
@@ -35,6 +40,7 @@ export default function ContactDetail() {
   const [isLoadingEnrich, setIsLoadingEnrich] = useState(false)
   const [enrichSuccessMsg, setEnrichSuccessMsg] = useState<string | null>(null)
   const [enrichError, setEnrichError] = useState<string | null>(null)
+  const [newCompanyModalOpen, setNewCompanyModalOpen] = useState(false)
   const [lastEnrichedAt, setLastEnrichedAt] = useState<string | null>(() => {
     if (!id) return null
     return localStorage.getItem(contactEnrichedAtKey(id))
@@ -133,7 +139,6 @@ export default function ContactDetail() {
 
   const showEnrichBanner = useMemo(() => {
     if (!contact) return false
-    if (contact.title && contact.phone && contact.linkedinUrl) return false
     if (summarizedMeetings.length === 0) return false
     if (!lastEnrichedAt) return true
     return summarizedMeetings.some((m) => m.date > lastEnrichedAt)
@@ -165,6 +170,14 @@ export default function ContactDetail() {
           window.api.invoke<ContactSummaryUpdateProposal[]>(IPC_CHANNELS.CONTACT_ENRICH_FROM_MEETING, m.id)
         )
       )
+      // Mark as enriched immediately so the banner hides — it will reappear
+      // only when new meetings arrive after this timestamp.
+      const enrichedAt = new Date().toISOString()
+      if (id) {
+        localStorage.setItem(contactEnrichedAtKey(id), enrichedAt)
+        setLastEnrichedAt(enrichedAt)
+      }
+
       const merged = mergeContactProposals(allResults.flat())
       if (merged.length > 0) {
         // Initialize per-field selections
@@ -180,13 +193,6 @@ export default function ContactDetail() {
         setFieldSelections(selections)
         setContactEnrichProposals(merged)
         setEnrichDialogOpen(true)
-      } else {
-        // No proposals found — mark as enriched so the banner hides
-        const enrichedAt = new Date().toISOString()
-        if (id) {
-          localStorage.setItem(contactEnrichedAtKey(id), enrichedAt)
-          setLastEnrichedAt(enrichedAt)
-        }
       }
     } catch (err) {
       console.error('[ContactDetail] Failed to load enrichment proposals:', err)
@@ -287,11 +293,6 @@ export default function ContactDetail() {
         const updated = await window.api.invoke<ContactDetailType>(IPC_CHANNELS.CONTACT_GET, id)
         if (updated) setContact(updated)
       }
-      const enrichedAt = new Date().toISOString()
-      if (id) {
-        localStorage.setItem(contactEnrichedAtKey(id), enrichedAt)
-        setLastEnrichedAt(enrichedAt)
-      }
       setEnrichSuccessMsg(`${names.join(', ')} updated`)
       setTimeout(() => setEnrichSuccessMsg(null), 3000)
     } catch (err) {
@@ -325,10 +326,10 @@ export default function ContactDetail() {
   }, [contactEnrichProposals])
 
   if (loading) {
-    return <div className={styles.loading}>Loading…</div>
+    return <div className={layoutStyles.loading}>Loading…</div>
   }
   if (!contact) {
-    return <div className={styles.notFound}>Contact not found.</div>
+    return <div className={layoutStyles.notFound}>Contact not found.</div>
   }
 
   const totalActivity = (contact.meetingCount || 0) + (contact.emailCount || 0) + (contact.noteCount || 0)
@@ -341,9 +342,15 @@ export default function ContactDetail() {
   ]
 
   return (
-    <div className={styles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr` }}>
+    <div className={styles.wrapper}>
+      {window.history.length > 1 && (
+        <button className={styles.backBtn} onClick={() => navigate(-1)}>
+          ← {backLabel}
+        </button>
+      )}
+    <div className={layoutStyles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr` }}>
       {/* Left panel — properties */}
-      <div className={styles.leftPanel}>
+      <div className={layoutStyles.leftPanel}>
         <ContactPropertiesPanel
           contact={contact}
           lastTouchpoint={effectiveLastTouchpoint}
@@ -354,6 +361,7 @@ export default function ContactDetail() {
           onEnrichFromMeetings={() => void handleEnrichFromMeetings()}
           isLoadingEnrich={isLoadingEnrich}
           exaApiKey={exaApiKey}
+          onRequestCreateCompany={() => setNewCompanyModalOpen(true)}
         />
         {enrichSuccessMsg && (
           <div className={styles.enrichSuccess}>
@@ -368,43 +376,43 @@ export default function ContactDetail() {
       </div>
 
       {/* Resizable divider */}
-      <div className={styles.divider} {...dividerProps} />
+      <div className={layoutStyles.divider} {...dividerProps} />
 
       {/* Right panel — tabs */}
-      <div className={styles.rightPanel}>
-        <div className={styles.tabBar}>
+      <div className={layoutStyles.rightPanel}>
+        <div className={layoutStyles.tabBar}>
           {tabs.map((tab) => (
             <button
               key={tab.key}
-              className={`${styles.tabBtn} ${activeTab === tab.key ? styles.tabActive : ''}`}
+              className={`${layoutStyles.tabBtn} ${activeTab === tab.key ? layoutStyles.tabActive : ''}`}
               onClick={() => setActiveTab(tab.key)}
             >
               {tab.label}
               {tab.badge != null && tab.badge > 0 && (
-                <span className={styles.tabBadge}>{tab.badge}</span>
+                <span className={layoutStyles.tabBadge}>{tab.badge}</span>
               )}
             </button>
           ))}
         </div>
 
-        <div className={styles.tabContent}>
+        <div className={layoutStyles.tabContent}>
           <ContactTimeline
             contactId={contact.id}
             hasEmail={!!contact.email}
-            className={activeTab !== 'timeline' ? styles.hidden : ''}
+            className={activeTab !== 'timeline' ? layoutStyles.hidden : ''}
           />
           <ContactMeetings
             meetings={mergedMeetings}
-            className={activeTab !== 'meetings' ? styles.hidden : ''}
+            className={activeTab !== 'meetings' ? layoutStyles.hidden : ''}
           />
           <ContactEmails
             contactId={contact.id}
             hasEmail={!!contact.email}
-            className={activeTab !== 'emails' ? styles.hidden : ''}
+            className={activeTab !== 'emails' ? layoutStyles.hidden : ''}
           />
           <ContactNotes
             contactId={contact.id}
-            className={activeTab !== 'notes' ? styles.hidden : ''}
+            className={activeTab !== 'notes' ? layoutStyles.hidden : ''}
           />
           {activeTab === 'decisions' && (
             <ContactDecisions
@@ -442,6 +450,12 @@ export default function ContactDetail() {
           isApplying={isApplyingEnrich}
         />
       )}
+      <NewCompanyModal
+        open={newCompanyModalOpen}
+        onClose={() => setNewCompanyModalOpen(false)}
+        onCreated={() => setNewCompanyModalOpen(false)}
+      />
+    </div>
     </div>
   )
 }

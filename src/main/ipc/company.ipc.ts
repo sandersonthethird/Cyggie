@@ -22,7 +22,11 @@ import type {
   CompanyDedupDecision
 } from '../../shared/types/company'
 import { ingestCompanyEmails, cancelCompanyEmailIngest } from '../services/company-email-ingest.service'
-import { getCompanyEnrichmentProposalsFromMeetings } from '../services/company-summary-sync.service'
+import {
+  getCompanyEnrichmentProposalsFromMeetings,
+  getCompanyEnrichmentProposalsFromNotes,
+  getCompanyEnrichmentProposalsFromEmails,
+} from '../services/company-summary-sync.service'
 import { extractFromPdf, extractFromUrl, PitchDeckError } from '../services/pitch-deck-ingestion.service'
 import { runPitchDeckAnalysis } from '../services/pitch-deck-analysis.service'
 import { createCompanyNote } from '../database/repositories/company-notes.repo'
@@ -797,6 +801,26 @@ export function registerCompanyHandlers(): void {
       }
     }
   )
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_ENRICH_FROM_NOTES, async (_event, companyId: string) => {
+    if (!companyId) return null
+    try {
+      return await getCompanyEnrichmentProposalsFromNotes(companyId, getProvider())
+    } catch (err) {
+      console.error('[Company Enrich Notes] IPC handler failed:', err)
+      return null
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_ENRICH_FROM_EMAILS, async (_event, companyId: string) => {
+    if (!companyId) return null
+    try {
+      return await getCompanyEnrichmentProposalsFromEmails(companyId, getProvider())
+    } catch (err) {
+      console.error('[Company Enrich Emails] IPC handler failed:', err)
+      return null
+    }
+  })
 
   // ---------------------------------------------------------------------------
   // Pitch deck ingestion

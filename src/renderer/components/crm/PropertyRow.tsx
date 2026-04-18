@@ -106,9 +106,29 @@ export function PropertyRow({
   const editValueRef = useRef<string | number | boolean | null>(value)
   useEffect(() => { editValueRef.current = editValue }, [editValue])
 
+  // Mirror displayValue synchronously for the unmount flush below
+  const displayValueRef = useRef<string | number | boolean | null>(value)
+  useEffect(() => { displayValueRef.current = displayValue }, [displayValue])
+
+  // Keep a stable ref to onSave so the unmount cleanup always calls the latest version
+  const onSaveRef = useRef(onSave)
+  useEffect(() => { onSaveRef.current = onSave }, [onSave])
+
   // Bail out of state updates if the component unmounts while a save is in-flight
   const mountedRef = useRef(true)
   useEffect(() => () => { mountedRef.current = false }, [])
+
+  // Flush unsaved changes on unmount — handles components (e.g. Website URL) that are
+  // conditionally rendered and get fully removed from the DOM when the edit panel closes,
+  // before any in-flight debounced save or IPC re-trigger can complete.
+  useEffect(() => {
+    return () => {
+      if (type !== 'text' && type !== 'textarea' && type !== 'url') return
+      if (editValueRef.current !== displayValueRef.current) {
+        void onSaveRef.current(editValueRef.current)
+      }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Multiselect dropdown state
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -139,13 +159,13 @@ export function PropertyRow({
     }
   }, [editMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-save for text/textarea/number with debounce
+  // Auto-save for text/textarea/url with debounce
   useEffect(() => {
     if (!editing && !editMode) return
-    if (type !== 'text' && type !== 'textarea' && type !== 'number' && type !== 'currency') return
+    if (type !== 'text' && type !== 'textarea' && type !== 'url') return
     // Only trigger if value actually changed
     if (debouncedEdit === displayValue) return
-    handleSave(debouncedEdit)
+    handleSave(debouncedEdit, true)  // keep editing open while user types
   }, [debouncedEdit]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close multiselect dropdown when edit mode is deactivated
@@ -204,7 +224,7 @@ export function PropertyRow({
     setError(null)
   }
 
-  async function handleSave(val: string | number | boolean | null) {
+  async function handleSave(val: string | number | boolean | null, keepEditing = false) {
     if (saving) return
     const prev = displayValue
     const prevLabel = displayLabel
@@ -214,7 +234,7 @@ export function PropertyRow({
     setError(null)
     try {
       await onSave(val)
-      setEditing(false)
+      if (!keepEditing) setEditing(false)
     } catch (e) {
       setDisplayValue(prev)
       setDisplayLabel(prevLabel)
@@ -228,7 +248,7 @@ export function PropertyRow({
       // If editValue changed while IPC was in-flight, re-trigger save to avoid data loss
       if (hadPendingChange && (editing || editMode)) {
         console.warn('[PropertyRow] re-triggering save: value changed during IPC')
-        setTimeout(() => handleSave(editValueRef.current), 0)
+        setTimeout(() => handleSave(editValueRef.current, true), 0)
       }
     }
   }
@@ -252,7 +272,9 @@ export function PropertyRow({
 
   function openExternalUrl(url: string) {
     if (!url) return
-    api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, url).catch(console.error)
+    // Prepend https:// if user saved a bare domain (e.g. "www.example.com")
+    const normalized = /^https?:\/\//i.test(url) ? url : `https://${url}`
+    api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, normalized).catch(console.error)
   }
 
   // ── Render edit controls ──
@@ -632,20 +654,26 @@ export function PropertyRow({
     }
 
     if (type === 'multiselect' && displayValue) {
+      const parsedOpts = safeParseOptions(options)
       const vals = String(displayValue).split(',').map(s => s.trim()).filter(Boolean)
       if (vals.length === 0) return <span className={styles.empty}>—</span>
       return (
         <span className={styles.chips}>
-          {vals.map(v => (
-            <span key={v} className={styles.chip} style={chipStyle(v)}>{v}</span>
-          ))}
+          {vals.map(v => {
+            const opt = parsedOpts.find(o => optionValue(o) === v)
+            const label = opt ? optionLabel(opt) : v
+            return <span key={v} className={styles.chip} style={chipStyle(v)}>{label}</span>
+          })}
         </span>
       )
     }
 
     if (type === 'select' && displayValue) {
       const strVal = String(displayValue)
-      return <span className={styles.chip} style={chipStyle(strVal)}>{strVal}</span>
+      const parsedOpts = safeParseOptions(options)
+      const opt = parsedOpts.find(o => optionValue(o) === strVal)
+      const label = opt ? optionLabel(opt) : strVal
+      return <span className={styles.chip} style={chipStyle(strVal)}>{label}</span>
     }
 
     const formatted = formatValue(displayValue, type, displayLabel)
@@ -658,7 +686,7 @@ export function PropertyRow({
       <span className={styles.label}>{label}</span>
       <span className={styles.value}>
         {isActive ? renderEditor() : renderDisplay()}
-        {saving && <span className={styles.saving}>…</span>}
+        {isActive && saving && <span className={styles.saving}>…</span>}
         {error && <span className={styles.error} title={error}>!</span>}
       </span>
     </div>

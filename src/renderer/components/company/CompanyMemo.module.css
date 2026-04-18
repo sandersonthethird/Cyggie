@@ -79,6 +79,122 @@
   color: var(--color-text-tertiary);
 }
 
+/* Version history dropdown */
+
+.versionDropdownWrap {
+  margin-left: auto;
+  position: relative;
+}
+
+.versionBtn {
+  padding: 3px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.versionBtn:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.versionBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.versionMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 260px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--color-bg, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+  padding: 4px 0;
+}
+
+.versionEmpty {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.versionOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.versionOption:hover {
+  background: var(--color-bg-secondary);
+}
+
+.versionOptionActive {
+  background: var(--color-primary-subtle, rgba(59, 130, 246, 0.08));
+}
+
+.versionOptionActive:hover {
+  background: var(--color-primary-subtle, rgba(59, 130, 246, 0.12));
+}
+
+.versionNum {
+  font-weight: 600;
+  min-width: 28px;
+  flex-shrink: 0;
+}
+
+.versionDate {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.versionNote {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.versionBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-warning-subtle, rgba(245, 158, 11, 0.08));
+  flex-shrink: 0;
+}
+
+.versionBannerText {
+  flex: 1;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 
 .preview {
   flex: 1;

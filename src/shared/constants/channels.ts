@@ -105,6 +105,8 @@ export const IPC_CHANNELS = {
   CONTACT_DEDUP_SUSPECTED: 'contact:dedup-suspected',
   CONTACT_DEDUP_APPLY: 'contact:dedup-apply',
   CONTACT_TIMELINE: 'contact:timeline',
+  CONTACT_KEY_TAKEAWAYS_GENERATE: 'contact:key-takeaways-generate',
+  CONTACT_KEY_TAKEAWAYS_PROGRESS: 'contact:key-takeaways-progress',
 
   // Dashboard
   DASHBOARD_GET: 'dashboard:get',
@@ -187,6 +189,7 @@ export const IPC_CHANNELS = {
   // Investment memo
   INVESTMENT_MEMO_GET_OR_CREATE: 'investment-memo:get-or-create',
   INVESTMENT_MEMO_LIST_VERSIONS: 'investment-memo:list-versions',
+  INVESTMENT_MEMO_GET_VERSION: 'investment-memo:get-version',
   INVESTMENT_MEMO_SAVE_VERSION: 'investment-memo:save-version',
   INVESTMENT_MEMO_SET_STATUS: 'investment-memo:set-status',
   INVESTMENT_MEMO_EXPORT_PDF: 'investment-memo:export-pdf',
@@ -304,8 +307,10 @@ export const IPC_CHANNELS = {
   // Contact enrichment
   CONTACT_ENRICH_FROM_MEETING: 'contact:enrich-from-meeting',
 
-  // Company on-demand enrichment (batched — one LLM call for all meetings)
+  // Company on-demand enrichment
   COMPANY_ENRICH_FROM_MEETINGS: 'company:enrich-from-meetings',
+  COMPANY_ENRICH_FROM_NOTES: 'company:enrich-from-notes',
+  COMPANY_ENRICH_FROM_EMAILS: 'company:enrich-from-emails',
 
   // Pitch deck ingestion (PDF or URL → LLM extraction → company profile)
   COMPANY_PITCH_DECK_OPEN_DIALOG: 'company:pitch-deck-open-dialog',

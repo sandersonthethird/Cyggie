@@ -1,4 +1,5 @@
 export type ContactType = 'investor' | 'founder' | 'operator'
+export type TalentPipelineStage = 'identified' | 'exploring' | 'ideating' | 'fundraising' | 'portfolio_candidate' | 'internal_candidate'
 export type ContactSortBy = 'recent_touch' | 'first_name' | 'last_name' | 'company'
 
 export interface ContactEnrichmentOptions {
@@ -22,6 +23,7 @@ export interface ContactSummary {
   primaryCompanyName?: string | null
   title: string | null
   contactType: ContactType | null
+  talentPipeline: TalentPipelineStage | null
   linkedinUrl: string | null
   crmContactId: string | null
   crmProvider: string | null
@@ -105,6 +107,7 @@ export interface ContactDetail extends ContactSummary {
   linkedinHeadline: string | null
   linkedinSkills: string | null       // JSON: string[]
   linkedinEnrichedAt: string | null
+  keyTakeaways: string | null
 }
 
 export type { Note as ContactNote } from './note'

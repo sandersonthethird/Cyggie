@@ -827,7 +827,15 @@ export default function MeetingDetail() {
       await api.invoke(IPC_CHANNELS.RECORDING_STOP)
       stopRecording()
       if (selectedTemplateId) {
-        generateSummaryRef.current()
+        let auto: string | null = null
+        try {
+          auto = await api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'autoEnhanceAfterMeeting')
+        } catch (err) {
+          console.warn('[MeetingDetail] auto-enhance setting read failed; defaulting OFF:', err)
+        }
+        if (auto === 'true') {
+          generateSummaryRef.current()
+        }
       }
     } catch (err) {
       setRecordingError(String(err))

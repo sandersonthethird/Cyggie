@@ -714,3 +714,18 @@
 
 .mergeConfirmButton:hover { opacity: 0.9; }
 .mergeConfirmButton:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Talent Pipeline filter chips ── */
+.scopeDivider {
+  width: 1px;
+  height: 16px;
+  background: var(--color-border);
+  margin: 0 4px;
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.pipelineScope {
+  border-color: var(--chip-process-bg);
+  color: var(--chip-process-text);
+}

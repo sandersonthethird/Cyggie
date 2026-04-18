@@ -65,7 +65,7 @@ function NoticeModalInner({ state, onClose }: { state: NoticeState; onClose: () 
   // while the modal is already open (the key on progressBar also restarts the CSS animation).
   useEffect(() => {
     if (!open || variant !== 'success') return
-    const timer = setTimeout(onClose, 3000)
+    const timer = setTimeout(onClose, 5000)
     return () => clearTimeout(timer)
   }, [open, openCount, variant, onClose])
 
@@ -155,7 +155,7 @@ function NoticeModalInner({ state, onClose }: { state: NoticeState; onClose: () 
         </button>
 
         {/* Branding */}
-        <p className={styles.branding}>POWERED BY INSIGHTCRM</p>
+        <p className={styles.branding}>POWERED BY CYGGIE</p>
 
         {/* Auto-dismiss progress bar — keyed on openCount so @keyframes restarts on re-open */}
         {variant === 'success' && (

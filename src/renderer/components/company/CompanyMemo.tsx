@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { InvestmentMemoVersion, InvestmentMemoWithLatest } from '../../../shared/types/company'
+import type { InvestmentMemoVersion, InvestmentMemoVersionSummary, InvestmentMemoWithLatest } from '../../../shared/types/company'
 import { MemoEditModal } from './MemoEditModal'
 import { useFindInPage, injectFindMarks } from '../../hooks/useFindInPage'
 import FindBar from '../common/FindBar'
@@ -38,6 +38,18 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
 
   const [findOpen, setFindOpen] = useState(false)
 
+  // Version history state
+  const [vhOpen, setVhOpen] = useState(false)
+  const [vhLoading, setVhLoading] = useState(false)
+  const [versions, setVersions] = useState<InvestmentMemoVersionSummary[]>([])
+  const [viewingVersion, setViewingVersion] = useState<InvestmentMemoVersion | null>(null)
+  const [loadingVersion, setLoadingVersion] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const vhTriggerRef = useRef<HTMLButtonElement>(null)
+  const vhMenuRef = useRef<HTMLDivElement>(null)
+
+  const displayedVersion = viewingVersion ?? memo?.latestVersion ?? null
+
   // Guard: Cmd+F must not open find in the background when modal is active
   const handleFindOpen = useCallback(
     () => { if (!modalOpen) setFindOpen(true) },
@@ -56,17 +68,19 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     goToNext,
     goToPrev,
   } = useFindInPage({
-    text: memo?.latestVersion?.contentMarkdown ?? '',
+    text: displayedVersion?.contentMarkdown ?? '',
     isOpen: findOpen,
     onOpen: handleFindOpen,
     onClose: () => setFindOpen(false),
   })
 
-  // Clear share state when company changes
+  // Clear share + version state when company changes
   useEffect(() => {
     setShareUrl(null)
     setShareToken(null)
     setShareError(null)
+    setViewingVersion(null)
+    setVhOpen(false)
   }, [companyId])
 
   useEffect(() => {
@@ -85,10 +99,98 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
       .finally(() => setLoaded(true))
   }, [companyId, loaded])
 
+  // Click-outside-to-close for version dropdown
+  useEffect(() => {
+    if (!vhOpen) return
+    function handle(e: MouseEvent) {
+      if (
+        vhMenuRef.current && !vhMenuRef.current.contains(e.target as Node) &&
+        vhTriggerRef.current && !vhTriggerRef.current.contains(e.target as Node)
+      ) {
+        setVhOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [vhOpen])
+
   function handleSaved(version: InvestmentMemoVersion) {
     setMemo((prev) =>
       prev ? { ...prev, latestVersion: version, latestVersionNumber: version.versionNumber } : prev
     )
+  }
+
+  async function openVersionHistory() {
+    if (vhOpen) { setVhOpen(false); return }
+    if (!memo) return
+    setVhLoading(true)
+    setErrorMsg('')
+    try {
+      const list = await api.invoke<InvestmentMemoVersionSummary[]>(
+        IPC_CHANNELS.INVESTMENT_MEMO_LIST_VERSIONS,
+        memo.id,
+        true
+      )
+      setVersions(list)
+      setVhOpen(true)
+    } catch (e) {
+      console.error('[CompanyMemo] list versions failed:', e)
+      setErrorMsg('Failed to load version history')
+    } finally {
+      setVhLoading(false)
+    }
+  }
+
+  async function selectVersion(summary: InvestmentMemoVersionSummary) {
+    if (summary.versionNumber === memo?.latestVersionNumber) {
+      setViewingVersion(null)
+      setVhOpen(false)
+      return
+    }
+    setLoadingVersion(true)
+    setErrorMsg('')
+    setVhOpen(false)
+    try {
+      const version = await api.invoke<InvestmentMemoVersion | null>(
+        IPC_CHANNELS.INVESTMENT_MEMO_GET_VERSION,
+        summary.id
+      )
+      if (!version) {
+        setErrorMsg('Version not found')
+        return
+      }
+      setViewingVersion(version)
+    } catch (e) {
+      console.error('[CompanyMemo] get version failed:', e)
+      setErrorMsg('Failed to load version')
+    } finally {
+      setLoadingVersion(false)
+    }
+  }
+
+  async function restoreVersion() {
+    if (!memo || !viewingVersion || restoring) return
+    setRestoring(true)
+    setErrorMsg('')
+    try {
+      const newVersion = await api.invoke<InvestmentMemoVersion>(
+        IPC_CHANNELS.INVESTMENT_MEMO_SAVE_VERSION,
+        memo.id,
+        {
+          contentMarkdown: viewingVersion.contentMarkdown,
+          changeNote: `Restored from v${viewingVersion.versionNumber}`
+        }
+      )
+      setMemo((prev) =>
+        prev ? { ...prev, latestVersion: newVersion, latestVersionNumber: newVersion.versionNumber } : prev
+      )
+      setViewingVersion(null)
+    } catch (e) {
+      console.error('[CompanyMemo] restore failed:', e)
+      setErrorMsg('Restore failed — try again')
+    } finally {
+      setRestoring(false)
+    }
   }
 
   async function generate() {
@@ -96,6 +198,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     setProgressText('')
     setErrorMsg('')
     setGenerating(true)
+    setViewingVersion(null)
     try {
       const result = await api.invoke<{ contentMarkdown: string; version: InvestmentMemoVersion }>(
         IPC_CHANNELS.INVESTMENT_MEMO_GENERATE,
@@ -204,20 +307,27 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     }
   }
 
+  function formatVersionDate(iso: string): string {
+    const d = new Date(iso)
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+      ', ' +
+      d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  }
+
   if (!loaded) return <div className={`${styles.root} ${className ?? ''}`}><div className={styles.loading}>Loading…</div></div>
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
       <div className={styles.toolbar}>
-        <button className={styles.btn} onClick={() => setModalOpen(true)} disabled={!memo}>Edit</button>
-        <button className={styles.btn} onClick={generate} disabled={generating || modalOpen || sharing}>
+        <button className={styles.btn} onClick={() => setModalOpen(true)} disabled={!memo || !!viewingVersion}>Edit</button>
+        <button className={styles.btn} onClick={generate} disabled={generating || modalOpen || sharing || !!viewingVersion}>
           {generating && <span className={styles.spinner} />}
           {generating ? 'Generating…' : 'Generate with AI'}
         </button>
         <button
           className={styles.btn}
           onClick={exportPdf}
-          disabled={!memo?.latestVersion || exportingPdf || generating}
+          disabled={!memo?.latestVersion || exportingPdf || generating || !!viewingVersion}
         >
           {exportingPdf && <span className={styles.spinner} />}
           {exportingPdf ? 'Exporting…' : 'Export PDF'}
@@ -226,7 +336,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
           <button
             className={styles.btn}
             onClick={share}
-            disabled={!memo?.latestVersion || sharing || generating}
+            disabled={!memo?.latestVersion || sharing || generating || !!viewingVersion}
           >
             {sharing && <span className={styles.spinner} />}
             {sharing ? 'Sharing…' : 'Share'}
@@ -235,9 +345,54 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         {errorMsg && <span className={styles.errorMsg}>{errorMsg}</span>}
         {pdfMsg && <span className={styles.errorMsg} style={{ color: pdfMsg.startsWith('Saved') ? 'var(--color-text-secondary)' : undefined }}>{pdfMsg}</span>}
         {shareError && <span className={styles.errorMsg}>{shareError}</span>}
-        {memo && <span className={styles.version}>v{memo.latestVersionNumber}</span>}
+        {memo && (
+          <div className={styles.versionDropdownWrap}>
+            <button
+              ref={vhTriggerRef}
+              className={styles.versionBtn}
+              onClick={openVersionHistory}
+              disabled={vhLoading}
+            >
+              {vhLoading && <span className={styles.spinner} />}
+              v{memo.latestVersionNumber} ▾
+            </button>
+            {vhOpen && (
+              <div ref={vhMenuRef} className={styles.versionMenu}>
+                {versions.length === 0 ? (
+                  <div className={styles.versionEmpty}>No version history yet</div>
+                ) : versions.map((v) => (
+                  <button
+                    key={v.id}
+                    className={`${styles.versionOption} ${
+                      v.id === (viewingVersion?.id ?? memo.latestVersion?.id) ? styles.versionOptionActive : ''
+                    }`}
+                    onClick={() => selectVersion(v)}
+                  >
+                    <span className={styles.versionNum}>v{v.versionNumber}</span>
+                    <span className={styles.versionDate}>{formatVersionDate(v.createdAt)}</span>
+                    {v.changeNote && <span className={styles.versionNote}>{v.changeNote}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {shareUrl && <span className={styles.sharedBadge}>Shared</span>}
       </div>
+
+      {viewingVersion && (
+        <div className={styles.versionBanner}>
+          <span className={styles.versionBannerText}>
+            Viewing v{viewingVersion.versionNumber} · {formatVersionDate(viewingVersion.createdAt)}
+            {viewingVersion.changeNote && ` · ${viewingVersion.changeNote}`}
+          </span>
+          <button className={styles.btn} onClick={() => setViewingVersion(null)}>Back to latest</button>
+          <button className={styles.btnPrimary} onClick={restoreVersion} disabled={restoring}>
+            {restoring && <span className={styles.spinner} />}
+            {restoring ? 'Restoring…' : 'Restore this version'}
+          </button>
+        </div>
+      )}
 
       {shareUrl && (
         <div className={styles.shareRow}>
@@ -265,9 +420,11 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
       <div className={styles.preview}>
         {generating ? (
           <pre className={styles.progressText}>{progressText || 'Starting generation…'}</pre>
-        ) : memo?.latestVersion?.contentMarkdown ? (
+        ) : loadingVersion ? (
+          <div className={styles.loading}>Loading version…</div>
+        ) : displayedVersion?.contentMarkdown ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-            {injectFindMarks(memo.latestVersion.contentMarkdown, findMatches, activeMatchIndex)}
+            {injectFindMarks(displayedVersion.contentMarkdown, findMatches, activeMatchIndex)}
           </ReactMarkdown>
         ) : (
           <div className={styles.empty}>No memo content yet. Click Edit or Generate with AI to get started.</div>

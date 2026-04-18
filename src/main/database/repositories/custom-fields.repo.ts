@@ -23,6 +23,7 @@ const FIELD_KEY_MAP: Record<string, { table: string; column: string }> = {
   productStage:       { table: 'org_companies', column: 'product_stage' },
   employeeCountRange: { table: 'org_companies', column: 'employee_count_range' },
   contactType:        { table: 'contacts',      column: 'contact_type' },
+  talentPipeline:     { table: 'contacts',      column: 'talent_pipeline' },
 }
 
 function rowToDefinition(row: Record<string, unknown>): CustomFieldDefinition {

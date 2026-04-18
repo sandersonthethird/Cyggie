@@ -32,6 +32,29 @@
   border-color: var(--color-primary);
 }
 
+.columnHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+.columnHeaderField {
+  flex: 1;
+  min-width: 0;
+  padding-left: 22px; /* align with labels past checkbox */
+}
+.columnHeaderSection {
+  flex-shrink: 0;
+  width: 90px;
+  text-align: left;
+}
+
 .list {
   overflow-y: auto;
   flex: 1;

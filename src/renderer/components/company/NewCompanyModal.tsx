@@ -22,12 +22,13 @@ import {
   type PitchDeckExtractionResult,
   type PitchDeckIngestResult,
 } from '../../../shared/types/pitch-deck'
-import type {
-  CompanyEntityType,
-  CompanyPipelineStage,
-  CompanyPriority,
-  CompanyRound,
-  CompanySummary,
+import {
+  ENTITY_TYPE_OPTIONS,
+  type CompanyEntityType,
+  type CompanyPipelineStage,
+  type CompanyPriority,
+  type CompanyRound,
+  type CompanySummary,
 } from '../../../shared/types/company'
 import type { PartnerMeetingDigest } from '../../../shared/types/partner-meeting'
 import { api } from '../../api'
@@ -45,15 +46,6 @@ function stageToDigestSection(stage: string | null): 'new_deals' | 'existing_dea
 
 // ── Constants (reused from Companies.tsx) ───────────────────────────────────
 
-const ENTITY_TYPES: { value: CompanyEntityType; label: string }[] = [
-  { value: 'startup',      label: 'Startup'       },
-  { value: 'vc_fund',      label: 'VC Fund'       },
-  { value: 'family_office',label: 'Family Office' },
-  { value: 'angel',        label: 'Angel'         },
-  { value: 'accelerator',  label: 'Accelerator'   },
-  { value: 'corporate',    label: 'Corporate'     },
-  { value: 'other',        label: 'Other'         },
-]
 
 const STAGES: { value: CompanyPipelineStage; label: string }[] = [
   { value: 'screening',     label: 'Screening'     },
@@ -99,7 +91,7 @@ const EMPTY_FORM: CreateFormState = {
   domain: '',
   city: '',
   state: '',
-  entityType: 'startup',
+  entityType: 'prospect',
   pipelineStage: '',
   priority: '',
   round: '',
@@ -194,7 +186,9 @@ export default function NewCompanyModal({
       ...prev,
       name:         result.companyName ?? prev.name,
       description:  result.description ?? prev.description,
-      domain:       result.domain ?? prev.domain,
+      domain:       result.domain
+                    ?? (result.websiteUrl ? result.websiteUrl.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') : null)
+                    ?? prev.domain,
       city:         result.city ?? prev.city,
       state:        result.state ?? prev.state,
       entityType:   (result.entityType as CompanyEntityType) ?? prev.entityType,
@@ -278,12 +272,21 @@ export default function NewCompanyModal({
         ? { fullName: ceoFounder.name, email: ceoFounder.email ?? undefined }
         : undefined
 
+      // Derive websiteUrl: prefer LLM-extracted URL, otherwise construct from the typed domain
+      const rawDomain = formState.domain.trim()
+      const cleanDomain = rawDomain
+        ? rawDomain.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '')
+        : ''
+      const websiteUrl = extractedResult?.websiteUrl?.trim() || (cleanDomain ? `https://${cleanDomain}` : null)
+
       const created = await api.invoke<CompanySummary>(IPC_CHANNELS.COMPANY_CREATE, {
-        canonicalName:  formState.name.trim(),
-        description:    formState.description.trim() || null,
-        primaryDomain:  formState.domain.trim() || null,
-        entityType:     formState.entityType,
+        canonicalName:         formState.name.trim(),
+        description:           formState.description.trim() || null,
+        primaryDomain:         formState.domain.trim() || null,
+        websiteUrl,
+        entityType:            formState.entityType,
         primaryContact,
+        includeInCompaniesView: true,
       })
 
       const updates: Record<string, unknown> = {}
@@ -550,7 +553,7 @@ export default function NewCompanyModal({
                   value={formState.entityType}
                   onChange={(e) => patchForm({ entityType: e.target.value as CompanyEntityType })}
                 >
-                  {ENTITY_TYPES.map((t) => (
+                  {ENTITY_TYPE_OPTIONS.filter(t => t.value !== 'unknown').map((t) => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                 </select>

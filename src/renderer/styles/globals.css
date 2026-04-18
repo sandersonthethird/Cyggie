@@ -1,5 +1,5 @@
 :root {
-  --color-bg: #F7F8FA;
+  --color-bg: #F9FAFB;
   --color-bg-secondary: #EEF0F4;
   --color-bg-tertiary: #E0E4EA;
   --color-text: #1A1E24;
@@ -13,7 +13,7 @@
   --color-success: #3D7A4A;
   --color-warning: #C9943A;
   --color-recording: #D94545;
-  --color-sidebar-bg: #EEF0F4;
+  --color-sidebar-bg: #F9FAFB;
   --color-card-bg: #FFFFFF;
   --color-card-hover: #EEF0F4;
 
@@ -67,7 +67,7 @@
     --color-success: #4E9A5E;
     --color-warning: #D4A44A;
     --color-recording: #E05555;
-    --color-sidebar-bg: #1E2329;
+    --color-sidebar-bg: #171B20;
     --color-card-bg: #1E2329;
     --color-card-hover: #2A3038;
 

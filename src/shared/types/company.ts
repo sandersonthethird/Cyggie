@@ -10,6 +10,19 @@ export type CompanyEntityType =
   | 'other'
   | 'unknown'
 
+export const ENTITY_TYPE_OPTIONS: { value: CompanyEntityType; label: string }[] = [
+  { value: 'unknown',   label: 'Unknown'   },
+  { value: 'prospect',  label: 'Prospect'  },
+  { value: 'portfolio', label: 'Portfolio' },
+  { value: 'pass',      label: 'Pass'      },
+  { value: 'vc_fund',   label: 'Investor'  },
+  { value: 'lp',        label: 'LP'        },
+  { value: 'customer',  label: 'Customer'  },
+  { value: 'partner',   label: 'Partner'   },
+  { value: 'vendor',    label: 'Vendor'    },
+  { value: 'other',     label: 'Other'     },
+]
+
 export type CompanyPriority = 'high' | 'further_work' | 'monitor'
 export type CompanyRound = 'pre_seed' | 'seed' | 'seed_extension' | 'series_a' | 'series_b'
 export type CompanyPipelineStage = 'screening' | 'diligence' | 'decision' | 'documentation' | 'pass'
@@ -276,6 +289,15 @@ export interface InvestmentMemoVersion {
   versionNumber: number
   contentMarkdown: string
   structuredJson: string | null
+  changeNote: string | null
+  createdBy: string | null
+  createdAt: string
+}
+
+export interface InvestmentMemoVersionSummary {
+  id: string
+  memoId: string
+  versionNumber: number
   changeNote: string | null
   createdBy: string | null
   createdAt: string

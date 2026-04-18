@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type HTMLAttributes } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type HTMLAttributes } from 'react'
 import { useCustomFieldSection } from '../../hooks/useCustomFieldSection'
 import { useHeaderChipOrder } from '../../hooks/useHeaderChipOrder'
 import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
 import { useFieldVisibility } from '../../hooks/useFieldVisibility'
 import { useSectionOrder } from '../../hooks/useSectionOrder'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactDetail, LinkedInWorkEntry, LinkedInEducationEntry } from '../../../shared/types/contact'
 import type { CompanySummary } from '../../../shared/types/company'
@@ -29,7 +29,6 @@ import { CONTACT_HARDCODED_FIELDS } from '../../constants/contactFields'
 import {
   CONTACT_TYPES,
   CONTACT_COLUMN_DEFS,
-  CONTACT_HEADER_KEYS
 } from './contactColumns'
 import styles from './ContactPropertiesPanel.module.css'
 import { api } from '../../api'
@@ -50,6 +49,24 @@ const CONTACT_TYPE_STYLE: Record<string, string> = {
   operator: styles.chipOperator,
 }
 
+const TALENT_PIPELINE_STAGES: { value: string; label: string }[] = [
+  { value: 'identified',          label: 'Identified / Passive' },
+  { value: 'exploring',           label: 'Exploring'             },
+  { value: 'ideating',            label: 'Ideating'              },
+  { value: 'fundraising',         label: 'Fundraising'           },
+  { value: 'portfolio_candidate', label: 'Portfolio Candidate'   },
+  { value: 'internal_candidate',  label: 'Internal Candidate'    },
+]
+
+const TALENT_PIPELINE_STYLE: Record<string, string> = {
+  identified:          styles.pipelineIdentified,
+  exploring:           styles.pipelineExploring,
+  ideating:            styles.pipelineIdeating,
+  fundraising:         styles.pipelineFundraising,
+  portfolio_candidate: styles.pipelinePortfolioCandidate,
+  internal_candidate:  styles.pipelineInternalCandidate,
+}
+
 interface ContactPropertiesPanelProps {
   contact: ContactDetail
   lastTouchpoint?: string | null
@@ -60,6 +77,7 @@ interface ContactPropertiesPanelProps {
   onEnrichFromMeetings?: () => void
   isLoadingEnrich?: boolean
   exaApiKey?: string
+  onRequestCreateCompany?: () => void
 }
 
 function LastTouchBadge({ lastTouchpoint }: { lastTouchpoint: string | null | undefined }) {
@@ -166,11 +184,11 @@ export function ContactPropertiesPanel({
   fieldSources,
   onEnrichFromMeetings,
   isLoadingEnrich,
-  exaApiKey = ''
+  exaApiKey = '',
+  onRequestCreateCompany
 }: ContactPropertiesPanelProps) {
   const navigate = useNavigate()
-  const location = useLocation()
-  const backLabel = (location.state as { backLabel?: string } | null)?.backLabel ?? 'Back'
+  // back button now lives in ContactDetail
   const [isEditing, setIsEditing] = useState(false)
   const [showAllFields, setShowAllFields] = useState(false)
   const [firstNameDraft, setFirstNameDraft] = useState(contact.firstName ?? '')
@@ -187,7 +205,7 @@ export function ContactPropertiesPanel({
   const [showLinkedInConfirm, setShowLinkedInConfirm] = useState(false)
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
   const [editingFieldLabel, setEditingFieldLabel] = useState('')
-  const [addFieldDropdownSection, setAddFieldDropdownSection] = useState<string | undefined>(undefined)
+  const [addFieldDropdownOpen, setAddFieldDropdownOpen] = useState(false)
   // Primary company edit state
   const [companyDraft, setCompanyDraft] = useState(contact.primaryCompany?.canonicalName ?? '')
   const [companyAutocomplete, setCompanyAutocomplete] = useState<CompanySummary[] | null>(null)
@@ -203,6 +221,25 @@ export function ContactPropertiesPanel({
   const sessionAddedFields = useRef<string[]>([])
   const markChanged = useCallback(() => { sessionChanges.current = true }, [])
 
+  // Key Takeaways state
+  const [ktText, setKtText] = useState<string>(contact.keyTakeaways ?? '')
+  const [ktEditing, setKtEditing] = useState(false)
+  const [ktGenerating, setKtGenerating] = useState(false)
+  const [ktStreaming, setKtStreaming] = useState('')
+  const [ktError, setKtError] = useState<string | null>(null)
+  const ktGeneratedAtKey = `cyggie:kt-generated-at:${contact.id}`
+  const [ktGeneratedAt, setKtGeneratedAt] = useState<string | null>(() => localStorage.getItem(ktGeneratedAtKey))
+  const hasNewMeetingsSinceKt = useMemo(() => {
+    if (!ktGeneratedAt) return false
+    return contact.meetings.some((m) => m.date > ktGeneratedAt)
+  }, [contact.meetings, ktGeneratedAt])
+  const showKtGenerate = !ktText && !ktGenerating && !ktEditing
+  const showKtUpdate = !!ktText && !ktGenerating && !ktEditing && hasNewMeetingsSinceKt
+  const [copiedMeta, setCopiedMeta] = useState<string | null>(null)
+  const ktTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const generatingForContactIdRef = useRef<string | null>(null)
+  const copiedMetaTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const { getJSON, setJSON } = usePreferencesStore()
   const { contactDefs, refresh, loaded: defsLoaded, load: loadDefs, version: defsVersion } = useCustomFieldStore()
   const pinnedKeys = getJSON<string[]>('cyggie:contact-summary-fields', [])
@@ -211,6 +248,9 @@ export function ContactPropertiesPanel({
 
   const contactTypeDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'contactType')
   const contactTypeOptions = mergeBuiltinOptions(CONTACT_TYPES, contactTypeDef?.optionsJson ?? null)
+
+  const talentPipelineDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'talentPipeline')
+  const talentPipelineOptions = mergeBuiltinOptions(TALENT_PIPELINE_STAGES, talentPipelineDef?.optionsJson ?? null)
 
   const fieldVisibility = useFieldVisibility(
     'contact',
@@ -261,14 +301,17 @@ export function ContactPropertiesPanel({
     markChanged()
   }
 
+  const sectionableFields = useMemo(() => customFields.filter(f => !f.isBuiltin), [customFields])
   const { draggingFieldId, setDraggingFieldId, dragOverSection, draggingOverFieldId, setDraggingOverFieldId, sectionedFields, nullSectionFields, handleWithinSectionDrop, sectionDragProps } =
-    useCustomFieldSection('contact', contact.id, customFields, setCustomFields)
+    useCustomFieldSection('contact', contact.id, sectionableFields, setCustomFields)
 
   const hfOrder = useHardcodedFieldOrder('contact')
 
   // Deduplicate: custom fields in 'summary' section + pinned builtin keys
   const customSummaryIds = customFields.filter(f => f.section === 'summary').map(f => `custom:${f.id}`)
-  const allChipIds = [...new Set(['contactType', ...pinnedKeys, ...customSummaryIds])]
+  // Only include talentPipeline chip when a stage is set — keeps header clean for untracked contacts
+  const talentPipelineChipIds = contact.talentPipeline ? ['talentPipeline'] : []
+  const allChipIds = [...new Set(['contactType', ...talentPipelineChipIds, ...pinnedKeys, ...customSummaryIds])]
   const { effectiveOrder, chipDragProps, chipDropZoneProps, chipDragOverIndex } =
     useHeaderChipOrder('contact', allChipIds, contact.id, null, markChanged)
 
@@ -425,6 +468,102 @@ export function ContactPropertiesPanel({
     return () => document.removeEventListener('keydown', onKey)
   }, [isEditing])
 
+  // Sync ktText when contact changes (e.g. navigating to a different contact)
+  useEffect(() => {
+    setKtText(contact.keyTakeaways ?? '')
+    setKtEditing(false)
+  }, [contact.id, contact.keyTakeaways])
+
+  // Mount-scoped progress listener — receives chunks from the backend KT generation
+  // NOTE: api.on callback is (payload) NOT (_e, payload) — bridge strips event arg
+  useEffect(() => {
+    return api.on(IPC_CHANNELS.CONTACT_KEY_TAKEAWAYS_PROGRESS, (payload) => {
+      if (payload === null) return // sentinel — final state set in .then()
+      const { contactId, chunk } = payload as { contactId: string; chunk: string }
+      if (contactId !== generatingForContactIdRef.current) return // stale: different contact
+      setKtStreaming((prev) => prev + chunk)
+    })
+  }, [])
+
+  // Auto-generate on first visit when contact has data but no saved takeaways —
+  // gated on the `autoGenerateKeyTakeaways` setting (default OFF).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      let v: string | null = null
+      try {
+        v = await api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'autoGenerateKeyTakeaways')
+      } catch (err) {
+        console.warn('[KT] settings read failed; defaulting auto-generate OFF:', err)
+        return
+      }
+      if (cancelled) return
+      if (v !== 'true') return
+      const hasData = contact.meetings.length > 0 || contact.emailCount > 0 || contact.noteCount > 0
+      if (!contact.keyTakeaways && hasData) {
+        void handleGenerateTakeaways()
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contact.id]) // only run when contact changes, not on every render
+
+  // No `if (ktGenerating) return` guard — backend AbortController handles concurrent requests
+  async function handleGenerateTakeaways() {
+    const thisContactId = contact.id
+    generatingForContactIdRef.current = thisContactId
+    setKtGenerating(true)
+    setKtStreaming('')
+    setKtError(null)
+    try {
+      const result = await api.invoke<{ success: boolean; contactId: string; keyTakeaways: string }>(
+        IPC_CHANNELS.CONTACT_KEY_TAKEAWAYS_GENERATE, thisContactId
+      )
+      if (generatingForContactIdRef.current !== thisContactId) return // stale — new contact running
+      setKtText(result.keyTakeaways)
+      onUpdate({ keyTakeaways: result.keyTakeaways })
+      const now = new Date().toISOString()
+      localStorage.setItem(ktGeneratedAtKey, now)
+      setKtGeneratedAt(now)
+    } catch (err) {
+      if (generatingForContactIdRef.current !== thisContactId) return // stale — aborted by new contact
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/abort/i.test(msg)) return // silently ignore cancelled streams
+      setKtError(msg || 'Generation failed — try again')
+    } finally {
+      if (generatingForContactIdRef.current === thisContactId) {
+        setKtStreaming('')
+        setKtGenerating(false)
+        generatingForContactIdRef.current = null
+      }
+    }
+  }
+
+  async function handleSaveKtText() {
+    const trimmed = (ktTextareaRef.current?.value ?? ktText).trim()
+    setKtEditing(false)
+    setKtText(trimmed)
+    onUpdate({ keyTakeaways: trimmed || null })
+    try {
+      await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { keyTakeaways: trimmed || null })
+    } catch (err) {
+      console.error('[KT] Save failed:', err)
+      setKtError('Save failed — please try again')
+      setKtEditing(true) // re-open edit so user doesn't lose their text
+    }
+  }
+
+  function copyMeta(value: string, key: string) {
+    if (copiedMetaTimeoutRef.current) clearTimeout(copiedMetaTimeoutRef.current)
+    navigator.clipboard.writeText(value).then(() => {
+      setCopiedMeta(key)
+      copiedMetaTimeoutRef.current = setTimeout(() => {
+        setCopiedMeta(null)
+        copiedMetaTimeoutRef.current = null
+      }, 1500)
+    }).catch(() => { /* clipboard unavailable */ })
+  }
+
   function handleCompanyInput(value: string) {
     setCompanyDraft(value)
     setCompanyAutocomplete(null)
@@ -517,10 +656,6 @@ export function ContactPropertiesPanel({
     } catch (err) {
       console.error('[ContactPropertiesPanel] addEmail failed:', err)
     }
-  }
-
-  function copyEmail(email: string) {
-    navigator.clipboard.writeText(email).catch(console.error)
   }
 
   async function handleDone() {
@@ -647,7 +782,7 @@ export function ContactPropertiesPanel({
     if (enrichResult?.errorCode === 'in_flight') {
       setLinkedinError({ code: 'in_flight', message: 'LinkedIn URL saved — enrichment is busy, try again shortly' })
     } else if (enrichResult?.success === false) {
-      setLinkedinError({ code: enrichResult.errorCode ?? 'unknown', message: 'Enrichment failed' })
+      setLinkedinError({ code: enrichResult.errorCode ?? 'unknown', message: (enrichResult as { message?: string }).message ?? 'Enrichment failed' })
     }
     setLinkedInFoundUrl(null)
   }
@@ -874,6 +1009,54 @@ export function ContactPropertiesPanel({
 
   const CHIP_LABELS: Record<string, string> = {
     contactType: 'Type',
+    talentPipeline: 'Pipeline',
+  }
+
+  function linkedinErrorMessage(err: { code: string; message: string }): string {
+    switch (err.code) {
+      case 'login_required':     return 'LinkedIn sign-in required'
+      case 'no_data':            return 'No profile data found'
+      case 'profile_timeout':    return 'Profile load timed out'
+      case 'profile_load_failed': return 'Failed to load profile'
+      case 'llm_failed':         return 'Extraction failed'
+      case 'llm_bad_json':       return 'Extraction failed'
+      case 'no_linkedin_url':    return 'No LinkedIn URL set'
+      case 'not_found':          return 'No LinkedIn profile found'
+      case 'no_exa_key':         return 'Add Exa API key in Settings'
+      case 'exa_auth':           return 'Invalid Exa API key'
+      case 'in_flight':          return err.message
+      default:                   return err.message || 'Enrichment failed'
+    }
+  }
+
+  function renderLinkedInHeaderBtn() {
+    if (showLinkedInConfirm) return null
+    if (contact.linkedinUrl) {
+      const label = linkedinEnriching
+        ? 'Enriching…'
+        : linkedinError?.code === 'login_required'
+          ? 'Try again'
+          : contact.linkedinEnrichedAt
+            ? 'Re-enrich from LinkedIn'
+            : 'Enrich from LinkedIn'
+      return (
+        <button
+          className={styles.linkedinHeaderBtn}
+          onClick={() => void handleLinkedInEnrich()}
+          disabled={linkedinEnriching}
+        >{label}</button>
+      )
+    }
+    if (exaApiKey) {
+      return (
+        <button
+          className={styles.linkedinHeaderBtn}
+          onClick={() => void handleFindOnLinkedIn()}
+          disabled={isSearchingLinkedIn || linkedinEnriching}
+        >{isSearchingLinkedIn ? 'Searching…' : 'Find on LinkedIn'}</button>
+      )
+    }
+    return null
   }
 
   function renderChipById(id: string) {
@@ -887,6 +1070,19 @@ export function ContactPropertiesPanel({
           className={`${styles.badge} ${contact.contactType ? (CONTACT_TYPE_STYLE[contact.contactType] ?? '') : ''}`}
           allowEmpty={true}
           onAddOption={contactTypeDef ? async (opt) => addCustomFieldOption(contactTypeDef.id, contactTypeDef.optionsJson, opt) : undefined}
+        />
+      )
+    }
+    if (id === 'talentPipeline') {
+      return (
+        <ChipSelect
+          value={contact.talentPipeline ?? ''}
+          options={[{ value: '', label: '—' }, ...talentPipelineOptions]}
+          isEditing={isEditing}
+          onSave={(v) => save('talentPipeline', v || null)}
+          className={`${styles.badge} ${contact.talentPipeline ? (TALENT_PIPELINE_STYLE[contact.talentPipeline] ?? '') : ''}`}
+          allowEmpty={true}
+          onAddOption={talentPipelineDef ? async (opt) => addCustomFieldOption(talentPipelineDef.id, talentPipelineDef.optionsJson, opt) : undefined}
         />
       )
     }
@@ -909,20 +1105,16 @@ export function ContactPropertiesPanel({
 
   return (
     <div ref={panelRef} className={styles.panel}>
+      <div className={styles.headerCard}>
       {showEnrichBanner && (
-        <div className={styles.enrichBanner}>
-          <span>✨ Meeting data available</span>
-          <button
-            className={styles.enrichBannerBtn}
-            onClick={onEnrichFromMeetings}
-            disabled={isLoadingEnrich}
-          >
-            {isLoadingEnrich
-              ? 'Loading…'
-              : `Enrich profile (${enrichMeetingCount} meeting${enrichMeetingCount !== 1 ? 's' : ''})`
-            }
-          </button>
-        </div>
+        <button
+          className={styles.enrichBadge}
+          onClick={onEnrichFromMeetings}
+          disabled={isLoadingEnrich}
+          title={`Enrich from ${enrichMeetingCount} meeting${enrichMeetingCount !== 1 ? 's' : ''}`}
+        >
+          {isLoadingEnrich ? 'Loading…' : '✨ Enrich'}
+        </button>
       )}
       <ConfirmDialog
         open={confirmDelete}
@@ -933,11 +1125,6 @@ export function ContactPropertiesPanel({
         onConfirm={handleDeleteContact}
         onCancel={() => setConfirmDelete(false)}
       />
-      {window.history.length > 1 && (
-        <button className={styles.backBtn} onClick={() => navigate(-1)}>
-          ← {backLabel}
-        </button>
-      )}
       {/* Header */}
       <div className={styles.header}>
         <ContactAvatar name={contact.fullName} size="lg" />
@@ -963,138 +1150,397 @@ export function ContactPropertiesPanel({
           ) : (
             <div className={styles.name}>{contact.fullName}</div>
           )}
-          <div className={styles.titleAndCompany}>
-            {contact.title && <span>{contact.title}</span>}
-            {contact.title && fieldSources?.title && (
-              <span className={styles.sourceBadge} title={`From: ${fieldSources.title.meetingTitle}`}>📋</span>
-            )}
-            {isEditing ? (
-              <div className={styles.companyEditWrapper}>
-                <input
-                  className={styles.priorCompanyInput}
-                  value={companyDraft}
-                  placeholder="Company"
-                  onChange={(e) => handleCompanyInput(e.target.value)}
-                  onBlur={() => {
-                    setTimeout(() => setCompanyAutocomplete(null), 150)
-                    void saveCompany(companyDraft)
-                  }}
-                />
-                {companyAutocomplete && companyAutocomplete.length > 0 && (
-                  <div className={styles.priorCompanyAutocomplete}>
-                    {companyAutocomplete.map(c => (
-                      <div
-                        key={c.id}
-                        className={styles.priorCompanyAutocompleteItem}
-                        onMouseDown={(e) => {
-                          e.preventDefault()
-                          setCompanyDraft(c.canonicalName)
-                          setCompanyAutocomplete(null)
-                          void saveCompany(c.canonicalName)
-                        }}
-                      >{c.canonicalName}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : contact.primaryCompany ? (
-              <>
-                {contact.title && <span className={styles.sep}>@</span>}
-                <button
-                  className={styles.companyLink}
-                  onClick={() => navigate(`/company/${contact.primaryCompany!.id}`, { state: { backLabel: contact.fullName } })}
-                >
-                  {contact.primaryCompany.canonicalName}
-                </button>
-              </>
-            ) : null}
-          </div>
+          {isEditing ? (
+            <div className={styles.companyEditWrapper}>
+              <input
+                className={styles.priorCompanyInput}
+                value={companyDraft}
+                placeholder="Company"
+                onChange={(e) => handleCompanyInput(e.target.value)}
+                onBlur={() => {
+                  setTimeout(() => setCompanyAutocomplete(null), 150)
+                  void saveCompany(companyDraft)
+                }}
+              />
+              {companyAutocomplete && companyAutocomplete.length > 0 && (
+                <div className={styles.priorCompanyAutocomplete}>
+                  {companyAutocomplete.map(c => (
+                    <div
+                      key={c.id}
+                      className={styles.priorCompanyAutocompleteItem}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        setCompanyDraft(c.canonicalName)
+                        setCompanyAutocomplete(null)
+                        void saveCompany(c.canonicalName)
+                      }}
+                    >{c.canonicalName}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : contact.primaryCompany ? (
+            <div className={styles.companyRow}>
+              <button
+                className={styles.companyLink}
+                onClick={() => navigate(`/company/${contact.primaryCompany!.id}`, { state: { backLabel: contact.fullName } })}
+              >
+                {contact.primaryCompany.canonicalName}
+              </button>
+            </div>
+          ) : null}
+          {contact.title && (
+            <div className={styles.titleRow}>
+              <span>{contact.title}</span>
+              {fieldSources?.title && (
+                <span className={styles.sourceBadge} title={`From: ${fieldSources.title.meetingTitle}`}>📋</span>
+              )}
+            </div>
+          )}
           {contact.linkedinHeadline && !isEditing && (
             <div className={styles.linkedinHeadline}>{contact.linkedinHeadline}</div>
           )}
-          <div
-            className={`${styles.headerBadge} ${isEditing && dragOverSection === 'summary' ? styles.dropTarget : ''}`}
-            {...(isEditing ? syncedSectionDragProps('summary') : {})}
-          >
-            {effectiveOrder.map((id, i) => {
-              const isCustom = id.startsWith('custom:')
-              // Custom chips: skip entirely if no value (no UUID placeholder, no ×)
-              if (isCustom && renderPinnedChip(id) === null) return null
-
-              const isHidden = hiddenHeaderChips.includes(id)
-              if (!isEditing && isHidden) return null
-
-              // Resolve label for hidden-chip placeholder (avoid raw UUID fallback)
-              const chipDisplayLabel = CHIP_LABELS[id] ?? (isCustom
-                ? (contactDefs.find((d) => d.id === id.slice(7))?.label ?? id)
-                : id)
-
-              return (
-                <div
-                  key={id}
-                  className={`${styles.headerChipDraggable} ${chipDragOverIndex === i ? styles.chipDropIndicator : ''} ${isEditing && isHidden ? styles.hiddenHeaderChip : ''}`}
-                  {...chipDragProps(id)}
-                  {...chipDropZoneProps(i)}
-                >
-                  {isEditing && isHidden ? (
-                    <span className={styles.hiddenChipPlaceholder}>
-                      {chipDisplayLabel}
-                      <button className={styles.restoreChipBtn} title="Restore chip" onClick={() => restoreHeaderChip(id)}>↺</button>
-                    </span>
-                  ) : (
-                    <>
-                      {isEditing && CHIP_LABELS[id] ? (
-                        <div className={styles.editChipField}>
-                          <span className={styles.editChipLabel}>{CHIP_LABELS[id]}</span>
-                          {renderChipById(id)}
-                        </div>
-                      ) : (
-                        renderChipById(id)
-                      )}
-                      {isEditing && (
-                        <button className={styles.hideChipBtn} title="Hide chip" onClick={() => hideHeaderChip(id)}>×</button>
-                      )}
-                    </>
-                  )}
+          {/* Contact type + last touch — always visible in header */}
+          <div className={styles.headerChipRow}>
+            {renderChipById('contactType')}
+            {!isEditing && <LastTouchBadge lastTouchpoint={lastTouchpoint ?? contact.lastTouchpoint} />}
+          </div>
+          {/* Edit-mode actions */}
+          {isEditing && (
+            <div className={styles.editActions}>
+              {sessionNewFields !== null ? (
+                <div className={styles.applyPrompt}>
+                  {(() => {
+                    function fieldLabel(key: string): string {
+                      if (key.startsWith('custom:')) {
+                        const id = key.slice(7)
+                        return customFields.find(f => f.id === id)?.label ?? key
+                      }
+                      return CONTACT_COLUMN_DEFS.find(d => d.key === key)?.label ?? key
+                    }
+                    const promptPrefix = sessionNewFields.length > 0
+                      ? `Show ${sessionNewFields.map(fieldLabel).join(', ')} on`
+                      : 'Apply layout changes to'
+                    return <span>{promptPrefix} <strong>all contacts</strong>?</span>
+                  })()}
+                  <button className={styles.applyAllBtn} onClick={handleApplyToAll}>All contacts</button>
+                  <button className={styles.applyOneBtn} onClick={handleJustThisContact}>Just {contact.fullName}</button>
                 </div>
-              )
-            })}
-            <LastTouchBadge lastTouchpoint={lastTouchpoint ?? contact.lastTouchpoint} />
+              ) : (
+                <>
+                  <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">↺</button>
+                  <button className={styles.doneBtn} onClick={() => void handleDone()}>Done</button>
+                </>
+              )}
+            </div>
+          )}
+          {/* Email + location + action buttons (read-only) */}
+          {!isEditing && (
+            <>
+              {(contact.emails[0] || contact.email) && (
+                <div
+                  className={`${styles.metaRow} ${styles.metaRowCopyable}`}
+                  onClick={() => copyMeta((contact.emails[0] || contact.email)!, 'email')}
+                  title="Click to copy"
+                >
+                  <span className={styles.metaIcon}>✉</span>
+                  <span className={styles.metaValue}>{contact.emails[0] || contact.email}</span>
+                  {copiedMeta === 'email' && <span className={styles.copiedToast}>Copied!</span>}
+                </div>
+              )}
+              {(contact.city || contact.state) && (
+                <div className={styles.metaRow}>
+                  <span className={styles.metaIcon}>📍</span>
+                  <span className={styles.metaValue}>{[contact.city, contact.state].filter(Boolean).join(', ')}</span>
+                </div>
+              )}
+              <div className={styles.headerActionRow}>
+                <button className={styles.editBtn} onClick={() => {
+                  sessionAddedFields.current = [...fieldVisibility.addedFields]
+                  setIsEditing(true)
+                }}>Edit</button>
+                {(contact.emails[0] || contact.email) && (
+                  <button
+                    className={styles.emailActionBtn}
+                    onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, `mailto:${contact.emails[0] || contact.email}`)}
+                  >Email</button>
+                )}
+                {renderLinkedInHeaderBtn()}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      </div>
+
+      {/* Key Takeaways card */}
+      <div className={styles.ktCard}>
+        <div className={styles.ktHeader}>
+          <span className={styles.ktTitle} onClick={() => toggleSection('key_takeaways')} style={{ cursor: 'pointer' }}>Key Takeaways</span>
+          {!isCollapsed('key_takeaways') && (
+            <div className={styles.ktActions}>
+              {!ktGenerating && !ktEditing && ktText && (
+                <button className={styles.ktEditBtn} onClick={() => { setKtEditing(true); setKtError(null) }}>Edit</button>
+              )}
+              {(showKtGenerate || showKtUpdate) && (
+                <button
+                  className={styles.ktGenerateBtn}
+                  onClick={() => void handleGenerateTakeaways()}
+                >
+                  {showKtUpdate ? '✨ Update' : '✨ Generate'}
+                </button>
+              )}
+              {ktGenerating && (
+                <span className={styles.ktGenerateBtn} style={{ opacity: 0.6 }}>Generating…</span>
+              )}
+            </div>
+          )}
+          <button
+            className={styles.sectionCollapseBtn}
+            onClick={() => toggleSection('key_takeaways')}
+            title={isCollapsed('key_takeaways') ? 'Expand section' : 'Collapse section'}
+          >
+            {isCollapsed('key_takeaways') ? '▶' : '▼'}
+          </button>
+        </div>
+        {!isCollapsed('key_takeaways') && (<>
+          {ktEditing ? (
+            <>
+              <textarea
+                ref={ktTextareaRef}
+                className={styles.ktTextarea}
+                defaultValue={ktText}
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Escape') setKtEditing(false) }}
+              />
+              <div className={styles.ktSaveActions}>
+                <button className={styles.ktSaveBtn} onClick={() => void handleSaveKtText()}>Save</button>
+                <button className={styles.ktCancelBtn} onClick={() => setKtEditing(false)}>Cancel</button>
+              </div>
+            </>
+          ) : ktGenerating ? (
+            <div className={styles.ktBullets}>
+              {(ktStreaming || '').split('\n').filter(Boolean).map((line, i) => (
+                <div key={i} className={styles.ktBullet}>{line}</div>
+              ))}
+              {!ktStreaming && <div className={styles.ktEmpty}>Generating takeaways…</div>}
+              <span className={styles.ktCursor}>▋</span>
+            </div>
+          ) : ktText ? (
+            <div className={styles.ktBullets}>
+              {ktText.split('\n').filter(Boolean).map((line, i) => (
+                <div key={i} className={styles.ktBullet}>{line}</div>
+              ))}
+            </div>
+          ) : (
+            <div className={styles.ktEmpty}>Click ✨ Generate to create AI-powered insights</div>
+          )}
+          {ktError && <div className={styles.ktError}>{ktError}</div>}
+        </>)}
+      </div>
+
+      <div className={styles.bodyCard}>
+      {/* LinkedIn status row: refreshed-ago / errors / login-required sign-in */}
+      {contact.linkedinUrl && (contact.linkedinEnrichedAt || linkedinError) && (
+        <div className={styles.linkedinStatusRow}>
+          {contact.linkedinEnrichedAt && !linkedinError && (
+            <span className={styles.linkedinEnrichedAgo}>
+              Refreshed {formatRelativeTime(contact.linkedinEnrichedAt)}
+            </span>
+          )}
+          {linkedinError?.code === 'login_required' ? (
+            <>
+              <span className={styles.linkedinErrorMsg}>LinkedIn sign-in required</span>
+              <button className={styles.linkedinLoginBtn} onClick={() => void handleLinkedInOpenLogin()}>
+                Sign in to LinkedIn
+              </button>
+            </>
+          ) : linkedinError ? (
+            <span className={styles.linkedinErrorMsg} title={linkedinError.message}>
+              {linkedinErrorMessage(linkedinError)}
+            </span>
+          ) : null}
+        </div>
+      )}
+
+      {/* Exa "profile found" confirmation modal */}
+      {!contact.linkedinUrl && exaApiKey && showLinkedInConfirm && linkedInFoundUrl && (
+        <div className={styles.linkedinStatusRow}>
+          <div className={styles.linkedinConfirmModal}>
+            <span className={styles.linkedinConfirmTitle}>LinkedIn profile found</span>
+            <a
+              className={styles.linkedinConfirmUrl}
+              href={linkedInFoundUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {linkedInFoundUrl.replace('https://', '')}
+            </a>
+            <div className={styles.linkedinConfirmActions}>
+              <button
+                className={styles.linkedinEnrichBtn}
+                onClick={() => void handleConfirmLinkedInUrl()}
+              >
+                Use this profile
+              </button>
+              <button
+                className={styles.linkedinCancelBtn}
+                onClick={() => { setShowLinkedInConfirm(false); setLinkedInFoundUrl(null) }}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
-        {isEditing ? (
-          <div className={styles.editActions}>
-            {sessionNewFields !== null ? (
-              <div className={styles.applyPrompt}>
-                {(() => {
-                  function fieldLabel(key: string): string {
-                    if (key.startsWith('custom:')) {
-                      const id = key.slice(7)
-                      return customFields.find(f => f.id === id)?.label ?? key
+      )}
+
+      {/* Exa search error (no URL, has exaApiKey) */}
+      {!contact.linkedinUrl && exaApiKey && linkedinError && !showLinkedInConfirm && (
+        <div className={styles.linkedinStatusRow}>
+          <span className={styles.linkedinErrorMsg} title={linkedinError.message}>
+            {linkedinErrorMessage(linkedinError)}
+          </span>
+        </div>
+      )}
+
+      {/* Metadata strip — email, phone, location, LinkedIn */}
+      {(isEditing || contact.emails[0] || contact.email || contact.phone || contact.city || contact.state || contact.linkedinUrl) && (
+        <div className={styles.metaStrip}>
+          {isEditing ? (
+            <>
+              <div className={styles.metaRow}>
+                <span className={styles.metaIcon}>✉</span>
+                <input
+                  className={styles.metaInput}
+                  defaultValue={contact.emails[0] || contact.email || ''}
+                  placeholder="Email address"
+                  type="email"
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    const existing = contact.emails[0] || contact.email
+                    if (val && val !== existing) {
+                      if (existing) void saveEmail(existing, val)
+                      else void addEmail(val)
                     }
-                    return CONTACT_COLUMN_DEFS.find(d => d.key === key)?.label ?? key
-                  }
-                  const promptPrefix = sessionNewFields.length > 0
-                    ? `Show ${sessionNewFields.map(fieldLabel).join(', ')} on`
-                    : 'Apply layout changes to'
-                  return <span>{promptPrefix} <strong>all contacts</strong>?</span>
-                })()}
-                <button className={styles.applyAllBtn} onClick={handleApplyToAll}>All contacts</button>
-                <button className={styles.applyOneBtn} onClick={handleJustThisContact}>Just {contact.fullName}</button>
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                />
               </div>
-            ) : (
-              <>
-                <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">↺</button>
-                <button className={styles.doneBtn} onClick={() => void handleDone()}>Done</button>
-              </>
-            )}
-          </div>
-        ) : (
-          <button className={styles.editBtn} onClick={() => {
-            sessionAddedFields.current = [...fieldVisibility.addedFields]
-            setIsEditing(true)
-          }}>Edit</button>
-        )}
+              <div className={styles.metaRow}>
+                <span className={styles.metaIcon}>📞</span>
+                <input
+                  className={styles.metaInput}
+                  defaultValue={contact.phone || ''}
+                  placeholder="Phone"
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    if (val !== (contact.phone || '')) save('phone', val || null)
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                />
+              </div>
+              <div className={styles.metaRow}>
+                <span className={styles.metaIcon}>📍</span>
+                <input
+                  className={`${styles.metaInput} ${styles.metaInputHalf}`}
+                  defaultValue={contact.city || ''}
+                  placeholder="City"
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    if (val !== (contact.city || '')) save('city', val || null)
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                />
+                <input
+                  className={`${styles.metaInput} ${styles.metaInputHalf}`}
+                  defaultValue={contact.state || ''}
+                  placeholder="State"
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    if (val !== (contact.state || '')) save('state', val || null)
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              {contact.phone && (
+                <div
+                  className={`${styles.metaRow} ${styles.metaRowCopyable}`}
+                  onClick={() => copyMeta(contact.phone!, 'phone')}
+                  title="Click to copy"
+                >
+                  <span className={styles.metaIcon}>📞</span>
+                  <span className={styles.metaValue}>{contact.phone}</span>
+                  {copiedMeta === 'phone' && <span className={styles.copiedToast}>Copied!</span>}
+                </div>
+              )}
+              {contact.linkedinUrl && (
+                <div className={styles.metaRow}>
+                  <span className={styles.metaIcon}>🔗</span>
+                  <span
+                    className={styles.metaLink}
+                    onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, contact.linkedinUrl!)}
+                    title={contact.linkedinUrl}
+                  >
+                    {contact.linkedinUrl.replace(/^https?:\/\/(www\.)?/, '')}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Chips row — relocated outside .header so it scrolls with content */}
+      <div
+        className={`${styles.headerBadge} ${isEditing && dragOverSection === 'summary' ? styles.dropTarget : ''}`}
+        {...(isEditing ? syncedSectionDragProps('summary') : {})}
+      >
+        {effectiveOrder.filter((id) => id !== 'contactType').map((id, i) => {
+          const isCustom = id.startsWith('custom:')
+          // Custom chips: skip entirely if no value (no UUID placeholder, no ×)
+          if (isCustom && renderPinnedChip(id) === null) return null
+
+          const isHidden = hiddenHeaderChips.includes(id)
+          if (!isEditing && isHidden) return null
+
+          // Resolve label for hidden-chip placeholder (avoid raw UUID fallback)
+          const chipDisplayLabel = CHIP_LABELS[id] ?? (isCustom
+            ? (contactDefs.find((d) => d.id === id.slice(7))?.label ?? id)
+            : id)
+
+          return (
+            <div
+              key={id}
+              className={`${styles.headerChipDraggable} ${chipDragOverIndex === i ? styles.chipDropIndicator : ''} ${isEditing && isHidden ? styles.hiddenHeaderChip : ''}`}
+              {...chipDragProps(id)}
+              {...chipDropZoneProps(i)}
+            >
+              {isEditing && isHidden ? (
+                <span className={styles.hiddenChipPlaceholder}>
+                  {chipDisplayLabel}
+                  <button className={styles.restoreChipBtn} title="Restore chip" onClick={() => restoreHeaderChip(id)}>↺</button>
+                </span>
+              ) : (
+                <>
+                  {isEditing && CHIP_LABELS[id] ? (
+                    <div className={styles.editChipField}>
+                      <span className={styles.editChipLabel}>{CHIP_LABELS[id]}</span>
+                      {renderChipById(id)}
+                    </div>
+                  ) : (
+                    renderChipById(id)
+                  )}
+                  {isEditing && (
+                    <button className={styles.hideChipBtn} title="Hide chip" onClick={() => hideHeaderChip(id)}>×</button>
+                  )}
+                </>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {sectionOrder.orderedSections.map(sectionKey => {
@@ -1119,93 +1565,12 @@ export function ContactPropertiesPanel({
           } : {}),
         }
 
-        function AddFieldBtn() {
-          return (
-            <div className={styles.addFieldContainer}>
-              <button
-                className={styles.addFieldBtn}
-                onClick={() => setAddFieldDropdownSection(addFieldDropdownSection === sectionKey ? undefined : sectionKey)}
-              >+ Add field</button>
-              {addFieldDropdownSection === sectionKey && (
-                <AddFieldDropdown
-                  entityType="contact"
-                  hardcodedDefs={CONTACT_HARDCODED_FIELDS}
-                  customFields={customFields}
-                  addedFields={fieldVisibility.addedFields}
-                  hiddenFields={hiddenFields}
-                  entityData={contact as Record<string, unknown>}
-                  fieldPlacements={fieldVisibility.fieldPlacements}
-                  sections={CONTACT_SECTIONS.filter(s => s.key !== 'summary')}
-                  onToggleField={(key, checked) => {
-                    if (checked) fieldVisibility.addToAddedFields([key])
-                    else fieldVisibility.removeFromAddedFields(key)
-                  }}
-                  onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
-                  onCreateCustomField={() => {
-                    setCreateFieldSection(sectionKey)
-                    setCreateFieldOpen(true)
-                    setAddFieldDropdownSection(undefined)
-                  }}
-                  onClose={() => setAddFieldDropdownSection(undefined)}
-                  defaultSection={sectionKey}
-                />
-              )}
-            </div>
-          )
-        }
-
         switch (sectionKey) {
           case 'contact_info': return (
             <div key="contact_info" {...sectionContainerProps}>
               <SectionHeader title="Contact Info" collapsible isCollapsed={isCollapsed('contact_info')} onToggle={() => toggleSection('contact_info')} />
               {!isCollapsed('contact_info') && (<>
-              {contact.emails.map((email) => (
-                <div key={email} className={styles.emailRow}>
-                  {isEditing ? (
-                    <input
-                      className={styles.emailInput}
-                      defaultValue={email}
-                      type="email"
-                      onBlur={(e) => {
-                        const newVal = e.target.value.trim()
-                        if (newVal && newVal !== email) void saveEmail(email, newVal)
-                      }}
-                    />
-                  ) : (
-                    <span className={styles.emailValue}>{email}</span>
-                  )}
-                  {!isEditing && (
-                    <button className={styles.copyBtn} onClick={() => copyEmail(email)} title="Copy email">⎘</button>
-                  )}
-                </div>
-              ))}
-              {isEditing && (
-                <div className={styles.emailRow}>
-                  <input
-                    key={`new-email-${contact.emails.length}`}
-                    className={styles.emailInput}
-                    defaultValue=""
-                    type="email"
-                    placeholder="Add email…"
-                    onBlur={(e) => {
-                      const val = e.target.value.trim()
-                      if (val) void addEmail(val)
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                    }}
-                  />
-                </div>
-              )}
               {renderHardcodedSection([
-                { key: 'phone', visible: showField('phone', contact.phone), render: () => (
-                  <HideableRow fieldKey="phone" isEmpty={!contact.phone}>
-                    <div className={styles.propertyWithBadge}>
-                      <PropertyRow label="Phone" value={contact.phone} type="text" editMode={isEditing} onSave={(v) => save('phone', v)} />
-                      {fieldSources?.phone && <span className={styles.sourceBadge} title={`From: ${fieldSources.phone.meetingTitle}`}>📋</span>}
-                    </div>
-                  </HideableRow>
-                )},
                 { key: 'linkedinUrl', visible: isEditing || showField('linkedinUrl', contact.linkedinUrl), render: () => (
                   <HideableRow fieldKey="linkedinUrl" isEmpty={!contact.linkedinUrl} onHide={contact.linkedinUrl ? () => { void save('linkedinUrl', null) } : undefined}>
                     <div className={styles.propertyWithBadge}>
@@ -1219,16 +1584,6 @@ export function ContactPropertiesPanel({
                     <PropertyRow label="Twitter/X" value={contact.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} />
                   </HideableRow>
                 )},
-                { key: 'city', visible: showField('city', contact.city), render: () => (
-                  <HideableRow fieldKey="city" isEmpty={!contact.city}>
-                    <PropertyRow label="City" value={contact.city} type="text" editMode={isEditing} onSave={(v) => save('city', v)} />
-                  </HideableRow>
-                )},
-                { key: 'state', visible: showField('state', contact.state), render: () => (
-                  <HideableRow fieldKey="state" isEmpty={!contact.state}>
-                    <PropertyRow label="State" value={contact.state} type="text" editMode={isEditing} onSave={(v) => save('state', v)} />
-                  </HideableRow>
-                )},
                 { key: 'timezone', visible: showField('timezone', contact.timezone), render: () => (
                   <HideableRow fieldKey="timezone" isEmpty={!contact.timezone}>
                     <PropertyRow label="Timezone" value={contact.timezone} type="text" editMode={isEditing} onSave={(v) => save('timezone', v)} />
@@ -1236,7 +1591,7 @@ export function ContactPropertiesPanel({
                 )},
               ], 'contact_info')}
               {renderSectionedFields('contact_info')}
-              {isEditing && <AddFieldBtn />}
+
               {nullSectionFields().map((field) => {
                 const opts = (() => { try { return field.optionsJson ? JSON.parse(field.optionsJson) : [] } catch { return [] } })()
                 return (
@@ -1348,7 +1703,7 @@ export function ContactPropertiesPanel({
                 )},
               ], 'professional')}
               {renderSectionedFields('professional')}
-              {isEditing && <AddFieldBtn />}
+
               </>)}
               {(isEditing || contact.otherSocials) && (
                 <>
@@ -1381,6 +1736,19 @@ export function ContactPropertiesPanel({
                 </div>
               </div>
               {renderHardcodedSection([
+                { key: 'talentPipeline', visible: showField('talentPipeline', contact.talentPipeline), render: () => (
+                  <HideableRow fieldKey="talentPipeline" isEmpty={!contact.talentPipeline}>
+                    <PropertyRow
+                      label="Talent Pipeline"
+                      value={contact.talentPipeline}
+                      type="select"
+                      editMode={isEditing}
+                      options={[{ value: '', label: '—' }, ...talentPipelineOptions]}
+                      onSave={(v) => save('talentPipeline', v || null)}
+                      onAddOption={talentPipelineDef ? async (opt) => addCustomFieldOption(talentPipelineDef.id, talentPipelineDef.optionsJson, opt) : undefined}
+                    />
+                  </HideableRow>
+                )},
                 { key: 'lastMetEvent', visible: showField('lastMetEvent', contact.lastMetEvent), render: () => (
                   <HideableRow fieldKey="lastMetEvent" isEmpty={!contact.lastMetEvent}>
                     <PropertyRow label="Last Met At" value={contact.lastMetEvent} type="text" editMode={isEditing} onSave={(v) => save('lastMetEvent', v)} />
@@ -1397,8 +1765,16 @@ export function ContactPropertiesPanel({
                   </HideableRow>
                 )},
               ], 'relationship')}
+              {contact.talentPipeline === 'fundraising' && onRequestCreateCompany && (
+                <div className={styles.fundraisingCallout}>
+                  <span>Ready to move to pipeline?</span>
+                  <button className={styles.fundraisingCalloutBtn} onClick={onRequestCreateCompany}>
+                    Create company record &rarr;
+                  </button>
+                </div>
+              )}
               {renderSectionedFields('relationship')}
-              {isEditing && <AddFieldBtn />}
+
               </>)}
             </div>
           )
@@ -1447,7 +1823,7 @@ export function ContactPropertiesPanel({
                   )},
                 ], 'investor_info')}
                 {renderSectionedFields('investor_info')}
-                {isEditing && <AddFieldBtn />}
+  
                 </>)}
               </div>
             )
@@ -1455,108 +1831,6 @@ export function ContactPropertiesPanel({
           default: return null
         }
       })}
-
-      {contact.linkedinUrl && (
-        <div className={styles.linkedinEnrichRow}>
-          {contact.linkedinEnrichedAt && !linkedinError && (
-            <span className={styles.linkedinEnrichedAgo}>
-              Refreshed {formatRelativeTime(contact.linkedinEnrichedAt)}
-            </span>
-          )}
-          {linkedinError?.code === 'login_required' ? (
-            <>
-              <span className={styles.linkedinErrorMsg}>LinkedIn sign-in required</span>
-              <button className={styles.linkedinLoginBtn} onClick={() => void handleLinkedInOpenLogin()}>
-                Sign in to LinkedIn
-              </button>
-              <button
-                className={styles.linkedinEnrichBtn}
-                onClick={() => void handleLinkedInEnrich()}
-                disabled={linkedinEnriching}
-              >
-                {linkedinEnriching ? 'Enriching…' : 'Try again'}
-              </button>
-            </>
-          ) : (
-            <>
-              {linkedinError && (
-                <span className={styles.linkedinErrorMsg} title={linkedinError.message}>
-                  {linkedinError.code === 'no_data' ? 'No profile data found' :
-                   linkedinError.code === 'profile_timeout' ? 'Profile load timed out' :
-                   linkedinError.code === 'profile_load_failed' ? 'Failed to load profile' :
-                   linkedinError.code === 'llm_failed' ? 'Extraction failed' :
-                   linkedinError.code === 'llm_bad_json' ? 'Extraction failed' :
-                   linkedinError.code === 'no_linkedin_url' ? 'No LinkedIn URL set' :
-                   linkedinError.code === 'not_found' ? 'No LinkedIn profile found' :
-                   linkedinError.code === 'in_flight' ? linkedinError.message :
-                   'Enrichment failed'}
-                </span>
-              )}
-              <button
-                className={styles.linkedinEnrichBtn}
-                onClick={() => void handleLinkedInEnrich()}
-                disabled={linkedinEnriching}
-              >
-                {linkedinEnriching
-                  ? 'Enriching…'
-                  : contact.linkedinEnrichedAt
-                    ? 'Re-enrich from LinkedIn'
-                    : 'Enrich from LinkedIn'}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
-      {!contact.linkedinUrl && exaApiKey && (
-        <div className={styles.linkedinEnrichRow}>
-          {showLinkedInConfirm && linkedInFoundUrl ? (
-            <div className={styles.linkedinConfirmModal}>
-              <span className={styles.linkedinConfirmTitle}>LinkedIn profile found</span>
-              <a
-                className={styles.linkedinConfirmUrl}
-                href={linkedInFoundUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {linkedInFoundUrl.replace('https://', '')}
-              </a>
-              <div className={styles.linkedinConfirmActions}>
-                <button
-                  className={styles.linkedinEnrichBtn}
-                  onClick={() => void handleConfirmLinkedInUrl()}
-                >
-                  Use this profile
-                </button>
-                <button
-                  className={styles.linkedinCancelBtn}
-                  onClick={() => { setShowLinkedInConfirm(false); setLinkedInFoundUrl(null) }}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {linkedinError && (
-                <span className={styles.linkedinErrorMsg} title={linkedinError.message}>
-                  {linkedinError.code === 'not_found' ? 'No LinkedIn profile found' :
-                   linkedinError.code === 'no_exa_key' ? 'Add Exa API key in Settings' :
-                   linkedinError.code === 'exa_auth' ? 'Invalid Exa API key' :
-                   'Search failed'}
-                </span>
-              )}
-              <button
-                className={styles.linkedinEnrichBtn}
-                onClick={() => void handleFindOnLinkedIn()}
-                disabled={isSearchingLinkedIn || linkedinEnriching}
-              >
-                {isSearchingLinkedIn ? 'Searching…' : 'Find on LinkedIn'}
-              </button>
-            </>
-          )}
-        </div>
-      )}
 
       {liWorkEntries.length > 0 && (
         <div className={styles.linkedinSection}>
@@ -1637,6 +1911,39 @@ export function ContactPropertiesPanel({
       )}
 
       {isEditing && (
+        <div className={styles.stickyAddFieldBar}>
+          <div className={styles.addFieldContainer}>
+            <button
+              className={styles.addFieldBtn}
+              onClick={() => setAddFieldDropdownOpen(!addFieldDropdownOpen)}
+            >+ Add field</button>
+            {addFieldDropdownOpen && (
+              <AddFieldDropdown
+                entityType="contact"
+                hardcodedDefs={CONTACT_HARDCODED_FIELDS}
+                customFields={customFields}
+                addedFields={fieldVisibility.addedFields}
+                hiddenFields={hiddenFields}
+                entityData={contact as Record<string, unknown>}
+                fieldPlacements={fieldVisibility.fieldPlacements}
+                sections={CONTACT_SECTIONS.filter(s => s.key !== 'summary')}
+                onToggleField={(key, checked) => {
+                  if (checked) fieldVisibility.addToAddedFields([key])
+                  else fieldVisibility.removeFromAddedFields(key)
+                }}
+                onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
+                onCreateCustomField={() => {
+                  setCreateFieldOpen(true)
+                  setAddFieldDropdownOpen(false)
+                }}
+                onClose={() => setAddFieldDropdownOpen(false)}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {isEditing && (
         <div className={styles.deleteSection}>
           <button
             className={styles.deleteBtn}
@@ -1647,6 +1954,7 @@ export function ContactPropertiesPanel({
           </button>
         </div>
       )}
+      </div>
     </div>
   )
 }

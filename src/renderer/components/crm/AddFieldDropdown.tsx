@@ -162,6 +162,11 @@ export function AddFieldDropdown({
         />
       </div>
 
+      <div className={styles.columnHeader}>
+        <span className={styles.columnHeaderField}>Field</span>
+        <span className={styles.columnHeaderSection}>Section</span>
+      </div>
+
       <div className={styles.list}>
         {groups.map((group) => (
           <div key={group.sectionKey} data-section={group.sectionKey}>

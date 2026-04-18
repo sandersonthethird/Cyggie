@@ -44,9 +44,14 @@ export function registerInvestmentMemoHandlers(): void {
     return memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName, getCurrentUserId())
   })
 
-  ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_LIST_VERSIONS, (_event, memoId: string) => {
+  ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_LIST_VERSIONS, (_event, memoId: string, summary?: boolean) => {
     if (!memoId) throw new Error('memoId is required')
-    return memoRepo.listMemoVersions(memoId)
+    return summary ? memoRepo.listMemoVersionsSummary(memoId) : memoRepo.listMemoVersions(memoId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_GET_VERSION, (_event, versionId: string) => {
+    if (!versionId) throw new Error('versionId is required')
+    return memoRepo.getMemoVersion(versionId)
   })
 
   ipcMain.handle(
@@ -333,7 +338,7 @@ export function registerInvestmentMemoHandlers(): void {
         return { success: false, error: 'no_content', message: 'Memo has no content to share.' }
       }
 
-      const claudeApiKey = getCredential('claudeApiKey')
+      const claudeApiKey = getCredential('webShareApiKey') || getCredential('claudeApiKey')
       if (!claudeApiKey) {
         return {
           success: false,
@@ -364,6 +369,7 @@ export function registerInvestmentMemoHandlers(): void {
             companyName,
             contentMarkdown: latest.contentMarkdown,
             claudeApiKey,
+            claudeModel: getSetting('webShareModel') || 'claude-sonnet-4-5-20250929',
             logoUrl,
             firmName,
             brandColor,

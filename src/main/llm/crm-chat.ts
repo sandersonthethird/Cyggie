@@ -309,7 +309,7 @@ export async function queryCrm(question: string): Promise<string> {
 
   const userPrompt = `Here is the relevant CRM data:\n\n${crmCtx}\n\n---\n\nUser question: ${question}`
 
-  const provider = getProvider()
+  const provider = getProvider('chat')
   allChatAbortController = new AbortController()
   const result = await provider.generateSummary(CRM_SYSTEM_PROMPT, userPrompt, sendProgress, allChatAbortController.signal)
   allChatAbortController = null
@@ -337,7 +337,7 @@ export async function queryAll(question: string, attachments: ChatAttachment[] =
 
   const userPrompt = `${combined}\n\n---\n\nUser question: ${enhancedQuestion}`
 
-  const provider = getProvider()
+  const provider = getProvider('chat')
   allChatAbortController = new AbortController()
   const result = await provider.generateSummary(QUERY_ALL_SYSTEM_PROMPT, userPrompt, sendProgress, allChatAbortController.signal, imageAtts)
   allChatAbortController = null

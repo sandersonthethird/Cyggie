@@ -84,18 +84,6 @@
 
 ---
 
-### Memo version history UI
-**What:** Make the version chip (`v2`, `v3`…) in `CompanyMemo` interactive — clicking it opens a panel or dropdown listing all past `InvestmentMemoVersion` rows, with a "Restore" button per entry.
-**Why:** The version counter is already displayed but non-interactive. With auto-save creating a new version on every edit session, users have no way to browse or recover an earlier draft if they want to revert a generation run or a bad edit.
-**Pros:** Completes the versioning story end-to-end; pairs naturally with the AI generation flow where you want to compare the AI draft against a previous version.
-**Cons:** Requires a new `INVESTMENT_MEMO_LIST_VERSIONS` IPC + repo query; the restore action is a write (saves a new version with old content) to avoid mutating history.
-**Context:** Start in `src/renderer/components/company/CompanyMemo.tsx`. The version chip is already rendered at line ~71 (`<span className={styles.version}>v{memo.latestVersionNumber}</span>`). Make it a `<button>` that opens a `MemoVersionHistoryPanel` (or inline dropdown). List versions via `INVESTMENT_MEMO_LIST_VERSIONS`; restore by calling `INVESTMENT_MEMO_SAVE_VERSION` with the old version's `contentMarkdown`. The `CompanyMemo` `handleSaved` callback already handles updating read view state.
-**Effort:** L
-**Priority:** P3
-**Depends on:** Memo edit modal PR (this work) merged.
-
----
-
 ## P3 — Contacts
 
 ### Undo merge

@@ -16,7 +16,11 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding-bottom: 32px;
+  padding: 0 16px 32px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--cv-radius);
+  overflow-y: auto;
 }
 
 .header {
@@ -82,10 +86,17 @@
 }
 
 .nameError {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
-  color: var(--color-danger, #e53e3e);
-  margin-top: -4px;
-  margin-bottom: 4px;
+  font-weight: 500;
+  color: var(--chip-error-text, #991B1B);
+  background: var(--chip-error-bg, #FEE2E2);
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-top: 2px;
+  margin-bottom: 2px;
 }
 
 .headerBadges {
@@ -273,17 +284,55 @@
 .headerIconBtn:disabled { opacity: 0.4; cursor: default; }
 
 .editBtn {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--color-success, #28a745);
+  background: transparent;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 6px;
+  padding: 5px 14px;
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
 }
 
 .editBtn:hover {
-  opacity: 0.75;
+  border-color: var(--color-text-secondary);
+  color: var(--color-text);
+}
+
+.headerActionRow {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.emailActionBtn {
+  background: var(--color-success, #28a745);
+  color: #fff;
+  border: none;
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.emailActionBtn:hover { opacity: 0.85; }
+
+.taskActionBtn {
+  background: none;
+  border: 1px solid var(--color-border);
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+.taskActionBtn:hover {
+  border-color: var(--color-text-secondary);
+  color: var(--color-text);
 }
 
 /* ── Enhance dropdown ────────────────────────────────────────────────────── */
@@ -295,9 +344,10 @@
 .enhanceBtn {
   background: none;
   border: 1px solid var(--color-border);
-  border-radius: 5px;
-  padding: 3px 8px;
+  border-radius: 6px;
+  padding: 5px 14px;
   font-size: 12px;
+  font-weight: 500;
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
@@ -554,9 +604,7 @@
 .editActions {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
   gap: 4px;
-  flex-shrink: 0;
 }
 
 /* ↺ Reset layout button (shown in Edit View, next to Done) */
@@ -1050,6 +1098,22 @@
 
 .addFieldContainer {
   position: relative;
+}
+
+.stickyAddFieldBar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  background: var(--color-bg);
+  padding: 8px 0;
+  border-top: 1px solid var(--color-bg-tertiary);
+}
+
+/* Open the Add Field dropdown upward from the sticky bar */
+.stickyAddFieldBar .addFieldContainer > div {
+  bottom: 100%;
+  top: auto;
+  margin-bottom: 4px;
 }
 
 /* ── Compound field rows (investors, source name) ── */

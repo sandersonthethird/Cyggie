@@ -72,7 +72,15 @@ export function ContactEmails({ contactId, hasEmail = true, className }: Contact
           {syncResultMsg && !isSyncing && (
             <span className={styles.syncMsg}>{syncResultMsg}</span>
           )}
-          {syncError && <span className={styles.syncError}>{syncError}</span>}
+          {syncError && (
+            <span className={styles.syncError}>
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true" style={{ flexShrink: 0, marginTop: 1 }}>
+                <path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Z" fill="currentColor"/>
+                <path d="M7.25 4.75a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-1.5 0v-3.5ZM8 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+              </svg>
+              {syncError}
+            </span>
+          )}
         </div>
       )}
       {!loaded && <div className={styles.loading}>Loading…</div>}

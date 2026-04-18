@@ -47,6 +47,7 @@ import type {
   ContactEmailRef,
   ContactTimelineItem,
   ContactType,
+  TalentPipelineStage,
   ContactDuplicateGroup,
   ContactDuplicateSummary,
   ContactDedupDecision,
@@ -103,6 +104,8 @@ interface ContactRow {
   linkedin_headline?: string | null
   linkedin_skills?: string | null
   linkedin_enriched_at?: string | null
+  talent_pipeline?: string | null
+  key_takeaways?: string | null
 }
 
 export interface ContactEmailOnboardingCandidate {
@@ -189,6 +192,7 @@ function rowToContactSummary(row: ContactRow): ContactSummary {
     contactType: (row.contact_type && VALID_CONTACT_TYPES.has(row.contact_type)
       ? row.contact_type
       : null) as ContactType | null,
+    talentPipeline: (row.talent_pipeline as TalentPipelineStage | null) ?? null,
     linkedinUrl: row.linkedin_url,
     crmContactId: row.crm_contact_id,
     crmProvider: row.crm_provider,
@@ -845,6 +849,7 @@ export function listContacts(filter?: {
         oc.canonical_name AS primary_company_name,
         c.title,
         c.contact_type,
+        c.talent_pipeline,
         c.linkedin_url,
         c.crm_contact_id,
         c.crm_provider,
@@ -929,6 +934,7 @@ export function listContactsLight(filter?: {
         oc.canonical_name AS primary_company_name,
         c.title,
         c.contact_type,
+        c.talent_pipeline,
         c.linkedin_url,
         c.crm_contact_id,
         c.crm_provider,
@@ -1233,6 +1239,8 @@ const CONTACT_UPDATABLE_FIELDS = {
   linkedinHeadline: 'linkedin_headline',
   linkedinSkills: 'linkedin_skills',
   linkedinEnrichedAt: 'linkedin_enriched_at',
+  talentPipeline: 'talent_pipeline',
+  keyTakeaways: 'key_takeaways',
 } as const
 
 type ContactUpdatableKey = keyof typeof CONTACT_UPDATABLE_FIELDS
@@ -1649,6 +1657,7 @@ export function getContact(contactId: string): ContactDetail | null {
         c.primary_company_id,
         c.title,
         c.contact_type,
+        c.talent_pipeline,
         c.linkedin_url,
         c.crm_contact_id,
         c.crm_provider,
@@ -1680,6 +1689,7 @@ export function getContact(contactId: string): ContactDetail | null {
         c.linkedin_headline,
         c.linkedin_skills,
         c.linkedin_enriched_at,
+        c.key_takeaways,
         c.created_at,
         c.updated_at,
         oc.canonical_name AS primary_company_name,
@@ -1796,6 +1806,7 @@ export function getContact(contactId: string): ContactDetail | null {
     linkedinHeadline: row.linkedin_headline ?? null,
     linkedinSkills: row.linkedin_skills ?? null,
     linkedinEnrichedAt: row.linkedin_enriched_at ?? null,
+    keyTakeaways: row.key_takeaways ?? null,
     noteCount: (() => {
       try {
         const countRow = db.prepare('SELECT COUNT(*) as count FROM notes WHERE contact_id = ?').get(contactId) as { count: number } | undefined

@@ -95,7 +95,7 @@ ${context}
 
 User question: ${enhancedQuestion}`
 
-  const provider = getProvider()
+  const provider = getProvider('chat')
   chatAbortController = new AbortController()
   const result = await provider.generateSummary(MEETING_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
   chatAbortController = null
@@ -317,7 +317,7 @@ User question: ${enhancedQuestion}
 
 Please answer based on the meeting content above. Cite the meeting title and date when referencing specific information.`
 
-  const provider = getProvider()
+  const provider = getProvider('chat')
   chatAbortController = new AbortController()
   const result = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
   chatAbortController = null

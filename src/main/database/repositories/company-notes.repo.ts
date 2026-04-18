@@ -39,7 +39,7 @@ export function createCompanyNote(
     if (existing) {
       if (existing.company_id === data.companyId) return _repo.get(existing.id)
       if (existing.company_id === null) {
-        db.prepare(`UPDATE notes SET company_id = ?, updated_at = datetime('now') WHERE id = ?`)
+        db.prepare(`UPDATE notes SET company_id = ? WHERE id = ?`)
           .run(data.companyId, existing.id)
         return _repo.get(existing.id)
       }

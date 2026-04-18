@@ -27,6 +27,7 @@ export const CONTACT_HARDCODED_FIELDS: HardcodedFieldDef[] = [
   { key: 'tags',                label: 'Tags',             defaultSection: 'professional'  },
   { key: 'pronouns',            label: 'Pronouns',         defaultSection: 'professional'  },
   // Relationship
+  { key: 'talentPipeline',      label: 'Talent Pipeline',  defaultSection: 'relationship'  },
   { key: 'lastMetEvent',        label: 'Last Met At',      defaultSection: 'relationship'  },
   { key: 'warmIntroPath',       label: 'Warm Intro Path',  defaultSection: 'relationship'  },
   { key: 'notes',               label: 'Notes',            defaultSection: 'relationship'  },

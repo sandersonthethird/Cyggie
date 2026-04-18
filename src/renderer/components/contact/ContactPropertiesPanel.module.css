@@ -1,22 +1,52 @@
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 0;
-  padding-bottom: 32px;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
 }
 
-.backBtn {
-  font-size: 13px;
-  color: var(--color-primary);
-  margin-bottom: 12px;
-  padding: 4px 0;
-  background: none;
-  border: none;
-  cursor: pointer;
-  display: block;
+.headerCard {
+  position: relative;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--cv-radius);
+  padding: 0 16px;
 }
-.backBtn:hover {
-  opacity: 0.7;
+
+.enrichBadge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.enrichBadge:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.enrichBadge:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bodyCard {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--cv-radius);
+  padding: 0 16px 32px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .header {
@@ -24,12 +54,6 @@
   align-items: flex-start;
   gap: 12px;
   padding: 16px 0 12px;
-  border-bottom: 1px solid var(--color-bg-tertiary);
-  margin-bottom: 12px;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background: var(--color-card-bg);
 }
 
 .headerMeta {
@@ -74,9 +98,14 @@
   font-family: inherit;
 }
 
-.titleAndCompany {
+.companyRow {
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.titleRow {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   font-size: 12px;
@@ -162,6 +191,14 @@
 .chipInvestor { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
 .chipFounder  { background: var(--chip-process-bg);  color: var(--chip-process-text); }
 .chipOperator { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+
+/* ── Talent Pipeline stage chip colors ── */
+.pipelineIdentified          { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.pipelineExploring           { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.pipelineIdeating            { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
+.pipelineFundraising         { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.pipelinePortfolioCandidate  { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
+.pipelineInternalCandidate   { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
 
 /* ── Configure summary button + popover wrapper ── */
 .configureWrap {
@@ -374,18 +411,21 @@
 /* Edit / Done buttons */
 .editBtn {
   flex-shrink: 0;
-  align-self: flex-start;
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--color-success, #28a745);
+  background: transparent;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 6px;
+  padding: 5px 14px;
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s;
 }
 
 .editBtn:hover {
-  opacity: 0.75;
+  border-color: var(--color-text-secondary);
+  color: var(--color-text);
 }
 
 .deleteBtn {
@@ -539,41 +579,6 @@
 .dragOverFieldIndicator {
   border-top: 2px solid var(--color-primary);
   border-radius: 2px;
-}
-
-/* ── Enrichment banner ── */
-.enrichBanner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  background: rgba(var(--color-primary-rgb, 59,130,246), 0.08);
-  border-bottom: 1px solid var(--color-border);
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-.enrichBannerBtn {
-  padding: 4px 10px;
-  background: var(--color-primary);
-  color: white;
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s;
-}
-
-.enrichBannerBtn:hover:not(:disabled) {
-  background: var(--color-primary-hover);
-}
-
-.enrichBannerBtn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 /* ── Source badge (📋 tooltip) ── */
@@ -779,6 +784,22 @@
   position: relative;
 }
 
+.stickyAddFieldBar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  background: var(--color-bg);
+  padding: 8px 0;
+  border-top: 1px solid var(--color-bg-tertiary);
+}
+
+/* Open the Add Field dropdown upward from the sticky bar */
+.stickyAddFieldBar .addFieldContainer > div {
+  bottom: 100%;
+  top: auto;
+  margin-bottom: 4px;
+}
+
 /* ── Prior Company multi-value editor ── */
 .priorCompanyField {
   display: flex;
@@ -903,14 +924,12 @@
   font-style: italic;
 }
 
-.linkedinEnrichRow {
+.linkedinStatusRow {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
+  padding: 4px 0 8px;
   flex-wrap: wrap;
-  border-top: 1px solid var(--color-bg-tertiary);
-  margin-top: 4px;
 }
 
 .linkedinEnrichedAgo {
@@ -1045,4 +1064,268 @@
   color: var(--color-text-secondary);
   line-height: 1.6;
   padding: 4px 0;
+}
+
+/* ── Fundraising callout ── */
+.fundraisingCallout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0 8px;
+  padding: 8px 12px;
+  background: var(--chip-success-bg);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--chip-success-text);
+}
+
+.fundraisingCalloutBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--chip-success-text);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+}
+.fundraisingCalloutBtn:hover { opacity: 0.75; }
+
+/* ── Header: compact chip row (contact type + last touch) ── */
+.headerChipRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── Header: Edit + Email action row ── */
+.headerActionRow {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.emailActionBtn {
+  display: inline-block;
+  padding: 5px 14px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.12s;
+  font-family: inherit;
+}
+.emailActionBtn:hover { opacity: 0.85; }
+
+.linkedinHeaderBtn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 6px;
+  padding: 5px 14px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s, opacity 0.12s;
+}
+.linkedinHeaderBtn:hover:not(:disabled) {
+  border-color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+}
+.linkedinHeaderBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Contact metadata strip ── */
+.metaStrip {
+  padding: 0 0 10px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.metaRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  min-width: 0;
+}
+.metaRowCopyable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  transition: background 0.1s;
+  position: relative;
+}
+.metaRowCopyable:hover { background: var(--color-bg-secondary); }
+.metaIcon { flex-shrink: 0; font-size: 12px; width: 16px; text-align: center; opacity: 0.6; }
+.metaValue { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.metaLink {
+  color: var(--color-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.metaLink:hover { text-decoration: underline; }
+.copiedToast {
+  font-size: 10px;
+  color: var(--color-primary);
+  font-weight: 600;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.metaInput {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-input-bg, var(--color-bg));
+  color: var(--color-text-primary);
+  outline: none;
+}
+.metaInput:focus {
+  border-color: var(--color-primary);
+}
+.metaInput::placeholder {
+  color: var(--color-text-tertiary);
+}
+.metaInputHalf {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Key Takeaways card ── */
+:root {
+  --color-kt-bg: #FEF2F2;
+  --color-kt-bg-hover: #fce7e7;
+  --color-input-bg: #fff;
+}
+.ktCard {
+  background: var(--color-kt-bg);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--cv-radius);
+  padding: 12px 14px;
+}
+.ktHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ktTitle {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+}
+.ktActions { display: flex; gap: 6px; align-items: center; }
+.ktEditBtn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--color-primary);
+  cursor: pointer;
+  background: transparent;
+  color: var(--color-primary);
+  font-family: inherit;
+}
+.ktEditBtn:hover { background: var(--color-kt-bg-hover); }
+.ktGenerateBtn {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.ktGenerateBtn:hover { opacity: 0.85; }
+.ktGenerateBtn:disabled { opacity: 0.55; cursor: not-allowed; }
+.ktBullets { display: flex; flex-direction: column; gap: 5px; }
+.ktBullet {
+  font-size: 12px;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+.ktEmpty {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  line-height: 1.5;
+}
+.ktCursor {
+  font-size: 12px;
+  color: var(--color-primary);
+  animation: ktBlink 1s step-end infinite;
+  line-height: 1;
+}
+@keyframes ktBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+.ktTextarea {
+  width: 100%;
+  min-height: 90px;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--color-primary);
+  border-radius: 4px;
+  resize: vertical;
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  box-sizing: border-box;
+  outline: none;
+  line-height: 1.5;
+}
+.ktSaveActions { display: flex; gap: 6px; margin-top: 8px; }
+.ktSaveBtn {
+  font-size: 11px;
+  padding: 3px 12px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ktCancelBtn {
+  font-size: 11px;
+  padding: 3px 12px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ktError {
+  font-size: 11px;
+  color: var(--color-primary);
+  margin-top: 6px;
+  line-height: 1.4;
 }

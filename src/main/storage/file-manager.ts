@@ -202,7 +202,42 @@ export function renameRecording(
 }
 
 const READABLE_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.csv'])
-const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+
+// Minimum character count to consider text extraction successful.
+// Matches MIN_TEXT_LENGTH in pitch-deck-ingestion.service.ts.
+const MIN_PDF_TEXT_LENGTH = 100
+
+/**
+ * Attempt text extraction via pdfjs-dist (legacy Node build).
+ * Returns extracted text, or null if extraction yields less than MIN_PDF_TEXT_LENGTH chars.
+ *
+ * pdfjs-dist handles more font encodings, ligatures, and character maps than pdf-parse,
+ * so it is used as a second-pass fallback before triggering the vision (image) path.
+ */
+async function extractTextWithPdfjs(buf: Buffer): Promise<string | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf') as {
+      getDocument: (opts: { data: Uint8Array; disableFontFace: boolean }) => { promise: Promise<{
+        numPages: number
+        getPage: (n: number) => Promise<{ getTextContent: () => Promise<{ items: { str: string }[] }> }>
+      }> }
+    }
+    const data = new Uint8Array(buf)
+    const doc = await pdfjsLib.getDocument({ data, disableFontFace: true }).promise
+    const parts: string[] = []
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i)
+      const content = await page.getTextContent()
+      parts.push(content.items.map((item) => item.str).join(' '))
+    }
+    const text = parts.join('\n').trim()
+    return text.length >= MIN_PDF_TEXT_LENGTH ? text : null
+  } catch {
+    return null
+  }
+}
 
 export async function readLocalFile(filePath: string): Promise<string | null> {
   try {
@@ -212,11 +247,19 @@ export async function readLocalFile(filePath: string): Promise<string | null> {
     const ext = extname(filePath).toLowerCase()
     if (!READABLE_EXTENSIONS.has(ext)) return null
     if (ext === '.pdf') {
+      const buf = readFileSync(filePath)
+
+      // Pass 1: pdf-parse (fast, good for standard text-layer PDFs)
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
-      const buf = readFileSync(filePath)
-      const result = await pdfParse(buf)
-      return result.text || null
+      const parsed = await pdfParse(buf)
+      if (parsed.text && parsed.text.trim().length >= MIN_PDF_TEXT_LENGTH) {
+        return parsed.text
+      }
+
+      // Pass 2: pdfjs-dist (handles more font encodings, ligatures, CID fonts)
+      // Falls through to null if still insufficient — triggers vision fallback in ingestion service
+      return await extractTextWithPdfjs(buf)
     }
     return readFileSync(filePath, 'utf-8')
   } catch {

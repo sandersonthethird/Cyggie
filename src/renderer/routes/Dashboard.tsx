@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Video, MapPin, SlidersHorizontal } from 'lucide-react'
+import { Video, MapPin, ChevronDown } from 'lucide-react'
 import { useAppStore } from '../stores/app.store'
 import { useRecordingStore } from '../stores/recording.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
@@ -15,7 +15,8 @@ import { DEFAULT_ACTIVITY_FILTER } from '../../shared/types/dashboard'
 import type {
   DashboardActivityFilter,
   DashboardActivityItem,
-  DashboardData
+  DashboardData,
+  DashboardEntityTypeFilter
 } from '../../shared/types/dashboard'
 import type { Meeting } from '../../shared/types/meeting'
 import type { TaskListItem } from '../../shared/types/task'
@@ -126,6 +127,46 @@ const ACTIVITY_ICONS: Record<string, string> = {
   meeting: '\u{1F4C5}',
   email: '\u2709',
   note: '\u270E'
+}
+
+const STAGE_FILTER_OPTIONS: { value: CompanyPipelineStage; label: string }[] = [
+  { value: 'screening',     label: 'Screening' },
+  { value: 'diligence',     label: 'Diligence' },
+  { value: 'decision',      label: 'Decision' },
+  { value: 'documentation', label: 'Documentation' },
+  { value: 'pass',          label: 'Pass' },
+]
+
+const ENTITY_TYPE_OPTIONS: { value: DashboardEntityTypeFilter; label: string }[] = [
+  { value: 'portfolio', label: 'Portfolio' },
+  { value: 'lp',        label: 'LP' },
+  { value: 'vc_fund',   label: 'VC Fund' },
+  { value: 'prospect',  label: 'Prospect' },
+]
+
+const ALL_STAGES = STAGE_FILTER_OPTIONS.map(o => o.value)
+const ALL_ENTITY_TYPES = ENTITY_TYPE_OPTIONS.map(o => o.value)
+
+function isDefaultFilter(f: DashboardActivityFilter): boolean {
+  return (
+    f.types.length === 2 &&
+    f.types.includes('meeting') &&
+    f.types.includes('email') &&
+    f.pipelineStages === null &&
+    f.entityTypes === null
+  )
+}
+
+// Toggle a value in an array-or-null filter field.
+// null means "all" — expanding to full list before toggling.
+// Returns null when the result would equal all items or be empty (reset to "show all").
+function toggleFilterValue<T>(current: T[] | null, allValues: T[], value: T): T[] | null {
+  const expanded = current ?? allValues
+  const next = expanded.includes(value)
+    ? expanded.filter(v => v !== value)
+    : [...expanded, value]
+  if (next.length === 0 || next.length === allValues.length) return null
+  return next
 }
 
 function platformIcon(platform: string): React.ReactNode {
@@ -254,13 +295,12 @@ export default function Dashboard() {
 
   const saveAndReloadFilter = useCallback(async (next: DashboardActivityFilter) => {
     setActivityFilter(next)
-    setFilterOpen(false)
+    // Panel stays open — multi-select; closed only via click-outside or button toggle
     try {
       await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'dashboardActivityFilter', JSON.stringify(next))
       void loadDashboard()
     } catch {
       setActivityFilter(activityFilter)
-      setFilterOpen(true)
     }
   }, [loadDashboard, activityFilter])
 
@@ -524,18 +564,24 @@ export default function Dashboard() {
               <span className={styles.sectionLabel}>RECENT TOUCHES</span>
               <div className={styles.filterContainer} ref={filterRef}>
                 <button
-                  className={`${styles.filterBtn} ${filterOpen ? styles.filterBtnActive : ''}`}
+                  className={[
+                    styles.filterTextBtn,
+                    filterOpen ? styles.filterTextBtnOpen : '',
+                    !isDefaultFilter(activityFilter) ? styles.filterTextBtnFiltered : '',
+                  ].filter(Boolean).join(' ')}
                   onClick={() => setFilterOpen(v => !v)}
-                  title="Filter activity"
                 >
-                  <SlidersHorizontal size={12} strokeWidth={2} />
+                  Filter
+                  <ChevronDown size={10} strokeWidth={2.5} />
                 </button>
                 {filterOpen && (
                   <div className={styles.filterDropdown}>
+
+                    {/* TYPE */}
                     <div className={styles.filterSection}>
-                      <span className={styles.filterLabel}>SHOW</span>
-                      <div className={styles.filterRow}>
-                        {(['meeting', 'email'] as const).map(type => {
+                      <span className={styles.filterSectionLabel}>TYPE</span>
+                      <div className={styles.filterChips}>
+                        {(['email', 'meeting'] as const).map(type => {
                           const active = activityFilter.types.includes(type)
                           return (
                             <button
@@ -549,36 +595,62 @@ export default function Dashboard() {
                                 void saveAndReloadFilter({ ...activityFilter, types: next as DashboardActivityFilter['types'] })
                               }}
                             >
-                              {type === 'meeting' ? 'Meetings' : 'Emails'}
+                              {type === 'email' ? 'Emails' : 'Meetings'}
                             </button>
                           )
                         })}
                       </div>
                     </div>
-                    {activityFilter.types.includes('email') && (
-                      <div className={styles.filterSection}>
-                        <span className={styles.filterLabel}>EMAILS FROM</span>
-                        {([
-                          { value: 'qualified', label: 'Qualified', desc: 'Portfolio, Prospect, Investors, Founders, LPs' },
-                          { value: 'all',       label: 'Everyone',  desc: 'All synced email' },
-                        ] as const).map(opt => (
-                          <button
-                            key={opt.value}
-                            className={`${styles.filterOption} ${activityFilter.emailCompanyFilter === opt.value ? styles.filterOptionActive : ''}`}
-                            onClick={() => void saveAndReloadFilter({ ...activityFilter, emailCompanyFilter: opt.value })}
-                          >
-                            <span className={styles.filterOptionLabel}>{opt.label}</span>
-                            <span className={styles.filterOptionDesc}>{opt.desc}</span>
-                          </button>
-                        ))}
+
+                    {/* STAGE */}
+                    <div className={styles.filterSection}>
+                      <span className={styles.filterSectionLabel}>STAGE</span>
+                      <div className={styles.filterChips}>
+                        {STAGE_FILTER_OPTIONS.map(({ value, label }) => {
+                          const active = activityFilter.pipelineStages === null
+                            || activityFilter.pipelineStages.includes(value)
+                          return (
+                            <button
+                              key={value}
+                              className={`${styles.filterChip} ${active ? styles.filterChipActive : ''}`}
+                              onClick={() => void saveAndReloadFilter({
+                                ...activityFilter,
+                                pipelineStages: toggleFilterValue(activityFilter.pipelineStages, ALL_STAGES, value)
+                              })}
+                            >
+                              {label}
+                            </button>
+                          )
+                        })}
                       </div>
-                    )}
+                    </div>
+
+                    {/* COMPANY TYPE */}
+                    <div className={styles.filterSection}>
+                      <span className={styles.filterSectionLabel}>COMPANY TYPE</span>
+                      <div className={styles.filterChips}>
+                        {ENTITY_TYPE_OPTIONS.map(({ value, label }) => {
+                          const active = activityFilter.entityTypes === null
+                            || activityFilter.entityTypes.includes(value)
+                          return (
+                            <button
+                              key={value}
+                              className={`${styles.filterChip} ${active ? styles.filterChipActive : ''}`}
+                              onClick={() => void saveAndReloadFilter({
+                                ...activityFilter,
+                                entityTypes: toggleFilterValue(activityFilter.entityTypes, ALL_ENTITY_TYPES, value)
+                              })}
+                            >
+                              {label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+
                   </div>
                 )}
               </div>
-              <button className={styles.viewAllBtn} onClick={() => navigate('/meetings')}>
-                View All Activity
-              </button>
             </div>
             <div className={styles.touchesScroll}>
             {(data?.recentActivity || []).slice(0, 5).map(item => (

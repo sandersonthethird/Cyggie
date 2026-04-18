@@ -66,6 +66,17 @@ const CLAUDE_MODEL_OPTIONS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ]
 
+const INTELLIGENCE_FUNCTIONS: Array<{
+  label: string
+  claudeKey: keyof SettingsState
+  openAiKey: keyof SettingsState
+  hint: string
+}> = [
+  { label: 'Summary', claudeKey: 'claudeSummaryModel', openAiKey: 'openAiSummaryModel', hint: 'Meeting summaries, key takeaways, and enrichment proposals' },
+  { label: 'Enrichment', claudeKey: 'claudeEnrichmentModel', openAiKey: 'openAiEnrichmentModel', hint: 'Contact/company web enrichment and LinkedIn inference' },
+  { label: 'Chat', claudeKey: 'claudeChatModel', openAiKey: 'openAiChatModel', hint: 'In-app AI chat on contacts, companies, and CRM queries' },
+]
+
 type SettingsTab = 'profile' | 'ai' | 'integrations' | 'import' | 'custom-fields' | 'templates'
 
 const TAB_LABELS: Record<SettingsTab, string> = {
@@ -83,16 +94,22 @@ interface SettingsState {
   claudeApiKey: string
   claudeSummaryModel: string
   claudeEnrichmentModel: string
+  claudeChatModel: string
   ollamaHost: string
   ollamaModel: string
   openAiApiKey: string
   openAiSummaryModel: string
   openAiEnrichmentModel: string
+  openAiChatModel: string
+  webShareApiKey: string
+  webShareModel: string
   showLiveTranscript: boolean
   defaultMaxSpeakers: string
   companyDriveRootFolder: string
   companyLocalFilesRoot: string
   autoSyncEmails: boolean
+  autoGenerateKeyTakeaways: boolean
+  autoEnhanceAfterMeeting: boolean
   exaApiKey: string
 }
 
@@ -112,20 +129,26 @@ export default function Settings() {
     claudeApiKey: '',
     claudeSummaryModel: 'claude-sonnet-4-5-20250929',
     claudeEnrichmentModel: 'claude-haiku-4-5-20251001',
+    claudeChatModel: 'claude-sonnet-4-5-20250929',
     ollamaHost: 'http://127.0.0.1:11434',
     ollamaModel: 'llama3.1',
     openAiApiKey: '',
     openAiSummaryModel: 'gpt-4o',
     openAiEnrichmentModel: 'gpt-4o-mini',
+    openAiChatModel: 'gpt-4o',
+    webShareApiKey: '',
+    webShareModel: 'claude-sonnet-4-5-20250929',
     showLiveTranscript: true,
     defaultMaxSpeakers: '',
     companyDriveRootFolder: '',
     companyLocalFilesRoot: '',
     autoSyncEmails: true,
+    autoGenerateKeyTakeaways: false,
+    autoEnhanceAfterMeeting: false,
     exaApiKey: ''
   })
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false)
-  const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai' | 'exa'>('claude')
+  const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai' | 'exa' | 'webShare' | 'deepgram'>('claude')
   const [apiKeyDraft, setApiKeyDraft] = useState('')
   const [showApiKeyDraft, setShowApiKeyDraft] = useState(false)
   const [isSavingKey, setIsSavingKey] = useState(false)
@@ -189,7 +212,7 @@ export default function Settings() {
   const [calendarAccountEmail, setCalendarAccountEmail] = useState<string | null>(null)
   const [gmailAccountEmail, setGmailAccountEmail] = useState<string | null>(null)
   const [editingThresholds, setEditingThresholds] = useState(false)
-  const [editingTranscription, setEditingTranscription] = useState(false)
+  // editingTranscription removed — Deepgram key now uses modal, controls always visible
 
   const refreshGoogleScopes = useCallback(async () => {
     const [driveScopeResult, driveFilesScopeResult, gmailConnectedResult] = await Promise.allSettled([
@@ -235,17 +258,23 @@ export default function Settings() {
             claudeApiKey: all.claudeApiKey || '',
             claudeSummaryModel: all.claudeSummaryModel || 'claude-sonnet-4-5-20250929',
             claudeEnrichmentModel: all.claudeEnrichmentModel || 'claude-haiku-4-5-20251001',
+            claudeChatModel: all.claudeChatModel || 'claude-sonnet-4-5-20250929',
             ollamaHost: all.ollamaHost || 'http://127.0.0.1:11434',
             ollamaModel: all.ollamaModel || 'llama3.1',
             openAiApiKey: all.openAiApiKey || '',
             openAiSummaryModel: all.openAiSummaryModel || 'gpt-4o',
             openAiEnrichmentModel: all.openAiEnrichmentModel || 'gpt-4o-mini',
+            openAiChatModel: all.openAiChatModel || 'gpt-4o',
             showLiveTranscript: all.showLiveTranscript !== 'false',
             defaultMaxSpeakers: all.defaultMaxSpeakers || '',
             companyDriveRootFolder: all.companyDriveRootFolder || '',
             companyLocalFilesRoot: all.companyLocalFilesRoot || '',
             autoSyncEmails: all.autoSyncEmails !== 'false',
-            exaApiKey: all.exaApiKey || ''
+            autoGenerateKeyTakeaways: all.autoGenerateKeyTakeaways === 'true',
+            autoEnhanceAfterMeeting: all.autoEnhanceAfterMeeting === 'true',
+            exaApiKey: all.exaApiKey || '',
+            webShareApiKey: all.webShareApiKey || '',
+            webShareModel: all.webShareModel || 'claude-sonnet-4-5-20250929'
           })
           setStaleRelationshipDays(all.dashboardStaleRelationshipDays || '21')
           setStalledPipelineDays(all.dashboardStalledPipelineDays || '21')
@@ -292,7 +321,6 @@ export default function Settings() {
     const deepgramMissing = !settings.deepgramApiKey
     const claudeMissing = settings.llmProvider === 'claude' && !settings.claudeApiKey
     const openAiMissing = settings.llmProvider === 'openai' && !settings.openAiApiKey
-    if (deepgramMissing) setEditingTranscription(true)
     if ((deepgramMissing || claudeMissing || openAiMissing) && !searchParams.get('tab')) {
       setActiveTab('ai')
     }
@@ -859,7 +887,7 @@ export default function Settings() {
                 <a href="https://console.anthropic.com/" target="_blank" rel="noreferrer">
                   console.anthropic.com
                 </a>
-                , go to Settings &gt; API Keys, and create a new key. Click <strong>Add key</strong> in the Summarization section below.
+                , go to Settings &gt; API Keys, and create a new key. Click <strong>Add key</strong> in the Intelligence section below.
               </li>
             )}
             {needsOpenAi && (
@@ -868,7 +896,7 @@ export default function Settings() {
                 <a href="https://platform.openai.com/" target="_blank" rel="noreferrer">
                   platform.openai.com
                 </a>
-                , go to API Keys, and create a new key. Click <strong>Add key</strong> in the Summarization section below.
+                , go to API Keys, and create a new key. Click <strong>Add key</strong> in the Intelligence section below.
               </li>
             )}
           </ol>
@@ -881,99 +909,67 @@ export default function Settings() {
       )}
 
       <section className={styles.section}>
-        <div className={styles.sectionTitleRow}>
-          <h3 className={styles.sectionTitle}>Transcription</h3>
-          {!editingTranscription && (
-            <button className={styles.linkBtn} onClick={() => setEditingTranscription(true)}>
-              Edit
-            </button>
-          )}
-        </div>
+        <h3 className={styles.sectionTitle}>Transcription</h3>
         <p className={styles.hint} style={{ marginBottom: 12 }}>
           Powered by Deepgram. Converts meeting audio into a real-time transcript during recording.
         </p>
-        {editingTranscription ? (
-          <>
-            <div className={styles.field}>
-              <input
-                type="password"
-                className={styles.input}
-                value={settings.deepgramApiKey}
-                onChange={(e) => setSettings({ ...settings, deepgramApiKey: e.target.value })}
-                placeholder="Enter your Deepgram API key"
-              />
-              <p className={styles.hint}>
-                Get your API key at{' '}
-                <a href="https://console.deepgram.com" target="_blank" rel="noreferrer">
-                  console.deepgram.com
-                </a>
-              </p>
-            </div>
-            <div className={styles.inlineFieldRow}>
-              <span className={styles.inlineFieldLabel}>Live transcript</span>
-              <select
-                className={styles.inlineSelect}
-                value={settings.showLiveTranscript ? 'on' : 'off'}
-                onChange={(e) => setSettings({ ...settings, showLiveTranscript: e.target.value === 'on' })}
+
+        <div className={styles.functionRow}>
+          <div className={styles.functionLeft}>
+            <span className={styles.functionLabel}>Deepgram API Key</span>
+          </div>
+          <div className={styles.functionRight}>
+            {settings.deepgramApiKey
+              ? <span className={styles.statusConfigured}>Configured</span>
+              : <span className={styles.statusMissing}>Not configured</span>}
+            <button
+              className={styles.changeKeyBtn}
+              onClick={() => { setApiKeyDraft(''); setTestKeyStatus(null); setShowApiKeyDraft(false); setApiKeyModalProvider('deepgram'); setApiKeyModalOpen(true) }}
+            >
+              Change Key
+            </button>
+            {settings.deepgramApiKey && (
+              <button
+                className={styles.changeKeyBtn}
+                onClick={async () => {
+                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'deepgramApiKey', '')
+                  setSettings((prev) => ({ ...prev, deepgramApiKey: '' }))
+                }}
               >
-                <option value="on">On</option>
-                <option value="off">Off</option>
-              </select>
-            </div>
-            <div className={styles.inlineFieldRow}>
-              <span className={styles.inlineFieldLabel}>Default speaker count</span>
-              <select
-                className={styles.inlineSelect}
-                value={settings.defaultMaxSpeakers || ''}
-                onChange={(e) => setSettings({ ...settings, defaultMaxSpeakers: e.target.value })}
-              >
-                <option value="">Auto-detect</option>
-                {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
-                  <option key={n} value={String(n)}>{n}</option>
-                ))}
-              </select>
-            </div>
-            <div className={styles.profileEditActions}>
-              <button className={styles.connectBtn} onClick={() => setEditingTranscription(false)}>
-                Done
+                Remove
               </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <p className={styles.profileMeta}>
-              API key: {settings.deepgramApiKey ? '••••••••' : <span style={{ color: 'var(--color-danger, #ef4444)' }}>Not configured</span>}
-            </p>
-            <div className={styles.inlineFieldRow}>
-              <span className={styles.inlineFieldLabel}>Live transcript</span>
-              <select
-                className={styles.inlineSelect}
-                value={settings.showLiveTranscript ? 'on' : 'off'}
-                onChange={(e) => setSettings({ ...settings, showLiveTranscript: e.target.value === 'on' })}
-              >
-                <option value="on">On</option>
-                <option value="off">Off</option>
-              </select>
-            </div>
-            <div className={styles.inlineFieldRow}>
-              <span className={styles.inlineFieldLabel}>Default speaker count</span>
-              <select
-                className={styles.inlineSelect}
-                value={settings.defaultMaxSpeakers || ''}
-                onChange={(e) => setSettings({ ...settings, defaultMaxSpeakers: e.target.value })}
-              >
-                <option value="">Auto-detect</option>
-                {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
-                  <option key={n} value={String(n)}>{n}</option>
-                ))}
-              </select>
-            </div>
-          </>
-        )}
+            )}
+          </div>
+        </div>
+
+        <div className={styles.inlineFieldRow} style={{ marginTop: 12 }}>
+          <span className={styles.inlineFieldLabel}>Live transcript</span>
+          <select
+            className={styles.inlineSelect}
+            value={settings.showLiveTranscript ? 'on' : 'off'}
+            onChange={(e) => setSettings({ ...settings, showLiveTranscript: e.target.value === 'on' })}
+          >
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </div>
+        <div className={styles.inlineFieldRow}>
+          <span className={styles.inlineFieldLabel}>Default speaker count</span>
+          <select
+            className={styles.inlineSelect}
+            value={settings.defaultMaxSpeakers || ''}
+            onChange={(e) => setSettings({ ...settings, defaultMaxSpeakers: e.target.value })}
+          >
+            <option value="">Auto-detect</option>
+            {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={String(n)}>{n}</option>
+            ))}
+          </select>
+        </div>
       </section>
 
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Summarization</h3>
+        <h3 className={styles.sectionTitle}>Intelligence</h3>
         <p className={styles.hint} style={{ marginBottom: 12 }}>
           Generates meeting summaries, extracts action items, and powers AI chat. Also used for contact web enrichment (title and LinkedIn inference).
         </p>
@@ -994,134 +990,43 @@ export default function Settings() {
           </select>
         </div>
 
-        {settings.llmProvider === 'claude' && (
-          <>
-            <div className={styles.field} style={{ marginTop: 12 }}>
-              <label className={styles.label}>Claude API Key</label>
-              <div className={styles.apiKeyRow}>
-                <span className={styles.apiKeyMask}>
-                  {settings.claudeApiKey ? '••••••••' : <span style={{ color: 'var(--color-danger, #ef4444)' }}>Not configured</span>}
-                </span>
-                <button
-                  className={styles.connectBtn}
-                  onClick={() => { setApiKeyDraft(''); setTestKeyStatus(null); setShowApiKeyDraft(false); setApiKeyModalProvider('claude'); setApiKeyModalOpen(true) }}
-                >
-                  {settings.claudeApiKey ? 'Change key' : 'Add key'}
-                </button>
-                {settings.claudeApiKey && (
-                  <button
-                    className={styles.connectBtn}
-                    onClick={() => handleTestKey('claude', settings.claudeApiKey)}
-                    disabled={isTesting}
-                  >
-                    {isTesting ? 'Testing…' : 'Test key'}
-                  </button>
-                )}
-              </div>
-              {testKeyStatus && apiKeyModalProvider === 'claude' && !apiKeyModalOpen && (
-                <div style={{ marginTop: 6, fontSize: 13, color: testKeyStatus.ok ? 'var(--color-success, #16a34a)' : 'var(--color-danger, #ef4444)' }}>
-                  {testKeyStatus.ok ? `✓ ${testKeyStatus.message}` : `✗ ${testKeyStatus.message}`}
+        {(settings.llmProvider === 'claude' || settings.llmProvider === 'openai') && (
+          <div style={{ marginTop: 12 }}>
+            {INTELLIGENCE_FUNCTIONS.map((fn) => {
+              const modelKey = settings.llmProvider === 'claude' ? fn.claudeKey : fn.openAiKey
+              const modelOptions = settings.llmProvider === 'claude' ? CLAUDE_MODEL_OPTIONS : OPENAI_MODEL_OPTIONS
+              const providerKey = settings.llmProvider === 'claude' ? 'claude' as const : 'openai' as const
+              return (
+                <div key={fn.label} className={styles.functionRow}>
+                  <div className={styles.functionLeft}>
+                    <span className={styles.functionLabel}>{fn.label}</span>
+                    <div className={styles.functionHint}>{fn.hint}</div>
+                  </div>
+                  <div className={styles.functionRight}>
+                    <select
+                      className={styles.inlineSelect}
+                      value={settings[modelKey] as string}
+                      onChange={async (e) => {
+                        const v = e.target.value
+                        setSettings((prev) => ({ ...prev, [modelKey]: v }))
+                        await api.invoke(IPC_CHANNELS.SETTINGS_SET, modelKey, v)
+                      }}
+                    >
+                      {modelOptions.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                    <button
+                      className={styles.changeKeyBtn}
+                      onClick={() => { setApiKeyDraft(''); setTestKeyStatus(null); setShowApiKeyDraft(false); setApiKeyModalProvider(providerKey); setApiKeyModalOpen(true) }}
+                    >
+                      Change Key
+                    </button>
+                  </div>
                 </div>
-              )}
-            </div>
-            <div className={styles.inlineFieldRow}>
-              <span className={styles.inlineFieldLabel}>Summary model</span>
-              <select
-                className={styles.inlineSelect}
-                value={settings.claudeSummaryModel}
-                onChange={async (e) => {
-                  const v = e.target.value
-                  setSettings((prev) => ({ ...prev, claudeSummaryModel: v }))
-                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'claudeSummaryModel', v)
-                }}
-              >
-                {CLAUDE_MODEL_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className={styles.inlineFieldRow}>
-              <span className={styles.inlineFieldLabel}>Enrichment model</span>
-              <select
-                className={styles.inlineSelect}
-                value={settings.claudeEnrichmentModel}
-                onChange={async (e) => {
-                  const v = e.target.value
-                  setSettings((prev) => ({ ...prev, claudeEnrichmentModel: v }))
-                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'claudeEnrichmentModel', v)
-                }}
-              >
-                {CLAUDE_MODEL_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-          </>
-        )}
-
-        {settings.llmProvider === 'openai' && (
-          <>
-            <div className={styles.field} style={{ marginTop: 12 }}>
-              <label className={styles.label}>OpenAI API Key</label>
-              <div className={styles.apiKeyRow}>
-                <span className={styles.apiKeyMask}>
-                  {settings.openAiApiKey ? '••••••••' : <span style={{ color: 'var(--color-danger, #ef4444)' }}>Not configured</span>}
-                </span>
-                <button
-                  className={styles.connectBtn}
-                  onClick={() => { setApiKeyDraft(''); setTestKeyStatus(null); setShowApiKeyDraft(false); setApiKeyModalProvider('openai'); setApiKeyModalOpen(true) }}
-                >
-                  {settings.openAiApiKey ? 'Change key' : 'Add key'}
-                </button>
-                {settings.openAiApiKey && (
-                  <button
-                    className={styles.connectBtn}
-                    onClick={() => handleTestKey('openai', settings.openAiApiKey)}
-                    disabled={isTesting}
-                  >
-                    {isTesting ? 'Testing…' : 'Test key'}
-                  </button>
-                )}
-              </div>
-              {testKeyStatus && apiKeyModalProvider === 'openai' && !apiKeyModalOpen && (
-                <div style={{ marginTop: 6, fontSize: 13, color: testKeyStatus.ok ? 'var(--color-success, #16a34a)' : 'var(--color-danger, #ef4444)' }}>
-                  {testKeyStatus.ok ? `✓ ${testKeyStatus.message}` : `✗ ${testKeyStatus.message}`}
-                </div>
-              )}
-            </div>
-            <div className={styles.inlineFieldRow}>
-              <span className={styles.inlineFieldLabel}>Summary model</span>
-              <select
-                className={styles.inlineSelect}
-                value={settings.openAiSummaryModel}
-                onChange={async (e) => {
-                  const v = e.target.value
-                  setSettings((prev) => ({ ...prev, openAiSummaryModel: v }))
-                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'openAiSummaryModel', v)
-                }}
-              >
-                {OPENAI_MODEL_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className={styles.inlineFieldRow}>
-              <span className={styles.inlineFieldLabel}>Enrichment model</span>
-              <select
-                className={styles.inlineSelect}
-                value={settings.openAiEnrichmentModel}
-                onChange={async (e) => {
-                  const v = e.target.value
-                  setSettings((prev) => ({ ...prev, openAiEnrichmentModel: v }))
-                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'openAiEnrichmentModel', v)
-                }}
-              >
-                {OPENAI_MODEL_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-          </>
+              )
+            })}
+          </div>
         )}
 
         {settings.llmProvider === 'ollama' && (
@@ -1146,28 +1051,63 @@ export default function Settings() {
           </>
         )}
 
-        <div className={styles.field} style={{ marginTop: 24 }}>
-          <label className={styles.label}>Exa API Key</label>
-          <p className={styles.profileMeta} style={{ marginBottom: 8 }}>
-            Used to discover LinkedIn URLs for contacts. Optional — only needed for LinkedIn backfill.
-          </p>
-          <div className={styles.apiKeyRow}>
-            <span className={styles.apiKeyMask}>
-              {settings.exaApiKey ? '••••••••' : <span style={{ color: 'var(--color-text-secondary)' }}>Not configured</span>}
-            </span>
-            <button
-              className={styles.connectBtn}
-              onClick={() => {
-                setApiKeyModalProvider('exa')
-                setApiKeyDraft('')
-                setApiKeyModalOpen(true)
+        <div className={styles.functionRow} style={{ marginTop: 16 }}>
+          <div className={styles.functionLeft}>
+            <span className={styles.functionLabel}>Web Chat</span>
+            <div className={styles.functionHint}>AI chat on publicly shared pages. Falls back to your Claude key if not set.</div>
+          </div>
+          <div className={styles.functionRight}>
+            <select
+              className={styles.inlineSelect}
+              value={settings.webShareModel}
+              onChange={async (e) => {
+                const v = e.target.value
+                setSettings((prev) => ({ ...prev, webShareModel: v }))
+                await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'webShareModel', v)
               }}
             >
-              {settings.exaApiKey ? 'Change key' : 'Add key'}
+              {CLAUDE_MODEL_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <button
+              className={styles.changeKeyBtn}
+              onClick={() => { setApiKeyDraft(''); setShowApiKeyDraft(false); setTestKeyStatus(null); setApiKeyModalProvider('webShare'); setApiKeyModalOpen(true) }}
+            >
+              Change Key
+            </button>
+            {settings.webShareApiKey && (
+              <button
+                className={styles.changeKeyBtn}
+                onClick={async () => {
+                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'webShareApiKey', '')
+                  setSettings((prev) => ({ ...prev, webShareApiKey: '' }))
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className={styles.functionRow}>
+          <div className={styles.functionLeft}>
+            <span className={styles.functionLabel}>Web Search</span>
+            <div className={styles.functionHint}>Exa API — discovers LinkedIn URLs for contacts. Optional.</div>
+          </div>
+          <div className={styles.functionRight}>
+            {settings.exaApiKey
+              ? <span className={styles.statusConfigured}>Configured</span>
+              : <span className={styles.statusMissing}>Not configured</span>}
+            <button
+              className={styles.changeKeyBtn}
+              onClick={() => { setApiKeyDraft(''); setShowApiKeyDraft(false); setTestKeyStatus(null); setApiKeyModalProvider('exa'); setApiKeyModalOpen(true) }}
+            >
+              Change Key
             </button>
             {settings.exaApiKey && (
               <button
-                className={styles.connectBtn}
+                className={styles.changeKeyBtn}
                 onClick={async () => {
                   await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'exaApiKey', '')
                   setSettings((prev) => ({ ...prev, exaApiKey: '' }))
@@ -1178,6 +1118,44 @@ export default function Settings() {
             )}
           </div>
         </div>
+
+        <div className={styles.inlineFieldRow} style={{ marginTop: 24 }}>
+          <span className={styles.inlineFieldLabel}>Auto-generate key takeaways</span>
+          <select
+            className={styles.inlineSelect}
+            value={settings.autoGenerateKeyTakeaways ? 'on' : 'off'}
+            onChange={async (e) => {
+              const v = e.target.value === 'on'
+              setSettings((prev) => ({ ...prev, autoGenerateKeyTakeaways: v }))
+              await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'autoGenerateKeyTakeaways', String(v))
+            }}
+          >
+            <option value="off">Off</option>
+            <option value="on">On</option>
+          </select>
+        </div>
+        <p className={styles.hint} style={{ marginTop: 4 }}>
+          When on, Key Takeaways generate automatically the first time you open a contact with meetings, emails, or notes. When off, click Generate to create them.
+        </p>
+
+        <div className={styles.inlineFieldRow} style={{ marginTop: 16 }}>
+          <span className={styles.inlineFieldLabel}>Auto-enhance notes after meeting</span>
+          <select
+            className={styles.inlineSelect}
+            value={settings.autoEnhanceAfterMeeting ? 'on' : 'off'}
+            onChange={async (e) => {
+              const v = e.target.value === 'on'
+              setSettings((prev) => ({ ...prev, autoEnhanceAfterMeeting: v }))
+              await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'autoEnhanceAfterMeeting', String(v))
+            }}
+          >
+            <option value="off">Off</option>
+            <option value="on">On</option>
+          </select>
+        </div>
+        <p className={styles.hint} style={{ marginTop: 4 }}>
+          Requires a Summary template selected on the meeting.
+        </p>
       </section>
         </>
       )}
@@ -1669,7 +1647,7 @@ export default function Settings() {
         >
           <div className={styles.apiKeyDialog} onClick={(e) => e.stopPropagation()}>
             <h2 className={styles.apiKeyDialogTitle}>
-              {apiKeyModalProvider === 'openai' ? 'Update OpenAI API Key' : apiKeyModalProvider === 'exa' ? 'Update Exa API Key' : 'Update Claude API Key'}
+              {apiKeyModalProvider === 'deepgram' ? 'Update Deepgram API Key' : apiKeyModalProvider === 'openai' ? 'Update OpenAI API Key' : apiKeyModalProvider === 'exa' ? 'Update Exa API Key' : apiKeyModalProvider === 'webShare' ? 'Update Web Share API Key' : 'Update Claude API Key'}
             </h2>
             <div className={styles.apiKeyInputRow}>
               <input
@@ -1678,7 +1656,7 @@ export default function Settings() {
                 autoFocus
                 value={apiKeyDraft}
                 onChange={(e) => { setApiKeyDraft(e.target.value); setTestKeyStatus(null) }}
-                placeholder={apiKeyModalProvider === 'openai' ? 'sk-...' : apiKeyModalProvider === 'exa' ? 'Paste Exa API key…' : 'sk-ant-api03-…'}
+                placeholder={apiKeyModalProvider === 'deepgram' ? 'Paste Deepgram API key…' : apiKeyModalProvider === 'openai' ? 'sk-...' : apiKeyModalProvider === 'exa' ? 'Paste Exa API key…' : 'sk-ant-api03-…'}
               />
               <button
                 className={styles.apiKeyToggle}
@@ -1693,7 +1671,7 @@ export default function Settings() {
               </div>
             )}
             <div className={styles.apiKeyDialogActions}>
-              {apiKeyModalProvider !== 'exa' && (
+              {apiKeyModalProvider !== 'exa' && apiKeyModalProvider !== 'webShare' && apiKeyModalProvider !== 'deepgram' && (
                 <button
                   className={styles.connectBtn}
                   onClick={() => handleTestKey(apiKeyModalProvider as 'claude' | 'openai', apiKeyDraft)}
@@ -1714,9 +1692,17 @@ export default function Settings() {
                 onClick={async () => {
                   setIsSavingKey(true)
                   const trimmed = apiKeyDraft.trim()
-                  if (apiKeyModalProvider === 'exa') {
+                  if (apiKeyModalProvider === 'deepgram') {
+                    await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'deepgramApiKey', trimmed)
+                    setSettings((prev) => ({ ...prev, deepgramApiKey: trimmed }))
+                    setApiKeyModalOpen(false)
+                  } else if (apiKeyModalProvider === 'exa') {
                     await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'exaApiKey', trimmed)
                     setSettings((prev) => ({ ...prev, exaApiKey: trimmed }))
+                    setApiKeyModalOpen(false)
+                  } else if (apiKeyModalProvider === 'webShare') {
+                    await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'webShareApiKey', trimmed)
+                    setSettings((prev) => ({ ...prev, webShareApiKey: trimmed }))
                     setApiKeyModalOpen(false)
                   } else {
                     const result = await handleTestKey(apiKeyModalProvider, apiKeyDraft)

@@ -6,6 +6,7 @@ import type {
   DashboardActivityType,
   DashboardCalendarCompanyContext,
   DashboardData,
+  DashboardEntityTypeFilter,
   DashboardStaleCompany
 } from '../../../shared/types/dashboard'
 import { DEFAULT_ACTIVITY_FILTER } from '../../../shared/types/dashboard'
@@ -185,50 +186,6 @@ const ACTIVITY_SQL_EMAIL_ALL = `
   )
 `
 
-const ACTIVITY_SQL_EMAIL_PIPELINE_PORTFOLIO = `
-  SELECT
-    'email:' || em.id AS id,
-    'email' AS type,
-    COALESCE(NULLIF(TRIM(em.subject), ''), '(no subject)') AS title,
-    em.from_email AS subtitle,
-    COALESCE(em.received_at, em.sent_at, em.created_at) AS occurred_at,
-    em.id AS reference_id,
-    'email' AS reference_type,
-    (
-      SELECT l.company_id
-      FROM email_company_links l
-      WHERE l.message_id = em.id
-      ORDER BY l.confidence DESC, datetime(l.created_at) ASC
-      LIMIT 1
-    ) AS company_id,
-    em.body_text,
-    em.snippet
-  FROM email_messages em
-  WHERE em.id IN (
-    SELECT e2.id FROM email_messages e2
-    WHERE e2.thread_id IS NULL
-    UNION ALL
-    SELECT e3.id FROM (
-      SELECT e4.id, ROW_NUMBER() OVER (
-        PARTITION BY e4.thread_id
-        ORDER BY COALESCE(e4.received_at, e4.sent_at, e4.created_at) DESC
-      ) AS rn
-      FROM email_messages e4
-      WHERE e4.thread_id IS NOT NULL
-    ) e3 WHERE e3.rn = 1
-  )
-  AND EXISTS (
-    SELECT 1
-    FROM email_company_links ecl
-    JOIN org_companies oc ON oc.id = ecl.company_id
-    WHERE ecl.message_id = em.id
-      AND (
-        oc.entity_type = 'portfolio'
-        OR oc.pipeline_stage IS NOT NULL
-      )
-  )
-`
-
 const ACTIVITY_SQL_EMAIL_QUALIFIED = `
   SELECT
     'email:' || em.id AS id,
@@ -299,40 +256,101 @@ const ACTIVITY_SQL_NOTE = `
   WHERE n.company_id IS NOT NULL
 `
 
+const VALID_STAGES: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
+const VALID_ENTITY_TYPES: DashboardEntityTypeFilter[] = ['portfolio', 'lp', 'vc_fund', 'prospect']
+
 function getActivityFilter(): DashboardActivityFilter {
   const raw = settingsRepo.getSetting('dashboardActivityFilter')
   if (!raw) return DEFAULT_ACTIVITY_FILTER
   try {
-    const parsed = JSON.parse(raw) as Partial<DashboardActivityFilter>
+    const parsed = JSON.parse(raw) as Record<string, unknown>
     const validTypes: DashboardActivityType[] = ['meeting', 'email', 'note']
+
     const types = Array.isArray(parsed.types)
-      ? parsed.types.filter((t) => validTypes.includes(t as DashboardActivityType))
+      ? (parsed.types as unknown[]).filter(t => validTypes.includes(t as DashboardActivityType)) as DashboardActivityType[]
       : DEFAULT_ACTIVITY_FILTER.types
-    const raw = parsed.emailCompanyFilter
-    const emailCompanyFilter: DashboardActivityFilter['emailCompanyFilter'] =
-      raw === 'all' ? 'all'
-      : raw === 'qualified' ? 'qualified'
-      : raw === 'pipeline_portfolio' ? 'qualified'   // migrate legacy value
-      : DEFAULT_ACTIVITY_FILTER.emailCompanyFilter
-    return { types: types as DashboardActivityType[], emailCompanyFilter }
+
+    const rawStages = parsed.pipelineStages
+    const pipelineStages = Array.isArray(rawStages) && rawStages.length > 0
+      ? (rawStages as unknown[]).filter(s => VALID_STAGES.includes(s as CompanyPipelineStage)) as CompanyPipelineStage[]
+      : null
+
+    const rawEntityTypes = parsed.entityTypes
+    const entityTypes = Array.isArray(rawEntityTypes) && rawEntityTypes.length > 0
+      ? (rawEntityTypes as unknown[]).filter(e => VALID_ENTITY_TYPES.includes(e as DashboardEntityTypeFilter)) as DashboardEntityTypeFilter[]
+      : null
+
+    return { types, pipelineStages, entityTypes }
   } catch {
     return DEFAULT_ACTIVITY_FILTER
   }
 }
 
+// Builds an AND EXISTS clause that filters activity rows to companies matching
+// the given pipeline stages and/or entity types. Values are validated against
+// known enums before interpolation — safe from SQL injection.
+// Returns '' when no filter is active (caller uses unfiltered SQL in that case).
+export function buildCompanyExistsClause(
+  pipelineStages: CompanyPipelineStage[] | null,
+  entityTypes: DashboardEntityTypeFilter[] | null,
+  linkTable: string,    // 'meeting_company_links' | 'email_company_links'
+  linkCol: string,      // 'meeting_id' | 'message_id'
+  activityAlias: string // 'm' | 'em'
+): string {
+  const conditions: string[] = []
+
+  if (pipelineStages && pipelineStages.length > 0) {
+    const list = pipelineStages.map(s => `'${s}'`).join(', ')
+    conditions.push(`oc.pipeline_stage IN (${list})`)
+  }
+  if (entityTypes && entityTypes.length > 0) {
+    const list = entityTypes.map(e => `'${e}'`).join(', ')
+    conditions.push(`oc.entity_type IN (${list})`)
+  }
+  if (conditions.length === 0) return ''
+
+  return `
+  AND EXISTS (
+    SELECT 1 FROM ${linkTable} lnk
+    JOIN org_companies oc ON oc.id = lnk.company_id
+    WHERE lnk.${linkCol} = ${activityAlias}.id
+      AND (${conditions.join(' OR ')})
+  )`
+}
+
 function listRecentActivity(limit = 20): DashboardActivityItem[] {
   const db = getDatabase()
   const filter = getActivityFilter()
+  const hasCompanyFilter = filter.pipelineStages !== null || filter.entityTypes !== null
   const unions: string[] = []
 
-  if (filter.types.includes('meeting')) unions.push(ACTIVITY_SQL_MEETING)
-  if (filter.types.includes('email')) {
-    unions.push(
-      filter.emailCompanyFilter === 'qualified'
-        ? ACTIVITY_SQL_EMAIL_QUALIFIED
-        : ACTIVITY_SQL_EMAIL_ALL
-    )
+  if (filter.types.includes('meeting')) {
+    if (hasCompanyFilter) {
+      const clause = buildCompanyExistsClause(
+        filter.pipelineStages, filter.entityTypes,
+        'meeting_company_links', 'meeting_id', 'm'
+      )
+      unions.push(`${ACTIVITY_SQL_MEETING}\nWHERE 1=1${clause}`)
+    } else {
+      unions.push(ACTIVITY_SQL_MEETING)
+    }
   }
+
+  if (filter.types.includes('email')) {
+    if (hasCompanyFilter) {
+      // When a company filter is active, the explicit selection IS the qualification —
+      // use all emails and restrict by company stage/type via EXISTS.
+      const clause = buildCompanyExistsClause(
+        filter.pipelineStages, filter.entityTypes,
+        'email_company_links', 'message_id', 'em'
+      )
+      unions.push(`${ACTIVITY_SQL_EMAIL_ALL}${clause}`)
+    } else {
+      // Default: qualified filter (portfolio/prospect companies + investor/founder contacts)
+      unions.push(ACTIVITY_SQL_EMAIL_QUALIFIED)
+    }
+  }
+
   if (filter.types.includes('note')) unions.push(ACTIVITY_SQL_NOTE)
 
   if (unions.length === 0) return []

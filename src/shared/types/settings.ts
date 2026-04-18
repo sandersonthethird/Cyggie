@@ -7,11 +7,13 @@ export interface AppSettings {
   claudeApiKey: string
   claudeSummaryModel: string
   claudeEnrichmentModel: string
+  claudeChatModel: string
   ollamaHost: string
   ollamaModel: string
   openAiApiKey: string
   openAiSummaryModel: string
   openAiEnrichmentModel: string
+  openAiChatModel: string
   calendarConnected: boolean
   autoRecord: boolean
   showLiveTranscript: boolean
@@ -20,6 +22,7 @@ export interface AppSettings {
   theme: 'system' | 'light' | 'dark'
   brandingLogoDataUrl: string
   autoSyncEmails: boolean
+  webShareModel: string
   exaApiKey: string
 }
 
@@ -30,11 +33,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   claudeApiKey: '',
   claudeSummaryModel: 'claude-sonnet-4-5-20250929',
   claudeEnrichmentModel: 'claude-haiku-4-5-20251001',
+  claudeChatModel: 'claude-sonnet-4-5-20250929',
   ollamaHost: 'http://127.0.0.1:11434',
   ollamaModel: 'llama3.1',
   openAiApiKey: '',
   openAiSummaryModel: 'gpt-4o',
   openAiEnrichmentModel: 'gpt-4o-mini',
+  openAiChatModel: 'gpt-4o',
+  webShareModel: 'claude-sonnet-4-5-20250929',
   calendarConnected: false,
   autoRecord: false,
   showLiveTranscript: true,

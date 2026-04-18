@@ -73,7 +73,7 @@ export function registerWebShareHandlers(): void {
         }
       }
 
-      const claudeApiKey = getCredential('claudeApiKey')
+      const claudeApiKey = getCredential('webShareApiKey') || getCredential('claudeApiKey')
       if (!claudeApiKey) {
         return {
           success: false,
@@ -135,6 +135,7 @@ export function registerWebShareHandlers(): void {
             transcript,
             notes: meeting.notes,
             claudeApiKey,
+            claudeModel: getSetting('webShareModel') || 'claude-sonnet-4-5-20250929',
             logoUrl: getSetting('brandingLogoDataUrl') || null,
             firmName: getSetting('brandingFirmName') || null,
             brandColor: getSetting('brandingPrimaryColor') || null,
@@ -171,7 +172,7 @@ export function registerWebShareHandlers(): void {
         return { success: false, error: 'upload_failed', message: 'Note not found.' }
       }
 
-      const claudeApiKey = getCredential('claudeApiKey')
+      const claudeApiKey = getCredential('webShareApiKey') || getCredential('claudeApiKey')
       if (!claudeApiKey) {
         return {
           success: false,
@@ -201,6 +202,7 @@ export function registerWebShareHandlers(): void {
             title: hydrated.title || 'Untitled',
             contentMarkdown: hydrated.content,
             claudeApiKey,
+            claudeModel: getSetting('webShareModel') || 'claude-sonnet-4-5-20250929',
             logoUrl: getSetting('brandingLogoDataUrl') || null,
             firmName: getSetting('brandingFirmName') || null,
             brandColor: getSetting('brandingPrimaryColor') || null,

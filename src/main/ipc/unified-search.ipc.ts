@@ -7,12 +7,7 @@ import type {
 } from '../../shared/types/unified-search'
 import { getCurrentUserId } from '../security/current-user'
 import { logAppEvent } from '../database/repositories/audit.repo'
-import { getSetting } from '../database/repositories/settings.repo'
-import { getCredential } from '../security/credentials'
-import type { LLMProvider } from '../llm/provider'
-import { ClaudeProvider } from '../llm/claude-provider'
-import { OllamaProvider } from '../llm/ollama-provider'
-import type { LlmProvider } from '../../shared/types/settings'
+import { getProvider } from '../llm/provider-factory'
 
 let unifiedSearchAbortController: AbortController | null = null
 
@@ -32,22 +27,6 @@ function sendClear(): void {
       win.webContents.send(IPC_CHANNELS.CHAT_PROGRESS, null)
     }
   }
-}
-
-function getProvider(): LLMProvider {
-  const providerType = (getSetting('llmProvider') || 'claude') as LlmProvider
-  if (providerType === 'ollama') {
-    const host = getSetting('ollamaHost') || 'http://127.0.0.1:11434'
-    const model = getSetting('ollamaModel') || 'llama3.1'
-    return new OllamaProvider(model, host)
-  }
-
-  const apiKey = getCredential('claudeApiKey')
-  if (!apiKey) {
-    throw new Error('Claude API key not configured. Go to Settings to add it.')
-  }
-  const model = getSetting('claudeSummaryModel') || 'claude-sonnet-4-5-20250929'
-  return new ClaudeProvider(apiKey, model)
 }
 
 function buildAnswerPrompt(query: string, search: UnifiedSearchResponse): string {
@@ -122,7 +101,7 @@ export function registerUnifiedSearchHandlers(): void {
         }
       }
 
-      const provider = getProvider()
+      const provider = getProvider('chat')
       const systemPrompt = [
         'You are a research assistant for CRM records.',
         'Answer only from provided sources and avoid speculation.',

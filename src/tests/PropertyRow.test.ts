@@ -101,6 +101,75 @@ describe('PropertyRow — Bug #2 race condition re-trigger', () => {
   })
 })
 
+// ── Bug #3: inline edit stays open after debounced auto-save ─────────────────
+//
+// When a user clicks a url/text field to enter inline edit mode (editing=true,
+// editMode=false), the debounced auto-save must NOT call setEditing(false).
+//
+// Flow:
+//   user clicks → editing=true → types URL
+//   debounce fires (300ms) → handleSave(val, keepEditing=true)
+//   save succeeds → editing stays true → input remains in DOM
+
+describe('PropertyRow — inline edit stays open after debounced auto-save', () => {
+  it('keeps the input mounted after debounced save fires', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+
+    const { container, getByRole, queryByRole } = render(
+      React.createElement(PropertyRow, {
+        label: 'Website',
+        value: '',
+        type: 'url' as const,
+        onSave,
+      }),
+    )
+
+    // Advance past initial debounce to ensure no spurious auto-save on mount
+    await act(async () => { vi.advanceTimersByTime(400) })
+
+    // Click the row div to enter inline edit mode (no button role — it's a plain div)
+    fireEvent.click(container.firstChild as Element)
+
+    // Input should now be present
+    expect(getByRole('textbox')).toBeTruthy()
+
+    // Type a partial URL
+    fireEvent.change(getByRole('textbox'), { target: { value: 'https://' } })
+
+    // Let debounce fire → handleSave('https://', keepEditing=true)
+    await act(async () => { vi.advanceTimersByTime(300) })
+    expect(onSave).toHaveBeenCalledWith('https://')
+
+    // Input must still be in the DOM — editing was NOT closed
+    expect(queryByRole('textbox')).not.toBeNull()
+  })
+
+  it('closes inline editing on blur', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+
+    const { container, getByRole, queryByRole } = render(
+      React.createElement(PropertyRow, {
+        label: 'Website',
+        value: '',
+        type: 'url' as const,
+        onSave,
+      }),
+    )
+
+    await act(async () => { vi.advanceTimersByTime(400) })
+
+    // Enter inline edit
+    fireEvent.click(container.firstChild as Element)
+    const input = getByRole('textbox')
+    fireEvent.change(input, { target: { value: 'https://example.com' } })
+
+    // Blur the input — should close editing
+    await act(async () => { fireEvent.blur(input) })
+
+    expect(queryByRole('textbox')).toBeNull()
+  })
+})
+
 // ── Bug #2: mounted guard ────────────────────────────────────────────────────
 //
 // If the component unmounts while a save is in-flight, the finally block

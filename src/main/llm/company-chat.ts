@@ -127,7 +127,7 @@ ${context}
 
 Question: ${question}`
 
-  const provider = getProvider()
+  const provider = getProvider('chat')
   companyChatAbortController = new AbortController()
   const result = await provider.generateSummary(SYSTEM_PROMPT, userPrompt, sendProgress, companyChatAbortController.signal)
   companyChatAbortController = null

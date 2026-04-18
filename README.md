@@ -8,12 +8,20 @@ A private, local-first CRM and meeting intelligence tool for early-stage investo
 
 ### Meetings & Recording
 - Live meeting recording with real-time transcription (Deepgram WebSocket streaming)
-- Automatic speaker diarization
+- Automatic speaker diarization with contact linking
 - AI summaries via Claude or local Ollama — fully customizable templates
 - Per-meeting chat: ask questions grounded in the transcript
 - Google Calendar integration: auto-detect current meeting, pre-populate attendees
 - Google Drive upload for transcripts and summaries
-- Import meeting notes from Granola
+- Import meeting notes from Granola or Apple Notes
+
+### Notes
+- Unified notes system across meetings, companies, and contacts
+- Rich text editor (Tiptap) with markdown, tables, links, and images
+- Folder organization with nested paths
+- Full-text search (SQLite FTS5)
+- Bulk actions, back navigation, and per-note sharing to web
+- AI tagging and key takeaways per contact
 
 ### CRM — Companies
 - Sortable, resizable table view with column picker and saved views
@@ -21,23 +29,43 @@ A private, local-first CRM and meeting intelligence tool for early-stage investo
 - Per-company timeline: meetings, emails, notes, and decision log entries in one feed
 - Type filter pills (meetings / emails / notes / decisions)
 - AI company chat grounded in notes, emails, and memos
-- Investment memo parsing and storage (PDF / Google Docs)
-- Custom fields, portfolio tracking (investment size, ownership %, follow-on)
+- Investment memo parsing, storage, and web sharing (PDF / Google Docs)
+- Pitch deck ingestion
+- Custom fields with sections and drag-and-drop section reassignment
+- Portfolio tracking (investment size, ownership %, follow-on)
 
 ### CRM — Contacts
 - Sortable table view with column picker
 - Per-contact timeline: meetings, emails, notes
 - AI contact chat grounded in relationship history
-- Custom fields, contact type (Investor / Founder / Operator)
+- LinkedIn enrichment with per-field accept/dismiss proposals
+- Contact type: Investor / Founder / Operator / Talent Pipeline
+- Custom fields with sections
+- Key takeaways and decisions tab per contact
 
 ### Decision Log
-- Structured investment decisions per company (Approved, Pass, Follow-on, Increase Allocation, etc.)
+- Structured investment decisions per company and contact (Approved, Pass, Follow-on, Increase Allocation, etc.)
 - Auto-prompts when a company moves to documentation or pass stage
 - Auto-syncs deal terms (amount, ownership %) back to company portfolio fields
+
+### Partner Meeting Digest
+- Weekly partner meeting prep report — surfaces portfolio updates, pipeline activity, and key metrics
+- Linked to a specific recurring calendar meeting
+- Replaces external Google Docs for partner meeting prep
+
+### Global Chat
+- Floating chat widget available from any screen
+- CRM-aware: queries across meetings, contacts, companies, and emails simultaneously
+- Context chip shows active data scope; expands to full chat view
 
 ### Email
 - Gmail sync per company or contact — pulls thread history into the timeline
 - Incremental sync with live progress and cancel
+
+### Web Share
+- Share individual meetings, memos, and notes to a hosted web page
+- Separate Next.js web app with shared header/footer and floating chat
+- Print-friendly styles
 
 ### CSV Import
 - Import contacts and/or companies from any CSV
@@ -59,11 +87,14 @@ A private, local-first CRM and meeting intelligence tool for early-stage investo
 |-------|------|
 | App shell | Electron |
 | Frontend | React 19, React Router 7, Zustand |
+| Notes editor | Tiptap |
+| Web share | Next.js (separate app in `/web`) |
 | Language | TypeScript 5.7 |
 | Build | electron-vite, Vite 6, electron-builder |
-| Database | SQLite (better-sqlite3), 45 migrations |
+| Database | SQLite (better-sqlite3), 69 migrations |
 | Transcription | Deepgram SDK |
 | AI / LLM | Anthropic Claude API, Ollama (local) |
+| Enrichment | Exa |
 | Google | Calendar API, Gmail API, Drive API |
 | Audio | electron-audio-loopback |
 | Tests | Vitest |
@@ -139,11 +170,11 @@ Flags: `--dry-run`, `--create-missing-companies`, `--no-template-update`
 src/
   main/                    # Electron main process
     database/
-      migrations/          # 45 SQL migrations (run on startup)
+      migrations/          # 69 SQL migrations (run on startup)
       repositories/        # SQLite query functions per entity
     ipc/                   # IPC handlers (one file per feature domain)
     llm/                   # Claude + Ollama providers, summarizer, chat
-    services/              # csv-import, meeting-notes-backfill
+    services/              # csv-import, enrichment, pitch-deck-ingestion
     security/              # Credential encryption, current-user context
   preload/                 # Electron preload — exposes window.api to renderer
   renderer/                # React frontend
@@ -158,6 +189,7 @@ src/
     constants/             # IPC channel names
     types/                 # Shared TypeScript types (company, contact, csv-import, …)
   tests/                   # Vitest test suites
+web/                       # Next.js web share app
 ```
 
 ---

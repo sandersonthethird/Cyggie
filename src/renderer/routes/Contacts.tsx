@@ -357,6 +357,21 @@ export default function Contacts() {
     })
   }, [setSearchParams])
 
+  // ── Talent Pipeline filter — URL-driven, toggleable ───────────────────────
+  const talentPipelineFilter = searchParams.get('talentPipeline') || null
+
+  const handleSetTalentPipeline = useCallback((stage: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (prev.get('talentPipeline') === stage) {
+        next.delete('talentPipeline')
+      } else {
+        next.set('talentPipeline', stage)
+      }
+      return next
+    })
+  }, [setSearchParams])
+
   // ── Data load ─────────────────────────────────────────────────────────────
   const loadContacts = useCallback(async (searchQuery: string) => {
     if (!contactsEnabled) return
@@ -897,8 +912,9 @@ export default function Contacts() {
     let items = filterContacts(contacts, columnFilters, rangeFilters, textFilters) as ContactSummary[]
     const typeFilter = CONTACT_SCOPE_TO_TYPE[scope]
     if (typeFilter) items = items.filter(c => c.contactType === typeFilter)
+    if (talentPipelineFilter) items = items.filter(c => c.talentPipeline === talentPipelineFilter)
     return sortRows(items as Record<string, unknown>[], sort, CONTACT_COLUMN_DEFS) as ContactSummary[]
-  }, [contacts, columnFilters, rangeFilters, textFilters, sort, scope])
+  }, [contacts, columnFilters, rangeFilters, textFilters, sort, scope, talentPipelineFilter])
 
   const groupedRows = useGroupedRows(filteredContacts as Record<string, unknown>[], groupBy, CONTACT_GROUPABLE_FIELDS, collapsedGroups)
 
@@ -1024,6 +1040,31 @@ export default function Contacts() {
               {CONTACT_SCOPE_LABELS[s]}
             </button>
           ))}
+          {contacts.some(c => c.talentPipeline) && (
+            <>
+              <span className={styles.scopeDivider} />
+              {([
+                { value: 'identified',          label: 'Identified' },
+                { value: 'exploring',           label: 'Exploring' },
+                { value: 'ideating',            label: 'Ideating' },
+                { value: 'fundraising',         label: 'Fundraising' },
+                { value: 'portfolio_candidate', label: 'Portfolio' },
+                { value: 'internal_candidate',  label: 'Internal' },
+              ] as const).map(({ value, label }) => {
+                const count = contacts.filter(c => c.talentPipeline === value).length
+                if (count === 0) return null
+                return (
+                  <button
+                    key={value}
+                    className={`${styles.scopeButton} ${styles.pipelineScope} ${talentPipelineFilter === value ? styles.activeScope : ''}`}
+                    onClick={() => handleSetTalentPipeline(value)}
+                  >
+                    {label} ({count})
+                  </button>
+                )
+              })}
+            </>
+          )}
         </div>
         <div className={styles.headerActions}>
           <div className={styles.actionsDropdown} ref={actionsRef}>

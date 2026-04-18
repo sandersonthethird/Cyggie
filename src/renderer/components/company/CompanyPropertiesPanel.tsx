@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom'
-import { useCallback, useEffect, useRef, useState, type ReactNode, type HTMLAttributes } from 'react'
-import { Share2, AtSign, Link, Mail, CheckSquare } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type HTMLAttributes } from 'react'
+import { Share2, AtSign, Link } from 'lucide-react'
 import { useCustomFieldSection } from '../../hooks/useCustomFieldSection'
 import { useHeaderChipOrder } from '../../hooks/useHeaderChipOrder'
 import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
@@ -117,7 +117,7 @@ interface CompanyPropertiesPanelProps {
   enrichMeetingCount?: number
   fieldSources?: Record<string, { meetingId: string; meetingTitle: string }>
   /** Unified enhancement callback — source determines which flow to trigger */
-  onEnhance?: (source: 'pdf' | 'url' | 'meetings') => void
+  onEnhance?: (source: 'pdf' | 'url' | 'meetings' | 'notes' | 'emails') => void
   isLoadingEnrich?: boolean
   /** Called when "Add to Partner Sync" or the sync status row is clicked */
   onOpenSync?: () => void
@@ -312,7 +312,7 @@ export function CompanyPropertiesPanel({
   const [createFieldSection, setCreateFieldSection] = useState<string | undefined>(undefined)
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
   const [editingFieldLabel, setEditingFieldLabel] = useState('')
-  const [addFieldDropdownSection, setAddFieldDropdownSection] = useState<string | undefined>(undefined)
+  const [addFieldDropdownOpen, setAddFieldDropdownOpen] = useState(false)
 
   // ── Enhance dropdown ──────────────────────────────────────────────────────
   const [enhanceDropdownOpen, setEnhanceDropdownOpen] = useState(false)
@@ -476,8 +476,9 @@ export function CompanyPropertiesPanel({
     )
   }
 
+  const sectionableFields = useMemo(() => customFields.filter(f => !f.isBuiltin), [customFields])
   const { draggingFieldId, setDraggingFieldId, dragOverSection, draggingOverFieldId, setDraggingOverFieldId, sectionedFields, nullSectionFields, handleWithinSectionDrop, sectionDragProps } =
-    useCustomFieldSection('company', company.id, customFields, setCustomFields)
+    useCustomFieldSection('company', company.id, sectionableFields, setCustomFields)
 
   const hfOrder = useHardcodedFieldOrder('company')
 
@@ -547,14 +548,19 @@ export function CompanyPropertiesPanel({
     }
   }, [company.entityType]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync name draft when entering edit mode; clear any prior error
+  // Sync name draft when entering edit mode; clear any prior error.
+  // Intentionally omit company.canonicalName from deps — this effect should only
+  // fire on enter/exit of edit mode. If it also ran when company.canonicalName
+  // changes mid-edit (e.g. optimistic-update revert after a failed save), it
+  // would wipe the user's typed input and force a second Done click to exit.
   useEffect(() => {
     if (isEditing) {
       setNameDraft(company.canonicalName)
       setNameError(null)
       setTimeout(() => nameInputRef.current?.focus(), 0)
     }
-  }, [isEditing, company.canonicalName])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditing])
 
   // Keyboard shortcut: E to enter edit mode, Esc to exit (guard against inputs)
   const handleDoneRef = useRef(handleDone)
@@ -1143,7 +1149,15 @@ export function CompanyPropertiesPanel({
                 onChange={(e) => setNameDraft(e.target.value)}
                 onKeyDown={handleNameKeyDown}
               />
-              {nameError && <div className={styles.nameError}>{nameError}</div>}
+              {nameError && (
+                <div className={styles.nameError}>
+                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Z" fill="currentColor"/>
+                    <path d="M7.25 4.75a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-1.5 0v-3.5ZM8 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+                  </svg>
+                  {nameError}
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -1206,101 +1220,108 @@ export function CompanyPropertiesPanel({
                 </div>
               )
             })}
-            <HealthBadge lastTouchpoint={company.lastTouchpoint} />
+            {!isEditing && <HealthBadge lastTouchpoint={company.lastTouchpoint} />}
           </div>
-        </div>
-        {isEditing ? (
-          <div className={styles.editActions}>
-            {sessionNewFields !== null ? (
-              <div className={styles.applyPrompt}>
-                {(() => {
-                  function fieldLabel(key: string): string {
-                    if (key.startsWith('custom:')) {
-                      const id = key.slice(7)
-                      return customFields.find(f => f.id === id)?.label ?? key
+          {/* Action buttons — inside headerMeta, below badges */}
+          {isEditing ? (
+            <div className={styles.editActions}>
+              {sessionNewFields !== null ? (
+                <div className={styles.applyPrompt}>
+                  {(() => {
+                    function fieldLabel(key: string): string {
+                      if (key.startsWith('custom:')) {
+                        const id = key.slice(7)
+                        return customFields.find(f => f.id === id)?.label ?? key
+                      }
+                      return COLUMN_DEFS.find(d => d.key === key)?.label ?? key
                     }
-                    return COLUMN_DEFS.find(d => d.key === key)?.label ?? key
-                  }
-                  const promptPrefix = sessionNewFields.length > 0
-                    ? `Show ${sessionNewFields.map(fieldLabel).join(', ')} on`
-                    : 'Apply layout changes to'
-                  return <span>{promptPrefix} <strong>all companies</strong>?</span>
-                })()}
-                <button className={styles.applyAllBtn} onClick={handleApplyToAll}>All companies</button>
-                <button className={styles.applyOneBtn} onClick={handleJustThisCompany}>Just {company.canonicalName}</button>
-              </div>
-            ) : (
-              <>
-                <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">↺</button>
-                <button className={styles.doneBtn} onClick={() => void handleDone()} disabled={deleting}>Done</button>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className={styles.headerBtnGroup}>
-            {/* Icon-only Email/Task — sticky, always visible alongside Enhance/Edit */}
-            <button
-              className={styles.headerIconBtn}
-              onClick={() => {
-                const email = keyContacts[0]?.email
-                if (email) void api.invoke(
-                  IPC_CHANNELS.APP_OPEN_EXTERNAL_URL,
-                  `https://mail.google.com/mail/?view=cm&tf=1&to=${encodeURIComponent(email)}`
-                )
-              }}
-              disabled={!keyContacts[0]?.email}
-              title={keyContacts[0]?.email ? `Email ${keyContacts[0].fullName}` : 'No contact email'}
-            >
-              <Mail size={14} />
-            </button>
-            <button
-              className={styles.headerIconBtn}
-              onClick={() => setTaskModalOpen(true)}
-              title="Add task"
-            >
-              <CheckSquare size={14} />
-            </button>
-            {onEnhance && (
-              <div className={styles.enhanceWrap}>
+                    const promptPrefix = sessionNewFields.length > 0
+                      ? `Show ${sessionNewFields.map(fieldLabel).join(', ')} on`
+                      : 'Apply layout changes to'
+                    return <span>{promptPrefix} <strong>all companies</strong>?</span>
+                  })()}
+                  <button className={styles.applyAllBtn} onClick={handleApplyToAll}>All companies</button>
+                  <button className={styles.applyOneBtn} onClick={handleJustThisCompany}>Just {company.canonicalName}</button>
+                </div>
+              ) : (
+                <>
+                  <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">↺</button>
+                  <button
+                    className={styles.doneBtn}
+                    onMouseDown={() => {
+                      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+                    }}
+                    onClick={() => void handleDone()}
+                    disabled={deleting}
+                  >Done</button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className={styles.headerActionRow}>
+              <button className={styles.editBtn} onClick={() => {
+                sessionAddedFields.current = [...fieldVisibility.addedFields]
+                setIsEditing(true)
+              }}>Edit</button>
+              {keyContacts[0]?.email && (
                 <button
-                  className={`${styles.enhanceBtn} ${enhanceFlash ? styles.enhanceBtnSuccess : ''}`}
-                  onClick={() => setEnhanceDropdownOpen(v => !v)}
-                  title="Enhance company profile"
-                >
-                  {enhanceFlash ? '✓ Enhanced' : 'Enhance ▾'}
-                </button>
-                {enhanceDropdownOpen && (
-                  <>
-                    <div className={styles.enhanceDropdownBackdrop} onClick={() => setEnhanceDropdownOpen(false)} />
-                    <div className={styles.enhanceDropdown}>
-                      <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('pdf') }}>
-                        📄 From a file (PDF)
-                      </button>
-                      <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('url') }}>
-                        🔗 From a URL
-                      </button>
-                      <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('meetings') }}
-                        disabled={!showEnrichBanner}
-                        title={showEnrichBanner ? undefined : 'No new meeting data available'}
-                      >
-                        ✨ From meeting notes
-                      </button>
-                      {lastEnhancedAt && (
-                        <div className={styles.enhanceTimestamp}>
-                          Last enhanced: {formatRelativeTime(lastEnhancedAt)}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-            <button className={styles.editBtn} onClick={() => {
-              sessionAddedFields.current = [...fieldVisibility.addedFields]
-              setIsEditing(true)
-            }}>Edit</button>
-          </div>
-        )}
+                  className={styles.emailActionBtn}
+                  onClick={() => {
+                    const email = keyContacts[0].email
+                    void api.invoke(
+                      IPC_CHANNELS.APP_OPEN_EXTERNAL_URL,
+                      `https://mail.google.com/mail/?view=cm&tf=1&to=${encodeURIComponent(email!)}`
+                    )
+                  }}
+                >Email</button>
+              )}
+              <button
+                className={styles.taskActionBtn}
+                onClick={() => setTaskModalOpen(true)}
+              >Task</button>
+              {onEnhance && (
+                <div className={styles.enhanceWrap}>
+                  <button
+                    className={`${styles.enhanceBtn} ${enhanceFlash ? styles.enhanceBtnSuccess : ''}`}
+                    onClick={() => setEnhanceDropdownOpen(v => !v)}
+                  >
+                    {enhanceFlash ? '✓ Enhanced' : 'Enhance'}
+                  </button>
+                  {enhanceDropdownOpen && (
+                    <>
+                      <div className={styles.enhanceDropdownBackdrop} onClick={() => setEnhanceDropdownOpen(false)} />
+                      <div className={styles.enhanceDropdown}>
+                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('pdf') }}>
+                          📄 From a file (PDF)
+                        </button>
+                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('url') }}>
+                          🔗 From a URL
+                        </button>
+                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('meetings') }}
+                          disabled={!showEnrichBanner}
+                          title={showEnrichBanner ? undefined : 'No new meeting data available'}
+                        >
+                          ✨ From meeting notes
+                        </button>
+                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('notes') }}>
+                          📝 From notes
+                        </button>
+                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('emails') }}>
+                          ✉️ From emails
+                        </button>
+                        {lastEnhancedAt && (
+                          <div className={styles.enhanceTimestamp}>
+                            Last enhanced: {formatRelativeTime(lastEnhancedAt)}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         </div>{/* end headerTopRow */}
 
         {/* Partner Sync status row */}
@@ -1478,41 +1499,6 @@ export function CompanyPropertiesPanel({
           } : {}),
         }
 
-        function AddFieldBtn() {
-          return (
-            <div className={styles.addFieldContainer}>
-              <button
-                className={styles.addFieldBtn}
-                onClick={() => setAddFieldDropdownSection(addFieldDropdownSection === sectionKey ? undefined : sectionKey)}
-              >+ Add field</button>
-              {addFieldDropdownSection === sectionKey && (
-                <AddFieldDropdown
-                  entityType="company"
-                  hardcodedDefs={COMPANY_HARDCODED_FIELDS}
-                  customFields={customFields}
-                  addedFields={fieldVisibility.addedFields}
-                  hiddenFields={hiddenFields}
-                  entityData={company as Record<string, unknown>}
-                  fieldPlacements={fieldVisibility.fieldPlacements}
-                  sections={COMPANY_SECTIONS.filter(s => s.key !== 'summary')}
-                  onToggleField={(key, checked) => {
-                    if (checked) fieldVisibility.addToAddedFields([key])
-                    else fieldVisibility.removeFromAddedFields(key)
-                  }}
-                  onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
-                  onCreateCustomField={() => {
-                    setCreateFieldSection(sectionKey)
-                    setCreateFieldOpen(true)
-                    setAddFieldDropdownSection(undefined)
-                  }}
-                  onClose={() => setAddFieldDropdownSection(undefined)}
-                  defaultSection={sectionKey}
-                />
-              )}
-            </div>
-          )
-        }
-
         switch (sectionKey) {
           case 'overview': return (
             <div key="overview" {...sectionContainerProps}>
@@ -1550,7 +1536,7 @@ export function CompanyPropertiesPanel({
                 { key: 'revenueModel', visible: show('revenueModel', company.revenueModel), render: () => <PropertyRow label="Revenue Model" value={company.revenueModel} type="text" editMode={isEditing} onSave={(v) => save('revenueModel', v)} /> },
               ], 'overview')}
               {renderSectionedFields('overview')}
-              {isEditing && <AddFieldBtn />}
+
               {nullSectionFields().map((field) => {
                 const opts = (() => { try { return field.optionsJson ? JSON.parse(field.optionsJson) : [] } catch { return [] } })()
                 return (
@@ -1612,7 +1598,7 @@ export function CompanyPropertiesPanel({
                 { key: 'nextFollowupDate', visible: show('nextFollowupDate', company.nextFollowupDate), render: () => <PropertyRow label="Next Follow-up" value={company.nextFollowupDate} type="date" editMode={isEditing} onSave={(v) => save('nextFollowupDate', v)} /> },
               ], 'pipeline')}
               {renderSectionedFields('pipeline')}
-              {isEditing && <AddFieldBtn />}
+
               </>)}
             </div>
           )
@@ -1685,7 +1671,7 @@ export function CompanyPropertiesPanel({
                 </div>
               )}
               {renderSectionedFields('financials')}
-              {isEditing && <AddFieldBtn />}
+
               </>)}
             </div>
           )
@@ -1707,7 +1693,7 @@ export function CompanyPropertiesPanel({
                   { key: 'totalInvested', visible: show('totalInvested', company.totalInvested), render: () => <PropertyRow label="Total Invested" value={company.totalInvested} type="text" editMode={isEditing} onSave={(v) => save('totalInvested', v)} /> },
                 ], 'investment')}
                 {renderSectionedFields('investment')}
-                {isEditing && <AddFieldBtn />}
+  
                 </>)}
               </div>
             )
@@ -1724,7 +1710,7 @@ export function CompanyPropertiesPanel({
                 { key: 'twitterHandle', visible: show('twitterHandle', company.twitterHandle), render: () => <PropertyRow label="Twitter/X" value={company.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} /> },
               ], 'links')}
               {renderSectionedFields('links')}
-              {isEditing && <AddFieldBtn />}
+
               </>)}
             </div>
           )
@@ -1778,6 +1764,39 @@ export function CompanyPropertiesPanel({
           }}
           onClose={() => { setCreateFieldOpen(false); setCreateFieldSection(undefined) }}
         />
+      )}
+
+      {isEditing && (
+        <div className={styles.stickyAddFieldBar}>
+          <div className={styles.addFieldContainer}>
+            <button
+              className={styles.addFieldBtn}
+              onClick={() => setAddFieldDropdownOpen(!addFieldDropdownOpen)}
+            >+ Add field</button>
+            {addFieldDropdownOpen && (
+              <AddFieldDropdown
+                entityType="company"
+                hardcodedDefs={COMPANY_HARDCODED_FIELDS}
+                customFields={customFields}
+                addedFields={fieldVisibility.addedFields}
+                hiddenFields={hiddenFields}
+                entityData={company as Record<string, unknown>}
+                fieldPlacements={fieldVisibility.fieldPlacements}
+                sections={COMPANY_SECTIONS.filter(s => s.key !== 'summary')}
+                onToggleField={(key, checked) => {
+                  if (checked) fieldVisibility.addToAddedFields([key])
+                  else fieldVisibility.removeFromAddedFields(key)
+                }}
+                onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
+                onCreateCustomField={() => {
+                  setCreateFieldOpen(true)
+                  setAddFieldDropdownOpen(false)
+                }}
+                onClose={() => setAddFieldDropdownOpen(false)}
+              />
+            )}
+          </div>
+        </div>
       )}
 
       {isEditing && (

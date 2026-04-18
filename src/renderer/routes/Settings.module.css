@@ -515,6 +515,71 @@
   }
 }
 
+/* Function row — used in AI tab for per-function model + key layout */
+.functionRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+  gap: 12px;
+}
+
+.functionRow:last-child {
+  border-bottom: none;
+}
+
+.functionLeft {
+  flex: 1;
+  min-width: 0;
+}
+
+.functionLabel {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.functionHint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+
+.functionRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.statusConfigured {
+  font-size: 12px;
+  color: var(--color-success, #16a34a);
+}
+
+.statusMissing {
+  font-size: 12px;
+  color: var(--color-danger, #ef4444);
+}
+
+.changeKeyBtn {
+  padding: 5px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.changeKeyBtn:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text);
+}
+
 /* API Key row (read-only display + buttons) */
 .apiKeyRow {
   display: flex;

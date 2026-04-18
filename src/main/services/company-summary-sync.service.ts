@@ -1,5 +1,6 @@
 import * as companyRepo from '../database/repositories/org-company.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
+import { listCompanyNotes } from '../database/repositories/company-notes.repo'
 import { resolveContactsByEmails } from '../database/repositories/contact.repo'
 import { getContact } from '../database/repositories/contact.repo'
 import { listFieldDefinitions, getFieldValuesForEntity } from '../database/repositories/custom-fields.repo'
@@ -577,6 +578,244 @@ function matchCompanySelectOption(raw: string, options: string[]): string | null
  *       │
  *   return proposal if any changes, else null
  */
+/*
+ * Core LLM extraction + diff engine, shared by meetings, notes, and email enrichment.
+ *
+ * Extraction pipeline:
+ *   textBlocks ──▶ LLM prompt ──▶ safeParseJson ──▶ field diff ──▶ proposal
+ *
+ * fieldSourceId:
+ *   string  → written to company.fieldSources for meeting-based attribution
+ *   null    → skip fieldSources update (notes/email enrichment)
+ */
+async function buildCompanyEnrichmentProposal(
+  company: CompanyDetail,
+  textBlocks: string,
+  sourceLabel: string,
+  customDefs: CustomFieldDefinition[],
+  provider: LLMProvider,
+  fieldSourceId: string | null
+): Promise<CompanySummaryUpdateProposal | null> {
+  const systemPrompt =
+    'You are a company data extractor. Extract structured company information from ' +
+    'the provided content. Return ONLY valid JSON — no prose, no markdown fences. ' +
+    'For conflicting information, use the most recent value (content is in chronological order, last is most recent). ' +
+    'Set fields to null if not mentioned in the content.'
+
+  const builtinFields = [
+    '  "description": one-sentence company description (string or null)',
+    '  "round": funding round, one of [pre_seed, seed, seed_extension, series_a, series_b] or null',
+    '  "raiseSize": raise size in millions USD (number or null)',
+    '  "postMoneyValuation": post-money valuation in millions USD (number or null)',
+    '  "city": headquarters city (string or null)',
+    '  "state": headquarters state abbreviation (string or null)',
+    '  "pipelineStage": one of [screening, diligence, decision, documentation, pass] or null',
+    '  "industries": array of industry category tags (e.g. ["FinTech", "AI/ML"]) or null',
+  ].join('\n')
+
+  const customFieldNotes = customDefs.length > 0
+    ? `\n\nCustom fields to extract:\n${buildCompanyCustomFieldPromptLines(customDefs)}`
+    : ''
+
+  const userPrompt =
+    `Extract information about company: ${company.canonicalName}\n\n` +
+    `${sourceLabel}:\n${textBlocks}\n\n` +
+    `Return a JSON object with these fields:\n{\n${builtinFields}\n}` +
+    customFieldNotes
+
+  let responseText: string
+  try {
+    responseText = await provider.generateSummary(systemPrompt, userPrompt)
+  } catch (err) {
+    console.error('[Company Enrich] LLM call failed:', err)
+    return null
+  }
+
+  const extracted = safeParseJson(responseText)
+  if (!extracted) {
+    console.warn('[Company Enrich] Could not parse LLM response as JSON')
+    return null
+  }
+
+  // --- Built-in field comparison ---
+  const updates: CompanySummaryUpdatePayload = {}
+  const changes: CompanySummaryUpdateChange[] = []
+
+  const rawDescription = extractString(extracted.description)
+  if (rawDescription && isDifferentText(rawDescription, company.description)) {
+    updates.description = rawDescription
+    changes.push({ field: 'description', from: company.description, to: rawDescription })
+  }
+
+  const rawRound = extractString(extracted.round) as CompanyRound | null
+  const validRounds: CompanyRound[] = ['pre_seed', 'seed', 'seed_extension', 'series_a', 'series_b']
+  if (rawRound && validRounds.includes(rawRound) && rawRound !== company.round) {
+    updates.round = rawRound
+    changes.push({ field: 'round', from: company.round, to: rawRound })
+  }
+
+  const rawRaiseSize = extractNumber(extracted.raiseSize)
+  if (isDifferentNumber(rawRaiseSize, company.raiseSize)) {
+    updates.raiseSize = rawRaiseSize
+    changes.push({ field: 'raiseSize', from: company.raiseSize, to: rawRaiseSize })
+  }
+
+  const rawPostMoney = extractNumber(extracted.postMoneyValuation)
+  if (isDifferentNumber(rawPostMoney, company.postMoneyValuation)) {
+    updates.postMoneyValuation = rawPostMoney
+    changes.push({ field: 'postMoneyValuation', from: company.postMoneyValuation, to: rawPostMoney })
+  }
+
+  const rawCity = extractString(extracted.city)
+  if (rawCity && isDifferentText(rawCity, company.city)) {
+    updates.city = rawCity
+    changes.push({ field: 'city', from: company.city, to: rawCity })
+  }
+
+  const rawState = extractString(extracted.state)
+  if (rawState && isDifferentText(rawState, company.state)) {
+    updates.state = rawState
+    changes.push({ field: 'state', from: company.state, to: rawState })
+  }
+
+  const rawStage = extractString(extracted.pipelineStage) as CompanyPipelineStage | null
+  const validStages: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
+  if (rawStage && validStages.includes(rawStage) && rawStage !== company.pipelineStage) {
+    updates.pipelineStage = rawStage
+    changes.push({ field: 'pipelineStage', from: company.pipelineStage, to: rawStage })
+  }
+
+  // Industries — LLM may return string[] or a comma-joined string; normalize to string[]
+  const rawIndustriesRaw = extracted.industries
+  const rawIndustries: string[] | null =
+    Array.isArray(rawIndustriesRaw)
+      ? (rawIndustriesRaw as unknown[]).map(String).filter(Boolean)
+      : typeof rawIndustriesRaw === 'string' && rawIndustriesRaw.trim()
+        ? rawIndustriesRaw.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : null
+  if (rawIndustries && rawIndustries.length > 0) {
+    const extractedSet = new Set(rawIndustries.map((s) => s.toLowerCase()))
+    const currentSet = new Set(company.industries.map((s) => s.toLowerCase()))
+    const isDiff =
+      rawIndustries.some((i) => !currentSet.has(i.toLowerCase())) ||
+      company.industries.some((i) => !extractedSet.has(i.toLowerCase()))
+    if (isDiff) {
+      updates.industries = rawIndustries
+      changes.push({
+        field: 'industries',
+        from: company.industries.join(', ') || null,
+        to: rawIndustries.join(', ')
+      })
+    }
+  }
+
+  // --- Custom fields ---
+  const customFieldUpdates: CustomFieldProposedUpdate[] = []
+
+  if (customDefs.length > 0) {
+    const currentValues = getFieldValuesForEntity('company', company.id)
+    const currentValueMap = new Map(currentValues.map(v => [v.id, v]))
+
+    for (const def of customDefs) {
+      const rawVal = extracted[def.fieldKey]
+      if (rawVal == null) continue
+
+      let parsedValue: string | number | boolean | string[] | null = null
+      let fromDisplay: string | null = null
+      let toDisplay = ''
+
+      const existing = currentValueMap.get(def.id)
+
+      if (def.fieldType === 'text' || def.fieldType === 'url' || def.fieldType === 'textarea') {
+        const s = extractString(rawVal)
+        if (!s || !isDifferentText(s, existing?.value?.valueText ?? null)) continue
+        parsedValue = s; fromDisplay = existing?.value?.valueText ?? null; toDisplay = s
+
+      } else if (def.fieldType === 'number' || def.fieldType === 'currency') {
+        const n = extractNumber(rawVal)
+        if (n == null || n === (existing?.value?.valueNumber ?? null)) continue
+        parsedValue = n; fromDisplay = existing?.value?.valueNumber != null ? String(existing.value.valueNumber) : null; toDisplay = String(n)
+
+      } else if (def.fieldType === 'boolean') {
+        if (typeof rawVal !== 'boolean') continue
+        const current = existing?.value?.valueBoolean ?? null
+        if (rawVal === current) continue
+        parsedValue = rawVal; fromDisplay = current != null ? String(current) : null; toDisplay = String(rawVal)
+
+      } else if (def.fieldType === 'date') {
+        const s = extractString(rawVal)
+        if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) continue
+        if (!isDifferentText(s, existing?.value?.valueDate ?? null)) continue
+        parsedValue = s; fromDisplay = existing?.value?.valueDate ?? null; toDisplay = s
+
+      } else if (def.fieldType === 'select') {
+        const s = extractString(rawVal)
+        if (!s) continue
+        const opts = parseCustomOptions(def)
+        if (opts.length === 0) continue
+        const matched = matchCompanySelectOption(s, opts)
+        if (!matched || !isDifferentText(matched, existing?.value?.valueText ?? null)) continue
+        parsedValue = matched; fromDisplay = existing?.value?.valueText ?? null; toDisplay = matched
+
+      } else if (def.fieldType === 'multiselect') {
+        const rawArr = Array.isArray(rawVal)
+          ? rawVal.map(String)
+          : typeof rawVal === 'string' ? rawVal.split(',').map(s => s.trim()) : null
+        if (!rawArr) continue
+        const opts = parseCustomOptions(def)
+        if (opts.length === 0) continue
+        const matched = rawArr.map(s => matchCompanySelectOption(s, opts)).filter((m): m is string => m != null)
+        if (matched.length === 0) continue
+        const newJson = JSON.stringify(matched)
+        if (newJson === (existing?.value?.valueText ?? null)) continue
+        parsedValue = matched; fromDisplay = existing?.value?.valueText ?? null; toDisplay = matched.join(', ')
+      }
+
+      if (parsedValue == null) continue
+      customFieldUpdates.push({
+        fieldDefinitionId: def.id,
+        label: def.label,
+        fieldType: def.fieldType,
+        newValue: parsedValue,
+        fromDisplay,
+        toDisplay,
+      })
+      changes.push({ field: def.label, from: fromDisplay, to: toDisplay })
+    }
+  }
+
+  if (changes.length === 0) return null
+
+  // Only track fieldSources when a source ID is provided (skip for notes/email enrichment)
+  if (fieldSourceId !== null) {
+    const existingSources: Record<string, string> = {}
+    if (company.fieldSources) {
+      try {
+        const prev = JSON.parse(company.fieldSources)
+        if (prev && typeof prev === 'object') Object.assign(existingSources, prev)
+      } catch { /* ignore */ }
+    }
+    // Only track built-in fields (custom fields tracked separately in the UI)
+    const builtinFieldNames = ['description', 'round', 'raiseSize', 'postMoneyValuation', 'city', 'state', 'pipelineStage']
+    for (const change of changes) {
+      if (builtinFieldNames.includes(change.field)) {
+        existingSources[change.field] = fieldSourceId
+      }
+    }
+    if (Object.keys(existingSources).length > 0) {
+      updates.fieldSources = JSON.stringify(existingSources)
+    }
+  }
+
+  return {
+    companyId: company.id,
+    companyName: company.canonicalName,
+    updates,
+    changes,
+    customFieldUpdates: customFieldUpdates.length > 0 ? customFieldUpdates : undefined,
+  }
+}
+
 export async function getCompanyEnrichmentProposalsFromMeetings(
   meetingIds: string[],
   companyId: string,
@@ -606,7 +845,6 @@ export async function getCompanyEnrichmentProposalsFromMeetings(
     const company = companyRepo.getCompany(companyId)
     if (!company) return null
 
-    // Custom field defs for 'company' entity (skip builtins, refs, hidden)
     const customDefs = listFieldDefinitions('company').filter(
       d => !d.isBuiltin &&
            d.fieldType !== 'contact_ref' &&
@@ -619,225 +857,92 @@ export async function getCompanyEnrichmentProposalsFromMeetings(
       `--- Meeting ${i + 1} (${e.date.slice(0, 10)}) ---\n${e.summary}`
     ).join('\n\n')
 
-    const systemPrompt =
-      'You are a company data extractor. Extract structured company information from ' +
-      'meeting summaries. Return ONLY valid JSON — no prose, no markdown fences. ' +
-      'For conflicting information across meetings, use the most recent value (meetings are in chronological order, last is most recent). ' +
-      'Set fields to null if not mentioned in the summaries.'
-
-    const builtinFields = [
-      '  "description": one-sentence company description (string or null)',
-      '  "round": funding round, one of [pre_seed, seed, seed_extension, series_a, series_b] or null',
-      '  "raiseSize": raise size in millions USD (number or null)',
-      '  "postMoneyValuation": post-money valuation in millions USD (number or null)',
-      '  "city": headquarters city (string or null)',
-      '  "state": headquarters state abbreviation (string or null)',
-      '  "pipelineStage": one of [screening, diligence, decision, documentation, pass] or null',
-      '  "industries": array of industry category tags (e.g. ["FinTech", "AI/ML"]) or null',
-    ].join('\n')
-
-    const customFieldNotes = customDefs.length > 0
-      ? `\n\nCustom fields to extract:\n${buildCompanyCustomFieldPromptLines(customDefs)}`
-      : ''
-
-    const userPrompt =
-      `Extract information about company: ${company.canonicalName}\n\n` +
-      `Meeting summaries:\n${summaryBlocks}\n\n` +
-      `Return a JSON object with these fields:\n{\n${builtinFields}\n}` +
-      customFieldNotes
-
-    let responseText: string
-    try {
-      responseText = await provider.generateSummary(systemPrompt, userPrompt)
-    } catch (err) {
-      console.error('[Company Enrich] LLM call failed:', err)
-      return null
-    }
-
-    const extracted = safeParseJson(responseText)
-    if (!extracted) {
-      console.warn('[Company Enrich] Could not parse LLM response as JSON')
-      return null
-    }
-
-    // --- Built-in field comparison ---
-    const updates: CompanySummaryUpdatePayload = {}
-    const changes: CompanySummaryUpdateChange[] = []
-
-    const rawDescription = extractString(extracted.description)
-    if (rawDescription && isDifferentText(rawDescription, company.description)) {
-      updates.description = rawDescription
-      changes.push({ field: 'description', from: company.description, to: rawDescription })
-    }
-
-    const rawRound = extractString(extracted.round) as CompanyRound | null
-    const validRounds: CompanyRound[] = ['pre_seed', 'seed', 'seed_extension', 'series_a', 'series_b']
-    if (rawRound && validRounds.includes(rawRound) && rawRound !== company.round) {
-      updates.round = rawRound
-      changes.push({ field: 'round', from: company.round, to: rawRound })
-    }
-
-    const rawRaiseSize = extractNumber(extracted.raiseSize)
-    if (isDifferentNumber(rawRaiseSize, company.raiseSize)) {
-      updates.raiseSize = rawRaiseSize
-      changes.push({ field: 'raiseSize', from: company.raiseSize, to: rawRaiseSize })
-    }
-
-    const rawPostMoney = extractNumber(extracted.postMoneyValuation)
-    if (isDifferentNumber(rawPostMoney, company.postMoneyValuation)) {
-      updates.postMoneyValuation = rawPostMoney
-      changes.push({ field: 'postMoneyValuation', from: company.postMoneyValuation, to: rawPostMoney })
-    }
-
-    const rawCity = extractString(extracted.city)
-    if (rawCity && isDifferentText(rawCity, company.city)) {
-      updates.city = rawCity
-      changes.push({ field: 'city', from: company.city, to: rawCity })
-    }
-
-    const rawState = extractString(extracted.state)
-    if (rawState && isDifferentText(rawState, company.state)) {
-      updates.state = rawState
-      changes.push({ field: 'state', from: company.state, to: rawState })
-    }
-
-    const rawStage = extractString(extracted.pipelineStage) as CompanyPipelineStage | null
-    const validStages: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
-    if (rawStage && validStages.includes(rawStage) && rawStage !== company.pipelineStage) {
-      updates.pipelineStage = rawStage
-      changes.push({ field: 'pipelineStage', from: company.pipelineStage, to: rawStage })
-    }
-
-    // Industries — LLM may return string[] or a comma-joined string; normalize to string[]
-    const rawIndustriesRaw = extracted.industries
-    const rawIndustries: string[] | null =
-      Array.isArray(rawIndustriesRaw)
-        ? (rawIndustriesRaw as unknown[]).map(String).filter(Boolean)
-        : typeof rawIndustriesRaw === 'string' && rawIndustriesRaw.trim()
-          ? rawIndustriesRaw.split(',').map((s: string) => s.trim()).filter(Boolean)
-          : null
-    if (rawIndustries && rawIndustries.length > 0) {
-      const extractedSet = new Set(rawIndustries.map((s) => s.toLowerCase()))
-      const currentSet = new Set(company.industries.map((s) => s.toLowerCase()))
-      const isDiff =
-        rawIndustries.some((i) => !currentSet.has(i.toLowerCase())) ||
-        company.industries.some((i) => !extractedSet.has(i.toLowerCase()))
-      if (isDiff) {
-        updates.industries = rawIndustries
-        changes.push({
-          field: 'industries',
-          from: company.industries.join(', ') || null,
-          to: rawIndustries.join(', ')
-        })
-      }
-    }
-
-    // --- Custom fields ---
-    const customFieldUpdates: CustomFieldProposedUpdate[] = []
-
-    if (customDefs.length > 0) {
-      const currentValues = getFieldValuesForEntity('company', companyId)
-      const currentValueMap = new Map(currentValues.map(v => [v.id, v]))
-
-      for (const def of customDefs) {
-        const rawVal = extracted[def.fieldKey]
-        if (rawVal == null) continue
-
-        let parsedValue: string | number | boolean | string[] | null = null
-        let fromDisplay: string | null = null
-        let toDisplay = ''
-
-        const existing = currentValueMap.get(def.id)
-
-        if (def.fieldType === 'text' || def.fieldType === 'url' || def.fieldType === 'textarea') {
-          const s = extractString(rawVal)
-          if (!s || !isDifferentText(s, existing?.value?.valueText ?? null)) continue
-          parsedValue = s; fromDisplay = existing?.value?.valueText ?? null; toDisplay = s
-
-        } else if (def.fieldType === 'number' || def.fieldType === 'currency') {
-          const n = extractNumber(rawVal)
-          if (n == null || n === (existing?.value?.valueNumber ?? null)) continue
-          parsedValue = n; fromDisplay = existing?.value?.valueNumber != null ? String(existing.value.valueNumber) : null; toDisplay = String(n)
-
-        } else if (def.fieldType === 'boolean') {
-          if (typeof rawVal !== 'boolean') continue
-          const current = existing?.value?.valueBoolean ?? null
-          if (rawVal === current) continue
-          parsedValue = rawVal; fromDisplay = current != null ? String(current) : null; toDisplay = String(rawVal)
-
-        } else if (def.fieldType === 'date') {
-          const s = extractString(rawVal)
-          if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) continue
-          if (!isDifferentText(s, existing?.value?.valueDate ?? null)) continue
-          parsedValue = s; fromDisplay = existing?.value?.valueDate ?? null; toDisplay = s
-
-        } else if (def.fieldType === 'select') {
-          const s = extractString(rawVal)
-          if (!s) continue
-          const opts = parseCustomOptions(def)
-          if (opts.length === 0) continue
-          const matched = matchCompanySelectOption(s, opts)
-          if (!matched || !isDifferentText(matched, existing?.value?.valueText ?? null)) continue
-          parsedValue = matched; fromDisplay = existing?.value?.valueText ?? null; toDisplay = matched
-
-        } else if (def.fieldType === 'multiselect') {
-          const rawArr = Array.isArray(rawVal)
-            ? rawVal.map(String)
-            : typeof rawVal === 'string' ? rawVal.split(',').map(s => s.trim()) : null
-          if (!rawArr) continue
-          const opts = parseCustomOptions(def)
-          if (opts.length === 0) continue
-          const matched = rawArr.map(s => matchCompanySelectOption(s, opts)).filter((m): m is string => m != null)
-          if (matched.length === 0) continue
-          const newJson = JSON.stringify(matched)
-          if (newJson === (existing?.value?.valueText ?? null)) continue
-          parsedValue = matched; fromDisplay = existing?.value?.valueText ?? null; toDisplay = matched.join(', ')
-        }
-
-        if (parsedValue == null) continue
-        customFieldUpdates.push({
-          fieldDefinitionId: def.id,
-          label: def.label,
-          fieldType: def.fieldType,
-          newValue: parsedValue,
-          fromDisplay,
-          toDisplay,
-        })
-        changes.push({ field: def.label, from: fromDisplay, to: toDisplay })
-      }
-    }
-
-    if (changes.length === 0) return null
-
-    // Build fieldSources: use the most recent meeting ID for all applied built-in fields
     const mostRecentMeetingId = sorted[sorted.length - 1]!.meetingId
-    const existingSources: Record<string, string> = {}
-    if (company.fieldSources) {
-      try {
-        const prev = JSON.parse(company.fieldSources)
-        if (prev && typeof prev === 'object') Object.assign(existingSources, prev)
-      } catch { /* ignore */ }
-    }
-    for (const change of changes) {
-      // Only track built-in fields (custom fields tracked separately in the UI)
-      const builtinFieldNames = ['description', 'round', 'raiseSize', 'postMoneyValuation', 'city', 'state', 'pipelineStage']
-      if (builtinFieldNames.includes(change.field)) {
-        existingSources[change.field] = mostRecentMeetingId
-      }
-    }
-    if (Object.keys(existingSources).length > 0) {
-      updates.fieldSources = JSON.stringify(existingSources)
-    }
-
-    return {
-      companyId: company.id,
-      companyName: company.canonicalName,
-      updates,
-      changes,
-      customFieldUpdates: customFieldUpdates.length > 0 ? customFieldUpdates : undefined,
-    }
+    return await buildCompanyEnrichmentProposal(
+      company, summaryBlocks, 'Meeting summaries', customDefs, provider, mostRecentMeetingId
+    )
   } catch (err) {
     console.error('[Company Enrich] getCompanyEnrichmentProposalsFromMeetings failed:', err)
+    return null
+  }
+}
+
+export async function getCompanyEnrichmentProposalsFromNotes(
+  companyId: string,
+  provider: LLMProvider
+): Promise<CompanySummaryUpdateProposal | null> {
+  try {
+    if (!companyId) return null
+
+    const notes = listCompanyNotes(companyId)
+    const validNotes = notes.filter(n => n.content?.trim())
+    if (validNotes.length === 0) return null
+
+    const company = companyRepo.getCompany(companyId)
+    if (!company) return null
+
+    const customDefs = listFieldDefinitions('company').filter(
+      d => !d.isBuiltin &&
+           d.fieldType !== 'contact_ref' &&
+           d.fieldType !== 'company_ref'
+    )
+
+    // Sort oldest→newest (most recent last = most weight in LLM)
+    const sorted = [...validNotes].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    const noteBlocks = sorted.map((n, i) => {
+      const label = n.title
+        ? `${n.title} (${n.createdAt.slice(0, 10)})`
+        : `Note ${i + 1} (${n.createdAt.slice(0, 10)})`
+      return `--- ${label} ---\n${_stripMarkdown(n.content ?? '')}`
+    }).join('\n\n')
+
+    // null fieldSourceId = skip fieldSources tracking for note-based enrichment
+    return await buildCompanyEnrichmentProposal(company, noteBlocks, 'Notes', customDefs, provider, null)
+  } catch (err) {
+    console.error('[Company Enrich Notes] getCompanyEnrichmentProposalsFromNotes failed:', err)
+    return null
+  }
+}
+
+export async function getCompanyEnrichmentProposalsFromEmails(
+  companyId: string,
+  provider: LLMProvider
+): Promise<CompanySummaryUpdateProposal | null> {
+  try {
+    if (!companyId) return null
+
+    const emails = companyRepo.listCompanyEmails(companyId)
+    // Use snippet only; sort newest-first, cap at 30 to keep prompt size manageable
+    const validEmails = emails
+      .filter(e => e.snippet?.trim())
+      .sort((a, b) => {
+        const da = a.receivedAt ?? a.sentAt ?? ''
+        const db = b.receivedAt ?? b.sentAt ?? ''
+        return db.localeCompare(da)  // newest first
+      })
+      .slice(0, 30)
+    if (validEmails.length === 0) return null
+
+    const company = companyRepo.getCompany(companyId)
+    if (!company) return null
+
+    const customDefs = listFieldDefinitions('company').filter(
+      d => !d.isBuiltin &&
+           d.fieldType !== 'contact_ref' &&
+           d.fieldType !== 'company_ref'
+    )
+
+    const emailBlocks = validEmails.map(e => {
+      const date = (e.receivedAt ?? e.sentAt ?? '').slice(0, 10)
+      const from = e.fromName ? `${e.fromName} <${e.fromEmail}>` : e.fromEmail
+      const subj = e.subject?.trim() || '(no subject)'
+      return `--- Email: "${subj}" from ${from} on ${date} ---\n${e.snippet!.trim()}`
+    }).join('\n\n')
+
+    // null fieldSourceId = skip fieldSources tracking for email-based enrichment
+    return await buildCompanyEnrichmentProposal(company, emailBlocks, 'Emails', customDefs, provider, null)
+  } catch (err) {
+    console.error('[Company Enrich Emails] getCompanyEnrichmentProposalsFromEmails failed:', err)
     return null
   }
 }

@@ -24,6 +24,7 @@ import { safeParseJson, extractString, extractNumber } from '../utils/json-utils
 import type { LLMProvider } from '../llm/provider'
 import type { ChatAttachment } from '../../shared/types/chat'
 import type { PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
+import { ENTITY_TYPE_OPTIONS } from '../../shared/types/company'
 import type { CompanyRound, CompanyEntityType } from '../../shared/types/company'
 
 // ---------------------------------------------------------------------------
@@ -64,9 +65,10 @@ const VALID_ROUNDS: CompanyRound[] = [
   'pre_seed', 'seed', 'seed_extension', 'series_a', 'series_b',
 ]
 
-const VALID_ENTITY_TYPES: CompanyEntityType[] = [
-  'startup', 'vc_fund', 'family_office', 'angel', 'accelerator', 'corporate', 'other',
-]
+// Exclude 'unknown' and 'pass' — LLM shouldn't classify a pitch deck as passing/unknown
+const VALID_ENTITY_TYPES: CompanyEntityType[] = ENTITY_TYPE_OPTIONS
+  .map(t => t.value)
+  .filter((v): v is CompanyEntityType => v !== 'unknown' && v !== 'pass')
 
 // Titles that indicate CEO / Co-CEO
 const CEO_TITLE_PATTERNS = [/\bCEO\b/i, /chief\s+executive/i, /co[-\s]?ceo/i]
@@ -103,7 +105,7 @@ function buildUserPrompt(sourceLabel: string, text: string): string {
     `  "round": one of [pre_seed, seed, seed_extension, series_a, series_b] or null,\n` +
     `  "raiseSize": raise size in millions USD as a number (number or null),\n` +
     `  "postMoneyValuation": post-money valuation in millions USD (number or null),\n` +
-    `  "entityType": one of [startup, vc_fund, family_office, angel, accelerator, corporate, other] or null,\n` +
+    `  "entityType": one of [prospect, portfolio, vc_fund, lp, customer, partner, vendor, other] or null,\n` +
     `  "industries": array of industry tags e.g. ["FinTech", "AI/ML"] (array, may be empty),\n` +
     `  "founders": array of founders and C-suite officers ONLY — each: { name, email, title } — exclude advisors/board/investors\n` +
     `}`
@@ -133,7 +135,7 @@ function buildVisionUserPrompt(sourceLabel: string): string {
     `  "round": one of [pre_seed, seed, seed_extension, series_a, series_b] or null,\n` +
     `  "raiseSize": raise size in millions USD as a number (number or null),\n` +
     `  "postMoneyValuation": post-money valuation in millions USD (number or null),\n` +
-    `  "entityType": one of [startup, vc_fund, family_office, angel, accelerator, corporate, other] or null,\n` +
+    `  "entityType": one of [prospect, portfolio, vc_fund, lp, customer, partner, vendor, other] or null,\n` +
     `  "industries": array of industry tags e.g. ["FinTech", "AI/ML"] (array, may be empty),\n` +
     `  "founders": array of founders and C-suite officers ONLY — each: { name, email, title } — exclude advisors/board/investors\n` +
     `}`
@@ -259,7 +261,7 @@ export async function extractFromPdf(
 
   if (text === null) {
     console.warn('[PitchDeck] readLocalFile returned null', { filePath })
-    throw new PitchDeckError('no_text', 'Could not read this PDF — it may be corrupted, encrypted, or exceed the 5 MB limit')
+    throw new PitchDeckError('no_text', 'Could not read this PDF — it may be corrupted, encrypted, or exceed the 10 MB limit')
   }
 
   const startMs = Date.now()

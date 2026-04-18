@@ -687,21 +687,14 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     }
   }
 
-  // 2. Companies: direct prefix matches from the companies cache table
+  // 2. Companies: org_companies is the source of truth, supplemented by
+  //    the companies cache table and meetings.companies column.
+  //    Deduplicate by tracking seen canonical names (lowercased) so that
+  //    cache/meeting entries don't create duplicates of existing org companies.
   // No per-source LIMIT — the final .slice(0, limit) below caps output.
-  // A per-source LIMIT would silently drop org_companies results when the
-  // cache table fills all slots alphabetically before them.
-  const cachedCompanyRows = db
-    .prepare('SELECT domain, display_name FROM companies WHERE display_name LIKE ?')
-    .all(`%${prefix}%`) as { domain: string; display_name: string }[]
+  const seenCompanyNames = new Set<string>()
 
-  for (const row of cachedCompanyRows) {
-    if (!companyMap.has(row.domain)) {
-      companyMap.set(row.domain, row.display_name)
-    }
-  }
-
-  // Also search org_companies (the main company entity table)
+  // 2a. org_companies first (authoritative — has domain for logo)
   const orgCompanyRows = db
     .prepare('SELECT id, canonical_name, primary_domain FROM org_companies WHERE canonical_name LIKE ?')
     .all(`%${prefix}%`) as { id: string; canonical_name: string; primary_domain: string | null }[]
@@ -711,10 +704,23 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     if (!companyMap.has(key)) {
       companyMap.set(key, row.canonical_name)
     }
+    seenCompanyNames.add(row.canonical_name.toLowerCase())
   }
 
-  // Also check companies column in meetings for names not yet in cache.
-  // LIKE filter pushed to SQLite to avoid scanning every meeting row in JS.
+  // 2b. companies cache table — skip entries whose name matches an org_company
+  const cachedCompanyRows = db
+    .prepare('SELECT domain, display_name FROM companies WHERE display_name LIKE ?')
+    .all(`%${prefix}%`) as { domain: string; display_name: string }[]
+
+  for (const row of cachedCompanyRows) {
+    if (seenCompanyNames.has(row.display_name.toLowerCase())) continue
+    if (!companyMap.has(row.domain)) {
+      companyMap.set(row.domain, row.display_name)
+      seenCompanyNames.add(row.display_name.toLowerCase())
+    }
+  }
+
+  // 2c. meetings.companies column — skip entries whose name matches an existing result
   const meetingCompanyRows = db
     .prepare('SELECT companies FROM meetings WHERE companies IS NOT NULL AND companies LIKE ?')
     .all(`%${prefix}%`) as { companies: string }[]
@@ -723,8 +729,11 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     try {
       const comps: string[] = JSON.parse(row.companies)
       for (const c of comps) {
-        if (c.toLowerCase().includes(lower) && !companyMap.has(c)) {
-          companyMap.set(c, c)
+        if (c.toLowerCase().includes(lower) && !seenCompanyNames.has(c.toLowerCase())) {
+          if (!companyMap.has(c)) {
+            companyMap.set(c, c)
+            seenCompanyNames.add(c.toLowerCase())
+          }
         }
       }
     } catch { /* skip */ }

@@ -22,6 +22,7 @@ export function runBuiltinFieldDefsMigration(db: Database.Database): void {
       ('builtin:businessModel',      'company', 'businessModel',     'Business Model',  'select', NULL, 1, 0,  -95, 0, datetime('now'), datetime('now')),
       ('builtin:productStage',       'company', 'productStage',      'Product Stage',   'select', NULL, 1, 0,  -94, 0, datetime('now'), datetime('now')),
       ('builtin:employeeCountRange', 'company', 'employeeCountRange','Employees',       'select', NULL, 1, 0,  -93, 0, datetime('now'), datetime('now')),
-      ('builtin:contactType',        'contact', 'contactType',       'Contact Type',    'select', NULL, 1, 0, -100, 0, datetime('now'), datetime('now'));
+      ('builtin:contactType',        'contact', 'contactType',       'Contact Type',    'select', NULL, 1, 0, -100, 0, datetime('now'), datetime('now')),
+      ('builtin:talentPipeline',     'contact', 'talentPipeline',    'Talent Pipeline', 'select', NULL, 1, 0,  -99, 0, datetime('now'), datetime('now'));
   `)
 }
