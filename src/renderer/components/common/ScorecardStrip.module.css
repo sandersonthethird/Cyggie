@@ -1,0 +1,95 @@
+/* ── ScorecardStrip ─────────────────────────────────────────────────────
+ * 3-column metric strip with hairline dividers.
+ *
+ *   ┌────────────┬────────────┬────────────┐
+ *   │ LABEL      │ LABEL      │ LABEL      │
+ *   │ value /suf │ value      │ value      │
+ *   │ +delta     │ +delta     │ N detail   │
+ *   └────────────┴────────────┴────────────┘
+ * ────────────────────────────────────────────────────────────────────── */
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--cy-border, var(--color-border));
+  border-radius: var(--cy-radius, 6px);
+  background: var(--cy-surface, var(--color-card-bg));
+  overflow: hidden;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  position: relative;
+}
+
+.cell:hover {
+  background: var(--cy-hover, var(--color-card-hover));
+}
+
+/* 1px hairline divider between cells */
+.cell + .cell::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 20%;
+  height: 60%;
+  width: 1px;
+  background: var(--cy-divider, var(--color-border));
+}
+
+.label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  margin-bottom: 2px;
+}
+
+.valueRow {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--cy-text, var(--color-text));
+  line-height: 1.2;
+}
+
+.suffix {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+}
+
+.delta {
+  font-size: 10.5px;
+  font-weight: 600;
+  margin-top: 1px;
+}
+
+.deltaUp {
+  color: var(--cy-acc-green, #22c55e);
+}
+
+.deltaDown {
+  color: var(--color-danger, #d94545);
+}
+
+.deltaNeutral {
+  color: var(--cy-text-4, var(--color-text-tertiary));
+}
+
+.detail {
+  font-size: 10.5px;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  margin-top: 1px;
+}

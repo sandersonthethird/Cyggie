@@ -1,0 +1,68 @@
+/* ── CollapsibleSection ─────────────────────────────────────────────────
+ * Reusable section with a toggle header and persisted open/closed state.
+ *
+ *   ┌── header ─────────────────────────────────────────┐
+ *   │  SECTION TITLE                              ▼ / ▶ │
+ *   └──────────────────────────────────────────────────┘
+ *   ┌── body (collapsed = display:none) ──────────────┐
+ *   │  children                                         │
+ *   └──────────────────────────────────────────────────┘
+ *
+ * Open/closed state persists via usePreferencesStore keyed by sectionKey.
+ * ────────────────────────────────────────────────────────────────────── */
+
+.section {
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  padding: 14px 0 4px;
+  margin-bottom: 2px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.header:hover .toggleBtn {
+  opacity: 1;
+}
+
+.toggleBtn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 9px;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.1s, color 0.1s, transform 0.15s ease-out;
+}
+
+.toggleBtn:hover {
+  opacity: 1;
+  color: var(--cy-brand, var(--color-primary));
+}
+
+/* Rotate the chevron when collapsed */
+.toggleBtnCollapsed {
+  transform: rotate(-90deg);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bodyCollapsed {
+  display: none;
+}

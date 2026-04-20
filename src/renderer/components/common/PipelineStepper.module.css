@@ -1,0 +1,113 @@
+/* ── PipelineStepper ────────────────────────────────────────────────────
+ * Horizontal stage progression bar.
+ *
+ *   ┌─────────────────────────────────────────────────────────────┐
+ *   │  ●────●────◉────○────○        12 days in stage             │
+ *   │  Sourced  Screening  Diligence  Partner  Term Sheet        │
+ *   └─────────────────────────────────────────────────────────────┘
+ *
+ * ◉ = current (ring halo)   ● = completed   ○ = future
+ * ────────────────────────────────────────────────────────────────────── */
+
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.topRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* The track + dots container */
+.track {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  position: relative;
+}
+
+/* Connecting line between dots */
+.segment {
+  flex: 1;
+  height: 3px;
+  background: var(--cy-border, var(--color-border));
+  transition: background 0.15s;
+}
+
+.segmentCompleted {
+  background: var(--cy-brand, #b91c1c);
+}
+
+/* Stage dot */
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--cy-border, var(--color-border));
+  background: var(--cy-surface, #fff);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+  z-index: 1;
+}
+
+.dot:hover {
+  border-color: var(--cy-brand, #b91c1c);
+  transform: scale(1.15);
+}
+
+.dotCompleted {
+  background: var(--cy-brand, #b91c1c);
+  border-color: var(--cy-brand, #b91c1c);
+}
+
+/* Current stage — ring halo */
+.dotCurrent {
+  background: var(--cy-brand, #b91c1c);
+  border-color: var(--cy-brand, #b91c1c);
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.2);
+}
+
+.dotFuture {
+  background: var(--cy-surface, #fff);
+  border-color: var(--cy-border-2, var(--color-border));
+}
+
+/* Days counter */
+.daysLabel {
+  font-size: 11px;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  white-space: nowrap;
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+
+/* Stage labels below the track */
+.labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.stageLabel {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--cy-text-4, var(--color-text-tertiary));
+  text-align: center;
+  cursor: pointer;
+  transition: color 0.1s;
+}
+
+.stageLabel:hover {
+  color: var(--cy-text, var(--color-text));
+}
+
+.stageLabelCurrent {
+  font-weight: 700;
+  color: var(--cy-text, var(--color-text));
+}

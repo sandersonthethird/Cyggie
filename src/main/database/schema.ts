@@ -25,6 +25,11 @@ export interface MeetingRow {
   status: string
   created_at: string
   updated_at: string
+  // Populated by LEFT JOIN in listMeetings — null when no company linked
+  company_id?: string | null
+  company_name?: string | null
+  company_domain?: string | null
+  company_stage?: string | null
 }
 
 export interface TemplateRow {

@@ -1,0 +1,191 @@
+/* ── Titlebar date chip ─────────── */
+
+.wrapper {
+  position: relative;
+}
+
+/* Chip (collapsed pill) */
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card-bg);
+  box-shadow: var(--cv-shadow);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.chip:hover {
+  border-color: #D1D5DB;
+}
+
+.chipOpen {
+  background: var(--cv-crimson-muted);
+  border-color: var(--cv-crimson);
+}
+
+.chipOpen .chipIcon,
+.chipOpen .chipDate,
+.chipOpen .chipNextLabel,
+.chipOpen .chipTime,
+.chipOpen .chipNowLabel,
+.chipOpen .chipEmpty {
+  color: var(--cv-crimson);
+}
+
+.chipOpen .chipDivider {
+  background: var(--cv-crimson);
+  opacity: 0.3;
+}
+
+/* Chip internals */
+.chipIcon {
+  width: 13px;
+  height: 13px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.chipDate {
+  font-weight: 600;
+}
+
+.chipDivider {
+  width: 1px;
+  height: 12px;
+  background: var(--color-border);
+  margin: 0 8px;
+  flex-shrink: 0;
+}
+
+.chipNextLabel {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cv-text-meta);
+  margin-right: 4px;
+}
+
+.chipTime {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chipNowLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cv-crimson);
+  margin-right: 4px;
+}
+
+.chipNowTitle {
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cv-crimson);
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.chipDotPulse {
+  animation: chip-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes chip-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.chipEmpty {
+  font-size: 12px;
+  color: var(--cv-text-meta);
+}
+
+/* Popover */
+.popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px -10px rgba(17, 24, 39, 0.22),
+              0 4px 12px rgba(17, 24, 39, 0.06);
+  padding: 14px 16px;
+  z-index: 200;
+  animation: popoverIn 140ms ease-out;
+}
+
+.popover::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: 24px;
+  width: 10px;
+  height: 10px;
+  background: var(--color-card-bg);
+  border-top: 1px solid var(--color-border);
+  border-left: 1px solid var(--color-border);
+  transform: rotate(45deg);
+}
+
+@keyframes popoverIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Popover footer */
+.popoverFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--color-border);
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.footerLink {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+
+.footerLink:hover {
+  text-decoration: underline;
+}
+
+.footerHint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}

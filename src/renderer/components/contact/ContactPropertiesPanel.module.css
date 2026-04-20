@@ -59,6 +59,14 @@
 .headerMeta {
   flex: 1;
   min-width: 0;
+  position: relative;
+}
+
+.kebabPosition {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
 }
 
 .name {
@@ -458,25 +466,7 @@
   margin-top: 16px;
 }
 
-.doneBtn {
-  flex-shrink: 0;
-  align-self: flex-start;
-  padding: 4px 12px;
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-md, 6px);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: opacity 0.12s;
-}
-
-.doneBtn:hover {
-  opacity: 0.85;
-}
-
-/* Edit action row: Reset + Done (or Apply prompt) */
+/* Edit action row: Save + Cancel + Reset Layout (or Apply prompt) */
 .editActions {
   display: flex;
   flex-direction: column;
@@ -485,17 +475,50 @@
   flex-shrink: 0;
 }
 
-.resetLayoutBtn {
-  background: none;
-  border: none;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: var(--radius-sm, 4px);
-  transition: color 0.1s;
+.editBtnRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.resetLayoutBtn:hover { color: var(--color-text-primary); }
+
+.saveBtn {
+  padding: 4px 14px;
+  background: var(--cv-crimson);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md, 6px);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.saveBtn:hover { background: var(--cv-crimson-hover); }
+
+.cancelBtn {
+  padding: 4px 14px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.cancelBtn:hover { border-color: var(--color-text-secondary); color: var(--color-text); }
+
+.resetLayoutBtn {
+  padding: 4px 14px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.resetLayoutBtn:hover { border-color: var(--color-text-secondary); color: var(--color-text); }
 
 .applyPrompt {
   display: flex;
@@ -1155,6 +1178,12 @@
   flex-direction: column;
   gap: 6px;
 }
+.metaEditBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
 .metaRow {
   display: flex;
   align-items: center;
@@ -1173,6 +1202,7 @@
 }
 .metaRowCopyable:hover { background: var(--color-bg-secondary); }
 .metaIcon { flex-shrink: 0; font-size: 12px; width: 16px; text-align: center; opacity: 0.6; }
+.metaIconSvg { flex-shrink: 0; width: 13px; height: 13px; opacity: 0.5; color: var(--color-text-secondary); margin: 0 1.5px; }
 .metaValue { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .metaLink {
   color: var(--color-primary);
@@ -1223,6 +1253,18 @@
   border-left: 3px solid var(--color-primary);
   border-radius: var(--cv-radius);
   padding: 12px 14px;
+}
+/* Smooth collapse animation using CSS grid */
+.ktBody {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.2s ease;
+}
+.ktBodyCollapsed {
+  grid-template-rows: 0fr;
+}
+.ktBodyInner {
+  overflow: hidden;
 }
 .ktHeader {
   display: flex;
@@ -1328,4 +1370,79 @@
   color: var(--color-primary);
   margin-top: 6px;
   line-height: 1.4;
+}
+
+/* ── Merge picker ──────────────────────────────────────────────────── */
+.mergePickerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.mergePicker {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  width: 360px;
+  max-width: 90vw;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mergePickerTitle {
+  font-size: 13px;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.mergePickerInput {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  box-sizing: border-box;
+  outline: none;
+}
+
+.mergePickerInput:focus {
+  border-color: var(--color-primary);
+}
+
+.mergePickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mergePickerOption {
+  text-align: left;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.mergePickerOption:hover {
+  background: var(--color-bg-secondary);
+}
+
+.mergePickerEmpty {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding: 4px 10px;
 }

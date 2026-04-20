@@ -49,6 +49,47 @@
   --cv-radius: 8px;
   --cv-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
   --cv-shadow-lg: 0 4px 16px rgba(0,0,0,0.1);
+
+  /* ── Cyggie Design Tokens (oklch warm neutrals) ──────────────────────────
+   * New token layer for the Company/Contact Detail redesign.
+   * Prefixed --cy- to coexist with legacy --color-* and --cv-* tokens.
+   * Components should migrate to --cy-* over time (see TODOS.md).
+   * ────────────────────────────────────────────────────────────────────── */
+  --cy-bg:        oklch(0.993 0.002 85);
+  --cy-surface:   oklch(1 0 0);
+  --cy-surface-2: oklch(0.98 0.003 85);
+  --cy-surface-3: oklch(0.965 0.004 85);
+  --cy-hover:     oklch(0.955 0.005 85);
+  --cy-border:    oklch(0.92 0.004 85);
+  --cy-border-2:  oklch(0.885 0.005 85);
+  --cy-divider:   oklch(0.945 0.004 85);
+
+  --cy-text:      oklch(0.22 0.008 85);
+  --cy-text-2:    oklch(0.42 0.008 85);
+  --cy-text-3:    oklch(0.58 0.008 85);
+  --cy-text-4:    oklch(0.72 0.006 85);
+
+  --cy-brand:      #B91C1C;
+  --cy-brand-soft: oklch(0.96 0.02 25);
+
+  --cy-acc-blue:     oklch(0.55 0.14 255);
+  --cy-acc-blue-bg:  oklch(0.965 0.025 255);
+  --cy-acc-green:    oklch(0.55 0.12 155);
+  --cy-acc-green-bg: oklch(0.965 0.03 155);
+  --cy-acc-amber:    oklch(0.62 0.13 75);
+  --cy-acc-amber-bg: oklch(0.96 0.04 80);
+  --cy-acc-violet:   oklch(0.52 0.14 295);
+  --cy-acc-violet-bg:oklch(0.965 0.025 295);
+
+  --cy-radius:    6px;
+  --cy-radius-lg: 10px;
+  --cy-shadow-sm: 0 1px 2px rgba(20,18,15,.04);
+  --cy-shadow-pop:0 8px 24px -6px rgba(20,18,15,.12), 0 2px 6px rgba(20,18,15,.06);
+
+  --cy-font: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --cy-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+
+  --sidebar-width-collapsed: 56px;
 }
 
 @media (prefers-color-scheme: dark) {

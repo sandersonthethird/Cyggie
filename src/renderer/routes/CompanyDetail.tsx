@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { Share2 } from 'lucide-react'
 import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { CompanyDetail as CompanyDetailType, CompanyMeetingRef } from '../../shared/types/company'
+import { ENTITY_TYPE_OPTIONS } from '../../shared/types/company'
 import type { CompanySummaryUpdateProposal, CompanySummaryUpdateChange, CompanySummaryUpdatePayload } from '../../shared/types/summary'
 import { companyEnrichedAtKey } from '../../shared/utils/enrichment-keys'
 import { CompanyPropertiesPanel } from '../components/company/CompanyPropertiesPanel'
-import { CompanyEnhanceModal } from '../components/company/CompanyEnhanceModal'
+import { CompanyEnrichModal } from '../components/company/CompanyEnrichModal'
 import type { PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import { CompanyTimeline } from '../components/company/CompanyTimeline'
 import { CompanyContacts } from '../components/company/CompanyContacts'
@@ -16,12 +18,13 @@ import { CompanyFiles } from '../components/company/CompanyFiles'
 import { CompanyDecisions } from '../components/company/CompanyDecisions'
 import { EnrichmentProposalDialog } from '../components/enrichment/EnrichmentProposalDialog'
 import type { EnrichmentEntityProposal } from '../components/enrichment/EnrichmentProposalDialog'
+import { RecordTopBar } from '../components/common/RecordTopBar'
 import { useChatStore } from '../stores/chat.store'
 import { usePanelResize } from '../hooks/usePanelResize'
 import layoutStyles from './TwoColumnLayout.module.css'
 import styles from './CompanyDetail.module.css'
 
-type CompanyTab = 'timeline' | 'contacts' | 'notes' | 'memo' | 'files' | 'decisions'
+type CompanyTab = 'timeline' | 'contacts' | 'notes' | 'thesis' | 'memo' | 'files' | 'decisions'
 
 export default function CompanyDetail() {
   const { companyId: id } = useParams<{ companyId: string }>()
@@ -47,13 +50,13 @@ export default function CompanyDetail() {
     id ? localStorage.getItem(companyEnrichedAtKey(id)) : null
   )
 
-  // ── File enhancement modal ────────────────────────────────────────────────
-  const [enhanceModalOpen, setEnhanceModalOpen] = useState(false)
-  const [enhanceSource, setEnhanceSource] = useState<'pdf' | 'url' | null>(null)
-  const [enhanceJustCompleted, setEnhanceJustCompleted] = useState(false)
+  // ── File enrichment modal ────────────────────────────────────────────────
+  const [enrichModalOpen, setEnrichModalOpen] = useState(false)
+  const [enrichSource, setEnrichSource] = useState<'pdf' | 'url' | null>(null)
+  const [enrichJustCompleted, setEnrichJustCompleted] = useState(false)
   const [highlightNoteId, setHighlightNoteId] = useState<string | null>(null)
   const [notesVersion, setNotesVersion] = useState(0)
-  const enhanceCompleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const enrichCompleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const setPageContext = useChatStore((s) => s.setPageContext)
 
@@ -268,7 +271,7 @@ export default function CompanyDetail() {
     }
   }, [id])
 
-  const handleEnhance = useCallback((source: 'pdf' | 'url' | 'meetings' | 'notes' | 'emails') => {
+  const handleEnrich = useCallback((source: 'pdf' | 'url' | 'meetings' | 'notes' | 'emails') => {
     if (source === 'meetings') {
       void handleEnrichFromMeetings()
       return
@@ -281,18 +284,18 @@ export default function CompanyDetail() {
       void handleEnrichFromSource(IPC_CHANNELS.COMPANY_ENRICH_FROM_EMAILS, 'emails')
       return
     }
-    setEnhanceSource(source)
-    setEnhanceModalOpen(true)
+    setEnrichSource(source)
+    setEnrichModalOpen(true)
   }, [handleEnrichFromMeetings, handleEnrichFromSource])
 
-  const handleEnhanceComplete = useCallback((noteId: string | null) => {
-    setEnhanceModalOpen(false)
-    setEnhanceSource(null)
+  const handleEnrichComplete = useCallback((noteId: string | null) => {
+    setEnrichModalOpen(false)
+    setEnrichSource(null)
 
-    // Flash the Enhance button and update last-enhanced timestamp
-    setEnhanceJustCompleted(true)
-    if (enhanceCompleteTimerRef.current) clearTimeout(enhanceCompleteTimerRef.current)
-    enhanceCompleteTimerRef.current = setTimeout(() => setEnhanceJustCompleted(false), 3500)
+    // Flash the Enrich button and update last-enhanced timestamp
+    setEnrichJustCompleted(true)
+    if (enrichCompleteTimerRef.current) clearTimeout(enrichCompleteTimerRef.current)
+    enrichCompleteTimerRef.current = setTimeout(() => setEnrichJustCompleted(false), 3500)
 
     if (noteId) {
       setHighlightNoteId(noteId)
@@ -342,13 +345,36 @@ export default function CompanyDetail() {
     },
     { key: 'contacts', label: 'Contacts', badge: company.contactCount || undefined },
     { key: 'notes', label: 'Notes', badge: company.noteCount || undefined },
+    { key: 'thesis', label: 'Thesis' },
     { key: 'decisions', label: 'Decisions' },
     { key: 'memo', label: 'Memo' },
     { key: 'files', label: 'Files' }
   ]
 
+  const entityLabel = ENTITY_TYPE_OPTIONS.find(o => o.value === company.entityType)?.label ?? 'Companies'
+  const entityLabelPlural = entityLabel === 'Prospect' ? 'Prospects'
+    : entityLabel === 'Portfolio' ? 'Portfolio'
+    : entityLabel + 's'
+
   return (
-    <div className={layoutStyles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr` }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <RecordTopBar
+        backLabel="Back"
+        backFallback="/companies"
+        breadcrumbs={[
+          { label: 'Companies', href: '/companies' },
+          { label: entityLabelPlural, href: `/companies?entityType=${company.entityType}` },
+          { label: company.canonicalName },
+        ]}
+        actions={
+          <>
+            <button className={layoutStyles.tabBtn} style={{ border: '1px solid var(--cy-border, var(--color-border))', borderRadius: 6, padding: '0 12px', height: 30 }}>
+              <Share2 size={13} strokeWidth={1.6} /> Share
+            </button>
+          </>
+        }
+      />
+    <div className={layoutStyles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr`, flex: 1 }}>
       {/* Left panel — properties */}
       <div className={layoutStyles.leftPanel}>
         <CompanyPropertiesPanel
@@ -357,10 +383,9 @@ export default function CompanyDetail() {
           showEnrichBanner={showEnrichBanner}
           enrichMeetingCount={summarizedMeetings.length}
           fieldSources={parsedFieldSources}
-          onEnhance={handleEnhance}
+          onEnrich={handleEnrich}
           isLoadingEnrich={isLoadingEnrich}
           onOpenSync={() => setAddToSyncOpen(true)}
-          enhanceJustCompleted={enhanceJustCompleted}
         />
         {enrichSuccessMsg && (
           <div className={styles.enrichSuccess}>
@@ -405,6 +430,11 @@ export default function CompanyDetail() {
           <div className={activeTab !== 'notes' ? layoutStyles.hidden : ''}>
             <CompanyNotes companyId={company.id} highlightNoteId={highlightNoteId ?? undefined} refreshKey={notesVersion} />
           </div>
+          <div className={activeTab !== 'thesis' ? layoutStyles.hidden : ''}>
+            <div style={{ padding: 32, color: 'var(--color-text-tertiary)', fontSize: 14 }}>
+              Thesis — coming soon. Track your investment thesis, claims, and supporting evidence.
+            </div>
+          </div>
           <div className={activeTab !== 'decisions' ? layoutStyles.hidden : ''}>
             <CompanyDecisions companyId={company.id} />
           </div>
@@ -425,11 +455,11 @@ export default function CompanyDetail() {
       )}
 
       {company && (
-        <CompanyEnhanceModal
-          open={enhanceModalOpen}
+        <CompanyEnrichModal
+          open={enrichModalOpen}
           company={company}
-          onClose={() => { setEnhanceModalOpen(false); setEnhanceSource(null) }}
-          onComplete={handleEnhanceComplete}
+          onClose={() => { setEnrichModalOpen(false); setEnrichSource(null) }}
+          onComplete={handleEnrichComplete}
         />
       )}
 
@@ -459,6 +489,7 @@ export default function CompanyDetail() {
           isApplying={isApplyingEnrich}
         />
       )}
+    </div>
     </div>
   )
 }

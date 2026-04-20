@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../connection'
 import type { MeetingRow } from '../schema'
-import type { ChatMessage, Meeting, MeetingListFilter, MeetingStatus } from '../../../shared/types/meeting'
+import type { ChatMessage, Meeting, MeetingCompany, MeetingListFilter, MeetingStatus } from '../../../shared/types/meeting'
 import type { MeetingPlatform } from '../../../shared/constants/meeting-apps'
 import type { TranscriptSegment } from '../../../shared/types/recording'
 
@@ -33,7 +33,10 @@ function rowToMeeting(row: MeetingRow): Meeting {
     recordingPath: row.recording_path ?? null,
     status: row.status as MeetingStatus,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    company: row.company_id
+      ? { id: row.company_id, name: row.company_name!, domain: row.company_domain ?? null, stage: (row.company_stage as MeetingCompany['stage']) ?? null }
+      : null
   }
 }
 
@@ -333,19 +336,19 @@ export function listMeetings(filter?: MeetingListFilter): Meeting[] {
   const params: unknown[] = []
 
   if (filter?.dateFrom) {
-    conditions.push('date >= ?')
+    conditions.push('m.date >= ?')
     params.push(filter.dateFrom)
   }
   if (filter?.dateTo) {
-    conditions.push('date <= ?')
+    conditions.push('m.date <= ?')
     params.push(filter.dateTo)
   }
   if (filter?.platform) {
-    conditions.push('meeting_platform = ?')
+    conditions.push('m.meeting_platform = ?')
     params.push(filter.platform)
   }
   if (filter?.status) {
-    conditions.push('status = ?')
+    conditions.push('m.status = ?')
     params.push(filter.status)
   }
 
@@ -358,7 +361,19 @@ export function listMeetings(filter?: MeetingListFilter): Meeting[] {
   const offset = hasOffset ? `OFFSET ${Math.floor(Number(filter!.offset))}` : ''
 
   const rows = db
-    .prepare(`SELECT * FROM meetings ${where} ORDER BY date DESC ${limit} ${offset}`)
+    .prepare(`
+      SELECT m.*,
+             c.id AS company_id,
+             c.canonical_name AS company_name,
+             c.primary_domain AS company_domain,
+             c.stage AS company_stage
+      FROM meetings m
+      LEFT JOIN meeting_company_links mcl ON mcl.meeting_id = m.id
+      LEFT JOIN org_companies c ON c.id = mcl.company_id
+      ${where}
+      GROUP BY m.id
+      ORDER BY m.date DESC ${limit} ${offset}
+    `)
     .all(...params) as MeetingRow[]
 
   return rows.map(rowToMeeting)

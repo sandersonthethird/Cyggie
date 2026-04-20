@@ -1,17 +1,25 @@
 /* ─────────────────────────────────────────────────────────────────────────────
  * Two-column CRM layout — shared by ContactDetail and CompanyDetail
  *
- * Layout diagram:
+ * Layout diagram (post-redesign):
  *
- *  ┌─ var(--color-bg) page background ──────────────────────────────────────┐
- *  │  ┌─ leftPanel (white card) ─┐  ▕▏  │─ rightPanel (white box) ────────│ │
- *  │  │  sticky header           │  ▕▏  │  tabBar                         │ │
- *  │  │  ──────────────────────  │  ▕▏  │  ─────────────────────────────  │ │
- *  │  │  scrollable content      │  ▕▏  │  tabContent (scrollable)        │ │
- *  │  └──────────────────────────┘  ▕▏  └─────────────────────────────────┘ │
- *  └────────────────────────────────────────────────────────────────────────┘
- *           12px margin top+left         12px margin top+right
- *           divider: faint 1px at rest, crimson on hover
+ *  ┌─ flex column wrapper (100% height) ────────────────────────────────────┐
+ *  │  ┌─ RecordTopBar (sticky 49px) ──────────────────────────────────────┐ │
+ *  │  │  [← Back] │ breadcrumbs                        [Share] [+Action] │ │
+ *  │  └───────────────────────────────────────────────────────────────────┘ │
+ *  │  ┌─ grid (flex: 1) ─────────────────────────────────────────────────┐ │
+ *  │  │  ┌─ leftPanel (360px) ─┐  ┌─ rightPanel (1fr) ─────────────────┐│ │
+ *  │  │  │  identity block     │  │  tabBar (sticky)                   ││ │
+ *  │  │  │  status pills       │  │  ─────────────────────────────     ││ │
+ *  │  │  │  quick actions      │  │  tabContent (scrollable)           ││ │
+ *  │  │  │  key takeaways      │  │  max-width 860px                   ││ │
+ *  │  │  │  scorecard strip    │  │                                    ││ │
+ *  │  │  │  pipeline stepper   │  │                                    ││ │
+ *  │  │  │  collapsible sects  │  │                                    ││ │
+ *  │  │  └─────────────────────┘  └────────────────────────────────────┘│ │
+ *  │  └───────────────────────────────────────────────────────────────────┘ │
+ *  └───────────────────────────────────────────────────────────────────────┘
+ *           NavRail (56/240px) is outside this layout (in Layout.tsx)
  * ───────────────────────────────────────────────────────────────────────────*/
 
 /* Grid container — grid-template-columns is overridden inline via usePanelResize */
@@ -29,6 +37,8 @@
   flex-direction: column;
   gap: 8px;
   margin: 12px 8px 0 12px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* Resize divider: short 1px center bar (only mid-screen) at rest, crimson on hover/drag.

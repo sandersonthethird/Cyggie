@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react'
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import Layout from './components/layout/Layout'
 import Dashboard from './routes/Dashboard'
-import MeetingList from './routes/MeetingList'
+import MeetingList from './routes/MeetingList' // kept for rollback
+import MeetingsPage from './routes/MeetingsPage'
 import MeetingDetail from './routes/MeetingDetail'
 import Companies from './routes/Companies'
 import CompanyDetail from './routes/CompanyDetail'
@@ -107,7 +108,7 @@ export default function App() {
           ) : (
             <Route element={<Layout />}>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/meetings" element={<MeetingList />} />
+              <Route path="/meetings" element={<MeetingsPage />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/notes" element={<Notes />} />
               <Route path="/note/new" element={<NoteDetail />} />

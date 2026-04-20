@@ -104,9 +104,12 @@ export const IPC_CHANNELS = {
   CONTACT_RESOLVE_EMAILS: 'contact:resolve-emails',
   CONTACT_DEDUP_SUSPECTED: 'contact:dedup-suspected',
   CONTACT_DEDUP_APPLY: 'contact:dedup-apply',
+  CONTACT_MERGE: 'contact:merge',
   CONTACT_TIMELINE: 'contact:timeline',
   CONTACT_KEY_TAKEAWAYS_GENERATE: 'contact:key-takeaways-generate',
   CONTACT_KEY_TAKEAWAYS_PROGRESS: 'contact:key-takeaways-progress',
+  COMPANY_KEY_TAKEAWAYS_GENERATE: 'company:key-takeaways-generate',
+  COMPANY_KEY_TAKEAWAYS_PROGRESS: 'company:key-takeaways-progress',
 
   // Dashboard
   DASHBOARD_GET: 'dashboard:get',

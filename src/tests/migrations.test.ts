@@ -3,6 +3,7 @@ import Database from 'better-sqlite3'
 import { runCustomFieldDefinitionsMigration } from '../main/database/migrations/039-custom-field-definitions'
 import { runCustomFieldValuesMigration } from '../main/database/migrations/040-custom-field-values'
 import { runContactKeyTakeawaysMigration } from '../main/database/migrations/069-contact-key-takeaways'
+import { runCompanyKeyTakeawaysMigration } from '../main/database/migrations/070-company-key-takeaways'
 
 function makeDb(): Database.Database {
   const db = new Database(':memory:')
@@ -132,5 +133,50 @@ describe('migration 069 — contact key_takeaways column', () => {
       .prepare(`SELECT value FROM settings WHERE key = 'migration_069_contact_key_takeaways'`)
       .get()
     expect(sentinel).toBeTruthy()
+  })
+})
+
+describe('migration 070 — company key_takeaways column', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = makeDb()
+    db.exec(`
+      CREATE TABLE org_companies (
+        id TEXT PRIMARY KEY,
+        canonical_name TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `)
+  })
+
+  it('adds key_takeaways column on first run', () => {
+    runCompanyKeyTakeawaysMigration(db)
+    const columns = db.pragma('table_info(org_companies)') as Array<{ name: string }>
+    const names = columns.map((c) => c.name)
+    expect(names).toContain('key_takeaways')
+  })
+
+  it('is idempotent — running twice does not throw', () => {
+    expect(() => {
+      runCompanyKeyTakeawaysMigration(db)
+      runCompanyKeyTakeawaysMigration(db)
+    }).not.toThrow()
+  })
+
+  it('records the sentinel key after running', () => {
+    runCompanyKeyTakeawaysMigration(db)
+    const sentinel = db
+      .prepare(`SELECT value FROM settings WHERE key = 'migration_070_company_key_takeaways'`)
+      .get()
+    expect(sentinel).toBeTruthy()
+  })
+
+  it('column defaults to null for existing rows', () => {
+    db.prepare(`INSERT INTO org_companies (id, canonical_name) VALUES (?, ?)`).run('test-1', 'Test Co')
+    runCompanyKeyTakeawaysMigration(db)
+    const row = db.prepare(`SELECT key_takeaways FROM org_companies WHERE id = 'test-1'`).get() as { key_takeaways: string | null }
+    expect(row.key_takeaways).toBeNull()
   })
 })

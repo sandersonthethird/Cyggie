@@ -8,6 +8,14 @@
   flex-shrink: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  transition: width 160ms ease-out;
+}
+
+/* ── Collapsed mode (icon-only rail, 56px) ───────────────────────── */
+.sidebarCollapsed {
+  width: var(--sidebar-width-collapsed);
+  padding: 10px 4px;
+  align-items: center;
 }
 
 .logoBlock {
@@ -84,4 +92,78 @@
 
 .active svg {
   opacity: 1;
+}
+
+/* ── Collapsed mode overrides ────────────────────────────────────── */
+.sidebarCollapsed .searchSection,
+.sidebarCollapsed .calendarSection,
+.sidebarCollapsed .logoBlock {
+  display: none;
+}
+
+.sidebarCollapsed .nav {
+  align-items: center;
+}
+
+.linkCollapsed {
+  justify-content: center;
+  padding: 10px;
+  gap: 0;
+  width: 40px;
+  height: 40px;
+}
+
+.linkLabel {
+  transition: opacity 80ms ease-out;
+}
+
+.sidebarCollapsed .linkLabel {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Collapsed active state — filled bg + subtle border + shadow */
+.sidebarCollapsed .active,
+.sidebarCollapsed .active:hover {
+  background: var(--cy-surface-3, var(--color-bg-tertiary));
+  color: var(--cy-text, var(--color-text));
+  border: 1px solid var(--cy-border, var(--color-border));
+  box-shadow: var(--cy-shadow-sm, var(--shadow-sm));
+}
+
+.sidebarCollapsed .active svg {
+  color: var(--cy-brand, var(--cv-crimson));
+}
+
+/* Toggle button at bottom of sidebar */
+.toggleBtn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.toggleBtn:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text);
+}
+
+.sidebarCollapsed .toggleBtn {
+  width: 40px;
+  height: 32px;
+  padding: 0;
+}
+
+.sidebarCollapsed .bottom {
+  align-items: center;
 }

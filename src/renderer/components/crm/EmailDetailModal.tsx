@@ -58,7 +58,7 @@ export function EmailDetailModal({ messageId, onClose }: EmailDetailModalProps) 
   function handleParticipantClick(contactId: string | null) {
     if (!contactId) return
     onClose()
-    navigate(`/contact/${contactId}`)
+    navigate(`/contact/${contactId}`, { state: { backLabel: 'Email' } })
   }
 
   const fromParticipants = state.status === 'loaded'

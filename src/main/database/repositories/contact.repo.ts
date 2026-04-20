@@ -2663,6 +2663,20 @@ export function resolveContactsByNormalizedNames(names: string[]): Record<string
   return result
 }
 
+/**
+ * Merge a source contact into a target contact. All meetings, emails, notes,
+ * and custom field values are relinked to the target. The source is deleted.
+ */
+export function mergeContacts(
+  targetContactId: string,
+  sourceContactId: string,
+  userId: string | null = null
+): { mergedCount: number } {
+  const db = getDatabase()
+  const mergedCount = mergeContactsIntoOne(db, targetContactId, [sourceContactId], userId)
+  return { mergedCount }
+}
+
 function mergeContactsIntoOne(
   db: ReturnType<typeof getDatabase>,
   keepContactId: string,

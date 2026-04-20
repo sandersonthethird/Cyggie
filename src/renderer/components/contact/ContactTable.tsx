@@ -705,7 +705,7 @@ export function ContactTable({
                     className={`${styles.nameCol} ${styles.nameCell}`}
                     onClick={() => {
                       setEditCell(null)
-                      navigate(`/contact/${contact.id}`)
+                      navigate(`/contact/${contact.id}`, { state: { backLabel: 'Contacts' } })
                     }}
                   >
                     <span className={styles.nameText}>{contact.fullName}</span>
@@ -729,7 +729,7 @@ export function ContactTable({
                       <div
                         key={col.key}
                         className={isCustomSelect ? styles.chipCell : styles.dataCell}
-                        onClick={() => navigate(`/contact/${contact.id}`)}
+                        onClick={() => navigate(`/contact/${contact.id}`, { state: { backLabel: 'Contacts' } })}
                       >
                         {isCustomSelect && cellValue ? (
                           <span className={styles.chip} style={chipStyle(cellValue)}>{cellValue}</span>

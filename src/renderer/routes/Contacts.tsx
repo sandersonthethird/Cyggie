@@ -406,7 +406,7 @@ export default function Contacts() {
         lastName
       })
       await loadContacts(query)
-      navigate(`/contact/${created.id}`)
+      navigate(`/contact/${created.id}`, { state: { backLabel: 'Contacts' } })
     } catch (e) {
       console.error('[createInline] failed', e)
     }
@@ -838,7 +838,7 @@ export default function Contacts() {
       setNewContactType('')
       setNewLinkedinUrl('')
       setNewCompanyName('')
-      navigate(`/contact/${created.id}`)
+      navigate(`/contact/${created.id}`, { state: { backLabel: 'Contacts' } })
     } catch (err) {
       setError(String(err))
     }

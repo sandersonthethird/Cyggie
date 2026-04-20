@@ -1,8 +1,17 @@
 import type { MeetingPlatform } from '../constants/meeting-apps'
 import type { TranscriptSegment } from './recording'
-import type { CompanyEntityType } from './company'
+import type { CompanyEntityType, CompanyPipelineStage } from './company'
 
 export type MeetingStatus = 'scheduled' | 'recording' | 'transcribed' | 'summarized' | 'error'
+
+export type MeetingBucket = 'all' | 'today' | 'upcoming' | 'past' | 'unreviewed'
+
+export interface MeetingCompany {
+  id: string
+  name: string
+  domain: string | null
+  stage: CompanyPipelineStage | null
+}
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
@@ -35,6 +44,7 @@ export interface Meeting {
   status: MeetingStatus
   createdAt: string
   updatedAt: string
+  company: MeetingCompany | null
 }
 
 export interface MeetingListFilter {

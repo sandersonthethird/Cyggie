@@ -1,0 +1,169 @@
+/* ── RecordTopBar ───────────────────────────────────────────────────────
+ * Sticky top bar for record detail views (Company, Contact).
+ *
+ *   ┌─────────────────────────────────────────────────────────────────┐
+ *   │ [← Back] [→] │ breadcrumb / trail / name    [actions...]       │
+ *   └─────────────────────────────────────────────────────────────────┘
+ *
+ * Forward button [→] appears only when the user has gone back.
+ * 49px tall, sticky to top, full width.
+ * ────────────────────────────────────────────────────────────────── */
+
+.topBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 49px;
+  padding: 0 16px 0 12px;
+  border-bottom: 1px solid var(--cy-border, var(--color-border));
+  background: var(--cy-surface, var(--color-card-bg));
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+/* Back button — 28px tall bordered pill */
+.backBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--cy-border, var(--color-border));
+  border-radius: var(--cy-radius, 6px);
+  background: var(--cy-surface, var(--color-card-bg));
+  color: var(--cy-text-2, var(--color-text-secondary));
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.backBtn:hover {
+  background: var(--cy-hover, var(--color-card-hover));
+  color: var(--cy-text, var(--color-text));
+}
+
+.backBtn svg {
+  flex-shrink: 0;
+}
+
+/* Forward button — icon-only pill, same height as back */
+.fwdBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--cy-border, var(--color-border));
+  border-radius: var(--cy-radius, 6px);
+  background: var(--cy-surface, var(--color-card-bg));
+  color: var(--cy-text-2, var(--color-text-secondary));
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.fwdBtn:hover {
+  background: var(--cy-hover, var(--color-card-hover));
+  color: var(--cy-text, var(--color-text));
+}
+
+/* Divider between nav buttons and breadcrumbs */
+.divider {
+  width: 1px;
+  height: 20px;
+  background: var(--cy-border, var(--color-border));
+  flex-shrink: 0;
+}
+
+/* Breadcrumbs */
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  min-width: 0;
+  flex: 1;
+}
+
+.crumbLink {
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.crumbLink:hover {
+  color: var(--cy-text, var(--color-text));
+}
+
+.crumbSep {
+  color: var(--cy-text-4, var(--color-text-tertiary));
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.crumbCurrent {
+  font-weight: 600;
+  color: var(--cy-text, var(--color-text));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Right-aligned actions slot */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Standard action buttons */
+.ghostBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--cy-border, var(--color-border));
+  border-radius: var(--cy-radius, 6px);
+  background: transparent;
+  color: var(--cy-text-2, var(--color-text-secondary));
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.ghostBtn:hover {
+  background: var(--cy-hover, var(--color-card-hover));
+  color: var(--cy-text, var(--color-text));
+}
+
+.primaryBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--cy-radius, 6px);
+  background: var(--cy-text, var(--color-text));
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+
+.primaryBtn:hover {
+  opacity: 0.88;
+}

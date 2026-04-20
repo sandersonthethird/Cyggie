@@ -220,6 +220,20 @@ export function registerContactHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.CONTACT_MERGE,
+    (_event, targetContactId: string, sourceContactId: string) => {
+      if (!targetContactId?.trim() || !sourceContactId?.trim()) {
+        throw new Error('Both targetContactId and sourceContactId are required')
+      }
+      const userId = getCurrentUserId()
+      const result = contactRepo.mergeContacts(targetContactId, sourceContactId, userId)
+      logAudit(userId, 'contact', targetContactId, 'update', { mergedFrom: sourceContactId })
+      logAudit(userId, 'contact', sourceContactId, 'delete', { mergedInto: targetContactId })
+      return result
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.CONTACT_SYNC_FROM_MEETINGS, () => {
     const userId = getCurrentUserId()
     const result = contactRepo.syncContactsFromMeetings(userId)

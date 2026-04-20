@@ -48,6 +48,25 @@ export function daysSince(value: string | null | undefined): number | null {
   return Math.max(0, Math.floor((Date.now() - ts) / 86400000))
 }
 
+export function formatMeetingDuration(seconds: number | null): string {
+  if (!seconds) return '--'
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  if (m >= 60) {
+    const h = Math.floor(m / 60)
+    return `${h}h ${m % 60}m`
+  }
+  return s > 0 ? `${m}m ${s}s` : `${m}m`
+}
+
+export function formatMeetingTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit'
+  })
+}
+
 /** Strip markdown syntax from text for use in plain-text previews (e.g. note list snippets).
  *  Not a full markdown parser — covers the common cases from Apple Notes / Notion exports.
  *  Known limitation: nested markers like ***bold-italic*** are only partially stripped.

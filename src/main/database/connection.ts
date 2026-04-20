@@ -69,6 +69,7 @@ import { runContactLinkedinFieldsMigration } from './migrations/066-contact-link
 import { runRepairCompanyViewFlagMigration } from './migrations/067-repair-company-view-flag'
 import { runContactTalentPipelineMigration } from './migrations/068-contact-talent-pipeline'
 import { runContactKeyTakeawaysMigration } from './migrations/069-contact-key-takeaways'
+import { runCompanyKeyTakeawaysMigration } from './migrations/070-company-key-takeaways'
 
 let db: Database.Database | null = null
 
@@ -146,6 +147,7 @@ export function getDatabase(): Database.Database {
     runRepairCompanyViewFlagMigration(db)
     runContactTalentPipelineMigration(db)
     runContactKeyTakeawaysMigration(db)
+    runCompanyKeyTakeawaysMigration(db)
   }
   return db
 }

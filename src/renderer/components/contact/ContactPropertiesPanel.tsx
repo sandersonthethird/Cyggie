@@ -30,6 +30,8 @@ import {
   CONTACT_TYPES,
   CONTACT_COLUMN_DEFS,
 } from './contactColumns'
+import { RecordKebabMenu } from '../common/RecordKebabMenu'
+import { EnrichMethodModal } from '../common/EnrichMethodModal'
 import styles from './ContactPropertiesPanel.module.css'
 import { api } from '../../api'
 import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
@@ -75,7 +77,6 @@ interface ContactPropertiesPanelProps {
   enrichMeetingCount?: number
   fieldSources?: Record<string, { meetingId: string; meetingTitle: string }>
   onEnrichFromMeetings?: () => void
-  isLoadingEnrich?: boolean
   exaApiKey?: string
   onRequestCreateCompany?: () => void
 }
@@ -183,18 +184,23 @@ export function ContactPropertiesPanel({
   enrichMeetingCount,
   fieldSources,
   onEnrichFromMeetings,
-  isLoadingEnrich,
   exaApiKey = '',
   onRequestCreateCompany
 }: ContactPropertiesPanelProps) {
   const navigate = useNavigate()
   // back button now lives in ContactDetail
+  const [enrichMethodModalOpen, setEnrichMethodModalOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [showAllFields, setShowAllFields] = useState(false)
   const [firstNameDraft, setFirstNameDraft] = useState(contact.firstName ?? '')
   const [lastNameDraft, setLastNameDraft] = useState(contact.lastName ?? '')
   const [customFields, setCustomFields] = useState<CustomFieldWithValue[]>([])
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [mergePickerOpen, setMergePickerOpen] = useState(false)
+  const [mergeQuery, setMergeQuery] = useState('')
+  const [mergeResults, setMergeResults] = useState<{ id: string; name: string }[]>([])
+  const [mergeTarget, setMergeTarget] = useState<{ id: string; name: string } | null>(null)
+  const [merging, setMerging] = useState(false)
   const [createFieldOpen, setCreateFieldOpen] = useState(false)
   const [createFieldSection, setCreateFieldSection] = useState<string | undefined>(undefined)
   const [deleting, setDeleting] = useState(false)
@@ -712,6 +718,14 @@ export function ContactPropertiesPanel({
     sessionChanges.current = false
   }
 
+  function handleCancel() {
+    setFirstNameDraft(contact.firstName ?? '')
+    setLastNameDraft(contact.lastName ?? '')
+    setCompanyDraft(contact.primaryCompany?.canonicalName ?? '')
+    setSessionNewFields(null)
+    setIsEditing(false)
+  }
+
   async function handleLinkedInEnrich() {
     if (linkedinEnriching) return
     setLinkedinEnriching(true)
@@ -798,6 +812,35 @@ export function ContactPropertiesPanel({
     } finally {
       setDeleting(false)
       setConfirmDelete(false)
+    }
+  }
+
+  // Merge picker — search contacts as the user types
+  useEffect(() => {
+    if (!mergePickerOpen) return
+    api.invoke<{ id: string; fullName: string }[]>(IPC_CHANNELS.CONTACT_LIST, {
+      query: mergeQuery || undefined,
+      limit: 10,
+    })
+      .then(res => setMergeResults(
+        (res ?? [])
+          .filter(c => c.id !== contact.id)
+          .map(c => ({ id: c.id, name: c.fullName }))
+      ))
+      .catch(() => setMergeResults([]))
+  }, [mergeQuery, mergePickerOpen, contact.id])
+
+  async function handleMergeInto() {
+    if (!mergeTarget || merging) return
+    setMerging(true)
+    try {
+      await api.invoke(IPC_CHANNELS.CONTACT_MERGE, mergeTarget.id, contact.id)
+      navigate(`/contact/${mergeTarget.id}`)
+    } catch (err) {
+      console.error('[ContactPropertiesPanel] merge failed:', err)
+    } finally {
+      setMerging(false)
+      setMergeTarget(null)
     }
   }
 
@@ -1029,36 +1072,6 @@ export function ContactPropertiesPanel({
     }
   }
 
-  function renderLinkedInHeaderBtn() {
-    if (showLinkedInConfirm) return null
-    if (contact.linkedinUrl) {
-      const label = linkedinEnriching
-        ? 'Enriching…'
-        : linkedinError?.code === 'login_required'
-          ? 'Try again'
-          : contact.linkedinEnrichedAt
-            ? 'Re-enrich from LinkedIn'
-            : 'Enrich from LinkedIn'
-      return (
-        <button
-          className={styles.linkedinHeaderBtn}
-          onClick={() => void handleLinkedInEnrich()}
-          disabled={linkedinEnriching}
-        >{label}</button>
-      )
-    }
-    if (exaApiKey) {
-      return (
-        <button
-          className={styles.linkedinHeaderBtn}
-          onClick={() => void handleFindOnLinkedIn()}
-          disabled={isSearchingLinkedIn || linkedinEnriching}
-        >{isSearchingLinkedIn ? 'Searching…' : 'Find on LinkedIn'}</button>
-      )
-    }
-    return null
-  }
-
   function renderChipById(id: string) {
     if (id === 'contactType') {
       return (
@@ -1097,7 +1110,7 @@ export function ContactPropertiesPanel({
   // Count of explicitly-hidden fields + empty hardcoded fields (Change 6)
   const hiddenFieldCount = !isEditing && !showAllFields ? (
     hiddenFields.length +
-    ([contact.phone, contact.linkedinUrl, contact.twitterHandle, contact.city, contact.state,
+    ([contact.phone, contact.twitterHandle, contact.city, contact.state,
       contact.timezone, contact.previousCompanies, contact.university, contact.tags, contact.pronouns]
       .filter(v => !v).length) +
     customFields.filter(f => !f.value && f.section !== 'summary').length
@@ -1106,16 +1119,32 @@ export function ContactPropertiesPanel({
   return (
     <div ref={panelRef} className={styles.panel}>
       <div className={styles.headerCard}>
-      {showEnrichBanner && (
-        <button
-          className={styles.enrichBadge}
-          onClick={onEnrichFromMeetings}
-          disabled={isLoadingEnrich}
-          title={`Enrich from ${enrichMeetingCount} meeting${enrichMeetingCount !== 1 ? 's' : ''}`}
-        >
-          {isLoadingEnrich ? 'Loading…' : '✨ Enrich'}
-        </button>
-      )}
+      <EnrichMethodModal
+        open={enrichMethodModalOpen}
+        onClose={() => setEnrichMethodModalOpen(false)}
+        title="Enrich contact"
+        subtitle="Choose a source to enrich this contact's profile."
+        methods={[
+          ...(showEnrichBanner && onEnrichFromMeetings ? [{
+            icon: '✨',
+            label: 'From meetings',
+            description: `${enrichMeetingCount ?? 0} new meeting${(enrichMeetingCount ?? 0) !== 1 ? 's' : ''} available`,
+            onClick: () => onEnrichFromMeetings(),
+          }] : []),
+          ...(contact.linkedinUrl ? [{
+            icon: '🔗',
+            label: contact.linkedinEnrichedAt ? 'Re-enrich from LinkedIn' : 'Enrich from LinkedIn',
+            description: contact.linkedinEnrichedAt ? `Last enriched ${formatRelativeTime(contact.linkedinEnrichedAt)}` : 'Pull profile data from LinkedIn',
+            onClick: () => void handleLinkedInEnrich(),
+          }] : exaApiKey ? [{
+            icon: '🔍',
+            label: 'Find on LinkedIn',
+            description: 'Search for this contact on LinkedIn',
+            onClick: () => void handleFindOnLinkedIn(),
+          }] : []),
+        ]}
+      />
+
       <ConfirmDialog
         open={confirmDelete}
         title="Delete contact?"
@@ -1125,10 +1154,72 @@ export function ContactPropertiesPanel({
         onConfirm={handleDeleteContact}
         onCancel={() => setConfirmDelete(false)}
       />
+
+      <ConfirmDialog
+        open={!!mergeTarget}
+        title="Merge contacts?"
+        message={`Merge "${contact.fullName}" into "${mergeTarget?.name ?? ''}"? All meetings, emails, and notes will be relinked and this contact will be deleted.`}
+        confirmLabel={merging ? 'Merging…' : 'Merge'}
+        variant="danger"
+        onConfirm={handleMergeInto}
+        onCancel={() => setMergeTarget(null)}
+      />
+
+      {mergePickerOpen && (
+        <div className={styles.mergePickerOverlay} onClick={() => setMergePickerOpen(false)}>
+          <div className={styles.mergePicker} onClick={e => e.stopPropagation()}>
+            <p className={styles.mergePickerTitle}>
+              Merge &ldquo;{contact.fullName}&rdquo; into:
+            </p>
+            <input
+              autoFocus
+              className={styles.mergePickerInput}
+              placeholder="Search contacts…"
+              value={mergeQuery}
+              onChange={e => setMergeQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Escape' && setMergePickerOpen(false)}
+            />
+            <div className={styles.mergePickerList}>
+              {mergeResults.map(r => (
+                <button
+                  key={r.id}
+                  className={styles.mergePickerOption}
+                  onClick={() => { setMergeTarget(r); setMergePickerOpen(false) }}
+                >
+                  {r.name}
+                </button>
+              ))}
+              {mergeResults.length === 0 && (
+                <span className={styles.mergePickerEmpty}>
+                  {mergeQuery ? 'No contacts found' : 'Start typing to search…'}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className={styles.header}>
         <ContactAvatar name={contact.fullName} size="lg" />
         <div className={styles.headerMeta}>
+          {/* 3-dot kebab menu — upper right of headerMeta (hidden during edit mode) */}
+          {!isEditing && (
+            <div className={styles.kebabPosition}>
+              <RecordKebabMenu groups={[
+                [
+                  { label: 'Edit record', onClick: () => { sessionAddedFields.current = [...fieldVisibility.addedFields]; setIsEditing(true) } },
+                  { label: 'Enrich', onClick: () => setEnrichMethodModalOpen(true) },
+                ],
+                [
+                  { label: 'Merge into', onClick: () => { setMergeQuery(''); setMergePickerOpen(true) } },
+                ],
+                [
+                  { label: 'Delete contact', onClick: () => setConfirmDelete(true), destructive: true },
+                ],
+              ]} />
+            </div>
+          )}
           {isEditing ? (
             <div className={styles.nameInputRow}>
               <input
@@ -1227,15 +1318,88 @@ export function ContactPropertiesPanel({
                   <button className={styles.applyOneBtn} onClick={handleJustThisContact}>Just {contact.fullName}</button>
                 </div>
               ) : (
-                <>
-                  <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">↺</button>
-                  <button className={styles.doneBtn} onClick={() => void handleDone()}>Done</button>
-                </>
+                <div className={styles.editBtnRow}>
+                  <button className={styles.saveBtn} onClick={() => void handleDone()}>Save</button>
+                  <button className={styles.cancelBtn} onClick={handleCancel}>Cancel</button>
+                  <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">Reset Layout</button>
+                </div>
               )}
             </div>
           )}
-          {/* Email + location + action buttons (read-only) */}
-          {!isEditing && (
+          {/* Contact meta — edit inputs or read-only display */}
+          {isEditing ? (
+            <div className={styles.metaEditBlock}>
+              <div className={styles.metaRow}>
+                <span className={styles.metaIcon}>✉</span>
+                <input
+                  className={styles.metaInput}
+                  defaultValue={contact.emails[0] || contact.email || ''}
+                  placeholder="Email address"
+                  type="email"
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    const existing = contact.emails[0] || contact.email
+                    if (val && val !== existing) {
+                      if (existing) void saveEmail(existing, val)
+                      else void addEmail(val)
+                    }
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                />
+              </div>
+              <div className={styles.metaRow}>
+                <svg className={styles.metaIconSvg} width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                </svg>
+                <input
+                  className={styles.metaInput}
+                  defaultValue={contact.linkedinUrl || ''}
+                  placeholder="LinkedIn URL"
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    if (val !== (contact.linkedinUrl || '')) save('linkedinUrl', val || null)
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                />
+              </div>
+              <div className={styles.metaRow}>
+                <span className={styles.metaIcon}>📞</span>
+                <input
+                  className={styles.metaInput}
+                  defaultValue={contact.phone || ''}
+                  placeholder="Phone"
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    if (val !== (contact.phone || '')) save('phone', val || null)
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                />
+              </div>
+              <div className={styles.metaRow}>
+                <span className={styles.metaIcon}>📍</span>
+                <input
+                  className={`${styles.metaInput} ${styles.metaInputHalf}`}
+                  defaultValue={contact.city || ''}
+                  placeholder="City"
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    if (val !== (contact.city || '')) save('city', val || null)
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                />
+                <input
+                  className={`${styles.metaInput} ${styles.metaInputHalf}`}
+                  defaultValue={contact.state || ''}
+                  placeholder="State"
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    if (val !== (contact.state || '')) save('state', val || null)
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                />
+              </div>
+            </div>
+          ) : (
             <>
               {(contact.emails[0] || contact.email) && (
                 <div
@@ -1248,6 +1412,31 @@ export function ContactPropertiesPanel({
                   {copiedMeta === 'email' && <span className={styles.copiedToast}>Copied!</span>}
                 </div>
               )}
+              {contact.linkedinUrl && (
+                <div className={styles.metaRow}>
+                  <svg className={styles.metaIconSvg} width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                  </svg>
+                  <span
+                    className={styles.metaLink}
+                    onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, contact.linkedinUrl!)}
+                    title={contact.linkedinUrl}
+                  >
+                    {contact.linkedinUrl.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}
+                  </span>
+                </div>
+              )}
+              {contact.phone && (
+                <div
+                  className={`${styles.metaRow} ${styles.metaRowCopyable}`}
+                  onClick={() => copyMeta(contact.phone!, 'phone')}
+                  title="Click to copy"
+                >
+                  <span className={styles.metaIcon}>📞</span>
+                  <span className={styles.metaValue}>{contact.phone}</span>
+                  {copiedMeta === 'phone' && <span className={styles.copiedToast}>Copied!</span>}
+                </div>
+              )}
               {(contact.city || contact.state) && (
                 <div className={styles.metaRow}>
                   <span className={styles.metaIcon}>📍</span>
@@ -1255,17 +1444,12 @@ export function ContactPropertiesPanel({
                 </div>
               )}
               <div className={styles.headerActionRow}>
-                <button className={styles.editBtn} onClick={() => {
-                  sessionAddedFields.current = [...fieldVisibility.addedFields]
-                  setIsEditing(true)
-                }}>Edit</button>
                 {(contact.emails[0] || contact.email) && (
                   <button
                     className={styles.emailActionBtn}
                     onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, `mailto:${contact.emails[0] || contact.email}`)}
                   >Email</button>
                 )}
-                {renderLinkedInHeaderBtn()}
               </div>
             </>
           )}
@@ -1303,7 +1487,8 @@ export function ContactPropertiesPanel({
             {isCollapsed('key_takeaways') ? '▶' : '▼'}
           </button>
         </div>
-        {!isCollapsed('key_takeaways') && (<>
+        <div className={`${styles.ktBody} ${isCollapsed('key_takeaways') ? styles.ktBodyCollapsed : ''}`}>
+          <div className={styles.ktBodyInner}>
           {ktEditing ? (
             <>
               <textarea
@@ -1336,7 +1521,8 @@ export function ContactPropertiesPanel({
             <div className={styles.ktEmpty}>Click ✨ Generate to create AI-powered insights</div>
           )}
           {ktError && <div className={styles.ktError}>{ktError}</div>}
-        </>)}
+          </div>
+        </div>
       </div>
 
       <div className={styles.bodyCard}>
@@ -1403,96 +1589,6 @@ export function ContactPropertiesPanel({
         </div>
       )}
 
-      {/* Metadata strip — email, phone, location, LinkedIn */}
-      {(isEditing || contact.emails[0] || contact.email || contact.phone || contact.city || contact.state || contact.linkedinUrl) && (
-        <div className={styles.metaStrip}>
-          {isEditing ? (
-            <>
-              <div className={styles.metaRow}>
-                <span className={styles.metaIcon}>✉</span>
-                <input
-                  className={styles.metaInput}
-                  defaultValue={contact.emails[0] || contact.email || ''}
-                  placeholder="Email address"
-                  type="email"
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    const existing = contact.emails[0] || contact.email
-                    if (val && val !== existing) {
-                      if (existing) void saveEmail(existing, val)
-                      else void addEmail(val)
-                    }
-                  }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                />
-              </div>
-              <div className={styles.metaRow}>
-                <span className={styles.metaIcon}>📞</span>
-                <input
-                  className={styles.metaInput}
-                  defaultValue={contact.phone || ''}
-                  placeholder="Phone"
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    if (val !== (contact.phone || '')) save('phone', val || null)
-                  }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                />
-              </div>
-              <div className={styles.metaRow}>
-                <span className={styles.metaIcon}>📍</span>
-                <input
-                  className={`${styles.metaInput} ${styles.metaInputHalf}`}
-                  defaultValue={contact.city || ''}
-                  placeholder="City"
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    if (val !== (contact.city || '')) save('city', val || null)
-                  }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                />
-                <input
-                  className={`${styles.metaInput} ${styles.metaInputHalf}`}
-                  defaultValue={contact.state || ''}
-                  placeholder="State"
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    if (val !== (contact.state || '')) save('state', val || null)
-                  }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              {contact.phone && (
-                <div
-                  className={`${styles.metaRow} ${styles.metaRowCopyable}`}
-                  onClick={() => copyMeta(contact.phone!, 'phone')}
-                  title="Click to copy"
-                >
-                  <span className={styles.metaIcon}>📞</span>
-                  <span className={styles.metaValue}>{contact.phone}</span>
-                  {copiedMeta === 'phone' && <span className={styles.copiedToast}>Copied!</span>}
-                </div>
-              )}
-              {contact.linkedinUrl && (
-                <div className={styles.metaRow}>
-                  <span className={styles.metaIcon}>🔗</span>
-                  <span
-                    className={styles.metaLink}
-                    onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, contact.linkedinUrl!)}
-                    title={contact.linkedinUrl}
-                  >
-                    {contact.linkedinUrl.replace(/^https?:\/\/(www\.)?/, '')}
-                  </span>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
       {/* Chips row — relocated outside .header so it scrolls with content */}
       <div
         className={`${styles.headerBadge} ${isEditing && dragOverSection === 'summary' ? styles.dropTarget : ''}`}
@@ -1543,6 +1639,37 @@ export function ContactPropertiesPanel({
         })}
       </div>
 
+      {isEditing && (
+        <div className={styles.addFieldContainer}>
+          <button
+            className={styles.addFieldBtn}
+            onClick={() => setAddFieldDropdownOpen(!addFieldDropdownOpen)}
+          >+ Add field</button>
+          {addFieldDropdownOpen && (
+            <AddFieldDropdown
+              entityType="contact"
+              hardcodedDefs={CONTACT_HARDCODED_FIELDS}
+              customFields={customFields}
+              addedFields={fieldVisibility.addedFields}
+              hiddenFields={hiddenFields}
+              entityData={contact as Record<string, unknown>}
+              fieldPlacements={fieldVisibility.fieldPlacements}
+              sections={CONTACT_SECTIONS.filter(s => s.key !== 'summary')}
+              onToggleField={(key, checked) => {
+                if (checked) fieldVisibility.addToAddedFields([key])
+                else fieldVisibility.removeFromAddedFields(key)
+              }}
+              onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
+              onCreateCustomField={() => {
+                setCreateFieldOpen(true)
+                setAddFieldDropdownOpen(false)
+              }}
+              onClose={() => setAddFieldDropdownOpen(false)}
+            />
+          )}
+        </div>
+      )}
+
       {sectionOrder.orderedSections.map(sectionKey => {
         const baseDragProps = syncedSectionDragProps(sectionKey)
         const isDraggingThisSection = sectionOrder.draggingSectionKey === sectionKey
@@ -1571,14 +1698,6 @@ export function ContactPropertiesPanel({
               <SectionHeader title="Contact Info" collapsible isCollapsed={isCollapsed('contact_info')} onToggle={() => toggleSection('contact_info')} />
               {!isCollapsed('contact_info') && (<>
               {renderHardcodedSection([
-                { key: 'linkedinUrl', visible: isEditing || showField('linkedinUrl', contact.linkedinUrl), render: () => (
-                  <HideableRow fieldKey="linkedinUrl" isEmpty={!contact.linkedinUrl} onHide={contact.linkedinUrl ? () => { void save('linkedinUrl', null) } : undefined}>
-                    <div className={styles.propertyWithBadge}>
-                      <PropertyRow label="LinkedIn" value={contact.linkedinUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinUrl', v)} />
-                      {fieldSources?.linkedinUrl && <span className={styles.sourceBadge} title={`From: ${fieldSources.linkedinUrl.meetingTitle}`}>📋</span>}
-                    </div>
-                  </HideableRow>
-                )},
                 { key: 'twitterHandle', visible: showField('twitterHandle', contact.twitterHandle), render: () => (
                   <HideableRow fieldKey="twitterHandle" isEmpty={!contact.twitterHandle}>
                     <PropertyRow label="Twitter/X" value={contact.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} />
@@ -1910,38 +2029,6 @@ export function ContactPropertiesPanel({
         />
       )}
 
-      {isEditing && (
-        <div className={styles.stickyAddFieldBar}>
-          <div className={styles.addFieldContainer}>
-            <button
-              className={styles.addFieldBtn}
-              onClick={() => setAddFieldDropdownOpen(!addFieldDropdownOpen)}
-            >+ Add field</button>
-            {addFieldDropdownOpen && (
-              <AddFieldDropdown
-                entityType="contact"
-                hardcodedDefs={CONTACT_HARDCODED_FIELDS}
-                customFields={customFields}
-                addedFields={fieldVisibility.addedFields}
-                hiddenFields={hiddenFields}
-                entityData={contact as Record<string, unknown>}
-                fieldPlacements={fieldVisibility.fieldPlacements}
-                sections={CONTACT_SECTIONS.filter(s => s.key !== 'summary')}
-                onToggleField={(key, checked) => {
-                  if (checked) fieldVisibility.addToAddedFields([key])
-                  else fieldVisibility.removeFromAddedFields(key)
-                }}
-                onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
-                onCreateCustomField={() => {
-                  setCreateFieldOpen(true)
-                  setAddFieldDropdownOpen(false)
-                }}
-                onClose={() => setAddFieldDropdownOpen(false)}
-              />
-            )}
-          </div>
-        </div>
-      )}
 
       {isEditing && (
         <div className={styles.deleteSection}>

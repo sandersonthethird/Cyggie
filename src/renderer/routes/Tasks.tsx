@@ -398,7 +398,7 @@ export default function Tasks() {
                             className={styles.metaLink}
                             onClick={(e) => {
                               e.stopPropagation()
-                              navigate(`/company/${task.companyId}`)
+                              navigate(`/company/${task.companyId}`, { state: { backLabel: 'Tasks' } })
                             }}
                           >
                             {task.companyName}
@@ -438,7 +438,7 @@ export default function Tasks() {
             onDelete={handleDeleteTask}
             onClose={() => setDetailTask(null)}
             onNavigateMeeting={(id) => navigate(`/meeting/${id}`)}
-            onNavigateCompany={(id) => navigate(`/company/${id}`)}
+            onNavigateCompany={(id) => navigate(`/company/${id}`, { state: { backLabel: 'Tasks' } })}
           />
         </>
       )}

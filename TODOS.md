@@ -470,6 +470,18 @@
 
 ## P3 — Refactoring
 
+### Extract useOutsideClick hook
+**What:** Extract shared `useOutsideClick(ref, onClose)` hook from 3 inline implementations.
+**Why:** Identical 8-line mousedown + ref.contains() pattern in Layout.tsx, useNoteShareMenu.ts, and TitlebarDateChip.tsx.
+**Pros:** Single implementation; less copy-paste when adding the 4th popup/dropdown.
+**Cons:** 8 lines is near the floor for abstraction — overhead of import + hook file may not justify.
+**Context:** Pattern: `useEffect` attaching `mousedown` listener that checks `ref.current.contains(e.target)`. All 3 implementations are identical. Extract to `src/renderer/hooks/useOutsideClick.ts`.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Nothing — can be done anytime.
+
+---
+
 ### Centralize parseTimestamp / SQLITE_DATETIME_RE
 **What:** Extract `parseTimestamp`, `pickLatestTimestamp`, `setLatestMapValue`, and `SQLITE_DATETIME_RE` into a shared utility (e.g. `src/main/utils/db-utils.ts`) and remove the duplicates from `contact-utils.ts` and `org-company.repo.ts`.
 **Why:** Two identical implementations exist — any bug fix or change would need to be applied twice.
@@ -747,3 +759,45 @@
 **Effort:** L
 **Priority:** P3
 **Depends on:** Web share redesign PR merged.
+
+---
+
+## P3 — Design System
+
+### Full oklch token migration
+**What:** Migrate all remaining CSS modules from `--color-*` / `--cv-*` hex tokens to the new `--cy-*` oklch tokens in `globals.css`.
+**Why:** The Company/Contact Detail redesign introduced `--cy-*` tokens (oklch warm neutrals) alongside the legacy hex tokens. Both systems coexist, which creates maintenance burden — contributors must know which system to use for which component.
+**Pros:** Unified token system; consistent warm neutral palette across all views; oklch gives perceptually uniform color manipulation.
+**Cons:** Touch every CSS module in the project (~40+ files). Risk of visual regressions in views not covered by the redesign.
+**Context:** New tokens are in `src/renderer/styles/globals.css` under the "Cyggie Design Tokens" comment block. New components (KeyTakeawaysCard, ScorecardStrip, PipelineStepper, RecordTopBar, etc.) already use `--cy-*` with `--color-*` fallbacks. Migration path: replace `var(--color-bg)` → `var(--cy-bg)`, `var(--color-text)` → `var(--cy-text)`, etc., one CSS module at a time. Remove `--color-*` vars from `:root` when no more consumers exist.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Company Detail redesign PR merged.
+
+---
+
+## P3 — Developer Experience
+
+### Storybook setup for new primitives
+**What:** Set up Storybook and add stories for the new shared components: `ScorecardStrip`, `PipelineStepper`, `CollapsibleSection`, `KeyTakeawaysCard`, `Tooltip`, `RecordKebabMenu`, `RecordTopBar`, `AddTaskModal`.
+**Why:** No visual testing or component documentation infrastructure exists. New primitives are designed for reuse across Company and Contact Detail — stories provide living documentation and catch visual regressions.
+**Pros:** Visual component catalog; isolated development environment; catches CSS regressions before integration.
+**Cons:** Storybook adds build-time dependency and config overhead (~30 min setup for Electron + Vite).
+**Context:** Components live in `src/renderer/components/common/`. Each accepts simple props (no IPC dependency) making them ideal for Storybook isolation. Start with `npx storybook@latest init` in the project root, configure for Vite + React, and create one `.stories.tsx` per component.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Company Detail redesign PR merged.
+
+---
+
+## P2 — UI
+
+### ContactPropertiesPanel decomposition quality bar
+**What:** Ensure `ContactPropertiesPanel.tsx` (currently 1960 lines) reaches ~500 lines via full extraction of `ContactIdentityBlock`, `ContactStatusPillRow`, `ContactQuickActions`, and section components.
+**Why:** The Company Detail redesign decomposed `CompanyPropertiesPanel` from 1905 → ~500 lines using extracted sub-components. ContactPropertiesPanel is even larger and should reach the same quality bar for maintainability.
+**Pros:** Parity between both record-type panels; each section independently modifiable; reduced cognitive load for new contributors.
+**Cons:** Contact panel has different state interactions (LinkedIn enrichment, talent pipeline, chat) — extraction requires careful prop threading.
+**Context:** Shared components already exist from the Company redesign: `CollapsibleSection`, `KeyTakeawaysCard`, `ScorecardStrip`, `PipelineStepper`, `AddTaskModal`, `RecordTopBar`, `RecordKebabMenu`. Contact-specific extractions needed: `ContactIdentityBlock` (avatar, name, title, company), `ContactStatusPillRow` (contact type, talent pipeline), `ContactQuickActions` (Email, Call, Task). The `useTakeaways` hook should replace the inline KT state (lines 224-554).
+**Effort:** M
+**Priority:** P2
+**Depends on:** Company Detail redesign PR merged.

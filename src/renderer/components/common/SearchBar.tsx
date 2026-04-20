@@ -134,7 +134,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
     setSearchFilter(null)
 
     if (item.type === 'contact' && item.id) {
-      navigate(`/contact/${item.id}`)
+      navigate(`/contact/${item.id}`, { state: { backLabel: 'Search' } })
       return
     }
 
@@ -171,7 +171,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
         ) || companies[0]
 
         if (bestMatch) {
-          navigate(`/company/${bestMatch.id}`)
+          navigate(`/company/${bestMatch.id}`, { state: { backLabel: 'Search' } })
           return
         }
 
@@ -194,7 +194,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
         ) || contacts[0]
 
         if (bestMatch) {
-          navigate(`/contact/${bestMatch.id}`)
+          navigate(`/contact/${bestMatch.id}`, { state: { backLabel: 'Search' } })
           return
         }
 

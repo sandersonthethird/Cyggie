@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -9,21 +9,26 @@ import {
   FileText,
   CheckSquare,
   Users2,
-  Settings
+  Settings,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react'
 import styles from './Sidebar.module.css'
 import { useFeatureFlag } from '../../hooks/useFeatureFlags'
 import { useAppStore } from '../../stores/app.store'
-import { useRecordingStore } from '../../stores/recording.store'
+import { useSidebarMode } from '../../hooks/useSidebarMode'
+import { useMiniCalendarActions } from '../../hooks/useMiniCalendarActions'
+import { Tooltip } from '../common/Tooltip'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import MiniCalendar from './MiniCalendar'
 import SearchBar from '../common/SearchBar'
-import type { CalendarEvent } from '../../../shared/types/calendar'
 import defaultLogo from '../../assets/logo.png'
 import { api } from '../../api'
 
 export default function Sidebar() {
   const navigate = useNavigate()
+  const { mode, toggle } = useSidebarMode()
+  const collapsed = mode === 'collapsed'
   const { enabled: companiesEnabled } = useFeatureFlag('ff_companies_ui_v1')
   const [brandingLogo, setBrandingLogo] = useState<string | null>(null)
 
@@ -35,48 +40,7 @@ export default function Sidebar() {
   const calendarConnected = useAppStore((s) => s.calendarConnected)
   const calendarEvents = useAppStore((s) => s.calendarEvents)
   const dismissedEventIds = useAppStore((s) => s.dismissedEventIds)
-  const dismissEvent = useAppStore((s) => s.dismissEvent)
-  const startRecording = useRecordingStore((s) => s.startRecording)
-
-  const handleRecordEvent = useCallback(async (event: CalendarEvent) => {
-    try {
-      const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
-        IPC_CHANNELS.RECORDING_START,
-        event.title,
-        event.id
-      )
-      startRecording(result.meetingId, result.meetingPlatform)
-      navigate(`/meeting/${result.meetingId}`)
-    } catch (err) {
-      console.error('Failed to start recording:', err)
-    }
-  }, [navigate, startRecording])
-
-  const handlePrepareEvent = useCallback(async (event: CalendarEvent) => {
-    try {
-      const meeting = await api.invoke<{ id: string }>(
-        IPC_CHANNELS.MEETING_PREPARE,
-        event.id,
-        event.title,
-        event.startTime,
-        event.platform || undefined,
-        event.meetingUrl || undefined,
-        event.attendees,
-        event.attendeeEmails
-      )
-      navigate(`/meeting/${meeting.id}`)
-    } catch (err) {
-      console.error('Failed to prepare meeting:', err)
-    }
-  }, [navigate])
-
-  const handleDismissEvent = useCallback((event: CalendarEvent) => {
-    dismissEvent(event.id)
-  }, [dismissEvent])
-
-  const handleClickMeeting = useCallback((meetingId: string) => {
-    navigate(`/meeting/${meetingId}`)
-  }, [navigate])
+  const { handleRecordEvent, handlePrepareEvent, handleDismissEvent, handleClickMeeting } = useMiniCalendarActions()
 
   // Cmd+Shift+N → new note from anywhere
   useEffect(() => {
@@ -90,74 +54,39 @@ export default function Sidebar() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [navigate])
 
+  const linkClass = ({ isActive }: { isActive: boolean }) =>
+    `${styles.link} ${collapsed ? styles.linkCollapsed : ''} ${isActive ? styles.active : ''}`
+
+  /** Wrap a nav link icon + label; in collapsed mode the label fades out and a tooltip appears */
+  function NavItem({ to, icon, label, end }: { to: string; icon: ReactNode; label: string; end?: boolean }) {
+    const link = (
+      <NavLink to={to} className={linkClass} end={end}>
+        {icon}
+        <span className={styles.linkLabel}>{label}</span>
+      </NavLink>
+    )
+    return collapsed ? <Tooltip content={label} side="right" delay={400}>{link}</Tooltip> : link
+  }
+
   return (
-    <nav className={styles.sidebar}>
+    <nav className={`${styles.sidebar} ${collapsed ? styles.sidebarCollapsed : ''}`}>
       <div className={styles.searchSection}>
         <SearchBar placeholder="Search" />
       </div>
 
       <div className={styles.nav}>
-        <NavLink
-          to="/"
-          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-          end
-        >
-          <LayoutDashboard size={16} strokeWidth={1.5} />
-          Dashboard
-        </NavLink>
-        <NavLink
-          to="/pipeline"
-          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-        >
-          <TrendingUp size={16} strokeWidth={1.5} />
-          Pipeline
-        </NavLink>
+        <NavItem to="/" icon={<LayoutDashboard size={16} strokeWidth={1.5} />} label="Dashboard" end />
+        <NavItem to="/pipeline" icon={<TrendingUp size={16} strokeWidth={1.5} />} label="Pipeline" />
         {companiesEnabled && (
-          <NavLink
-            to="/companies"
-            className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-          >
-            <Building2 size={16} strokeWidth={1.5} />
-            Companies
-          </NavLink>
+          <NavItem to="/companies" icon={<Building2 size={16} strokeWidth={1.5} />} label="Companies" />
         )}
         {companiesEnabled && (
-          <NavLink
-            to="/contacts"
-            className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-          >
-            <Users size={16} strokeWidth={1.5} />
-            Contacts
-          </NavLink>
+          <NavItem to="/contacts" icon={<Users size={16} strokeWidth={1.5} />} label="Contacts" />
         )}
-        <NavLink
-          to="/meetings"
-          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-        >
-          <Calendar size={16} strokeWidth={1.5} />
-          Meetings
-        </NavLink>
-        <NavLink
-          to="/notes"
-          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-        >
-          <FileText size={16} strokeWidth={1.5} />
-          Notes
-        </NavLink>
-        <NavLink
-          to="/tasks"
-          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-        >
-          <CheckSquare size={16} strokeWidth={1.5} />
-          Tasks
-        </NavLink>
-        <NavLink
-          to="/partner-meeting"
-          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-        >
-          <Users2 size={16} strokeWidth={1.5} />
-          Partner Sync
-        </NavLink>
+        <NavItem to="/meetings" icon={<Calendar size={16} strokeWidth={1.5} />} label="Meetings" />
+        <NavItem to="/notes" icon={<FileText size={16} strokeWidth={1.5} />} label="Notes" />
+        <NavItem to="/tasks" icon={<CheckSquare size={16} strokeWidth={1.5} />} label="Tasks" />
+        <NavItem to="/partner-meeting" icon={<Users2 size={16} strokeWidth={1.5} />} label="Partner Sync" />
       </div>
 
       {calendarConnected && (
@@ -178,13 +107,13 @@ export default function Sidebar() {
         <div className={styles.logoBlock}>
           <img src={brandingLogo ?? defaultLogo} alt="Logo" className={styles.logoImg} />
         </div>
-        <NavLink
-          to="/settings"
-          className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-        >
-          <Settings size={16} strokeWidth={1.5} />
-          Settings
-        </NavLink>
+        <button className={styles.toggleBtn} onClick={toggle} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          {collapsed
+            ? <ChevronsRight size={14} strokeWidth={1.6} />
+            : <><ChevronsLeft size={14} strokeWidth={1.6} /><span className={styles.linkLabel}>Collapse</span></>
+          }
+        </button>
+        <NavItem to="/settings" icon={<Settings size={16} strokeWidth={1.5} />} label="Settings" />
       </div>
     </nav>
   )

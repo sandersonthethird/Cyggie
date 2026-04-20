@@ -1,0 +1,88 @@
+/* ── RecordKebabMenu ────────────────────────────────────────────────────
+ * Three-dot dropdown menu for record-level actions.
+ *
+ *   ┌──────────────────────────┐
+ *   │ Edit record…            │
+ *   │ Enrich… ✨              │
+ *   │ ──────────────────────── │
+ *   │ Merge into…             │
+ *   │ ──────────────────────── │
+ *   │ Archive          (red)  │
+ *   │ Delete           (red)  │
+ *   └──────────────────────────┘
+ * ────────────────────────────────────────────────────────────────────── */
+
+.wrapper {
+  position: relative;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--cy-border, var(--color-border));
+  border-radius: var(--cy-radius, 6px);
+  background: transparent;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.trigger:hover {
+  background: var(--cy-hover, var(--color-card-hover));
+  color: var(--cy-text, var(--color-text));
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 100;
+  min-width: 180px;
+  padding: 4px 0;
+  background: var(--cy-surface, var(--color-card-bg));
+  border: 1px solid var(--cy-border, var(--color-border));
+  border-radius: var(--cy-radius-lg, var(--radius-md));
+  box-shadow: var(--cy-shadow-pop, var(--shadow-md));
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  background: none;
+  color: var(--cy-text, var(--color-text));
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.08s;
+}
+
+.item:hover {
+  background: var(--cy-hover, var(--color-card-hover));
+}
+
+.itemDestructive {
+  color: var(--color-danger);
+}
+
+.itemDestructive:hover {
+  background: var(--chip-error-bg);
+}
+
+.divider {
+  height: 1px;
+  background: var(--cy-divider, var(--color-border));
+  margin: 4px 8px;
+}

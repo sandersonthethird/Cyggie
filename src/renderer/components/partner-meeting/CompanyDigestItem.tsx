@@ -154,7 +154,7 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
           )}
           <button
             className={styles.companyLink}
-            onClick={() => navigate(`/company/${item.companyId}`)}
+            onClick={() => navigate(`/company/${item.companyId}`, { state: { backLabel: 'Partner Meeting' } })}
             title="Open company profile"
           >
             {item.companyName ?? 'Unknown Company'}

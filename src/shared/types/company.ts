@@ -103,6 +103,8 @@ export interface CompanySummary {
   totalInvested: string | null
   // Field source tracking — JSON string { fieldName: meetingId }
   fieldSources: string | null
+  // AI-generated key takeaways (bullet-point summary)
+  keyTakeaways: string | null
 }
 
 export interface CompanyDetail extends CompanySummary {

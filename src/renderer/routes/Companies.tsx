@@ -394,7 +394,7 @@ export default function Companies() {
         entityType: 'unknown'
       })
       await fetchCompanies()
-      navigate(`/company/${created.id}`)
+      navigate(`/company/${created.id}`, { state: { backLabel: 'Companies' } })
     },
     [fetchCompanies, navigate]
   )
@@ -511,7 +511,7 @@ export default function Companies() {
   const handleCompanyCreated = useCallback(async (company: CompanySummary) => {
     closeCreateForm()
     await fetchCompanies()
-    navigate(`/company/${company.id}`)
+    navigate(`/company/${company.id}`, { state: { backLabel: 'Companies' } })
   }, [closeCreateForm, fetchCompanies, navigate])
 
   // ── Feature flag gate ───────────────────────────────────────────────────────

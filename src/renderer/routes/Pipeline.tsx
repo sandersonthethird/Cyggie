@@ -441,7 +441,7 @@ export default function Pipeline() {
   const handleCompanyCreated = useCallback(async (company: CompanySummary) => {
     closeCreate()
     await loadData()
-    navigate(`/company/${company.id}`)
+    navigate(`/company/${company.id}`, { state: { backLabel: 'Pipeline' } })
   }, [closeCreate, loadData, navigate])
 
   const updateCompanyField = useCallback(async (
@@ -657,10 +657,10 @@ export default function Pipeline() {
                       className={`${styles.companyCard} ${company.priority ? (CARD_PRIORITY_STYLE[company.priority] ?? '') : ''}`}
                       draggable
                       onDragStart={() => setDragCompanyId(company.id)}
-                      onClick={() => navigate(`/company/${company.id}`)}
+                      onClick={() => navigate(`/company/${company.id}`, { state: { backLabel: 'Pipeline' } })}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/company/${company.id}`) }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/company/${company.id}`, { state: { backLabel: 'Pipeline' } }) }}
                     >
                       <div className={styles.cardName}>{company.canonicalName}</div>
                       {company.description && (
@@ -757,7 +757,7 @@ export default function Pipeline() {
                   <td className={styles.companyColumn}>
                     <button
                       className={styles.companyLink}
-                      onClick={() => navigate(`/company/${company.id}`)}
+                      onClick={() => navigate(`/company/${company.id}`, { state: { backLabel: 'Pipeline' } })}
                     >
                       {company.canonicalName}
                     </button>

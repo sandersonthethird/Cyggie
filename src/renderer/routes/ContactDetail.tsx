@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { ContactDetail as ContactDetailType, ContactMeetingRef } from '../../shared/types/contact'
 import type { ContactSummaryUpdateProposal } from '../../shared/types/summary'
@@ -15,6 +15,7 @@ import { ContactTimeline } from '../components/contact/ContactTimeline'
 import { ContactDecisions } from '../components/contact/ContactDecisions'
 import { EnrichmentProposalDialog } from '../components/enrichment/EnrichmentProposalDialog'
 import type { EnrichmentEntityProposal } from '../components/enrichment/EnrichmentProposalDialog'
+import { RecordTopBar } from '../components/common/RecordTopBar'
 import { useChatStore } from '../stores/chat.store'
 import { usePanelResize } from '../hooks/usePanelResize'
 import { mergeContactProposals } from '../../shared/utils/contact-proposal-utils'
@@ -25,9 +26,6 @@ type ContactTab = 'timeline' | 'meetings' | 'emails' | 'notes' | 'decisions'
 
 export default function ContactDetail() {
   const { contactId: id } = useParams<{ contactId: string }>()
-  const navigate = useNavigate()
-  const location = useLocation()
-  const backLabel = (location.state as { backLabel?: string } | null)?.backLabel ?? 'Back'
   const [contact, setContact] = useState<ContactDetailType | null>(null)
   const [loading, setLoading] = useState(true)
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
@@ -343,11 +341,14 @@ export default function ContactDetail() {
 
   return (
     <div className={styles.wrapper}>
-      {window.history.length > 1 && (
-        <button className={styles.backBtn} onClick={() => navigate(-1)}>
-          ← {backLabel}
-        </button>
-      )}
+      <RecordTopBar
+        backLabel="Back"
+        backFallback="/contacts"
+        breadcrumbs={[
+          { label: 'Contacts', href: '/contacts' },
+          { label: contact.fullName ?? 'Contact' },
+        ]}
+      />
     <div className={layoutStyles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr` }}>
       {/* Left panel — properties */}
       <div className={layoutStyles.leftPanel}>
@@ -396,24 +397,18 @@ export default function ContactDetail() {
         </div>
 
         <div className={layoutStyles.tabContent}>
-          <ContactTimeline
-            contactId={contact.id}
-            hasEmail={!!contact.email}
-            className={activeTab !== 'timeline' ? layoutStyles.hidden : ''}
-          />
-          <ContactMeetings
-            meetings={mergedMeetings}
-            className={activeTab !== 'meetings' ? layoutStyles.hidden : ''}
-          />
-          <ContactEmails
-            contactId={contact.id}
-            hasEmail={!!contact.email}
-            className={activeTab !== 'emails' ? layoutStyles.hidden : ''}
-          />
-          <ContactNotes
-            contactId={contact.id}
-            className={activeTab !== 'notes' ? layoutStyles.hidden : ''}
-          />
+          <div className={activeTab !== 'timeline' ? layoutStyles.hidden : ''}>
+            <ContactTimeline contactId={contact.id} hasEmail={!!contact.email} />
+          </div>
+          <div className={activeTab !== 'meetings' ? layoutStyles.hidden : ''}>
+            <ContactMeetings meetings={mergedMeetings} />
+          </div>
+          <div className={activeTab !== 'emails' ? layoutStyles.hidden : ''}>
+            <ContactEmails contactId={contact.id} hasEmail={!!contact.email} />
+          </div>
+          <div className={activeTab !== 'notes' ? layoutStyles.hidden : ''}>
+            <ContactNotes contactId={contact.id} />
+          </div>
           {activeTab === 'decisions' && (
             <ContactDecisions
               contactId={contact.id}

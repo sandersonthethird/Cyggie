@@ -84,6 +84,7 @@ interface CompanyRow {
   referral_contact_id: string | null
   next_followup_date: string | null
   field_sources: string | null
+  key_takeaways: string | null
   // Portfolio fields from migration 045
   investment_size: string | null
   ownership_pct: string | null
@@ -339,6 +340,7 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     referralContactId: row.referral_contact_id ?? null,
     nextFollowupDate: row.next_followup_date ?? null,
     fieldSources: row.field_sources ?? null,
+    keyTakeaways: row.key_takeaways ?? null,
     investmentSize: row.investment_size ?? null,
     ownershipPct: row.ownership_pct ?? null,
     followonInvestmentSize: row.followon_investment_size ?? null,
@@ -731,15 +733,18 @@ export function getCompany(companyId: string): CompanyDetail | null {
     .get(companyId) as CompanyRow | undefined
   if (!row) return null
 
-  // field_sources is excluded from baseCompanySelect (schema compat with older DBs).
-  // Fetch it separately here so it's only required in the detail view path.
+  // field_sources and key_takeaways are excluded from baseCompanySelect (schema compat
+  // with older DBs). Fetch them separately so they're only required in the detail view.
   try {
-    const fsRow = db
-      .prepare(`SELECT field_sources FROM org_companies WHERE id = ?`)
-      .get(companyId) as { field_sources: string | null } | undefined
-    if (fsRow !== undefined) row.field_sources = fsRow.field_sources ?? null
+    const extraRow = db
+      .prepare(`SELECT field_sources, key_takeaways FROM org_companies WHERE id = ?`)
+      .get(companyId) as { field_sources: string | null; key_takeaways: string | null } | undefined
+    if (extraRow !== undefined) {
+      row.field_sources = extraRow.field_sources ?? null
+      row.key_takeaways = extraRow.key_takeaways ?? null
+    }
   } catch {
-    // Column doesn't exist yet (migration pending) — leave as null
+    // Columns don't exist yet (migration pending) — leave as null
   }
 
   const industries = db
@@ -957,6 +962,7 @@ const COMPANY_UPDATABLE_FIELDS = {
   round: 'round',
   pipelineStage: 'pipeline_stage',
   fieldSources: 'field_sources',
+  keyTakeaways: 'key_takeaways',
   investmentSize: 'investment_size',
   ownershipPct: 'ownership_pct',
   followonInvestmentSize: 'followon_investment_size',

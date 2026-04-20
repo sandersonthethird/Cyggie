@@ -564,7 +564,7 @@ export function CompanyTable({
                     className={`${styles.nameCol} ${styles.nameCell}`}
                     onClick={() => {
                       setEditCell(null)
-                      navigate(`/company/${company.id}`)
+                      navigate(`/company/${company.id}`, { state: { backLabel: 'Companies' } })
                     }}
                   >
                     {company.primaryDomain && (
@@ -596,7 +596,7 @@ export function CompanyTable({
                       <div
                         key={col.key}
                         className={isCustomSelect ? styles.chipCell : styles.dataCell}
-                        onClick={() => navigate(`/company/${company.id}`)}
+                        onClick={() => navigate(`/company/${company.id}`, { state: { backLabel: 'Companies' } })}
                       >
                         {isCustomSelect && cellValue ? (
                           <span className={styles.chip} style={chipStyle(cellValue)}>{cellValue}</span>

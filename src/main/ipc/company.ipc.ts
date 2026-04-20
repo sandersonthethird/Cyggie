@@ -1,4 +1,4 @@
-import { ipcMain, dialog } from 'electron'
+import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { existsSync } from 'fs'
 import { readdir, stat } from 'fs/promises'
 import { join, extname, basename, resolve as resolvePath } from 'path'
@@ -28,6 +28,7 @@ import {
   getCompanyEnrichmentProposalsFromEmails,
 } from '../services/company-summary-sync.service'
 import { extractFromPdf, extractFromUrl, PitchDeckError } from '../services/pitch-deck-ingestion.service'
+import { generateCompanyKeyTakeaways } from '../llm/company-key-takeaways'
 import { runPitchDeckAnalysis } from '../services/pitch-deck-analysis.service'
 import { createCompanyNote } from '../database/repositories/company-notes.repo'
 import type { PitchDeckIngestPayload, PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
@@ -930,4 +931,33 @@ export function registerCompanyHandlers(): void {
       }
     }
   )
+
+  // ── Key Takeaways (AI summary) ───────────────────────────────────────
+  ipcMain.handle(IPC_CHANNELS.COMPANY_KEY_TAKEAWAYS_GENERATE, async (_event, companyId: string) => {
+    if (!companyId) throw new Error('companyId is required')
+
+    const sendKtProgress = (payload: { companyId: string; chunk: string } | null): void => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.COMPANY_KEY_TAKEAWAYS_PROGRESS, payload)
+        }
+      }
+    }
+
+    try {
+      const generated = await generateCompanyKeyTakeaways(companyId, (chunk) => {
+        sendKtProgress({ companyId, chunk })
+      })
+
+      sendKtProgress(null) // completion sentinel
+
+      companyRepo.updateCompany(companyId, { keyTakeaways: generated })
+      console.log('[Company KT] Generated and saved for company:', companyId)
+      return { success: true, companyId, keyTakeaways: generated }
+    } catch (err) {
+      console.error('[Company KT] Generation failed for company:', companyId, err)
+      sendKtProgress(null) // ensure sentinel fires on error too
+      throw err
+    }
+  })
 }

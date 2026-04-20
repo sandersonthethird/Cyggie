@@ -1,0 +1,41 @@
+/* ── Tooltip ────────────────────────────────────────────────────────────
+ * Lightweight tooltip rendered via a fixed-position portal.
+ * Positioning is computed from the trigger element's bounding rect.
+ *
+ *   trigger (hover)
+ *       │
+ *       ▼
+ *   getBoundingClientRect() → compute position
+ *       │
+ *       ▼
+ *   portal renders .tooltip at computed { top, left }
+ *   with clamping to keep within viewport
+ * ──────────────────────────────────────────────────────────────────── */
+
+.wrapper {
+  display: inline-flex;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+
+  padding: 4px 8px;
+  border-radius: var(--cy-radius, 6px);
+  background: var(--cy-text, #1a1e24);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: nowrap;
+  box-shadow: var(--cy-shadow-pop, 0 4px 12px rgba(0,0,0,0.15));
+
+  opacity: 0;
+  animation: tooltipIn 120ms ease-out forwards;
+}
+
+@keyframes tooltipIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}

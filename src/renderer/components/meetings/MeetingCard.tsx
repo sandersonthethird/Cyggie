@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Meeting } from '../../../shared/types/meeting'
 import { getSingleCompanyDomain } from '../../../shared/utils/company-domain'
+import { formatMeetingDuration, formatMeetingTime } from '../../utils/format'
 import styles from './MeetingCard.module.css'
 
 interface MeetingCardProps {
@@ -9,25 +10,6 @@ interface MeetingCardProps {
   onClick: () => void
   onDelete: () => void
   onCopyLink: () => void
-}
-
-function formatDuration(seconds: number | null): string {
-  if (!seconds) return '--'
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  if (m >= 60) {
-    const h = Math.floor(m / 60)
-    return `${h}h ${m % 60}m`
-  }
-  return s > 0 ? `${m}m ${s}s` : `${m}m`
-}
-
-function formatTime(dateStr: string): string {
-  const date = new Date(dateStr)
-  return date.toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit'
-  })
 }
 
 export default function MeetingCard({ meeting, snippet, onClick, onDelete, onCopyLink }: MeetingCardProps) {
@@ -73,7 +55,7 @@ export default function MeetingCard({ meeting, snippet, onClick, onDelete, onCop
       ) : null}
       <div className={styles.row}>
         <h3 className={styles.title}>{meeting.title}</h3>
-        <span className={styles.time}>{formatTime(meeting.date)}</span>
+        <span className={styles.time}>{formatMeetingTime(meeting.date)}</span>
       </div>
       <div className={styles.row}>
         {speakerNames ? (
@@ -81,7 +63,7 @@ export default function MeetingCard({ meeting, snippet, onClick, onDelete, onCop
         ) : (
           <span />
         )}
-        <span className={styles.duration}>{formatDuration(meeting.durationSeconds)}</span>
+        <span className={styles.duration}>{formatMeetingDuration(meeting.durationSeconds)}</span>
       </div>
       {snippet && (
         <div className={styles.row}>

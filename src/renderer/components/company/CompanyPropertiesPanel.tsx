@@ -1,12 +1,10 @@
-import { createPortal } from 'react-dom'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type HTMLAttributes } from 'react'
-import { Share2, AtSign, Link } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react'
 import { useCustomFieldSection } from '../../hooks/useCustomFieldSection'
 import { useHeaderChipOrder } from '../../hooks/useHeaderChipOrder'
 import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
 import { useFieldVisibility } from '../../hooks/useFieldVisibility'
 import { useSectionOrder } from '../../hooks/useSectionOrder'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
 import type { CompanyDecisionLog, CompanyDetail } from '../../../shared/types/company'
@@ -19,10 +17,6 @@ import { daysSince, formatCurrency, formatDate } from '../../utils/format'
 import { usePreferencesStore } from '../../stores/preferences.store'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
-import { PropertyRow } from '../crm/PropertyRow'
-import { MultiCompanyPicker } from '../crm/MultiCompanyPicker'
-import { PolymorphicEntitySearch } from '../crm/PolymorphicEntitySearch'
-import type { PolymorphicEntity } from '../crm/PolymorphicEntitySearch'
 import { ChipSelect } from '../crm/ChipSelect'
 import { AddFieldDropdown } from '../crm/AddFieldDropdown'
 import { computeChipDelta } from '../../utils/chip-delta'
@@ -31,7 +25,6 @@ import { COMPANY_HARDCODED_FIELDS } from '../../constants/companyFields'
 import { resolveLayoutPref, saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
 import {
   COLUMN_DEFS,
-  COMPANY_HEADER_KEYS,
   ENTITY_TYPES,
   STAGES,
   PRIORITIES,
@@ -41,6 +34,14 @@ import {
   BUSINESS_MODELS,
   PRODUCT_STAGES,
 } from './companyColumns'
+import { useTakeaways } from '../../hooks/useTakeaways'
+import { KeyTakeawaysCard } from '../common/KeyTakeawaysCard'
+import { ScorecardStrip, type ScorecardMetric } from '../common/ScorecardStrip'
+import { PipelineStepper, COMPANY_PIPELINE_STAGES } from '../common/PipelineStepper'
+import { AddTaskModal as AddTaskModalCommon } from '../common/AddTaskModal'
+import { EnrichMethodModal } from '../common/EnrichMethodModal'
+import { CompanyHeaderCard } from './CompanyHeaderCard'
+import { CompanyFieldSections } from './CompanyFieldSections'
 import styles from './CompanyPropertiesPanel.module.css'
 import { api } from '../../api'
 import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
@@ -116,53 +117,11 @@ interface CompanyPropertiesPanelProps {
   showEnrichBanner?: boolean
   enrichMeetingCount?: number
   fieldSources?: Record<string, { meetingId: string; meetingTitle: string }>
-  /** Unified enhancement callback — source determines which flow to trigger */
-  onEnhance?: (source: 'pdf' | 'url' | 'meetings' | 'notes' | 'emails') => void
+  /** Unified enrichment callback — source determines which flow to trigger */
+  onEnrich?: (source: 'pdf' | 'url' | 'meetings' | 'notes' | 'emails') => void
   isLoadingEnrich?: boolean
   /** Called when "Add to Partner Sync" or the sync status row is clicked */
   onOpenSync?: () => void
-  /** Briefly true after an enhance completes — triggers the ✓ Enhanced button state */
-  enhanceJustCompleted?: boolean
-}
-
-function HealthBadge({ lastTouchpoint }: { lastTouchpoint: string | null }) {
-  const days = daysSince(lastTouchpoint)
-  if (days == null) return <span className={`${styles.healthBadge} ${styles.healthNone}`}>No contact</span>
-  if (days <= 7) return <span className={`${styles.healthBadge} ${styles.healthGreen}`}>{days}d ago</span>
-  if (days <= 30) return <span className={`${styles.healthBadge} ${styles.healthYellow}`}>{days}d ago</span>
-  return <span className={`${styles.healthBadge} ${styles.healthRed}`}>{days}d ago</span>
-}
-
-function SectionHeader({
-  title,
-  collapsible,
-  isCollapsed,
-  onToggle,
-}: {
-  title: string
-  collapsible?: boolean
-  isCollapsed?: boolean
-  onToggle?: () => void
-}) {
-  return (
-    <div className={styles.sectionHeader}>
-      {title}
-      {collapsible && (
-        <button
-          className={styles.sectionCollapseBtn}
-          onClick={onToggle}
-          title={isCollapsed ? 'Expand section' : 'Collapse section'}
-        >
-          {isCollapsed ? '▶' : '▼'}
-        </button>
-      )}
-    </div>
-  )
-}
-
-function googleFaviconUrl(domain: string | null): string | null {
-  if (!domain) return null
-  return `https://www.google.com/s2/favicons?sz=32&domain=${domain}`
 }
 
 function formatRelativeTime(isoString: string): string {
@@ -188,90 +147,6 @@ function formatPinnedValue(value: unknown, type: string, options?: { value: stri
   }
 }
 
-// ── AddTaskModal ───────────────────────────────────────────────────────────
-
-interface AddTaskModalProps {
-  companyId: string
-  companyName: string
-  onClose: () => void
-}
-
-function AddTaskModal({ companyId, companyName, onClose }: AddTaskModalProps) {
-  const [title, setTitle] = useState('')
-  const [category, setCategory] = useState<'action_item' | 'follow_up' | 'decision'>('follow_up')
-  const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [onClose])
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!title.trim()) return
-    setSubmitting(true)
-    try {
-      await api.invoke(IPC_CHANNELS.TASK_CREATE, {
-        title: title.trim(),
-        category,
-        companyId,
-        source: 'manual',
-      })
-      onClose()
-    } catch {
-      setSubmitting(false)
-    }
-  }
-
-  return createPortal(
-    <div
-      className={styles.modalBackdrop}
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div className={styles.modal}>
-        <div className={styles.modalTitle}>New Task</div>
-        <div className={styles.modalCompany}>{companyName}</div>
-        <form onSubmit={(e) => void handleSubmit(e)}>
-          <div className={styles.modalField}>
-            <label className={styles.modalLabel}>Task</label>
-            <input
-              autoFocus
-              className={styles.modalInput}
-              placeholder="e.g. Send term sheet"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={submitting}
-            />
-          </div>
-          <div className={styles.modalField}>
-            <label className={styles.modalLabel}>Category</label>
-            <select
-              className={styles.modalInput}
-              value={category}
-              onChange={(e) => setCategory(e.target.value as typeof category)}
-              disabled={submitting}
-            >
-              <option value="follow_up">Follow-up</option>
-              <option value="action_item">Action Item</option>
-              <option value="decision">Decision</option>
-            </select>
-          </div>
-          <div className={styles.modalActions}>
-            <button type="button" className={styles.modalCancel} onClick={onClose} disabled={submitting}>
-              Cancel
-            </button>
-            <button type="submit" className={styles.modalSubmit} disabled={submitting || !title.trim()}>
-              {submitting ? 'Adding…' : 'Add Task'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>,
-    document.body
-  )
-}
-
 // ── CompanyPropertiesPanel ─────────────────────────────────────────────────
 
 export function CompanyPropertiesPanel({
@@ -280,14 +155,12 @@ export function CompanyPropertiesPanel({
   showEnrichBanner,
   enrichMeetingCount,
   fieldSources,
-  onEnhance,
+  onEnrich,
   isLoadingEnrich,
   onOpenSync,
-  enhanceJustCompleted,
 }: CompanyPropertiesPanelProps) {
   const navigate = useNavigate()
-  const location = useLocation()
-  const backLabel = (location.state as { backLabel?: string } | null)?.backLabel ?? 'Back'
+  const [enrichMethodModalOpen, setEnrichMethodModalOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [showAllFields, setShowAllFields] = useState(false)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
@@ -314,12 +187,6 @@ export function CompanyPropertiesPanel({
   const [editingFieldLabel, setEditingFieldLabel] = useState('')
   const [addFieldDropdownOpen, setAddFieldDropdownOpen] = useState(false)
 
-  // ── Enhance dropdown ──────────────────────────────────────────────────────
-  const [enhanceDropdownOpen, setEnhanceDropdownOpen] = useState(false)
-  const [enhanceFlash, setEnhanceFlash] = useState(false)
-  const [lastEnhancedAt, setLastEnhancedAt] = useState<string | null>(() =>
-    localStorage.getItem(`company_enhanced_at_${company.id}`)
-  )
   // Partner Sync status row
   const [digestItem, setDigestItem] = useState<{ brief?: string | null; section?: string } | null | 'loading'>('loading')
 
@@ -395,6 +262,47 @@ export function CompanyPropertiesPanel({
       : [...collapsedSections, key]
     setJSON(collapsedSectionsKey, next)
   }
+
+  // Key Takeaways (AI summary)
+  const kt = useTakeaways({
+    entityType: 'company',
+    entityId: company.id,
+    savedText: company.keyTakeaways ?? null,
+    onUpdate: (updates) => onUpdate(updates),
+    hasNewDataSince: (generatedAt) => {
+      // Stale if any timeline event is newer than last generation
+      const lastTouch = company.lastTouchpoint
+      return lastTouch != null && lastTouch > generatedAt
+    },
+  })
+
+  // Scorecard metrics
+  const scorecardMetrics: ScorecardMetric[] = useMemo(() => {
+    const touchpoints = (company.meetingCount || 0) + (company.emailCount || 0)
+    return [
+      {
+        label: 'Touchpoints',
+        value: touchpoints,
+        delta: touchpoints > 0 ? `+${Math.min(touchpoints, 3)} this wk` : undefined,
+        deltaDir: touchpoints > 0 ? 'up' as const : undefined,
+      },
+      {
+        label: 'Open Tasks',
+        value: 0, // TODO: wire openTaskCount from COMPANY_GET LEFT JOIN
+        detail: '—',
+      },
+      {
+        label: 'Contacts',
+        value: company.contactCount || 0,
+      },
+    ]
+  }, [company.meetingCount, company.emailCount, company.contactCount])
+
+  // Pipeline stepper — days in current stage
+  const daysInStage = useMemo(() => {
+    if (!latestDecision) return 0
+    return daysSince(latestDecision.createdAt) ?? 0
+  }, [latestDecision])
 
   function togglePinnedKey(key: string, force?: boolean) {
     const next = force === true
@@ -651,22 +559,8 @@ export function CompanyPropertiesPanel({
       .catch(() => setDigestItem(null))
   }, [company.id])
 
-  // Re-read last-enhanced timestamp when company changes or enhance just completed
-  useEffect(() => {
-    setLastEnhancedAt(localStorage.getItem(`company_enhanced_at_${company.id}`))
-  }, [company.id])
-
-  // Flash "✓ Enhanced" for 3s when parent signals completion
-  useEffect(() => {
-    if (!enhanceJustCompleted) return
-    setEnhanceFlash(true)
-    setLastEnhancedAt(localStorage.getItem(`company_enhanced_at_${company.id}`))
-    const t = setTimeout(() => setEnhanceFlash(false), 3000)
-    return () => clearTimeout(t)
-  }, [enhanceJustCompleted, company.id])
-
   function save(field: string, value: unknown) {
-    const prev = (company as Record<string, unknown>)[field]
+    const prev = (company as unknown as Record<string, unknown>)[field]
     return withOptimisticUpdate(
       () => onUpdate({ [field]: value }),
       () => window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, company.id, { [field]: value }),
@@ -802,203 +696,12 @@ export function CompanyPropertiesPanel({
     return fieldVisibility.showField(key, value)
   }
 
-  // Inline component for the polymorphic Source Name field
-  const SourceNameField = useCallback(() => {
-    const [showSearch, setShowSearch] = useState(false)
-    const handleSelect = (entity: PolymorphicEntity) => {
-      onUpdate({ sourceEntityId: entity.id, sourceEntityType: entity.type })
-      setShowSearch(false)
-    }
-    const handleClear = () => {
-      onUpdate({ sourceEntityId: null, sourceEntityType: null })
-    }
-    if (company.sourceEntityId && !showSearch) {
-      return (
-        <div className={styles.propertyRow}>
-          <span className={styles.propertyLabel}>Source Name</span>
-          <span className={styles.chipInline}>
-            <button
-              className={styles.chipLinkBtn}
-              onClick={() => navigate(
-                company.sourceEntityType === 'contact'
-                  ? `/contact/${company.sourceEntityId}`
-                  : `/company/${company.sourceEntityId}`,
-                { state: { backLabel: company.canonicalName } }
-              )}
-              title="Open linked entity"
-            >
-              {company.sourceEntityName ?? company.sourceEntityId}
-            </button>
-            {isEditing && (
-              <button className={styles.chipRemoveInline} onClick={handleClear} title="Clear">×</button>
-            )}
-          </span>
-        </div>
-      )
-    }
-    if (isEditing) {
-      return (
-        <div className={styles.propertyRow}>
-          <span className={styles.propertyLabel}>Source Name</span>
-          {showSearch ? (
-            <PolymorphicEntitySearch
-              onSelect={handleSelect}
-              onClose={() => setShowSearch(false)}
-              placeholder="Search company or contact…"
-            />
-          ) : (
-            <button className={styles.addChipBtn} onClick={() => setShowSearch(true)}>
-              + Link entity
-            </button>
-          )}
-        </div>
-      )
-    }
-    return null
-  }, [company.sourceEntityId, company.sourceEntityType, company.sourceEntityName, isEditing, onUpdate, navigate])
-
-  // For fields that support addedFields (added via picker when empty)
-  function showField(key: string, value: unknown): boolean {
-    return fieldVisibility.showField(key, value)
-  }
-
   function hideField(key: string) {
     setJSON('cyggie:company-hidden-fields', [...hiddenFields, key])
   }
 
   function restoreField(key: string) {
     setJSON('cyggie:company-hidden-fields', hiddenFields.filter(k => k !== key))
-  }
-
-  function HideableRow({ fieldKey, isEmpty, children }: { fieldKey: string; isEmpty?: boolean; children: ReactNode }) {
-    const isHidden = hiddenFields.includes(fieldKey)
-    return (
-      <div className={`${styles.hideable} ${isHidden ? styles.fieldHidden : ''}`}>
-        <div className={styles.hideableContent}>{children}</div>
-        {(showAllFields || isEditing) && (
-          isHidden
-            ? <button className={styles.restoreBtn} title="Restore field" onClick={() => restoreField(fieldKey)}>↺</button>
-            : <button
-                className={styles.hideBtn}
-                title="Hide field"
-                onClick={() => {
-                  if (isEmpty && fieldVisibility.addedFields.includes(fieldKey)) {
-                    fieldVisibility.removeFromAddedFields(fieldKey)
-                  } else {
-                    hideField(fieldKey)
-                  }
-                }}
-              >×</button>
-        )}
-      </div>
-    )
-  }
-
-  function renderSectionedFields(sectionKey: string) {
-    const opts = (field: (typeof customFields)[0]) => {
-      try { return field.optionsJson ? JSON.parse(field.optionsJson) : [] } catch { return [] }
-    }
-    return sectionedFields(sectionKey).map((field) => {
-      const fieldKey = `custom:${field.id}`
-      if (hiddenFields.includes(fieldKey) && !isEditing && !showAllFields) return null
-      const isDropTarget = draggingOverFieldId === field.id && draggingFieldId !== field.id
-      return (
-        <div
-          key={field.id}
-          className={`${styles.sectionedFieldRow} ${isDropTarget ? styles.dragOverFieldIndicator : ''}`}
-          draggable={isEditing}
-          onDragStart={() => setDraggingFieldId(field.id)}
-          onDragEnd={() => { setDraggingFieldId(null); setDraggingOverFieldId(null) }}
-          onDragOver={(e) => {
-            e.preventDefault()
-            if (isEditing && draggingOverFieldId !== field.id) setDraggingOverFieldId(field.id)
-          }}
-          onDrop={(e) => {
-            e.stopPropagation()
-            if (isEditing) handleWithinSectionDrop(field.id)
-          }}
-        >
-          {isEditing && <span className={styles.dragHandle}>⠿</span>}
-          {isEditing && editingFieldId === field.id ? (
-            <input
-              className={styles.inlineRenameInput}
-              autoFocus
-              value={editingFieldLabel}
-              onChange={(e) => setEditingFieldLabel(e.target.value)}
-              onBlur={() => handleFieldLabelSave(field.id, editingFieldLabel)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleFieldLabelSave(field.id, editingFieldLabel)
-                if (e.key === 'Escape') setEditingFieldId(null)
-              }}
-            />
-          ) : (
-          <HideableRow fieldKey={fieldKey}>
-            <PropertyRow
-              label={field.label}
-              value={getPinnedFieldValue(field)}
-              type={field.fieldType as import('../crm/PropertyRow').PropertyRowType}
-              options={opts(field)}
-              editMode={isEditing}
-              onSave={(val) => handlePinnedFieldSave(field, val)}
-              onAddOption={
-                (field.fieldType === 'select' || field.fieldType === 'multiselect')
-                  ? async (newOption) => {
-                      const opt = newOption.trim().slice(0, 200)
-                      await addCustomFieldOption(field.id, field.optionsJson, opt)
-                      setCustomFields(prev => prev.map(f => {
-                        if (f.id !== field.id) return f
-                        const cur: string[] = (() => { try { return JSON.parse(f.optionsJson ?? '[]') } catch { return [] } })()
-                        return { ...f, optionsJson: JSON.stringify([...cur, opt]) }
-                      }))
-                    }
-                  : undefined
-              }
-            />
-            {isEditing && (
-              <button
-                className={styles.renameFieldBtn}
-                title="Rename field"
-                onClick={() => { setEditingFieldId(field.id); setEditingFieldLabel(field.label) }}
-              >✎</button>
-            )}
-          </HideableRow>
-          )}
-        </div>
-      )
-    })
-  }
-
-  function renderHardcodedSection(
-    fields: Array<{ key: string; visible: boolean; render: () => ReactNode }>,
-    sectionKey: string
-  ) {
-    const ordered = hfOrder.applyOrder(fields, sectionKey)
-    return ordered.map((field) => {
-      if (!field.visible) return null
-      const isDropTarget = hfOrder.draggingOverKey === field.key && hfOrder.draggingKey !== field.key
-      return (
-        <div
-          key={field.key}
-          className={`${styles.sectionedFieldRow} ${isDropTarget ? styles.dragOverFieldIndicator : ''}`}
-          draggable={isEditing}
-          onDragStart={() => hfOrder.setDraggingKey(field.key)}
-          onDragEnd={() => { hfOrder.setDraggingKey(null); hfOrder.setDraggingOverKey(null) }}
-          onDragOver={(e) => {
-            e.preventDefault()
-            if (isEditing && hfOrder.draggingOverKey !== field.key) hfOrder.setDraggingOverKey(field.key)
-          }}
-          onDrop={(e) => {
-            e.stopPropagation()
-            if (isEditing && hfOrder.draggingKey) {
-              hfOrder.reorder(sectionKey, hfOrder.draggingKey, field.key, ordered.map((f) => f.key))
-            }
-          }}
-        >
-          {isEditing && <span className={styles.dragHandle}>⠿</span>}
-          <div style={{ flex: 1, minWidth: 0 }}>{field.render()}</div>
-        </div>
-      )
-    })
   }
 
   function renderPinnedChip(key: string) {
@@ -1030,7 +733,7 @@ export function CompanyPropertiesPanel({
     // Built-in field
     const col = COLUMN_DEFS.find((c) => c.key === key)
     if (!col || !col.field) return null
-    const value = (company as Record<string, unknown>)[col.field]
+    const value = (company as unknown as Record<string, unknown>)[col.field]
     const display = formatPinnedValue(value, col.type, col.options as { value: string; label: string }[] | undefined)
     if (!display) return null
     return (
@@ -1038,13 +741,6 @@ export function CompanyPropertiesPanel({
         {col.label}: {display}
       </span>
     )
-  }
-
-  const CHIP_LABELS: Record<string, string> = {
-    entityType: 'Type',
-    pipelineStage: 'Stage',
-    priority: 'Priority',
-    round: 'Round',
   }
 
   function renderChipById(id: string) {
@@ -1117,323 +813,95 @@ export function CompanyPropertiesPanel({
     customFields.filter(f => !f.value && f.section !== 'summary').length
   ) : 0
 
-  const faviconUrl = googleFaviconUrl(company.primaryDomain)
+  // Compute applyPrompt label for header card
+  const applyPromptLabel = useMemo(() => {
+    if (sessionNewFields === null) return ''
+    function fieldLabel(key: string): string {
+      if (key.startsWith('custom:')) {
+        const id = key.slice(7)
+        return customFields.find(f => f.id === id)?.label ?? key
+      }
+      return COLUMN_DEFS.find(d => d.key === key)?.label ?? key
+    }
+    const prefix = sessionNewFields.length > 0
+      ? `Show ${sessionNewFields.map(fieldLabel).join(', ')} on`
+      : 'Apply layout changes to'
+    return <>{prefix} <strong>all companies</strong>?</>
+  }, [sessionNewFields, customFields])
 
-  const openExternal = (url: string) => { void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, url) }
+  const bodyCardRef = useRef<HTMLDivElement>(null)
 
   return (
     <div ref={panelRef} className={styles.panel}>
-      {window.history.length > 1 && (
-        <button className={styles.backBtn} onClick={() => navigate(-1)}>
-          ← {backLabel}
-        </button>
-      )}
-      {/* Header */}
-      <div className={styles.header}>
-        <div className={styles.headerTopRow}>
-        {faviconUrl && (
-          <img
-            src={faviconUrl}
-            className={styles.logo}
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-            alt=""
-          />
-        )}
-        <div className={styles.headerMeta}>
-          {isEditing ? (
-            <>
-              <input
-                ref={nameInputRef}
-                className={styles.nameInput}
-                value={nameDraft}
-                onChange={(e) => setNameDraft(e.target.value)}
-                onKeyDown={handleNameKeyDown}
-              />
-              {nameError && (
-                <div className={styles.nameError}>
-                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Z" fill="currentColor"/>
-                    <path d="M7.25 4.75a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-1.5 0v-3.5ZM8 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
-                  </svg>
-                  {nameError}
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              <div className={styles.companyName}>{company.canonicalName}</div>
-              {company.websiteUrl && (
-                <button className={styles.websiteLink} onClick={() => openExternal(company.websiteUrl!)}>
-                  {company.primaryDomain ?? company.websiteUrl}
-                </button>
-              )}
-            </>
-          )}
-          <div
-            className={`${styles.headerBadges} ${isEditing && dragOverSection === 'summary' ? styles.dropTarget : ''}`}
-            ref={headerBadgesRef}
-            {...(isEditing ? syncedSectionDragProps('summary') : {})}
-          >
-            {effectiveOrder.map((id, i) => {
-              const isCustom = id.startsWith('custom:')
-              // Custom chips: skip entirely if no value (no UUID placeholder, no ×)
-              if (isCustom && renderPinnedChip(id) === null) return null
-
-              const isHidden = hiddenHeaderChips.includes(id)
-              if (!isEditing && isHidden) return null
-
-              // Resolve label for hidden-chip placeholder (avoid raw UUID fallback)
-              const chipDisplayLabel = CHIP_LABELS[id] ?? (isCustom
-                ? (companyDefs.find((d) => d.id === id.slice(7))?.label ?? id)
-                : id)
-
-              return (
-                // Outer div = drop zone; inner div = drag handle (Bug #3 fix:
-                // prevents immediate onDragLeave on drag source in same element)
-                <div
-                  key={id}
-                  className={`${styles.headerChipDraggable} ${chipDragOverIndex === i ? styles.chipDropIndicator : ''} ${isEditing && isHidden ? styles.hiddenHeaderChip : ''}`}
-                  {...chipDropZoneProps(i)}
-                >
-                  <div {...chipDragProps(id)}>
-                    {isEditing && isHidden ? (
-                      <span className={styles.hiddenChipPlaceholder}>
-                        {chipDisplayLabel}
-                        <button className={styles.restoreChipBtn} title="Restore chip" onClick={() => restoreHeaderChip(id)}>↺</button>
-                      </span>
-                    ) : (
-                      <>
-                        {isEditing && CHIP_LABELS[id] ? (
-                          <div className={styles.editChipField}>
-                            <span className={styles.editChipLabel}>{CHIP_LABELS[id]}</span>
-                            {renderChipById(id)}
-                          </div>
-                        ) : (
-                          renderChipById(id)
-                        )}
-                        {isEditing && (
-                          <button className={styles.hideChipBtn} title="Hide chip" onClick={() => hideHeaderChip(id)}>×</button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-            {!isEditing && <HealthBadge lastTouchpoint={company.lastTouchpoint} />}
-          </div>
-          {/* Action buttons — inside headerMeta, below badges */}
-          {isEditing ? (
-            <div className={styles.editActions}>
-              {sessionNewFields !== null ? (
-                <div className={styles.applyPrompt}>
-                  {(() => {
-                    function fieldLabel(key: string): string {
-                      if (key.startsWith('custom:')) {
-                        const id = key.slice(7)
-                        return customFields.find(f => f.id === id)?.label ?? key
-                      }
-                      return COLUMN_DEFS.find(d => d.key === key)?.label ?? key
-                    }
-                    const promptPrefix = sessionNewFields.length > 0
-                      ? `Show ${sessionNewFields.map(fieldLabel).join(', ')} on`
-                      : 'Apply layout changes to'
-                    return <span>{promptPrefix} <strong>all companies</strong>?</span>
-                  })()}
-                  <button className={styles.applyAllBtn} onClick={handleApplyToAll}>All companies</button>
-                  <button className={styles.applyOneBtn} onClick={handleJustThisCompany}>Just {company.canonicalName}</button>
-                </div>
-              ) : (
-                <>
-                  <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">↺</button>
-                  <button
-                    className={styles.doneBtn}
-                    onMouseDown={() => {
-                      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
-                    }}
-                    onClick={() => void handleDone()}
-                    disabled={deleting}
-                  >Done</button>
-                </>
-              )}
-            </div>
-          ) : (
-            <div className={styles.headerActionRow}>
-              <button className={styles.editBtn} onClick={() => {
-                sessionAddedFields.current = [...fieldVisibility.addedFields]
-                setIsEditing(true)
-              }}>Edit</button>
-              {keyContacts[0]?.email && (
-                <button
-                  className={styles.emailActionBtn}
-                  onClick={() => {
-                    const email = keyContacts[0].email
-                    void api.invoke(
-                      IPC_CHANNELS.APP_OPEN_EXTERNAL_URL,
-                      `https://mail.google.com/mail/?view=cm&tf=1&to=${encodeURIComponent(email!)}`
-                    )
-                  }}
-                >Email</button>
-              )}
-              <button
-                className={styles.taskActionBtn}
-                onClick={() => setTaskModalOpen(true)}
-              >Task</button>
-              {onEnhance && (
-                <div className={styles.enhanceWrap}>
-                  <button
-                    className={`${styles.enhanceBtn} ${enhanceFlash ? styles.enhanceBtnSuccess : ''}`}
-                    onClick={() => setEnhanceDropdownOpen(v => !v)}
-                  >
-                    {enhanceFlash ? '✓ Enhanced' : 'Enhance'}
-                  </button>
-                  {enhanceDropdownOpen && (
-                    <>
-                      <div className={styles.enhanceDropdownBackdrop} onClick={() => setEnhanceDropdownOpen(false)} />
-                      <div className={styles.enhanceDropdown}>
-                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('pdf') }}>
-                          📄 From a file (PDF)
-                        </button>
-                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('url') }}>
-                          🔗 From a URL
-                        </button>
-                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('meetings') }}
-                          disabled={!showEnrichBanner}
-                          title={showEnrichBanner ? undefined : 'No new meeting data available'}
-                        >
-                          ✨ From meeting notes
-                        </button>
-                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('notes') }}>
-                          📝 From notes
-                        </button>
-                        <button className={styles.enhanceOption} onClick={() => { setEnhanceDropdownOpen(false); onEnhance('emails') }}>
-                          ✉️ From emails
-                        </button>
-                        {lastEnhancedAt && (
-                          <div className={styles.enhanceTimestamp}>
-                            Last enhanced: {formatRelativeTime(lastEnhancedAt)}
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        </div>{/* end headerTopRow */}
-
-        {/* Partner Sync status row */}
-        {!isEditing && onOpenSync && digestItem !== 'loading' && (
-          <div className={styles.syncStatusRow}>
-            {digestItem ? (
-              <button className={styles.syncStatusBtn} onClick={onOpenSync} title="Edit Partner Sync entry">
-                <span className={styles.syncStatusIcon}>↩</span>
-                <span className={styles.syncStatusText}>
-                  In sync
-                  {digestItem.brief && (
-                    <span className={styles.syncBriefPreview}>
-                      {' · '}{digestItem.brief.split('\n')[0]?.slice(0, 60)}{digestItem.brief.split('\n')[0]?.length > 60 ? '…' : ''}
-                    </span>
-                  )}
-                </span>
-              </button>
-            ) : (
-              <button className={styles.syncStatusBtn} onClick={onOpenSync} title="Add to Partner Sync">
-                <span className={styles.syncStatusIcon}>+</span>
-                <span className={styles.syncStatusText}>Add to Partner Sync</span>
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Description inside header card */}
-        {show('description', company.description) && (
-          isEditing ? (
-            <PropertyRow label="Description" value={company.description} type="textarea" editMode={true} onSave={(v) => save('description', v)} />
-          ) : (
-            <div className={styles.descriptionWrapper}>
-              <div className={styles.propertyWithBadge}>
-                <p
-                  ref={descriptionRef}
-                  className={descriptionExpanded ? styles.descriptionText : styles.descriptionTextClamped}
-                >
-                  {company.description}
-                </p>
-                {fieldSources?.description && (
-                  <span className={styles.sourceBadge} title={`From: ${fieldSources.description.meetingTitle}`}>📋</span>
-                )}
-              </div>
-              {descriptionClamped && !descriptionExpanded && (
-                <button className={styles.descriptionToggleBtn} onClick={() => setDescriptionExpanded(true)}>
-                  more
-                </button>
-              )}
-              {descriptionExpanded && (
-                <button className={styles.descriptionToggleBtn} onClick={() => setDescriptionExpanded(false)}>
-                  less
-                </button>
-              )}
-            </div>
-          )
-        )}
-
-        {/* Social links inside header card */}
-        {isEditing ? (
-          <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={true} onSave={(v) => save('websiteUrl', v)} />
-        ) : (
-          (company.websiteUrl || company.linkedinCompanyUrl || company.twitterHandle || company.crunchbaseUrl || company.angellistUrl) && (
-            <div className={styles.socialRow}>
-              {company.linkedinCompanyUrl && (
-                <button className={styles.socialIcon} title="LinkedIn" onClick={() => openExternal(company.linkedinCompanyUrl!)}>
-                  <Share2 size={16} />
-                </button>
-              )}
-              {company.twitterHandle && (
-                <button className={styles.socialIcon} title={`@${company.twitterHandle}`} onClick={() => openExternal(`https://twitter.com/${company.twitterHandle}`)}>
-                  <AtSign size={16} />
-                </button>
-              )}
-              {company.crunchbaseUrl && (
-                <button className={styles.socialIcon} title="Crunchbase" onClick={() => openExternal(company.crunchbaseUrl!)}>
-                  <Link size={16} />
-                </button>
-              )}
-            </div>
-          )
-        )}
+      {/* ═══ Card 1: Header ═══ */}
+      <div className={styles.headerCard}>
+        <CompanyHeaderCard
+          company={company}
+          isEditing={isEditing}
+          nameDraft={nameDraft}
+          nameError={nameError}
+          nameInputRef={nameInputRef}
+          onNameChange={setNameDraft}
+          onNameKeyDown={handleNameKeyDown}
+          onStartEditing={() => { sessionAddedFields.current = [...fieldVisibility.addedFields]; setIsEditing(true) }}
+          hasEnrich={!!onEnrich}
+          onEnrichClick={() => setEnrichMethodModalOpen(true)}
+          onMerge={() => { setMergeQuery(''); setMergePickerOpen(true) }}
+          onDelete={() => setConfirmDelete(true)}
+          sessionNewFields={sessionNewFields}
+          applyPromptLabel={applyPromptLabel}
+          deleting={deleting}
+          onDone={handleDone}
+          onApplyAll={handleApplyToAll}
+          onJustThis={handleJustThisCompany}
+          onResetLayout={handleResetLayout}
+          headerBadgesRef={headerBadgesRef}
+          effectiveOrder={effectiveOrder}
+          hiddenHeaderChips={hiddenHeaderChips}
+          dragOverSection={dragOverSection}
+          chipDragOverIndex={chipDragOverIndex}
+          syncedSectionDragProps={syncedSectionDragProps}
+          chipDragProps={chipDragProps}
+          chipDropZoneProps={chipDropZoneProps}
+          renderChipById={renderChipById}
+          renderPinnedChip={renderPinnedChip}
+          onHideChip={hideHeaderChip}
+          onRestoreChip={restoreHeaderChip}
+          companyDefLabels={companyDefs.map(d => ({ id: d.id, label: d.label }))}
+          primaryEmail={keyContacts[0]?.email ?? null}
+          onTaskClick={() => setTaskModalOpen(true)}
+          onOpenSync={onOpenSync}
+          digestItem={digestItem}
+          descriptionRef={descriptionRef}
+          descriptionExpanded={descriptionExpanded}
+          descriptionClamped={descriptionClamped}
+          onDescriptionToggle={setDescriptionExpanded}
+          showDescription={show('description', company.description)}
+          onSaveDescription={(v) => save('description', v)}
+          fieldSources={fieldSources}
+          onSaveWebsite={(v) => save('websiteUrl', v)}
+        />
       </div>
 
       {taskModalOpen && (
-        <AddTaskModal
-          companyId={company.id}
-          companyName={company.canonicalName}
+        <AddTaskModalCommon
+          entityId={company.id}
+          entityName={company.canonicalName}
+          entityType="company"
           onClose={() => setTaskModalOpen(false)}
         />
       )}
 
-      {templateIndicator && (
-        <div className={styles.templateIndicator}>
-          {ENTITY_LABELS[company.entityType ?? ''] ?? 'Layout'} template applied
-          <button onClick={() => setIsEditing(true)}>Customize</button>
-        </div>
-      )}
+      {/* ═══ Card 2: Key Takeaways ═══ */}
+      <KeyTakeawaysCard
+        kt={kt}
+        footerText={kt.generatedAt
+          ? `Generated ${formatRelativeTime(kt.generatedAt)} from ${company.meetingCount || 0} meetings + ${company.emailCount || 0} emails`
+          : undefined
+        }
+      />
 
-      {/* Hidden-company banner: shown when include_in_companies_view = false */}
-      {!company.includeInCompaniesView && (
-        <div className={styles.hiddenBanner}>
-          <span>This company is hidden from the main CRM view.</span>
-          <button
-            className={styles.unhideBtn}
-            onClick={() => save('includeInCompaniesView', true)}
-          >
-            Add to CRM view
-          </button>
-        </div>
-      )}
-
-      {/* Current Decision widget */}
+      {/* ═══ Card 3: Decision Widget ═══ */}
       {latestDecision && (
         <div
           className={`${styles.decisionWidget} ${
@@ -1460,446 +928,231 @@ export function CompanyPropertiesPanel({
         </div>
       )}
 
-      {/* Enrich Profile banner — shown when new meeting data is available */}
-      {showEnrichBanner && (
-        <div className={styles.enrichBanner}>
-          <span>✨ Meeting data available</span>
-          <button
-            className={styles.enrichBannerBtn}
-            onClick={() => onEnhance?.('meetings')}
-            disabled={isLoadingEnrich}
-          >
-            {isLoadingEnrich
-              ? 'Loading…'
-              : `Enrich profile (${enrichMeetingCount} meeting${enrichMeetingCount !== 1 ? 's' : ''})`
-            }
-          </button>
-        </div>
-      )}
-
-      {sectionOrder.orderedSections.map(sectionKey => {
-        const baseDragProps = syncedSectionDragProps(sectionKey)
-        const isDraggingThisSection = sectionOrder.draggingSectionKey === sectionKey
-        const isDropTargetForSection = sectionOrder.dragOverSectionKey === sectionKey && !isDraggingThisSection
-        const sectionContainerProps: HTMLAttributes<HTMLDivElement> = {
-          ...baseDragProps,
-          className: [
-            isDraggingThisSection ? styles.sectionDragging : '',
-            isDropTargetForSection || (isEditing && dragOverSection === sectionKey) ? styles.dropTarget : '',
-          ].filter(Boolean).join(' '),
-          ...(isEditing ? {
-            draggable: true,
-            onDragStart: (e) => { e.stopPropagation(); sectionOrder.setDraggingSectionKey(sectionKey) },
-            onDragEnd: () => { sectionOrder.setDraggingSectionKey(null); sectionOrder.setDragOverSectionKey(null) },
-            onDragOver: (e) => {
-              e.preventDefault()
-              sectionOrder.setDragOverSectionKey(sectionKey)
-              baseDragProps.onDragOver?.(e)
-            },
-          } : {}),
-        }
-
-        switch (sectionKey) {
-          case 'overview': return (
-            <div key="overview" {...sectionContainerProps}>
-              <SectionHeader title="Overview" collapsible isCollapsed={isCollapsed('overview')} onToggle={() => toggleSection('overview')} />
-              {!isCollapsed('overview') && (<>
-              {renderHardcodedSection([
-                { key: 'industries', visible: show('industries', company.industries), render: () => (
-                  <PropertyRow
-                    label="Industry"
-                    value={company.industries?.join(', ') ?? ''}
-                    type="tags"
-                    editMode={isEditing}
-                    onSave={(v) => {
-                      if (!v) { onUpdate({ industries: [] }); return }
-                      const names = String(v).split(',').map((s) => s.trim()).filter(Boolean)
-                      onUpdate({ industries: names })
-                    }}
-                  />
-                )},
-                { key: 'sector', visible: show('sector', company.sector), render: () => <PropertyRow label="Sector" value={company.sector} type="text" editMode={isEditing} onSave={(v) => save('sector', v)} /> },
-                { key: 'targetCustomer', visible: show('targetCustomer', company.targetCustomer), render: () => (
-                  <PropertyRow label="Target Customer" value={company.targetCustomer} type="select" options={targetCustomerOptions} editMode={isEditing} onSave={(v) => save('targetCustomer', v)} onAddOption={targetCustomerDef ? async (opt) => addCustomFieldOption(targetCustomerDef.id, targetCustomerDef.optionsJson, opt) : undefined} />
-                )},
-                { key: 'businessModel', visible: show('businessModel', company.businessModel), render: () => (
-                  <PropertyRow label="Business Model" value={company.businessModel} type="select" options={businessModelOptions} editMode={isEditing} onSave={(v) => save('businessModel', v)} onAddOption={businessModelDef ? async (opt) => addCustomFieldOption(businessModelDef.id, businessModelDef.optionsJson, opt) : undefined} />
-                )},
-                { key: 'productStage', visible: show('productStage', company.productStage), render: () => (
-                  <PropertyRow label="Product Stage" value={company.productStage} type="select" options={productStageOptions} editMode={isEditing} onSave={(v) => save('productStage', v)} onAddOption={productStageDef ? async (opt) => addCustomFieldOption(productStageDef.id, productStageDef.optionsJson, opt) : undefined} />
-                )},
-                { key: 'foundingYear', visible: show('foundingYear', company.foundingYear), render: () => <PropertyRow label="Founded" value={company.foundingYear} type="number" editMode={isEditing} onSave={(v) => save('foundingYear', v)} /> },
-                { key: 'employeeCountRange', visible: show('employeeCountRange', company.employeeCountRange), render: () => (
-                  <PropertyRow label="Employees" value={company.employeeCountRange} type="select" options={employeeRangeOptions} editMode={isEditing} onSave={(v) => save('employeeCountRange', v)} onAddOption={employeeCountDef ? async (opt) => addCustomFieldOption(employeeCountDef.id, employeeCountDef.optionsJson, opt) : undefined} />
-                )},
-                { key: 'hqAddress', visible: show('hqAddress', company.hqAddress), render: () => <PropertyRow label="HQ" value={company.hqAddress} type="text" editMode={isEditing} onSave={(v) => save('hqAddress', v)} /> },
-                { key: 'revenueModel', visible: show('revenueModel', company.revenueModel), render: () => <PropertyRow label="Revenue Model" value={company.revenueModel} type="text" editMode={isEditing} onSave={(v) => save('revenueModel', v)} /> },
-              ], 'overview')}
-              {renderSectionedFields('overview')}
-
-              {nullSectionFields().map((field) => {
-                const opts = (() => { try { return field.optionsJson ? JSON.parse(field.optionsJson) : [] } catch { return [] } })()
-                return (
-                  <div
-                    key={field.id}
-                    className={styles.sectionedFieldRow}
-                    title="No section assigned — drag to reassign"
-                    draggable={isEditing}
-                    onDragStart={() => setDraggingFieldId(field.id)}
-                    onDragEnd={() => setDraggingFieldId(null)}
-                  >
-                    {isEditing && <span className={styles.dragHandle}>⠿</span>}
-                    <PropertyRow
-                      label={field.label}
-                      value={getPinnedFieldValue(field)}
-                      type={field.fieldType as import('../crm/PropertyRow').PropertyRowType}
-                      options={opts}
-                      editMode={isEditing}
-                      onSave={(val) => handlePinnedFieldSave(field, val)}
-                    />
-                  </div>
-                )
-              })}
-              </>)}
-            </div>
-          )
-
-          case 'pipeline': return (
-            <div key="pipeline" {...sectionContainerProps}>
-              <SectionHeader title="Pipeline" collapsible isCollapsed={isCollapsed('pipeline')} onToggle={() => toggleSection('pipeline')} />
-              {!isCollapsed('pipeline') && (<>
-              {renderHardcodedSection([
-                { key: 'sourceType', visible: show('sourceType', company.sourceType), render: () => (
-                  <PropertyRow
-                    label="Source Type"
-                    value={company.sourceType}
-                    type="select"
-                    options={[
-                      { value: '', label: '—' },
-                      { value: 'personal relationship', label: 'Personal Relationship' },
-                      { value: 'emerging manager', label: 'Emerging Manager' },
-                      { value: 'founder', label: 'Founder' },
-                      { value: 'incubator', label: 'Incubator' },
-                      { value: 'accelerator', label: 'Accelerator' },
-                      { value: 'inbound', label: 'Inbound' },
-                      { value: 'later stage VC', label: 'Later Stage VC' },
-                      { value: 'LP', label: 'LP' },
-                      { value: 'outbound', label: 'Outbound' },
-                    ]}
-                    editMode={isEditing}
-                    onSave={(v) => save('sourceType', v || null)}
-                  />
-                )},
-                { key: 'sourceEntityId', visible: show('sourceEntityId', company.sourceEntityId), render: () => <SourceNameField /> },
-                { key: 'dealSource', visible: show('dealSource', company.dealSource), render: () => <PropertyRow label="Deal Source" value={company.dealSource} type="text" editMode={isEditing} onSave={(v) => save('dealSource', v)} /> },
-                { key: 'warmIntroSource', visible: show('warmIntroSource', company.warmIntroSource), render: () => <PropertyRow label="Warm Intro Source" value={company.warmIntroSource} type="text" editMode={isEditing} onSave={(v) => save('warmIntroSource', v)} /> },
-                { key: 'referralContactId', visible: show('referralContactId', company.referralContactId), render: () => <PropertyRow label="Referral Contact" value={company.referralContactId} type="contact_ref" editMode={isEditing} onSave={(v) => save('referralContactId', v)} /> },
-                { key: 'relationshipOwner', visible: show('relationshipOwner', company.relationshipOwner), render: () => <PropertyRow label="Relationship Owner" value={company.relationshipOwner} type="text" editMode={isEditing} onSave={(v) => save('relationshipOwner', v)} /> },
-                { key: 'nextFollowupDate', visible: show('nextFollowupDate', company.nextFollowupDate), render: () => <PropertyRow label="Next Follow-up" value={company.nextFollowupDate} type="date" editMode={isEditing} onSave={(v) => save('nextFollowupDate', v)} /> },
-              ], 'pipeline')}
-              {renderSectionedFields('pipeline')}
-
-              </>)}
-            </div>
-          )
-
-          case 'financials': return (
-            <div key="financials" {...sectionContainerProps}>
-              <SectionHeader title="Financials" collapsible isCollapsed={isCollapsed('financials')} onToggle={() => toggleSection('financials')} />
-              {!isCollapsed('financials') && (<>
-              {renderHardcodedSection([
-                { key: 'round', visible: show('round', company.round), render: () => (
-                  <div className={!isEditing && fieldSources?.round ? styles.propertyWithBadge : undefined}>
-                    <PropertyRow label="Round" value={company.round} type="select" options={[{ value: '', label: '—' }, ...roundOptions]} editMode={isEditing} onSave={(v) => save('round', v)} onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined} />
-                    {!isEditing && fieldSources?.round && <span className={styles.sourceBadge} title={`From: ${fieldSources.round.meetingTitle}`}>📋</span>}
-                  </div>
-                )},
-                { key: 'raiseSize', visible: show('raiseSize', company.raiseSize), render: () => (
-                  <div className={!isEditing && fieldSources?.raiseSize ? styles.propertyWithBadge : undefined}>
-                    <PropertyRow label="Raise Size" value={company.raiseSize} type="currency" editMode={isEditing} onSave={(v) => save('raiseSize', v)} />
-                    {!isEditing && fieldSources?.raiseSize && <span className={styles.sourceBadge} title={`From: ${fieldSources.raiseSize.meetingTitle}`}>📋</span>}
-                  </div>
-                )},
-                { key: 'postMoneyValuation', visible: show('postMoneyValuation', company.postMoneyValuation), render: () => (
-                  <div className={!isEditing && fieldSources?.postMoneyValuation ? styles.propertyWithBadge : undefined}>
-                    <PropertyRow label="Post-Money Val." value={company.postMoneyValuation} type="currency" editMode={isEditing} onSave={(v) => save('postMoneyValuation', v)} />
-                    {!isEditing && fieldSources?.postMoneyValuation && <span className={styles.sourceBadge} title={`From: ${fieldSources.postMoneyValuation.meetingTitle}`}>📋</span>}
-                  </div>
-                )},
-                { key: 'arr', visible: show('arr', company.arr), render: () => <PropertyRow label="ARR" value={company.arr} type="currency" editMode={isEditing} onSave={(v) => save('arr', v)} /> },
-                { key: 'burnRate', visible: show('burnRate', company.burnRate), render: () => <PropertyRow label="Burn Rate" value={company.burnRate} type="currency" editMode={isEditing} onSave={(v) => save('burnRate', v)} /> },
-                { key: 'runwayMonths', visible: show('runwayMonths', company.runwayMonths), render: () => <PropertyRow label="Runway (months)" value={company.runwayMonths} type="number" editMode={isEditing} onSave={(v) => save('runwayMonths', v)} /> },
-                { key: 'lastFundingDate', visible: show('lastFundingDate', company.lastFundingDate), render: () => <PropertyRow label="Last Funded" value={company.lastFundingDate} type="date" editMode={isEditing} onSave={(v) => save('lastFundingDate', v)} /> },
-                { key: 'totalFundingRaised', visible: show('totalFundingRaised', company.totalFundingRaised), render: () => <PropertyRow label="Total Raised" value={company.totalFundingRaised} type="currency" editMode={isEditing} onSave={(v) => save('totalFundingRaised', v)} /> },
-                { key: 'leadInvestor', visible: show('leadInvestor', company.leadInvestor), render: () => <PropertyRow label="Lead Investor" value={company.leadInvestor} type="text" editMode={isEditing} onSave={(v) => save('leadInvestor', v)} /> },
-                { key: 'coInvestors', visible: show('coInvestors', company.coInvestorsList), render: () => (
-                  <div className={styles.propertyRow}>
-                    <span className={styles.propertyLabel}>Co-Investors</span>
-                    <MultiCompanyPicker
-                      value={company.coInvestorsList}
-                      onChange={(v) => onUpdate({ coInvestorsList: v })}
-                      readOnly={!isEditing}
-                    />
-                  </div>
-                )},
-                { key: 'priorInvestors', visible: show('priorInvestors', company.priorInvestorsList), render: () => (
-                  <div className={styles.propertyRow}>
-                    <span className={styles.propertyLabel}>Prior Investors</span>
-                    <MultiCompanyPicker
-                      value={company.priorInvestorsList}
-                      onChange={(v) => onUpdate({ priorInvestorsList: v })}
-                      readOnly={!isEditing}
-                    />
-                  </div>
-                )},
-              ], 'financials')}
-              {company.coInvestedIn.length > 0 && (
-                <div className={styles.propertyRow}>
-                  <span className={styles.propertyLabel}>Co-invested in</span>
-                  <div className={styles.chipList}>
-                    {company.coInvestedIn.map((c) => (
-                      <button
-                        key={c.id}
-                        className={styles.chipLinkBtn}
-                        onClick={() => navigate(`/company/${c.id}`, { state: { backLabel: company.canonicalName } })}
-                        title={`Open ${c.name}`}
-                      >
-                        {c.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {renderSectionedFields('financials')}
-
-              </>)}
-            </div>
-          )
-
-          case 'investment': {
-            const showInvestment = isEditing || company.entityType === 'portfolio' ||
-              company.investmentSize || company.ownershipPct ||
-              company.followonInvestmentSize || company.totalInvested ||
-              sectionedFields('investment').length > 0
-            if (!showInvestment) return null
-            return (
-              <div key="investment" {...sectionContainerProps}>
-                <SectionHeader title="Investment" collapsible isCollapsed={isCollapsed('investment')} onToggle={() => toggleSection('investment')} />
-                {!isCollapsed('investment') && (<>
-                {renderHardcodedSection([
-                  { key: 'investmentSize', visible: show('investmentSize', company.investmentSize), render: () => <PropertyRow label="Investment Size" value={company.investmentSize} type="text" editMode={isEditing} onSave={(v) => save('investmentSize', v)} /> },
-                  { key: 'ownershipPct', visible: show('ownershipPct', company.ownershipPct), render: () => <PropertyRow label="Ownership %" value={company.ownershipPct} type="text" editMode={isEditing} onSave={(v) => save('ownershipPct', v)} /> },
-                  { key: 'followonInvestmentSize', visible: show('followonInvestmentSize', company.followonInvestmentSize), render: () => <PropertyRow label="Follow-on Size" value={company.followonInvestmentSize} type="text" editMode={isEditing} onSave={(v) => save('followonInvestmentSize', v)} /> },
-                  { key: 'totalInvested', visible: show('totalInvested', company.totalInvested), render: () => <PropertyRow label="Total Invested" value={company.totalInvested} type="text" editMode={isEditing} onSave={(v) => save('totalInvested', v)} /> },
-                ], 'investment')}
-                {renderSectionedFields('investment')}
-  
-                </>)}
-              </div>
-            )
-          }
-
-          case 'links': return (
-            <div key="links" {...sectionContainerProps}>
-              <SectionHeader title="Links" collapsible isCollapsed={isCollapsed('links')} onToggle={() => toggleSection('links')} />
-              {!isCollapsed('links') && (<>
-              {renderHardcodedSection([
-                { key: 'linkedinCompanyUrl', visible: show('linkedinCompanyUrl', company.linkedinCompanyUrl), render: () => <PropertyRow label="LinkedIn" value={company.linkedinCompanyUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinCompanyUrl', v)} /> },
-                { key: 'crunchbaseUrl', visible: show('crunchbaseUrl', company.crunchbaseUrl), render: () => <PropertyRow label="Crunchbase" value={company.crunchbaseUrl} type="url" editMode={isEditing} onSave={(v) => save('crunchbaseUrl', v)} /> },
-                { key: 'angellistUrl', visible: show('angellistUrl', company.angellistUrl), render: () => <PropertyRow label="AngelList" value={company.angellistUrl} type="url" editMode={isEditing} onSave={(v) => save('angellistUrl', v)} /> },
-                { key: 'twitterHandle', visible: show('twitterHandle', company.twitterHandle), render: () => <PropertyRow label="Twitter/X" value={company.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} /> },
-              ], 'links')}
-              {renderSectionedFields('links')}
-
-              </>)}
-            </div>
-          )
-
-          default: return null
-        }
-      })}
-
-      {hiddenFieldCount > 0 && (
-        <button className={styles.showAllBtn} onClick={() => setShowAllFields(true)}>
-          {hiddenFieldCount} field{hiddenFieldCount !== 1 ? 's' : ''} hidden · Show
-        </button>
-      )}
-      {showAllFields && !isEditing && (
-        <button className={styles.showAllBtn} onClick={() => setShowAllFields(false)}>
-          Hide empty fields
-        </button>
-      )}
-
-      {/* Key Contacts — shown at bottom of sidebar */}
-      {keyContacts.length > 0 && (
-        <div className={styles.keyContactsSection}>
-          <div className={styles.keyContactsSectionLabel}>Key Contacts</div>
-          {keyContacts.map(contact => (
-            <div key={contact.id} className={styles.contactRow}>
-              <div className={styles.contactAvatar}>
-                {(contact.firstName?.[0] ?? contact.fullName?.[0] ?? '?').toUpperCase()}
-              </div>
-              <div>
-                <div className={styles.contactName}>{contact.fullName}</div>
-                {contact.title && <div className={styles.contactTitle}>{contact.title}</div>}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {createFieldOpen && (
-        <CreateCustomFieldModal
-          entityType="company"
-          defaultSection={createFieldSection}
-          onSaved={(def) => {
-            void refresh().then(() => {
-              setCreateFieldOpen(false)
-              setCreateFieldSection(undefined)
-              // Auto-add to pinnedKeys if created in Header section
-              if (def.section === 'summary') {
-                togglePinnedKey(`custom:${def.id}`, true)
-              }
-            })
-          }}
-          onClose={() => { setCreateFieldOpen(false); setCreateFieldSection(undefined) }}
-        />
-      )}
-
-      {isEditing && (
-        <div className={styles.stickyAddFieldBar}>
-          <div className={styles.addFieldContainer}>
-            <button
-              className={styles.addFieldBtn}
-              onClick={() => setAddFieldDropdownOpen(!addFieldDropdownOpen)}
-            >+ Add field</button>
-            {addFieldDropdownOpen && (
-              <AddFieldDropdown
-                entityType="company"
-                hardcodedDefs={COMPANY_HARDCODED_FIELDS}
-                customFields={customFields}
-                addedFields={fieldVisibility.addedFields}
-                hiddenFields={hiddenFields}
-                entityData={company as Record<string, unknown>}
-                fieldPlacements={fieldVisibility.fieldPlacements}
-                sections={COMPANY_SECTIONS.filter(s => s.key !== 'summary')}
-                onToggleField={(key, checked) => {
-                  if (checked) fieldVisibility.addToAddedFields([key])
-                  else fieldVisibility.removeFromAddedFields(key)
-                }}
-                onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
-                onCreateCustomField={() => {
-                  setCreateFieldOpen(true)
-                  setAddFieldDropdownOpen(false)
-                }}
-                onClose={() => setAddFieldDropdownOpen(false)}
-              />
-            )}
+      {/* ═══ Card 4: Body (scrollable) ═══ */}
+      <div
+        ref={bodyCardRef}
+        className={styles.bodyCard}
+        onScroll={(e) => bodyCardRef.current?.classList.toggle(styles.bodyCardScrolled, e.currentTarget.scrollTop > 0)}
+      >
+        {templateIndicator && (
+          <div className={styles.templateIndicator}>
+            {ENTITY_LABELS[company.entityType ?? ''] ?? 'Layout'} template applied
+            <button onClick={() => setIsEditing(true)}>Customize</button>
           </div>
-        </div>
-      )}
+        )}
 
-      {isEditing && (
-        <div className={styles.deleteSection}>
-          <button
-            className={styles.mergeBtn}
-            onClick={() => { setMergeQuery(''); setMergePickerOpen(true) }}
-          >
-            Merge into…
-          </button>
-          <button
-            className={styles.deleteBtn}
-            onClick={() => setConfirmDelete(true)}
-            disabled={deleting}
-          >
-            Delete Company
-          </button>
-        </div>
-      )}
+        {!company.includeInCompaniesView && (
+          <div className={styles.hiddenBanner}>
+            <span>This company is hidden from the main CRM view.</span>
+            <button className={styles.unhideBtn} onClick={() => save('includeInCompaniesView', true)}>Add to CRM view</button>
+          </div>
+        )}
 
+        {showEnrichBanner && (
+          <div className={styles.enrichBanner}>
+            <span>✨ Meeting data available</span>
+            <button className={styles.enrichBannerBtn} onClick={() => onEnrich?.('meetings')} disabled={isLoadingEnrich}>
+              {isLoadingEnrich ? 'Loading…' : `Enrich profile (${enrichMeetingCount} meeting${enrichMeetingCount !== 1 ? 's' : ''})`}
+            </button>
+          </div>
+        )}
+
+        <ScorecardStrip metrics={scorecardMetrics} />
+
+        <PipelineStepper
+          stages={COMPANY_PIPELINE_STAGES}
+          currentValue={company.pipelineStage}
+          daysInStage={daysInStage}
+          onStageClick={(value) => saveWithDecisionPrompt('pipelineStage', value)}
+        />
+
+        <CompanyFieldSections
+          company={company}
+          isEditing={isEditing}
+          showAllFields={showAllFields}
+          onUpdate={onUpdate}
+          save={save}
+          saveWithDecisionPrompt={saveWithDecisionPrompt}
+          sectionOrder={sectionOrder}
+          hfOrder={hfOrder}
+          customFieldSection={{ sectionedFields, nullSectionFields, draggingFieldId, setDraggingFieldId, draggingOverFieldId, setDraggingOverFieldId, handleWithinSectionDrop, dragOverSection }}
+          fieldVisibility={fieldVisibility}
+          isCollapsed={isCollapsed}
+          toggleSection={toggleSection}
+          show={show}
+          hiddenFields={hiddenFields}
+          onHideField={hideField}
+          onRestoreField={restoreField}
+          customFields={customFields}
+          setCustomFields={setCustomFields}
+          editingFieldId={editingFieldId}
+          editingFieldLabel={editingFieldLabel}
+          setEditingFieldId={setEditingFieldId}
+          setEditingFieldLabel={setEditingFieldLabel}
+          handleFieldLabelSave={handleFieldLabelSave}
+          getPinnedFieldValue={getPinnedFieldValue}
+          handlePinnedFieldSave={handlePinnedFieldSave}
+          syncedSectionDragProps={syncedSectionDragProps}
+          options={{
+            targetCustomer: targetCustomerOptions,
+            businessModel: businessModelOptions,
+            productStage: productStageOptions,
+            employeeRange: employeeRangeOptions,
+            round: roundOptions,
+          }}
+          builtinDefs={{
+            targetCustomer: targetCustomerDef ? { id: targetCustomerDef.id, optionsJson: targetCustomerDef.optionsJson } : undefined,
+            businessModel: businessModelDef ? { id: businessModelDef.id, optionsJson: businessModelDef.optionsJson } : undefined,
+            productStage: productStageDef ? { id: productStageDef.id, optionsJson: productStageDef.optionsJson } : undefined,
+            employeeCount: employeeCountDef ? { id: employeeCountDef.id, optionsJson: employeeCountDef.optionsJson } : undefined,
+            round: roundDef ? { id: roundDef.id, optionsJson: roundDef.optionsJson } : undefined,
+          }}
+          fieldSources={fieldSources}
+        />
+
+        {hiddenFieldCount > 0 && (
+          <button className={styles.showAllBtn} onClick={() => setShowAllFields(true)}>
+            {hiddenFieldCount} field{hiddenFieldCount !== 1 ? 's' : ''} hidden · Show
+          </button>
+        )}
+        {showAllFields && !isEditing && (
+          <button className={styles.showAllBtn} onClick={() => setShowAllFields(false)}>
+            Hide empty fields
+          </button>
+        )}
+
+        {/* Key Contacts — clickable names */}
+        {keyContacts.length > 0 && (
+          <div className={styles.keyContactsSection}>
+            <div className={styles.keyContactsSectionLabel}>Key Contacts</div>
+            {keyContacts.map(contact => (
+              <div key={contact.id} className={styles.contactRow}>
+                <div className={styles.contactAvatar}>
+                  {(contact.firstName?.[0] ?? contact.fullName?.[0] ?? '?').toUpperCase()}
+                </div>
+                <div>
+                  <button
+                    className={styles.contactName}
+                    onClick={() => navigate(`/contact/${contact.id}`, { state: { backLabel: company.canonicalName } })}
+                  >
+                    {contact.fullName}
+                  </button>
+                  {contact.title && <div className={styles.contactTitle}>{contact.title}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {createFieldOpen && (
+          <CreateCustomFieldModal
+            entityType="company"
+            defaultSection={createFieldSection}
+            onSaved={(def) => {
+              void refresh().then(() => {
+                setCreateFieldOpen(false)
+                setCreateFieldSection(undefined)
+                if (def.section === 'summary') togglePinnedKey(`custom:${def.id}`, true)
+              })
+            }}
+            onClose={() => { setCreateFieldOpen(false); setCreateFieldSection(undefined) }}
+          />
+        )}
+
+        {isEditing && (
+          <div className={styles.stickyAddFieldBar}>
+            <div className={styles.addFieldContainer}>
+              <button className={styles.addFieldBtn} onClick={() => setAddFieldDropdownOpen(!addFieldDropdownOpen)}>+ Add field</button>
+              {addFieldDropdownOpen && (
+                <AddFieldDropdown
+                  entityType="company"
+                  hardcodedDefs={COMPANY_HARDCODED_FIELDS}
+                  customFields={customFields}
+                  addedFields={fieldVisibility.addedFields}
+                  hiddenFields={hiddenFields}
+                  entityData={company as unknown as Record<string, unknown>}
+                  fieldPlacements={fieldVisibility.fieldPlacements}
+                  sections={COMPANY_SECTIONS.filter(s => s.key !== 'summary')}
+                  onToggleField={(key, checked) => {
+                    if (checked) fieldVisibility.addToAddedFields([key])
+                    else fieldVisibility.removeFromAddedFields(key)
+                  }}
+                  onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
+                  onCreateCustomField={() => { setCreateFieldOpen(true); setAddFieldDropdownOpen(false) }}
+                  onClose={() => setAddFieldDropdownOpen(false)}
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+        {isEditing && (
+          <div className={styles.deleteSection}>
+            <button className={styles.mergeBtn} onClick={() => { setMergeQuery(''); setMergePickerOpen(true) }}>Merge</button>
+            <button className={styles.deleteBtn} onClick={() => setConfirmDelete(true)} disabled={deleting}>Delete Company</button>
+          </div>
+        )}
+      </div>{/* end bodyCard */}
+
+      {/* ═══ Modals (fixed position, outside card flow) ═══ */}
       {mergePickerOpen && (
         <div className={styles.mergePickerOverlay} onClick={() => setMergePickerOpen(false)}>
           <div className={styles.mergePicker} onClick={e => e.stopPropagation()}>
-            <p className={styles.mergePickerTitle}>
-              Merge &ldquo;{company.canonicalName}&rdquo; into:
-            </p>
-            <input
-              autoFocus
-              className={styles.mergePickerInput}
-              placeholder="Search companies…"
-              value={mergeQuery}
-              onChange={e => setMergeQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Escape' && setMergePickerOpen(false)}
-            />
+            <p className={styles.mergePickerTitle}>Merge &ldquo;{company.canonicalName}&rdquo; into:</p>
+            <input autoFocus className={styles.mergePickerInput} placeholder="Search companies…" value={mergeQuery} onChange={e => setMergeQuery(e.target.value)} onKeyDown={e => e.key === 'Escape' && setMergePickerOpen(false)} />
             <div className={styles.mergePickerList}>
               {mergeResults.map(r => (
-                <button
-                  key={r.id}
-                  className={styles.mergePickerOption}
-                  onClick={() => { setMergeTarget(r); setMergePickerOpen(false) }}
-                >
-                  {r.name}
-                </button>
+                <button key={r.id} className={styles.mergePickerOption} onClick={() => { setMergeTarget(r); setMergePickerOpen(false) }}>{r.name}</button>
               ))}
-              {mergeResults.length === 0 && (
-                <span className={styles.mergePickerEmpty}>
-                  {mergeQuery ? 'No companies found' : 'Start typing to search…'}
-                </span>
-              )}
+              {mergeResults.length === 0 && <span className={styles.mergePickerEmpty}>{mergeQuery ? 'No companies found' : 'Start typing to search…'}</span>}
             </div>
           </div>
         </div>
       )}
 
-      {/* Stage-change decision prompt */}
       {showDecisionModal && (
         <DecisionLogModal
           companyId={company.id}
           initialDecisionType={decisionTriggerType}
           onClose={() => setShowDecisionModal(false)}
-          onSaved={(log) => {
-            setLatestDecision(log)
+          onSaved={() => {
+            void window.api.invoke<CompanyDecisionLog | null>(IPC_CHANNELS.COMPANY_DECISION_LOG_GET_LATEST, company.id).then(d => setLatestDecision(d ?? null))
             setShowDecisionModal(false)
           }}
         />
       )}
 
-      {/* Edit existing decision from widget */}
       {editDecisionId && (
         <DecisionLogModal
           companyId={company.id}
           logId={editDecisionId}
           onClose={() => setEditDecisionId(null)}
-          onSaved={(log) => {
-            setLatestDecision(log)
+          onSaved={() => {
+            void window.api.invoke<CompanyDecisionLog | null>(IPC_CHANNELS.COMPANY_DECISION_LOG_GET_LATEST, company.id).then(d => setLatestDecision(d ?? null))
             setEditDecisionId(null)
           }}
-          onDeleted={() => {
-            setLatestDecision(null)
-            setEditDecisionId(null)
-          }}
+          onDeleted={() => { setLatestDecision(null); setEditDecisionId(null) }}
         />
       )}
 
-      <ConfirmDialog
-        open={confirmDelete}
-        title="Delete company?"
-        message={`Delete "${company.canonicalName}" and all associated data? This cannot be undone.`}
-        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
-        variant="danger"
-        onConfirm={handleDeleteCompany}
-        onCancel={() => setConfirmDelete(false)}
-      />
+      {onEnrich && (
+        <EnrichMethodModal
+          open={enrichMethodModalOpen}
+          onClose={() => setEnrichMethodModalOpen(false)}
+          title="Enrich company"
+          subtitle="Choose a source to enrich this company's profile."
+          methods={[
+            { icon: '📄', label: 'From a file (PDF)', description: 'Upload a pitch deck or document', onClick: () => onEnrich('pdf') },
+            { icon: '🔗', label: 'From a URL', description: 'Extract from a webpage', onClick: () => onEnrich('url') },
+            { icon: '✨', label: 'From meetings', description: showEnrichBanner ? `${enrichMeetingCount} new meeting${enrichMeetingCount !== 1 ? 's' : ''} available` : 'No new meetings', onClick: () => onEnrich('meetings'), disabled: !showEnrichBanner },
+            { icon: '📝', label: 'From notes', description: 'Extract from company notes', onClick: () => onEnrich('notes') },
+            { icon: '✉️', label: 'From emails', description: 'Extract from email threads', onClick: () => onEnrich('emails') },
+          ]}
+        />
+      )}
 
-      <ConfirmDialog
-        open={!!mergeTarget}
-        title="Merge companies?"
-        message={`Merge "${company.canonicalName}" into "${mergeTarget?.name ?? ''}"? All meetings, contacts, and notes will be relinked and this company will be deleted.`}
-        confirmLabel={merging ? 'Merging…' : 'Merge'}
-        variant="danger"
-        onConfirm={handleMergeInto}
-        onCancel={() => setMergeTarget(null)}
-      />
+      <ConfirmDialog open={confirmDelete} title="Delete company?" message={`Delete "${company.canonicalName}" and all associated data? This cannot be undone.`} confirmLabel={deleting ? 'Deleting...' : 'Delete'} variant="danger" onConfirm={handleDeleteCompany} onCancel={() => setConfirmDelete(false)} />
+      <ConfirmDialog open={!!mergeTarget} title="Merge companies?" message={`Merge "${company.canonicalName}" into "${mergeTarget?.name ?? ''}"? All meetings, contacts, and notes will be relinked and this company will be deleted.`} confirmLabel={merging ? 'Merging…' : 'Merge'} variant="danger" onConfirm={handleMergeInto} onCancel={() => setMergeTarget(null)} />
     </div>
   )
 }

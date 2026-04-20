@@ -1,0 +1,17 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+/* Stage colors — sourced from --chip-* vars in globals.css */
+.screening     { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.diligence     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.decision      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.documentation { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.pass          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }

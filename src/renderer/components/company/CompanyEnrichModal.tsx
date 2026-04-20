@@ -1,5 +1,5 @@
 /**
- * CompanyEnhanceModal — multi-step wizard for enhancing a company profile
+ * CompanyEnrichModal — multi-step wizard for enhancing a company profile
  * from an external file (PDF or URL).
  *
  * Flow:
@@ -25,22 +25,22 @@ import type { CompanySummaryUpdateChange, CompanySummaryUpdatePayload } from '..
 import { EnrichmentProposalDialog } from '../enrichment/EnrichmentProposalDialog'
 import type { EnrichmentEntityProposal } from '../enrichment/EnrichmentProposalDialog'
 import { PitchDeckSourceInput } from './PitchDeckSourceInput'
-import { companyEnhancedAtKey } from '../../../shared/utils/enrichment-keys'
+import { companyEnrichedAtKey } from '../../../shared/utils/enrichment-keys'
 import { api } from '../../api'
-import styles from './CompanyEnhanceModal.module.css'
+import styles from './CompanyEnrichModal.module.css'
 
 type Step = 'source' | 'extracting' | 'options' | 'fields' | 'processing' | 'done'
 
 type ActionResult = 'ok' | 'failed' | 'skipped'
 
-interface EnhanceResults {
+interface EnrichResults {
   note: ActionResult
   noteId: string | null
   fields: ActionResult
   sync: ActionResult | 'partial'  // 'partial' = added to sync but brief not generated
 }
 
-interface CompanyEnhanceModalProps {
+interface CompanyEnrichModalProps {
   open: boolean
   company: CompanyDetail
   onClose: () => void
@@ -48,12 +48,12 @@ interface CompanyEnhanceModalProps {
   onComplete: (noteId: string | null) => void
 }
 
-export function CompanyEnhanceModal({
+export function CompanyEnrichModal({
   open,
   company,
   onClose,
   onComplete,
-}: CompanyEnhanceModalProps) {
+}: CompanyEnrichModalProps) {
   const [step, setStep] = useState<Step>('source')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [extractionResult, setExtractionResult] = useState<PitchDeckExtractionResult | null>(null)
@@ -83,7 +83,7 @@ export function CompanyEnhanceModal({
   const [isApplyingFields, setIsApplyingFields] = useState(false)
 
   // Done results
-  const [results, setResults] = useState<EnhanceResults | null>(null)
+  const [results, setResults] = useState<EnrichResults | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -175,7 +175,7 @@ export function CompanyEnhanceModal({
     if (!extractionResult) return
     setStep('processing')
 
-    const r: EnhanceResults = { note: 'skipped', noteId: null, fields: 'skipped', sync: 'skipped' }
+    const r: EnrichResults = { note: 'skipped', noteId: null, fields: 'skipped', sync: 'skipped' }
 
     // Apply fields if confirmed
     if (appliedFieldSelections !== null && enrichProposal) {
@@ -198,7 +198,7 @@ export function CompanyEnhanceModal({
         }
         r.fields = 'ok'
       } catch (err) {
-        console.error('[CompanyEnhanceModal] field apply failed:', err)
+        console.error('[CompanyEnrichModal] field apply failed:', err)
         r.fields = 'failed'
       } finally {
         setIsApplyingFields(false)
@@ -230,7 +230,7 @@ export function CompanyEnhanceModal({
           r.note = 'ok'
           r.noteId = result.noteId
           if (result.noteCreatedAt) {
-            localStorage.setItem(companyEnhancedAtKey(company.id), result.noteCreatedAt)
+            localStorage.setItem(companyEnrichedAtKey(company.id), result.noteCreatedAt)
           }
         } else {
           r.note = 'failed'
@@ -238,7 +238,7 @@ export function CompanyEnhanceModal({
         r.sync = 'skipped'
       }
     } catch (err) {
-      console.error('[CompanyEnhanceModal] note/sync failed:', err)
+      console.error('[CompanyEnrichModal] note/sync failed:', err)
       r.note = 'failed'
       if (shouldAddToSync) r.sync = 'failed'
     }
@@ -253,7 +253,7 @@ export function CompanyEnhanceModal({
 
     // Store last-enhanced timestamp
     if (r.note === 'ok') {
-      localStorage.setItem(companyEnhancedAtKey(company.id), new Date().toISOString())
+      localStorage.setItem(companyEnrichedAtKey(company.id), new Date().toISOString())
     }
   }
 
@@ -282,7 +282,7 @@ export function CompanyEnhanceModal({
           {/* Header */}
           <div className={styles.header}>
             <h3 className={styles.title}>
-              {step === 'source'     && 'Enhance from file'}
+              {step === 'source'     && 'Enrich from file'}
               {step === 'extracting' && 'Extracting…'}
               {step === 'options'    && 'What to update'}
               {step === 'fields'     && 'Review field updates'}
