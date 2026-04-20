@@ -199,8 +199,6 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [pipelineCompanies, setPipelineCompanies] = useState<CompanySummary[]>([])
   const [openTasks, setOpenTasks] = useState<TaskListItem[]>([])
-  const [newMenuOpen, setNewMenuOpen] = useState(false)
-  const newMenuRef = useRef<HTMLDivElement>(null)
   const [activityFilter, setActivityFilter] = useState<DashboardActivityFilter>(DEFAULT_ACTIVITY_FILTER)
   const [filterOpen, setFilterOpen] = useState(false)
   const filterRef = useRef<HTMLDivElement>(null)
@@ -215,17 +213,6 @@ export default function Dashboard() {
     const id = setInterval(() => setNow(new Date()), 60_000)
     return () => clearInterval(id)
   }, [])
-
-  useEffect(() => {
-    if (!newMenuOpen) return
-    const handleClick = (e: MouseEvent) => {
-      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) {
-        setNewMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [newMenuOpen])
 
   useEffect(() => {
     if (!filterOpen) return
@@ -318,15 +305,6 @@ export default function Dashboard() {
     }
   }, [navigate, startRecording])
 
-  const handleQuickNote = useCallback(async () => {
-    try {
-      const meeting = await api.invoke<Meeting>(IPC_CHANNELS.MEETING_CREATE)
-      navigate(`/meeting/${meeting.id}`)
-    } catch (err) {
-      setError(String(err))
-    }
-  }, [navigate])
-
   const handlePrepareFromCalendar = useCallback(async (event: CalendarEvent) => {
     try {
       const meeting = await api.invoke<Meeting>(
@@ -355,7 +333,7 @@ export default function Dashboard() {
       return
     }
     if (item.companyId) {
-      navigate(`/company/${item.companyId}?tab=timeline`)
+      navigate(`/company/${item.companyId}?tab=timeline`, { state: { backLabel: 'Dashboard' } })
       return
     }
     navigate('/companies')
@@ -372,42 +350,6 @@ export default function Dashboard() {
             Focus on what matters.
             {todayCount > 0 && ` You have ${todayCount} meeting${todayCount > 1 ? 's' : ''} today.`}
           </p>
-        </div>
-        <div className={styles.newMenuContainer} ref={newMenuRef}>
-          <button
-            className={styles.newRecordBtn}
-            onClick={() => setNewMenuOpen((v) => !v)}
-          >
-            + New Record
-          </button>
-          {newMenuOpen && (
-            <div className={styles.newMenuDropdown}>
-              <button
-                className={styles.newMenuItem}
-                onClick={() => { setNewMenuOpen(false); void handleQuickNote() }}
-              >
-                Meeting
-              </button>
-              <button
-                className={styles.newMenuItem}
-                onClick={() => { setNewMenuOpen(false); navigate('/companies?new=1') }}
-              >
-                Company
-              </button>
-              <button
-                className={styles.newMenuItem}
-                onClick={() => { setNewMenuOpen(false); navigate('/contacts?new=1') }}
-              >
-                Contact
-              </button>
-              <button
-                className={styles.newMenuItem}
-                onClick={() => { setNewMenuOpen(false); navigate('/tasks') }}
-              >
-                Task
-              </button>
-            </div>
-          )}
         </div>
       </header>
 
@@ -540,7 +482,7 @@ export default function Dashboard() {
                             setDragInfo({ companyId: company.id, fromStage: stage })
                           }}
                           onDragEnd={() => { setDragInfo(null); setDragOverStage(null) }}
-                          onClick={() => navigate(`/company/${company.id}`)}
+                          onClick={() => navigate(`/company/${company.id}`, { state: { backLabel: 'Dashboard' } })}
                         >
                           <span className={styles.dealName}>{company.canonicalName}</span>
                           {meta && <span className={styles.dealMeta}>{meta}</span>}

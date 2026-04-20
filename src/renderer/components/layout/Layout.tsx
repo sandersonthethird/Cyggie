@@ -5,9 +5,11 @@ import ChatInterface from '../chat/ChatInterface'
 import { useAppStore } from '../../stores/app.store'
 import { useRecordingStore } from '../../stores/recording.store'
 import { useChatStore } from '../../stores/chat.store'
+import { useSidebarMode } from '../../hooks/useSidebarMode'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import type { Meeting } from '../../../shared/types/meeting'
+import TitlebarDateChip from './TitlebarDateChip'
 import styles from './Layout.module.css'
 import { api } from '../../api'
 
@@ -15,6 +17,7 @@ const NOTIFY_BEFORE_MS = 2 * 60 * 1000 // 2 minutes
 
 export default function Layout() {
   const navigate = useNavigate()
+  const { mode: sidebarMode } = useSidebarMode()
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const newMenuRef = useRef<HTMLDivElement>(null)
   const calendarEvents = useAppStore((s) => s.calendarEvents)
@@ -113,9 +116,19 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', handler)
   }, [newMenuOpen])
 
+  const handleNewMeeting = async () => {
+    setNewMenuOpen(false)
+    try {
+      const meeting = await api.invoke<Meeting>(IPC_CHANNELS.MEETING_CREATE)
+      navigate(`/meeting/${meeting.id}`)
+    } catch (err) {
+      console.error('Failed to create meeting:', err)
+    }
+  }
+
   const handleNewNote = () => {
     setNewMenuOpen(false)
-    navigate('/note/new')
+    navigate('/notes?new=1')
   }
 
   const handleNewCompany = () => {
@@ -134,9 +147,13 @@ export default function Layout() {
   }
 
   return (
-    <div className={styles.layout}>
+    <div
+      className={`${styles.layout} ${sidebarMode === 'collapsed' ? styles.sidebarCollapsed : ''}`}
+      style={{ '--sidebar-width': sidebarMode === 'collapsed' ? 'var(--sidebar-width-collapsed)' : '240px' } as React.CSSProperties}
+    >
       <div className={styles.titlebar}>
         <div className={styles.titlebarControls}>
+          <TitlebarDateChip />
           <div className={styles.titlebarNewDropdown} ref={newMenuRef}>
             <button
               className={styles.titlebarNewBtn}
@@ -146,8 +163,8 @@ export default function Layout() {
             </button>
             {newMenuOpen && (
               <div className={styles.titlebarNewMenu}>
-                <button className={styles.titlebarNewMenuItem} onClick={handleNewNote}>
-                  Note
+                <button className={styles.titlebarNewMenuItem} onClick={handleNewMeeting}>
+                  Meeting
                 </button>
                 <button className={styles.titlebarNewMenuItem} onClick={handleNewCompany}>
                   Company
@@ -157,6 +174,9 @@ export default function Layout() {
                 </button>
                 <button className={styles.titlebarNewMenuItem} onClick={handleNewTask}>
                   Task
+                </button>
+                <button className={styles.titlebarNewMenuItem} onClick={handleNewNote}>
+                  Note
                 </button>
               </div>
             )}

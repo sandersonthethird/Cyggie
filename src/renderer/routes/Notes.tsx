@@ -33,17 +33,11 @@ export function getDateGroup(dateStr: string): string {
 }
 
 function formatTime(dateStr: string): string {
-  const date = new Date(dateStr)
-  const now = new Date()
-  const noteDay  = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  const todayDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const diffDays = Math.floor((todayDay.getTime() - noteDay.getTime()) / 86_400_000)
-  if (diffDays === 0) {
-    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-  }
-  if (diffDays === 1) return 'Yesterday'
-  if (diffDays < 7) return date.toLocaleDateString(undefined, { weekday: 'short' })
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const d = new Date(dateStr)
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const yy = String(d.getFullYear()).slice(-2)
+  return `${mm}/${dd}/${yy}`
 }
 
 const FILTERS: { label: string; value: NoteFilterView }[] = [
@@ -272,6 +266,16 @@ export default function Notes() {
       showToast('Failed to create note')
     }
   }, [selectedFolder, fetchFolderCounts, setSearchParams, showToast])
+
+  // Handle ?new=1 from "+ New → Note" in titlebar
+  const didCreateFromNewParam = useRef(false)
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return
+    if (didCreateFromNewParam.current) return
+    didCreateFromNewParam.current = true
+    setSearchParams(prev => { prev.delete('new'); return prev }, { replace: true })
+    void handleNewNote()
+  }, [searchParams, handleNewNote, setSearchParams])
 
   // Cmd+N shortcut
   useEffect(() => {
@@ -729,8 +733,8 @@ export default function Notes() {
             ) : (
               notes.map((note, index) => {
                 const group = getDateGroup(note.updatedAt)
-                const showHeader = !debouncedQuery && group !== lastGroup
-                lastGroup = group
+                const showHeader = !debouncedQuery && !note.isPinned && group !== lastGroup
+                if (!note.isPinned) lastGroup = group
 
                 return (
                   <div key={note.id}>
