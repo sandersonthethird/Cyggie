@@ -153,6 +153,57 @@ describe('useDigestItemAutoSave', () => {
     expect(result.current.draft).toBe('new content from db')
   })
 
+  // ── Content-comparison safety net ────────────────────────────────────────
+
+  it('flushSave skips onSave when hasEdited=true but content matches original after normalization', () => {
+    const { result, rerender } = renderHook(
+      ({ expanded }) => useDigestItemAutoSave({ content: 'Hello\n\nWorld', onSave, expanded }),
+      { initialProps: { expanded: false } },
+    )
+
+    rerender({ expanded: true })
+
+    // Spurious markEdited (simulates the bug — TipTap fires onUpdate during load)
+    act(() => { result.current.markEdited() })
+    onSave.mockClear()
+
+    // flushSave with normalized version (extra trailing newline from getMarkdown)
+    act(() => { result.current.flushSave('Hello\n\nWorld\n') })
+
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('flushSave skips onSave when content differs only in collapsed whitespace runs', () => {
+    const { result, rerender } = renderHook(
+      ({ expanded }) => useDigestItemAutoSave({ content: 'Hello\n\nWorld', onSave, expanded }),
+      { initialProps: { expanded: false } },
+    )
+
+    rerender({ expanded: true })
+    act(() => { result.current.markEdited() })
+    onSave.mockClear()
+
+    // TipTap normalized with extra blank lines between paragraphs
+    act(() => { result.current.flushSave('Hello\n\n\n\nWorld') })
+
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('flushSave calls onSave when content genuinely differs despite hasEdited being spurious', () => {
+    const { result, rerender } = renderHook(
+      ({ expanded }) => useDigestItemAutoSave({ content: 'Hello\n\nWorld', onSave, expanded }),
+      { initialProps: { expanded: false } },
+    )
+
+    rerender({ expanded: true })
+    act(() => { result.current.markEdited() })
+    onSave.mockClear()
+
+    act(() => { result.current.flushSave('Hello\n\nWorld\n\nNew paragraph') })
+
+    expect(onSave).toHaveBeenCalledWith('Hello\n\nWorld\n\nNew paragraph')
+  })
+
   it('does NOT sync draft from parent content prop when expanded (preserves in-progress edits)', () => {
     const { result, rerender } = renderHook(
       ({ content, expanded }) => useDigestItemAutoSave({ content, onSave, expanded }),

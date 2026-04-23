@@ -25,6 +25,8 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
       .finally(() => setLoaded(true))
   }
 
+  useEffect(() => { setLoaded(false) }, [companyId])
+
   useEffect(() => {
     if (!loaded) load()
   }, [companyId, loaded])

@@ -305,6 +305,22 @@ describe('enrichContactFromLinkedIn', () => {
     expect(mockUpdateContact).toHaveBeenCalled()
   })
 
+  it('backfills university when blank', async () => {
+    mockGetContact.mockReturnValue(makeContact({ university: null }))
+    await enrichContactFromLinkedIn('contact-1', null)
+    const updateCall = mockUpdateContact.mock.calls[0]!
+    expect(updateCall[1].university).toBe('MIT')
+    const fs = JSON.parse(updateCall[1].fieldSources as string) as Record<string, unknown>
+    expect(fs.university).toBe('linkedin')
+  })
+
+  it('does not overwrite existing university', async () => {
+    mockGetContact.mockReturnValue(makeContact({ university: 'Stanford' }))
+    await enrichContactFromLinkedIn('contact-1', null)
+    const updateCall = mockUpdateContact.mock.calls[0]!
+    expect(updateCall[1]).not.toHaveProperty('university')
+  })
+
   it('DB write failure → throws wrapped error', async () => {
     mockGetContact.mockReturnValue(makeContact())
     mockUpdateContact.mockImplementation(() => { throw new Error('DB locked') })

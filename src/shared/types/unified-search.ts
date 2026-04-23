@@ -1,4 +1,4 @@
-export type UnifiedSearchEntityType = 'meeting' | 'email' | 'note' | 'memo'
+export type UnifiedSearchEntityType = 'meeting' | 'email' | 'note' | 'memo' | 'company' | 'contact'
 
 export interface UnifiedSearchCitation {
   id: string
@@ -22,6 +22,8 @@ export interface UnifiedSearchResultsGrouped {
   email: UnifiedSearchResult[]
   note: UnifiedSearchResult[]
   memo: UnifiedSearchResult[]
+  company: UnifiedSearchResult[]
+  contact: UnifiedSearchResult[]
 }
 
 export interface UnifiedSearchResponse {

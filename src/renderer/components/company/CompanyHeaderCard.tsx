@@ -193,7 +193,7 @@ export function CompanyHeaderCard({
               <div className={styles.companyName}>{company.canonicalName}</div>
               {company.websiteUrl && (
                 <button className={styles.websiteLink} onClick={() => openExternal(company.websiteUrl!)}>
-                  {company.primaryDomain ?? company.websiteUrl}
+                  {company.primaryDomain ?? company.websiteUrl!.replace(/^https?:\/\//, '')}
                 </button>
               )}
             </>

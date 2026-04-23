@@ -50,6 +50,7 @@ export function useDigestItemAutoSave({
   const [draft, setDraft] = useState(content ?? '')
   const debouncedDraft = useDebounce(draft, 800)
   const hasEditedRef = useRef(false)
+  const contentRef = useRef(content)
   const latestOnSave = useRef(onSave)
   latestOnSave.current = onSave
 
@@ -57,6 +58,7 @@ export function useDigestItemAutoSave({
   useEffect(() => {
     if (!expanded) {
       setDraft(content ?? '')
+      contentRef.current = content
     }
   }, [content, expanded])
 
@@ -80,6 +82,13 @@ export function useDigestItemAutoSave({
   const flushSave = useCallback((currentMd: string) => {
     setDraft(currentMd)
     if (hasEditedRef.current) {
+      // Safety net: skip save if content hasn't meaningfully changed
+      // (guards against getMarkdown() whitespace normalization round-trips)
+      const normalize = (s: string) => s.replace(/\n{3,}/g, '\n\n').trim()
+      if (normalize(currentMd) === normalize(contentRef.current ?? '')) {
+        hasEditedRef.current = false  // clear dirty flag to prevent debounced auto-save too
+        return
+      }
       latestOnSave.current(currentMd)
     }
   }, [])

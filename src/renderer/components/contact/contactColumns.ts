@@ -24,7 +24,8 @@ export type { ColumnDef, GroupableField, RangeValue, SortKey, SortState }
 export const CONTACT_TYPES: { value: ContactType; label: string }[] = [
   { value: 'investor', label: 'Investor' },
   { value: 'founder', label: 'Founder' },
-  { value: 'operator', label: 'Operator' }
+  { value: 'operator', label: 'Operator' },
+  { value: 'lp', label: 'LP' }
 ]
 
 // Keys that are hardcoded in the contact header — excluded from the pin mechanism

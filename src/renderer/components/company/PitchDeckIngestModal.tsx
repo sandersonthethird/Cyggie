@@ -11,6 +11,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { PitchDeckExtractionResult } from '../../../shared/types/pitch-deck'
 import { PitchDeckSourceInput } from './PitchDeckSourceInput'
+import { Spinner } from '../common/Spinner'
 import styles from './NewCompanyModal.module.css'
 
 type Step = 'source' | 'loading' | 'error'
@@ -71,7 +72,7 @@ export default function PitchDeckIngestModal({
         {/* Loading */}
         {step === 'loading' && (
           <div className={styles.loadingStep}>
-            <div className={styles.spinner} />
+            <Spinner size="lg" />
             <p className={styles.loadingText}>Extracting company data…</p>
           </div>
         )}

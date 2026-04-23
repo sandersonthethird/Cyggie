@@ -735,16 +735,22 @@ export function getCompany(companyId: string): CompanyDetail | null {
 
   // field_sources and key_takeaways are excluded from baseCompanySelect (schema compat
   // with older DBs). Fetch them separately so they're only required in the detail view.
+  // Each column is queried independently so a missing column doesn't block the other.
   try {
-    const extraRow = db
-      .prepare(`SELECT field_sources, key_takeaways FROM org_companies WHERE id = ?`)
-      .get(companyId) as { field_sources: string | null; key_takeaways: string | null } | undefined
-    if (extraRow !== undefined) {
-      row.field_sources = extraRow.field_sources ?? null
-      row.key_takeaways = extraRow.key_takeaways ?? null
-    }
+    const fsRow = db
+      .prepare('SELECT field_sources FROM org_companies WHERE id = ?')
+      .get(companyId) as { field_sources: string | null } | undefined
+    if (fsRow) row.field_sources = fsRow.field_sources ?? null
   } catch {
-    // Columns don't exist yet (migration pending) — leave as null
+    // Column doesn't exist yet (migration pending) — leave as null
+  }
+  try {
+    const ktRow = db
+      .prepare('SELECT key_takeaways FROM org_companies WHERE id = ?')
+      .get(companyId) as { key_takeaways: string | null } | undefined
+    if (ktRow) row.key_takeaways = ktRow.key_takeaways ?? null
+  } catch {
+    // Column doesn't exist yet (migration pending) — leave as null
   }
 
   const industries = db
@@ -1273,11 +1279,11 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
 
   const db = getDatabase()
   const target = db
-    .prepare('SELECT id FROM org_companies WHERE id = ? LIMIT 1')
-    .get(targetCompanyId) as { id: string } | undefined
+    .prepare('SELECT id, canonical_name FROM org_companies WHERE id = ? LIMIT 1')
+    .get(targetCompanyId) as { id: string; canonical_name: string } | undefined
   const source = db
-    .prepare('SELECT id FROM org_companies WHERE id = ? LIMIT 1')
-    .get(sourceCompanyId) as { id: string } | undefined
+    .prepare('SELECT id, canonical_name FROM org_companies WHERE id = ? LIMIT 1')
+    .get(sourceCompanyId) as { id: string; canonical_name: string } | undefined
 
   if (!target) throw new Error('Target company not found')
   if (!source) throw new Error('Source company not found')
@@ -1299,6 +1305,11 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
   }
 
   const tx = db.transaction(() => {
+    // Capture affected meeting IDs before relinking (for denormalized cache update)
+    const affectedMeetingIds = db
+      .prepare('SELECT meeting_id FROM meeting_company_links WHERE company_id = ?')
+      .all(sourceCompanyId) as { meeting_id: string }[]
+
     db.prepare(`
       INSERT INTO meeting_company_links (
         meeting_id, company_id, confidence, linked_by, created_at
@@ -1316,6 +1327,25 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
     relinked.meetingLinks = db
       .prepare('DELETE FROM meeting_company_links WHERE company_id = ?')
       .run(sourceCompanyId).changes
+
+    // Update denormalized meetings.companies JSON cache: replace source name with target name
+    for (const { meeting_id } of affectedMeetingIds) {
+      const row = db.prepare('SELECT companies FROM meetings WHERE id = ?').get(meeting_id) as { companies: string | null } | undefined
+      if (!row?.companies) continue
+      try {
+        const names: string[] = JSON.parse(row.companies)
+        const srcLower = source.canonical_name.toLowerCase()
+        const hasSource = names.some(n => n.toLowerCase() === srcLower)
+        if (!hasSource) continue
+        const tgtLower = target.canonical_name.toLowerCase()
+        const hasTarget = names.some(n => n.toLowerCase() === tgtLower)
+        const updated = names
+          .filter(n => n.toLowerCase() !== srcLower)
+          .concat(hasTarget ? [] : [target.canonical_name])
+        db.prepare('UPDATE meetings SET companies = ? WHERE id = ?')
+          .run(JSON.stringify(updated), meeting_id)
+      } catch { /* skip malformed JSON */ }
+    }
 
     db.prepare(`
       INSERT INTO email_company_links (

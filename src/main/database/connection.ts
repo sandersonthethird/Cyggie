@@ -70,6 +70,7 @@ import { runRepairCompanyViewFlagMigration } from './migrations/067-repair-compa
 import { runContactTalentPipelineMigration } from './migrations/068-contact-talent-pipeline'
 import { runContactKeyTakeawaysMigration } from './migrations/069-contact-key-takeaways'
 import { runCompanyKeyTakeawaysMigration } from './migrations/070-company-key-takeaways'
+import { runMeetingDismissedCompaniesMigration } from './migrations/071-meeting-dismissed-companies'
 
 let db: Database.Database | null = null
 
@@ -148,6 +149,7 @@ export function getDatabase(): Database.Database {
     runContactTalentPipelineMigration(db)
     runContactKeyTakeawaysMigration(db)
     runCompanyKeyTakeawaysMigration(db)
+    runMeetingDismissedCompaniesMigration(db)
   }
   return db
 }

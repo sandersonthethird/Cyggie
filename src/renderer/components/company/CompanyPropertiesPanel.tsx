@@ -1067,7 +1067,7 @@ export function CompanyPropertiesPanel({
                 <AddFieldDropdown
                   entityType="company"
                   hardcodedDefs={COMPANY_HARDCODED_FIELDS}
-                  customFields={customFields}
+                  customFields={customFields.filter(f => !f.isBuiltin)}
                   addedFields={fieldVisibility.addedFields}
                   hiddenFields={hiddenFields}
                   entityData={company as unknown as Record<string, unknown>}

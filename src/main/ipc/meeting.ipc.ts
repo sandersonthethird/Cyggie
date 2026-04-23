@@ -392,7 +392,16 @@ export function registerMeetingHandlers(): void {
         }
       }
 
-      return enriched
+      // Filter out dismissed companies (by domain or name)
+      const dismissed = new Set(
+        (meeting.dismissedCompanies ?? []).map(d => d.toLowerCase())
+      )
+      if (dismissed.size === 0) return enriched
+      return enriched.filter(s => {
+        if (s.domain && dismissed.has(s.domain.toLowerCase())) return false
+        if (dismissed.has(s.name.toLowerCase())) return false
+        return true
+      })
     }
   )
 
@@ -555,35 +564,76 @@ export function registerMeetingHandlers(): void {
 
       // Update the denormalized companies cache on the meeting row
       const updatedCompanies = appendCompanyIfMissing(meeting.companies, company.canonicalName)
-      if (updatedCompanies !== meeting.companies) {
-        meetingRepo.updateMeeting(meetingId, { companies: updatedCompanies }, userId)
-      }
+
+      // Remove from dismissed list if previously dismissed
+      const dismissKey = (company.primaryDomain || company.canonicalName).toLowerCase()
+      const dismissed = meeting.dismissedCompanies ?? []
+      const updatedDismissed = dismissed.filter(
+        d => d !== dismissKey && d !== company.canonicalName.toLowerCase()
+      )
+
+      meetingRepo.updateMeeting(meetingId, {
+        companies: updatedCompanies,
+        dismissedCompanies: updatedDismissed.length ? updatedDismissed : null,
+      }, userId)
 
       logAudit(userId, 'meeting', meetingId, 'link_company', { companyId })
       return meetingRepo.getMeeting(meetingId)
     }
   )
 
+  // Unlink a company from a meeting. Accepts either:
+  //   (meetingId, companyId)          — unlinks from meeting_company_links + denormalized cache
+  //   (meetingId, null, companyName)  — removes a name-only suggestion from the denormalized cache
   ipcMain.handle(
     IPC_CHANNELS.MEETING_UNLINK_COMPANY,
-    (_event, meetingId: string, companyId: string) => {
+    (_event, meetingId: string, companyId: string | null, companyName?: string) => {
       if (!meetingId) throw new Error('meetingId is required')
-      if (!companyId) throw new Error('companyId is required')
       const userId = getCurrentUserId()
 
       const meeting = meetingRepo.getMeeting(meetingId)
       if (!meeting) throw new Error('Meeting not found')
 
-      const company = getCompany(companyId)
-      if (!company) throw new Error('Company not found')
+      if (companyId) {
+        // Linked company: unlink from meeting_company_links + update cache
+        const company = getCompany(companyId)
+        if (!company) throw new Error('Company not found')
 
-      unlinkMeetingCompany(meetingId, companyId)
+        unlinkMeetingCompany(meetingId, companyId)
 
-      // Update the denormalized companies cache (mirror of MEETING_LINK_EXISTING_COMPANY)
-      const updatedCompanies = removeCompanyFromList(meeting.companies, company.canonicalName)
-      meetingRepo.updateMeeting(meetingId, { companies: updatedCompanies }, userId)
+        const updatedCompanies = removeCompanyFromList(meeting.companies, company.canonicalName)
+        // Dismiss by domain (stable), fall back to name if no domain
+        const dismissKey = (company.primaryDomain || company.canonicalName).toLowerCase()
+        const dismissed = meeting.dismissedCompanies ?? []
+        const updatedDismissed = dismissed.includes(dismissKey)
+          ? dismissed
+          : [...dismissed, dismissKey]
 
-      logAudit(userId, 'meeting', meetingId, 'unlink_company', { companyId })
+        meetingRepo.updateMeeting(meetingId, {
+          companies: updatedCompanies,
+          dismissedCompanies: updatedDismissed,
+        }, userId)
+
+        logAudit(userId, 'meeting', meetingId, 'unlink_company', { companyId })
+      } else if (companyName) {
+        // Name-only suggestion: dismiss by name (no domain available)
+        const updatedCompanies = removeCompanyFromList(meeting.companies, companyName)
+        const dismissKey = companyName.toLowerCase()
+        const dismissed = meeting.dismissedCompanies ?? []
+        const updatedDismissed = dismissed.includes(dismissKey)
+          ? dismissed
+          : [...dismissed, dismissKey]
+
+        meetingRepo.updateMeeting(meetingId, {
+          companies: updatedCompanies,
+          dismissedCompanies: updatedDismissed,
+        }, userId)
+
+        logAudit(userId, 'meeting', meetingId, 'dismiss_company_suggestion', { companyName })
+      } else {
+        throw new Error('Either companyId or companyName is required')
+      }
+
       return meetingRepo.getMeeting(meetingId)
     }
   )

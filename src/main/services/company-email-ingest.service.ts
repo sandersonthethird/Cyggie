@@ -43,9 +43,9 @@ const activeCompanyControllers = new Map<string, AbortController>()
 const activeContactControllers = new Map<string, AbortController>()
 
 const MAX_CONTACT_CUES = 30
-const MAX_EMAILS_PER_CONTACT_QUERY = 120
-const MAX_EMAILS_PER_DOMAIN_QUERY = 180
-const MAX_TOTAL_MATCHES = 800
+const MAX_EMAILS_PER_CONTACT_QUERY = 200
+const MAX_EMAILS_PER_DOMAIN_QUERY = 300
+const MAX_TOTAL_MATCHES = 2000
 
 interface CompanyIngestCues {
   companyId: string
@@ -272,25 +272,45 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks
 }
 
+export interface EmailQueryOpts {
+  includeBcc?: boolean
+  confidence: number
+  maxResults: number
+  reasonPrefix: string
+}
+
+export function buildEmailQueries(emails: string[], opts: EmailQueryOpts): QueryCue[] {
+  const queries: QueryCue[] = []
+  for (const group of chunkArray(emails, 8)) {
+    const parts = group.map((email) => {
+      const base = `from:${email} OR to:${email} OR cc:${email}`
+      return opts.includeBcc ? `(${base} OR bcc:${email})` : `(${base})`
+    })
+    queries.push({
+      query: parts.join(' OR ') + ' -filename:ics',
+      reason: `${opts.reasonPrefix}:${group.length}`,
+      confidence: opts.confidence,
+      maxResults: opts.maxResults
+    })
+  }
+  return queries
+}
+
 export function buildQueryCues(cues: CompanyIngestCues): QueryCue[] {
   const queries: QueryCue[] = []
 
   // Prefer explicit contact emails. Domain queries are only used as a fallback
   // when no associated contacts are available.
   if (cues.contactEmails.length > 0) {
-    for (const group of chunkArray(cues.contactEmails, 8)) {
-      const parts = group.map((email) => `(from:${email} OR to:${email} OR cc:${email})`)
-      queries.push({
-        query: parts.join(' OR '),
-        reason: `contacts:${group.length}`,
-        confidence: 0.95,
-        maxResults: MAX_EMAILS_PER_CONTACT_QUERY
-      })
-    }
+    queries.push(...buildEmailQueries(cues.contactEmails, {
+      confidence: 0.95,
+      maxResults: MAX_EMAILS_PER_CONTACT_QUERY,
+      reasonPrefix: 'contacts'
+    }))
   } else {
     for (const domain of cues.domains) {
       queries.push({
-        query: `(from:${domain} OR to:${domain} OR cc:${domain})`,
+        query: `(from:${domain} OR to:${domain} OR cc:${domain}) -filename:ics`,
         reason: `domain:${domain}`,
         confidence: 0.82,
         maxResults: MAX_EMAILS_PER_DOMAIN_QUERY
@@ -888,6 +908,7 @@ async function _ingestCompanyEmails(companyId: string, signal: AbortSignal): Pro
     let linkedContactCount = 0
     let fetchedCount = 0
 
+    console.time('[Company Email Ingest] fetch')
     for (const [providerMessageId, cue] of messageCueByProviderId.entries()) {
       if (signal.aborted) break
       let fullMessage: gmail_v1.Schema$Message
@@ -1048,6 +1069,7 @@ async function _ingestCompanyEmails(companyId: string, signal: AbortSignal): Pro
       fetchedCount++
       sendProgress(IPC_CHANNELS.COMPANY_EMAIL_INGEST_PROGRESS, { companyId, phase: 'fetching', fetched: fetchedCount, total })
     }
+    console.timeEnd('[Company Email Ingest] fetch')
 
     markSyncCompleted(db, account.accountId, account.historyCursor)
 
@@ -1108,16 +1130,11 @@ async function _ingestContactEmails(contactId: string, signal: AbortSignal): Pro
   const gmail = google.gmail({ version: 'v1', auth })
   const db = getDatabase()
   const cues = loadContactIngestCues(db, contactId)
-  const queries: QueryCue[] = chunkArray(cues.contactEmails, 8).map((group) => {
-    const groupQuery = group
-      .map((email) => `(from:${email} OR to:${email} OR cc:${email} OR bcc:${email})`)
-      .join(' OR ')
-    return {
-      query: groupQuery,
-      reason: `contact:${group.length}`,
-      confidence: 0.98,
-      maxResults: MAX_TOTAL_MATCHES
-    }
+  const queries: QueryCue[] = buildEmailQueries(cues.contactEmails, {
+    includeBcc: true,
+    confidence: 0.98,
+    maxResults: MAX_TOTAL_MATCHES,
+    reasonPrefix: 'contact'
   })
 
   let accountId: string | null = null
@@ -1370,6 +1387,7 @@ async function _ingestContactEmails(contactId: string, signal: AbortSignal): Pro
     const senderNamesForTargetContact = new Set<string>()
     const cueContactEmailSet = new Set(cues.contactEmails)
 
+    console.time('[Contact Email Ingest] fetch')
     for (const [providerMessageId, cue] of messageCueByProviderId.entries()) {
       if (signal.aborted) break
       let fullMessage: gmail_v1.Schema$Message
@@ -1546,6 +1564,7 @@ async function _ingestContactEmails(contactId: string, signal: AbortSignal): Pro
       contactFetchedCount++
       sendProgress(IPC_CHANNELS.CONTACT_EMAIL_INGEST_PROGRESS, { contactId, phase: 'fetching', fetched: contactFetchedCount, total: contactTotal })
     }
+    console.timeEnd('[Contact Email Ingest] fetch')
 
     markSyncCompleted(db, account.accountId, account.historyCursor)
     const suggestedFullName = selectExpandedContactName(

@@ -449,11 +449,22 @@ export function registerCompanyHandlers(): void {
 
       const result = companyRepo.mergeCompanies(targetCompanyId, sourceCompanyId)
 
-      // Remap any domain-cache entries that pointed to the old company name
-      // (e.g. angellist.com → "Wellfound" becomes angellist.com → "AngelList")
+      // Clean up stale search sources so the old name no longer appears in results
       if (sourceRow && targetRow) {
-        db.prepare('UPDATE companies SET display_name = ? WHERE display_name = ?')
+        // 1. Remap domain-cache entries (case-insensitive to catch casing variants)
+        db.prepare('UPDATE companies SET display_name = ? WHERE display_name = ? COLLATE NOCASE')
           .run(targetRow.canonical_name, sourceRow.canonical_name)
+
+        // 2. Replace old name in meetings.companies JSON arrays
+        db.prepare(`
+          UPDATE meetings
+          SET companies = REPLACE(companies, ?, ?)
+          WHERE companies LIKE ?
+        `).run(
+          JSON.stringify(sourceRow.canonical_name).slice(1, -1),
+          JSON.stringify(targetRow.canonical_name).slice(1, -1),
+          `%${sourceRow.canonical_name}%`
+        )
       }
 
       logAudit(userId, 'company', targetCompanyId, 'update', {

@@ -185,6 +185,18 @@ export function registerContactHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC_CHANNELS.CONTACT_REMOVE_EMAIL,
+    (_event, contactId: string, email: string) => {
+      if (!contactId?.trim()) throw new Error('contactId is required')
+      if (!email?.trim()) throw new Error('email is required')
+      const userId = getCurrentUserId()
+      const updated = contactRepo.removeContactEmail(contactId, email, userId)
+      logAudit(userId, 'contact', contactId, 'update', { removedEmail: email })
+      return updated
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.CONTACT_RESOLVE_EMAILS,
     (_event, emails: string[]) => {
       if (!Array.isArray(emails)) return {}

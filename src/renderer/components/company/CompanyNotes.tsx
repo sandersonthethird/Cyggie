@@ -25,8 +25,8 @@ export function CompanyNotes({ companyId, className, highlightNoteId, refreshKey
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { togglePin, togglingIds } = usePinToggle<CompanyNote>(IPC_CHANNELS.COMPANY_NOTES_UPDATE, setNotes)
 
-  // Reset loaded state when a new note is created externally (e.g. from Enhance modal)
-  useEffect(() => { setLoaded(false) }, [refreshKey])
+  // Reset loaded state when company changes or a new note is created externally
+  useEffect(() => { setLoaded(false) }, [companyId, refreshKey])
 
   useEffect(() => {
     if (loaded) return

@@ -55,7 +55,9 @@ export function correctProperNouns(text: string, canonicalNames: string[]): stri
         // Single-word: replace each word-boundary token that scores above threshold.
         // Only consider tokens of at least MIN_TOKEN_LENGTH to avoid false positives
         // on common short words (e.g. matching "the" to "Thé").
-        result = result.replace(/\b[A-Za-z]{4,}\b/g, (token) => {
+        result = result.replace(/\b[A-Za-z]{4,}\b/g, (token, offset, str) => {
+          // Skip tokens that are part of an email address (local part or domain)
+          if (str[offset + token.length] === '@' || (offset > 0 && str[offset - 1] === '@')) return token
           const score = jaroWinkler(token.toLowerCase(), canonLower)
           return score >= SINGLE_WORD_THRESHOLD ? canonical : token
         })

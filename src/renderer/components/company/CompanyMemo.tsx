@@ -7,6 +7,7 @@ import type { InvestmentMemoVersion, InvestmentMemoVersionSummary, InvestmentMem
 import { MemoEditModal } from './MemoEditModal'
 import { useFindInPage, injectFindMarks } from '../../hooks/useFindInPage'
 import FindBar from '../common/FindBar'
+import { Spinner } from '../common/Spinner'
 import styles from './CompanyMemo.module.css'
 import { api } from '../../api'
 
@@ -89,6 +90,8 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
       setProgressText((prev) => prev + (chunk as string))
     })
   }, [])
+
+  useEffect(() => { setLoaded(false) }, [companyId])
 
   useEffect(() => {
     if (loaded) return
@@ -321,7 +324,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
       <div className={styles.toolbar}>
         <button className={styles.btn} onClick={() => setModalOpen(true)} disabled={!memo || !!viewingVersion}>Edit</button>
         <button className={styles.btn} onClick={generate} disabled={generating || modalOpen || sharing || !!viewingVersion}>
-          {generating && <span className={styles.spinner} />}
+          {generating && <Spinner size="sm" />}
           {generating ? 'Generating…' : 'Generate with AI'}
         </button>
         <button
@@ -329,7 +332,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
           onClick={exportPdf}
           disabled={!memo?.latestVersion || exportingPdf || generating || !!viewingVersion}
         >
-          {exportingPdf && <span className={styles.spinner} />}
+          {exportingPdf && <Spinner size="sm" />}
           {exportingPdf ? 'Exporting…' : 'Export PDF'}
         </button>
         {!shareUrl && (
@@ -338,7 +341,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
             onClick={share}
             disabled={!memo?.latestVersion || sharing || generating || !!viewingVersion}
           >
-            {sharing && <span className={styles.spinner} />}
+            {sharing && <Spinner size="sm" />}
             {sharing ? 'Sharing…' : 'Share'}
           </button>
         )}
@@ -353,7 +356,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
               onClick={openVersionHistory}
               disabled={vhLoading}
             >
-              {vhLoading && <span className={styles.spinner} />}
+              {vhLoading && <Spinner size="sm" />}
               v{memo.latestVersionNumber} ▾
             </button>
             {vhOpen && (
@@ -388,7 +391,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
           </span>
           <button className={styles.btn} onClick={() => setViewingVersion(null)}>Back to latest</button>
           <button className={styles.btnPrimary} onClick={restoreVersion} disabled={restoring}>
-            {restoring && <span className={styles.spinner} />}
+            {restoring && <Spinner size="sm" />}
             {restoring ? 'Restoring…' : 'Restore this version'}
           </button>
         </div>

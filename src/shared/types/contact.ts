@@ -1,4 +1,4 @@
-export type ContactType = 'investor' | 'founder' | 'operator'
+export type ContactType = 'investor' | 'founder' | 'operator' | 'lp'
 export type TalentPipelineStage = 'identified' | 'exploring' | 'ideating' | 'fundraising' | 'portfolio_candidate' | 'internal_candidate'
 export type ContactSortBy = 'recent_touch' | 'first_name' | 'last_name' | 'company'
 

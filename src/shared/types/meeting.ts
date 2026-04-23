@@ -40,6 +40,7 @@ export interface Meeting {
   attendees: string[] | null  // Calendar attendees (names/emails)
   attendeeEmails: string[] | null
   companies: string[] | null
+  dismissedCompanies: string[] | null
   chatMessages: ChatMessage[] | null
   status: MeetingStatus
   createdAt: string
@@ -83,12 +84,22 @@ export interface CompanySuggestion {
   entityType?: CompanyEntityType | null
 }
 
+export interface ContentMatchPreview {
+  entityType: 'meeting' | 'email' | 'note' | 'memo' | 'company' | 'contact'
+  entityId: string
+  title: string
+  snippet: string
+  route: string
+  context?: string
+}
+
 export interface CategorizedSuggestions {
   people: string[]
   companies: CompanySuggestion[]
   contacts: { id: string; label: string; context?: string }[]
   meetings: { id: string; title: string }[]
   notes: { id: string; label: string; context?: string }[]
+  contentMatches: ContentMatchPreview[]
 }
 
 export interface AdvancedSearchResult {

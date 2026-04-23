@@ -269,10 +269,32 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
     })
   }, [])
 
+  const addCyggieFile = useCallback(async (filePath: string, fileName: string) => {
+    try {
+      const result = await api.invoke<{ content: string | null; error: string | null }>(
+        IPC_CHANNELS.FILE_READ_CONTENT, filePath
+      )
+      if (result.content) {
+        setAttachments((prev) => [...prev, {
+          name: fileName,
+          mimeType: 'text/plain',
+          type: 'text',
+          data: result.content
+        }])
+      } else {
+        setError(result.error || 'Could not read file')
+      }
+    } catch (err) {
+      setError(`Could not read ${fileName}: ${String(err)}`)
+    }
+  }, [])
+
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     dragCounterRef.current++
-    if (e.dataTransfer.types.includes('Files')) setIsDragOver(true)
+    if (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('application/x-cyggie-file')) {
+      setIsDragOver(true)
+    }
   }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
@@ -289,9 +311,21 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
     e.preventDefault()
     dragCounterRef.current = 0
     setIsDragOver(false)
+
+    // Cyggie file from CompanyFiles tab
+    const cyggieData = e.dataTransfer.getData('application/x-cyggie-file')
+    if (cyggieData) {
+      try {
+        const { path, name } = JSON.parse(cyggieData) as { path: string; name: string }
+        addCyggieFile(path, name)
+      } catch { /* ignore malformed data */ }
+      return
+    }
+
+    // Standard file drop (OS Finder, etc.)
     const files = Array.from(e.dataTransfer.files)
     if (files.length > 0) addAttachments(files)
-  }, [addAttachments])
+  }, [addAttachments, addCyggieFile])
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const files: File[] = []
@@ -360,8 +394,8 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
         response = await api.invoke<string>(
           activeContext.type === 'company' ? IPC_CHANNELS.COMPANY_CHAT_QUERY : IPC_CHANNELS.CONTACT_CHAT_QUERY,
           activeContext.type === 'company'
-            ? { companyId: activeContext.id, question }
-            : { contactId: activeContext.id, question }
+            ? { companyId: activeContext.id, question, attachments: ipcAttachments }
+            : { contactId: activeContext.id, question, attachments: ipcAttachments }
         )
       } else if (meetingIds) {
         response = await api.invoke<string>(

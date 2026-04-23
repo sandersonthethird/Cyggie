@@ -34,7 +34,7 @@
  * 'no_exa_key' is returned by the IPC handler before this service is called.
  */
 
-import Exa from 'exa-js'
+import { Exa } from 'exa-js'
 import { normalizeLinkedinUrl } from '../database/repositories/contact-utils'
 import { findLinkedInUrlFromWeb } from './contact-web-enrichment'
 import { getContact } from '../database/repositories/contact.repo'

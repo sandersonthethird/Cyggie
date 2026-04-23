@@ -81,7 +81,7 @@ export function DigestItemNotes({ content, placeholder = 'Click to add notes…'
     if (expanded) {
       isLoadingRef.current = true
       loadContent(content ?? '')
-      const tid = setTimeout(() => { isLoadingRef.current = false }, 0)
+      const tid = setTimeout(() => { isLoadingRef.current = false }, 50)
       return () => clearTimeout(tid)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

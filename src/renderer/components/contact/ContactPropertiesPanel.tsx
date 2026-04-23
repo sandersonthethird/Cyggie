@@ -32,6 +32,7 @@ import {
 } from './contactColumns'
 import { RecordKebabMenu } from '../common/RecordKebabMenu'
 import { EnrichMethodModal } from '../common/EnrichMethodModal'
+import { Spinner } from '../common/Spinner'
 import styles from './ContactPropertiesPanel.module.css'
 import { api } from '../../api'
 import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
@@ -49,6 +50,7 @@ const CONTACT_TYPE_STYLE: Record<string, string> = {
   investor: styles.chipInvestor,
   founder: styles.chipFounder,
   operator: styles.chipOperator,
+  lp: styles.chipLp,
 }
 
 const TALENT_PIPELINE_STAGES: { value: string; label: string }[] = [
@@ -194,6 +196,11 @@ export function ContactPropertiesPanel({
   const [showAllFields, setShowAllFields] = useState(false)
   const [firstNameDraft, setFirstNameDraft] = useState(contact.firstName ?? '')
   const [lastNameDraft, setLastNameDraft] = useState(contact.lastName ?? '')
+  const [emailDraft, setEmailDraft] = useState(contact.emails[0] || contact.email || '')
+  const [linkedinDraft, setLinkedinDraft] = useState(contact.linkedinUrl || '')
+  const [phoneDraft, setPhoneDraft] = useState(contact.phone || '')
+  const [cityDraft, setCityDraft] = useState(contact.city || '')
+  const [stateDraft, setStateDraft] = useState(contact.state || '')
   const [customFields, setCustomFields] = useState<CustomFieldWithValue[]>([])
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [mergePickerOpen, setMergePickerOpen] = useState(false)
@@ -206,6 +213,7 @@ export function ContactPropertiesPanel({
   const [deleting, setDeleting] = useState(false)
   const [linkedinEnriching, setLinkedinEnriching] = useState(false)
   const [linkedinError, setLinkedinError] = useState<{ code: string; message: string } | null>(null)
+  const [metaSaveError, setMetaSaveError] = useState<string | null>(null)
   const [isSearchingLinkedIn, setIsSearchingLinkedIn] = useState(false)
   const [linkedInFoundUrl, setLinkedInFoundUrl] = useState<string | null>(null)
   const [showLinkedInConfirm, setShowLinkedInConfirm] = useState(false)
@@ -445,15 +453,24 @@ export function ContactPropertiesPanel({
     if (isEditing) sessionChanges.current = false
   }, [isEditing])
 
-  // Sync name drafts when entering edit mode
+  // Sync field drafts when entering edit mode
   useEffect(() => {
     if (isEditing) {
       setFirstNameDraft(contact.firstName ?? '')
       setLastNameDraft(contact.lastName ?? '')
       setCompanyDraft(contact.primaryCompany?.canonicalName ?? '')
       setPriorCompanyDrafts(parsePriorCompanies(contact.previousCompanies))
+      setEmailDraft(contact.emails[0] || contact.email || '')
+      setLinkedinDraft(contact.linkedinUrl || '')
+      setPhoneDraft(contact.phone || '')
+      setCityDraft(contact.city || '')
+      setStateDraft(contact.state || '')
       setTimeout(() => firstNameInputRef.current?.focus(), 0)
     }
+    // Meta field drafts (email, linkedin, phone, city, state) are intentionally
+    // NOT in the dep array — we only sync them on edit mode entry, not on every
+    // contact prop change, to avoid clobbering user input mid-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, contact.firstName, contact.lastName, contact.previousCompanies])
 
   // Keyboard shortcut: E to enter edit mode, Esc to exit (guard against inputs)
@@ -636,35 +653,49 @@ export function ContactPropertiesPanel({
   async function saveEmail(oldEmail: string, newEmail: string) {
     const isPrimary = oldEmail === contact.email
     const optimisticEmails = contact.emails.map(e => e === oldEmail ? newEmail : e)
-    try {
-      await withOptimisticUpdate(
-        () => onUpdate({ emails: optimisticEmails, ...(isPrimary ? { email: newEmail } : {}) }),
-        () => isPrimary
-          ? window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { email: newEmail })
-          : window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE_EMAIL, { contactId: contact.id, oldEmail, newEmail }),
-        () => onUpdate({ emails: contact.emails, ...(isPrimary ? { email: contact.email } : {}) }),
-        (updated) => onUpdate(updated),
-      )
-    } catch (err) {
-      console.error('[ContactPropertiesPanel] saveEmail failed:', err)
-    }
+    await withOptimisticUpdate(
+      () => onUpdate({ emails: optimisticEmails, ...(isPrimary ? { email: newEmail } : {}) }),
+      () => isPrimary
+        ? window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { email: newEmail })
+        : window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE_EMAIL, { contactId: contact.id, oldEmail, newEmail }),
+      () => onUpdate({ emails: contact.emails, ...(isPrimary ? { email: contact.email } : {}) }),
+      (updated) => onUpdate(updated),
+    )
   }
 
   async function addEmail(email: string) {
     const isFirst = contact.emails.length === 0
+    await withOptimisticUpdate(
+      () => onUpdate({ emails: [...contact.emails, email], ...(isFirst ? { email } : {}) }),
+      () => window.api.invoke(IPC_CHANNELS.CONTACT_ADD_EMAIL, contact.id, email),
+      () => onUpdate({ emails: contact.emails, ...(isFirst ? { email: contact.email } : {}) }),
+      (updated) => onUpdate(updated as Record<string, unknown>),
+    )
+  }
+
+  async function removeEmail(email: string) {
+    const isPrimary = email === contact.email
     try {
       await withOptimisticUpdate(
-        () => onUpdate({ emails: [...contact.emails, email], ...(isFirst ? { email } : {}) }),
-        () => window.api.invoke(IPC_CHANNELS.CONTACT_ADD_EMAIL, contact.id, email),
-        () => onUpdate({ emails: contact.emails, ...(isFirst ? { email: contact.email } : {}) }),
+        () => onUpdate({
+          emails: contact.emails.filter(e => e !== email),
+          ...(isPrimary ? { email: null } : {}),
+        }),
+        () => window.api.invoke(IPC_CHANNELS.CONTACT_REMOVE_EMAIL, contact.id, email),
+        () => onUpdate({
+          emails: contact.emails,
+          ...(isPrimary ? { email: contact.email } : {}),
+        }),
         (updated) => onUpdate(updated),
       )
     } catch (err) {
-      console.error('[ContactPropertiesPanel] addEmail failed:', err)
+      console.error('[ContactPropertiesPanel] removeEmail failed:', err)
     }
   }
 
   async function handleDone() {
+    setMetaSaveError(null)
+
     const firstName = firstNameDraft.trim()
     const lastName = lastNameDraft.trim()
     const fullName = [firstName, lastName].filter(Boolean).join(' ')
@@ -674,6 +705,46 @@ export function ContactPropertiesPanel({
         .then(() => { onUpdate({ firstName: firstName || null, lastName: lastName || null, fullName }) })
         .catch(console.error)
     }
+
+    // Save meta fields from draft state
+    try {
+      const trimmedEmail = emailDraft.trim()
+      const existingEmail = contact.emails[0] || contact.email || ''
+      if (trimmedEmail && trimmedEmail !== existingEmail) {
+        if (existingEmail) {
+          await saveEmail(existingEmail, trimmedEmail)
+        } else {
+          await addEmail(trimmedEmail)
+        }
+      } else if (!trimmedEmail && existingEmail) {
+        await removeEmail(existingEmail)
+      }
+
+      const trimmedLinkedin = linkedinDraft.trim()
+      if (trimmedLinkedin !== (contact.linkedinUrl || '')) {
+        await save('linkedinUrl', trimmedLinkedin || null)
+      }
+
+      const trimmedPhone = phoneDraft.trim()
+      if (trimmedPhone !== (contact.phone || '')) {
+        await save('phone', trimmedPhone || null)
+      }
+
+      const trimmedCity = cityDraft.trim()
+      if (trimmedCity !== (contact.city || '')) {
+        await save('city', trimmedCity || null)
+      }
+
+      const trimmedState = stateDraft.trim()
+      if (trimmedState !== (contact.state || '')) {
+        await save('state', trimmedState || null)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save'
+      setMetaSaveError(msg)
+      return // Stay in edit mode so user can fix the issue
+    }
+
     // Clean up any explicitly-added empty fields from the addedFields pref
     const emptyKeys = fieldVisibility.addedFields.filter(key => {
       if (key.startsWith('custom:')) {
@@ -722,6 +793,11 @@ export function ContactPropertiesPanel({
     setFirstNameDraft(contact.firstName ?? '')
     setLastNameDraft(contact.lastName ?? '')
     setCompanyDraft(contact.primaryCompany?.canonicalName ?? '')
+    setEmailDraft(contact.emails[0] || contact.email || '')
+    setLinkedinDraft(contact.linkedinUrl || '')
+    setPhoneDraft(contact.phone || '')
+    setCityDraft(contact.city || '')
+    setStateDraft(contact.state || '')
     setSessionNewFields(null)
     setIsEditing(false)
   }
@@ -1318,11 +1394,18 @@ export function ContactPropertiesPanel({
                   <button className={styles.applyOneBtn} onClick={handleJustThisContact}>Just {contact.fullName}</button>
                 </div>
               ) : (
-                <div className={styles.editBtnRow}>
-                  <button className={styles.saveBtn} onClick={() => void handleDone()}>Save</button>
-                  <button className={styles.cancelBtn} onClick={handleCancel}>Cancel</button>
-                  <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">Reset Layout</button>
-                </div>
+                <>
+                  <div className={styles.editBtnRow}>
+                    <button className={styles.saveBtn} onClick={() => void handleDone()}>Save</button>
+                    <button className={styles.cancelBtn} onClick={handleCancel}>Cancel</button>
+                    <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">Reset Layout</button>
+                  </div>
+                  {metaSaveError && (
+                    <div style={{ color: '#c0392b', fontSize: '12px', marginTop: '4px', padding: '0 8px' }}>
+                      {metaSaveError}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1333,17 +1416,9 @@ export function ContactPropertiesPanel({
                 <span className={styles.metaIcon}>✉</span>
                 <input
                   className={styles.metaInput}
-                  defaultValue={contact.emails[0] || contact.email || ''}
+                  value={emailDraft}
+                  onChange={(e) => setEmailDraft(e.target.value)}
                   placeholder="Email address"
-                  type="email"
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    const existing = contact.emails[0] || contact.email
-                    if (val && val !== existing) {
-                      if (existing) void saveEmail(existing, val)
-                      else void addEmail(val)
-                    }
-                  }}
                   onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                 />
               </div>
@@ -1353,12 +1428,9 @@ export function ContactPropertiesPanel({
                 </svg>
                 <input
                   className={styles.metaInput}
-                  defaultValue={contact.linkedinUrl || ''}
+                  value={linkedinDraft}
+                  onChange={(e) => setLinkedinDraft(e.target.value)}
                   placeholder="LinkedIn URL"
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    if (val !== (contact.linkedinUrl || '')) save('linkedinUrl', val || null)
-                  }}
                   onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                 />
               </div>
@@ -1366,12 +1438,9 @@ export function ContactPropertiesPanel({
                 <span className={styles.metaIcon}>📞</span>
                 <input
                   className={styles.metaInput}
-                  defaultValue={contact.phone || ''}
+                  value={phoneDraft}
+                  onChange={(e) => setPhoneDraft(e.target.value)}
                   placeholder="Phone"
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    if (val !== (contact.phone || '')) save('phone', val || null)
-                  }}
                   onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                 />
               </div>
@@ -1379,22 +1448,16 @@ export function ContactPropertiesPanel({
                 <span className={styles.metaIcon}>📍</span>
                 <input
                   className={`${styles.metaInput} ${styles.metaInputHalf}`}
-                  defaultValue={contact.city || ''}
+                  value={cityDraft}
+                  onChange={(e) => setCityDraft(e.target.value)}
                   placeholder="City"
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    if (val !== (contact.city || '')) save('city', val || null)
-                  }}
                   onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                 />
                 <input
                   className={`${styles.metaInput} ${styles.metaInputHalf}`}
-                  defaultValue={contact.state || ''}
+                  value={stateDraft}
+                  onChange={(e) => setStateDraft(e.target.value)}
                   placeholder="State"
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    if (val !== (contact.state || '')) save('state', val || null)
-                  }}
                   onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                 />
               </div>
@@ -1526,14 +1589,19 @@ export function ContactPropertiesPanel({
       </div>
 
       <div className={styles.bodyCard}>
-      {/* LinkedIn status row: refreshed-ago / errors / login-required sign-in */}
-      {contact.linkedinUrl && (contact.linkedinEnrichedAt || linkedinError) && (
+      {/* LinkedIn status row: enriching / refreshed-ago / errors / login-required sign-in */}
+      {contact.linkedinUrl && (contact.linkedinEnrichedAt || linkedinError || linkedinEnriching) && (
         <div className={styles.linkedinStatusRow}>
-          {contact.linkedinEnrichedAt && !linkedinError && (
+          {linkedinEnriching ? (
+            <span className={styles.linkedinEnrichingStatus}>
+              <Spinner />
+              Enriching from LinkedIn…
+            </span>
+          ) : contact.linkedinEnrichedAt && !linkedinError ? (
             <span className={styles.linkedinEnrichedAgo}>
               Refreshed {formatRelativeTime(contact.linkedinEnrichedAt)}
             </span>
-          )}
+          ) : null}
           {linkedinError?.code === 'login_required' ? (
             <>
               <span className={styles.linkedinErrorMsg}>LinkedIn sign-in required</span>
@@ -1649,7 +1717,7 @@ export function ContactPropertiesPanel({
             <AddFieldDropdown
               entityType="contact"
               hardcodedDefs={CONTACT_HARDCODED_FIELDS}
-              customFields={customFields}
+              customFields={customFields.filter(f => !f.isBuiltin)}
               addedFields={fieldVisibility.addedFields}
               hiddenFields={hiddenFields}
               entityData={contact as Record<string, unknown>}
@@ -1805,7 +1873,7 @@ export function ContactPropertiesPanel({
                     </div>
                   </HideableRow>
                 )},
-                { key: 'university', visible: showField('university', contact.university), render: () => (
+                { key: 'university', visible: showField('university', contact.university) && liEduEntries.length === 0, render: () => (
                   <HideableRow fieldKey="university" isEmpty={!contact.university}>
                     <PropertyRow label="University" value={contact.university} type="text" editMode={isEditing} onSave={(v) => save('university', v)} />
                   </HideableRow>

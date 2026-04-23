@@ -32,6 +32,7 @@ import {
 } from '../../../shared/types/company'
 import type { PartnerMeetingDigest } from '../../../shared/types/partner-meeting'
 import { api } from '../../api'
+import { Spinner } from '../common/Spinner'
 import styles from './NewCompanyModal.module.css'
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -471,7 +472,7 @@ export default function NewCompanyModal({
         {/* Loading */}
         {(step === 'loading' || step === 'creating') && (
           <div className={styles.loadingStep}>
-            <div className={styles.spinner} />
+            <Spinner size="lg" />
             <p className={styles.loadingText}>
               {step === 'loading' ? 'AI is reading the deck…' : 'Creating company…'}
             </p>

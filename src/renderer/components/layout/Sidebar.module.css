@@ -40,14 +40,6 @@
   margin-bottom: 10px;
 }
 
-.calendarSection {
-  margin-top: 12px;
-  padding: 10px 8px;
-  background: #fff;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-}
-
 .bottom {
   display: flex;
   flex-direction: column;
@@ -95,10 +87,52 @@
 }
 
 /* ── Collapsed mode overrides ────────────────────────────────────── */
-.sidebarCollapsed .searchSection,
-.sidebarCollapsed .calendarSection,
 .sidebarCollapsed .logoBlock {
   display: none;
+}
+
+.sidebarCollapsed .searchSection {
+  padding: 0;
+  border-bottom: none;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: center;
+}
+
+.searchIconBtn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.searchIconBtn:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text);
+}
+
+.searchIconBtnActive {
+  background: var(--color-bg-tertiary, var(--color-card-hover));
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.searchPanel {
+  position: fixed;
+  z-index: 100;
+  width: 320px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 8px;
 }
 
 .sidebarCollapsed .nav {

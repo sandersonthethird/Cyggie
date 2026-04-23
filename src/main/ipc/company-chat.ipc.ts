@@ -77,9 +77,9 @@ export function registerCompanyChatHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_CHAT_QUERY,
-    async (_event, data: { companyId: string; question: string }) => {
+    async (_event, data: { companyId: string; question: string; attachments?: import('../../shared/types/chat').ChatAttachment[] }) => {
       if (!data?.companyId || !data?.question?.trim()) throw new Error('companyId and question are required')
-      return queryCompany(data.companyId, data.question.trim())
+      return queryCompany(data.companyId, data.question.trim(), data.attachments)
     }
   )
 

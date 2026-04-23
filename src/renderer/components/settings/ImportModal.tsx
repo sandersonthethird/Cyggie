@@ -14,6 +14,7 @@ import type {
   ContactDiff,
   CompanyDiff
 } from '../../../shared/types/csv-import'
+import { Spinner } from '../common/Spinner'
 import styles from './ImportModal.module.css'
 import { api } from '../../api'
 import { CONTACT_TYPES } from '../contact/contactColumns'
@@ -530,7 +531,7 @@ export function ImportModal({ onClose }: Props) {
 
               {suggestLoading && (
                 <div className={styles.loadingRow}>
-                  <div className={styles.spinner} />
+                  <Spinner />
                   Suggesting field mappings...
                 </div>
               )}
@@ -736,7 +737,7 @@ export function ImportModal({ onClose }: Props) {
             <>
               {previewLoading && (
                 <div className={styles.loadingRow}>
-                  <div className={styles.spinner} />
+                  <Spinner />
                   Scanning file...
                 </div>
               )}
@@ -843,7 +844,7 @@ export function ImportModal({ onClose }: Props) {
 
               {importing && !progress && (
                 <div className={styles.loadingRow}>
-                  <div className={styles.spinner} />
+                  <Spinner />
                   Starting import...
                 </div>
               )}

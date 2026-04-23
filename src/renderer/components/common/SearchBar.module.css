@@ -248,6 +248,39 @@
   font-size: 0.85em;
 }
 
+.contentSuggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.contentTypeBadge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--color-bg);
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.contentTitle {
+  font-weight: 500;
+}
+
+.contentSnippet {
+  width: 100%;
+  font-size: 0.8em;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
 .suggestionFooter {
   padding: 6px 12px;
   font-size: 0.8em;

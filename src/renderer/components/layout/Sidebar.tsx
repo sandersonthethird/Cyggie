@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   TrendingUp,
@@ -12,36 +13,36 @@ import {
   Settings,
   ChevronsLeft,
   ChevronsRight,
+  Search,
 } from 'lucide-react'
 import styles from './Sidebar.module.css'
 import { useFeatureFlag } from '../../hooks/useFeatureFlags'
-import { useAppStore } from '../../stores/app.store'
 import { useSidebarMode } from '../../hooks/useSidebarMode'
-import { useMiniCalendarActions } from '../../hooks/useMiniCalendarActions'
 import { Tooltip } from '../common/Tooltip'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import MiniCalendar from './MiniCalendar'
 import SearchBar from '../common/SearchBar'
 import defaultLogo from '../../assets/logo.png'
 import { api } from '../../api'
 
 export default function Sidebar() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { mode, toggle } = useSidebarMode()
   const collapsed = mode === 'collapsed'
   const { enabled: companiesEnabled } = useFeatureFlag('ff_companies_ui_v1')
   const [brandingLogo, setBrandingLogo] = useState<string | null>(null)
+
+  // Floating search panel state (collapsed mode)
+  const [showSearchPanel, setShowSearchPanel] = useState(false)
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+  const searchIconRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'brandingLogoDataUrl')
       .then((val) => { if (val) setBrandingLogo(val) })
       .catch(() => { /* ignore */ })
   }, [])
-  const calendarConnected = useAppStore((s) => s.calendarConnected)
-  const calendarEvents = useAppStore((s) => s.calendarEvents)
-  const dismissedEventIds = useAppStore((s) => s.dismissedEventIds)
-  const { handleRecordEvent, handlePrepareEvent, handleDismissEvent, handleClickMeeting } = useMiniCalendarActions()
-
   // Cmd+Shift+N → new note from anywhere
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -53,6 +54,39 @@ export default function Sidebar() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [navigate])
+
+  // Open floating search panel — compute position once from icon rect
+  const handleSearchIconClick = () => {
+    if (!searchIconRef.current) return
+    const rect = searchIconRef.current.getBoundingClientRect()
+    setPanelPos({ top: rect.top, left: rect.right + 8 })
+    setShowSearchPanel((prev) => !prev)
+  }
+
+  // Effect 1: DOM events — close panel on outside click or resize (only when open)
+  useEffect(() => {
+    if (!showSearchPanel) return
+    const handleMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (
+        panelRef.current?.contains(target) ||
+        searchIconRef.current?.contains(target)
+      ) return
+      setShowSearchPanel(false)
+    }
+    const handleResize = () => setShowSearchPanel(false)
+    document.addEventListener('mousedown', handleMouseDown)
+    window.addEventListener('resize', handleResize)
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [showSearchPanel])
+
+  // Effect 2: React state — close panel when sidebar expands or route changes
+  useEffect(() => {
+    setShowSearchPanel(false)
+  }, [collapsed, location.pathname])
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     `${styles.link} ${collapsed ? styles.linkCollapsed : ''} ${isActive ? styles.active : ''}`
@@ -71,8 +105,32 @@ export default function Sidebar() {
   return (
     <nav className={`${styles.sidebar} ${collapsed ? styles.sidebarCollapsed : ''}`}>
       <div className={styles.searchSection}>
-        <SearchBar placeholder="Search" />
+        {collapsed ? (
+          <Tooltip content="Search" side="right" delay={400}>
+            <button
+              ref={searchIconRef}
+              className={`${styles.searchIconBtn} ${showSearchPanel ? styles.searchIconBtnActive : ''}`}
+              onClick={handleSearchIconClick}
+              title="Search"
+            >
+              <Search size={16} strokeWidth={1.5} />
+            </button>
+          </Tooltip>
+        ) : (
+          <SearchBar placeholder="Search" />
+        )}
       </div>
+
+      {showSearchPanel && collapsed && createPortal(
+        <div
+          ref={panelRef}
+          className={styles.searchPanel}
+          style={{ top: panelPos.top, left: panelPos.left }}
+        >
+          <SearchBar placeholder="Search" autoFocus />
+        </div>,
+        document.body
+      )}
 
       <div className={styles.nav}>
         <NavItem to="/" icon={<LayoutDashboard size={16} strokeWidth={1.5} />} label="Dashboard" end />
@@ -88,20 +146,6 @@ export default function Sidebar() {
         <NavItem to="/tasks" icon={<CheckSquare size={16} strokeWidth={1.5} />} label="Tasks" />
         <NavItem to="/partner-meeting" icon={<Users2 size={16} strokeWidth={1.5} />} label="Partner Sync" />
       </div>
-
-      {calendarConnected && (
-        <div className={styles.calendarSection}>
-          <MiniCalendar
-            calendarConnected={calendarConnected}
-            dismissedEventIds={dismissedEventIds}
-            storeEvents={calendarEvents}
-            onRecordEvent={handleRecordEvent}
-            onPrepareEvent={handlePrepareEvent}
-            onDismissEvent={handleDismissEvent}
-            onClickMeeting={handleClickMeeting}
-          />
-        </div>
-      )}
 
       <div className={styles.bottom}>
         <div className={styles.logoBlock}>

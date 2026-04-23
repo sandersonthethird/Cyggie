@@ -21,6 +21,9 @@
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 5px 12px;
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
@@ -35,22 +38,6 @@
   cursor: default;
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.spinner {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid currentColor;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-  margin-right: 5px;
-  vertical-align: middle;
-}
 
 .errorMsg {
   font-size: 11px;

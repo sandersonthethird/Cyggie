@@ -14,6 +14,7 @@ import Tasks from './routes/Tasks'
 import Notes from './routes/Notes'
 import NoteDetail, { NoteDetailLoaded } from './routes/NoteDetail'
 import LiveRecording from './routes/LiveRecording'
+import SearchResults from './routes/SearchResults'
 import Settings from './routes/Settings'
 import PartnerMeeting from './routes/PartnerMeeting'
 import { useCalendar } from './hooks/useCalendar'
@@ -110,6 +111,7 @@ export default function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/meetings" element={<MeetingsPage />} />
               <Route path="/tasks" element={<Tasks />} />
+              <Route path="/search" element={<SearchResults />} />
               <Route path="/notes" element={<Notes />} />
               <Route path="/note/new" element={<NoteDetail />} />
               <Route path="/note/:id" element={<NoteDetailLoaded />} />

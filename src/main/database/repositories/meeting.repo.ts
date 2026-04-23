@@ -29,6 +29,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     attendees: row.attendees ? JSON.parse(row.attendees) : null,
     attendeeEmails: row.attendee_emails ? JSON.parse(row.attendee_emails) : null,
     companies: row.companies ? JSON.parse(row.companies) : null,
+    dismissedCompanies: row.dismissed_companies ? JSON.parse(row.dismissed_companies) : null,
     chatMessages: row.chat_messages ? JSON.parse(row.chat_messages) : null,
     recordingPath: row.recording_path ?? null,
     status: row.status as MeetingStatus,
@@ -396,6 +397,7 @@ export function updateMeeting(
     attendees: string[] | null
     attendeeEmails: string[] | null
     companies: string[] | null
+    dismissedCompanies: string[] | null
     chatMessages: ChatMessage[] | null
     recordingPath: string | null
     status: MeetingStatus
@@ -462,6 +464,10 @@ export function updateMeeting(
   if (data.companies !== undefined) {
     sets.push('companies = ?')
     params.push(data.companies ? JSON.stringify(data.companies) : null)
+  }
+  if (data.dismissedCompanies !== undefined) {
+    sets.push('dismissed_companies = ?')
+    params.push(data.dismissedCompanies ? JSON.stringify(data.dismissedCompanies) : null)
   }
   if (data.chatMessages !== undefined) {
     sets.push('chat_messages = ?')

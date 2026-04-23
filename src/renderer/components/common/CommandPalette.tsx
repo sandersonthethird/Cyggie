@@ -21,7 +21,9 @@ const EMPTY_RESULTS: UnifiedSearchResponse = {
     meeting: [],
     email: [],
     note: [],
-    memo: []
+    memo: [],
+    company: [],
+    contact: []
   },
   flat: []
 }
@@ -38,6 +40,8 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [answer, setAnswer] = useState<UnifiedSearchAnswerResponse | null>(null)
 
   const groups = useMemo(() => ([
+    { key: 'company', label: 'Companies', items: results.grouped.company },
+    { key: 'contact', label: 'Contacts', items: results.grouped.contact },
     { key: 'meeting', label: 'Meetings', items: results.grouped.meeting },
     { key: 'email', label: 'Emails', items: results.grouped.email },
     { key: 'note', label: 'Notes', items: results.grouped.note },

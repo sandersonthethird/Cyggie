@@ -159,7 +159,7 @@ interface ContactMergeRow {
   crm_provider: string | null
 }
 
-const VALID_CONTACT_TYPES = new Set<string>(['investor', 'founder', 'operator'])
+const VALID_CONTACT_TYPES = new Set<string>(['investor', 'founder', 'operator', 'lp'])
 const GENERIC_DUPLICATE_NAMES = new Set<string>([
   'unknown',
   'unknown contact',
@@ -1467,6 +1467,48 @@ export function updateContactEmail(
       } else {
         db.prepare(`UPDATE contacts SET email = ?, updated_at = datetime('now') WHERE id = ?`)
           .run(newEmail, contactId)
+      }
+    }
+  })
+  tx()
+
+  const updated = getContact(contactId)
+  if (!updated) throw new Error('Failed to load updated contact')
+  return updated
+}
+
+export function removeContactEmail(
+  contactId: string,
+  emailInput: string,
+  userId: string | null = null
+): ContactDetail {
+  const db = getDatabase()
+  const email = normalizeEmail(emailInput)
+  if (!email) throw new Error('Valid email is required')
+
+  const row = db
+    .prepare('SELECT is_primary FROM contact_emails WHERE contact_id = ? AND lower(email) = ? LIMIT 1')
+    .get(contactId, email) as { is_primary: number } | undefined
+  if (!row) throw new Error('Email not found on this contact')
+
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM contact_emails WHERE contact_id = ? AND lower(email) = ?')
+      .run(contactId, email)
+    if (row.is_primary === 1) {
+      // Promote next email to primary, or clear
+      const next = db
+        .prepare('SELECT email FROM contact_emails WHERE contact_id = ? ORDER BY datetime(created_at) ASC LIMIT 1')
+        .get(contactId) as { email: string } | undefined
+      if (userId) {
+        db.prepare("UPDATE contacts SET email = ?, updated_by_user_id = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(next?.email ?? null, userId, contactId)
+      } else {
+        db.prepare("UPDATE contacts SET email = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(next?.email ?? null, contactId)
+      }
+      if (next) {
+        db.prepare('UPDATE contact_emails SET is_primary = 1 WHERE contact_id = ? AND lower(email) = ?')
+          .run(contactId, next.email.toLowerCase())
       }
     }
   })

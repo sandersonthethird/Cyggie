@@ -15,7 +15,7 @@ import type { ContactDetail } from '../shared/types/contact'
 const mockExaSearch = vi.fn()
 
 vi.mock('exa-js', () => ({
-  default: vi.fn().mockImplementation(() => ({
+  Exa: vi.fn().mockImplementation(() => ({
     search: mockExaSearch,
   })),
 }))

@@ -213,9 +213,11 @@ export default function MeetingDetail() {
   const [speakerContactMap, setSpeakerContactMap] = useState<Record<number, string>>({})
   const [linkingPicker, setLinkingPicker] = useState<number | null>(null)
   const [showCompanyPicker, setShowCompanyPicker] = useState(false)
+  const [showContactPicker, setShowContactPicker] = useState(false)
   const [isSavingSpeakers, setIsSavingSpeakers] = useState(false)
   const speakerInputRef = useRef<HTMLInputElement>(null)
   const speakerContactPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST)
+  const contactAddPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST)
   const companyLinkPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
   const swapCompanyPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
   const [editingCompanyKey, setEditingCompanyKey] = useState<string | null>(null)
@@ -772,7 +774,8 @@ export default function MeetingDetail() {
       const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null }>(
         IPC_CHANNELS.RECORDING_START,
         data.meeting.title,
-        data.meeting.calendarEventId || undefined
+        data.meeting.calendarEventId || undefined,
+        data.meeting.id
       )
       startRecording(result.meetingId, result.meetingPlatform)
       // Navigate to the recording meeting if it's different from the current one
@@ -1397,11 +1400,61 @@ export default function MeetingDetail() {
     }
   }, [id, loadMeeting])
 
+  const handleCreateCompanyAndLink = useCallback(async (name: string) => {
+    setShowCompanyPicker(false)
+    try {
+      const created = await api.invoke<{ id: string }>(IPC_CHANNELS.COMPANY_CREATE, { canonicalName: name })
+      await api.invoke(IPC_CHANNELS.MEETING_LINK_EXISTING_COMPANY, id, created.id)
+      await loadMeeting()
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to create and link company:', err)
+    }
+  }, [id, loadMeeting])
+
+  // Attendee management — atomic helpers to keep parallel arrays aligned
+  const addAttendee = useCallback(async (name: string, email: string) => {
+    const attendees = [...(data?.meeting.attendees ?? []), name]
+    const attendeeEmails = [...(data?.meeting.attendeeEmails ?? []), email]
+    await api.invoke(IPC_CHANNELS.MEETING_UPDATE, id, { attendees, attendeeEmails })
+    await loadMeeting()
+  }, [data?.meeting, id, loadMeeting])
+
+  const removeAttendee = useCallback(async (index: number) => {
+    const attendees = (data?.meeting.attendees ?? []).filter((_, i) => i !== index)
+    const attendeeEmails = (data?.meeting.attendeeEmails ?? []).filter((_, i) => i !== index)
+    await api.invoke(IPC_CHANNELS.MEETING_UPDATE, id, { attendees, attendeeEmails })
+    await loadMeeting()
+  }, [data?.meeting, id, loadMeeting])
+
+  const handleAddContact = useCallback(async (contact: ContactSummary) => {
+    setShowContactPicker(false)
+    try {
+      await addAttendee(contact.fullName, contact.email ?? '')
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to add contact:', err)
+    }
+  }, [addAttendee])
+
+  const handleCreateContactAttendee = useCallback(async (name: string) => {
+    setShowContactPicker(false)
+    try {
+      const created = await api.invoke<{ id: string }>(IPC_CHANNELS.CONTACT_CREATE, { fullName: name })
+      setAttendeeContactMap((prev) => ({ ...prev, [name.toLowerCase()]: { id: created.id, fullName: name } }))
+      await addAttendee(name, '')
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to create contact:', err)
+    }
+  }, [addAttendee])
+
   const handleUnlinkCompany = useCallback(async (e: React.MouseEvent, company: CompanySuggestion) => {
     e.stopPropagation()
-    if (!company.id) return
     try {
-      await api.invoke(IPC_CHANNELS.MEETING_UNLINK_COMPANY, id, company.id)
+      if (company.id) {
+        await api.invoke(IPC_CHANNELS.MEETING_UNLINK_COMPANY, id, company.id)
+      } else {
+        // Name-only suggestion: dismiss from denormalized cache
+        await api.invoke(IPC_CHANNELS.MEETING_UNLINK_COMPANY, id, null, company.name)
+      }
       await loadMeeting()
     } catch (err) {
       console.error('[MeetingDetail] Failed to unlink company:', err)
@@ -1656,7 +1709,7 @@ export default function MeetingDetail() {
               <div className={styles.attendeeAvatars}>
                 {(meeting.attendees ?? []).slice(0, 4).map((attendee, i) => {
                   const email = meeting.attendeeEmails?.[i]?.trim().toLowerCase() || ''
-                  const resolved = attendeeContactMap[email]
+                  const resolved = attendeeContactMap[email] || attendeeContactMap[attendee.toLowerCase()]
                   const contactId = resolved?.id
                   const displayName = resolved?.fullName ?? attendee
                   const initials = getInitials(displayName)
@@ -1684,6 +1737,13 @@ export default function MeetingDetail() {
                       }}
                     >
                       {initials}
+                      <span
+                        className={styles.attendeeRemoveBtn}
+                        onClick={(e) => { e.stopPropagation(); removeAttendee(i) }}
+                        title="Remove"
+                      >
+                        ×
+                      </span>
                     </button>
                   )
                 })}
@@ -1693,27 +1753,32 @@ export default function MeetingDetail() {
                   </span>
                 )}
               </div>
-              {!showCompanyPicker ? (
+              {!showContactPicker ? (
                 <button
                   className={styles.addCompanyBtn}
-                  onClick={() => { setShowCompanyPicker(true); companyLinkPicker.search('', 0) }}
+                  onClick={() => { setShowContactPicker(true); contactAddPicker.search('', 0) }}
                 >
-                  + Add Company
+                  + Add Contact
                 </button>
               ) : (
-                <EntityPicker<CompanySummary>
-                  picker={companyLinkPicker}
-                  placeholder="Search company…"
-                  renderItem={(c) => c.canonicalName}
-                  onSelect={handleLinkExistingCompany}
-                  onClose={() => setShowCompanyPicker(false)}
+                <EntityPicker<ContactSummary>
+                  picker={{
+                    ...contactAddPicker,
+                    results: contactAddPicker.results.filter((c) =>
+                      !(meeting.attendeeEmails ?? []).map((e) => e.toLowerCase()).includes(c.email?.toLowerCase() ?? '\0')
+                    )
+                  }}
+                  placeholder="Search contacts…"
+                  renderItem={(c) => c.fullName}
+                  onSelect={handleAddContact}
+                  onClose={() => setShowContactPicker(false)}
+                  onCreate={handleCreateContactAttendee}
                 />
               )}
             </div>
 
-            {companySuggestions.length > 0 && (
-              <div className={styles.companies}>
-                {companySuggestions.map((c) => {
+            <div className={styles.companies}>
+              {companySuggestions.map((c) => {
                   const suggestionKey = companySuggestionKey(c)
                   const selectedType = companyTagSelections[suggestionKey]
                   const chipKey = c.id ?? c.name
@@ -1773,7 +1838,7 @@ export default function MeetingDetail() {
                             ✎
                           </button>
                         )}
-                        {!isEditing && c.id && (
+                        {!isEditing && (
                           <button
                             type="button"
                             className={styles.companyChipRemove}
@@ -1784,7 +1849,7 @@ export default function MeetingDetail() {
                           </button>
                         )}
                       </div>
-                      {!isEditing && !selectedType && (
+                      {!isEditing && (!selectedType || selectedType === 'unknown') && (
                         <span className={styles.companyChipActions}>
                           {TAGGABLE_COMPANY_TYPES.map((entityType) => (
                             <button
@@ -1802,8 +1867,24 @@ export default function MeetingDetail() {
                     </div>
                   )
                 })}
+              {!showCompanyPicker ? (
+                <button
+                  className={styles.addCompanyBtn}
+                  onClick={() => { setShowCompanyPicker(true); companyLinkPicker.search('', 0) }}
+                >
+                  + Add Company
+                </button>
+              ) : (
+                <EntityPicker<CompanySummary>
+                  picker={companyLinkPicker}
+                  placeholder="Search company…"
+                  renderItem={(c) => c.canonicalName}
+                  onSelect={handleLinkExistingCompany}
+                  onClose={() => setShowCompanyPicker(false)}
+                  onCreate={handleCreateCompanyAndLink}
+                />
+              )}
               </div>
-            )}
           </div>
         </div>
 

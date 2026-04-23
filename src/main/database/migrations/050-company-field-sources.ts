@@ -9,4 +9,9 @@ export function runCompanyFieldSourcesMigration(db: Database.Database): void {
   if (!cols.includes('field_sources')) {
     db.exec(`ALTER TABLE companies ADD COLUMN field_sources TEXT`)
   }
+
+  const orgCols = (db.pragma('table_info(org_companies)') as { name: string }[]).map((c) => c.name)
+  if (!orgCols.includes('field_sources')) {
+    db.exec(`ALTER TABLE org_companies ADD COLUMN field_sources TEXT`)
+  }
 }

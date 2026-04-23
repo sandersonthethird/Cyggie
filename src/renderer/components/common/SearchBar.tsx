@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore, selectHasActiveFilters } from '../../stores/app.store'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { CategorizedSuggestions } from '../../../shared/types/meeting'
+import type { CategorizedSuggestions, ContentMatchPreview } from '../../../shared/types/meeting'
 import type { CompanySummary } from '../../../shared/types/company'
 import type { ContactSummary } from '../../../shared/types/contact'
 import styles from './SearchBar.module.css'
@@ -10,21 +10,23 @@ import { api } from '../../api'
 
 interface SearchBarProps {
   placeholder?: string
+  autoFocus?: boolean
 }
 
 function normalizeLookup(value: string | null | undefined): string {
   return (value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
-export default function SearchBar({ placeholder = 'Search meetings...' }: SearchBarProps) {
+export default function SearchBar({ placeholder = 'Search meetings...', autoFocus = false }: SearchBarProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
+  const inputRef = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState('')
   const searchQuery = useAppStore((s) => s.searchQuery)
   const setSearchQuery = useAppStore((s) => s.setSearchQuery)
   const setSearchFilter = useAppStore((s) => s.setSearchFilter)
-  const [categorized, setCategorized] = useState<CategorizedSuggestions>({ people: [], companies: [], contacts: [], meetings: [], notes: [] })
+  const [categorized, setCategorized] = useState<CategorizedSuggestions>({ people: [], companies: [], contacts: [], meetings: [], notes: [], contentMatches: [] })
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [activeSuggestion, setActiveSuggestion] = useState(-1)
   const suggestRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -46,16 +48,18 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
   const hasActiveFilters = useAppStore(selectHasActiveFilters)
   const isCompaniesPage = location.pathname === '/companies'
   const isContactsPage = location.pathname === '/contacts'
-  const isEntityListPage = isCompaniesPage || isContactsPage
+  const isSearchPage = location.pathname === '/search'
+  const isEntityListPage = isCompaniesPage || isContactsPage || isSearchPage
   const entityQuery = (searchParams.get('q') || '').trim()
 
   const flatItems = useMemo(() => {
-    const items: { type: 'person' | 'company' | 'contact' | 'meeting' | 'note'; label: string; id?: string; domain?: string }[] = []
+    const items: { type: 'person' | 'company' | 'contact' | 'meeting' | 'note' | 'content'; label: string; id?: string; domain?: string; route?: string; snippet?: string; context?: string; entityType?: string }[] = []
     for (const name of categorized.people) items.push({ type: 'person', label: name })
     for (const c of categorized.companies) items.push({ type: 'company', label: c.name, domain: c.domain })
     for (const ct of categorized.contacts) items.push({ type: 'contact', label: ct.label, id: ct.id })
     for (const m of categorized.meetings) items.push({ type: 'meeting', label: m.title, id: m.id })
     for (const n of categorized.notes) items.push({ type: 'note', label: n.label, id: n.id })
+    for (const cm of categorized.contentMatches) items.push({ type: 'content', label: cm.title, id: cm.entityId, route: cm.route, snippet: cm.snippet, context: cm.context, entityType: cm.entityType })
     return items
   }, [categorized])
 
@@ -78,6 +82,11 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
     return () => clearSearch()
   }, [clearSearch])
 
+  // Auto-focus when rendered in floating panel
+  useEffect(() => {
+    if (autoFocus && inputRef.current) inputRef.current.focus()
+  }, [autoFocus])
+
   // Load all speakers on mount
   useEffect(() => {
     api.invoke<string[]>(IPC_CHANNELS.SEARCH_ALL_SPEAKERS).then(setAllSpeakers)
@@ -87,7 +96,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
   useEffect(() => {
     if (suggestRef.current) clearTimeout(suggestRef.current)
     if (value.trim().length < 2) {
-      setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [] })
+      setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [], contentMatches: [] })
       setShowSuggestions(false)
       return
     }
@@ -100,7 +109,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
           people: results.people.filter((name) => !contactNameSet.has(normalizeLookup(name))),
         }
         setCategorized(dedupedResults)
-        const hasResults = dedupedResults.people.length > 0 || results.companies.length > 0 || results.contacts.length > 0 || results.meetings.length > 0 || results.notes.length > 0
+        const hasResults = dedupedResults.people.length > 0 || results.companies.length > 0 || results.contacts.length > 0 || results.meetings.length > 0 || results.notes.length > 0 || results.contentMatches.length > 0
         setShowSuggestions(hasResults)
         if (hasResults) setShowFilterPanel(false)
         setActiveSuggestion(-1)
@@ -127,11 +136,16 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
 
   const handleSuggestionSelect = useCallback(async (item: typeof flatItems[number]) => {
     setShowSuggestions(false)
-    setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [] })
+    setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [], contentMatches: [] })
     setActiveSuggestion(-1)
     setValue(item.label)
     setSearchQuery(item.label)
     setSearchFilter(null)
+
+    if (item.type === 'content' && item.route) {
+      navigate(item.route, { state: { backLabel: 'Search' } })
+      return
+    }
 
     if (item.type === 'contact' && item.id) {
       navigate(`/contact/${item.id}`, { state: { backLabel: 'Search' } })
@@ -236,7 +250,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
       setSearchParams(next)
     }
     clearAdvancedFilters()
-    setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [] })
+    setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [], contentMatches: [] })
     setShowSuggestions(false)
     setShowFilterPanel(false)
   }, [
@@ -250,6 +264,16 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
   ])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (showSuggestions && activeSuggestion >= 0 && activeSuggestion < flatItems.length) {
+        void handleSuggestionSelect(flatItems[activeSuggestion])
+      } else if (value.trim()) {
+        setShowSuggestions(false)
+        navigate(`/search?q=${encodeURIComponent(value.trim())}`)
+      }
+      return
+    }
     if (!showSuggestions || flatItems.length === 0) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -257,14 +281,10 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActiveSuggestion((prev) => (prev <= 0 ? flatItems.length - 1 : prev - 1))
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      const selectedIndex = activeSuggestion >= 0 ? activeSuggestion : 0
-      void handleSuggestionSelect(flatItems[selectedIndex])
     } else if (e.key === 'Escape') {
       setShowSuggestions(false)
     }
-  }, [showSuggestions, flatItems, activeSuggestion, handleSuggestionSelect])
+  }, [showSuggestions, flatItems, activeSuggestion, handleSuggestionSelect, value, navigate])
 
   const handleFilterToggle = useCallback(() => {
     setShowFilterPanel(!showFilterPanel)
@@ -283,6 +303,7 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
     <div className={styles.wrapper} ref={wrapperRef}>
       <span className={styles.searchIcon}>&#128269;</span>
       <input
+        ref={inputRef}
         type="text"
         className={styles.input}
         placeholder={placeholder}
@@ -423,6 +444,37 @@ export default function SearchBar({ placeholder = 'Search meetings...' }: Search
                 </div>
               </div>
             )}
+            {categorized.contentMatches.length > 0 && (
+              <div className={styles.suggestionSection}>
+                <div className={styles.sectionHeader}>Content Matches</div>
+                {categorized.contentMatches.map((cm) => {
+                  const i = idx++
+                  return (
+                    <div
+                      key={`content-${cm.entityType}-${cm.entityId}`}
+                      className={`${styles.suggestionItem} ${styles.contentSuggestion} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
+                      onMouseDown={() => { void handleSuggestionSelect({ type: 'content', label: cm.title, id: cm.entityId, route: cm.route }) }}
+                      onMouseEnter={() => setActiveSuggestion(i)}
+                    >
+                      <span className={styles.contentTypeBadge}>{cm.entityType}</span>
+                      <span className={styles.contentTitle}>{cm.title}</span>
+                      {cm.context && (
+                        <span className={styles.suggestionContext}> · {cm.context}</span>
+                      )}
+                      {cm.snippet && (
+                        <div className={styles.contentSnippet}>{cm.snippet.length > 80 ? cm.snippet.slice(0, 80) + '...' : cm.snippet}</div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <div
+              className={styles.suggestionFooter}
+              onMouseDown={() => { navigate(`/search?q=${encodeURIComponent(value)}`) }}
+            >
+              See all results for &ldquo;{value}&rdquo;
+            </div>
           </div>
         )
       })()}

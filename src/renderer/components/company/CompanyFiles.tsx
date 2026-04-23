@@ -99,7 +99,20 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
         <div className={styles.empty}>No files found. Configure a folder in Settings to see files here.</div>
       )}
       {files.map((file) => (
-        <div key={file.id} className={styles.file} onClick={() => openFile(file)}>
+        <div
+          key={file.id}
+          className={styles.file}
+          draggable={file.mimeType !== 'folder'}
+          onDragStart={(e) => {
+            e.dataTransfer.setData('application/x-cyggie-file', JSON.stringify({
+              path: file.id,
+              name: file.name,
+              mimeType: file.mimeType
+            }))
+            e.dataTransfer.effectAllowed = 'copy'
+          }}
+          onClick={() => openFile(file)}
+        >
           <div className={styles.fileName}>{file.name}</div>
           <div className={styles.fileMeta}>
             {file.mimeType && <span className={styles.type}>{file.mimeType.split('/').pop()}</span>}

@@ -64,4 +64,26 @@ describe('correctProperNouns', () => {
     const text = 'Normal transcript text.'
     expect(() => correctProperNouns(text, ['ValidName'])).not.toThrow()
   })
+
+  it('does not replace email local parts that fuzzy-match a CRM name', () => {
+    // "sandy" in "sandy@redswanventures.com" should not become "Andy"
+    // even though jaroWinkler("sandy", "andy") ≈ 0.933 > 0.92 threshold
+    const text = '**sandy@redswanventures.com** [0:00]\nCoding and investing.'
+    const result = correctProperNouns(text, ['Andy'])
+    expect(result).toContain('sandy@redswanventures.com')
+  })
+
+  it('does not replace email domain parts that fuzzy-match a CRM name', () => {
+    const text = 'Contact info@Promptcapital.com for details.'
+    const result = correctProperNouns(text, ['PromptCapital'])
+    expect(result).toContain('info@Promptcapital.com')
+  })
+
+  it('still corrects non-email words that fuzzy-match a CRM name', () => {
+    // "Tobius" in normal text should still be corrected to "Tobias"
+    // (regression: email guard must not block non-email tokens)
+    const text = 'Tobius discussed the deal with the team.'
+    const result = correctProperNouns(text, ['Tobias'])
+    expect(result).toBe('Tobias discussed the deal with the team.')
+  })
 })

@@ -1,7 +1,7 @@
 import { getDatabase } from '../connection'
 import { extractCompanyFromEmail, extractDomainFromEmail } from '../../utils/company-extractor'
 import * as companyRepo from './company.repo'
-import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult, CategorizedSuggestions, CompanySuggestion } from '../../../shared/types/meeting'
+import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult, CategorizedSuggestions, CompanySuggestion, ContentMatchPreview } from '../../../shared/types/meeting'
 import type {
   UnifiedSearchResponse,
   UnifiedSearchResult,
@@ -895,13 +895,212 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     }
   }
 
+  // 6. Content match previews: keyword matches in content fields across entities
+  let contentMatches: ContentMatchPreview[] = []
+  try {
+    contentMatches = getContentMatchPreviews(prefix, 5)
+  } catch {
+    // Content match failure should not break suggestions
+  }
+
   return {
     people: [...people].sort().slice(0, limit),
     companies: companySuggestions,
     contacts: contactSuggestions,
     meetings: meetingRows,
     notes: noteSuggestions,
+    contentMatches,
   }
+}
+
+/**
+ * Quick, low-limit content search across entity types for the SearchBar dropdown.
+ * Intentionally separate from searchUnified for independent performance tuning.
+ * If query columns change, update both this function and searchUnified.
+ */
+export function getContentMatchPreviews(query: string, limit = 5): ContentMatchPreview[] {
+  const trimmed = query.trim()
+  if (!trimmed) return []
+
+  const db = getDatabase()
+  const lowerLike = `%${trimmed.toLowerCase()}%`
+  const results: (ContentMatchPreview & { rank: number })[] = []
+
+  // Meetings via FTS5
+  try {
+    const ftsQuery = sanitizeFts5Query(trimmed)
+    const rows = db
+      .prepare(`
+        SELECT
+          m.id,
+          m.title,
+          snippet(meetings_fts, 2, '<mark>', '</mark>', '...', 24) AS snippet,
+          bm25(meetings_fts) AS bm_rank,
+          c.canonical_name AS company_name
+        FROM meetings_fts
+        JOIN meetings m ON m.id = meetings_fts.meeting_id
+        LEFT JOIN org_companies c ON c.id = (
+          SELECT l.company_id FROM meeting_company_links l
+          WHERE l.meeting_id = m.id
+          ORDER BY l.confidence DESC LIMIT 1
+        )
+        WHERE meetings_fts MATCH ?
+        ORDER BY bm_rank
+        LIMIT 2
+      `)
+      .all(ftsQuery) as Array<{
+      id: string; title: string; snippet: string; bm_rank: number; company_name: string | null
+    }>
+    rows.forEach((row) => {
+      results.push({
+        entityType: 'meeting',
+        entityId: row.id,
+        title: row.title,
+        snippet: row.snippet || '',
+        route: `/meeting/${row.id}`,
+        context: row.company_name ?? undefined,
+        rank: 1200 + (-row.bm_rank || 0)
+      })
+    })
+  } catch { /* FTS5 syntax error — skip meetings */ }
+
+  // Companies via LIKE on content fields
+  try {
+    const rows = db
+      .prepare(`
+        SELECT id, canonical_name,
+          substr(replace(replace(trim(COALESCE(description, key_takeaways, '')), char(10), ' '), char(13), ' '), 1, 120) AS snippet
+        FROM org_companies
+        WHERE lower(COALESCE(description, '')) LIKE ?
+           OR lower(COALESCE(sector, '')) LIKE ?
+           OR lower(COALESCE(target_customer, '')) LIKE ?
+           OR lower(COALESCE(business_model, '')) LIKE ?
+           OR lower(COALESCE(key_takeaways, '')) LIKE ?
+           OR lower(COALESCE(lead_investor, '')) LIKE ?
+           OR lower(COALESCE(co_investors, '')) LIKE ?
+        LIMIT 2
+      `)
+      .all(lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike) as Array<{
+      id: string; canonical_name: string; snippet: string
+    }>
+    rows.forEach((row) => {
+      results.push({
+        entityType: 'company',
+        entityId: row.id,
+        title: row.canonical_name,
+        snippet: row.snippet || '',
+        route: `/company/${row.id}`,
+        rank: 850
+      })
+    })
+  } catch { /* skip companies */ }
+
+  // Contacts via LIKE on content fields
+  try {
+    const rows = db
+      .prepare(`
+        SELECT c.id, c.full_name,
+          oc.canonical_name AS company_name,
+          substr(replace(replace(trim(COALESCE(c.linkedin_headline, c.notes, c.key_takeaways, '')), char(10), ' '), char(13), ' '), 1, 120) AS snippet
+        FROM contacts c
+        LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
+        WHERE lower(COALESCE(c.university, '')) LIKE ?
+           OR lower(COALESCE(c.education_history, '')) LIKE ?
+           OR lower(COALESCE(c.linkedin_headline, '')) LIKE ?
+           OR lower(COALESCE(c.work_history, '')) LIKE ?
+           OR lower(COALESCE(c.notes, '')) LIKE ?
+           OR lower(COALESCE(c.key_takeaways, '')) LIKE ?
+           OR lower(COALESCE(c.previous_companies, '')) LIKE ?
+        LIMIT 2
+      `)
+      .all(lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike) as Array<{
+      id: string; full_name: string; company_name: string | null; snippet: string
+    }>
+    rows.forEach((row) => {
+      results.push({
+        entityType: 'contact',
+        entityId: row.id,
+        title: row.full_name,
+        snippet: row.snippet || '',
+        route: `/contact/${row.id}`,
+        context: row.company_name ?? undefined,
+        rank: 650
+      })
+    })
+  } catch { /* skip contacts */ }
+
+  // Emails via LIKE
+  try {
+    const rows = db
+      .prepare(`
+        SELECT id,
+          COALESCE(NULLIF(TRIM(subject), ''), '(no subject)') AS subject,
+          COALESCE(snippet, '') AS snippet,
+          c.id AS company_id,
+          c.canonical_name AS company_name
+        FROM email_messages em
+        LEFT JOIN org_companies c ON c.id = (
+          SELECT l.company_id FROM email_company_links l
+          WHERE l.message_id = em.id
+          ORDER BY l.confidence DESC LIMIT 1
+        )
+        WHERE lower(COALESCE(em.subject, '')) LIKE ?
+           OR lower(COALESCE(em.body_text, '')) LIKE ?
+        LIMIT 2
+      `)
+      .all(lowerLike, lowerLike) as Array<{
+      id: string; subject: string; snippet: string; company_id: string | null; company_name: string | null
+    }>
+    rows.forEach((row) => {
+      results.push({
+        entityType: 'email',
+        entityId: row.id,
+        title: row.subject,
+        snippet: row.snippet || '',
+        route: row.company_id
+          ? `/company/${row.company_id}?tab=timeline&filter=emails&focus=${row.id}`
+          : '/companies',
+        context: row.company_name ?? undefined,
+        rank: 900
+      })
+    })
+  } catch { /* skip emails */ }
+
+  // Memos via LIKE
+  try {
+    const rows = db
+      .prepare(`
+        SELECT im.id AS memo_id, im.company_id, im.title,
+          c.canonical_name AS company_name,
+          substr(replace(replace(trim(imv.content_markdown), char(10), ' '), char(13), ' '), 1, 120) AS snippet
+        FROM investment_memo_versions imv
+        JOIN investment_memos im ON im.id = imv.memo_id
+        LEFT JOIN org_companies c ON c.id = im.company_id
+        WHERE lower(COALESCE(im.title, '')) LIKE ?
+           OR lower(COALESCE(imv.content_markdown, '')) LIKE ?
+        ORDER BY datetime(imv.created_at) DESC
+        LIMIT 2
+      `)
+      .all(lowerLike, lowerLike) as Array<{
+      memo_id: string; company_id: string | null; title: string; company_name: string | null; snippet: string
+    }>
+    rows.forEach((row) => {
+      results.push({
+        entityType: 'memo',
+        entityId: row.memo_id,
+        title: row.title,
+        snippet: row.snippet || '',
+        route: row.company_id ? `/company/${row.company_id}?tab=memo` : '/companies',
+        context: row.company_name ?? undefined,
+        rank: 700
+      })
+    })
+  } catch { /* skip memos */ }
+
+  return results
+    .sort((a, b) => b.rank - a.rank)
+    .slice(0, limit)
+    .map(({ rank: _rank, ...rest }) => rest)
 }
 
 function emptyUnifiedGroups(): UnifiedSearchResultsGrouped {
@@ -909,7 +1108,9 @@ function emptyUnifiedGroups(): UnifiedSearchResultsGrouped {
     meeting: [],
     email: [],
     note: [],
-    memo: []
+    memo: [],
+    company: [],
+    contact: []
   }
 }
 
@@ -1152,6 +1353,107 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
       companyName: row.company_name,
       route: row.company_id ? `/company/${row.company_id}?tab=memo` : '/companies',
       citationLabel: `Memo: ${row.title} (${formatCitationDate(row.occurred_at)})`
+    })
+  })
+
+  // Companies: content search across description, sector, key_takeaways, etc.
+  const companyRows = db
+    .prepare(`
+      SELECT
+        id,
+        canonical_name,
+        primary_domain,
+        substr(replace(replace(trim(COALESCE(description, key_takeaways, '')), char(10), ' '), char(13), ' '), 1, 320) AS snippet,
+        updated_at AS occurred_at
+      FROM org_companies
+      WHERE lower(COALESCE(canonical_name, '')) LIKE ?
+         OR lower(COALESCE(description, '')) LIKE ?
+         OR lower(COALESCE(sector, '')) LIKE ?
+         OR lower(COALESCE(target_customer, '')) LIKE ?
+         OR lower(COALESCE(business_model, '')) LIKE ?
+         OR lower(COALESCE(key_takeaways, '')) LIKE ?
+         OR lower(COALESCE(lead_investor, '')) LIKE ?
+         OR lower(COALESCE(co_investors, '')) LIKE ?
+      ORDER BY datetime(updated_at) DESC
+      LIMIT ?
+    `)
+    .all(lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike,
+      Math.max(6, Math.ceil(limit * 0.15))) as Array<{
+    id: string
+    canonical_name: string
+    primary_domain: string | null
+    snippet: string
+    occurred_at: string
+  }>
+  companyRows.forEach((row) => {
+    const rank = 850 + recencyBoost(row.occurred_at)
+    results.push({
+      id: `company:${row.id}`,
+      entityType: 'company',
+      entityId: row.id,
+      title: row.canonical_name,
+      snippet: row.snippet || '',
+      occurredAt: row.occurred_at,
+      rank,
+      companyId: row.id,
+      companyName: row.canonical_name,
+      route: `/company/${row.id}`,
+      citationLabel: `Company: ${row.canonical_name}`
+    })
+  })
+
+  // Contacts: content search across university, education, linkedin, notes, etc.
+  const contactRows = db
+    .prepare(`
+      SELECT
+        c.id,
+        c.full_name,
+        c.title AS job_title,
+        oc.id AS company_id,
+        oc.canonical_name AS company_name,
+        substr(replace(replace(trim(COALESCE(c.linkedin_headline, c.notes, c.key_takeaways, '')), char(10), ' '), char(13), ' '), 1, 320) AS snippet,
+        c.updated_at AS occurred_at
+      FROM contacts c
+      LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
+      WHERE lower(COALESCE(c.full_name, '')) LIKE ?
+         OR lower(COALESCE(c.email, '')) LIKE ?
+         OR lower(COALESCE(c.title, '')) LIKE ?
+         OR lower(COALESCE(c.university, '')) LIKE ?
+         OR lower(COALESCE(c.previous_companies, '')) LIKE ?
+         OR lower(COALESCE(c.education_history, '')) LIKE ?
+         OR lower(COALESCE(c.linkedin_headline, '')) LIKE ?
+         OR lower(COALESCE(c.work_history, '')) LIKE ?
+         OR lower(COALESCE(c.notes, '')) LIKE ?
+         OR lower(COALESCE(c.key_takeaways, '')) LIKE ?
+      ORDER BY datetime(c.updated_at) DESC
+      LIMIT ?
+    `)
+    .all(lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike,
+      Math.max(6, Math.ceil(limit * 0.15))) as Array<{
+    id: string
+    full_name: string
+    job_title: string | null
+    company_id: string | null
+    company_name: string | null
+    snippet: string
+    occurred_at: string
+  }>
+  contactRows.forEach((row) => {
+    const rank = 650 + recencyBoost(row.occurred_at)
+    const titleParts = [row.full_name]
+    if (row.job_title) titleParts.push(row.job_title)
+    results.push({
+      id: `contact:${row.id}`,
+      entityType: 'contact',
+      entityId: row.id,
+      title: row.full_name,
+      snippet: row.snippet || '',
+      occurredAt: row.occurred_at,
+      rank,
+      companyId: row.company_id,
+      companyName: row.company_name,
+      route: `/contact/${row.id}`,
+      citationLabel: `Contact: ${row.full_name}${row.company_name ? ` (${row.company_name})` : ''}`
     })
   })
 

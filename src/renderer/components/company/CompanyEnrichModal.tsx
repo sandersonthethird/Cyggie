@@ -27,6 +27,7 @@ import type { EnrichmentEntityProposal } from '../enrichment/EnrichmentProposalD
 import { PitchDeckSourceInput } from './PitchDeckSourceInput'
 import { companyEnrichedAtKey } from '../../../shared/utils/enrichment-keys'
 import { api } from '../../api'
+import { Spinner } from '../common/Spinner'
 import styles from './CompanyEnrichModal.module.css'
 
 type Step = 'source' | 'extracting' | 'options' | 'fields' | 'processing' | 'done'
@@ -313,7 +314,7 @@ export function CompanyEnrichModal({
           {/* Extracting spinner */}
           {step === 'extracting' && (
             <div className={styles.loadingStep}>
-              <div className={styles.spinner} />
+              <Spinner size="lg" />
               <p className={styles.loadingText}>Extracting company data…</p>
             </div>
           )}
@@ -408,7 +409,7 @@ export function CompanyEnrichModal({
           {/* Processing spinner */}
           {step === 'processing' && (
             <div className={styles.loadingStep}>
-              <div className={styles.spinner} />
+              <Spinner size="lg" />
               <p className={styles.loadingText}>Analyzing document and saving results…</p>
             </div>
           )}

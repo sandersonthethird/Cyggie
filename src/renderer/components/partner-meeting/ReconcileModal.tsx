@@ -31,6 +31,7 @@ import type {
   ApplyReconciliationResult,
 } from '../../../shared/types/partner-meeting'
 import { api } from '../../api'
+import { Spinner } from '../common/Spinner'
 import styles from './ReconcileModal.module.css'
 
 interface PerProposalState {
@@ -197,7 +198,7 @@ export function ReconcileModal({
         <div className={styles.modalHeader}>
           <div className={styles.modalTitle}>
             Review Meeting Notes — {weekLabel}
-            {state === 'generating' && <span className={styles.spinner} />}
+            {state === 'generating' && <Spinner />}
           </div>
           {state !== 'generating' && (
             <div className={styles.bulkActions}>

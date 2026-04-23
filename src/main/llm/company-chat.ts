@@ -5,6 +5,8 @@ import { readSummary, readTranscript, readLocalFile } from '../storage/file-mana
 import { basename } from 'path'
 import { getProvider } from './provider-factory'
 import { sendProgress } from './send-progress'
+import { injectTextAttachments } from './chat'
+import type { ChatAttachment } from '../../shared/types/chat'
 
 let companyChatAbortController: AbortController | null = null
 
@@ -28,7 +30,7 @@ const MAX_TOTAL_SUMMARIES = 30000
 const MAX_TOTAL_EMAILS = 15000
 const MAX_TOTAL_FILES = 30000
 
-export async function queryCompany(companyId: string, question: string): Promise<string> {
+export async function queryCompany(companyId: string, question: string, attachments?: ChatAttachment[]): Promise<string> {
   const company = companyRepo.getCompany(companyId)
   if (!company) throw new Error('Company not found')
 
@@ -119,13 +121,15 @@ export async function queryCompany(companyId: string, question: string): Promise
 
   const context = parts.join('\n')
 
+  const enhancedQuestion = attachments?.length ? injectTextAttachments(question, attachments) : question
+
   const userPrompt = `Here is the available information about ${company.canonicalName}:
 
 ${context}
 
 ---
 
-Question: ${question}`
+Question: ${enhancedQuestion}`
 
   const provider = getProvider('chat')
   companyChatAbortController = new AbortController()

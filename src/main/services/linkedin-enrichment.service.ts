@@ -165,9 +165,26 @@ export async function loadLinkedInProfile(url: string): Promise<string> {
       await delay(500)
     }
 
+    // Best-effort: scroll to trigger lazy loading + expand collapsed sections
+    try {
+      await win.webContents.executeJavaScript('window.scrollTo(0, document.body.scrollHeight)')
+      await win.webContents.executeJavaScript(`
+        document.querySelectorAll('a, button').forEach(el => {
+          if (/show all.*experience|show all.*education/i.test(el.textContent || '')) {
+            el.click();
+          }
+        })
+      `)
+      await delay(1500)
+    } catch {
+      // Expansion is best-effort — window may have been destroyed, or selectors may not match
+      console.debug('[LinkedIn Enrich] Section expansion failed or no-op — continuing with visible content')
+    }
+
     const innerText: string = await win.webContents.executeJavaScript(
       'document.body ? document.body.innerText : ""'
     )
+    console.debug(`[LinkedIn Enrich] Captured ${innerText.length} chars of profile text`)
 
     // Detect login wall in page content
     if (innerText.length < 500 || /join linkedin|sign in/i.test(innerText.slice(0, 500))) {
@@ -349,6 +366,10 @@ export async function enrichContactFromLinkedIn(
   if (!contact.state && profileData.inferredState) {
     updates.state = profileData.inferredState
     newFieldSources.state = 'linkedin'
+  }
+  if (!contact.university && profileData.educationHistory.length > 0) {
+    updates.university = profileData.educationHistory[0].school
+    newFieldSources.university = 'linkedin'
   }
   updates.fieldSources = JSON.stringify(newFieldSources)
 

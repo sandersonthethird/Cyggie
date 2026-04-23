@@ -596,7 +596,14 @@ export function registerRecordingHandlers(): void {
         const companyNames = listCompanies({ view: 'all' }).map((c) => c.canonicalName).filter(Boolean) as string[]
         const crmNames = [...contactNames, ...companyNames]
         if (crmNames.length > 0) {
-          transcriptMd = correctProperNouns(rawTranscriptMd, crmNames)
+          // Apply correction line-by-line, skipping speaker-label lines
+          // to prevent fuzzy matches from corrupting speaker names/emails.
+          const lines = rawTranscriptMd.split('\n')
+          transcriptMd = lines.map((line) =>
+            line.startsWith('**') && line.includes('** [')
+              ? line
+              : correctProperNouns(line, crmNames)
+          ).join('\n')
         }
       } catch (err) {
         console.warn('[Recording] Proper noun correction failed, using raw transcript:', err)
