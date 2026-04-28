@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useStaleGuard } from '../hooks/useStaleGuard'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import EmptyState from '../components/common/EmptyState'
@@ -101,7 +102,10 @@ export default function Tasks() {
   const [detailTask, setDetailTask] = useState<TaskListItem | null>(null)
   const [showDetailedCreate, setShowDetailedCreate] = useState(false)
 
+  const getGuard = useStaleGuard()
+
   const fetchTasks = useCallback(async () => {
+    const isStale = getGuard()
     setLoading(true)
     setError(null)
     try {
@@ -113,13 +117,15 @@ export default function Tasks() {
         filter.category = [categoryFilter]
       }
       const results = await api.invoke<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, filter)
+      if (isStale()) return
       setTasks(results)
     } catch (err) {
+      if (isStale()) return
       setError(String(err))
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
-  }, [activeStatuses, categoryFilter])
+  }, [activeStatuses, categoryFilter, getGuard])
 
   useEffect(() => {
     fetchTasks()

@@ -7,7 +7,7 @@ import type {
   CompanySummary,
   CompanySortBy
 } from '../../../shared/types/company'
-import { ENTITY_TYPE_OPTIONS } from '../../../shared/types/company'
+import { ENTITY_TYPE_OPTIONS, PORTFOLIO_FUND_OPTIONS, INVESTMENT_SECURITY_OPTIONS } from '../../../shared/types/company'
 import {
   createColumnConfigLoader,
   saveColumnConfig as saveColumnConfigBase,
@@ -58,6 +58,8 @@ export const ROUNDS: { value: CompanyRound; label: string }[] = [
   { value: 'series_a', label: 'Series A' },
   { value: 'series_b', label: 'Series B' }
 ]
+
+export const PORTFOLIOS = PORTFOLIO_FUND_OPTIONS
 
 export const EMPLOYEE_RANGES = [
   '1-10', '11-50', '51-200', '201-500', '501-1000', '1000+'
@@ -177,7 +179,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
   // Hidden by default
   {
     key: 'round',
-    label: 'Round',
+    label: 'Last Round',
     field: 'round',
     defaultVisible: false,
     width: 110,
@@ -186,6 +188,18 @@ export const COLUMN_DEFS: ColumnDef[] = [
     editable: true,
     type: 'select',
     options: [{ value: '', label: '—' }, ...ROUNDS]
+  },
+  {
+    key: 'portfolioFund',
+    label: 'Portfolio',
+    field: 'portfolioFund',
+    defaultVisible: false,
+    width: 110,
+    minWidth: 80,
+    sortable: true,
+    editable: true,
+    type: 'select',
+    options: [{ value: '', label: '—' }, ...PORTFOLIOS]
   },
   {
     key: 'raiseSize',
@@ -202,7 +216,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
   },
   {
     key: 'postMoneyValuation',
-    label: 'Post-Money ($M)',
+    label: 'Initial Valuation ($M)',
     field: 'postMoneyValuation',
     defaultVisible: false,
     width: 140,
@@ -313,6 +327,225 @@ export const COLUMN_DEFS: ColumnDef[] = [
     sortable: true,
     editable: false,
     type: 'date'
+  },
+  // ── Fund IV / portfolio investment columns ──────────────────────────────────
+  {
+    key: 'description',
+    label: 'Description',
+    field: 'description',
+    defaultVisible: false,
+    width: 300,
+    minWidth: 120,
+    sortable: false,
+    editable: true,
+    type: 'text'
+  },
+  {
+    key: 'industriesCsv',
+    label: 'Industry',
+    field: 'industriesCsv',
+    defaultVisible: false,
+    width: 160,
+    minWidth: 80,
+    sortable: true,
+    editable: false,
+    type: 'computed'
+  },
+  {
+    key: 'location',
+    label: 'Location',
+    field: null,
+    defaultVisible: false,
+    width: 160,
+    minWidth: 80,
+    sortable: false,
+    editable: false,
+    type: 'computed'
+  },
+  {
+    key: 'totalInvested',
+    label: 'Total Investment ($M)',
+    field: 'totalInvested',
+    defaultVisible: false,
+    width: 160,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'text',
+    prefix: '$',
+    suffix: 'M'
+  },
+  {
+    key: 'investmentMark',
+    label: 'Investment Mark ($M)',
+    field: 'investmentMark',
+    defaultVisible: false,
+    width: 160,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'number',
+    prefix: '$',
+    suffix: 'M',
+    decimals: 3
+  },
+  {
+    key: 'investmentRound',
+    label: 'Investment Round',
+    field: 'investmentRound',
+    defaultVisible: false,
+    width: 140,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'select',
+    options: [{ value: '', label: '—' }, ...ROUNDS]
+  },
+  {
+    key: 'investmentSize',
+    label: 'Initial Investment ($M)',
+    field: 'investmentSize',
+    defaultVisible: false,
+    width: 170,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'text',
+    prefix: '$',
+    suffix: 'M'
+  },
+  {
+    key: 'initialInvestmentSecurity',
+    label: 'Initial Security',
+    field: 'initialInvestmentSecurity',
+    defaultVisible: false,
+    width: 140,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'select',
+    options: [{ value: '', label: '—' }, ...INVESTMENT_SECURITY_OPTIONS]
+  },
+  {
+    key: 'dateOfInitialInvestment',
+    label: 'Date of Initial Investment',
+    field: 'dateOfInitialInvestment',
+    defaultVisible: false,
+    width: 170,
+    minWidth: 120,
+    sortable: true,
+    editable: true,
+    type: 'date'
+  },
+  {
+    key: 'ownershipPct',
+    label: 'Initial Ownership (%)',
+    field: 'ownershipPct',
+    defaultVisible: false,
+    width: 160,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'text',
+    suffix: '%'
+  },
+  {
+    key: 'initialRoundSize',
+    label: 'Initial Round Size ($M)',
+    field: 'initialRoundSize',
+    defaultVisible: false,
+    width: 170,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'number',
+    prefix: '$',
+    suffix: 'M',
+    decimals: 1
+  },
+  {
+    key: 'lastCompanyValuation',
+    label: 'Last Company Valuation ($M)',
+    field: 'lastCompanyValuation',
+    defaultVisible: false,
+    width: 200,
+    minWidth: 120,
+    sortable: true,
+    editable: true,
+    type: 'number',
+    prefix: '$',
+    suffix: 'M',
+    decimals: 1
+  },
+  {
+    key: 'followonCheck',
+    label: 'Follow-on Check ($M)',
+    field: 'followonCheck',
+    defaultVisible: false,
+    width: 160,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'number',
+    prefix: '$',
+    suffix: 'M'
+  },
+  {
+    key: 'followonDate',
+    label: 'Follow-on Date',
+    field: 'followonDate',
+    defaultVisible: false,
+    width: 130,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'date'
+  },
+  {
+    key: 'followonCheck2',
+    label: 'Follow-on Check 2 ($M)',
+    field: 'followonCheck2',
+    defaultVisible: false,
+    width: 170,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'number',
+    prefix: '$',
+    suffix: 'M'
+  },
+  {
+    key: 'followonDate2',
+    label: 'Follow-on Date 2',
+    field: 'followonDate2',
+    defaultVisible: false,
+    width: 140,
+    minWidth: 100,
+    sortable: true,
+    editable: true,
+    type: 'date'
+  },
+  {
+    key: 'coInvestorNames',
+    label: 'Coinvestors',
+    field: 'coInvestorNames',
+    defaultVisible: false,
+    width: 200,
+    minWidth: 100,
+    sortable: true,
+    editable: false,
+    type: 'computed'
+  },
+  {
+    key: 'subsequentInvestorNames',
+    label: 'Subsequent Investors',
+    field: 'subsequentInvestorNames',
+    defaultVisible: false,
+    width: 200,
+    minWidth: 100,
+    sortable: true,
+    editable: false,
+    type: 'computed'
   }
 ]
 
@@ -326,7 +559,8 @@ export const COMPANY_GROUPABLE_FIELDS: GroupableField[] = [
   { key: 'entityType',    label: 'Type',     order: ENTITY_TYPES.map((e) => e.value) },
   { key: 'pipelineStage', label: 'Stage',    order: STAGES.map((s) => s.value) },
   { key: 'priority',      label: 'Priority', order: PRIORITIES.map((p) => p.value) },
-  { key: 'round',         label: 'Round',    order: ROUNDS.map((r) => r.value) },
+  { key: 'round',         label: 'Last Round', order: ROUNDS.map((r) => r.value) },
+  { key: 'portfolioFund', label: 'Portfolio', order: PORTFOLIOS.map((p) => p.value) },
 ]
 
 // ─── localStorage helpers (delegate to tableUtils) ────────────────────────────
@@ -366,9 +600,9 @@ export function filterCompanies(
   //   Pass 1: Select filters  — exact match against option values (applySelectFilter)
   //   Pass 2: Range filters   — numeric or date inclusive bounds (applyRangeFilter)
   //   Pass 3: Text filters    — case-insensitive contains (applyTextFilter)
-  let result = applySelectFilter(companies as Record<string, unknown>[], filters) as CompanySummary[]
-  result = applyRangeFilter(result as Record<string, unknown>[], rangeFilters ?? {}) as CompanySummary[]
-  result = applyTextFilter(result as Record<string, unknown>[], textFilters ?? {}) as CompanySummary[]
+  let result = applySelectFilter(companies as unknown as Record<string, unknown>[], filters) as unknown as CompanySummary[]
+  result = applyRangeFilter(result as unknown as Record<string, unknown>[], rangeFilters ?? {}) as unknown as CompanySummary[]
+  result = applyTextFilter(result as unknown as Record<string, unknown>[], textFilters ?? {}) as unknown as CompanySummary[]
   return result
 }
 
@@ -376,7 +610,8 @@ export function filterCompanies(
 
 export function buildUrlFilter(
   query: string,
-  sortBy: CompanySortBy
+  sortBy: CompanySortBy,
+  opts?: { includeIndustries?: boolean; includeInvestorNames?: boolean }
 ): CompanyListFilter {
   // No limit — view: 'all' means all companies. baseCompanySelect uses LEFT JOINs
   // (not correlated subqueries) so this is O(n) and fast in SQLite at current scale.
@@ -385,6 +620,8 @@ export function buildUrlFilter(
     query: query.trim() || undefined,
     view: 'all',
     includeStats: true,
-    sortBy
+    sortBy,
+    includeIndustries: opts?.includeIndustries,
+    includeInvestorNames: opts?.includeInvestorNames,
   }
 }

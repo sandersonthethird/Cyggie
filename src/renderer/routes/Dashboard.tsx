@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useStaleGuard } from '../hooks/useStaleGuard'
 import { useNavigate } from 'react-router-dom'
 import { Video, MapPin, ChevronDown } from 'lucide-react'
 import { useAppStore } from '../stores/app.store'
@@ -253,7 +254,10 @@ export default function Dashboard() {
     [scheduleEvents, now]
   )
 
+  const getGuard = useStaleGuard()
+
   const loadDashboard = useCallback(async () => {
+    const isStale = getGuard()
     setLoading(true)
     setError(null)
     try {
@@ -265,16 +269,18 @@ export default function Dashboard() {
           limit: 5
         })
       ])
+      if (isStale()) return
       setData(result)
       setActivityFilter(result.activityFilter)
       setPipelineCompanies(pipelineData)
       setOpenTasks(tasks)
     } catch (err) {
+      if (isStale()) return
       setError(String(err))
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
-  }, [])
+  }, [getGuard])
 
   useEffect(() => {
     void loadDashboard()

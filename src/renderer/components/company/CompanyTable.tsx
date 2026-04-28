@@ -42,7 +42,7 @@ import {
   type ColumnDef,
   type SortState
 } from './companyColumns'
-import { executeBulkEdit } from '../crm/tableUtils'
+import { executeBulkEdit, createCellCallbacks } from '../crm/tableUtils'
 import type { RangeValue } from '../crm/tableUtils'
 import type { VirtualRow } from '../../hooks/useGroupedRows'
 import { chipStyle } from '../../utils/colorChip'
@@ -52,6 +52,7 @@ import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
 import { useEditCellNav } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
+import { useCellClipboard } from '../../hooks/useCellClipboard'
 import { HeaderFilter } from '../crm/HeaderFilter'
 import { RangeFilter } from '../crm/RangeFilter'
 import { TextFilter } from '../crm/TextFilter'
@@ -232,7 +233,10 @@ export function CompanyTable({
   // (scrollToRow is defined below after rowVirtualizer — forward-ref via closure)
   const scrollToRowRef = useRef<(idx: number) => void>(() => {})
 
-  const { editCell, setEditCell, handleStartEdit, handleEndEdit } = useEditCellNav(
+  const {
+    focusedCell, editCell, setEditCell, cellRange,
+    handleFocusCell, handleStartEdit, handleEndEdit, handleArrowNav, clearFocus
+  } = useEditCellNav(
     companies.length,
     visibleCols,
     (idx) => scrollToRowRef.current(idx)
@@ -241,7 +245,7 @@ export function CompanyTable({
   const getEditCell = useCallback(() => editCell, [editCell])
 
   // ── Row selection ──────────────────────────────────────────────────────────
-  const { selectedIds, setSelectedIds, toggleSelect, lastSelectedIdxRef } = useRowSelection(
+  const { selectedIds, setSelectedIds, toggleSelect, handleTableKeyDown, lastSelectedIdxRef } = useRowSelection(
     companies,
     (idx) => scrollToRowRef.current(idx),
     getEditCell
@@ -296,13 +300,7 @@ export function CompanyTable({
     setBulkEditing(false)
   }
 
-  // ── Sort ───────────────────────────────────────────────────────────────────
-  function handleHeaderClick(col: ColumnDef, e: React.MouseEvent) {
-    if (!col.sortable) return
-    onSort(col.key, e.shiftKey)
-  }
-
-  // ── Inline save ────────────────────────────────────────────────────────────
+  // ── Cell callbacks (for clipboard + inline edit) ────────────────────────────
   const handleCellSave = useCallback(
     async (company: CompanySummary, field: string, newValue: string | null) => {
       const patch: Record<string, unknown> = { [field]: newValue === '' ? null : newValue }
@@ -311,6 +309,73 @@ export function CompanyTable({
     },
     [onPatch]
   )
+
+  const { getCellValue, saveCellValue } = useMemo(() => createCellCallbacks<CompanySummary>({
+    getCustomFieldValue: (entityId, cfId) => customFieldValues?.[entityId]?.[cfId] ?? null,
+    saveCustomField: async (entityId, col, value) => {
+      const cfId = col.key.slice(7)
+      await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, {
+        fieldDefinitionId: cfId,
+        entityType: 'company',
+        entityId,
+        valueText: col.type === 'number' ? null : (value || null),
+        valueNumber: col.type === 'number' ? (value ? parseFloat(value) : null) : null,
+      })
+      onPatchCustomField?.(entityId, cfId, value)
+    },
+    saveRegularField: handleCellSave,
+    getComputedValue: (entity, col) => {
+      if (col.key === 'location') return [entity.city, entity.state].filter(Boolean).join(', ') || null
+      return null
+    },
+  }), [customFieldValues, handleCellSave, onPatchCustomField])
+
+  // ── Clipboard ──────────────────────────────────────────────────────────────
+  const {
+    copiedCell, copiedRange, clipboardToast, undoAction,
+    handleClipboardKeyDown, handleUndo, dismissUndo,
+  } = useCellClipboard({
+    rows: companies,
+    visibleCols: mergedVisibleCols,
+    focusedCell,
+    editCell,
+    cellRange,
+    selectedIds,
+    getCellValue,
+    saveCellValue,
+    onStartEdit: handleStartEdit,
+  })
+
+  // ── Composed keyboard handler ──────────────────────────────────────────────
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Arrow keys for cell navigation (when focused, not editing)
+    if (!editCell && focusedCell && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      e.preventDefault()
+      const dir = e.key.replace('Arrow', '').toLowerCase() as 'up' | 'down' | 'left' | 'right'
+      handleArrowNav(dir, e.shiftKey)
+      return
+    }
+    // Enter to start editing focused cell
+    if (!editCell && focusedCell && e.key === 'Enter') {
+      e.preventDefault()
+      handleStartEdit(focusedCell.rowIdx, focusedCell.colIdx)
+      return
+    }
+    // Escape to clear focus
+    if (!editCell && focusedCell && e.key === 'Escape' && !copiedCell && !copiedRange) {
+      e.preventDefault()
+      clearFocus()
+      return
+    }
+    handleClipboardKeyDown(e)
+    handleTableKeyDown(e)
+  }, [editCell, focusedCell, copiedCell, copiedRange, handleArrowNav, handleStartEdit, clearFocus, handleClipboardKeyDown, handleTableKeyDown])
+
+  // ── Sort ───────────────────────────────────────────────────────────────────
+  function handleHeaderClick(col: ColumnDef, e: React.MouseEvent) {
+    if (!col.sortable) return
+    onSort(col.key, e.shiftKey)
+  }
 
   // ── Inline add row ─────────────────────────────────────────────────────────
   const [addingRow, setAddingRow] = useState(false)
@@ -360,7 +425,7 @@ export function CompanyTable({
         </div>
       )}
 
-      <div className={styles.tableWrapper} ref={scrollRef}>
+      <div className={styles.tableWrapper} ref={scrollRef} tabIndex={0} onKeyDown={handleKeyDown}>
         {/* Header row */}
         <div className={styles.headerRow} style={{ gridTemplateColumns: gridCols }}>
           {/* Checkbox */}
@@ -582,13 +647,17 @@ export function CompanyTable({
                 {/* Editable cells for remaining columns */}
                 {mergedVisibleCols.slice(1).map((col, relIdx) => {
                   const colIdx = relIdx + 1
-                  const fieldKey = col.field as keyof CompanySummary
-                  const isCellFocused = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
                   const customFieldId = col.key.startsWith('custom:') ? col.key.slice(7) : null
-                  const cellValue = customFieldId
-                    ? (customFieldValues?.[company.id]?.[customFieldId] ?? null)
-                    : col.field ? (company[fieldKey] as string | null) : null
+                  const cellValue = getCellValue(company, col)
                   const isCustomSelect = !!customFieldId && col.type === 'select'
+
+                  const isCellEditing = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
+                  const isCellHighlighted =
+                    (focusedCell?.rowIdx === dataIndex && focusedCell?.colIdx === colIdx) ||
+                    (cellRange?.colIdx === colIdx && dataIndex >= cellRange.startRow && dataIndex <= cellRange.endRow)
+                  const isCopied =
+                    (copiedCell?.rowIdx === dataIndex && copiedCell?.colIdx === colIdx) ||
+                    (copiedRange?.colIdx === colIdx && dataIndex >= copiedRange.startRow && dataIndex <= copiedRange.endRow)
 
                   // When groupBy is active: scan mode — all cells navigate to detail
                   if (groupBy) {
@@ -605,12 +674,13 @@ export function CompanyTable({
                     )
                   }
 
-                  if (isCustomSelect && !isCellFocused) {
+                  if (isCustomSelect && !isCellEditing) {
                     return (
                       <div
                         key={col.key}
-                        className={styles.chipCell}
-                        onClick={() => handleStartEdit(dataIndex, colIdx)}
+                        className={`${styles.chipCell}${isCopied ? ` ${styles.copiedCell}` : ''}${isCellHighlighted ? ` ${styles.focusedCell}` : ''}`}
+                        onClick={(e) => handleFocusCell(dataIndex, colIdx, e.shiftKey)}
+                        onDoubleClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
                         {cellValue ? (
                           <span className={styles.chip} style={chipStyle(cellValue)}>
@@ -622,42 +692,34 @@ export function CompanyTable({
                   }
 
                   return (
-                    <EditableCell
-                      key={col.key}
-                      value={cellValue}
-                      col={col}
-                      isFocused={isCellFocused}
-                      onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
-                      onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
-                      onAddOption={
-                        col.type === 'select'
-                          ? async (newOption) => {
-                              if (customFieldId) {
-                                const def = useCustomFieldStore.getState().companyDefs.find(d => d.id === customFieldId)
-                                await addCustomFieldOption(customFieldId, def?.optionsJson ?? null, newOption)
-                              } else {
-                                const builtinDef = useCustomFieldStore.getState().companyDefs.find(d => d.isBuiltin && d.fieldKey === col.key)
-                                if (builtinDef) await addCustomFieldOption(builtinDef.id, builtinDef.optionsJson, newOption)
+                    <div key={col.key} className={isCopied ? styles.copiedCell : undefined}>
+                      <EditableCell
+                        value={cellValue}
+                        col={col}
+                        isHighlighted={isCellHighlighted && !isCellEditing}
+                        isEditing={isCellEditing}
+                        initialChar={isCellEditing ? editCell?.initialChar : undefined}
+                        onFocus={() => handleFocusCell(dataIndex, colIdx)}
+                        onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
+                        onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
+                        onAddOption={
+                          col.type === 'select'
+                            ? async (newOption) => {
+                                if (customFieldId) {
+                                  const def = useCustomFieldStore.getState().companyDefs.find(d => d.id === customFieldId)
+                                  await addCustomFieldOption(customFieldId, def?.optionsJson ?? null, newOption)
+                                } else {
+                                  const builtinDef = useCustomFieldStore.getState().companyDefs.find(d => d.isBuiltin && d.fieldKey === col.key)
+                                  if (builtinDef) await addCustomFieldOption(builtinDef.id, builtinDef.optionsJson, newOption)
+                                }
                               }
-                            }
-                          : undefined
-                      }
-                      onSave={async (newVal) => {
-                        if (customFieldId) {
-                          await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, {
-                            fieldDefinitionId: customFieldId,
-                            entityType: 'company',
-                            entityId: company.id,
-                            valueText: col.type === 'number' ? null : (newVal || null),
-                            valueNumber: col.type === 'number' ? (newVal ? parseFloat(newVal) : null) : null,
-                          })
-                          onPatchCustomField?.(company.id, customFieldId, newVal)
-                        } else {
-                          if (!col.field) return
-                          await handleCellSave(company, col.field, newVal)
+                            : undefined
                         }
-                      }}
-                    />
+                        onSave={async (newVal) => {
+                          await saveCellValue(company, col, newVal)
+                        }}
+                      />
+                    </div>
                   )
                 })}
 
@@ -832,6 +894,20 @@ export function CompanyTable({
           >
             {bulkDeleting ? 'Working…' : `Delete ${selectedIds.size}`}
           </button>
+        </div>
+      )}
+
+      {/* Clipboard toast */}
+      {clipboardToast && (
+        <div className={styles.clipboardToast}>{clipboardToast}</div>
+      )}
+
+      {/* Undo paste toast */}
+      {undoAction && (
+        <div className={styles.clipboardToast}>
+          Pasted to {undoAction.count} cell{undoAction.count !== 1 ? 's' : ''}
+          <button className={styles.undoBtn} onClick={() => void handleUndo()}>Undo</button>
+          <button className={styles.undoDismiss} onClick={dismissUndo}>✕</button>
         </div>
       )}
     </>

@@ -1,25 +1,27 @@
 /**
- * EditableCell — display/edit/saving/error state machine for a single table cell.
+ * EditableCell — display/focus/edit/saving/error state machine for a single table cell.
  *
  * State machine:
- *   DISPLAY ──click──▶ EDIT ──blur/Enter──▶ SAVING ──success──▶ DISPLAY
- *                        │   │                 │
- *                      Esc   picks sentinel   error──▶ ERROR (revert + 3s) ──▶ DISPLAY
- *                        │   │
- *                        │   ▼
- *                        │  ADDING_OPTION ──Enter (non-empty)──▶ [addCustomFieldOption + onSave] ──▶ DISPLAY
- *                        │        │
- *                        └─ Esc/blur ──▶ DISPLAY
+ *   DISPLAY ──click──▶ FOCUSED (highlight, no input)
+ *   FOCUSED ──dbl-click/Enter──▶ EDIT ──blur/Enter──▶ SAVING ──success──▶ DISPLAY
+ *                                  │   │                 │
+ *                                Esc   picks sentinel   error──▶ ERROR (revert + 3s) ──▶ DISPLAY
+ *                                  │   │
+ *                                  │   ▼
+ *                                  │  ADDING_OPTION ──Enter (non-empty)──▶ [addCustomFieldOption + onSave] ──▶ DISPLAY
+ *                                  │        │
+ *                                  └─ Esc/blur ──▶ FOCUSED (stay focused after cancel)
  *
  * Props:
- *   value       — current display value (string, number, null)
- *   field       — CompanySummary field key being edited
- *   type        — 'text' | 'select' | 'number' | 'date' | 'computed'
- *   options     — for select type
- *   onSave      — async callback: (newValue: string | null) => void
- *   isFocused   — externally driven focus (keyboard nav)
- *   onFocused   — notify parent this cell is being edited
- *   onBlurEdit  — notify parent edit ended (keyboard nav)
+ *   value         — current display value (string, number, null)
+ *   col           — ColumnDef for the field being displayed/edited
+ *   isHighlighted — externally driven focus highlight (single-click, arrow nav, range selection)
+ *   isEditing     — externally driven edit mode (double-click, Enter, type-to-edit)
+ *   initialChar   — if set, seeds draft with this char instead of current value (type-to-edit)
+ *   onSave        — async callback: (newValue: string | null) => void
+ *   onFocus       — notify parent this cell is focused (single click)
+ *   onStartEdit   — notify parent this cell is being edited (double click)
+ *   onEndEdit     — notify parent edit ended (keyboard nav)
  */
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { daysSince, formatLastTouch } from '../../utils/format'
@@ -34,7 +36,10 @@ interface EditableCellProps {
   col: ColumnDef
   onSave: (newValue: string | null) => Promise<void>
   onAddOption?: (newOption: string) => Promise<void>
-  isFocused: boolean
+  isHighlighted: boolean
+  isEditing: boolean
+  initialChar?: string
+  onFocus: () => void
   onStartEdit: () => void
   onEndEdit: (advanceDir?: 'down' | 'right' | null) => void
 }
@@ -88,6 +93,15 @@ function renderDisplay(col: ColumnDef, value: unknown): React.ReactNode {
     return <span className={styles.cellText}>{label}</span>
   }
 
+  // Number/currency formatting — applies to all columns with prefix/suffix or number type
+  if ((col.type === 'number' || col.prefix || col.suffix) && value != null && value !== '') {
+    const num = parseFloat(String(value))
+    if (!isNaN(num)) {
+      const formatted = col.decimals != null ? num.toFixed(col.decimals) : String(num)
+      return <span className={styles.cellText}>{col.prefix ?? ''}{formatted}{col.suffix ?? ''}</span>
+    }
+  }
+
   if (value == null || value === '') {
     return <span className={styles.cellEmpty}>—</span>
   }
@@ -100,7 +114,10 @@ function EditableCellInner({
   col,
   onSave,
   onAddOption,
-  isFocused,
+  isHighlighted,
+  isEditing,
+  initialChar,
+  onFocus,
   onStartEdit,
   onEndEdit
 }: EditableCellProps) {
@@ -115,13 +132,13 @@ function EditableCellInner({
   // Keep savedValueRef in sync with prop (reflects optimistic patches from parent)
   savedValueRef.current = value
 
-  // If parent requests focus (keyboard nav), enter edit mode
+  // If parent requests edit (keyboard nav / double-click), enter edit mode
   useEffect(() => {
-    if (isFocused && col.editable && cellState === 'display') {
+    if (isEditing && col.editable && cellState === 'display') {
       startEdit()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFocused])
+  }, [isEditing])
 
   // Focus the input when entering edit mode
   useEffect(() => {
@@ -135,11 +152,15 @@ function EditableCellInner({
 
   const startEdit = useCallback(() => {
     if (!col.editable) return
-    const current = savedValueRef.current
-    setDraft(current == null ? '' : String(current))
+    if (initialChar) {
+      setDraft(initialChar)
+    } else {
+      const current = savedValueRef.current
+      setDraft(current == null ? '' : String(current))
+    }
     setCellState('edit')
     onStartEdit()
-  }, [col.editable, onStartEdit])
+  }, [col.editable, initialChar, onStartEdit])
 
   const cancelEdit = useCallback(() => {
     setCellState('display')
@@ -178,7 +199,15 @@ function EditableCellInner({
   }, [draft, onSave, onEndEdit])
 
   function handleClick() {
-    if (cellState === 'display') startEdit()
+    if (cellState === 'display') {
+      onFocus()
+    }
+  }
+
+  function handleDoubleClick() {
+    if (cellState === 'display' || (cellState === 'display' && isHighlighted)) {
+      startEdit()
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -201,13 +230,24 @@ function EditableCellInner({
     }
   }
 
+  const cellClassName = [
+    styles.cell,
+    isHighlighted && cellState === 'display' ? styles.focusedCell : '',
+  ].filter(Boolean).join(' ')
+
   return (
     <div
-      className={styles.cell}
+      className={cellClassName}
       onClick={handleClick}
+      onDoubleClick={col.editable ? handleDoubleClick : undefined}
       role={col.editable ? 'button' : undefined}
       tabIndex={col.editable ? 0 : undefined}
-      onKeyDown={col.editable && cellState === 'display' ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEdit() } } : handleKeyDown}
+      onKeyDown={col.editable && cellState === 'display' ? (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          startEdit()
+        }
+      } : handleKeyDown}
     >
       {errorMsg && <span className={styles.errorMsg}>{errorMsg}</span>}
 

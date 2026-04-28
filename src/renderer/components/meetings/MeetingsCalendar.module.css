@@ -1,0 +1,358 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.monthLabel {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--cy-text, #1F2937);
+  margin: 0 6px 0 4px;
+  white-space: nowrap;
+}
+
+.todayBtn {
+  padding: 4px 10px;
+  border: 1px solid var(--cy-border, #E5E7EB);
+  border-radius: var(--cy-radius, 6px);
+  background: var(--cy-surface, #FFFFFF);
+  color: var(--cy-text-2, #374151);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--cy-font, 'Inter', sans-serif);
+  cursor: pointer;
+}
+
+.todayBtn:hover {
+  background: var(--cy-hover, #F3F4F6);
+}
+
+.arrowBtn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--cy-radius, 6px);
+  color: var(--cy-text-3, #6B7280);
+  background: transparent;
+  border: 1px solid var(--cy-border, #E5E7EB);
+  cursor: pointer;
+  padding: 0;
+}
+
+.arrowBtn:hover {
+  background: var(--cy-hover, #F3F4F6);
+  color: var(--cy-text, #1F2937);
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Legend */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--cy-text-3, #6B7280);
+  white-space: nowrap;
+}
+
+.legendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Week/Month toggle */
+.viewToggle {
+  display: flex;
+  border: 1px solid var(--cy-border, #E5E7EB);
+  border-radius: var(--cy-radius, 6px);
+  overflow: hidden;
+}
+
+.viewToggleBtn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--cy-font, 'Inter', sans-serif);
+  border: none;
+  background: var(--cy-surface, #FFFFFF);
+  color: var(--cy-text-3, #6B7280);
+  cursor: pointer;
+  border-right: 1px solid var(--cy-border, #E5E7EB);
+}
+
+.viewToggleBtn:last-child {
+  border-right: none;
+}
+
+.viewToggleBtn:hover:not(.viewToggleActive) {
+  background: var(--cy-hover, #F3F4F6);
+}
+
+.viewToggleActive {
+  background: var(--cy-text, #1F2937);
+  color: #FFFFFF;
+}
+
+/* ── Grid ──────────────────────────────────────────────────────────────────── */
+/* Day headers and day cells share the same 7-col grid for perfect alignment */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.gridWeek .dayCell {
+  min-height: 300px;
+}
+
+/* Day headers (first 7 items in the grid) */
+.dayHeader {
+  padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cy-text-3, #6B7280);
+  text-align: left;
+  border-bottom: 1px solid var(--cy-border, #E5E7EB);
+}
+
+/* Day cells */
+.dayCell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 90px;
+  padding: 4px 5px;
+  border-bottom: 1px solid var(--cy-border, #E5E7EB);
+  border-right: 1px solid var(--cy-border, #E5E7EB);
+  background: var(--cy-surface, #FFFFFF);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--cy-font, 'Inter', sans-serif);
+  transition: background 0.1s;
+  overflow: hidden;
+}
+
+/* Remove right border on last column (every 7th cell after the 7 headers) */
+.dayCell:nth-child(7n + 14) {
+  border-right-color: transparent;
+}
+
+.dayCell:hover {
+  background: var(--cy-hover, #F3F4F6);
+}
+
+.outsideMonth {
+  background: var(--cy-bg, #F9FAFB);
+}
+
+.outsideMonth .dayNumber {
+  color: var(--cy-text-4, #9CA3AF);
+}
+
+.outsideMonth .meetingPreviews {
+  opacity: 0.4;
+}
+
+.today .dayNumber {
+  background: var(--cy-primary, #2563EB);
+  color: #FFFFFF;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.selected {
+  background: color-mix(in srgb, var(--cy-primary, #2563EB) 5%, var(--cy-surface, #FFFFFF)) !important;
+}
+
+.dayNumber {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cy-text-2, #374151);
+  margin-bottom: 2px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+/* ── Meeting previews inside day cells ─────────────────────────────────────── */
+
+.meetingPreviews {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.meetingPreview {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border-left: 3px solid var(--cy-primary, #2563EB);
+  background: var(--cy-bg, #F9FAFB);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.meetingPreview:hover {
+  background: var(--cy-border, #E5E7EB);
+}
+
+.previewTime {
+  font-size: 9.5px;
+  color: var(--cy-text-3, #6B7280);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.previewTitle {
+  font-size: 10px;
+  color: var(--cy-text-2, #374151);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.moreCount {
+  font-size: 10px;
+  color: var(--cy-text-3, #6B7280);
+  padding: 1px 4px;
+  font-weight: 500;
+}
+
+/* ── Day detail (below calendar) ───────────────────────────────────────────── */
+
+.dayDetail {
+  border-top: 1px solid var(--cy-border, #E5E7EB);
+  padding: 12px 0 0;
+  margin-top: 8px;
+}
+
+.dayDetailHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.dayDetailDate {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cy-text, #1F2937);
+}
+
+.dayDetailCount {
+  font-size: 12px;
+  color: var(--cy-text-3, #6B7280);
+}
+
+.dayDetailList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dayDetailItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: var(--cy-radius, 6px);
+  border-left: 3px solid var(--cy-primary, #2563EB);
+  background: var(--cy-surface, #FFFFFF);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.dayDetailItem:hover {
+  background: var(--cy-hover, #F3F4F6);
+}
+
+.dayDetailTime {
+  font-size: 12px;
+  color: var(--cy-text-3, #6B7280);
+  white-space: nowrap;
+  padding-top: 1px;
+  min-width: 56px;
+}
+
+.dayDetailInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.dayDetailTitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--cy-text, #1F2937);
+}
+
+.dayDetailCompany {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--cy-text-3, #6B7280);
+  margin-top: 2px;
+}
+
+.companyLogo {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+.stageBadge {
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+  line-height: 1.5;
+}

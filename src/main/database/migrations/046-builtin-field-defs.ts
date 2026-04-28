@@ -17,7 +17,7 @@ export function runBuiltinFieldDefsMigration(db: Database.Database): void {
       ('builtin:entityType',         'company', 'entityType',        'Type',            'select', NULL, 1, 0, -100, 0, datetime('now'), datetime('now')),
       ('builtin:pipelineStage',      'company', 'pipelineStage',     'Stage',           'select', NULL, 1, 0,  -99, 0, datetime('now'), datetime('now')),
       ('builtin:priority',           'company', 'priority',          'Priority',        'select', NULL, 1, 0,  -98, 0, datetime('now'), datetime('now')),
-      ('builtin:round',              'company', 'round',             'Round',           'select', NULL, 1, 0,  -97, 0, datetime('now'), datetime('now')),
+      ('builtin:round',              'company', 'round',             'Last Round',      'select', NULL, 1, 0,  -97, 0, datetime('now'), datetime('now')),
       ('builtin:targetCustomer',     'company', 'targetCustomer',    'Target Customer', 'select', NULL, 1, 0,  -96, 0, datetime('now'), datetime('now')),
       ('builtin:businessModel',      'company', 'businessModel',     'Business Model',  'select', NULL, 1, 0,  -95, 0, datetime('now'), datetime('now')),
       ('builtin:productStage',       'company', 'productStage',      'Product Stage',   'select', NULL, 1, 0,  -94, 0, datetime('now'), datetime('now')),

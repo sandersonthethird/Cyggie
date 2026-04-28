@@ -35,7 +35,8 @@ import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
 import { useEditCellNav } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
-import { executeBulkEdit } from '../crm/tableUtils'
+import { useCellClipboard } from '../../hooks/useCellClipboard'
+import { executeBulkEdit, createCellCallbacks } from '../crm/tableUtils'
 import type { RangeValue } from '../crm/tableUtils'
 import { chipStyle } from '../../utils/colorChip'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
@@ -213,7 +214,10 @@ export function ContactTable({
   // (scrollToRow is defined below after rowVirtualizer — forward-ref via closure)
   const scrollToRowRef = useRef<(idx: number) => void>(() => {})
 
-  const { editCell, setEditCell, handleStartEdit, handleEndEdit } = useEditCellNav(
+  const {
+    focusedCell, editCell, setEditCell, cellRange,
+    handleFocusCell, handleStartEdit, handleEndEdit, handleArrowNav, clearFocus
+  } = useEditCellNav(
     contacts.length,
     visibleCols,
     (idx) => scrollToRowRef.current(idx)
@@ -444,6 +448,68 @@ export function ContactTable({
     [contacts, selectedIds, onPatch]
   )
 
+  // ── Cell callbacks (for clipboard) ──────────────────────────────────────────
+  const { getCellValue, saveCellValue } = useMemo(() => createCellCallbacks<ContactSummary>({
+    getCustomFieldValue: (entityId, cfId) => customFieldValues?.[entityId]?.[cfId] ?? null,
+    saveCustomField: async (entityId, col, value) => {
+      const cfId = col.key.slice(7)
+      await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, {
+        fieldDefinitionId: cfId,
+        entityType: 'contact',
+        entityId,
+        valueText: col.type === 'number' ? null : (value || null),
+        valueNumber: col.type === 'number' ? (value ? parseFloat(value) : null) : null,
+      })
+      onPatchCustomField?.(entityId, cfId, value)
+    },
+    saveRegularField: async (entity, field, value) => {
+      await handleCellSave(entity, field, value)
+    },
+  }), [customFieldValues, handleCellSave, onPatchCustomField])
+
+  // ── Clipboard ──────────────────────────────────────────────────────────────
+  const {
+    copiedCell, copiedRange, clipboardToast,
+    undoAction: clipboardUndoAction,
+    handleClipboardKeyDown, handleUndo: handleClipboardUndo, dismissUndo: dismissClipboardUndo,
+  } = useCellClipboard({
+    rows: contacts,
+    visibleCols: mergedVisibleCols,
+    focusedCell,
+    editCell,
+    cellRange,
+    selectedIds,
+    getCellValue,
+    saveCellValue,
+    onStartEdit: handleStartEdit,
+    onClearTableUndo: () => { clearTimeout(undoTimerRef.current); setUndoAction(null) },
+  })
+
+  // ── Composed keyboard handler ──────────────────────────────────────────────
+  const composedKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Arrow keys for cell navigation (when focused, not editing)
+    if (!editCell && focusedCell && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      e.preventDefault()
+      const dir = e.key.replace('Arrow', '').toLowerCase() as 'up' | 'down' | 'left' | 'right'
+      handleArrowNav(dir, e.shiftKey)
+      return
+    }
+    // Enter to start editing focused cell
+    if (!editCell && focusedCell && e.key === 'Enter') {
+      e.preventDefault()
+      handleStartEdit(focusedCell.rowIdx, focusedCell.colIdx)
+      return
+    }
+    // Escape to clear focus
+    if (!editCell && focusedCell && e.key === 'Escape' && !copiedCell && !copiedRange) {
+      e.preventDefault()
+      clearFocus()
+      return
+    }
+    handleClipboardKeyDown(e)
+    handleTableKeyDown(e)
+  }, [editCell, focusedCell, copiedCell, copiedRange, handleArrowNav, handleStartEdit, clearFocus, handleClipboardKeyDown, handleTableKeyDown])
+
   // ── TanStack Virtual ───────────────────────────────────────────────────────
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -500,7 +566,7 @@ export function ContactTable({
           Editing will update {selectedIds.size} selected contacts
         </div>
       )}
-      <div className={styles.tableWrapper} ref={scrollRef} tabIndex={0} onKeyDown={handleTableKeyDown}>
+      <div className={styles.tableWrapper} ref={scrollRef} tabIndex={0} onKeyDown={composedKeyDown}>
         {/* Header row */}
         <div className={styles.headerRow} style={{ gridTemplateColumns: gridCols }}>
           {/* Checkbox */}
@@ -715,13 +781,17 @@ export function ContactTable({
                 {/* Remaining columns */}
                 {mergedVisibleCols.slice(1).map((col, relIdx) => {
                   const colIdx = relIdx + 1
-                  const isCellFocused = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
-                  const fieldKey = col.field as keyof ContactSummary
                   const customFieldId = col.key.startsWith('custom:') ? col.key.slice(7) : null
-                  const cellValue = customFieldId
-                    ? (customFieldValues?.[contact.id]?.[customFieldId] ?? null)
-                    : col.field ? (contact[fieldKey] as string | null) : null
+                  const cellValue = getCellValue(contact, col)
                   const isCustomSelect = !!customFieldId && col.type === 'select'
+
+                  const isCellEditing = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
+                  const isCellHighlighted =
+                    (focusedCell?.rowIdx === dataIndex && focusedCell?.colIdx === colIdx) ||
+                    (cellRange?.colIdx === colIdx && dataIndex >= cellRange.startRow && dataIndex <= cellRange.endRow)
+                  const isCopied =
+                    (copiedCell?.rowIdx === dataIndex && copiedCell?.colIdx === colIdx) ||
+                    (copiedRange?.colIdx === colIdx && dataIndex >= copiedRange.startRow && dataIndex <= copiedRange.endRow)
 
                   // When groupBy is active: scan mode — all cells navigate to detail
                   if (groupBy) {
@@ -738,12 +808,13 @@ export function ContactTable({
                     )
                   }
 
-                  if (isCustomSelect && !isCellFocused) {
+                  if (isCustomSelect && !isCellEditing) {
                     return (
                       <div
                         key={col.key}
-                        className={styles.chipCell}
-                        onClick={() => handleStartEdit(dataIndex, colIdx)}
+                        className={`${styles.chipCell}${isCopied ? ` ${styles.copiedCell}` : ''}${isCellHighlighted ? ` ${styles.focusedCell}` : ''}`}
+                        onClick={(e) => handleFocusCell(dataIndex, colIdx, e.shiftKey)}
+                        onDoubleClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
                         {cellValue ? (
                           <span className={styles.chip} style={chipStyle(cellValue)}>
@@ -755,42 +826,34 @@ export function ContactTable({
                   }
 
                   return (
-                    <EditableCell
-                      key={col.key}
-                      value={cellValue}
-                      col={col}
-                      isFocused={isCellFocused}
-                      onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
-                      onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
-                      onAddOption={
-                        col.type === 'select'
-                          ? async (newOption) => {
-                              if (customFieldId) {
-                                const def = useCustomFieldStore.getState().contactDefs.find(d => d.id === customFieldId)
-                                await addCustomFieldOption(customFieldId, def?.optionsJson ?? null, newOption)
-                              } else {
-                                const builtinDef = useCustomFieldStore.getState().contactDefs.find(d => d.isBuiltin && d.fieldKey === col.key)
-                                if (builtinDef) await addCustomFieldOption(builtinDef.id, builtinDef.optionsJson, newOption)
+                    <div key={col.key} className={isCopied ? styles.copiedCell : undefined}>
+                      <EditableCell
+                        value={cellValue}
+                        col={col}
+                        isHighlighted={isCellHighlighted && !isCellEditing}
+                        isEditing={isCellEditing}
+                        initialChar={isCellEditing ? editCell?.initialChar : undefined}
+                        onFocus={() => handleFocusCell(dataIndex, colIdx)}
+                        onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
+                        onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
+                        onAddOption={
+                          col.type === 'select'
+                            ? async (newOption) => {
+                                if (customFieldId) {
+                                  const def = useCustomFieldStore.getState().contactDefs.find(d => d.id === customFieldId)
+                                  await addCustomFieldOption(customFieldId, def?.optionsJson ?? null, newOption)
+                                } else {
+                                  const builtinDef = useCustomFieldStore.getState().contactDefs.find(d => d.isBuiltin && d.fieldKey === col.key)
+                                  if (builtinDef) await addCustomFieldOption(builtinDef.id, builtinDef.optionsJson, newOption)
+                                }
                               }
-                            }
-                          : undefined
-                      }
-                      onSave={async (newVal) => {
-                        if (customFieldId) {
-                          await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, {
-                            fieldDefinitionId: customFieldId,
-                            entityType: 'contact',
-                            entityId: contact.id,
-                            valueText: col.type === 'number' ? null : (newVal || null),
-                            valueNumber: col.type === 'number' ? (newVal ? parseFloat(newVal) : null) : null,
-                          })
-                          onPatchCustomField?.(contact.id, customFieldId, newVal)
-                        } else {
-                          if (!col.field) return
-                          await handleCellSave(contact, col.field, newVal)
+                            : undefined
                         }
-                      }}
-                    />
+                        onSave={async (newVal) => {
+                          await saveCellValue(contact, col, newVal)
+                        }}
+                      />
+                    </div>
                   )
                 })}
 
@@ -990,6 +1053,20 @@ export function ContactTable({
           >
             {bulkDeleting ? 'Working…' : `Delete ${selectedIds.size}`}
           </button>
+        </div>
+      )}
+
+      {/* Clipboard toast */}
+      {clipboardToast && (
+        <div className={styles.clipboardToast}>{clipboardToast}</div>
+      )}
+
+      {/* Clipboard undo toast */}
+      {clipboardUndoAction && (
+        <div className={styles.clipboardToast}>
+          Pasted to {clipboardUndoAction.count} cell{clipboardUndoAction.count !== 1 ? 's' : ''}
+          <button className={styles.clipboardUndoBtn} onClick={() => void handleClipboardUndo()}>Undo</button>
+          <button className={styles.clipboardUndoDismiss} onClick={dismissClipboardUndo}>✕</button>
         </div>
       )}
     </>

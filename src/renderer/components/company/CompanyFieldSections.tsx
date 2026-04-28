@@ -1,6 +1,7 @@
 import { useCallback, useState, type ReactNode, type HTMLAttributes } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { CompanyDetail } from '../../../shared/types/company'
+import { INVESTMENT_SECURITY_OPTIONS, PORTFOLIO_FUND_OPTIONS } from '../../../shared/types/company'
 import type { CustomFieldWithValue } from '../../../shared/types/custom-fields'
 import { PropertyRow, type PropertyRowType } from '../crm/PropertyRow'
 import { MultiCompanyPicker } from '../crm/MultiCompanyPicker'
@@ -477,7 +478,7 @@ export function CompanyFieldSections({
           {renderHardcodedSection([
             { key: 'round', visible: show('round', company.round), render: () => (
               <div className={!isEditing && fieldSources?.round ? styles.propertyWithBadge : undefined}>
-                <PropertyRow label="Round" value={company.round} type="select" options={[{ value: '', label: '—' }, ...options.round]} editMode={isEditing} onSave={(v) => save('round', v)} onAddOption={builtinDefs.round ? async (opt) => addCustomFieldOption(builtinDefs.round!.id, builtinDefs.round!.optionsJson, opt) : undefined} />
+                <PropertyRow label="Last Round" value={company.round} type="select" options={[{ value: '', label: '—' }, ...options.round]} editMode={isEditing} onSave={(v) => save('round', v)} onAddOption={builtinDefs.round ? async (opt) => addCustomFieldOption(builtinDefs.round!.id, builtinDefs.round!.optionsJson, opt) : undefined} />
                 {!isEditing && fieldSources?.round && <span className={styles.sourceBadge} title={`From: ${fieldSources.round.meetingTitle}`}>📋</span>}
               </div>
             )},
@@ -489,7 +490,7 @@ export function CompanyFieldSections({
             )},
             { key: 'postMoneyValuation', visible: show('postMoneyValuation', company.postMoneyValuation), render: () => (
               <div className={!isEditing && fieldSources?.postMoneyValuation ? styles.propertyWithBadge : undefined}>
-                <PropertyRow label="Post-Money Val." value={company.postMoneyValuation} type="currency" editMode={isEditing} onSave={(v) => save('postMoneyValuation', v)} />
+                <PropertyRow label="Initial Valuation" value={company.postMoneyValuation} type="currency" editMode={isEditing} onSave={(v) => save('postMoneyValuation', v)} />
                 {!isEditing && fieldSources?.postMoneyValuation && <span className={styles.sourceBadge} title={`From: ${fieldSources.postMoneyValuation.meetingTitle}`}>📋</span>}
               </div>
             )},
@@ -515,6 +516,16 @@ export function CompanyFieldSections({
                 <MultiCompanyPicker
                   value={company.priorInvestorsList}
                   onChange={(v) => onUpdate({ priorInvestorsList: v })}
+                  readOnly={!isEditing}
+                />
+              </div>
+            )},
+            { key: 'subsequentInvestors', visible: show('subsequentInvestors', company.subsequentInvestorsList), render: () => (
+              <div className={styles.propertyRow}>
+                <span className={styles.propertyLabel}>Subsequent Investors</span>
+                <MultiCompanyPicker
+                  value={company.subsequentInvestorsList}
+                  onChange={(v) => onUpdate({ subsequentInvestorsList: v })}
                   readOnly={!isEditing}
                 />
               </div>
@@ -546,17 +557,35 @@ export function CompanyFieldSections({
         const showInvestment = isEditing || company.entityType === 'portfolio' ||
           company.investmentSize || company.ownershipPct ||
           company.followonInvestmentSize || company.totalInvested ||
+          company.investmentMark || company.investmentRound ||
+          company.lastCompanyValuation || company.followonCheck ||
           customFieldSection.sectionedFields('investment').length > 0
         if (!showInvestment) return null
+
+        const portfolioFundOptions = [{ value: '', label: '—' }, ...PORTFOLIO_FUND_OPTIONS.map(o => ({ value: o.value, label: o.label }))]
+        const securityOptions = [{ value: '', label: '—' }, ...INVESTMENT_SECURITY_OPTIONS.map(o => ({ value: o.value, label: o.label }))]
+        const investmentRoundOptions = [{ value: '', label: '—' }, ...options.round]
+
         return (
           <div key="investment" {...sectionContainerProps}>
             <SectionHeader title="Investment" collapsible isCollapsed={isCollapsed('investment')} onToggle={() => toggleSection('investment')} />
             {!isCollapsed('investment') && (<>
             {renderHardcodedSection([
-              { key: 'investmentSize', visible: show('investmentSize', company.investmentSize), render: () => <PropertyRow label="Investment Size" value={company.investmentSize} type="text" editMode={isEditing} onSave={(v) => save('investmentSize', v)} /> },
-              { key: 'ownershipPct', visible: show('ownershipPct', company.ownershipPct), render: () => <PropertyRow label="Ownership %" value={company.ownershipPct} type="text" editMode={isEditing} onSave={(v) => save('ownershipPct', v)} /> },
+              { key: 'portfolioFund', visible: show('portfolioFund', company.portfolioFund), render: () => <PropertyRow label="Portfolio" value={company.portfolioFund} type="select" options={portfolioFundOptions} editMode={isEditing} onSave={(v) => save('portfolioFund', v)} /> },
+              { key: 'investmentSize', visible: show('investmentSize', company.investmentSize), render: () => <PropertyRow label="Initial Investment" value={company.investmentSize} type="text" editMode={isEditing} onSave={(v) => save('investmentSize', v)} /> },
+              { key: 'ownershipPct', visible: show('ownershipPct', company.ownershipPct), render: () => <PropertyRow label="Initial Ownership %" value={company.ownershipPct} type="text" editMode={isEditing} onSave={(v) => save('ownershipPct', v)} /> },
+              { key: 'investmentMark', visible: show('investmentMark', company.investmentMark), render: () => <PropertyRow label="Investment Mark" value={company.investmentMark} type="number" editMode={isEditing} onSave={(v) => save('investmentMark', v)} /> },
+              { key: 'investmentRound', visible: show('investmentRound', company.investmentRound), render: () => <PropertyRow label="Investment Round" value={company.investmentRound} type="select" options={investmentRoundOptions} editMode={isEditing} onSave={(v) => save('investmentRound', v)} /> },
+              { key: 'initialInvestmentSecurity', visible: show('initialInvestmentSecurity', company.initialInvestmentSecurity), render: () => <PropertyRow label="Initial Security" value={company.initialInvestmentSecurity} type="select" options={securityOptions} editMode={isEditing} onSave={(v) => save('initialInvestmentSecurity', v)} /> },
+              { key: 'dateOfInitialInvestment', visible: show('dateOfInitialInvestment', company.dateOfInitialInvestment), render: () => <PropertyRow label="Date of Initial Investment" value={company.dateOfInitialInvestment} type="date" editMode={isEditing} onSave={(v) => save('dateOfInitialInvestment', v)} /> },
+              { key: 'initialRoundSize', visible: show('initialRoundSize', company.initialRoundSize), render: () => <PropertyRow label="Initial Round Size" value={company.initialRoundSize} type="number" editMode={isEditing} onSave={(v) => save('initialRoundSize', v)} /> },
+              { key: 'lastCompanyValuation', visible: show('lastCompanyValuation', company.lastCompanyValuation), render: () => <PropertyRow label="Last Company Valuation" value={company.lastCompanyValuation} type="number" editMode={isEditing} onSave={(v) => save('lastCompanyValuation', v)} /> },
+              { key: 'followonCheck', visible: show('followonCheck', company.followonCheck), render: () => <PropertyRow label="Follow-on Check" value={company.followonCheck} type="number" editMode={isEditing} onSave={(v) => save('followonCheck', v)} /> },
+              { key: 'followonDate', visible: show('followonDate', company.followonDate), render: () => <PropertyRow label="Follow-on Date" value={company.followonDate} type="date" editMode={isEditing} onSave={(v) => save('followonDate', v)} /> },
+              { key: 'followonCheck2', visible: show('followonCheck2', company.followonCheck2), render: () => <PropertyRow label="Follow-on Check 2" value={company.followonCheck2} type="number" editMode={isEditing} onSave={(v) => save('followonCheck2', v)} /> },
+              { key: 'followonDate2', visible: show('followonDate2', company.followonDate2), render: () => <PropertyRow label="Follow-on Date 2" value={company.followonDate2} type="date" editMode={isEditing} onSave={(v) => save('followonDate2', v)} /> },
               { key: 'followonInvestmentSize', visible: show('followonInvestmentSize', company.followonInvestmentSize), render: () => <PropertyRow label="Follow-on Size" value={company.followonInvestmentSize} type="text" editMode={isEditing} onSave={(v) => save('followonInvestmentSize', v)} /> },
-              { key: 'totalInvested', visible: show('totalInvested', company.totalInvested), render: () => <PropertyRow label="Total Invested" value={company.totalInvested} type="text" editMode={isEditing} onSave={(v) => save('totalInvested', v)} /> },
+              { key: 'totalInvested', visible: show('totalInvested', company.totalInvested), render: () => <PropertyRow label="Total Investment" value={company.totalInvested} type="text" editMode={isEditing} onSave={(v) => save('totalInvested', v)} /> },
             ], 'investment')}
             {renderSectionedFields('investment')}
             </>)}

@@ -11,6 +11,7 @@ export interface MeetingCompany {
   name: string
   domain: string | null
   stage: CompanyPipelineStage | null
+  entityType: CompanyEntityType | null
 }
 
 export interface ChatMessage {

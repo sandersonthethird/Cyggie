@@ -1,8 +1,8 @@
 import { useEffect, useCallback, useMemo } from 'react'
 import { useAppStore } from '../stores/app.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import type { Meeting, MeetingBucket, MeetingListFilter } from '../../shared/types/meeting'
-import type { CompanyPipelineStage } from '../../shared/types/company'
+import type { Meeting, MeetingBucket, MeetingListFilter, MeetingStatus } from '../../shared/types/meeting'
+import type { CompanyEntityType, CompanyPipelineStage } from '../../shared/types/company'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import { api } from '../api'
 
@@ -158,6 +158,10 @@ interface UseMeetingsOptions {
   bucket?: MeetingBucket
   stage?: CompanyPipelineStage
   searchQuery?: string
+  dateFrom?: string
+  dateTo?: string
+  entityTypes?: Set<CompanyEntityType>
+  statuses?: Set<MeetingStatus>
 }
 
 export function useMeetings(options?: UseMeetingsOptions) {
@@ -201,7 +205,7 @@ export function useMeetings(options?: UseMeetingsOptions) {
   }, [meetings, calendarEvents, calendarConnected])
 
   // Compute counts from all meetings (before filtering)
-  const now = useMemo(() => new Date(), [allMeetings]) // eslint-disable-line react-hooks/exhaustive-deps
+  const now = useMemo(() => new Date(), []) // eslint-disable-line react-hooks/exhaustive-deps
   const counts = useMemo(() => computeCounts(allMeetings, now), [allMeetings, now])
 
   // Apply filters
@@ -210,6 +214,10 @@ export function useMeetings(options?: UseMeetingsOptions) {
     const bucket = options?.bucket
     const stage = options?.stage
     const search = options?.searchQuery?.trim()
+    const dateFrom = options?.dateFrom
+    const dateTo = options?.dateTo
+    const entityTypes = options?.entityTypes
+    const statuses = options?.statuses
 
     if (bucket && bucket !== 'all') {
       if (bucket === 'unreviewed') {
@@ -223,12 +231,30 @@ export function useMeetings(options?: UseMeetingsOptions) {
       result = result.filter(m => m.company?.stage === stage)
     }
 
+    if (dateFrom) {
+      result = result.filter(m => m.date >= dateFrom)
+    }
+
+    if (dateTo) {
+      // Add a day so dateTo is inclusive (meeting at 2026-04-23T14:00 matches dateTo=2026-04-23)
+      const dateToEnd = dateTo + 'T23:59:59'
+      result = result.filter(m => m.date <= dateToEnd)
+    }
+
+    if (entityTypes && entityTypes.size > 0) {
+      result = result.filter(m => m.company?.entityType != null && entityTypes.has(m.company.entityType))
+    }
+
+    if (statuses && statuses.size > 0) {
+      result = result.filter(m => statuses.has(m.status))
+    }
+
     if (search) {
       result = result.filter(m => matchesSearch(m, search))
     }
 
     return result
-  }, [allMeetings, options?.bucket, options?.stage, options?.searchQuery, now])
+  }, [allMeetings, options?.bucket, options?.stage, options?.searchQuery, options?.dateFrom, options?.dateTo, options?.entityTypes, options?.statuses, now])
 
   // Group by date and sort day groups
   const groupedMeetings = useMemo(() => {

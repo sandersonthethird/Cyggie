@@ -1,5 +1,19 @@
 # TODOS
 
+## P2 — Contacts (Performance)
+
+### Pre-compute contact activity touchpoints
+**What:** Add `last_meeting_date` and `last_email_date` columns to the contacts table, updated on write (via triggers or write hooks). Remove the 3 full-table scan functions (`buildLatestMeetingTouchByEmail`, `buildLatestEmailTouchByEmail`, `buildLatestEmailTouchByContactId`) from the read path.
+**Why:** When `includeActivityTouchpoint=true`, `listContacts()` runs 3 full-table scans across meetings and email tables on every call. This is the heaviest query in the app and fires on every Contacts page mount. The correct pattern for web/mobile is to move this work from read-time to write-time.
+**Pros:** Eliminates O(n) scans on every Contacts load; correct architecture for web/mobile migration; read path becomes a simple column read.
+**Cons:** Requires a migration to add columns + backfill existing data; write paths (meeting create/update, email sync) need to update the denormalized columns.
+**Context:** The 3 scan functions are in `src/main/database/repositories/contact.repo.ts` lines 641-760. Called when `includeActivityTouchpoint=true` (Contacts.tsx line 388). Write-side update points: meeting creation/update in `meeting.repo.ts`, email sync in `email.repo.ts`. Backfill migration: run the existing scan logic once to populate columns for all existing contacts.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Nothing.
+
+---
+
 ## P3 — Contacts
 
 ### Talent Pipeline: AI-suggested stage progressions

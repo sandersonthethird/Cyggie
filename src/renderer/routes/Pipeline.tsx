@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useStaleGuard } from '../hooks/useStaleGuard'
 import { useNavigate } from 'react-router-dom'
 import NewCompanyModal from '../components/company/NewCompanyModal'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
@@ -398,20 +399,25 @@ export default function Pipeline() {
   useEffect(() => { setJSON('cyggie:pipeline-sort-column', sortColumn) }, [sortColumn]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setJSON('cyggie:pipeline-sort-direction', sortDirection) }, [sortDirection]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const getGuard = useStaleGuard()
+
   const loadData = useCallback(async () => {
+    const isStale = getGuard()
     setLoading(true)
     setError(null)
     try {
       const pipelineData = await api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST, {
         passExpiryBefore: passExpiryCutoff(passExpiryDays)
       })
+      if (isStale()) return
       setCompanies(pipelineData)
     } catch (err) {
+      if (isStale()) return
       setError(String(err))
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
-  }, [passExpiryDays])
+  }, [passExpiryDays, getGuard])
 
   useEffect(() => {
     api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL)

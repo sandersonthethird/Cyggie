@@ -1,11 +1,14 @@
+.topBarWrap {
+  flex-shrink: 0;
+  background: var(--cy-surface, #FFFFFF);
+}
+
 .bar {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px 28px;
   border-bottom: 1px solid var(--cy-border, #E5E7EB);
-  background: var(--cy-surface, #FFFFFF);
-  flex-shrink: 0;
 }
 
 .searchWrap {
@@ -59,6 +62,27 @@
   pointer-events: none;
 }
 
+.clearBtn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--cy-text-4, #9CA3AF);
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  border-radius: 3px;
+}
+
+.clearBtn:hover {
+  color: var(--cy-text, #1F2937);
+  background: var(--cy-surface-2, #F3F4F6);
+}
+
+/* Filter button */
 .filterBtn {
   display: flex;
   align-items: center;
@@ -78,8 +102,91 @@
   background: var(--cy-hover, #F3F4F6);
 }
 
+.filterBtnActive {
+  border-color: var(--cy-primary, #2563EB);
+  color: var(--cy-primary, #2563EB);
+}
+
+.filterBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--cy-primary, #2563EB);
+  color: #FFFFFF;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
 .spacer {
   flex: 1;
+}
+
+/* Filter row */
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 28px;
+  border-bottom: 1px solid var(--cy-border, #E5E7EB);
+  background: var(--cy-bg, #F9FAFB);
+}
+
+.filterGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filterLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--cy-text-3, #6B7280);
+  white-space: nowrap;
+}
+
+.dateInput {
+  padding: 4px 8px;
+  border: 1px solid var(--cy-border, #E5E7EB);
+  border-radius: var(--cy-radius, 6px);
+  font-size: 12px;
+  font-family: var(--cy-font, 'Inter', sans-serif);
+  color: var(--cy-text, #1F2937);
+  background: var(--cy-surface, #FFFFFF);
+  outline: none;
+}
+
+.dateInput:focus {
+  border-color: var(--cy-text-3, #6B7280);
+}
+
+.dateSep {
+  font-size: 12px;
+  color: var(--cy-text-4, #9CA3AF);
+}
+
+.clearAllBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--cy-radius, 6px);
+  background: none;
+  color: var(--cy-text-3, #6B7280);
+  font-size: 12px;
+  font-family: var(--cy-font, 'Inter', sans-serif);
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.clearAllBtn:hover {
+  background: var(--cy-surface-2, #F3F4F6);
+  color: var(--cy-text, #1F2937);
 }
 
 /* View switch pills */

@@ -1,53 +1,131 @@
 /* ── Views bar container ── */
 .viewsBar {
+  position: relative;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 4px 12px;
   flex-shrink: 0;
-  min-height: 32px;
-  border-bottom: 1px solid var(--color-bg-tertiary);
 }
 
-/* ── Saved view chips ── */
-.viewChip {
+/* ── Header trigger — shows active view name ── */
+.viewsHeader {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 6px 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  background: var(--color-card-bg);
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: opacity 0.12s;
 }
 
-.viewChip:hover {
-  border-color: var(--color-primary);
+.viewsHeader:hover {
+  opacity: 0.8;
+}
+
+.viewsHeaderOpen {
+  opacity: 0.8;
+}
+
+.viewsTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
   color: var(--color-text-primary);
+  white-space: nowrap;
 }
 
-.viewChipActive {
+.viewsChevron {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  line-height: 1;
+}
+
+/* ── Dropdown menu ── */
+.viewsDropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  min-width: 200px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  padding: 4px;
+}
+
+.viewsDivider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px 0;
+}
+
+/* ── Menu items ── */
+.viewsItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.viewsItem:hover {
+  background: var(--color-card-hover);
+}
+
+.viewsItemActive {
   background: var(--color-accent);
-  border-color: var(--color-accent);
   color: #fff;
 }
 
-.viewChipActive:hover {
+.viewsItemActive:hover {
   background: var(--color-accent);
   color: #fff;
 }
 
-.viewChipDrifted {
-  border-style: dashed;
+.viewsItemDrifted {
+  border: 1px dashed var(--color-border);
 }
 
-/* Drift indicator dot — shown when last-applied view's state has changed */
+.viewsItemLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewsItemX {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+}
+
+.viewsItem:hover .viewsItemX {
+  opacity: 0.5;
+}
+
+.viewsItemX:hover {
+  opacity: 1 !important;
+}
+
+/* Drift indicator dot */
 .driftDot {
   display: inline-block;
   width: 5px;
@@ -55,64 +133,13 @@
   border-radius: 50%;
   background: var(--color-primary);
   flex-shrink: 0;
-  margin-right: 2px;
 }
 
-.viewChipX {
-  background: none;
-  border: none;
-  padding: 0 2px;
-  font-size: 13px;
-  line-height: 1;
-  color: inherit;
-  opacity: 0.6;
-  cursor: pointer;
-}
-
-.viewChipX:hover {
-  opacity: 1;
-}
-
-/* ── Save view button + popover ── */
-.saveWrap {
-  position: relative;
-}
-
-.saveBtn {
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 3px 10px;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.12s;
-}
-
-.saveBtn:hover {
-  color: var(--color-text-secondary);
-  border-color: var(--color-text-tertiary);
-}
-
-.saveBtnActive {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.savePopover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 50;
+/* ── Save view row ── */
+.saveRow {
   display: flex;
   gap: 6px;
-  background: var(--color-card-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.16);
-  padding: 8px;
-  min-width: 200px;
+  padding: 4px;
 }
 
 .saveInput {
@@ -124,6 +151,7 @@
   background: var(--color-bg);
   color: var(--color-text);
   outline: none;
+  min-width: 0;
 }
 
 .saveInput:focus {
@@ -140,6 +168,7 @@
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .saveConfirmBtn:disabled {

@@ -11,7 +11,7 @@ const CHIP_LABELS: Record<string, string> = {
   entityType: 'Type',
   pipelineStage: 'Stage',
   priority: 'Priority',
-  round: 'Round',
+  round: 'Last Round',
 }
 
 function HealthBadge({ lastTouchpoint }: { lastTouchpoint: string | null }) {

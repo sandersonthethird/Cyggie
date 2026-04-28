@@ -16,54 +16,41 @@
   border-bottom: 1px solid var(--color-border);
 }
 
-.headerActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* ViewsBar fills the left, 3-dot menu pushed right */
+.header > *:first-child {
+  flex: 1;
+  min-width: 0;
 }
 
 
-.newButton {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: 4px 12px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.newButton:hover {
-  color: var(--color-text-primary);
-  background: var(--color-card-hover);
-}
-
-/* ── Actions dropdown ── */
+/* ── 3-dot menu ── */
 .actionsDropdown {
   position: relative;
+  flex-shrink: 0;
 }
 
-.actionsBtn {
+.moreBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: 4px 10px;
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 16px;
+  line-height: 1;
   cursor: pointer;
-  white-space: nowrap;
   transition: background 0.15s, color 0.15s;
 }
 
-.actionsBtn:hover {
+.moreBtn:hover {
   color: var(--color-text-primary);
   background: var(--color-card-hover);
 }
 
-.actionsBtn:disabled {
+.moreBtn:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -71,7 +58,7 @@
 .actionsMenu {
   position: absolute;
   top: 100%;
-  left: 0;
+  right: 0;
   margin-top: 4px;
   min-width: 180px;
   background: var(--color-card-bg);

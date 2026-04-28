@@ -7,6 +7,7 @@ import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 import { TABLE_EXTENSIONS } from '../lib/tiptap-extensions'
 import { Clock } from 'lucide-react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
@@ -2051,7 +2052,7 @@ export default function MeetingDetail() {
                       </div>
                     )}
                     <div className={styles.markdown}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
                         {injectFindMarks(preprocessSummaryMarkdown(streamedSummary), findMatches, activeMatchIndex)}
                       </ReactMarkdown>
                     </div>
@@ -2066,7 +2067,7 @@ export default function MeetingDetail() {
                     onClick={() => { if (!findOpen) setEditingSummary(true) }}
                     title={findOpen ? undefined : 'Click to edit'}
                   >
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
                       {injectFindMarks(preprocessSummaryMarkdown(summaryDraft ?? ''), findMatches, activeMatchIndex)}
                     </ReactMarkdown>
                   </div>
@@ -2138,7 +2139,9 @@ export default function MeetingDetail() {
           <div className={styles.transcriptTab}>
             {transcript && (
               <div className={styles.markdown}>
-                {injectFindMarks(transcript ?? '', findMatches, activeMatchIndex)}
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                  {injectFindMarks(transcript ?? '', findMatches, activeMatchIndex)}
+                </ReactMarkdown>
               </div>
             )}
             {isThisMeetingRecording && (

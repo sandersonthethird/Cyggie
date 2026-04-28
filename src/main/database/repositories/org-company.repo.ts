@@ -86,10 +86,26 @@ interface CompanyRow {
   field_sources: string | null
   key_takeaways: string | null
   // Portfolio fields from migration 045
+  portfolio_fund: string | null
   investment_size: string | null
   ownership_pct: string | null
   followon_investment_size: string | null
   total_invested: string | null
+  // Portfolio investment fields from migration 073
+  investment_mark: number | null
+  investment_round: string | null
+  initial_investment_security: string | null
+  date_of_initial_investment: string | null
+  initial_round_size: number | null
+  last_company_valuation: number | null
+  followon_check: number | null
+  followon_date: string | null
+  followon_check_2: number | null
+  followon_date_2: string | null
+  // Denormalized list-view fields (conditional GROUP_CONCAT joins)
+  industries_csv: string | null
+  co_investor_names: string | null
+  subsequent_investor_names: string | null
 }
 
 export interface CompanyMergeResult {
@@ -341,14 +357,66 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     nextFollowupDate: row.next_followup_date ?? null,
     fieldSources: row.field_sources ?? null,
     keyTakeaways: row.key_takeaways ?? null,
+    portfolioFund: (row.portfolio_fund as CompanySummary['portfolioFund']) || null,
     investmentSize: row.investment_size ?? null,
     ownershipPct: row.ownership_pct ?? null,
     followonInvestmentSize: row.followon_investment_size ?? null,
     totalInvested: row.total_invested ?? null,
+    // Portfolio investment fields (migration 073)
+    investmentMark: row.investment_mark ?? null,
+    investmentRound: (row.investment_round as CompanySummary['investmentRound']) || null,
+    initialInvestmentSecurity: row.initial_investment_security ?? null,
+    dateOfInitialInvestment: row.date_of_initial_investment ?? null,
+    initialRoundSize: row.initial_round_size ?? null,
+    lastCompanyValuation: row.last_company_valuation ?? null,
+    followonCheck: row.followon_check ?? null,
+    followonDate: row.followon_date ?? null,
+    followonCheck2: row.followon_check_2 ?? null,
+    followonDate2: row.followon_date_2 ?? null,
+    // Denormalized list-view fields
+    industriesCsv: row.industries_csv ?? null,
+    coInvestorNames: row.co_investor_names ?? null,
+    subsequentInvestorNames: row.subsequent_investor_names ?? null,
   }
 }
 
-function baseCompanySelect(whereClause = ''): string {
+interface BaseSelectOpts {
+  includeIndustries?: boolean
+  includeInvestorNames?: boolean
+}
+
+function baseCompanySelect(whereClause = '', opts?: BaseSelectOpts): string {
+  const industryCols = opts?.includeIndustries
+    ? 'ind.industries_csv'
+    : 'NULL AS industries_csv'
+  const investorCols = opts?.includeInvestorNames
+    ? 'coinv.co_investor_names, subinv.subsequent_investor_names'
+    : 'NULL AS co_investor_names, NULL AS subsequent_investor_names'
+
+  const industryJoin = opts?.includeIndustries ? `
+    LEFT JOIN (
+      SELECT ci.company_id, GROUP_CONCAT(i.name, ', ') AS industries_csv
+      FROM org_company_industries ci
+      JOIN industries i ON i.id = ci.industry_id
+      GROUP BY ci.company_id
+    ) ind ON ind.company_id = c.id` : ''
+
+  const coinvestorJoin = opts?.includeInvestorNames ? `
+    LEFT JOIN (
+      SELECT ci.company_id, GROUP_CONCAT(oc.canonical_name, ', ') AS co_investor_names
+      FROM company_investors ci
+      JOIN org_companies oc ON oc.id = ci.investor_company_id
+      WHERE ci.investor_type = 'co_investor'
+      GROUP BY ci.company_id
+    ) coinv ON coinv.company_id = c.id
+    LEFT JOIN (
+      SELECT ci.company_id, GROUP_CONCAT(oc.canonical_name, ', ') AS subsequent_investor_names
+      FROM company_investors ci
+      JOIN org_companies oc ON oc.id = ci.investor_company_id
+      WHERE ci.investor_type = 'subsequent_investor'
+      GROUP BY ci.company_id
+    ) subinv ON subinv.company_id = c.id` : ''
+
   return `
     SELECT
       c.id,
@@ -415,10 +483,23 @@ function baseCompanySelect(whereClause = ''): string {
       c.referral_contact_id,
       c.next_followup_date,
       NULL AS field_sources,
+      c.portfolio_fund,
       c.investment_size,
       c.ownership_pct,
       c.followon_investment_size,
-      c.total_invested
+      c.total_invested,
+      c.investment_mark,
+      c.investment_round,
+      c.initial_investment_security,
+      c.date_of_initial_investment,
+      c.initial_round_size,
+      c.last_company_valuation,
+      c.followon_check,
+      c.followon_date,
+      c.followon_check_2,
+      c.followon_date_2,
+      ${industryCols},
+      ${investorCols}
     FROM org_companies c
     LEFT JOIN (
       SELECT
@@ -462,7 +543,7 @@ function baseCompanySelect(whereClause = ''): string {
       FROM contacts
       WHERE primary_company_id IS NOT NULL
       GROUP BY primary_company_id
-    ) cc ON cc.primary_company_id = c.id
+    ) cc ON cc.primary_company_id = c.id${industryJoin}${coinvestorJoin}
     ${whereClause}
   `
 }
@@ -497,7 +578,26 @@ function baseCompanySelectLight(whereClause = ''): string {
       c.updated_at AS last_touchpoint,
       c.created_at,
       c.updated_at,
-      NULL AS field_sources
+      c.portfolio_fund,
+      NULL AS field_sources,
+      NULL AS key_takeaways,
+      c.investment_size,
+      c.ownership_pct,
+      c.followon_investment_size,
+      c.total_invested,
+      c.investment_mark,
+      c.investment_round,
+      c.initial_investment_security,
+      c.date_of_initial_investment,
+      c.initial_round_size,
+      c.last_company_valuation,
+      c.followon_check,
+      c.followon_date,
+      c.followon_check_2,
+      c.followon_date_2,
+      NULL AS industries_csv,
+      NULL AS co_investor_names,
+      NULL AS subsequent_investor_names
     FROM org_companies c
     ${whereClause}
   `
@@ -564,10 +664,14 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
   const offset = filter?.offset ?? 0
   const paginate = limit !== undefined
   const includeStats = filter?.includeStats === true
+  const selectOpts: BaseSelectOpts = {
+    includeIndustries: filter?.includeIndustries,
+    includeInvestorNames: filter?.includeInvestorNames,
+  }
 
   const rows = db
     .prepare(
-      `${includeStats ? baseCompanySelect(where) : baseCompanySelectLight(where)}
+      `${includeStats ? baseCompanySelect(where, selectOpts) : baseCompanySelectLight(where)}
        ${buildCompanyOrderBy(filter?.sortBy, includeStats)}
        ${paginate ? 'LIMIT ? OFFSET ?' : ''}`
     )
@@ -710,16 +814,22 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         sourceType: nullStr, sourceEntityType: null, sourceEntityId: nullStr,
         relationshipOwner: nullStr, dealSource: nullStr,
         warmIntroSource: nullStr, referralContactId: nullStr, nextFollowupDate: nullStr,
-        investmentSize: nullStr, ownershipPct: nullStr,
+        portfolioFund: null, investmentSize: nullStr, ownershipPct: nullStr,
         followonInvestmentSize: nullStr, totalInvested: nullStr,
         postMoneyValuation: nullNum, priority: null,
         includeInCompaniesView: false, classificationSource: 'manual',
         classificationConfidence: nullNum, contactCount: 0, lastTouchpoint: nullStr,
         meetingCount: 0, noteCount: 0, emailCount: 0,
+        investmentMark: nullNum, investmentRound: null,
+        initialInvestmentSecurity: nullStr, dateOfInitialInvestment: nullStr,
+        initialRoundSize: nullNum, lastCompanyValuation: nullNum,
+        followonCheck: nullNum, followonDate: nullStr,
+        followonCheck2: nullNum, followonDate2: nullStr,
+        industriesCsv: nullStr, coInvestorNames: nullStr, subsequentInvestorNames: nullStr,
         createdAt: '', updatedAt: '',
         industries: [], themes: [],
-        sourceEntityName: nullStr, coInvestorsList: [], priorInvestorsList: [], coInvestedIn: [],
-        fieldSources: nullStr
+        sourceEntityName: nullStr, coInvestorsList: [], priorInvestorsList: [], subsequentInvestorsList: [], coInvestedIn: [],
+        fieldSources: nullStr, keyTakeaways: nullStr
       } satisfies CompanyDetail
     }
   }
@@ -789,6 +899,7 @@ export function getCompany(companyId: string): CompanyDetail | null {
 
   const coInvestorsList = getCompanyInvestors(db, companyId, 'co_investor')
   const priorInvestorsList = getCompanyInvestors(db, companyId, 'prior_investor')
+  const subsequentInvestorsList = getCompanyInvestors(db, companyId, 'subsequent_investor')
   const coInvestedIn = getCompanyCoInvestedIn(db, companyId)
 
   return {
@@ -798,6 +909,7 @@ export function getCompany(companyId: string): CompanyDetail | null {
     sourceEntityName,
     coInvestorsList,
     priorInvestorsList,
+    subsequentInvestorsList,
     coInvestedIn,
   }
 }
@@ -805,7 +917,7 @@ export function getCompany(companyId: string): CompanyDetail | null {
 function getCompanyInvestors(
   db: ReturnType<typeof getDatabase>,
   companyId: string,
-  type: 'co_investor' | 'prior_investor'
+  type: 'co_investor' | 'prior_investor' | 'subsequent_investor'
 ): Array<{ id: string; name: string }> {
   try {
     return db
@@ -969,10 +1081,21 @@ const COMPANY_UPDATABLE_FIELDS = {
   pipelineStage: 'pipeline_stage',
   fieldSources: 'field_sources',
   keyTakeaways: 'key_takeaways',
+  portfolioFund: 'portfolio_fund',
   investmentSize: 'investment_size',
   ownershipPct: 'ownership_pct',
   followonInvestmentSize: 'followon_investment_size',
   totalInvested: 'total_invested',
+  investmentMark: 'investment_mark',
+  investmentRound: 'investment_round',
+  initialInvestmentSecurity: 'initial_investment_security',
+  dateOfInitialInvestment: 'date_of_initial_investment',
+  initialRoundSize: 'initial_round_size',
+  lastCompanyValuation: 'last_company_valuation',
+  followonCheck: 'followon_check',
+  followonDate: 'followon_date',
+  followonCheck2: 'followon_check_2',
+  followonDate2: 'followon_date_2',
 } as const
 
 type CompanyUpdatableKey = keyof typeof COMPANY_UPDATABLE_FIELDS
@@ -1093,7 +1216,7 @@ export function updateCompanyIndustries(companyId: string, names: string[]): voi
 
 export function setCompanyInvestors(
   companyId: string,
-  type: 'co_investor' | 'prior_investor',
+  type: 'co_investor' | 'prior_investor' | 'subsequent_investor',
   investors: Array<{ id: string; name: string }>
 ): void {
   const db = getDatabase()

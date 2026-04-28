@@ -23,8 +23,28 @@ export const ENTITY_TYPE_OPTIONS: { value: CompanyEntityType; label: string }[] 
   { value: 'other',     label: 'Other'     },
 ]
 
+export type CompanyPortfolioFund = 'fund_i' | 'fund_ii' | 'fund_iii' | 'fund_iv' | 'fund_v' | 'personal'
+
+export const PORTFOLIO_FUND_OPTIONS: { value: CompanyPortfolioFund; label: string }[] = [
+  { value: 'fund_i',    label: 'Fund I'    },
+  { value: 'fund_ii',   label: 'Fund II'   },
+  { value: 'fund_iii',  label: 'Fund III'  },
+  { value: 'fund_iv',   label: 'Fund IV'   },
+  { value: 'fund_v',    label: 'Fund V'    },
+  { value: 'personal',  label: 'Personal'  },
+]
+
 export type CompanyPriority = 'high' | 'further_work' | 'monitor'
-export type CompanyRound = 'pre_seed' | 'seed' | 'seed_extension' | 'series_a' | 'series_b'
+export type CompanyRound = 'pre_seed' | 'seed' | 'seed_extension' | 'series_a' | 'series_b' | 'series_c' | 'series_d'
+
+export type InvestmentSecurityType = 'preferred_stock' | 'safe' | 'convertible_note' | 'common_stock'
+
+export const INVESTMENT_SECURITY_OPTIONS: { value: InvestmentSecurityType; label: string }[] = [
+  { value: 'preferred_stock', label: 'Preferred Stock' },
+  { value: 'safe', label: 'SAFE' },
+  { value: 'convertible_note', label: 'Convertible Note' },
+  { value: 'common_stock', label: 'Common Stock' },
+]
 export type CompanyPipelineStage = 'screening' | 'diligence' | 'decision' | 'documentation' | 'pass'
 export type CompanySortBy = 'recent_touch' | 'name'
 
@@ -36,6 +56,8 @@ export interface CompanyListFilter {
   entityTypes?: CompanyEntityType[]
   sortBy?: CompanySortBy
   includeStats?: boolean
+  includeIndustries?: boolean
+  includeInvestorNames?: boolean
 }
 
 export interface CompanySummary {
@@ -97,10 +119,26 @@ export interface CompanySummary {
   referralContactId: string | null
   nextFollowupDate: string | null
   // Portfolio fields (for entityType = 'portfolio')
+  portfolioFund: CompanyPortfolioFund | null
   investmentSize: string | null
   ownershipPct: string | null
   followonInvestmentSize: string | null
   totalInvested: string | null
+  // New portfolio investment fields
+  investmentMark: number | null
+  investmentRound: CompanyRound | null
+  initialInvestmentSecurity: string | null
+  dateOfInitialInvestment: string | null
+  initialRoundSize: number | null
+  lastCompanyValuation: number | null
+  followonCheck: number | null
+  followonDate: string | null
+  followonCheck2: number | null
+  followonDate2: string | null
+  // Denormalized list-view fields (conditional GROUP_CONCAT joins)
+  industriesCsv: string | null
+  coInvestorNames: string | null
+  subsequentInvestorNames: string | null
   // Field source tracking — JSON string { fieldName: meetingId }
   fieldSources: string | null
   // AI-generated key takeaways (bullet-point summary)
@@ -113,6 +151,7 @@ export interface CompanyDetail extends CompanySummary {
   sourceEntityName: string | null
   coInvestorsList: Array<{ id: string; name: string }>
   priorInvestorsList: Array<{ id: string; name: string }>
+  subsequentInvestorsList: Array<{ id: string; name: string }>
   coInvestedIn: Array<{ id: string; name: string }>
 }
 

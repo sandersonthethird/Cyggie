@@ -654,3 +654,55 @@
   color: var(--color-text-secondary);
   max-width: 220px;
 }
+
+/* ── Clipboard styles ── */
+.copiedCell {
+  outline: 2px dashed var(--color-primary);
+  outline-offset: -2px;
+}
+
+.focusedCell {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.clipboardToast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--color-text);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  z-index: 1000;
+}
+
+.clipboardUndoBtn {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0;
+}
+
+.clipboardUndoBtn:hover {
+  text-decoration: underline;
+}
+
+.clipboardUndoDismiss {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+}

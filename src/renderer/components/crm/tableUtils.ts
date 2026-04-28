@@ -25,6 +25,8 @@ export interface ColumnDef {
   prefix?: string
   /** Display suffix for values (e.g. 'M' for $M columns). Used by RangeFilter. */
   suffix?: string
+  /** Fixed decimal places for number display (e.g. 3 → 1.500). Used by renderDisplay. */
+  decimals?: number
 }
 
 // ─── Range & text filter types ────────────────────────────────────────────────
@@ -342,4 +344,55 @@ function parseCustomOptions(json: string | null): { value: string; label: string
   } catch {
     return undefined
   }
+}
+
+// ─── Cell value callbacks factory ────────────────────────────────────────────
+
+/**
+ * createCellCallbacks — builds getCellValue and saveCellValue callbacks
+ * that route between regular fields, custom fields, and computed fields.
+ *
+ * Used by CompanyTable and ContactTable to provide clipboard and inline-edit
+ * save logic without duplicating the routing.
+ *
+ *   getCellValue(entity, col) → raw string value (or null)
+ *   saveCellValue(entity, col, value) → async save via IPC
+ */
+export function createCellCallbacks<T extends Record<string, unknown> & { id: string }>(opts: {
+  /** Read a custom field value for an entity. colKey is the full 'custom:xyz' key. */
+  getCustomFieldValue: (entityId: string, customFieldId: string) => string | null
+  /** Save a custom field value. */
+  saveCustomField: (entityId: string, col: ColumnDef, value: string | null) => Promise<void>
+  /** Save a regular (built-in) field. */
+  saveRegularField: (entity: T, field: string, value: string | null) => Promise<void>
+  /** Read a computed field value (e.g. 'location' = city + state). Optional. */
+  getComputedValue?: (entity: T, col: ColumnDef) => string | null
+}): {
+  getCellValue: (entity: T, col: ColumnDef) => string | null
+  saveCellValue: (entity: T, col: ColumnDef, value: string | null) => Promise<void>
+} {
+  const { getCustomFieldValue, saveCustomField, saveRegularField, getComputedValue } = opts
+
+  function getCellValue(entity: T, col: ColumnDef): string | null {
+    const customFieldId = col.key.startsWith('custom:') ? col.key.slice(7) : null
+    if (customFieldId) return getCustomFieldValue(entity.id, customFieldId)
+    if (getComputedValue && !col.field) return getComputedValue(entity, col)
+    if (col.field) {
+      const val = entity[col.field]
+      return val == null || val === '' ? null : String(val)
+    }
+    return null
+  }
+
+  async function saveCellValue(entity: T, col: ColumnDef, value: string | null): Promise<void> {
+    const customFieldId = col.key.startsWith('custom:') ? col.key.slice(7) : null
+    if (customFieldId) {
+      await saveCustomField(entity.id, col, value)
+      return
+    }
+    if (!col.field) return
+    await saveRegularField(entity, col.field, value)
+  }
+
+  return { getCellValue, saveCellValue }
 }

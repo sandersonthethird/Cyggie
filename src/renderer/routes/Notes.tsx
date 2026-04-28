@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { useStaleGuard } from '../hooks/useStaleGuard'
 import { useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { usePicker } from '../hooks/usePicker'
@@ -135,23 +136,29 @@ export default function Notes() {
     return () => clearTimeout(t)
   }, [searchQuery])
 
+  const getGuard = useStaleGuard()
+
   const fetchFolderData = useCallback(async () => {
+    const isStale = getGuard()
     try {
       const [folderList, sourceList] = await Promise.all([
         api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_FOLDERS),
         api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_IMPORT_SOURCES),
       ])
+      if (isStale()) return
       setFolders(folderList)
       setImportSources(sourceList)
     } catch { /* non-fatal */ }
-  }, [showMeetingNotes])
+  }, [getGuard])
 
   const fetchFolderCounts = useCallback(async () => {
+    const isStale = getGuard()
     try {
       const rows = await api.invoke<{ folderPath: string | null; count: number }[]>(
         IPC_CHANNELS.NOTES_FOLDER_COUNTS,
         { hideClaimedMeetingNotes: !showMeetingNotes }
       )
+      if (isStale()) return
       const map: Record<string, number> = { __all__: 0 }
       for (const row of rows) {
         const key = row.folderPath ?? INBOX_SENTINEL
@@ -160,7 +167,7 @@ export default function Notes() {
       }
       setFolderCounts(map)
     } catch { /* non-fatal — no count badges */ }
-  }, [])
+  }, [showMeetingNotes, getGuard])
 
   useEffect(() => {
     void Promise.all([fetchFolderData(), fetchFolderCounts()])
@@ -178,6 +185,7 @@ export default function Notes() {
   }, [])
 
   const fetchNotes = useCallback(async () => {
+    const isStale = getGuard()
     setLoading(true)
     try {
       const opts: {
@@ -192,16 +200,17 @@ export default function Notes() {
         hideClaimedMeetingNotes: !showMeetingNotes,
       }
       const results = await api.invoke<Note[]>(IPC_CHANNELS.NOTES_LIST, opts)
+      if (isStale()) return
       const filtered = selectedImportSource
         ? results.filter(n => n.importSource === selectedImportSource)
         : results
       setNotes(filtered)
     } catch {
-      setNotes([])
+      if (!isStale()) setNotes([])
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
-  }, [filter, debouncedQuery, selectedFolder, selectedImportSource, showMeetingNotes])
+  }, [filter, debouncedQuery, selectedFolder, selectedImportSource, showMeetingNotes, getGuard])
 
   useEffect(() => {
     void fetchNotes()

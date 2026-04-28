@@ -371,6 +371,15 @@ export function registerCompanyHandlers(): void {
         const { priorInvestorsList: _, ...rest } = remaining
         remaining = rest
       }
+      if ('subsequentInvestorsList' in remaining) {
+        try {
+          companyRepo.setCompanyInvestors(companyId, 'subsequent_investor', (remaining.subsequentInvestorsList as Array<{ id: string; name: string }>) ?? [])
+        } catch (err) {
+          console.error('[COMPANY_UPDATE] Failed to update subsequentInvestorsList:', err)
+        }
+        const { subsequentInvestorsList: _, ...rest } = remaining
+        remaining = rest
+      }
 
       // Pre-fetch current pipeline_stage to detect changes
       let currentStage: string | null = null

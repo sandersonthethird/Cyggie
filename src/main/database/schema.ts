@@ -30,6 +30,7 @@ export interface MeetingRow {
   company_name?: string | null
   company_domain?: string | null
   company_stage?: string | null
+  company_entity_type?: string | null
 }
 
 export interface TemplateRow {

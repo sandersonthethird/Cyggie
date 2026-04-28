@@ -194,7 +194,7 @@ describe('matchesSearch', () => {
   })
 
   it('matches on company name', () => {
-    const m = makeMeeting({ company: { id: '1', name: 'Acme Corp', domain: null, stage: null } })
+    const m = makeMeeting({ company: { id: '1', name: 'Acme Corp', domain: null, stage: null, entityType: null } })
     expect(matchesSearch(m, 'acme')).toBe(true)
   })
 
@@ -219,9 +219,9 @@ describe('computeCounts', () => {
   it('computes bucket and stage counts correctly', () => {
     const now = new Date('2026-04-20T14:00:00Z')
     const meetings = [
-      makeMeeting({ id: '1', date: '2026-04-20T10:00:00Z', status: 'summarized', company: { id: 'c1', name: 'A', domain: null, stage: 'screening' } }),
-      makeMeeting({ id: '2', date: '2026-04-20T11:00:00Z', status: 'transcribed', company: { id: 'c2', name: 'B', domain: null, stage: 'screening' } }),
-      makeMeeting({ id: '3', date: '2026-04-19T10:00:00Z', status: 'summarized', company: { id: 'c3', name: 'C', domain: null, stage: 'diligence' } }),
+      makeMeeting({ id: '1', date: '2026-04-20T10:00:00Z', status: 'summarized', company: { id: 'c1', name: 'A', domain: null, stage: 'screening', entityType: null } }),
+      makeMeeting({ id: '2', date: '2026-04-20T11:00:00Z', status: 'transcribed', company: { id: 'c2', name: 'B', domain: null, stage: 'screening', entityType: null } }),
+      makeMeeting({ id: '3', date: '2026-04-19T10:00:00Z', status: 'summarized', company: { id: 'c3', name: 'C', domain: null, stage: 'diligence', entityType: null } }),
       makeMeeting({ id: '4', date: '2026-04-21T10:00:00Z', status: 'scheduled' }),
     ]
 

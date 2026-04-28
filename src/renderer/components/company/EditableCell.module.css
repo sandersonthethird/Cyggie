@@ -116,3 +116,14 @@
 .warmthYellow { background: #ff9f0a; }
 .warmthRed    { background: #d94545; }
 .warmthGray   { background: var(--color-text-tertiary); opacity: 0.5; }
+
+/* ── Clipboard / focus highlight styles ── */
+.focusedCell {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.copiedCell {
+  outline: 2px dashed var(--color-primary);
+  outline-offset: -2px;
+}

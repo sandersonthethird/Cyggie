@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useStaleGuard } from '../hooks/useStaleGuard'
 import { createPortal } from 'react-dom'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
@@ -9,6 +10,7 @@ import { ViewsBar } from '../components/crm/ViewsBar'
 import { CreateCustomFieldModal } from '../components/crm/CreateCustomFieldModal'
 import {
   CONTACT_COLUMN_DEFS,
+  CONTACT_DEFAULT_VISIBLE_KEYS,
   CONTACT_GROUPABLE_FIELDS,
   CONTACT_SCOPE_LABELS,
   CONTACT_SCOPE_TO_TYPE,
@@ -373,8 +375,11 @@ export default function Contacts() {
   }, [setSearchParams])
 
   // ── Data load ─────────────────────────────────────────────────────────────
+  const getGuard = useStaleGuard()
+
   const loadContacts = useCallback(async (searchQuery: string) => {
     if (!contactsEnabled) return
+    const isStale = getGuard()
     setLoading(true)
     setError(null)
     try {
@@ -387,13 +392,15 @@ export default function Contacts() {
           includeActivityTouchpoint: true
         }
       )
+      if (isStale()) return
       setContacts(results)
     } catch (err) {
+      if (isStale()) return
       setError(String(err))
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
-  }, [contactsEnabled])
+  }, [contactsEnabled, getGuard])
 
   const handleCreateInline = useCallback(async (fullName: string) => {
     const tokens = fullName.trim().split(/\s+/)
@@ -1184,6 +1191,8 @@ export default function Contacts() {
         storageKey="cyggie:contact-views"
         currentParams={searchParams}
         currentColumns={visibleKeys}
+        defaultColumns={CONTACT_DEFAULT_VISIBLE_KEYS}
+        entityLabel="Contacts"
         onApply={(params, columns) => {
           setSearchParams(params)
           setVisibleKeys(columns)

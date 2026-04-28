@@ -36,7 +36,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     company: row.company_id
-      ? { id: row.company_id, name: row.company_name!, domain: row.company_domain ?? null, stage: (row.company_stage as MeetingCompany['stage']) ?? null }
+      ? { id: row.company_id, name: row.company_name!, domain: row.company_domain ?? null, stage: (row.company_stage as MeetingCompany['stage']) ?? null, entityType: (row.company_entity_type as MeetingCompany['entityType']) ?? null }
       : null
   }
 }
@@ -367,7 +367,8 @@ export function listMeetings(filter?: MeetingListFilter): Meeting[] {
              c.id AS company_id,
              c.canonical_name AS company_name,
              c.primary_domain AS company_domain,
-             c.stage AS company_stage
+             c.stage AS company_stage,
+             c.entity_type AS company_entity_type
       FROM meetings m
       LEFT JOIN meeting_company_links mcl ON mcl.meeting_id = m.id
       LEFT JOIN org_companies c ON c.id = mcl.company_id

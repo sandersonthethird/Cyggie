@@ -71,6 +71,8 @@ import { runContactTalentPipelineMigration } from './migrations/068-contact-tale
 import { runContactKeyTakeawaysMigration } from './migrations/069-contact-key-takeaways'
 import { runCompanyKeyTakeawaysMigration } from './migrations/070-company-key-takeaways'
 import { runMeetingDismissedCompaniesMigration } from './migrations/071-meeting-dismissed-companies'
+import { runCompanyPortfolioFundMigration } from './migrations/072-company-portfolio-fund'
+import { runPortfolioInvestmentFieldsMigration } from './migrations/073-portfolio-investment-fields'
 
 let db: Database.Database | null = null
 
@@ -150,6 +152,8 @@ export function getDatabase(): Database.Database {
     runContactKeyTakeawaysMigration(db)
     runCompanyKeyTakeawaysMigration(db)
     runMeetingDismissedCompaniesMigration(db)
+    runCompanyPortfolioFundMigration(db)
+    runPortfolioInvestmentFieldsMigration(db)
   }
   return db
 }

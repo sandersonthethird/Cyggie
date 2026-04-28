@@ -3,35 +3,28 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { Meeting } from '../../../shared/types/meeting'
 import { FeedTopBar } from './FeedTopBar'
 import { DayGroup } from './DayGroup'
+import { MeetingsCalendar } from './MeetingsCalendar'
 import styles from './MeetingsFeed.module.css'
 
 interface MeetingsFeedProps {
   groupedMeetings: [string, Meeting[]][]
   filtered: Meeting[]
-  searchQuery: string
 }
 
-export function MeetingsFeed({ groupedMeetings, filtered, searchQuery }: MeetingsFeedProps) {
+export function MeetingsFeed({ groupedMeetings, filtered }: MeetingsFeedProps) {
   const navigate = useNavigate()
-  const [, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const searchRef = useRef<HTMLInputElement>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-
-  const handleSearchChange = useCallback((query: string) => {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev)
-      if (query) next.set('q', query)
-      else next.delete('q')
-      return next
-    }, { replace: true })
-  }, [setSearchParams])
+  const searchQuery = searchParams.get('q') ?? ''
+  const activeView = searchParams.get('view') === 'calendar' ? 'calendar' : 'timeline'
 
   const handleSelect = useCallback((id: string) => {
     if (id.startsWith('cal-')) return
     navigate(`/meeting/${id}`)
   }, [navigate])
 
-  // Keyboard navigation
+  // Keyboard navigation (timeline view only)
   const flatIds = filtered.map(m => m.id)
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -42,6 +35,8 @@ export function MeetingsFeed({ groupedMeetings, filtered, searchQuery }: Meeting
       searchRef.current?.focus()
       return
     }
+
+    if (activeView !== 'timeline') return
 
     if (e.key === 'j' || e.key === 'k') {
       e.preventDefault()
@@ -56,36 +51,38 @@ export function MeetingsFeed({ groupedMeetings, filtered, searchQuery }: Meeting
     if (e.key === 'Enter' && selectedId) {
       handleSelect(selectedId)
     }
-  }, [selectedId, flatIds, handleSelect])
+  }, [selectedId, flatIds, handleSelect, activeView])
 
   return (
     <div className={styles.container} onKeyDown={handleKeyDown} tabIndex={-1}>
-      <FeedTopBar
-        searchQuery={searchQuery}
-        onSearchChange={handleSearchChange}
-        searchRef={searchRef}
-      />
+      <FeedTopBar searchRef={searchRef} />
 
-      <div className={styles.scrollArea}>
-        {groupedMeetings.length === 0 ? (
-          <div className={styles.empty}>
-            <div className={styles.emptyTitle}>No meetings found</div>
-            <div className={styles.emptyDesc}>
-              {searchQuery ? 'Try adjusting your search.' : 'No meetings match the current filter.'}
+      {activeView === 'calendar' ? (
+        <div className={styles.scrollArea}>
+          <MeetingsCalendar meetings={filtered} />
+        </div>
+      ) : (
+        <div className={styles.scrollArea}>
+          {groupedMeetings.length === 0 ? (
+            <div className={styles.empty}>
+              <div className={styles.emptyTitle}>No meetings found</div>
+              <div className={styles.emptyDesc}>
+                {searchQuery ? 'Try adjusting your search or filters.' : 'No meetings match the current filter.'}
+              </div>
             </div>
-          </div>
-        ) : (
-          groupedMeetings.map(([dateKey, meetings]) => (
-            <DayGroup
-              key={dateKey}
-              dateKey={dateKey}
-              meetings={meetings}
-              selectedId={selectedId}
-              onSelect={handleSelect}
-            />
-          ))
-        )}
-      </div>
+          ) : (
+            groupedMeetings.map(([dateKey, meetings]) => (
+              <DayGroup
+                key={dateKey}
+                dateKey={dateKey}
+                meetings={meetings}
+                selectedId={selectedId}
+                onSelect={handleSelect}
+              />
+            ))
+          )}
+        </div>
+      )}
     </div>
   )
 }

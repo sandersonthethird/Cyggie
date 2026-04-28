@@ -1,12 +1,13 @@
 /**
- * ViewsBar — entity-agnostic saved views chip bar.
+ * ViewsBar — entity-agnostic saved views header + dropdown.
  *
- * Shows named filter+sort+column combos as chips.
- * Lives between the scope tabs and the filter chips row.
+ * Displays the active view name as a page-level heading with a dropdown
+ * chevron. Clicking opens a menu with "All {entity}" plus all saved views.
+ * Includes inline save + delete.
  *
  * Drift detection:
- *   - "active" chip: current state exactly matches saved view
- *   - "drifted" chip: this was the last-applied view but state has since changed
+ *   - "active" item: current state exactly matches saved view
+ *   - "drifted" item: this was the last-applied view but state has since changed
  *
  * normalizeParams() produces a stable, sorted string from URLSearchParams
  * so equivalent param sets compare equal regardless of insertion order.
@@ -14,8 +15,7 @@
  * Storage format (localStorage):
  *   SavedView[] JSON, keyed by storageKey prop.
  */
-import { useEffect, useRef, useState } from 'react'
-import type { ReadonlyURLSearchParams } from 'react-router-dom'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import styles from './ViewsBar.module.css'
 
 export interface SavedView {
@@ -25,11 +25,18 @@ export interface SavedView {
   columns: string[]    // visibleKeys snapshot
 }
 
+export interface ViewsBarHandle {
+  openSave: () => void
+}
+
 interface ViewsBarProps {
   storageKey: string                  // 'cyggie:company-views' | 'cyggie:contact-views'
-  currentParams: ReadonlyURLSearchParams
+  currentParams: URLSearchParams
   currentColumns: string[]
+  defaultColumns: string[]            // columns to restore when switching to "All"
   onApply: (params: URLSearchParams, columns: string[]) => void
+  hideSaveButton?: boolean
+  entityLabel?: string                // e.g. "Companies", "Contacts" — used as "All {label}"
 }
 
 /**
@@ -97,33 +104,41 @@ function persistViews(storageKey: string, views: SavedView[]): void {
   }
 }
 
-export function ViewsBar({ storageKey, currentParams, currentColumns, onApply }: ViewsBarProps) {
+export const ViewsBar = forwardRef<ViewsBarHandle, ViewsBarProps>(function ViewsBar(
+  { storageKey, currentParams, currentColumns, defaultColumns, onApply, hideSaveButton, entityLabel },
+  ref
+) {
   const [views, setViews] = useState<SavedView[]>(() => loadViews(storageKey))
+  const [dropdownOpen, setDropdownOpen] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
-  // Tracks which view was last applied — used to show drift indicator
   const [lastAppliedId, setLastAppliedId] = useState<string | null>(null)
-  const saveRef = useRef<HTMLDivElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
   const saveInputRef = useRef<HTMLInputElement>(null)
 
-  // Reload views when storageKey changes (switching between Company/Contact pages)
+  useImperativeHandle(ref, () => ({
+    openSave: () => { setSaveOpen(true); setDropdownOpen(true) }
+  }), [])
+
+  // Reload views when storageKey changes
   useEffect(() => {
     setViews(loadViews(storageKey))
     setLastAppliedId(null)
   }, [storageKey])
 
-  // Click-outside to close save popover
+  // Click-outside to close
   useEffect(() => {
-    if (!saveOpen) return
+    if (!dropdownOpen) return
     function handle(e: MouseEvent) {
-      if (saveRef.current && !saveRef.current.contains(e.target as Node)) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false)
         setSaveOpen(false)
         setSaveName('')
       }
     }
     document.addEventListener('mousedown', handle)
     return () => document.removeEventListener('mousedown', handle)
-  }, [saveOpen])
+  }, [dropdownOpen])
 
   useEffect(() => {
     if (saveOpen) saveInputRef.current?.focus()
@@ -131,15 +146,22 @@ export function ViewsBar({ storageKey, currentParams, currentColumns, onApply }:
 
   const normalizedCurrent = normalizeParams(currentParams)
   const currentColStr = currentColumns.join(',')
+  const allLabel = entityLabel ? `All ${entityLabel}` : 'All'
 
   function isViewActive(view: SavedView): boolean {
     return view.urlParams === normalizedCurrent && view.columns.join(',') === currentColStr
   }
 
-  // A chip shows the drift dot if it was the last-applied view but state has since drifted
   function isViewDrifted(view: SavedView): boolean {
     return lastAppliedId === view.id && !isViewActive(view)
   }
+
+  const activeView = views.find(isViewActive)
+  const driftedView = !activeView ? views.find(isViewDrifted) : null
+  const hasParams = normalizedCurrent !== ''
+  const headerLabel = activeView?.name
+    ?? driftedView?.name
+    ?? (hasParams ? `${allLabel} (filtered)` : allLabel)
 
   function applyView(view: SavedView) {
     const params = new URLSearchParams()
@@ -152,6 +174,13 @@ export function ViewsBar({ storageKey, currentParams, currentColumns, onApply }:
     }
     setLastAppliedId(view.id)
     onApply(params, view.columns)
+    setDropdownOpen(false)
+  }
+
+  function applyAll() {
+    setLastAppliedId(null)
+    onApply(new URLSearchParams(), defaultColumns)
+    setDropdownOpen(false)
   }
 
   function deleteView(id: string) {
@@ -182,62 +211,89 @@ export function ViewsBar({ storageKey, currentParams, currentColumns, onApply }:
   }
 
   return (
-    <div className={styles.viewsBar}>
-      {/* Saved view chips */}
-      {views.map((view) => {
-        const active = isViewActive(view)
-        const drifted = isViewDrifted(view)
-        return (
-          <span
-            key={view.id}
-            className={`${styles.viewChip} ${active ? styles.viewChipActive : ''} ${drifted ? styles.viewChipDrifted : ''}`}
-            onClick={() => applyView(view)}
-            title={drifted ? 'State has changed since this view was applied — click to restore' : undefined}
-          >
-            {drifted && <span className={styles.driftDot} />}
-            {view.name}
-            <button
-              className={styles.viewChipX}
-              onClick={(e) => { e.stopPropagation(); deleteView(view.id) }}
-              title="Remove view"
-            >
-              ×
-            </button>
-          </span>
-        )
-      })}
+    <div className={styles.viewsBar} ref={dropdownRef}>
+      {/* Header title — shows active view name */}
+      <button
+        className={`${styles.viewsHeader} ${dropdownOpen ? styles.viewsHeaderOpen : ''}`}
+        onClick={() => setDropdownOpen((v) => !v)}
+      >
+        <h2 className={styles.viewsTitle}>{headerLabel}</h2>
+        <span className={styles.viewsChevron}>{dropdownOpen ? '▴' : '▾'}</span>
+      </button>
 
-      {/* Save view button + popover */}
-      <div ref={saveRef} className={styles.saveWrap}>
-        <button
-          className={`${styles.saveBtn} ${saveOpen ? styles.saveBtnActive : ''}`}
-          onClick={() => setSaveOpen((v) => !v)}
-        >
-          ★ Save view
-        </button>
-        {saveOpen && (
-          <div className={styles.savePopover}>
-            <input
-              ref={saveInputRef}
-              className={styles.saveInput}
-              placeholder="View name…"
-              value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); saveCurrentView() }
-                if (e.key === 'Escape') { setSaveOpen(false); setSaveName('') }
-              }}
-            />
-            <button
-              className={styles.saveConfirmBtn}
-              onClick={saveCurrentView}
-              disabled={!saveName.trim()}
-            >
-              Save
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Dropdown menu */}
+      {dropdownOpen && (
+        <div className={styles.viewsDropdown}>
+          {/* "All" default */}
+          <button
+            className={`${styles.viewsItem} ${!activeView && !driftedView ? styles.viewsItemActive : ''}`}
+            onClick={applyAll}
+          >
+            {allLabel}
+          </button>
+
+          {views.length > 0 && <div className={styles.viewsDivider} />}
+
+          {/* Saved views */}
+          {views.map((view) => {
+            const active = isViewActive(view)
+            const drifted = isViewDrifted(view)
+            return (
+              <div
+                key={view.id}
+                className={`${styles.viewsItem} ${active ? styles.viewsItemActive : ''} ${drifted ? styles.viewsItemDrifted : ''}`}
+                onClick={() => applyView(view)}
+              >
+                {drifted && <span className={styles.driftDot} />}
+                <span className={styles.viewsItemLabel}>{view.name}</span>
+                <button
+                  className={styles.viewsItemX}
+                  onClick={(e) => { e.stopPropagation(); deleteView(view.id) }}
+                  title="Remove view"
+                >
+                  ×
+                </button>
+              </div>
+            )
+          })}
+
+          {/* Save current view */}
+          {!hideSaveButton && (
+            <>
+              <div className={styles.viewsDivider} />
+              {saveOpen ? (
+                <div className={styles.saveRow}>
+                  <input
+                    ref={saveInputRef}
+                    className={styles.saveInput}
+                    placeholder="View name…"
+                    value={saveName}
+                    onChange={(e) => setSaveName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); saveCurrentView() }
+                      if (e.key === 'Escape') { setSaveOpen(false); setSaveName('') }
+                    }}
+                  />
+                  <button
+                    className={styles.saveConfirmBtn}
+                    onClick={saveCurrentView}
+                    disabled={!saveName.trim()}
+                  >
+                    Save
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className={styles.viewsItem}
+                  onClick={() => setSaveOpen(true)}
+                >
+                  ★ Save current view
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
-}
+})

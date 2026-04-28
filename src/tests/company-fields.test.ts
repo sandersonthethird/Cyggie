@@ -72,6 +72,7 @@ const {
   updateCompanyIndustries,
   setCompanyInvestors,
   getCompany,
+  listCompanies,
 } = await import('../main/database/repositories/org-company.repo')
 
 const { getCompanyEnrichmentProposalsFromMeetings } = await import(
@@ -134,9 +135,21 @@ function buildDb(): Database.Database {
       followon_investment_size TEXT,
       total_invested TEXT,
       field_sources TEXT,
+      key_takeaways TEXT,
       source_type TEXT,
       source_entity_type TEXT,
       source_entity_id TEXT,
+      portfolio_fund TEXT,
+      investment_mark REAL,
+      investment_round TEXT,
+      initial_investment_security TEXT,
+      date_of_initial_investment TEXT,
+      initial_round_size REAL,
+      last_company_valuation REAL,
+      followon_check REAL,
+      followon_date TEXT,
+      followon_check_2 REAL,
+      followon_date_2 TEXT,
       created_by_user_id TEXT,
       updated_by_user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -344,6 +357,20 @@ describe('setCompanyInvestors', () => {
     ).all()
     expect(coRows).toHaveLength(1)
     expect(priorRows).toHaveLength(1)
+  })
+
+  it('inserts subsequent_investor rows independently of co_investor and prior_investor', () => {
+    setCompanyInvestors('portfolio1', 'co_investor', [{ id: 'inv1', name: 'Sequoia Capital' }])
+    setCompanyInvestors('portfolio1', 'subsequent_investor', [{ id: 'inv2', name: 'a16z' }])
+    const coRows = testDb.prepare(
+      `SELECT * FROM company_investors WHERE company_id = 'portfolio1' AND investor_type = 'co_investor'`
+    ).all()
+    const subRows = testDb.prepare(
+      `SELECT * FROM company_investors WHERE company_id = 'portfolio1' AND investor_type = 'subsequent_investor'`
+    ).all()
+    expect(coRows).toHaveLength(1)
+    expect(subRows).toHaveLength(1)
+    expect((subRows[0] as { investor_company_id: string }).investor_company_id).toBe('inv2')
   })
 })
 
@@ -579,5 +606,49 @@ describe('enrichment — industries normalization', () => {
     const result = await getCompanyEnrichmentProposalsFromMeetings(['meet1'], 'co1', provider)
     // No industry diff, no other changes either → null
     expect(result?.updates.industries).toBeUndefined()
+  })
+})
+
+// ─── 7. listCompanies — conditional JOINs ────────────────────────────────────
+
+describe('listCompanies — conditional JOINs', () => {
+  beforeEach(() => {
+    testDb = buildDb()
+    insertCompany(testDb, 'co1', 'StartupCo')
+    insertCompany(testDb, 'inv1', 'Sequoia Capital')
+    // Add industry
+    testDb.prepare(`INSERT INTO industries (id, name) VALUES ('ind1', 'FinTech')`).run()
+    testDb.prepare(`INSERT INTO org_company_industries (company_id, industry_id) VALUES ('co1', 'ind1')`).run()
+    // Add co-investor
+    testDb.prepare(
+      `INSERT INTO company_investors (id, company_id, investor_company_id, investor_type) VALUES ('ci1', 'co1', 'inv1', 'co_investor')`
+    ).run()
+    // Mark co1 as visible in companies view
+    testDb.prepare(`UPDATE org_companies SET include_in_companies_view = 1 WHERE id = 'co1'`).run()
+    testDb.prepare(`UPDATE org_companies SET include_in_companies_view = 1 WHERE id = 'inv1'`).run()
+  })
+
+  it('returns null for industriesCsv when includeIndustries is false', () => {
+    const results = listCompanies({ view: 'all', includeStats: true, includeIndustries: false })
+    const co = results.find(r => r.id === 'co1')!
+    expect(co.industriesCsv).toBeNull()
+  })
+
+  it('returns industries CSV when includeIndustries is true', () => {
+    const results = listCompanies({ view: 'all', includeStats: true, includeIndustries: true })
+    const co = results.find(r => r.id === 'co1')!
+    expect(co.industriesCsv).toBe('FinTech')
+  })
+
+  it('returns null for coInvestorNames when includeInvestorNames is false', () => {
+    const results = listCompanies({ view: 'all', includeStats: true, includeInvestorNames: false })
+    const co = results.find(r => r.id === 'co1')!
+    expect(co.coInvestorNames).toBeNull()
+  })
+
+  it('returns co-investor names when includeInvestorNames is true', () => {
+    const results = listCompanies({ view: 'all', includeStats: true, includeInvestorNames: true })
+    const co = results.find(r => r.id === 'co1')!
+    expect(co.coInvestorNames).toBe('Sequoia Capital')
   })
 })

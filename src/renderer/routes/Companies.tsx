@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useStaleGuard } from '../hooks/useStaleGuard'
 import { createPortal } from 'react-dom'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import NewCompanyModal from '../components/company/NewCompanyModal'
@@ -6,11 +7,12 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
 import { CompanyTable } from '../components/company/CompanyTable'
-import { ViewsBar } from '../components/crm/ViewsBar'
+import { ViewsBar, type ViewsBarHandle } from '../components/crm/ViewsBar'
 import { CreateCustomFieldModal } from '../components/crm/CreateCustomFieldModal'
 import {
   COLUMN_DEFS,
   COMPANY_GROUPABLE_FIELDS,
+  DEFAULT_VISIBLE_KEYS,
   ENTITY_TYPES,
   STAGES,
   PRIORITIES,
@@ -98,7 +100,10 @@ const FIELD_TO_PARAM: Record<string, string> = {
   entityType: 'type',
   pipelineStage: 'stage',
   priority: 'priority',
-  round: 'round'
+  round: 'round',
+  portfolioFund: 'fund',
+  investmentRound: 'investmentRound',
+  initialInvestmentSecurity: 'initialSecurity'
 }
 
 export default function Companies() {
@@ -212,6 +217,7 @@ export default function Companies() {
   // ── Actions / dedup ───────────────────────────────────────────────────────
   const [actionsOpen, setActionsOpen] = useState(false)
   const actionsRef = useRef<HTMLDivElement>(null)
+  const viewsBarRef = useRef<ViewsBarHandle>(null)
   const [checkingDuplicates, setCheckingDuplicates] = useState(false)
   const [applyingDedup, setApplyingDedup] = useState(false)
   const [dedupGroups, setDedupGroups] = useState<CompanyDuplicateGroup[] | null>(null)
@@ -240,14 +246,6 @@ export default function Companies() {
 
 
   // ── URL helpers ─────────────────────────────────────────────────────────────
-  const openCreateForm = useCallback(() => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev)
-      next.set('new', '1')
-      return next
-    })
-  }, [setSearchParams])
-
   const closeCreateForm = useCallback(() => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
@@ -320,20 +318,31 @@ export default function Companies() {
   // Map sort key to the two backend-supported sort modes
   const backendSortBy = sort[0]?.key === 'name' ? ('name' as const) : ('recent_touch' as const)
 
+  const getGuard = useStaleGuard()
+
+  const needsIndustries = visibleKeys.includes('industriesCsv')
+  const needsInvestorNames = visibleKeys.includes('coInvestorNames') || visibleKeys.includes('subsequentInvestorNames')
+
   const fetchCompanies = useCallback(async () => {
     if (!companiesEnabled) return
+    const isStale = getGuard()
     setLoading(true)
     setError(null)
     try {
-      const filter = buildUrlFilter(query, backendSortBy)
+      const filter = buildUrlFilter(query, backendSortBy, {
+        includeIndustries: needsIndustries,
+        includeInvestorNames: needsInvestorNames,
+      })
       const results = await api.invoke<CompanySummary[]>(IPC_CHANNELS.COMPANY_LIST, filter)
+      if (isStale()) return
       setCompanies(results)
     } catch (err) {
+      if (isStale()) return
       setError(String(err))
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
-  }, [companiesEnabled, query, backendSortBy])
+  }, [companiesEnabled, query, backendSortBy, needsIndustries, needsInvestorNames, getGuard])
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => {
@@ -345,6 +354,28 @@ export default function Companies() {
     searchDebounceRef.current = setTimeout(() => { void fetchCompanies() }, 300)
     return () => { clearTimeout(searchDebounceRef.current) }
   }, [fetchCompanies])
+
+  // ── Ensure default saved views exist ─────────────────────────────────────────
+  useEffect(() => {
+    const STORAGE_KEY = 'cyggie:company-views'
+    let existing: Array<{ id: string; name: string; urlParams: string; columns: string[] }> = []
+    try { existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') } catch { /* corrupt — reset */ }
+    if (existing.some(v => v.id === 'fund-iv-default')) return
+    existing.push({
+      id: 'fund-iv-default',
+      name: 'Fund IV',
+      urlParams: 'type=portfolio&fund=fund_iv',
+      columns: [
+        'name', 'description', 'primaryDomain', 'industriesCsv', 'location',
+        'totalInvested', 'investmentMark', 'investmentRound', 'investmentSize',
+        'initialInvestmentSecurity', 'dateOfInitialInvestment', 'ownershipPct',
+        'initialRoundSize', 'postMoneyValuation', 'lastCompanyValuation', 'round',
+        'followonCheck', 'followonDate', 'followonCheck2', 'followonDate2',
+        'coInvestorNames', 'subsequentInvestorNames'
+      ]
+    })
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(existing))
+  }, [])
 
   // ── Derived display list ─────────────────────────────────────────────────────
   const displayCompanies = useMemo(() => {
@@ -534,42 +565,49 @@ export default function Companies() {
           {dedupResult.failures.length > 0 ? `, failures: ${dedupResult.failures.length}` : ''}
         </span>
       )}
+      {/* Saved views bar + 3-dot menu */}
       <div className={styles.header}>
-        <div className={styles.headerActions}>
-          <div className={styles.actionsDropdown} ref={actionsRef}>
-            <button
-              className={styles.actionsBtn}
-              onClick={() => setActionsOpen((v) => !v)}
-              disabled={busy}
-            >
-              Actions &#9662;
-            </button>
-            {actionsOpen && (
-              <div className={styles.actionsMenu}>
-                <button
-                  className={styles.actionsMenuItem}
-                  onClick={() => { void reviewDuplicates(false); setActionsOpen(false) }}
-                  disabled={busy}
-                >
-                  {checkingDuplicates ? 'Checking...' : 'Review Duplicates'}
-                </button>
-              </div>
-            )}
-          </div>
-          <button className={styles.newButton} onClick={openCreateForm}>+ New</button>
+        <ViewsBar
+          ref={viewsBarRef}
+          storageKey="cyggie:company-views"
+          currentParams={searchParams}
+          currentColumns={visibleKeys}
+          defaultColumns={DEFAULT_VISIBLE_KEYS}
+          entityLabel="Companies"
+          onApply={(params, columns) => {
+            setSearchParams(params)
+            setVisibleKeys(columns)
+          }}
+          hideSaveButton
+        />
+        <div className={styles.actionsDropdown} ref={actionsRef}>
+          <button
+            className={styles.moreBtn}
+            onClick={() => setActionsOpen((v) => !v)}
+            disabled={busy}
+            title="More actions"
+          >
+            ⋮
+          </button>
+          {actionsOpen && (
+            <div className={styles.actionsMenu}>
+              <button
+                className={styles.actionsMenuItem}
+                onClick={() => { viewsBarRef.current?.openSave(); setActionsOpen(false) }}
+              >
+                Save View
+              </button>
+              <button
+                className={styles.actionsMenuItem}
+                onClick={() => { void reviewDuplicates(false); setActionsOpen(false) }}
+                disabled={busy}
+              >
+                {checkingDuplicates ? 'Checking...' : 'Review Duplicates'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Saved views bar */}
-      <ViewsBar
-        storageKey="cyggie:company-views"
-        currentParams={searchParams}
-        currentColumns={visibleKeys}
-        onApply={(params, columns) => {
-          setSearchParams(params)
-          setVisibleKeys(columns)
-        }}
-      />
 
       {/* Toolbar row 2: group-by picker + clear sort + smart filters */}
       <div className={styles.toolbarRow2}>
