@@ -1,0 +1,175 @@
+.cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  height: 100%;
+  width: 100%;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.cellEmpty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  align-items: center;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.moreCount {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+/* ── Popover ── */
+.popover {
+  position: fixed;
+  z-index: 1000;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 8px;
+  width: 360px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.popoverChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-height: 24px;
+}
+
+.popoverInput {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+
+.popoverInput:focus {
+  border-color: var(--color-primary);
+}
+
+.popoverHint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  padding: 0 2px;
+}
+
+.suggestionList {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  max-height: 220px;
+}
+
+.suggestionItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--color-text);
+  border: none;
+  background: transparent;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+}
+
+.suggestionItem:hover,
+.suggestionItem.active {
+  background: var(--color-bg-secondary);
+}
+
+.suggestionItem.create {
+  font-style: italic;
+  color: var(--color-text-secondary);
+  border-top: 1px dashed var(--color-border);
+  margin-top: 2px;
+  padding-top: 6px;
+}
+
+/* ── Dedup confirm ── */
+.dedupConfirm {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.dedupQuestion {
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.dedupActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.dedupBtn {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.dedupBtnPrimary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.dedupBtn:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.dedupBtnPrimary:hover {
+  opacity: 0.9;
+  background: var(--color-primary);
+}
+
+/* ── Toast (lightweight) ── */
+.toastSlot {
+  font-size: 11px;
+  color: var(--color-danger);
+  padding: 0 2px;
+  min-height: 14px;
+}

@@ -34,6 +34,14 @@ export const PORTFOLIO_FUND_OPTIONS: { value: CompanyPortfolioFund; label: strin
   { value: 'personal',  label: 'Personal'  },
 ]
 
+export type CompanyStatus = 'active' | 'exited' | 'shut_down'
+
+export const STATUS_OPTIONS: { value: CompanyStatus; label: string }[] = [
+  { value: 'active',    label: 'Active'    },
+  { value: 'exited',    label: 'Exited'    },
+  { value: 'shut_down', label: 'Shut Down' },
+]
+
 export type CompanyPriority = 'high' | 'further_work' | 'monitor'
 export type CompanyRound = 'pre_seed' | 'seed' | 'seed_extension' | 'series_a' | 'series_b' | 'series_c' | 'series_d'
 
@@ -52,11 +60,10 @@ export interface CompanyListFilter {
   query?: string
   limit?: number
   offset?: number
-  view?: 'companies' | 'all' | 'hidden'
+  view?: 'companies' | 'all' | 'hidden' | 'stubs'
   entityTypes?: CompanyEntityType[]
   sortBy?: CompanySortBy
   includeStats?: boolean
-  includeIndustries?: boolean
   includeInvestorNames?: boolean
 }
 
@@ -70,7 +77,7 @@ export interface CompanySummary {
   city: string | null
   state: string | null
   stage: string | null
-  status: string
+  status: CompanyStatus
   crmProvider: string | null
   crmCompanyId: string | null
   entityType: CompanyEntityType
@@ -97,7 +104,7 @@ export interface CompanySummary {
   twitterHandle: string | null
   crunchbaseUrl: string | null
   angellistUrl: string | null
-  sector: string | null
+  industry: string | null
   targetCustomer: string | null
   businessModel: string | null
   productStage: string | null
@@ -136,9 +143,14 @@ export interface CompanySummary {
   followonCheck2: number | null
   followonDate2: string | null
   // Denormalized list-view fields (conditional GROUP_CONCAT joins)
-  industriesCsv: string | null
   coInvestorNames: string | null
+  coInvestorsList: Array<{ id: string; name: string; domain: string | null }>
+  priorInvestorNames: string | null
+  priorInvestorsList: Array<{ id: string; name: string; domain: string | null }>
   subsequentInvestorNames: string | null
+  subsequentInvestorsList: Array<{ id: string; name: string; domain: string | null }>
+  /** Linked company for lead investor (preferred over leadInvestor text). */
+  leadInvestorCompany: { id: string; name: string; domain: string | null } | null
   // Field source tracking — JSON string { fieldName: meetingId }
   fieldSources: string | null
   // AI-generated key takeaways (bullet-point summary)
@@ -146,13 +158,16 @@ export interface CompanySummary {
 }
 
 export interface CompanyDetail extends CompanySummary {
-  industries: string[]
   themes: string[]
   sourceEntityName: string | null
-  coInvestorsList: Array<{ id: string; name: string }>
-  priorInvestorsList: Array<{ id: string; name: string }>
-  subsequentInvestorsList: Array<{ id: string; name: string }>
-  coInvestedIn: Array<{ id: string; name: string }>
+  // coInvestorsList / priorInvestorsList / subsequentInvestorsList inherited from CompanySummary
+  coInvestedIn: Array<{ id: string; name: string; domain: string | null }>
+  /**
+   * For each co-investor of THIS company, how many OTHER portfolio companies share that investor.
+   * Keyed by investor_company_id; only entries with count > 0 are included.
+   * Phase 2C: powers "↑ N more" badges on co-investor chips.
+   */
+  coInvestorOverlaps: Record<string, number>
 }
 
 export type CompanyDedupAction = 'skip' | 'delete' | 'merge'

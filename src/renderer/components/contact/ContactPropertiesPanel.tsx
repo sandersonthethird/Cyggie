@@ -19,6 +19,8 @@ import { PropertyRow, type PropertyRowType } from '../crm/PropertyRow'
 import { chipStyle } from '../../utils/colorChip'
 import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
 import { ChipSelect } from '../crm/ChipSelect'
+import { TagPicker } from '../crm/TagPicker'
+import { INDUSTRY_OPTIONS } from '../company/companyColumns'
 import { SocialsEditor } from '../crm/SocialsEditor'
 import { AddFieldDropdown } from '../crm/AddFieldDropdown'
 import { computeChipDelta } from '../../utils/chip-delta'
@@ -266,6 +268,9 @@ export function ContactPropertiesPanel({
   const talentPipelineDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'talentPipeline')
   const talentPipelineOptions = mergeBuiltinOptions(TALENT_PIPELINE_STAGES, talentPipelineDef?.optionsJson ?? null)
 
+  const sectorFocusDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'investmentSectorFocus')
+  const sectorFocusOptions = mergeBuiltinOptions(INDUSTRY_OPTIONS, sectorFocusDef?.optionsJson ?? null)
+
   const fieldVisibility = useFieldVisibility(
     'contact',
     CONTACT_HARDCODED_FIELDS,
@@ -478,11 +483,17 @@ export function ContactPropertiesPanel({
   handleDoneRef.current = handleDone
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      const target = e.target as Element | null
       if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLButtonElement ||
-        e.target instanceof HTMLSelectElement
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLButtonElement ||
+        target instanceof HTMLSelectElement ||
+        // TipTap / ProseMirror editing surfaces are <div contenteditable="true">.
+        // Without this guard, typing a word containing 'e' inside any inline
+        // editor on the page (NoteCreator, etc.) would trigger the panel's
+        // edit-mode shortcut.
+        (target instanceof HTMLElement && target.isContentEditable)
       ) return
       if ((e.key === 'e' || e.key === 'E') && !isEditing) setIsEditing(true)
       if (e.key === 'Escape' && isEditing) void handleDoneRef.current()
@@ -1995,7 +2006,21 @@ export function ContactPropertiesPanel({
                   )},
                   { key: 'investmentSectorFocus', visible: showField('investmentSectorFocus', contact.investmentSectorFocus), render: () => (
                     <HideableRow fieldKey="investmentSectorFocus" isEmpty={!contact.investmentSectorFocus}>
-                      <PropertyRow label="Sector Focus" value={contact.investmentSectorFocus} type="text" editMode={isEditing} onSave={(v) => save('investmentSectorFocus', v)} />
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                        <span style={{ minWidth: 120, color: 'var(--text-muted)' }}>Sector Focus</span>
+                        <TagPicker
+                          value={contact.investmentSectorFocus}
+                          options={sectorFocusOptions}
+                          isEditing={isEditing}
+                          onSave={(v) => save('investmentSectorFocus', v)}
+                          onAddOption={sectorFocusDef ? async (opt) => addCustomFieldOption(sectorFocusDef.id, sectorFocusDef.optionsJson, opt) : undefined}
+                        />
+                      </div>
+                    </HideableRow>
+                  )},
+                  { key: 'investmentSectorFocusNotes', visible: showField('investmentSectorFocusNotes', contact.investmentSectorFocusNotes), render: () => (
+                    <HideableRow fieldKey="investmentSectorFocusNotes" isEmpty={!contact.investmentSectorFocusNotes}>
+                      <PropertyRow label="Sector Focus Notes" value={contact.investmentSectorFocusNotes} type="text" editMode={isEditing} onSave={(v) => save('investmentSectorFocusNotes', v)} />
                     </HideableRow>
                   )},
                   { key: 'investorStage', visible: showField('investorStage', contact.investorStage), render: () => (

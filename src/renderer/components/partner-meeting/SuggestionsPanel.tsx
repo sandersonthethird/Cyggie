@@ -85,7 +85,7 @@ export function SuggestionsPanel({ digestId, suggestions, onDismiss, onAdded }: 
       twitterHandle: null,
       crunchbaseUrl: null,
       angellistUrl: null,
-      sector: null,
+      industry: null,
       targetCustomer: null,
       businessModel: null,
       productStage: null,

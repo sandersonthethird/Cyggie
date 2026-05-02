@@ -34,11 +34,20 @@ export default function LiveRecording() {
 
   const audioCapture = useSharedAudioCapture()
   const { hasSystemAudio } = audioCapture
-  const transcriptEndRef = useRef<HTMLDivElement>(null)
+  const transcriptScrollRef = useRef<HTMLDivElement>(null)
+  const stuckToBottomRef = useRef(true)
 
-  // Auto-scroll transcript
+  const handleTranscriptScroll = useCallback(() => {
+    const el = transcriptScrollRef.current
+    if (!el) return
+    stuckToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  }, [])
+
+  // Auto-scroll transcript only when user is already at the bottom
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = transcriptScrollRef.current
+    if (!el || !stuckToBottomRef.current) return
+    el.scrollTop = el.scrollHeight
   }, [liveTranscript, interimSegment])
 
   const handleStart = useCallback(async () => {
@@ -128,7 +137,11 @@ export default function LiveRecording() {
         </div>
       )}
 
-      <div className={styles.transcript}>
+      <div
+        ref={transcriptScrollRef}
+        className={styles.transcript}
+        onScroll={handleTranscriptScroll}
+      >
         {allSegments.length === 0 && !isRecording && (
           <p className={styles.placeholder}>
             Click "Start Recording" to begin transcribing a meeting.
@@ -146,7 +159,6 @@ export default function LiveRecording() {
             <span className={styles.text}>{segment.text}</span>
           </div>
         ))}
-        <div ref={transcriptEndRef} />
       </div>
     </div>
   )

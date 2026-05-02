@@ -98,7 +98,7 @@ async function buildCrmContext(question: string): Promise<string> {
       `).all(...contactParams) as ContactRow[]
 
       const companyConditions = keywords.map(() =>
-        '(canonical_name LIKE ? OR description LIKE ? OR sector LIKE ? OR stage LIKE ? OR entity_type LIKE ?)'
+        '(canonical_name LIKE ? OR description LIKE ? OR industry LIKE ? OR stage LIKE ? OR entity_type LIKE ?)'
       ).join(' OR ')
 
       const companyParams = keywords.flatMap(kw => {
@@ -107,7 +107,7 @@ async function buildCrmContext(question: string): Promise<string> {
       })
 
       companyRows = db.prepare(`
-        SELECT id, canonical_name, description, sector, stage, entity_type, website_url, lead_investor
+        SELECT id, canonical_name, description, industry, stage, entity_type, website_url, lead_investor
         FROM org_companies
         WHERE include_in_companies_view = 1
           AND (${companyConditions})
@@ -132,7 +132,7 @@ async function buildCrmContext(question: string): Promise<string> {
 
       // For companies: all VC funds when no keyword context
       companyRows = db.prepare(`
-        SELECT id, canonical_name, description, sector, stage, entity_type, website_url, lead_investor
+        SELECT id, canonical_name, description, industry, stage, entity_type, website_url, lead_investor
         FROM org_companies
         WHERE include_in_companies_view = 1
           AND entity_type = 'vc_fund'
@@ -256,9 +256,9 @@ function formatCrmContext(
     parts.push('## Companies & Funds')
     const tableRows = companies.map(c => {
       const desc = c.description ? c.description.substring(0, 100) : ''
-      return `| ${c.canonical_name} | ${c.entity_type || ''} | ${c.sector || ''} | ${c.stage || ''} | ${desc} |`
+      return `| ${c.canonical_name} | ${c.entity_type || ''} | ${c.industry || ''} | ${c.stage || ''} | ${desc} |`
     })
-    const tableBlock = '| Name | Type | Sector | Stage | Description |\n|------|------|--------|-------|-------------|\n' + tableRows.join('\n') + '\n'
+    const tableBlock = '| Name | Type | Industry | Stage | Description |\n|------|------|----------|-------|-------------|\n' + tableRows.join('\n') + '\n'
     if (totalChars + tableBlock.length < MAX_TOTAL_CHARS) {
       parts.push(tableBlock)
       totalChars += tableBlock.length
@@ -368,7 +368,7 @@ interface CompanyRow {
   id: string
   canonical_name: string
   description: string | null
-  sector: string | null
+  industry: string | null
   stage: string | null
   entity_type: string | null
   website_url: string | null

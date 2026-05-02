@@ -300,7 +300,7 @@ export function registerInvestmentMemoHandlers(): void {
         postMoneyValuation: company.postMoneyValuation,
         city: company.city,
         state: company.state,
-        industries: company.industries,
+        industry: company.industry,
         themes: company.themes
       }
     }, (chunk) => {

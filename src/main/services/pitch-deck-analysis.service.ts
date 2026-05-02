@@ -80,7 +80,7 @@ export async function runPitchDeckAnalysis(
     '## Full Analysis',
     '',
     'Provide structured analysis with these sections:',
-    '1. **Company Overview** - What the company does, stage, and sector',
+    '1. **Company Overview** - What the company does, stage, and industry',
     '2. **Key Metrics & Traction** - Revenue, growth, users, retention, ACV',
     '3. **Team** - Founders and key team backgrounds',
     '4. **Market Opportunity** - TAM/SAM/SOM, competitive landscape',

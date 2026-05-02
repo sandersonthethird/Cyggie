@@ -9,10 +9,10 @@ export type CompanySummaryAutoFillField =
   | 'city'
   | 'state'
   | 'pipelineStage'
-  | 'industries'
+  | 'industry'
 
 export interface CompanySummaryUpdateChange {
-  field: string  // CompanySummaryAutoFillField for built-in fields; 'industries' also included
+  field: string  // CompanySummaryAutoFillField for built-in fields; 'industry' also included
   from: string | number | null
   to: string | number | null
 }
@@ -25,7 +25,7 @@ export interface CompanySummaryUpdatePayload {
   city?: string | null
   state?: string | null
   pipelineStage?: CompanyPipelineStage | null
-  industries?: string[]
+  industry?: string | null
   fieldSources?: string | null  // serialized JSON: { description: meetingId, round: meetingId, ... }
 }
 
@@ -48,7 +48,7 @@ export interface CompanySummaryUpdateProposal {
 export type ContactSummaryAutoFillField =
   | 'title' | 'phone' | 'linkedinUrl' | 'company'
   | 'fundSize' | 'typicalCheckSizeMin' | 'typicalCheckSizeMax'
-  | 'investmentStageFocus' | 'investmentSectorFocus'
+  | 'investmentStageFocus' | 'investmentSectorFocus' | 'investmentSectorFocusNotes'
 
 export interface ContactSummaryUpdateChange {
   field: string  // ContactSummaryAutoFillField for built-in/investor fields, or custom field label
@@ -66,6 +66,7 @@ export interface ContactSummaryUpdatePayload {
   typicalCheckSizeMax?: number | null
   investmentStageFocus?: string | null
   investmentSectorFocus?: string | null
+  investmentSectorFocusNotes?: string | null
 }
 
 export interface CustomFieldProposedUpdate {

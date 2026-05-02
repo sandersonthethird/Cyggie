@@ -84,7 +84,7 @@ export const CONTACT_FIELD_KEYS = [
 ]
 
 export const COMPANY_FIELD_KEYS = [
-  'canonical_name', 'primary_domain', 'website_url', 'description', 'sector',
+  'canonical_name', 'primary_domain', 'website_url', 'description', 'industry',
   'entity_type', 'city', 'state', 'founding_year', 'employee_count_range',
   'linkedin_company_url', 'twitter_handle', 'crunchbase_url', 'arr',
   'burn_rate', 'runway_months', 'total_funding_raised', 'last_funding_date',
@@ -101,7 +101,7 @@ const FIELD_LABELS: Record<string, string> = {
   city: 'City', state: 'State', phone: 'Phone', twitter_handle: 'Twitter',
   canonical_name: 'Company Name', primary_domain: 'Domain',
   entity_type: 'Entity Type', pipeline_stage: 'Stage',
-  sector: 'Sector', raise_size: 'Raise ($M)', arr: 'ARR ($M)',
+  industry: 'Industry', raise_size: 'Raise ($M)', arr: 'ARR ($M)',
   description: 'Description', website_url: 'Website',
   round: 'Round', priority: 'Priority', deal_source: 'Deal Source',
   founding_year: 'Founded', employee_count_range: 'Employees',
@@ -173,8 +173,8 @@ const FIELD_ALIASES: Record<string, { entity: 'contact' | 'company'; field: stri
   totalfundingraised: { entity: 'company', field: 'total_funding_raised' },
   lastfundingdate: { entity: 'company', field: 'last_funding_date' },
   // Company — firmographics
-  sector: { entity: 'company', field: 'sector' },
-  industry: { entity: 'company', field: 'sector' },
+  sector: { entity: 'company', field: 'industry' },
+  industry: { entity: 'company', field: 'industry' },
   stage: { entity: 'company', field: 'pipeline_stage' },
   pipelinestage: { entity: 'company', field: 'pipeline_stage' },
   round: { entity: 'company', field: 'round' },

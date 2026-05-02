@@ -97,6 +97,7 @@ interface ContactRow {
   typical_check_size_max?: number | null
   investment_stage_focus?: string | null
   investment_sector_focus?: string | null
+  investment_sector_focus_notes?: string | null
   proud_portfolio_companies?: string | null
   field_sources?: string | null
   work_history?: string | null
@@ -1232,6 +1233,7 @@ const CONTACT_UPDATABLE_FIELDS = {
   typicalCheckSizeMax: 'typical_check_size_max',
   investmentStageFocus: 'investment_stage_focus',
   investmentSectorFocus: 'investment_sector_focus',
+  investmentSectorFocusNotes: 'investment_sector_focus_notes',
   proudPortfolioCompanies: 'proud_portfolio_companies',
   fieldSources: 'field_sources',
   workHistory: 'work_history',
@@ -1724,6 +1726,7 @@ export function getContact(contactId: string): ContactDetail | null {
         c.typical_check_size_max,
         c.investment_stage_focus,
         c.investment_sector_focus,
+        c.investment_sector_focus_notes,
         c.proud_portfolio_companies,
         c.field_sources,
         c.work_history,
@@ -1841,6 +1844,7 @@ export function getContact(contactId: string): ContactDetail | null {
     typicalCheckSizeMax: row.typical_check_size_max ?? null,
     investmentStageFocus: row.investment_stage_focus ?? null,
     investmentSectorFocus: row.investment_sector_focus ?? null,
+    investmentSectorFocusNotes: row.investment_sector_focus_notes ?? null,
     proudPortfolioCompanies: row.proud_portfolio_companies ?? null,
     fieldSources: row.field_sources ?? null,
     workHistory: row.work_history ?? null,

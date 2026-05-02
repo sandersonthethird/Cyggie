@@ -13,8 +13,7 @@ export type { HardcodedFieldDef }
  */
 export const COMPANY_HARDCODED_FIELDS: HardcodedFieldDef[] = [
   // Overview
-  { key: 'industries',          label: 'Industry',          defaultSection: 'overview'    },
-  { key: 'sector',              label: 'Sector',            defaultSection: 'overview'    },
+  { key: 'industry',            label: 'Industry',          defaultSection: 'overview'    },
   { key: 'targetCustomer',      label: 'Target Customer',   defaultSection: 'overview'    },
   { key: 'businessModel',       label: 'Business Model',    defaultSection: 'overview'    },
   { key: 'productStage',        label: 'Product Stage',     defaultSection: 'overview'    },
@@ -45,6 +44,7 @@ export const COMPANY_HARDCODED_FIELDS: HardcodedFieldDef[] = [
   { key: 'subsequentInvestors', label: 'Subsequent Investors', defaultSection: 'financials' },
   // Investment
   { key: 'portfolioFund',       label: 'Portfolio',         defaultSection: 'investment'  },
+  { key: 'status',              label: 'Status',            defaultSection: 'investment'  },
   { key: 'investmentSize',      label: 'Initial Investment', defaultSection: 'investment' },
   { key: 'ownershipPct',        label: 'Initial Ownership %', defaultSection: 'investment' },
   { key: 'investmentMark',      label: 'Investment Mark',   defaultSection: 'investment'  },

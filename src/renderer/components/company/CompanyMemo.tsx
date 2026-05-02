@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import rehypeRaw from 'rehype-raw'
-import remarkGfm from 'remark-gfm'
+import { EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import { Markdown } from '@tiptap/markdown'
+import Link from '@tiptap/extension-link'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { InvestmentMemoVersion, InvestmentMemoVersionSummary, InvestmentMemoWithLatest } from '../../../shared/types/company'
 import { MemoEditModal } from './MemoEditModal'
-import { useFindInPage, injectFindMarks } from '../../hooks/useFindInPage'
+import { useFindInPage } from '../../hooks/useFindInPage'
+import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
+import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
+import { FindHighlight } from '../../lib/find-highlight-extension'
 import FindBar from '../common/FindBar'
 import { Spinner } from '../common/Spinner'
 import styles from './CompanyMemo.module.css'
@@ -51,6 +55,31 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
 
   const displayedVersion = viewingVersion ?? memo?.latestVersion ?? null
 
+  // Read-only TipTap editor for the memo preview. Recreated on company switch
+  // and on version switch so it loads the right content for the active version.
+  // Find matches are pushed into FindHighlight as <mark> decorations (matching
+  // the same wiring on MeetingDetail's summary card).
+  const { editor: memoEditor, loadContent: loadMemoContent } = useTiptapMarkdown(
+    {
+      extensions: [
+        StarterKit,
+        Markdown,
+        Link.configure({ openOnClick: true }),
+        ...TABLE_EXTENSIONS,
+        FindHighlight,
+      ],
+      editable: false,
+    },
+    [companyId, displayedVersion?.id],
+  )
+
+  // Load the active version's markdown into the editor whenever it changes.
+  // The editor is recreated on the deps above, so this fires once per recreation.
+  useEffect(() => {
+    if (!memoEditor) return
+    loadMemoContent(displayedVersion?.contentMarkdown ?? '')
+  }, [memoEditor, displayedVersion?.contentMarkdown]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Guard: Cmd+F must not open find in the background when modal is active
   const handleFindOpen = useCallback(
     () => { if (!modalOpen) setFindOpen(true) },
@@ -59,6 +88,13 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
 
   // Close find when generation starts (prevents stale find reappearing after gen ends)
   useEffect(() => { if (generating) setFindOpen(false) }, [generating])
+
+  // Feed editor.state.doc.textContent (NOT editor.getText() — see find-highlight-extension.ts
+  // header for why) so match offsets align with FindHighlight's cursor walk.
+  // Falls back to the raw markdown while the editor mounts so find still has a target text.
+  const findTargetText = memoEditor
+    ? memoEditor.state.doc.textContent
+    : (displayedVersion?.contentMarkdown ?? '')
 
   const {
     query: findQuery,
@@ -69,11 +105,17 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     goToNext,
     goToPrev,
   } = useFindInPage({
-    text: displayedVersion?.contentMarkdown ?? '',
+    text: findTargetText,
     isOpen: findOpen,
     onOpen: handleFindOpen,
     onClose: () => setFindOpen(false),
   })
+
+  // Push matches into the editor's FindHighlight extension as <mark> decorations.
+  useEffect(() => {
+    if (!memoEditor) return
+    memoEditor.commands.setFindMatches(findMatches, activeMatchIndex)
+  }, [memoEditor, findMatches, activeMatchIndex])
 
   // Clear share + version state when company changes
   useEffect(() => {
@@ -426,9 +468,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         ) : loadingVersion ? (
           <div className={styles.loading}>Loading version…</div>
         ) : displayedVersion?.contentMarkdown ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-            {injectFindMarks(displayedVersion.contentMarkdown, findMatches, activeMatchIndex)}
-          </ReactMarkdown>
+          <EditorContent editor={memoEditor} />
         ) : (
           <div className={styles.empty}>No memo content yet. Click Edit or Generate with AI to get started.</div>
         )}

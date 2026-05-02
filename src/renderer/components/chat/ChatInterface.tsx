@@ -9,6 +9,8 @@ const MARKDOWN_PLUGINS = [remarkGfm]
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatStore } from '../../stores/chat.store'
 import type { ContextOption } from '../../../shared/types/chat'
+import type { UnifiedSearchResponse, UnifiedSearchResult } from '../../../shared/types/unified-search'
+import type { Note } from '../../../shared/types/note'
 import styles from './ChatInterface.module.css'
 import { api } from '../../api'
 
@@ -135,6 +137,12 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
     // meetingId case: keep 'meeting' (This meeting is the correct default)
   }, [meetingId, contextOptions])
 
+  // When the panel re-opens, drop the user back at the bottom — they expect to
+  // see the latest message, not the stale scroll position from before they minimized.
+  useEffect(() => {
+    if (floatingPanelOpen) stuckToBottomRef.current = true
+  }, [floatingPanelOpen])
+
   // contextId: key for the chat.store conversations map.
   // Derived from activeContext when an entity option is selected; otherwise from meetingId/meetingIds.
   const contextId = activeContext !== 'meeting'
@@ -153,11 +161,20 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
   const [error, setError] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesScrollRef = useRef<HTMLDivElement>(null)
+  const stuckToBottomRef = useRef(true)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const widgetRef = useRef<HTMLDivElement>(null)
   const dragCounterRef = useRef(0)
   const contextDropdownRef = useRef<HTMLDivElement>(null)
+
+  // "Save chat to Notes" state
+  const [savePickerOpen, setSavePickerOpen] = useState(false)
+  const [saveQuery, setSaveQuery] = useState('')
+  const [saveResults, setSaveResults] = useState<UnifiedSearchResult[]>([])
+  const [savingState, setSavingState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const [savedToast, setSavedToast] = useState<string | null>(null)
+  const savePickerRef = useRef<HTMLDivElement>(null)
 
   // Revoke object URLs on unmount
   useEffect(() => {
@@ -166,10 +183,19 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom only when the user is already pinned there.
+  // Lets users scroll up to read prior turns while the AI is still streaming.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = messagesScrollRef.current
+    if (!el || !stuckToBottomRef.current) return
+    el.scrollTop = el.scrollHeight
   }, [messages, streamedContent])
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesScrollRef.current
+    if (!el) return
+    stuckToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  }, [])
 
   // Listen for streaming progress
   useEffect(() => {
@@ -231,10 +257,115 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [floatingPanelOpen, messages.length, isLoading, contextDropdownOpen])
 
+  // ── Save chat to Notes ─────────────────────────────────────────
+  // Build the markdown transcript: alternating "**You:** …" / "**AI:** …" blocks
+  // separated by horizontal rules. System messages (context-switch breadcrumbs)
+  // are skipped — they're UI scaffolding, not content.
+  const buildTranscriptMarkdown = useCallback((): string => {
+    const blocks: string[] = []
+    for (const m of messages) {
+      if (m.role === 'system') continue
+      const label = m.role === 'user' ? '**You:**' : '**AI:**'
+      blocks.push(`${label}\n\n${m.content.trim()}`)
+    }
+    return blocks.join('\n\n---\n\n')
+  }, [messages])
+
+  const performSave = useCallback(async (target: { companyId?: string | null; contactId?: string | null; label: string }) => {
+    if (savingState === 'saving') return
+    setSavingState('saving')
+    setError(null)
+    try {
+      const transcriptMarkdown = buildTranscriptMarkdown()
+      if (!transcriptMarkdown) {
+        setError('Nothing to save yet.')
+        setSavingState('idle')
+        return
+      }
+      await api.invoke<Note>(IPC_CHANNELS.CHAT_SAVE_AS_NOTE, {
+        transcriptMarkdown,
+        companyId: target.companyId ?? null,
+        contactId: target.contactId ?? null,
+        sourceMeetingId: meetingId ?? null
+      })
+      setSavingState('saved')
+      setSavedToast(`Saved to ${target.label}`)
+      setSavePickerOpen(false)
+      setSaveQuery('')
+      setSaveResults([])
+      window.setTimeout(() => {
+        setSavingState('idle')
+        setSavedToast(null)
+      }, 2400)
+    } catch (err) {
+      setError(`Couldn't save chat: ${String(err)}`)
+      setSavingState('idle')
+    }
+  }, [savingState, buildTranscriptMarkdown, meetingId])
+
+  const handleSaveClick = useCallback(() => {
+    if (messages.length === 0 || isLoading || savingState === 'saving') return
+    if (activeContext !== 'meeting') {
+      // Entity already chosen via the context chip — save directly
+      void performSave({
+        companyId: activeContext.type === 'company' ? activeContext.id : null,
+        contactId: activeContext.type === 'contact' ? activeContext.id : null,
+        label: activeContext.name
+      })
+      return
+    }
+    setSavePickerOpen((v) => !v)
+  }, [messages.length, isLoading, savingState, activeContext, performSave])
+
+  // Type-ahead search for the entity picker — companies + contacts only
+  useEffect(() => {
+    if (!savePickerOpen) return
+    const q = saveQuery.trim()
+    if (!q) {
+      setSaveResults([])
+      return
+    }
+    let cancelled = false
+    const t = window.setTimeout(async () => {
+      try {
+        const response = await api.invoke<UnifiedSearchResponse>(
+          IPC_CHANNELS.UNIFIED_SEARCH_QUERY,
+          q,
+          16
+        )
+        if (cancelled) return
+        const merged = [
+          ...response.grouped.company,
+          ...response.grouped.contact
+        ]
+        setSaveResults(merged)
+      } catch {
+        if (!cancelled) setSaveResults([])
+      }
+    }, 180)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [savePickerOpen, saveQuery])
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!savePickerOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (savePickerRef.current && !savePickerRef.current.contains(e.target as Node)) {
+        setSavePickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [savePickerOpen])
+
   function handleContextSwitch(next: 'meeting' | ContextOption) {
     if (next === activeContext || (next !== 'meeting' && activeContext !== 'meeting' && next.id === activeContext.id)) return
     setActiveContext(next)
     setContextDropdownOpen(false)
+    stuckToBottomRef.current = true
     const label = next === 'meeting'
       ? (meetingId ? 'This meeting' : 'Global')
       : `All ${next.name} meetings`
@@ -386,6 +517,9 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
     addMessage(contextId, { role: 'user', content: displayContent })
     setIsLoading(true)
     setFloatingPanelOpen(true)
+    // New turn: always bring the user's question into view, regardless of where
+    // they had scrolled to in a previous exchange.
+    stuckToBottomRef.current = true
 
     try {
       let response: string
@@ -495,7 +629,6 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
           <div className={`${styles.messageContent} ${styles.streaming}`}>Thinking...</div>
         </div>
       )}
-      <div ref={messagesEndRef} />
     </>
   )
 
@@ -564,6 +697,52 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
               ) : null}
             </div>
             <div className={styles.floatingPanelActions}>
+              <div className={styles.savePickerWrap} ref={savePickerRef}>
+                <button
+                  className={styles.floatingPanelSave}
+                  onClick={handleSaveClick}
+                  disabled={messages.length === 0 || isLoading || savingState === 'saving'}
+                  title={
+                    activeContext !== 'meeting'
+                      ? `Save chat to ${activeContext.name}`
+                      : 'Save chat to a company or contact'
+                  }
+                >
+                  {savingState === 'saving' ? '…' : savingState === 'saved' ? '✓' : 'Save'}
+                </button>
+                {savePickerOpen && (
+                  <div className={styles.savePicker} role="dialog">
+                    <input
+                      className={styles.savePickerInput}
+                      autoFocus
+                      value={saveQuery}
+                      onChange={(e) => setSaveQuery(e.target.value)}
+                      placeholder="Search companies or contacts…"
+                    />
+                    <div className={styles.savePickerResults}>
+                      {saveQuery.trim() && saveResults.length === 0 && (
+                        <div className={styles.savePickerEmpty}>No matches</div>
+                      )}
+                      {saveResults.map((r) => (
+                        <button
+                          key={`${r.entityType}:${r.entityId}`}
+                          className={styles.savePickerItem}
+                          onClick={() => void performSave({
+                            companyId: r.entityType === 'company' ? r.entityId : null,
+                            contactId: r.entityType === 'contact' ? r.entityId : null,
+                            label: r.title
+                          })}
+                        >
+                          <span className={styles.savePickerItemIcon}>
+                            {r.entityType === 'company' ? '🏢' : '👤'}
+                          </span>
+                          <span className={styles.savePickerItemLabel}>{r.title}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
               <button
                 className={styles.floatingPanelClose}
                 onClick={() => setFloatingPanelOpen(false)}
@@ -588,10 +767,15 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
               </button>
             </div>
           </div>
-          <div className={styles.floatingMessages}>
+          <div
+            ref={messagesScrollRef}
+            className={styles.floatingMessages}
+            onScroll={handleMessagesScroll}
+          >
             {messagesContent}
           </div>
           {error && <div className={`${styles.error} ${styles.floatingError}`}>{error}</div>}
+          {savedToast && <div className={styles.savedToast}>{savedToast}</div>}
         </div>
         <div className={styles.floatingInputArea}>
           <div

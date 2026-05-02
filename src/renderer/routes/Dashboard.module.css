@@ -159,6 +159,60 @@
   padding: 0 32px 8px;
 }
 
+/* ── Stub-pollution banner (Phase 3) ──────────────────────────────────── */
+.stubBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 32px 16px;
+  padding: 10px 14px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.stubBannerText {
+  flex: 1;
+  min-width: 0;
+}
+
+.stubBannerActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.stubBannerSecondary,
+.stubBannerPrimary {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+}
+
+.stubBannerSecondary:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.stubBannerPrimary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.stubBannerPrimary:hover {
+  opacity: 0.9;
+}
+
 /* ── LEFT: Schedule timeline ──────────────────────────────────────────────── */
 
 .scheduleCol {

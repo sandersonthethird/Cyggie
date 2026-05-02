@@ -73,6 +73,10 @@ import { runCompanyKeyTakeawaysMigration } from './migrations/070-company-key-ta
 import { runMeetingDismissedCompaniesMigration } from './migrations/071-meeting-dismissed-companies'
 import { runCompanyPortfolioFundMigration } from './migrations/072-company-portfolio-fund'
 import { runPortfolioInvestmentFieldsMigration } from './migrations/073-portfolio-investment-fields'
+import { runBackfillCompanyDomainsMigration } from './migrations/074-backfill-company-domains'
+import { runCompanyInvestorsPositionMigration } from './migrations/075-company-investors-position'
+import { runLeadInvestorCompanyIdMigration } from './migrations/076-lead-investor-company-id'
+import { runIndustryConsolidationMigration } from './migrations/077-industry-consolidation'
 
 let db: Database.Database | null = null
 
@@ -154,6 +158,10 @@ export function getDatabase(): Database.Database {
     runMeetingDismissedCompaniesMigration(db)
     runCompanyPortfolioFundMigration(db)
     runPortfolioInvestmentFieldsMigration(db)
+    runBackfillCompanyDomainsMigration(db)
+    runCompanyInvestorsPositionMigration(db)
+    runLeadInvestorCompanyIdMigration(db)
+    runIndustryConsolidationMigration(db)
   }
   return db
 }

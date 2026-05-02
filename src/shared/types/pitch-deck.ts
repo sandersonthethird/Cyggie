@@ -7,7 +7,7 @@ export interface PitchDeckExtractionResult {
   websiteUrl: string | null
   city: string | null
   state: string | null
-  sector: string | null
+  industry: string | null
   businessModel: string | null
   targetCustomer: string | null
   productStage: string | null
@@ -15,7 +15,6 @@ export interface PitchDeckExtractionResult {
   raiseSize: number | null           // millions USD
   postMoneyValuation: number | null  // millions USD
   entityType: CompanyEntityType | null
-  industries: string[]
   // Founders and C-suite officers ONLY — no advisors, board members, or investors
   founders: Array<{
     name: string

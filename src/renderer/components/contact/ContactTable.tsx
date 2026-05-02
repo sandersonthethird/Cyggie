@@ -33,7 +33,7 @@ import {
 import type { VirtualRow } from '../../hooks/useGroupedRows'
 import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
-import { useEditCellNav } from '../../hooks/useEditCellNav'
+import { useEditCellNav, getRangePosition } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
 import { executeBulkEdit, createCellCallbacks } from '../crm/tableUtils'
@@ -216,7 +216,7 @@ export function ContactTable({
 
   const {
     focusedCell, editCell, setEditCell, cellRange,
-    handleFocusCell, handleStartEdit, handleEndEdit, handleArrowNav, clearFocus
+    handleFocusCell, handleStartEdit, handleEndEdit, handleKeyboardEvent,
   } = useEditCellNav(
     contacts.length,
     visibleCols,
@@ -486,29 +486,13 @@ export function ContactTable({
   })
 
   // ── Composed keyboard handler ──────────────────────────────────────────────
+  // useEditCellNav owns Arrow/Enter/Escape/type-to-edit. Suppress its Escape
+  // when the clipboard hook is in "copied" mode so Esc clears the copy state first.
   const composedKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Arrow keys for cell navigation (when focused, not editing)
-    if (!editCell && focusedCell && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-      e.preventDefault()
-      const dir = e.key.replace('Arrow', '').toLowerCase() as 'up' | 'down' | 'left' | 'right'
-      handleArrowNav(dir, e.shiftKey)
-      return
-    }
-    // Enter to start editing focused cell
-    if (!editCell && focusedCell && e.key === 'Enter') {
-      e.preventDefault()
-      handleStartEdit(focusedCell.rowIdx, focusedCell.colIdx)
-      return
-    }
-    // Escape to clear focus
-    if (!editCell && focusedCell && e.key === 'Escape' && !copiedCell && !copiedRange) {
-      e.preventDefault()
-      clearFocus()
-      return
-    }
+    if (handleKeyboardEvent(e, { suppressEscape: !!(copiedCell || copiedRange) })) return
     handleClipboardKeyDown(e)
     handleTableKeyDown(e)
-  }, [editCell, focusedCell, copiedCell, copiedRange, handleArrowNav, handleStartEdit, clearFocus, handleClipboardKeyDown, handleTableKeyDown])
+  }, [handleKeyboardEvent, copiedCell, copiedRange, handleClipboardKeyDown, handleTableKeyDown])
 
   // ── TanStack Virtual ───────────────────────────────────────────────────────
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -566,7 +550,19 @@ export function ContactTable({
           Editing will update {selectedIds.size} selected contacts
         </div>
       )}
-      <div className={styles.tableWrapper} ref={scrollRef} tabIndex={0} onKeyDown={composedKeyDown}>
+      <div
+        className={styles.tableWrapper}
+        ref={scrollRef}
+        tabIndex={0}
+        onKeyDown={composedKeyDown}
+        onMouseDown={(e) => {
+          // Re-focus wrapper after mouse interactions so keyboard shortcuts keep working.
+          const tag = (e.target as HTMLElement).tagName
+          if (tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA') {
+            requestAnimationFrame(() => scrollRef.current?.focus({ preventScroll: true }))
+          }
+        }}
+      >
         {/* Header row */}
         <div className={styles.headerRow} style={{ gridTemplateColumns: gridCols }}>
           {/* Checkbox */}
@@ -786,12 +782,8 @@ export function ContactTable({
                   const isCustomSelect = !!customFieldId && col.type === 'select'
 
                   const isCellEditing = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
-                  const isCellHighlighted =
-                    (focusedCell?.rowIdx === dataIndex && focusedCell?.colIdx === colIdx) ||
-                    (cellRange?.colIdx === colIdx && dataIndex >= cellRange.startRow && dataIndex <= cellRange.endRow)
-                  const isCopied =
-                    (copiedCell?.rowIdx === dataIndex && copiedCell?.colIdx === colIdx) ||
-                    (copiedRange?.colIdx === colIdx && dataIndex >= copiedRange.startRow && dataIndex <= copiedRange.endRow)
+                  const focusPos = isCellEditing ? null : getRangePosition(dataIndex, colIdx, cellRange, focusedCell)
+                  const copiedPos = getRangePosition(dataIndex, colIdx, copiedRange, copiedCell)
 
                   // When groupBy is active: scan mode — all cells navigate to detail
                   if (groupBy) {
@@ -809,10 +801,22 @@ export function ContactTable({
                   }
 
                   if (isCustomSelect && !isCellEditing) {
+                    const chipRangeClass = focusPos
+                      ? focusPos === 'only' ? styles.focusedCell
+                        : focusPos === 'top' ? styles.rangeTop
+                        : focusPos === 'mid' ? styles.rangeMid
+                        : styles.rangeBot
+                      : ''
+                    const chipCopiedClass = copiedPos
+                      ? copiedPos === 'only' ? styles.copiedCell
+                        : copiedPos === 'top' ? styles.copiedRangeTop
+                        : copiedPos === 'mid' ? styles.copiedRangeMid
+                        : styles.copiedRangeBot
+                      : ''
                     return (
                       <div
                         key={col.key}
-                        className={`${styles.chipCell}${isCopied ? ` ${styles.copiedCell}` : ''}${isCellHighlighted ? ` ${styles.focusedCell}` : ''}`}
+                        className={`${styles.chipCell} ${chipRangeClass} ${chipCopiedClass}`.trim()}
                         onClick={(e) => handleFocusCell(dataIndex, colIdx, e.shiftKey)}
                         onDoubleClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
@@ -825,15 +829,22 @@ export function ContactTable({
                     )
                   }
 
+                  const wrapperCopiedClass = copiedPos
+                    ? copiedPos === 'only' ? styles.copiedCell
+                      : copiedPos === 'top' ? styles.copiedRangeTop
+                      : copiedPos === 'mid' ? styles.copiedRangeMid
+                      : styles.copiedRangeBot
+                    : undefined
+
                   return (
-                    <div key={col.key} className={isCopied ? styles.copiedCell : undefined}>
+                    <div key={col.key} className={wrapperCopiedClass}>
                       <EditableCell
                         value={cellValue}
                         col={col}
-                        isHighlighted={isCellHighlighted && !isCellEditing}
+                        rangePosition={focusPos}
                         isEditing={isCellEditing}
                         initialChar={isCellEditing ? editCell?.initialChar : undefined}
-                        onFocus={() => handleFocusCell(dataIndex, colIdx)}
+                        onFocus={(shiftKey) => handleFocusCell(dataIndex, colIdx, shiftKey)}
                         onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
                         onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
                         onAddOption={

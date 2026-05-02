@@ -34,6 +34,7 @@ import type {
   ContactDuplicateGroup
 } from '../../shared/types/contact'
 import { sortRows, buildCustomFieldColumnDefs } from '../components/crm/tableUtils'
+import { useLastView } from '../hooks/useLastView'
 import type { SortState, SortKey } from '../components/crm/tableUtils'
 import { useTableFilters } from '../hooks/useTableFilters'
 import { useCustomFieldValues } from '../hooks/useCustomFieldValues'
@@ -138,6 +139,10 @@ export default function Contacts() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { enabled: contactsEnabled, loading: flagsLoading } = useFeatureFlag('ff_companies_ui_v1')
 
+  // Increments on each mount so loadContacts gets a new useCallback ref,
+  // forcing the useEffect to re-run and fetch fresh data after back-navigation.
+  const [mountId] = useState(() => Date.now())
+
   // ── Data ──────────────────────────────────────────────────────────────────
   const [contacts, setContacts] = useState<ContactSummary[]>([])
   const [loading, setLoading] = useState(false)
@@ -203,6 +208,9 @@ export default function Contacts() {
 
   // ── Columns + sort + filter (lifted for ViewsBar) ─────────────────────────
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => loadContactColumnConfig())
+
+  // ── Persist & restore last-active view for sidebar navigation ──────────────
+  useLastView('cyggie:contacts-last-view', '/contacts', searchParams, visibleKeys, navigate, setVisibleKeys, saveContactColumnConfig)
 
   // ── Custom fields ───────────────────────────────────────────────────────────
   const { contactDefs, refresh: refreshCustomFields } = useCustomFieldStore()
@@ -400,7 +408,8 @@ export default function Contacts() {
     } finally {
       if (!isStale()) setLoading(false)
     }
-  }, [contactsEnabled, getGuard])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contactsEnabled, getGuard, mountId])
 
   const handleCreateInline = useCallback(async (fullName: string) => {
     const tokens = fullName.trim().split(/\s+/)

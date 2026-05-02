@@ -1,0 +1,116 @@
+.loading,
+.empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.note {
+  padding: 10px 12px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+}
+
+.note:hover {
+  background: var(--color-bg-secondary);
+}
+
+.noteTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.4;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.noteBody {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-top: 2px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.noteTitleRow {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.pinnedBadge {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.noteMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.noteMetaActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pinBtn {
+  background: none;
+  border: none;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.25;
+  line-height: 1;
+}
+
+.pinBtn:hover {
+  opacity: 0.7;
+}
+
+.pinBtn.pinned {
+  opacity: 1;
+}
+
+.pinBtn:disabled {
+  cursor: default;
+  opacity: 0.15;
+}
+
+.notePinned {
+  border-color: var(--color-primary);
+}
+
+.deleteBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.deleteBtn:hover {
+  color: var(--color-danger);
+}
+
+.noteHighlight {
+  animation: highlightFade 2s ease-out forwards;
+}
+
+@keyframes highlightFade {
+  0%   { background: var(--color-accent-subtle, #eef2ff); border-color: var(--color-accent, #6366f1); }
+  70%  { background: var(--color-accent-subtle, #eef2ff); border-color: var(--color-accent, #6366f1); }
+  100% { background: var(--color-card-bg); border-color: var(--color-border); }
+}

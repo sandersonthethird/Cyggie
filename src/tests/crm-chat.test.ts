@@ -63,7 +63,7 @@ function buildDb(): Database.Database {
       id TEXT PRIMARY KEY,
       canonical_name TEXT NOT NULL,
       description TEXT,
-      sector TEXT,
+      industry TEXT,
       stage TEXT,
       entity_type TEXT,
       website_url TEXT,

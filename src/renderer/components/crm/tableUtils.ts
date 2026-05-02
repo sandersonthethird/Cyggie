@@ -19,7 +19,9 @@ export interface ColumnDef {
   minWidth: number
   sortable: boolean
   editable: boolean
-  type: 'text' | 'select' | 'number' | 'date' | 'computed'
+  type: 'text' | 'select' | 'number' | 'date' | 'computed' | 'investor_chips'
+  /** For investor_chips columns: caps the chip count. Used by Lead Investor (maxChips: 1). */
+  maxChips?: number
   options?: { value: string; label: string }[]
   /** Display prefix for values (e.g. '$' for currency columns). Used by RangeFilter. */
   prefix?: string
@@ -27,6 +29,8 @@ export interface ColumnDef {
   suffix?: string
   /** Fixed decimal places for number display (e.g. 3 → 1.500). Used by renderDisplay. */
   decimals?: number
+  /** Significant digits for number display (e.g. 2 → 0.85, 13, 5.0). Takes precedence over decimals. */
+  sigDigits?: number
 }
 
 // ─── Range & text filter types ────────────────────────────────────────────────

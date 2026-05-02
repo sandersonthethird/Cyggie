@@ -105,7 +105,7 @@ const COMPANY_FIELDS: FieldDef[] = [
   { value: 'primary_domain', label: 'Primary Domain' },
   { value: 'website_url', label: 'Website URL' },
   { value: 'description', label: 'Description' },
-  { value: 'sector', label: 'Sector / Industry' },
+  { value: 'industry', label: 'Industry' },
   { value: 'entity_type', label: 'Entity Type' },
   { value: 'city', label: 'City' },
   { value: 'state', label: 'State' },

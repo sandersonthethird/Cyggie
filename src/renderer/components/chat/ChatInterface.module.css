@@ -316,6 +316,113 @@
   color: var(--color-text);
 }
 
+.savePickerWrap {
+  position: relative;
+}
+
+.floatingPanelSave {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: none;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  margin-right: 4px;
+}
+
+.floatingPanelSave:hover:not(:disabled) {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-color: var(--color-text-tertiary);
+}
+
+.floatingPanelSave:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.savePicker {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 260px;
+  background: var(--color-bg-elevated, var(--color-bg));
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.savePickerInput {
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
+  outline: none;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.savePickerResults {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.savePickerItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text);
+  transition: background 0.1s;
+}
+
+.savePickerItem:hover {
+  background: var(--color-bg);
+}
+
+.savePickerItemIcon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.savePickerItemLabel {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.savePickerEmpty {
+  padding: 12px 10px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.savedToast {
+  margin: 0 16px 12px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--color-success, #2c7a39);
+  background: var(--color-success-bg, rgba(44, 122, 57, 0.08));
+  border: 1px solid var(--color-success-border, rgba(44, 122, 57, 0.2));
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
 .floatingMessages {
   flex: 1;
   overflow-y: auto;

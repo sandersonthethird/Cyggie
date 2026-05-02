@@ -30,6 +30,7 @@ import {
 import { extractFromPdf, extractFromUrl, PitchDeckError } from '../services/pitch-deck-ingestion.service'
 import { generateCompanyKeyTakeaways } from '../llm/company-key-takeaways'
 import { runPitchDeckAnalysis } from '../services/pitch-deck-analysis.service'
+import { queueStubEnrichment } from '../services/stub-enrichment.service'
 import { createCompanyNote } from '../database/repositories/company-notes.repo'
 import type { PitchDeckIngestPayload, PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import { hasDriveFilesScope } from '../calendar/google-auth'
@@ -294,6 +295,10 @@ export function registerCompanyHandlers(): void {
     }
   )
 
+  ipcMain.handle(IPC_CHANNELS.COMPANY_COUNT_STUBS, () => {
+    return companyRepo.countStubCompanies()
+  })
+
   ipcMain.handle(IPC_CHANNELS.COMPANY_GET, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
     return companyRepo.getCompany(companyId)
@@ -344,15 +349,6 @@ export function registerCompanyHandlers(): void {
       // Peel off non-column keys that require special handling
       let remaining: Record<string, unknown> = { ...updates }
 
-      if ('industries' in remaining) {
-        try {
-          companyRepo.updateCompanyIndustries(companyId, (remaining.industries as string[] | null) ?? [])
-        } catch (err) {
-          console.error('[COMPANY_UPDATE] Failed to update industries:', err)
-        }
-        const { industries: _, ...rest } = remaining
-        remaining = rest
-      }
       if ('coInvestorsList' in remaining) {
         try {
           companyRepo.setCompanyInvestors(companyId, 'co_investor', (remaining.coInvestorsList as Array<{ id: string; name: string }>) ?? [])
@@ -379,6 +375,22 @@ export function registerCompanyHandlers(): void {
         }
         const { subsequentInvestorsList: _, ...rest } = remaining
         remaining = rest
+      }
+
+      // Phase 2B: when a leadInvestorCompanyId patch arrives, also keep the
+      // legacy `lead_investor` TEXT field in sync (for any code path that
+      // still reads the text fallback). The FK column itself is updated
+      // by the regular updateCompany() field-map handling.
+      if ('leadInvestorCompanyId' in remaining) {
+        const newId = remaining.leadInvestorCompanyId as string | null
+        if (newId) {
+          const row = db.prepare('SELECT canonical_name FROM org_companies WHERE id = ?').get(newId) as
+            | { canonical_name: string }
+            | undefined
+          if (row) remaining = { ...remaining, leadInvestor: row.canonical_name }
+        } else {
+          remaining = { ...remaining, leadInvestor: null }
+        }
       }
 
       // Pre-fetch current pipeline_stage to detect changes
@@ -532,7 +544,20 @@ export function registerCompanyHandlers(): void {
     (_event, companyName: string) => {
       if (!companyName?.trim()) throw new Error('companyName is required')
       const userId = getCurrentUserId()
-      return companyRepo.getOrCreateCompanyByName(companyName.trim(), userId)
+      const company = companyRepo.getOrCreateCompanyByName(companyName.trim(), userId)
+
+      // Phase 4: if find-or-create produced (or returned) a sparse stub,
+      // fire-and-forget background LLM enrichment to fill in entity_type,
+      // primary_domain, and description. Throttled + deduped inside the service.
+      const isSparseStub =
+        company.entityType === 'unknown' &&
+        !company.primaryDomain &&
+        !company.description
+      if (isSparseStub) {
+        queueStubEnrichment(company.id)
+      }
+
+      return company
     }
   )
 

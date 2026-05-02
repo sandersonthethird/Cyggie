@@ -6,6 +6,7 @@
   overflow: auto;
   min-height: 0;
   position: relative;
+  outline: none;
 }
 
 /* ── Grid rows ── */
@@ -20,9 +21,10 @@
 .headerRow {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 20;
   background: var(--color-card-bg);
   border-bottom: 1px solid var(--color-border);
+  isolation: isolate;
 }
 
 .headerCell {
@@ -41,6 +43,7 @@
   user-select: none;
   position: relative;
   border-right: 1px solid var(--color-bg-tertiary);
+  background: var(--color-card-bg);
 }
 
 .headerCell:last-child { border-right: none; }
@@ -122,7 +125,7 @@
   border-right: 1px solid var(--color-border) !important;
 }
 
-.headerRow .nameCol { z-index: 11; }
+.headerRow .nameCol { z-index: 21; }
 
 .checkboxCol {
   position: sticky;
@@ -132,7 +135,7 @@
   width: 40px;
 }
 
-.headerRow .checkboxCol { z-index: 11; }
+.headerRow .checkboxCol { z-index: 21; }
 
 /* ── Data rows ── */
 .dataRow {
@@ -656,14 +659,61 @@
 }
 
 /* ── Clipboard styles ── */
+
+/* Single cell */
+.focusedCell {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
 .copiedCell {
   outline: 2px dashed var(--color-primary);
   outline-offset: -2px;
 }
 
-.focusedCell {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
+/* Range selection — unified border via inset box-shadow */
+.rangeTop {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary),
+    inset 0 2px 0 0 var(--color-primary);
+}
+
+.rangeMid {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary);
+}
+
+.rangeBot {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary),
+    inset 0 -2px 0 0 var(--color-primary);
+}
+
+/* Copied range — unified border */
+.copiedRangeTop {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary),
+    inset 0 2px 0 0 var(--color-primary);
+  opacity: 0.85;
+}
+
+.copiedRangeMid {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary);
+  opacity: 0.85;
+}
+
+.copiedRangeBot {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary),
+    inset 0 -2px 0 0 var(--color-primary);
+  opacity: 0.85;
 }
 
 .clipboardToast {

@@ -4,11 +4,13 @@ import { jaroWinkler } from '../../utils/jaroWinkler'
 import { UnionFind } from '../../utils/unionFind'
 import { splitCamelCase } from '../../utils/string-utils'
 import { trySegment } from '../../utils/company-extractor'
+import { extractDomainFromWebsiteUrl } from '../../utils/email-parser'
 import { logAudit } from './audit.repo'
 import type {
   CompanyEntityType,
   CompanyPriority,
   CompanyRound,
+  CompanyStatus,
   CompanyPipelineStage,
   CompanySortBy,
   CompanyListFilter,
@@ -63,7 +65,7 @@ interface CompanyRow {
   twitter_handle: string | null
   crunchbase_url: string | null
   angellist_url: string | null
-  sector: string | null
+  industry: string | null
   target_customer: string | null
   business_model: string | null
   product_stage: string | null
@@ -103,9 +105,47 @@ interface CompanyRow {
   followon_check_2: number | null
   followon_date_2: string | null
   // Denormalized list-view fields (conditional GROUP_CONCAT joins)
-  industries_csv: string | null
   co_investor_names: string | null
+  co_investors_json: string | null
+  prior_investor_names: string | null
+  prior_investors_json: string | null
   subsequent_investor_names: string | null
+  subsequent_investors_json: string | null
+  // Lead investor link (joined from org_companies)
+  lead_investor_company_id: string | null
+  lead_investor_company_name: string | null
+  lead_investor_company_domain: string | null
+}
+
+/**
+ * Parse a json_group_array result from SQLite into a typed list of investors.
+ * Tolerates: null (no JOIN match), '[]' (empty), or malformed JSON (logs + empty).
+ *
+ *   '[{"id":"abc","name":"Sequoia","domain":"sequoia.com"}]'  →  parsed entry
+ *   null                                                       →  []
+ *   '[]'                                                       →  []
+ *   garbage                                                    →  []  (with console.error)
+ */
+export function parseInvestorsJson(raw: string | null | undefined): Array<{ id: string; name: string; domain: string | null }> {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const out: Array<{ id: string; name: string; domain: string | null }> = []
+    for (const entry of parsed) {
+      if (entry && typeof entry === 'object' && typeof entry.id === 'string' && typeof entry.name === 'string') {
+        out.push({
+          id: entry.id,
+          name: entry.name,
+          domain: typeof entry.domain === 'string' ? entry.domain : null,
+        })
+      }
+    }
+    return out
+  } catch (err) {
+    console.error('[org-company.repo] parseInvestorsJson failed:', err, 'raw:', raw.slice(0, 200))
+    return []
+  }
 }
 
 export interface CompanyMergeResult {
@@ -120,7 +160,6 @@ export interface CompanyMergeResult {
     notes: number
     conversations: number
     memos: number
-    industries: number
     themes: number
     theses: number
     artifacts: number
@@ -229,6 +268,13 @@ function normalizeEntityType(value: string | null | undefined): CompanyEntityTyp
     : 'unknown'
 }
 
+function normalizeStatus(value: string | null | undefined): CompanyStatus {
+  const normalized = (value || '').trim().toLowerCase()
+  return normalized === 'exited' || normalized === 'shut_down'
+    ? normalized
+    : 'active'
+}
+
 function parseEmailParticipants(value: string | null): CompanyEmailRef['participants'] {
   if (!value) return []
   try {
@@ -309,7 +355,7 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     city: row.city,
     state: row.state,
     stage: row.stage,
-    status: row.status,
+    status: normalizeStatus(row.status),
     crmProvider: row.crm_provider,
     crmCompanyId: row.crm_company_id,
     entityType: normalizeEntityType(row.entity_type),
@@ -336,7 +382,7 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     twitterHandle: row.twitter_handle ?? null,
     crunchbaseUrl: row.crunchbase_url ?? null,
     angellistUrl: row.angellist_url ?? null,
-    sector: row.sector ?? null,
+    industry: row.industry ?? null,
     targetCustomer: row.target_customer ?? null,
     businessModel: row.business_model ?? null,
     productStage: row.product_stage ?? null,
@@ -374,47 +420,79 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     followonCheck2: row.followon_check_2 ?? null,
     followonDate2: row.followon_date_2 ?? null,
     // Denormalized list-view fields
-    industriesCsv: row.industries_csv ?? null,
     coInvestorNames: row.co_investor_names ?? null,
+    coInvestorsList: parseInvestorsJson(row.co_investors_json),
+    priorInvestorNames: row.prior_investor_names ?? null,
+    priorInvestorsList: parseInvestorsJson(row.prior_investors_json),
     subsequentInvestorNames: row.subsequent_investor_names ?? null,
+    subsequentInvestorsList: parseInvestorsJson(row.subsequent_investors_json),
+    leadInvestorCompany: row.lead_investor_company_id && row.lead_investor_company_name
+      ? {
+          id: row.lead_investor_company_id,
+          name: row.lead_investor_company_name,
+          domain: row.lead_investor_company_domain ?? null,
+        }
+      : null,
   }
 }
 
 interface BaseSelectOpts {
-  includeIndustries?: boolean
   includeInvestorNames?: boolean
 }
 
 function baseCompanySelect(whereClause = '', opts?: BaseSelectOpts): string {
-  const industryCols = opts?.includeIndustries
-    ? 'ind.industries_csv'
-    : 'NULL AS industries_csv'
   const investorCols = opts?.includeInvestorNames
-    ? 'coinv.co_investor_names, subinv.subsequent_investor_names'
-    : 'NULL AS co_investor_names, NULL AS subsequent_investor_names'
+    ? `coinv.co_investor_names, coinv.co_investors_json,
+       priorinv.prior_investor_names, priorinv.prior_investors_json,
+       subinv.subsequent_investor_names, subinv.subsequent_investors_json`
+    : `NULL AS co_investor_names, NULL AS co_investors_json,
+       NULL AS prior_investor_names, NULL AS prior_investors_json,
+       NULL AS subsequent_investor_names, NULL AS subsequent_investors_json`
 
-  const industryJoin = opts?.includeIndustries ? `
-    LEFT JOIN (
-      SELECT ci.company_id, GROUP_CONCAT(i.name, ', ') AS industries_csv
-      FROM org_company_industries ci
-      JOIN industries i ON i.id = ci.industry_id
-      GROUP BY ci.company_id
-    ) ind ON ind.company_id = c.id` : ''
-
+  // Rollup queries are ORDERed inside subqueries via inner SELECT to ensure
+  // GROUP_CONCAT and json_group_array preserve user-specified position order.
   const coinvestorJoin = opts?.includeInvestorNames ? `
     LEFT JOIN (
-      SELECT ci.company_id, GROUP_CONCAT(oc.canonical_name, ', ') AS co_investor_names
-      FROM company_investors ci
-      JOIN org_companies oc ON oc.id = ci.investor_company_id
-      WHERE ci.investor_type = 'co_investor'
-      GROUP BY ci.company_id
+      SELECT
+        company_id,
+        GROUP_CONCAT(name, ', ') AS co_investor_names,
+        json_group_array(json_object('id', id, 'name', name, 'domain', domain)) AS co_investors_json
+      FROM (
+        SELECT ci.company_id, oc.id AS id, oc.canonical_name AS name, oc.primary_domain AS domain
+        FROM company_investors ci
+        JOIN org_companies oc ON oc.id = ci.investor_company_id
+        WHERE ci.investor_type = 'co_investor'
+        ORDER BY ci.position, ci.created_at
+      )
+      GROUP BY company_id
     ) coinv ON coinv.company_id = c.id
     LEFT JOIN (
-      SELECT ci.company_id, GROUP_CONCAT(oc.canonical_name, ', ') AS subsequent_investor_names
-      FROM company_investors ci
-      JOIN org_companies oc ON oc.id = ci.investor_company_id
-      WHERE ci.investor_type = 'subsequent_investor'
-      GROUP BY ci.company_id
+      SELECT
+        company_id,
+        GROUP_CONCAT(name, ', ') AS prior_investor_names,
+        json_group_array(json_object('id', id, 'name', name, 'domain', domain)) AS prior_investors_json
+      FROM (
+        SELECT ci.company_id, oc.id AS id, oc.canonical_name AS name, oc.primary_domain AS domain
+        FROM company_investors ci
+        JOIN org_companies oc ON oc.id = ci.investor_company_id
+        WHERE ci.investor_type = 'prior_investor'
+        ORDER BY ci.position, ci.created_at
+      )
+      GROUP BY company_id
+    ) priorinv ON priorinv.company_id = c.id
+    LEFT JOIN (
+      SELECT
+        company_id,
+        GROUP_CONCAT(name, ', ') AS subsequent_investor_names,
+        json_group_array(json_object('id', id, 'name', name, 'domain', domain)) AS subsequent_investors_json
+      FROM (
+        SELECT ci.company_id, oc.id AS id, oc.canonical_name AS name, oc.primary_domain AS domain
+        FROM company_investors ci
+        JOIN org_companies oc ON oc.id = ci.investor_company_id
+        WHERE ci.investor_type = 'subsequent_investor'
+        ORDER BY ci.position, ci.created_at
+      )
+      GROUP BY company_id
     ) subinv ON subinv.company_id = c.id` : ''
 
   return `
@@ -462,7 +540,7 @@ function baseCompanySelect(whereClause = '', opts?: BaseSelectOpts): string {
       c.twitter_handle,
       c.crunchbase_url,
       c.angellist_url,
-      c.sector,
+      c.industry,
       c.target_customer,
       c.business_model,
       c.product_stage,
@@ -473,6 +551,9 @@ function baseCompanySelect(whereClause = '', opts?: BaseSelectOpts): string {
       c.last_funding_date,
       c.total_funding_raised,
       c.lead_investor,
+      c.lead_investor_company_id,
+      lead_inv.canonical_name AS lead_investor_company_name,
+      lead_inv.primary_domain AS lead_investor_company_domain,
       c.co_investors,
       c.source_type,
       c.source_entity_type,
@@ -498,9 +579,9 @@ function baseCompanySelect(whereClause = '', opts?: BaseSelectOpts): string {
       c.followon_date,
       c.followon_check_2,
       c.followon_date_2,
-      ${industryCols},
       ${investorCols}
     FROM org_companies c
+    LEFT JOIN org_companies lead_inv ON lead_inv.id = c.lead_investor_company_id
     LEFT JOIN (
       SELECT
         l.company_id,
@@ -543,7 +624,7 @@ function baseCompanySelect(whereClause = '', opts?: BaseSelectOpts): string {
       FROM contacts
       WHERE primary_company_id IS NOT NULL
       GROUP BY primary_company_id
-    ) cc ON cc.primary_company_id = c.id${industryJoin}${coinvestorJoin}
+    ) cc ON cc.primary_company_id = c.id${coinvestorJoin}
     ${whereClause}
   `
 }
@@ -595,10 +676,17 @@ function baseCompanySelectLight(whereClause = ''): string {
       c.followon_date,
       c.followon_check_2,
       c.followon_date_2,
-      NULL AS industries_csv,
       NULL AS co_investor_names,
-      NULL AS subsequent_investor_names
+      NULL AS co_investors_json,
+      NULL AS prior_investor_names,
+      NULL AS prior_investors_json,
+      NULL AS subsequent_investor_names,
+      NULL AS subsequent_investors_json,
+      c.lead_investor_company_id,
+      lead_inv.canonical_name AS lead_investor_company_name,
+      lead_inv.primary_domain AS lead_investor_company_domain
     FROM org_companies c
+    LEFT JOIN org_companies lead_inv ON lead_inv.id = c.lead_investor_company_id
     ${whereClause}
   `
 }
@@ -634,6 +722,20 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
     conditions.push('c.include_in_companies_view = 1')
   } else if (view === 'hidden') {
     conditions.push('c.include_in_companies_view = 0')
+  } else if (view === 'stubs') {
+    // Phase 3: investor-stub pollution detection.
+    // A "stub" is a sparse company that's referenced by some other company's
+    // investor list (so it was likely created via find-or-create) AND has
+    // no enrichment, no domain, no activity.
+    conditions.push(`(
+      c.entity_type = 'unknown'
+      AND (c.primary_domain IS NULL OR c.primary_domain = '')
+      AND (c.description IS NULL OR c.description = '')
+      AND (c.lead_investor IS NULL OR c.lead_investor = '')
+      AND EXISTS (SELECT 1 FROM company_investors WHERE investor_company_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM meeting_company_links WHERE company_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM email_company_links WHERE company_id = c.id)
+    )`)
   }
 
   if (query) {
@@ -665,7 +767,6 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
   const paginate = limit !== undefined
   const includeStats = filter?.includeStats === true
   const selectOpts: BaseSelectOpts = {
-    includeIndustries: filter?.includeIndustries,
     includeInvestorNames: filter?.includeInvestorNames,
   }
 
@@ -678,6 +779,34 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
     .all(...(paginate ? [...params, limit, offset] : params)) as CompanyRow[]
 
   return rows.map(rowToCompanySummary)
+}
+
+/**
+ * Count investor-stub-pollution candidates. Used by the Dashboard banner.
+ *
+ * Mirrors the `view: 'stubs'` filter in listCompanies — a stub is a sparse
+ * org_companies row referenced by another company's investor list with no
+ * enrichment and no activity. See listCompanies WHERE clause for the exact
+ * predicate.
+ */
+export function countStubCompanies(): number {
+  const db = getDatabase()
+  try {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS n FROM org_companies c
+      WHERE c.entity_type = 'unknown'
+        AND (c.primary_domain IS NULL OR c.primary_domain = '')
+        AND (c.description IS NULL OR c.description = '')
+        AND (c.lead_investor IS NULL OR c.lead_investor = '')
+        AND EXISTS (SELECT 1 FROM company_investors WHERE investor_company_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM meeting_company_links WHERE company_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM email_company_links WHERE company_id = c.id)
+    `).get() as { n: number } | undefined
+    return row?.n ?? 0
+  } catch (err) {
+    console.error('[org-company.repo] countStubCompanies failed:', err)
+    return 0
+  }
 }
 
 export function listPipelineCompanies(filter?: {
@@ -768,7 +897,7 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
     const rows = db
       .prepare(
         `SELECT id, canonical_name, normalized_name, entity_type, pipeline_stage,
-                primary_domain, sector, city, state, arr, raise_size, round
+                primary_domain, industry, city, state, arr, raise_size, round
          FROM org_companies WHERE lower(normalized_name) IN (${placeholders})`
       )
       .all(...chunk.map((n) => n.toLowerCase())) as Array<{
@@ -778,7 +907,7 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         entity_type: string | null
         pipeline_stage: string | null
         primary_domain: string | null
-        sector: string | null
+        industry: string | null
         city: string | null
         state: string | null
         arr: number | null
@@ -797,7 +926,7 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         entityType: (r.entity_type as CompanyDetail['entityType']) ?? 'unknown',
         pipelineStage: (r.pipeline_stage as CompanyDetail['pipelineStage']) ?? null,
         primaryDomain: r.primary_domain,
-        sector: r.sector,
+        industry: r.industry,
         city: r.city,
         state: r.state,
         arr: r.arr,
@@ -825,10 +954,13 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         initialRoundSize: nullNum, lastCompanyValuation: nullNum,
         followonCheck: nullNum, followonDate: nullStr,
         followonCheck2: nullNum, followonDate2: nullStr,
-        industriesCsv: nullStr, coInvestorNames: nullStr, subsequentInvestorNames: nullStr,
+        coInvestorNames: nullStr,
+        priorInvestorNames: nullStr, subsequentInvestorNames: nullStr,
+        leadInvestorCompany: null,
         createdAt: '', updatedAt: '',
-        industries: [], themes: [],
+        themes: [],
         sourceEntityName: nullStr, coInvestorsList: [], priorInvestorsList: [], subsequentInvestorsList: [], coInvestedIn: [],
+        coInvestorOverlaps: {},
         fieldSources: nullStr, keyTakeaways: nullStr
       } satisfies CompanyDetail
     }
@@ -863,16 +995,6 @@ export function getCompany(companyId: string): CompanyDetail | null {
     // Column doesn't exist yet (migration pending) — leave as null
   }
 
-  const industries = db
-    .prepare(`
-      SELECT i.name
-      FROM org_company_industries ci
-      JOIN industries i ON i.id = ci.industry_id
-      WHERE ci.company_id = ?
-      ORDER BY ci.is_primary DESC, i.name ASC
-    `)
-    .all(companyId) as { name: string }[]
-
   const themes = db
     .prepare(`
       SELECT t.name
@@ -901,16 +1023,17 @@ export function getCompany(companyId: string): CompanyDetail | null {
   const priorInvestorsList = getCompanyInvestors(db, companyId, 'prior_investor')
   const subsequentInvestorsList = getCompanyInvestors(db, companyId, 'subsequent_investor')
   const coInvestedIn = getCompanyCoInvestedIn(db, companyId)
+  const coInvestorOverlaps = getCoInvestorOverlaps(companyId)
 
   return {
     ...rowToCompanySummary(row),
-    industries: industries.map((v) => v.name),
     themes: themes.map((v) => v.name),
     sourceEntityName,
     coInvestorsList,
     priorInvestorsList,
     subsequentInvestorsList,
     coInvestedIn,
+    coInvestorOverlaps,
   }
 }
 
@@ -918,17 +1041,18 @@ function getCompanyInvestors(
   db: ReturnType<typeof getDatabase>,
   companyId: string,
   type: 'co_investor' | 'prior_investor' | 'subsequent_investor'
-): Array<{ id: string; name: string }> {
+): Array<{ id: string; name: string; domain: string | null }> {
   try {
-    return db
+    const rows = db
       .prepare(`
-        SELECT ci.investor_company_id AS id, oc.canonical_name AS name
+        SELECT ci.investor_company_id AS id, oc.canonical_name AS name, oc.primary_domain AS domain
         FROM company_investors ci
         JOIN org_companies oc ON oc.id = ci.investor_company_id
         WHERE ci.company_id = ? AND ci.investor_type = ?
-        ORDER BY ci.created_at
+        ORDER BY ci.position, ci.created_at
       `)
-      .all(companyId, type) as Array<{ id: string; name: string }>
+      .all(companyId, type) as Array<{ id: string; name: string; domain: string | null }>
+    return rows.map((r) => ({ id: r.id, name: r.name, domain: r.domain ?? null }))
   } catch {
     return []
   }
@@ -937,19 +1061,64 @@ function getCompanyInvestors(
 function getCompanyCoInvestedIn(
   db: ReturnType<typeof getDatabase>,
   companyId: string
-): Array<{ id: string; name: string }> {
+): Array<{ id: string; name: string; domain: string | null }> {
   try {
-    return db
+    const rows = db
       .prepare(`
-        SELECT ci.company_id AS id, oc.canonical_name AS name
+        SELECT ci.company_id AS id, oc.canonical_name AS name, oc.primary_domain AS domain
         FROM company_investors ci
         JOIN org_companies oc ON oc.id = ci.company_id
         WHERE ci.investor_company_id = ? AND ci.investor_type = 'co_investor'
-        ORDER BY ci.created_at
+        ORDER BY ci.position, ci.created_at
       `)
-      .all(companyId) as Array<{ id: string; name: string }>
+      .all(companyId) as Array<{ id: string; name: string; domain: string | null }>
+    return rows.map((r) => ({ id: r.id, name: r.name, domain: r.domain ?? null }))
   } catch {
     return []
+  }
+}
+
+/**
+ * For a portfolio company, count how many OTHER portfolio companies share each
+ * of its co-investors. Phase 2C: powers "↑ N more" badges on co-investor chips
+ * in the detail panel — turns relational data into investor-network intelligence.
+ *
+ *   Input:  companyId = "portco-1"
+ *   Output: { "sequoia-id": 2, "accel-id": 1 }   (portco-1 + 2 others have Sequoia, etc.)
+ *
+ * Only counts overlap with portfolio-typed companies (entity_type = 'portfolio').
+ * Does NOT include the input company itself.
+ *
+ * Returns empty object on DB error rather than throwing — UI gracefully omits badges.
+ */
+export function getCoInvestorOverlaps(companyId: string): Record<string, number> {
+  const db = getDatabase()
+  try {
+    const rows = db
+      .prepare(`
+        SELECT
+          ci_target.investor_company_id AS investor_id,
+          COUNT(DISTINCT ci_other.company_id) AS overlap_count
+        FROM company_investors ci_target
+        JOIN company_investors ci_other
+          ON ci_other.investor_company_id = ci_target.investor_company_id
+          AND ci_other.investor_type = 'co_investor'
+          AND ci_other.company_id != ci_target.company_id
+        JOIN org_companies oc ON oc.id = ci_other.company_id
+        WHERE ci_target.company_id = ?
+          AND ci_target.investor_type = 'co_investor'
+          AND oc.entity_type = 'portfolio'
+        GROUP BY ci_target.investor_company_id
+      `)
+      .all(companyId) as Array<{ investor_id: string; overlap_count: number }>
+    const out: Record<string, number> = {}
+    for (const r of rows) {
+      if (r.overlap_count > 0) out[r.investor_id] = r.overlap_count
+    }
+    return out
+  } catch (err) {
+    console.error('[org-company.repo] getCoInvestorOverlaps failed:', err)
+    return {}
   }
 }
 
@@ -1055,7 +1224,7 @@ const COMPANY_UPDATABLE_FIELDS = {
   twitterHandle: 'twitter_handle',
   crunchbaseUrl: 'crunchbase_url',
   angellistUrl: 'angellist_url',
-  sector: 'sector',
+  industry: 'industry',
   targetCustomer: 'target_customer',
   businessModel: 'business_model',
   productStage: 'product_stage',
@@ -1066,6 +1235,7 @@ const COMPANY_UPDATABLE_FIELDS = {
   lastFundingDate: 'last_funding_date',
   totalFundingRaised: 'total_funding_raised',
   leadInvestor: 'lead_investor',
+  leadInvestorCompanyId: 'lead_investor_company_id',
   sourceType: 'source_type',
   sourceEntityType: 'source_entity_type',
   sourceEntityId: 'source_entity_id',
@@ -1130,6 +1300,23 @@ export function updateCompany(
     sets.push('primary_domain = ?')
     params.push(normalizedPrimaryDomain)
   }
+  // Auto-derive primary_domain from websiteUrl when the user edits the website
+  // and primary_domain is currently empty. Skips if the caller is also setting
+  // primaryDomain explicitly, or if the company already has a domain set.
+  if (data.websiteUrl !== undefined && data.primaryDomain === undefined) {
+    const derived = extractDomainFromWebsiteUrl((data.websiteUrl as string | null) ?? null)
+    if (derived) {
+      const existing = db
+        .prepare('SELECT primary_domain FROM org_companies WHERE id = ?')
+        .get(companyId) as { primary_domain: string | null } | undefined
+      const currentDomain = (existing?.primary_domain ?? '').trim()
+      if (!currentDomain) {
+        normalizedPrimaryDomain = derived
+        sets.push('primary_domain = ?')
+        params.push(derived)
+      }
+    }
+  }
   if (data.entityType !== undefined) {
     const normalizedEntityType = normalizeEntityType(data.entityType)
     sets.push('entity_type = ?')
@@ -1178,7 +1365,7 @@ export function updateCompany(
     if (normalizedCanonicalName) {
       upsertCompanyAlias(db, companyId, normalizedCanonicalName, 'name')
     }
-    if (data.primaryDomain !== undefined && normalizedPrimaryDomain) {
+    if (normalizedPrimaryDomain) {
       for (const candidate of getDomainLookupCandidates(normalizedPrimaryDomain)) {
         upsertCompanyAlias(db, companyId, candidate, 'domain')
       }
@@ -1194,39 +1381,20 @@ export function updateCompany(
   return detail
 }
 
-export function updateCompanyIndustries(companyId: string, names: string[]): void {
-  const db = getDatabase()
-  db.transaction(() => {
-    db.prepare('DELETE FROM org_company_industries WHERE company_id = ?').run(companyId)
-    for (const name of names.filter(Boolean)) {
-      let industry = db
-        .prepare('SELECT id FROM industries WHERE LOWER(name) = LOWER(?)')
-        .get(name) as { id: string } | undefined
-      if (!industry) {
-        const id = randomUUID()
-        db.prepare('INSERT INTO industries (id, name) VALUES (?, ?)').run(id, name)
-        industry = { id }
-      }
-      db.prepare(
-        'INSERT OR IGNORE INTO org_company_industries (company_id, industry_id) VALUES (?, ?)'
-      ).run(companyId, industry.id)
-    }
-  })()
-}
-
 export function setCompanyInvestors(
   companyId: string,
   type: 'co_investor' | 'prior_investor' | 'subsequent_investor',
+  /** Order matters — the array index becomes the persisted `position`. */
   investors: Array<{ id: string; name: string }>
 ): void {
   const db = getDatabase()
   db.transaction(() => {
     db.prepare('DELETE FROM company_investors WHERE company_id = ? AND investor_type = ?').run(companyId, type)
-    for (const inv of investors) {
+    investors.forEach((inv, idx) => {
       db.prepare(
-        'INSERT INTO company_investors (id, company_id, investor_company_id, investor_type) VALUES (?, ?, ?, ?)'
-      ).run(randomUUID(), companyId, inv.id, type)
-    }
+        'INSERT INTO company_investors (id, company_id, investor_company_id, investor_type, position) VALUES (?, ?, ?, ?, ?)'
+      ).run(randomUUID(), companyId, inv.id, type, idx)
+    })
   })()
 }
 
@@ -1420,7 +1588,6 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
     notes: 0,
     conversations: 0,
     memos: 0,
-    industries: 0,
     themes: 0,
     theses: 0,
     artifacts: 0,
@@ -1540,18 +1707,6 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
         WHERE company_id = ?
       `)
       .run(targetCompanyId, sourceCompanyId).changes
-
-    db.prepare(`
-      INSERT OR IGNORE INTO org_company_industries (
-        company_id, industry_id, confidence, is_primary, tagged_by, created_at
-      )
-      SELECT ?, industry_id, confidence, is_primary, tagged_by, created_at
-      FROM org_company_industries
-      WHERE company_id = ?
-    `).run(targetCompanyId, sourceCompanyId)
-    relinked.industries = db
-      .prepare('DELETE FROM org_company_industries WHERE company_id = ?')
-      .run(sourceCompanyId).changes
 
     db.prepare(`
       INSERT OR IGNORE INTO org_company_themes (
@@ -1871,7 +2026,6 @@ export function deleteCompany(companyId: string): void {
     // Delete memo versions first, then memos
     db.prepare('DELETE FROM investment_memo_versions WHERE memo_id IN (SELECT id FROM investment_memos WHERE company_id = ?)').run(companyId)
     db.prepare('DELETE FROM investment_memos WHERE company_id = ?').run(companyId)
-    db.prepare('DELETE FROM org_company_industries WHERE company_id = ?').run(companyId)
     db.prepare('DELETE FROM org_company_themes WHERE company_id = ?').run(companyId)
     db.prepare('DELETE FROM theses WHERE company_id = ?').run(companyId)
     db.prepare('DELETE FROM artifacts WHERE company_id = ?').run(companyId)

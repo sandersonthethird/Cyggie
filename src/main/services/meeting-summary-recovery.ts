@@ -18,6 +18,9 @@
  *        │
  *        ▼
  *   query notes WHERE source_meeting_id = meeting.id AND TRIM(content) != ''
+ *        │ ORDER BY created_at DESC LIMIT 1  — newest first, so re-enhanced
+ *        │ summaries don't roll back to the very first generation when the
+ *        │ summary file is later lost
  *        │
  *        ├─ no rows → return null
  *        │
@@ -48,7 +51,7 @@ export function recoverSummaryFromCompanionNote(meeting: Meeting): string | null
     const db = getDatabase()
     const row = db
       .prepare(
-        "SELECT content FROM notes WHERE source_meeting_id = ? AND TRIM(content) != '' ORDER BY created_at ASC LIMIT 1"
+        "SELECT content FROM notes WHERE source_meeting_id = ? AND TRIM(content) != '' ORDER BY created_at DESC LIMIT 1"
       )
       .get(meeting.id) as { content: string } | undefined
 

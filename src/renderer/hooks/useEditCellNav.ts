@@ -2,9 +2,9 @@
  * useEditCellNav — shared hook for cell focus, inline edit, and keyboard navigation.
  *
  * State machine:
- *   IDLE ──click──▶ FOCUSED ──dbl-click/Enter──▶ EDIT ──save──▶ FOCUSED
- *     ▲                │  ▲                         │
- *     └── click out ───┘  └──────── Esc ────────────┘
+ *   IDLE ──click──▶ FOCUSED ──dbl-click/Enter/type──▶ EDIT ──save──▶ FOCUSED
+ *     ▲                │  ▲                              │
+ *     └── click out ───┘  └──────── Esc ─────────────────┘
  *     └── Esc ─────────┘
  *
  *   FOCUSED + Shift:
@@ -22,14 +22,42 @@
  *   handleEndEdit(dir='down')         ──► advance to next row, stay FOCUSED
  *   handleEndEdit(dir=null)           ──► clear editCell, keep focusedCell (Esc from edit)
  *   handleArrowNav(dir, shift)        ──► move focusedCell, optionally extend cellRange
+ *   handleKeyboardEvent(e, opts)      ──► dispatch a key event to nav/edit/escape/type-to-edit;
+ *                                         returns true if handled, false to let caller continue.
+ *                                         opts.suppressEscape skips the Esc clause when caller
+ *                                         has competing state (e.g. clipboard "copied" mode).
  */
-import { useState, useCallback } from 'react'
+import { useState, useCallback, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ColumnDef } from '../components/crm/tableUtils'
 
 export interface EditCell {
   rowIdx: number
   colIdx: number
   initialChar?: string
+}
+
+/** Position of a cell within a contiguous range. null = not in range. */
+export type RangePosition = 'only' | 'top' | 'mid' | 'bot' | null
+
+/** Compute a cell's position within a range (for unified border rendering). */
+export function getRangePosition(
+  dataIndex: number,
+  colIdx: number,
+  range: CellRange | null,
+  singleCell: EditCell | null
+): RangePosition {
+  // Check range first
+  if (range && range.colIdx === colIdx && dataIndex >= range.startRow && dataIndex <= range.endRow) {
+    if (range.startRow === range.endRow) return 'only'
+    if (dataIndex === range.startRow) return 'top'
+    if (dataIndex === range.endRow) return 'bot'
+    return 'mid'
+  }
+  // Single cell
+  if (singleCell && singleCell.rowIdx === dataIndex && singleCell.colIdx === colIdx) {
+    return 'only'
+  }
+  return null
 }
 
 export interface CellRange {
@@ -153,6 +181,62 @@ export function useEditCellNav(
     setEditCell(null)
   }, [focusedCell, rowCount, visibleCols, scrollToRow])
 
+  /**
+   * Dispatches a React keyboard event to the appropriate cell-nav action.
+   * Returns true if the event was handled (caller should stop), false if not
+   * (caller should continue to other handlers like clipboard / row-selection).
+   *
+   * Handles, in order:
+   *   1. Arrow keys (when focused, not editing) → handleArrowNav
+   *   2. Enter (when focused, not editing) → handleStartEdit
+   *   3. Escape (when focused, not editing, !opts.suppressEscape) → clearFocus
+   *   4. Printable single-char key (when focused, not editing, no modifiers,
+   *      not autorepeat, focused col is editable) → handleStartEdit with initialChar
+   */
+  const handleKeyboardEvent = useCallback(
+    (e: ReactKeyboardEvent, opts?: { suppressEscape?: boolean }): boolean => {
+      if (!focusedCell || editCell) return false
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault()
+        const dir = e.key.replace('Arrow', '').toLowerCase() as 'up' | 'down' | 'left' | 'right'
+        handleArrowNav(dir, e.shiftKey)
+        return true
+      }
+
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        handleStartEdit(focusedCell.rowIdx, focusedCell.colIdx)
+        return true
+      }
+
+      if (e.key === 'Escape' && !opts?.suppressEscape) {
+        e.preventDefault()
+        clearFocus()
+        return true
+      }
+
+      // Type-to-edit: any printable single character without modifiers, on an editable col.
+      // - e.repeat skipped so holding a key doesn't re-trigger after edit mode begins
+      // - length === 1 excludes "Tab", "Backspace", "Enter", "ArrowDown", "Process" (IME), etc.
+      if (
+        !e.metaKey && !e.ctrlKey && !e.altKey &&
+        !e.repeat &&
+        e.key.length === 1
+      ) {
+        const focusedCol = visibleCols[focusedCell.colIdx]
+        if (focusedCol?.editable) {
+          e.preventDefault()
+          handleStartEdit(focusedCell.rowIdx, focusedCell.colIdx, e.key)
+          return true
+        }
+      }
+
+      return false
+    },
+    [focusedCell, editCell, visibleCols, handleArrowNav, handleStartEdit, clearFocus],
+  )
+
   return {
     focusedCell,
     setFocusedCell,
@@ -164,6 +248,7 @@ export function useEditCellNav(
     handleStartEdit,
     handleEndEdit,
     handleArrowNav,
+    handleKeyboardEvent,
     clearFocus,
   }
 }

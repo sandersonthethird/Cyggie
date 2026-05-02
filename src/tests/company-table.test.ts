@@ -34,7 +34,7 @@ describe('loadColumnConfig', () => {
 
   it('returns stored config when all keys are valid (with default cols merged in)', () => {
     // Store full DEFAULT_VISIBLE_KEYS plus a hidden column — expect it back with that order preserved
-    const stored = [...DEFAULT_VISIBLE_KEYS, 'sector']
+    const stored = [...DEFAULT_VISIBLE_KEYS, 'industry']
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
     const result = loadColumnConfig()
     // All stored keys are preserved in order
@@ -84,7 +84,7 @@ function makeCompany(overrides: Partial<CompanySummary>): CompanySummary {
     raiseSize: null,
     postMoneyValuation: null,
     arr: null,
-    sector: null,
+    industry: null,
     city: null,
     state: null,
     foundingYear: null,
@@ -347,44 +347,44 @@ describe('filterCompanies — range filters', () => {
 describe('filterCompanies — text filters', () => {
   it('text filter is case-insensitive and partial-match', () => {
     const companies = [
-      makeCompany({ id: '1', sector: 'FinTech' }),
-      makeCompany({ id: '2', sector: 'healthcare' }),
-      makeCompany({ id: '3', sector: null })
+      makeCompany({ id: '1', industry: 'FinTech' }),
+      makeCompany({ id: '2', industry: 'healthcare' }),
+      makeCompany({ id: '3', industry: null })
     ]
-    const result = filterCompanies(companies, {}, {}, { sector: 'fintech' })
+    const result = filterCompanies(companies, {}, {}, { industry: 'fintech' })
     expect(result.map((c) => c.id)).toEqual(['1'])
   })
 
   it('null cell value is excluded when text filter is active', () => {
     const companies = [
-      makeCompany({ id: '1', sector: 'FinTech' }),
-      makeCompany({ id: '2', sector: null })
+      makeCompany({ id: '1', industry: 'FinTech' }),
+      makeCompany({ id: '2', industry: null })
     ]
-    const result = filterCompanies(companies, {}, {}, { sector: 'fin' })
+    const result = filterCompanies(companies, {}, {}, { industry: 'fin' })
     expect(result.map((c) => c.id)).toEqual(['1'])
   })
 
   it('empty string text filter passes all rows', () => {
     const companies = [
-      makeCompany({ id: '1', sector: 'FinTech' }),
-      makeCompany({ id: '2', sector: null })
+      makeCompany({ id: '1', industry: 'FinTech' }),
+      makeCompany({ id: '2', industry: null })
     ]
-    const result = filterCompanies(companies, {}, {}, { sector: '' })
+    const result = filterCompanies(companies, {}, {}, { industry: '' })
     expect(result.map((c) => c.id)).toEqual(['1', '2'])
   })
 
   it('select + range + text all AND together (three-pass chain)', () => {
     const companies = [
-      makeCompany({ id: '1', entityType: 'prospect', raiseSize: 10, sector: 'FinTech' }),
-      makeCompany({ id: '2', entityType: 'prospect', raiseSize: 10, sector: 'Healthcare' }),
-      makeCompany({ id: '3', entityType: 'portfolio', raiseSize: 10, sector: 'FinTech' }),
-      makeCompany({ id: '4', entityType: 'prospect', raiseSize: 2, sector: 'FinTech' })
+      makeCompany({ id: '1', entityType: 'prospect', raiseSize: 10, industry: 'FinTech' }),
+      makeCompany({ id: '2', entityType: 'prospect', raiseSize: 10, industry: 'Healthcare' }),
+      makeCompany({ id: '3', entityType: 'portfolio', raiseSize: 10, industry: 'FinTech' }),
+      makeCompany({ id: '4', entityType: 'prospect', raiseSize: 2, industry: 'FinTech' })
     ]
     const result = filterCompanies(
       companies,
       { entityType: ['prospect'] },
       { raiseSize: { min: '5' } },
-      { sector: 'fintech' }
+      { industry: 'fintech' }
     )
     expect(result.map((c) => c.id)).toEqual(['1'])
   })

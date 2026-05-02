@@ -1,4 +1,4 @@
-import React, { type ReactNode, type HTMLAttributes, type RefObject, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import React, { useEffect, useState, type ReactNode, type HTMLAttributes, type RefObject, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Share2, AtSign, Link, Mail, ListTodo, CalendarSync } from 'lucide-react'
 import type { CompanyDetail } from '../../../shared/types/company'
 import { RecordKebabMenu } from '../common/RecordKebabMenu'
@@ -24,6 +24,11 @@ function HealthBadge({ lastTouchpoint }: { lastTouchpoint: string | null }) {
   if (days <= 7) return <span className={`${styles.healthBadge} ${styles.healthGreen}`}>{days}d ago</span>
   if (days <= 30) return <span className={`${styles.healthBadge} ${styles.healthYellow}`}>{days}d ago</span>
   return <span className={`${styles.healthBadge} ${styles.healthRed}`}>{days}d ago</span>
+}
+
+function companyLogoUrl(domain: string | null): string | null {
+  if (!domain) return null
+  return `https://logo.clearbit.com/${domain}`
 }
 
 function googleFaviconUrl(domain: string | null): string | null {
@@ -139,20 +144,32 @@ export function CompanyHeaderCard({
   fieldSources,
   onSaveWebsite,
 }: CompanyHeaderCardProps) {
+  const logoUrl = companyLogoUrl(company.primaryDomain)
   const faviconUrl = googleFaviconUrl(company.primaryDomain)
+  const [logoFailed, setLogoFailed] = useState(false)
   const openExternal = (url: string) => { void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, url) }
+
+  // Reset logo state when domain changes
+  useEffect(() => { setLogoFailed(false) }, [company.primaryDomain])
 
   return (
     <div className={styles.header}>
       <div className={styles.headerTopRow}>
-        {faviconUrl && (
+        {logoUrl && !logoFailed ? (
+          <img
+            src={logoUrl}
+            className={styles.logo}
+            onError={() => setLogoFailed(true)}
+            alt=""
+          />
+        ) : faviconUrl ? (
           <img
             src={faviconUrl}
             className={styles.logo}
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
             alt=""
           />
-        )}
+        ) : null}
         <div className={styles.headerMeta}>
           {/* 3-dot kebab menu */}
           {!isEditing && (
@@ -193,7 +210,7 @@ export function CompanyHeaderCard({
               <div className={styles.companyName}>{company.canonicalName}</div>
               {company.websiteUrl && (
                 <button className={styles.websiteLink} onClick={() => openExternal(company.websiteUrl!)}>
-                  {company.primaryDomain ?? company.websiteUrl!.replace(/^https?:\/\//, '')}
+                  {company.primaryDomain ?? company.websiteUrl!.replace(/^https?:\/\//, '').replace(/\/+$/, '')}
                 </button>
               )}
             </>

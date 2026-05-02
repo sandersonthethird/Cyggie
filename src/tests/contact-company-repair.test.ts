@@ -135,16 +135,6 @@ function buildEnrichDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    CREATE TABLE industries (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE
-    );
-    CREATE TABLE org_company_industries (
-      company_id TEXT NOT NULL,
-      industry_id TEXT NOT NULL,
-      is_primary INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (company_id, industry_id)
-    );
     CREATE TABLE org_company_themes (
       company_id TEXT NOT NULL,
       theme_id TEXT NOT NULL,
@@ -190,7 +180,7 @@ function buildEnrichDb(): Database.Database {
     ALTER TABLE org_companies ADD COLUMN twitter_handle TEXT;
     ALTER TABLE org_companies ADD COLUMN crunchbase_url TEXT;
     ALTER TABLE org_companies ADD COLUMN angellist_url TEXT;
-    ALTER TABLE org_companies ADD COLUMN sector TEXT;
+    ALTER TABLE org_companies ADD COLUMN industry TEXT;
     ALTER TABLE org_companies ADD COLUMN target_customer TEXT;
     ALTER TABLE org_companies ADD COLUMN business_model TEXT;
     ALTER TABLE org_companies ADD COLUMN product_stage TEXT;

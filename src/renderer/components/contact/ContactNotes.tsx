@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { useEffect, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactNote } from '../../../shared/types/contact'
 import { ContactNoteDetailModal } from '../crm/ContactNoteDetailModal'
+import { NoteCreator } from '../common/NoteCreator'
+import { NoteList } from '../common/NoteList'
 import styles from './ContactNotes.module.css'
 import { api } from '../../api'
 import { usePinToggle } from '../../hooks/usePinToggle'
-import { stripMarkdownPreview } from '../../utils/format'
 
 interface ContactNotesProps {
   contactId: string
@@ -16,11 +16,7 @@ interface ContactNotesProps {
 export function ContactNotes({ contactId, className }: ContactNotesProps) {
   const [notes, setNotes] = useState<ContactNote[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [newContent, setNewContent] = useState('')
-  const [creating, setCreating] = useState(false)
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
-  const [focused, setFocused] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { togglePin, togglingIds } = usePinToggle<ContactNote>(IPC_CHANNELS.CONTACT_NOTES_UPDATE, setNotes)
 
   useEffect(() => {
@@ -32,28 +28,12 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
       .finally(() => setLoaded(true))
   }, [contactId, loaded])
 
-  async function createNote() {
-    if (!newContent.trim()) return
-    setCreating(true)
-    try {
-      const note = await api.invoke<ContactNote>(IPC_CHANNELS.CONTACT_NOTES_CREATE, {
-        contactId,
-        content: newContent.trim()
-      })
-      setNotes((prev) => [note, ...prev])
-      setNewContent('')
-      setFocused(false)
-    } catch (e) {
-      console.error('[ContactNotes] create failed:', e)
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  function cancelNote() {
-    setNewContent('')
-    setFocused(false)
-    textareaRef.current?.blur()
+  async function createNote(content: string) {
+    const note = await api.invoke<ContactNote>(IPC_CHANNELS.CONTACT_NOTES_CREATE, {
+      contactId,
+      content: content.trim(),
+    })
+    setNotes((prev) => [note, ...prev])
   }
 
   async function deleteNote(noteId: string) {
@@ -76,83 +56,16 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
-      <div className={styles.newNote}>
-        <textarea
-          ref={textareaRef}
-          className={styles.textarea}
-          value={newContent}
-          onChange={(e) => setNewContent(e.target.value)}
-          placeholder="Add a note…"
-          rows={focused ? 5 : 1}
-          onFocus={() => setFocused(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) createNote()
-            if (e.key === 'Escape') cancelNote()
-          }}
-        />
-        {focused && (
-          <div className={styles.noteActions}>
-            <button className={styles.cancelBtn} onClick={cancelNote} disabled={creating}>
-              Cancel
-            </button>
-            <button
-              className={styles.saveBtn}
-              onClick={createNote}
-              disabled={!newContent.trim() || creating}
-            >
-              Save Note
-            </button>
-          </div>
-        )}
-      </div>
+      <NoteCreator onSave={createNote} />
 
-      {!loaded && <div className={styles.loading}>Loading…</div>}
-      {loaded && notes.length === 0 && (
-        <div className={styles.empty}>No notes yet.</div>
-      )}
-
-      {notes.map((note) => {
-        const content = note.content || ''
-        const nl = content.indexOf('\n')
-        const firstLine = nl >= 0 ? content.slice(0, nl) : content
-        const explicitTitle = note.title?.trim()
-        const title = explicitTitle || stripMarkdownPreview(firstLine)
-        const body = explicitTitle
-          ? (nl >= 0 && firstLine.trim() === explicitTitle
-            ? content.slice(nl + 1).trim()
-            : content.trim())
-          : (nl >= 0 ? content.slice(nl + 1).trim() : '')
-        return (
-          <div
-            key={note.id}
-            className={`${styles.note} ${note.isPinned ? styles.notePinned : ''}`}
-            onClick={() => setSelectedNoteId(note.id)}
-          >
-            <div className={styles.noteTitleRow}>
-              <div className={styles.noteTitle}>{title}</div>
-              {note.isPinned && <span className={styles.pinnedBadge}>📌 Pinned</span>}
-            </div>
-            {body && <div className={styles.noteBody}><ReactMarkdown>{body.slice(0, 400)}</ReactMarkdown></div>}
-            <div className={styles.noteMeta}>
-              <span>{new Date(note.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-              <div className={styles.noteMetaActions}>
-                <button
-                  className={`${styles.pinBtn} ${note.isPinned ? styles.pinned : ''}`}
-                  disabled={togglingIds.has(note.id)}
-                  onClick={(e) => { e.stopPropagation(); void togglePin(note) }}
-                  title={note.isPinned ? 'Unpin' : 'Pin to top'}
-                >📌</button>
-                <button
-                  className={styles.deleteBtn}
-                  onClick={(e) => { e.stopPropagation(); deleteNote(note.id) }}
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      })}
+      <NoteList
+        notes={notes}
+        loaded={loaded}
+        onSelect={setSelectedNoteId}
+        onTogglePin={togglePin}
+        togglingIds={togglingIds}
+        onDelete={deleteNote}
+      />
 
       {selectedNoteId && (
         <ContactNoteDetailModal

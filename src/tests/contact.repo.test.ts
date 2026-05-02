@@ -220,6 +220,7 @@ describe('getContact / updateContact — keyTakeaways field', () => {
         typical_check_size_max REAL,
         investment_stage_focus TEXT,
         investment_sector_focus TEXT,
+        investment_sector_focus_notes TEXT,
         proud_portfolio_companies TEXT,
         field_sources TEXT,
         work_history TEXT,

@@ -9,6 +9,7 @@ import Placeholder from '@tiptap/extension-placeholder'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import { TABLE_EXTENSIONS } from '../lib/tiptap-extensions'
+import { FindHighlight } from '../lib/find-highlight-extension'
 import { Clock } from 'lucide-react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
@@ -67,6 +68,13 @@ function preprocessSummaryMarkdown(text: string): string {
       if (/^[•·]\s/.test(line)) return '- ' + line.replace(/^[•·]\s+/, '')
       // Drop empty heading lines (e.g. "## " or "### " with nothing after)
       if (/^#{1,6}\s*$/.test(line)) return ''
+      // Normalize 2-space-indented sub-bullets to 3 spaces. remark-gfm requires
+      // 3-space indent (matching the "N. " marker width) to nest a UL inside an
+      // ordered list item — at 2 spaces it renders the UL as a sibling of the OL
+      // and renumbers the OL from the next item. The TipTap markdown serializer
+      // emits 2-space indents, so summaries that have been round-tripped through
+      // edit mode hit this. 3-space indent is also accepted under top-level ULs.
+      if (/^ {2}[-*+]\s/.test(line)) return ' ' + line
       return line
     })
     .join('\n')
@@ -258,7 +266,18 @@ export default function MeetingDetail() {
     [id],
   )
 
-  // Tiptap summary editor — dep [id] ensures recreation on meeting switch
+  // Tracks the markdown that was last loaded into the editor. Used by the sync
+  // effect (below) to avoid reloading when the change came from the editor itself.
+  // Updated in two places:
+  //   - onUpdate (BEFORE setSummaryDraft) so the next sync sees no diff
+  //   - the sync effect after a successful loadSummaryContent
+  // Reset on meeting switch so a stale value from the previous meeting can't
+  // suppress the initial load of the new meeting's summary.
+  const lastLoadedSummaryRef = useRef<string>('')
+  useEffect(() => { lastLoadedSummaryRef.current = '' }, [id])
+
+  // Tiptap summary editor — dep [id] ensures recreation on meeting switch.
+  // Single editor for both view and edit modes; `editable` toggles via editingSummary.
   const { editor: summaryEditor, loadContent: loadSummaryContent } = useTiptapMarkdown(
     {
       extensions: [
@@ -267,22 +286,55 @@ export default function MeetingDetail() {
         Link.configure({ openOnClick: true }),
         ...TABLE_EXTENSIONS,
         Placeholder.configure({ placeholder: 'Summary content...' }),
+        FindHighlight,
       ],
       editable: editingSummary,
       onUpdate: ({ editor: ed }) => {
-        handleSummaryChangeText(ed.getMarkdown?.() ?? ed.getText())
+        const md = ed.getMarkdown?.() ?? ed.getText()
+        // Advance the last-loaded ref BEFORE setSummaryDraft so the sync effect
+        // sees no diff and skips reloading. This is the loop-prevention mechanism.
+        lastLoadedSummaryRef.current = md
+        handleSummaryChangeText(md)
       },
       onBlur: () => setEditingSummary(false),
     },
     [id],
   )
 
-  // Load content into Tiptap and focus when entering edit mode
+  // Click coords captured when entering edit mode, so we can place the cursor where
+  // the user clicked. Same DOM in view + edit modes (just contenteditable toggles)
+  // means posAtCoords on the SAME editor lands pixel-perfect.
+  const summaryClickCoordsRef = useRef<{ x: number; y: number } | null>(null)
+
+  // Sync external summary updates (re-enhance, recovery, IPC) into the editor.
+  // Also handles initial mount load. Compares the last-loaded markdown string
+  // (not a boolean guard) so React's batching can't silently drop an external
+  // update sandwiched with a user edit.
   useEffect(() => {
-    if (editingSummary) {
-      loadSummaryContent(summaryDraft ?? '')
-      setTimeout(() => summaryEditor?.commands.focus(), 0)
-    }
+    if (!summaryEditor) return
+    const next = summaryDraft ?? ''
+    if (next === lastLoadedSummaryRef.current) return
+    loadSummaryContent(preprocessSummaryMarkdown(next))
+    lastLoadedSummaryRef.current = next
+  }, [summaryDraft, summaryEditor]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On entering edit mode, place the cursor at the captured click coords.
+  // Content is already loaded by the sync effect above — do NOT reload here.
+  useEffect(() => {
+    if (!editingSummary) return
+    setTimeout(() => {
+      if (!summaryEditor) return
+      const coords = summaryClickCoordsRef.current
+      summaryClickCoordsRef.current = null
+      if (coords) {
+        const hit = summaryEditor.view.posAtCoords({ left: coords.x, top: coords.y })
+        if (hit) {
+          summaryEditor.commands.focus(hit.pos)
+          return
+        }
+      }
+      summaryEditor.commands.focus()
+    }, 0)
   }, [editingSummary]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const wordCount = useMemo(() => {
@@ -333,7 +385,8 @@ export default function MeetingDetail() {
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [volumeOpen, setVolumeOpen] = useState(false)
   const volumeRef = useRef<HTMLDivElement>(null)
-  const transcriptEndRef = useRef<HTMLDivElement>(null)
+  const transcriptScrollRef = useRef<HTMLDivElement>(null)
+  const stuckToBottomRef = useRef(true)
   const [findOpen, setFindOpen] = useState(false)
   const [shareMenuOpen, setShareMenuOpen] = useState(false)
   const shareRef = useRef<HTMLDivElement>(null)
@@ -805,11 +858,18 @@ export default function MeetingDetail() {
   }, [data, isRecording, flushNotes, startRecording])
 
 
-  // Auto-scroll live transcript
+  const handleTranscriptScroll = useCallback(() => {
+    const el = transcriptScrollRef.current
+    if (!el) return
+    stuckToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  }, [])
+
+  // Auto-scroll live transcript only when user is already at the bottom
   useEffect(() => {
-    if (activeTab === 'transcript') {
-      transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
+    if (activeTab !== 'transcript') return
+    const el = transcriptScrollRef.current
+    if (!el || !stuckToBottomRef.current) return
+    el.scrollTop = el.scrollHeight
   }, [liveTranscript, interimSegment, activeTab])
 
   // Reload meeting data when recording stops (e.g. new transcript available)
@@ -1570,8 +1630,18 @@ export default function MeetingDetail() {
 
   const displaySummary = isGenerating ? streamedSummary : summaryDraft
   const hasSummary = isGenerating ? !!streamedSummary : summaryExists
+  // For the notes tab:
+  //   - while streaming, the summary is rendered by ReactMarkdown — feed the
+  //     preprocessed markdown text so injectFindMarks can work (legacy path).
+  //   - once finalized, the summary is rendered by TipTap + FindHighlight — feed
+  //     editor.state.doc.textContent so match offsets line up with the cursor
+  //     walk in FindHighlight.decorations(). NEVER use editor.getText() here:
+  //     it inserts \n\n between blocks and would offset positions by 2 chars per
+  //     block boundary. (See find-highlight-extension.ts header for the contract.)
   const searchableText = activeTab === 'notes'
-    ? preprocessSummaryMarkdown(displaySummary || '')
+    ? (isGenerating
+        ? preprocessSummaryMarkdown(displaySummary || '')
+        : (summaryEditor?.state.doc.textContent ?? ''))
     : (data?.transcript || '')
 
   const {
@@ -1588,6 +1658,18 @@ export default function MeetingDetail() {
     onOpen: () => setFindOpen(true),
     onClose: () => setFindOpen(false)
   })
+
+  // Push find matches into the summary editor's FindHighlight extension so they
+  // render as <mark> decorations in the editor DOM. Streaming branch keeps using
+  // the legacy injectFindMarks path because no TipTap editor exists during streaming.
+  useEffect(() => {
+    if (!summaryEditor) return
+    if (isGenerating) {
+      summaryEditor.commands.clearFindMatches()
+      return
+    }
+    summaryEditor.commands.setFindMatches(findMatches, activeMatchIndex)
+  }, [summaryEditor, findMatches, activeMatchIndex, isGenerating])
 
   if (!data) {
     return <div className={styles.loading}>Loading...</div>
@@ -2057,19 +2139,20 @@ export default function MeetingDetail() {
                       </ReactMarkdown>
                     </div>
                   </>
-                ) : editingSummary ? (
-                  <div className={styles.summaryEditor}>
-                    <EditorContent editor={summaryEditor} />
-                  </div>
                 ) : (
+                  // Single TipTap editor for both view and edit. editable toggles via
+                  // editingSummary; the same DOM in both states means posAtCoords on
+                  // click is pixel-perfect.
                   <div
-                    className={styles.markdown}
-                    onClick={() => { if (!findOpen) setEditingSummary(true) }}
-                    title={findOpen ? undefined : 'Click to edit'}
+                    className={`${styles.summaryEditor} ${editingSummary ? '' : styles.summaryViewing}`}
+                    onClick={editingSummary ? undefined : (e) => {
+                      summaryClickCoordsRef.current = { x: e.clientX, y: e.clientY }
+                      setFindOpen(false)
+                      setEditingSummary(true)
+                    }}
+                    title={editingSummary ? undefined : 'Click to edit'}
                   >
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                      {injectFindMarks(preprocessSummaryMarkdown(summaryDraft ?? ''), findMatches, activeMatchIndex)}
-                    </ReactMarkdown>
+                    <EditorContent editor={summaryEditor} />
                   </div>
                 )}
               </div>
@@ -2145,7 +2228,11 @@ export default function MeetingDetail() {
               </div>
             )}
             {isThisMeetingRecording && (
-              <div className={styles.liveTranscript}>
+              <div
+                ref={transcriptScrollRef}
+                className={styles.liveTranscript}
+                onScroll={handleTranscriptScroll}
+              >
                 {speakerEntries.length > 0 && (
                   <div className={styles.speakers}>
                     {speakerEntries.map(([idx, name]) => {
@@ -2277,7 +2364,6 @@ export default function MeetingDetail() {
                     <span>{interimSegment.text}</span>
                   </div>
                 )}
-                <div ref={transcriptEndRef} />
               </div>
             )}
             {!isThisMeetingRecording && !transcript && (

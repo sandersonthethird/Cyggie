@@ -17,6 +17,7 @@ import type { LLMProvider } from '../llm/provider'
 import type { CustomFieldDefinition } from '../../shared/types/custom-fields'
 import { readSummary } from '../storage/file-manager'
 import { safeParseJson, extractString, extractNumber } from '../utils/json-utils'
+import { CANONICAL_INDUSTRIES, INDUSTRY_PROMPT_LIST, isCanonicalIndustry } from '../../shared/constants/industries'
 
 export interface MeetingContext {
   attendees: string[] | null
@@ -610,7 +611,7 @@ async function buildCompanyEnrichmentProposal(
     '  "city": headquarters city (string or null)',
     '  "state": headquarters state abbreviation (string or null)',
     '  "pipelineStage": one of [screening, diligence, decision, documentation, pass] or null',
-    '  "industries": array of industry category tags (e.g. ["FinTech", "AI/ML"]) or null',
+    `  "industry": one of [${INDUSTRY_PROMPT_LIST}] or null (must be exact string match; null if no good fit)`,
   ].join('\n')
 
   const customFieldNotes = customDefs.length > 0
@@ -685,27 +686,16 @@ async function buildCompanyEnrichmentProposal(
     changes.push({ field: 'pipelineStage', from: company.pipelineStage, to: rawStage })
   }
 
-  // Industries — LLM may return string[] or a comma-joined string; normalize to string[]
-  const rawIndustriesRaw = extracted.industries
-  const rawIndustries: string[] | null =
-    Array.isArray(rawIndustriesRaw)
-      ? (rawIndustriesRaw as unknown[]).map(String).filter(Boolean)
-      : typeof rawIndustriesRaw === 'string' && rawIndustriesRaw.trim()
-        ? rawIndustriesRaw.split(',').map((s: string) => s.trim()).filter(Boolean)
-        : null
-  if (rawIndustries && rawIndustries.length > 0) {
-    const extractedSet = new Set(rawIndustries.map((s) => s.toLowerCase()))
-    const currentSet = new Set(company.industries.map((s) => s.toLowerCase()))
-    const isDiff =
-      rawIndustries.some((i) => !currentSet.has(i.toLowerCase())) ||
-      company.industries.some((i) => !extractedSet.has(i.toLowerCase()))
-    if (isDiff) {
-      updates.industries = rawIndustries
-      changes.push({
-        field: 'industries',
-        from: company.industries.join(', ') || null,
-        to: rawIndustries.join(', ')
-      })
+  // Industry — LLM-emitted value snapped to canonical list; non-canonical → NULL with warn-log.
+  const rawIndustry = extractString(extracted.industry)
+  if (rawIndustry !== null) {
+    if (isCanonicalIndustry(rawIndustry)) {
+      if (rawIndustry !== company.industry) {
+        updates.industry = rawIndustry
+        changes.push({ field: 'industry', from: company.industry, to: rawIndustry })
+      }
+    } else {
+      console.warn(`[Company Enrich] Non-canonical industry "${rawIndustry}" returned by LLM — expected one of: ${CANONICAL_INDUSTRIES.join(', ')}. Dropping.`)
     }
   }
 

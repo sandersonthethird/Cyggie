@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanyContactRef } from '../../../shared/types/company'
+import type { ContactSummary } from '../../../shared/types/contact'
 import { ContactAvatar } from '../crm/ContactAvatar'
-import { EntitySearch } from '../crm/EntitySearch'
+import { EntityPicker } from '../common/EntityPicker'
+import { usePicker } from '../../hooks/usePicker'
 import styles from './CompanyContacts.module.css'
 import { api } from '../../api'
 
@@ -15,7 +17,10 @@ interface CompanyContactsProps {
 export function CompanyContacts({ companyId, className }: CompanyContactsProps) {
   const [contacts, setContacts] = useState<CompanyContactRef[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [showPicker, setShowPicker] = useState(false)
+  const creatingRef = useRef(false)
   const navigate = useNavigate()
+  const contactPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST, 8)
 
   function load() {
     window.api
@@ -35,6 +40,25 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
     await api.invoke(IPC_CHANNELS.COMPANY_LINK_CONTACT, companyId, contactId)
     setLoaded(false)
   }
+
+  const handleCreateContact = useCallback(async (name: string) => {
+    if (creatingRef.current) return
+    creatingRef.current = true
+    try {
+      const contact = await api.invoke<ContactSummary>(
+        IPC_CHANNELS.CONTACT_CREATE,
+        { fullName: name.trim() }
+      )
+      if (contact) {
+        await handleLinkContact(contact.id)
+        setShowPicker(false)
+      }
+    } catch (err) {
+      console.error('[CompanyContacts] Failed to create contact:', err)
+    } finally {
+      creatingRef.current = false
+    }
+  }, [companyId])
 
   async function handleUnlinkContact(e: React.MouseEvent, contactId: string) {
     e.stopPropagation()
@@ -57,11 +81,27 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
       <div className={styles.searchRow}>
-        <EntitySearch
-          entityType="contact"
-          onSelect={(id) => handleLinkContact(id)}
-          placeholder="Link a contact…"
-        />
+        {showPicker ? (
+          <EntityPicker<ContactSummary>
+            picker={contactPicker}
+            placeholder="Search contacts…"
+            renderItem={(c) => (
+              <>
+                {c.fullName}
+                {c.primaryCompanyName && (
+                  <span className={styles.pickerSub}> — {c.primaryCompanyName}</span>
+                )}
+              </>
+            )}
+            onSelect={(c) => { void handleLinkContact(c.id); setShowPicker(false) }}
+            onClose={() => setShowPicker(false)}
+            onCreate={handleCreateContact}
+          />
+        ) : (
+          <button className={styles.addBtn} onClick={() => setShowPicker(true)}>
+            + Link a contact
+          </button>
+        )}
       </div>
       {!loaded && <div className={styles.loading}>Loading…</div>}
       {loaded && contacts.length === 0 && (

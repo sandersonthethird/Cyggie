@@ -58,7 +58,7 @@ export async function generateCompanyKeyTakeaways(
   if (company.round) meta.push(`Round: ${company.round}`)
   if (company.raiseSize) meta.push(`Raise: $${company.raiseSize}`)
   if (company.arr) meta.push(`ARR: $${company.arr}`)
-  if (company.industries?.length) meta.push(`Industries: ${company.industries.join(', ')}`)
+  if (company.industry) meta.push(`Industry: ${company.industry}`)
   if (meta.length) parts.push(meta.join(' | '))
   parts.push('')
 

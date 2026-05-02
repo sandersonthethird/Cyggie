@@ -972,7 +972,7 @@ export function getContentMatchPreviews(query: string, limit = 5): ContentMatchP
           substr(replace(replace(trim(COALESCE(description, key_takeaways, '')), char(10), ' '), char(13), ' '), 1, 120) AS snippet
         FROM org_companies
         WHERE lower(COALESCE(description, '')) LIKE ?
-           OR lower(COALESCE(sector, '')) LIKE ?
+           OR lower(COALESCE(industry, '')) LIKE ?
            OR lower(COALESCE(target_customer, '')) LIKE ?
            OR lower(COALESCE(business_model, '')) LIKE ?
            OR lower(COALESCE(key_takeaways, '')) LIKE ?
@@ -1356,7 +1356,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
     })
   })
 
-  // Companies: content search across description, sector, key_takeaways, etc.
+  // Companies: content search across description, industry, key_takeaways, etc.
   const companyRows = db
     .prepare(`
       SELECT
@@ -1368,7 +1368,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
       FROM org_companies
       WHERE lower(COALESCE(canonical_name, '')) LIKE ?
          OR lower(COALESCE(description, '')) LIKE ?
-         OR lower(COALESCE(sector, '')) LIKE ?
+         OR lower(COALESCE(industry, '')) LIKE ?
          OR lower(COALESCE(target_customer, '')) LIKE ?
          OR lower(COALESCE(business_model, '')) LIKE ?
          OR lower(COALESCE(key_takeaways, '')) LIKE ?

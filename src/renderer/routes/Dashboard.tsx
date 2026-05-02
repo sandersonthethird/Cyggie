@@ -215,6 +215,28 @@ export default function Dashboard() {
     return () => clearInterval(id)
   }, [])
 
+  // ── Stub-pollution banner (Phase 3) ──────────────────────────────────────
+  const STUB_DISMISS_KEY = 'cyggie:dashboard-stub-banner-dismissed'
+  const [stubCount, setStubCount] = useState(0)
+  const [stubDismissed, setStubDismissed] = useState(() => sessionStorage.getItem(STUB_DISMISS_KEY) === '1')
+
+  useEffect(() => {
+    let cancelled = false
+    api.invoke<number>(IPC_CHANNELS.COMPANY_COUNT_STUBS).then((n) => {
+      if (!cancelled) setStubCount(n ?? 0)
+    }).catch((err) => {
+      console.error('[Dashboard] COMPANY_COUNT_STUBS failed:', err)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const dismissStubBanner = useCallback(() => {
+    sessionStorage.setItem(STUB_DISMISS_KEY, '1')
+    setStubDismissed(true)
+  }, [])
+
+  const showStubBanner = stubCount > 0 && !stubDismissed
+
   useEffect(() => {
     if (!filterOpen) return
     const handler = (e: MouseEvent) => {
@@ -360,6 +382,23 @@ export default function Dashboard() {
       </header>
 
       {error && <div className={styles.error}>{error}</div>}
+
+      {showStubBanner && (
+        <div className={styles.stubBanner}>
+          <span className={styles.stubBannerText}>
+            {stubCount} sparse {stubCount === 1 ? 'investor' : 'investors'} detected — likely created from typed names with no enrichment.
+          </span>
+          <div className={styles.stubBannerActions}>
+            <button className={styles.stubBannerSecondary} onClick={dismissStubBanner}>Ignore</button>
+            <button
+              className={styles.stubBannerPrimary}
+              onClick={() => navigate('/companies?stubs=1')}
+            >
+              Fix
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Two-column body ─────────────────────────────────────────── */}
       <div className={styles.body}>

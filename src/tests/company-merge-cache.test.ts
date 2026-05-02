@@ -57,7 +57,7 @@ function buildDb(): Database.Database {
       twitter_handle           TEXT,
       crunchbase_url           TEXT,
       angellist_url            TEXT,
-      sector                   TEXT,
+      industry                 TEXT,
       target_customer          TEXT,
       business_model           TEXT,
       product_stage            TEXT,
@@ -116,13 +116,6 @@ function buildDb(): Database.Database {
     );
     CREATE TABLE notes (id TEXT PRIMARY KEY, company_id TEXT, updated_at TEXT DEFAULT (datetime('now')));
 
-    CREATE TABLE industries (id TEXT PRIMARY KEY, name TEXT NOT NULL);
-    CREATE TABLE org_company_industries (
-      company_id TEXT NOT NULL, industry_id TEXT NOT NULL,
-      confidence REAL, is_primary INTEGER DEFAULT 0, tagged_by TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(company_id, industry_id)
-    );
     CREATE TABLE themes (id TEXT PRIMARY KEY, name TEXT NOT NULL);
     CREATE TABLE org_company_themes (
       company_id TEXT NOT NULL, theme_id TEXT NOT NULL,

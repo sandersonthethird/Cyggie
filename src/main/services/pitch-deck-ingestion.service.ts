@@ -26,6 +26,7 @@ import type { ChatAttachment } from '../../shared/types/chat'
 import type { PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import { ENTITY_TYPE_OPTIONS } from '../../shared/types/company'
 import type { CompanyRound, CompanyEntityType } from '../../shared/types/company'
+import { INDUSTRY_PROMPT_LIST, isCanonicalIndustry } from '../../shared/constants/industries'
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -98,7 +99,7 @@ function buildUserPrompt(sourceLabel: string, text: string): string {
     `  "websiteUrl": full website URL (string or null),\n` +
     `  "city": headquarters city (string or null),\n` +
     `  "state": headquarters state abbreviation (string or null),\n` +
-    `  "sector": primary sector / industry (string or null),\n` +
+    `  "industry": one of [${INDUSTRY_PROMPT_LIST}] or null (must be exact string match; null if no good fit),\n` +
     `  "businessModel": B2B/B2C/B2B2C/marketplace/etc. (string or null),\n` +
     `  "targetCustomer": description of target customer (string or null),\n` +
     `  "productStage": idea/mvp/beta/live/growth/scale (string or null),\n` +
@@ -106,7 +107,6 @@ function buildUserPrompt(sourceLabel: string, text: string): string {
     `  "raiseSize": raise size in millions USD as a number (number or null),\n` +
     `  "postMoneyValuation": post-money valuation in millions USD (number or null),\n` +
     `  "entityType": one of [prospect, portfolio, vc_fund, lp, customer, partner, vendor, other] or null,\n` +
-    `  "industries": array of industry tags e.g. ["FinTech", "AI/ML"] (array, may be empty),\n` +
     `  "founders": array of founders and C-suite officers ONLY — each: { name, email, title } — exclude advisors/board/investors\n` +
     `}`
   )
@@ -128,7 +128,7 @@ function buildVisionUserPrompt(sourceLabel: string): string {
     `  "websiteUrl": full website URL (string or null),\n` +
     `  "city": headquarters city (string or null),\n` +
     `  "state": headquarters state abbreviation (string or null),\n` +
-    `  "sector": primary sector / industry (string or null),\n` +
+    `  "industry": one of [${INDUSTRY_PROMPT_LIST}] or null (must be exact string match; null if no good fit),\n` +
     `  "businessModel": B2B/B2C/B2B2C/marketplace/etc. (string or null),\n` +
     `  "targetCustomer": description of target customer (string or null),\n` +
     `  "productStage": idea/mvp/beta/live/growth/scale (string or null),\n` +
@@ -136,7 +136,6 @@ function buildVisionUserPrompt(sourceLabel: string): string {
     `  "raiseSize": raise size in millions USD as a number (number or null),\n` +
     `  "postMoneyValuation": post-money valuation in millions USD (number or null),\n` +
     `  "entityType": one of [prospect, portfolio, vc_fund, lp, customer, partner, vendor, other] or null,\n` +
-    `  "industries": array of industry tags e.g. ["FinTech", "AI/ML"] (array, may be empty),\n` +
     `  "founders": array of founders and C-suite officers ONLY — each: { name, email, title } — exclude advisors/board/investors\n` +
     `}`
   )
@@ -201,7 +200,14 @@ function parseExtractionResult(
     websiteUrl:          extractString(raw.websiteUrl),
     city:                extractString(raw.city),
     state:               extractString(raw.state),
-    sector:              extractString(raw.sector),
+    industry:            (() => {
+                           const v = extractString(raw.industry)
+                           if (v && !isCanonicalIndustry(v)) {
+                             console.warn(`[PitchDeck] Non-canonical industry "${v}" returned by LLM. Dropping.`)
+                             return null
+                           }
+                           return v
+                         })(),
     businessModel:       extractString(raw.businessModel),
     targetCustomer:      extractString(raw.targetCustomer),
     productStage:        extractString(raw.productStage),
@@ -209,9 +215,6 @@ function parseExtractionResult(
     raiseSize:           extractNumber(raw.raiseSize),
     postMoneyValuation:  extractNumber(raw.postMoneyValuation),
     entityType:          entityType && VALID_ENTITY_TYPES.includes(entityType) ? entityType : null,
-    industries:          Array.isArray(raw.industries)
-                           ? (raw.industries as unknown[]).filter((v): v is string => typeof v === 'string')
-                           : [],
     founders,
     sourceLabel,
   }

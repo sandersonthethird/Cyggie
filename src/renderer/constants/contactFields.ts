@@ -37,6 +37,7 @@ export const CONTACT_HARDCODED_FIELDS: HardcodedFieldDef[] = [
   { key: 'typicalCheckSizeMax', label: 'Check Size Max',   defaultSection: 'investor_info' },
   { key: 'investmentStageFocus',label: 'Stage Focus',      defaultSection: 'investor_info' },
   { key: 'investmentSectorFocus',label:'Sector Focus',     defaultSection: 'investor_info' },
+  { key: 'investmentSectorFocusNotes', label: 'Sector Focus Notes', defaultSection: 'investor_info' },
   { key: 'investorStage',       label: 'Investor Stage',   defaultSection: 'investor_info' },
   { key: 'proudPortfolioCompanies', label: 'Portfolio Cos', defaultSection: 'investor_info' },
 ]

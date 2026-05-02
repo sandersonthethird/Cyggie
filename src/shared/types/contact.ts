@@ -98,6 +98,7 @@ export interface ContactDetail extends ContactSummary {
   typicalCheckSizeMax: number | null
   investmentStageFocus: string | null
   investmentSectorFocus: string | null
+  investmentSectorFocusNotes: string | null
   proudPortfolioCompanies: string | null
   noteCount: number
   fieldSources: string | null

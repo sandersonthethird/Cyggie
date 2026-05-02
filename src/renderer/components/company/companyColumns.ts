@@ -7,7 +7,8 @@ import type {
   CompanySummary,
   CompanySortBy
 } from '../../../shared/types/company'
-import { ENTITY_TYPE_OPTIONS, PORTFOLIO_FUND_OPTIONS, INVESTMENT_SECURITY_OPTIONS } from '../../../shared/types/company'
+import { ENTITY_TYPE_OPTIONS, PORTFOLIO_FUND_OPTIONS, INVESTMENT_SECURITY_OPTIONS, STATUS_OPTIONS } from '../../../shared/types/company'
+import { CANONICAL_INDUSTRIES } from '../../../shared/constants/industries'
 import {
   createColumnConfigLoader,
   saveColumnConfig as saveColumnConfigBase,
@@ -89,6 +90,8 @@ export const PRODUCT_STAGES: { value: string; label: string }[] = [
   { value: 'ga', label: 'GA' },
   { value: 'scaling', label: 'Scaling' },
 ]
+
+export const INDUSTRY_OPTIONS: { value: string; label: string }[] = CANONICAL_INDUSTRIES.map((v) => ({ value: v, label: v }))
 
 // Keys that are hardcoded in the company header — excluded from the pin mechanism
 export const COMPANY_HEADER_KEYS = new Set(['entityType', 'pipelineStage', 'priority', 'round'])
@@ -241,15 +244,16 @@ export const COLUMN_DEFS: ColumnDef[] = [
     suffix: 'M'
   },
   {
-    key: 'sector',
-    label: 'Sector',
-    field: 'sector',
+    key: 'industry',
+    label: 'Industry',
+    field: 'industry',
     defaultVisible: false,
-    width: 140,
+    width: 160,
     minWidth: 80,
     sortable: true,
     editable: true,
-    type: 'text'
+    type: 'select',
+    options: INDUSTRY_OPTIONS,
   },
   {
     key: 'city',
@@ -289,11 +293,12 @@ export const COLUMN_DEFS: ColumnDef[] = [
     label: 'Lead Investor',
     field: 'leadInvestor',
     defaultVisible: false,
-    width: 140,
-    minWidth: 100,
+    width: 200,
+    minWidth: 120,
     sortable: true,
     editable: true,
-    type: 'text'
+    type: 'investor_chips',
+    maxChips: 1
   },
   {
     key: 'relationshipOwner',
@@ -341,17 +346,6 @@ export const COLUMN_DEFS: ColumnDef[] = [
     type: 'text'
   },
   {
-    key: 'industriesCsv',
-    label: 'Industry',
-    field: 'industriesCsv',
-    defaultVisible: false,
-    width: 160,
-    minWidth: 80,
-    sortable: true,
-    editable: false,
-    type: 'computed'
-  },
-  {
     key: 'location',
     label: 'Location',
     field: null,
@@ -364,7 +358,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
   },
   {
     key: 'totalInvested',
-    label: 'Total Investment ($M)',
+    label: 'Total Investment',
     field: 'totalInvested',
     defaultVisible: false,
     width: 160,
@@ -373,11 +367,11 @@ export const COLUMN_DEFS: ColumnDef[] = [
     editable: true,
     type: 'text',
     prefix: '$',
-    suffix: 'M'
+    decimals: 2
   },
   {
     key: 'investmentMark',
-    label: 'Investment Mark ($M)',
+    label: 'Investment Mark',
     field: 'investmentMark',
     defaultVisible: false,
     width: 160,
@@ -386,8 +380,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
     editable: true,
     type: 'number',
     prefix: '$',
-    suffix: 'M',
-    decimals: 3
+    decimals: 2
   },
   {
     key: 'investmentRound',
@@ -403,7 +396,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
   },
   {
     key: 'investmentSize',
-    label: 'Initial Investment ($M)',
+    label: 'Initial Investment',
     field: 'investmentSize',
     defaultVisible: false,
     width: 170,
@@ -412,7 +405,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
     editable: true,
     type: 'text',
     prefix: '$',
-    suffix: 'M'
+    decimals: 2
   },
   {
     key: 'initialInvestmentSecurity',
@@ -438,6 +431,18 @@ export const COLUMN_DEFS: ColumnDef[] = [
     type: 'date'
   },
   {
+    key: 'status',
+    label: 'Status',
+    field: 'status',
+    defaultVisible: false,
+    width: 110,
+    minWidth: 80,
+    sortable: true,
+    editable: true,
+    type: 'select',
+    options: STATUS_OPTIONS
+  },
+  {
     key: 'ownershipPct',
     label: 'Initial Ownership (%)',
     field: 'ownershipPct',
@@ -447,11 +452,12 @@ export const COLUMN_DEFS: ColumnDef[] = [
     sortable: true,
     editable: true,
     type: 'text',
-    suffix: '%'
+    suffix: '%',
+    sigDigits: 2
   },
   {
     key: 'initialRoundSize',
-    label: 'Initial Round Size ($M)',
+    label: 'Initial Round Size',
     field: 'initialRoundSize',
     defaultVisible: false,
     width: 170,
@@ -460,8 +466,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
     editable: true,
     type: 'number',
     prefix: '$',
-    suffix: 'M',
-    decimals: 1
+    decimals: 2
   },
   {
     key: 'lastCompanyValuation',
@@ -479,7 +484,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
   },
   {
     key: 'followonCheck',
-    label: 'Follow-on Check ($M)',
+    label: 'Follow-on Check',
     field: 'followonCheck',
     defaultVisible: false,
     width: 160,
@@ -488,7 +493,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
     editable: true,
     type: 'number',
     prefix: '$',
-    suffix: 'M'
+    decimals: 2
   },
   {
     key: 'followonDate',
@@ -503,7 +508,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
   },
   {
     key: 'followonCheck2',
-    label: 'Follow-on Check 2 ($M)',
+    label: 'Follow-on Check 2',
     field: 'followonCheck2',
     defaultVisible: false,
     width: 170,
@@ -512,7 +517,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
     editable: true,
     type: 'number',
     prefix: '$',
-    suffix: 'M'
+    decimals: 2
   },
   {
     key: 'followonDate2',
@@ -530,22 +535,33 @@ export const COLUMN_DEFS: ColumnDef[] = [
     label: 'Coinvestors',
     field: 'coInvestorNames',
     defaultVisible: false,
-    width: 200,
-    minWidth: 100,
+    width: 280,
+    minWidth: 120,
     sortable: true,
-    editable: false,
-    type: 'computed'
+    editable: true,
+    type: 'investor_chips'
+  },
+  {
+    key: 'priorInvestorNames',
+    label: 'Prior Investors',
+    field: 'priorInvestorNames',
+    defaultVisible: false,
+    width: 280,
+    minWidth: 120,
+    sortable: true,
+    editable: true,
+    type: 'investor_chips'
   },
   {
     key: 'subsequentInvestorNames',
     label: 'Subsequent Investors',
     field: 'subsequentInvestorNames',
     defaultVisible: false,
-    width: 200,
-    minWidth: 100,
+    width: 280,
+    minWidth: 120,
     sortable: true,
-    editable: false,
-    type: 'computed'
+    editable: true,
+    type: 'investor_chips'
   }
 ]
 
@@ -611,7 +627,7 @@ export function filterCompanies(
 export function buildUrlFilter(
   query: string,
   sortBy: CompanySortBy,
-  opts?: { includeIndustries?: boolean; includeInvestorNames?: boolean }
+  opts?: { includeInvestorNames?: boolean }
 ): CompanyListFilter {
   // No limit — view: 'all' means all companies. baseCompanySelect uses LEFT JOINs
   // (not correlated subqueries) so this is O(n) and fast in SQLite at current scale.
@@ -621,7 +637,6 @@ export function buildUrlFilter(
     view: 'all',
     includeStats: true,
     sortBy,
-    includeIndustries: opts?.includeIndustries,
     includeInvestorNames: opts?.includeInvestorNames,
   }
 }

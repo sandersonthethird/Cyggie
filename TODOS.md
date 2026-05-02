@@ -462,6 +462,16 @@
 
 ## P2 — Notes
 
+### Migrate `company_notes` / `contact_notes` tables to unified `notes` table
+**What:** Stop using the separate `company_notes` and `contact_notes` tables. Move all reads/writes to the unified `notes` table (which already has nullable `company_id` and `contact_id` columns from migrations 052/053). CompanyNotes / ContactNotes detail tabs become filtered views over the unified store.
+**Why:** Migrations 052/053 started this consolidation but stopped short of removing the legacy tables. The mid-migration state means `notes.repo.ts` and `company-notes.repo.ts`/`contact-notes.repo.ts` coexist with overlapping concerns (note-tagging, FTS, audit), and surfaces like the standalone Notes view (`useNoteEditor`) can't be reused on Company/Contact detail because they write to a different table.
+**Pros:** Single source of truth; FTS already in place on the unified table; enables `useNoteEditor` reuse across all surfaces; fewer parallel concerns to keep in sync (audit logs, tag suggestions, summary-sync references).
+**Cons:** Backfill of existing rows in `company_notes` and `contact_notes` into `notes` (with proper `company_id`/`contact_id` set); rename of all consumer sites (IPC channels `COMPANY_NOTES_*`, `CONTACT_NOTES_*` either deprecated or rewired); data-integrity risk requires explicit pre-migration backup + post-migration verification (count parity per entity).
+**Context:** Affected files: `src/main/database/repositories/company-notes.repo.ts`, `contact-notes.repo.ts`, `notes-base.ts`, `notes.repo.ts`. IPC: `src/main/ipc/company-notes.ipc.ts`, `contact-notes.ipc.ts`, `notes-ipc-base.ts`. Renderer consumers (post-this-PR): `src/renderer/components/company/CompanyNotes.tsx`, `src/renderer/components/contact/ContactNotes.tsx` (both now use the shared `NoteCreator`/`NoteList`, so they're the cleanest place to repoint). Recommended approach: write a migration that copies rows + sets foreign keys, run it transactionally, leave legacy tables read-only for one release as a safety net, then drop in the next release.
+**Effort:** L (~1–2 days)
+**Priority:** P2
+**Depends on:** Rich-text NoteCreator/NoteList PR landing first so this migration touches stable component shapes.
+
 ### Use meeting title as note card title fallback
 **What:** When a note has no explicit `title` but has a `sourceMeetingId`, display the linked meeting's title as the note card title in the Notes list.
 **Why:** Meeting-sourced notes created without a typed title currently fall back to the first line of content (which may be blank or a heading), making them hard to identify in the list.

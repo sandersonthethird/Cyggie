@@ -23,7 +23,7 @@
  *   onStartEdit   — notify parent this cell is being edited (double click)
  *   onEndEdit     — notify parent edit ended (keyboard nav)
  */
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { daysSince, formatLastTouch } from '../../utils/format'
 import { AddOptionInlineInput } from '../crm/AddOptionInlineInput'
 import type { ColumnDef } from './companyColumns'
@@ -31,15 +31,19 @@ import styles from './EditableCell.module.css'
 
 type CellState = 'display' | 'edit' | 'saving' | 'error'
 
+/** Position within a contiguous range selection. null = not highlighted. */
+export type RangePosition = 'only' | 'top' | 'mid' | 'bot' | null
+
 interface EditableCellProps {
   value: unknown
   col: ColumnDef
   onSave: (newValue: string | null) => Promise<void>
   onAddOption?: (newOption: string) => Promise<void>
-  isHighlighted: boolean
+  /** Cell highlight position. null=none, 'only'=single cell, 'top'/'mid'/'bot'=range position. */
+  rangePosition: RangePosition
   isEditing: boolean
   initialChar?: string
-  onFocus: () => void
+  onFocus: (shiftKey?: boolean) => void
   onStartEdit: () => void
   onEndEdit: (advanceDir?: 'down' | 'right' | null) => void
 }
@@ -97,7 +101,24 @@ function renderDisplay(col: ColumnDef, value: unknown): React.ReactNode {
   if ((col.type === 'number' || col.prefix || col.suffix) && value != null && value !== '') {
     const num = parseFloat(String(value))
     if (!isNaN(num)) {
-      const formatted = col.decimals != null ? num.toFixed(col.decimals) : String(num)
+      // Group with thousands separators on currency columns and any column with explicit
+      // numeric formatting; skip for plain integers like founding year.
+      const useGrouping = col.prefix === '$' || col.decimals != null || col.sigDigits != null
+      let formatted: string
+      if (col.sigDigits != null) {
+        // Round to N sig figs, then format. Round-trip via Number drops toPrecision's
+        // trailing zeros and scientific notation (e.g. 12.5 → '13', 0.85 → '0.85').
+        const rounded = Number(num.toPrecision(col.sigDigits))
+        formatted = rounded.toLocaleString('en-US', { useGrouping, maximumFractionDigits: 20 })
+      } else if (col.decimals != null) {
+        formatted = num.toLocaleString('en-US', {
+          useGrouping,
+          minimumFractionDigits: col.decimals,
+          maximumFractionDigits: col.decimals
+        })
+      } else {
+        formatted = num.toLocaleString('en-US', { useGrouping, maximumFractionDigits: 20 })
+      }
       return <span className={styles.cellText}>{col.prefix ?? ''}{formatted}{col.suffix ?? ''}</span>
     }
   }
@@ -114,7 +135,7 @@ function EditableCellInner({
   col,
   onSave,
   onAddOption,
-  isHighlighted,
+  rangePosition,
   isEditing,
   initialChar,
   onFocus,
@@ -140,14 +161,30 @@ function EditableCellInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing])
 
-  // Focus the input when entering edit mode
-  useEffect(() => {
+  // Focus the input when entering edit mode.
+  // useLayoutEffect (not useEffect) so focus happens synchronously after the
+  // input mounts, before paint — closes the race where a fast typist's first
+  // keystroke after a double-click landed before the input was focused.
+  //
+  // For type-to-edit (initialChar set), place the cursor at the end so the
+  // next typed character appends instead of replacing the seed character.
+  // For click/Enter-to-edit, select() so typing replaces existing text — the
+  // long-standing behavior.
+  useLayoutEffect(() => {
     if (cellState === 'edit' && inputRef.current) {
       inputRef.current.focus()
       if (inputRef.current instanceof HTMLInputElement) {
-        inputRef.current.select()
+        if (initialChar) {
+          const len = inputRef.current.value.length
+          inputRef.current.setSelectionRange(len, len)
+        } else {
+          inputRef.current.select()
+        }
       }
     }
+    // initialChar intentionally omitted from deps: it is captured at the moment
+    // we transition into edit, and any later prop change shouldn't re-fire focus.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cellState])
 
   const startEdit = useCallback(() => {
@@ -198,9 +235,9 @@ function EditableCellInner({
     }
   }, [draft, onSave, onEndEdit])
 
-  function handleClick() {
+  function handleClick(e: React.MouseEvent) {
     if (cellState === 'display') {
-      onFocus()
+      onFocus(e.shiftKey)
     }
   }
 
@@ -230,10 +267,16 @@ function EditableCellInner({
     }
   }
 
-  const cellClassName = [
-    styles.cell,
-    isHighlighted && cellState === 'display' ? styles.focusedCell : '',
-  ].filter(Boolean).join(' ')
+  const rangeClass =
+    rangePosition && cellState === 'display'
+      ? rangePosition === 'only' ? styles.focusedCell
+        : rangePosition === 'top' ? styles.rangeTop
+        : rangePosition === 'mid' ? styles.rangeMid
+        : rangePosition === 'bot' ? styles.rangeBot
+        : ''
+      : ''
+
+  const cellClassName = [styles.cell, rangeClass].filter(Boolean).join(' ')
 
   return (
     <div

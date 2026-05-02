@@ -1,0 +1,107 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--chip-neutral-bg);
+  border: none;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--chip-neutral-text);
+  overflow: hidden;
+  padding-left: 6px;
+  max-width: 220px;
+}
+
+.chip.draggable {
+  padding-left: 2px;
+}
+
+.chip.dragging {
+  opacity: 0.4;
+}
+
+.chip.dropTarget {
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+
+.dragHandle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 18px;
+  cursor: grab;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.chip.pending {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-tertiary);
+  opacity: 0.7;
+}
+
+.favicon {
+  flex-shrink: 0;
+}
+
+.name {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px 4px 3px 2px;
+  font-size: 12px;
+  color: inherit;
+  font-family: inherit;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.1s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.name:hover {
+  text-decoration-color: currentColor;
+}
+
+.name:disabled {
+  cursor: default;
+  text-decoration: none;
+}
+
+.remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px 2px 2px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.5;
+  color: inherit;
+  flex-shrink: 0;
+}
+
+.remove:hover {
+  opacity: 1;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  border-left: 1px solid var(--color-border);
+  margin-left: 2px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}

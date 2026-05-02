@@ -48,6 +48,7 @@ export const IPC_CHANNELS = {
   COMPANY_ENRICH_MEETING: 'company:enrich-meeting',
   COMPANY_GET_SUGGESTIONS: 'company:get-suggestions',
   COMPANY_LIST: 'company:list',
+  COMPANY_COUNT_STUBS: 'company:count-stubs',
   COMPANY_GET: 'company:get',
   COMPANY_CREATE: 'company:create',
   COMPANY_UPDATE: 'company:update',
@@ -238,6 +239,7 @@ export const IPC_CHANNELS = {
   CHAT_ABORT_ALL: 'chat:abort-all',
   CHAT_PROGRESS: 'chat:progress',
   CHAT_ABORT: 'chat:abort',
+  CHAT_SAVE_AS_NOTE: 'chat:save-as-note',
 
   // Settings
   SETTINGS_GET: 'settings:get',

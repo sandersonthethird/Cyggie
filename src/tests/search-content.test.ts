@@ -35,7 +35,7 @@ function buildDb(): Database.Database {
       normalized_name TEXT,
       primary_domain TEXT,
       description TEXT,
-      sector TEXT,
+      industry TEXT,
       target_customer TEXT,
       business_model TEXT,
       key_takeaways TEXT,
@@ -267,9 +267,9 @@ describe('searchUnified — company block', () => {
     expect(companyResults.some((r) => r.entityId === 'co1')).toBe(true)
   })
 
-  it('finds company by sector keyword', () => {
+  it('finds company by industry keyword', () => {
     testDb.exec(`
-      INSERT INTO org_companies (id, canonical_name, sector)
+      INSERT INTO org_companies (id, canonical_name, industry)
       VALUES ('co2', 'GreenTech Co', 'Climate Technology')
     `)
     const results = searchUnified('Climate', 20)

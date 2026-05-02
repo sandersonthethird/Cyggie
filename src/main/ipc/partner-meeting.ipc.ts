@@ -95,7 +95,7 @@ async function generateBrief(companyId: string): Promise<string | null> {
 
   lines.push(`# Company: ${company.canonicalName}`)
   if (company.description) lines.push(`Description: ${company.description}`)
-  if (company.sector) lines.push(`Sector: ${company.sector}`)
+  if (company.industry) lines.push(`Industry: ${company.industry}`)
   if (company.websiteUrl) lines.push(`Website: ${company.websiteUrl}`)
   if (company.foundingYear) lines.push(`Founded: ${company.foundingYear}`)
   if (company.employeeCountRange) lines.push(`Employees: ${company.employeeCountRange}`)

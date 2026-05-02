@@ -8,6 +8,7 @@ import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
 import { CompanyTable } from '../components/company/CompanyTable'
 import { ViewsBar, type ViewsBarHandle } from '../components/crm/ViewsBar'
+import { useLastView } from '../hooks/useLastView'
 import { CreateCustomFieldModal } from '../components/crm/CreateCustomFieldModal'
 import {
   COLUMN_DEFS,
@@ -110,11 +111,16 @@ export default function Companies() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { enabled: companiesEnabled, loading: flagsLoading } = useFeatureFlag('ff_companies_ui_v1')
+  // Increments on each mount so fetchCompanies gets a new useCallback ref,
+  // forcing the useEffect to re-run and fetch fresh data after back-navigation.
+  const [mountId] = useState(() => Date.now())
 
   // ── URL-derived state ───────────────────────────────────────────────────────
   const query = (searchParams.get('q') || '').trim()
   const showCreate = searchParams.get('new') === '1'
   const groupBy = searchParams.get('groupBy') || null
+  /** ?stubs=1 — investor-pollution review mode (Phase 3). */
+  const stubsView = searchParams.get('stubs') === '1'
 
   // Multi-column sort — new format: ?sort=key:dir,key:dir
   // Legacy fallback: ?sortKey=...&sortDir=... for saved views
@@ -139,6 +145,9 @@ export default function Companies() {
 
   // ── Column visibility (lifted from CompanyTable so ViewsBar can control it) ─
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => loadColumnConfig())
+
+  // ── Persist & restore last-active view for sidebar navigation ──────────────
+  useLastView('cyggie:companies-last-view', '/companies', searchParams, visibleKeys, navigate, setVisibleKeys, saveColumnConfig)
 
   // ── Data ────────────────────────────────────────────────────────────────────
   const [companies, setCompanies] = useState<CompanySummary[]>([])
@@ -320,8 +329,9 @@ export default function Companies() {
 
   const getGuard = useStaleGuard()
 
-  const needsIndustries = visibleKeys.includes('industriesCsv')
-  const needsInvestorNames = visibleKeys.includes('coInvestorNames') || visibleKeys.includes('subsequentInvestorNames')
+  const needsInvestorNames = visibleKeys.includes('coInvestorNames')
+    || visibleKeys.includes('priorInvestorNames')
+    || visibleKeys.includes('subsequentInvestorNames')
 
   const fetchCompanies = useCallback(async () => {
     if (!companiesEnabled) return
@@ -330,9 +340,9 @@ export default function Companies() {
     setError(null)
     try {
       const filter = buildUrlFilter(query, backendSortBy, {
-        includeIndustries: needsIndustries,
         includeInvestorNames: needsInvestorNames,
       })
+      if (stubsView) filter.view = 'stubs'
       const results = await api.invoke<CompanySummary[]>(IPC_CHANNELS.COMPANY_LIST, filter)
       if (isStale()) return
       setCompanies(results)
@@ -342,7 +352,8 @@ export default function Companies() {
     } finally {
       if (!isStale()) setLoading(false)
     }
-  }, [companiesEnabled, query, backendSortBy, needsIndustries, needsInvestorNames, getGuard])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companiesEnabled, query, backendSortBy, needsInvestorNames, stubsView, getGuard, mountId])
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => {
@@ -360,21 +371,44 @@ export default function Companies() {
     const STORAGE_KEY = 'cyggie:company-views'
     let existing: Array<{ id: string; name: string; urlParams: string; columns: string[] }> = []
     try { existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') } catch { /* corrupt — reset */ }
-    if (existing.some(v => v.id === 'fund-iv-default')) return
-    existing.push({
-      id: 'fund-iv-default',
-      name: 'Fund IV',
-      urlParams: 'type=portfolio&fund=fund_iv',
-      columns: [
-        'name', 'description', 'primaryDomain', 'industriesCsv', 'location',
-        'totalInvested', 'investmentMark', 'investmentRound', 'investmentSize',
-        'initialInvestmentSecurity', 'dateOfInitialInvestment', 'ownershipPct',
-        'initialRoundSize', 'postMoneyValuation', 'lastCompanyValuation', 'round',
-        'followonCheck', 'followonDate', 'followonCheck2', 'followonDate2',
-        'coInvestorNames', 'subsequentInvestorNames'
-      ]
-    })
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(existing))
+    const fundIvColumns = [
+      'name', 'description', 'primaryDomain', 'industry', 'location', 'status',
+      'totalInvested', 'investmentMark', 'investmentRound', 'investmentSize',
+      'initialInvestmentSecurity', 'dateOfInitialInvestment', 'ownershipPct',
+      'initialRoundSize', 'postMoneyValuation', 'lastCompanyValuation', 'round',
+      'followonCheck', 'followonDate', 'followonCheck2', 'followonDate2',
+      'coInvestorNames', 'subsequentInvestorNames'
+    ]
+    const fundIv = existing.find(v => v.id === 'fund-iv-default')
+    let mutated = false
+    if (!fundIv) {
+      existing.push({
+        id: 'fund-iv-default',
+        name: 'Fund IV',
+        urlParams: 'type=portfolio&fund=fund_iv',
+        columns: fundIvColumns
+      })
+      mutated = true
+    } else {
+      // Migrate legacy column keys (industriesCsv/sector → industry) on existing saved views.
+      const legacyIdx = fundIv.columns.findIndex(c => c === 'industriesCsv' || c === 'sector')
+      if (legacyIdx >= 0) {
+        if (fundIv.columns.includes('industry')) {
+          fundIv.columns.splice(legacyIdx, 1)
+        } else {
+          fundIv.columns[legacyIdx] = 'industry'
+        }
+        mutated = true
+      }
+      if (!fundIv.columns.includes('status')) {
+        // Patch existing saved view: insert 'status' after 'location' (or at end).
+        const locIdx = fundIv.columns.indexOf('location')
+        const insertAt = locIdx >= 0 ? locIdx + 1 : fundIv.columns.length
+        fundIv.columns.splice(insertAt, 0, 'status')
+        mutated = true
+      }
+    }
+    if (mutated) localStorage.setItem(STORAGE_KEY, JSON.stringify(existing))
   }, [])
 
   // ── Derived display list ─────────────────────────────────────────────────────

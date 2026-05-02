@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useEditCellNav } from '../renderer/hooks/useEditCellNav'
+import { useEditCellNav, getRangePosition } from '../renderer/hooks/useEditCellNav'
 import type { ColumnDef } from '../renderer/components/crm/tableUtils'
 
 const makeCols = (count: number, editable = true): ColumnDef[] =>
@@ -25,6 +25,48 @@ const makeCols = (count: number, editable = true): ColumnDef[] =>
     editable: i > 0 ? editable : false, // col0 is name (not editable)
     type: 'text' as const,
   }))
+
+// ── getRangePosition unit tests ──────────────────────────────────────────────
+
+describe('getRangePosition', () => {
+  it('returns null when not in any range or cell', () => {
+    expect(getRangePosition(5, 1, null, null)).toBeNull()
+  })
+
+  it('returns "only" for a single focused cell', () => {
+    expect(getRangePosition(2, 1, null, { rowIdx: 2, colIdx: 1 })).toBe('only')
+  })
+
+  it('returns null for wrong column on single cell', () => {
+    expect(getRangePosition(2, 3, null, { rowIdx: 2, colIdx: 1 })).toBeNull()
+  })
+
+  it('returns "only" for a single-row range', () => {
+    expect(getRangePosition(2, 1, { colIdx: 1, startRow: 2, endRow: 2 }, null)).toBe('only')
+  })
+
+  it('returns "top" for first row of multi-row range', () => {
+    expect(getRangePosition(2, 1, { colIdx: 1, startRow: 2, endRow: 5 }, null)).toBe('top')
+  })
+
+  it('returns "mid" for middle row of multi-row range', () => {
+    expect(getRangePosition(3, 1, { colIdx: 1, startRow: 2, endRow: 5 }, null)).toBe('mid')
+  })
+
+  it('returns "bot" for last row of multi-row range', () => {
+    expect(getRangePosition(5, 1, { colIdx: 1, startRow: 2, endRow: 5 }, null)).toBe('bot')
+  })
+
+  it('returns null for wrong column in range', () => {
+    expect(getRangePosition(3, 2, { colIdx: 1, startRow: 2, endRow: 5 }, null)).toBeNull()
+  })
+
+  it('range takes precedence over single cell', () => {
+    expect(getRangePosition(2, 1, { colIdx: 1, startRow: 2, endRow: 4 }, { rowIdx: 2, colIdx: 1 })).toBe('top')
+  })
+})
+
+// ── useEditCellNav hook tests ───────────────────────────────────────────────
 
 describe('useEditCellNav', () => {
   const cols = makeCols(5)

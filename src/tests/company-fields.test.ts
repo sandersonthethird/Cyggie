@@ -7,12 +7,12 @@
  *   - meeting.repo, file-manager, contact.repo → vi.fn() stubs (enrichment tests)
  *
  * Sections:
- *   1. updateCompanyIndustries (4 cases)
+ *   1. updateCompany.industry (3 cases)
  *   2. setCompanyInvestors (3 cases)
  *   3. getCompany new fields (6 cases)
  *   4. migration idempotency (1 case)
- *   5. IPC COMPANY_UPDATE special-cases (4 cases)
- *   6. enrichment — industries normalization (4 cases)
+ *   5. IPC COMPANY_UPDATE special-cases (3 cases)
+ *   6. enrichment — industry canonical constraint (4 cases)
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -69,10 +69,10 @@ vi.mock('../main/database/repositories/audit.repo', () => ({
 // ─── Import under test (after mocks) ─────────────────────────────────────────
 
 const {
-  updateCompanyIndustries,
   setCompanyInvestors,
   getCompany,
   listCompanies,
+  updateCompany,
 } = await import('../main/database/repositories/org-company.repo')
 
 const { getCompanyEnrichmentProposalsFromMeetings } = await import(
@@ -113,7 +113,7 @@ function buildDb(): Database.Database {
       twitter_handle TEXT,
       crunchbase_url TEXT,
       angellist_url TEXT,
-      sector TEXT,
+      industry TEXT,
       target_customer TEXT,
       business_model TEXT,
       product_stage TEXT,
@@ -124,6 +124,7 @@ function buildDb(): Database.Database {
       last_funding_date TEXT,
       total_funding_raised REAL,
       lead_investor TEXT,
+      lead_investor_company_id TEXT,
       co_investors TEXT,
       relationship_owner TEXT,
       deal_source TEXT,
@@ -162,18 +163,6 @@ function buildDb(): Database.Database {
       alias_value TEXT NOT NULL,
       alias_type TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE industries (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE
-    );
-
-    CREATE TABLE org_company_industries (
-      company_id TEXT NOT NULL,
-      industry_id TEXT NOT NULL,
-      is_primary INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (company_id, industry_id)
     );
 
     CREATE TABLE org_company_themes (
@@ -259,6 +248,7 @@ function buildDb(): Database.Database {
       company_id TEXT NOT NULL,
       investor_company_id TEXT NOT NULL,
       investor_type TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (company_id) REFERENCES org_companies(id) ON DELETE CASCADE,
       FOREIGN KEY (investor_company_id) REFERENCES org_companies(id) ON DELETE CASCADE
@@ -273,45 +263,37 @@ function insertCompany(db: Database.Database, id: string, name: string): void {
   ).run(id, name, name.toLowerCase())
 }
 
-// ─── 1. updateCompanyIndustries ───────────────────────────────────────────────
+// ─── 1. updateCompany — industry as plain field ──────────────────────────────
 
-describe('updateCompanyIndustries', () => {
+describe('updateCompany.industry', () => {
   beforeEach(() => {
     testDb = buildDb()
     insertCompany(testDb, 'co1', 'Acme Corp')
   })
 
-  it('creates a new industry and junction row', () => {
-    updateCompanyIndustries('co1', ['FinTech'])
-    const rows = testDb.prepare(`
-      SELECT i.name FROM org_company_industries ci
-      JOIN industries i ON i.id = ci.industry_id
-      WHERE ci.company_id = 'co1'
-    `).all() as { name: string }[]
-    expect(rows.map((r) => r.name)).toEqual(['FinTech'])
+  it('writes an industry value via the standard field-update path', () => {
+    updateCompany('co1', { industry: 'FinTech' })
+    const row = testDb
+      .prepare(`SELECT industry FROM org_companies WHERE id = 'co1'`)
+      .get() as { industry: string | null }
+    expect(row.industry).toBe('FinTech')
   })
 
-  it('reuses an existing industry by name (case-insensitive)', () => {
-    testDb.prepare(`INSERT INTO industries (id, name) VALUES (?, ?)`).run('ind1', 'FinTech')
-    updateCompanyIndustries('co1', ['fintech'])
-    const indRows = testDb.prepare(`SELECT * FROM industries`).all()
-    expect(indRows).toHaveLength(1) // no duplicate
-    const junctionRows = testDb.prepare(`SELECT * FROM org_company_industries WHERE company_id = 'co1'`).all()
-    expect(junctionRows).toHaveLength(1)
-    expect((junctionRows[0] as { industry_id: string }).industry_id).toBe('ind1')
+  it('clears industry when set to null', () => {
+    updateCompany('co1', { industry: 'FinTech' })
+    updateCompany('co1', { industry: null })
+    const row = testDb
+      .prepare(`SELECT industry FROM org_companies WHERE id = 'co1'`)
+      .get() as { industry: string | null }
+    expect(row.industry).toBeNull()
   })
 
-  it('clears all industries when names=[]', () => {
-    updateCompanyIndustries('co1', ['FinTech', 'AI/ML'])
-    updateCompanyIndustries('co1', [])
-    const rows = testDb.prepare(`SELECT * FROM org_company_industries WHERE company_id = 'co1'`).all()
-    expect(rows).toHaveLength(0)
-  })
-
-  it('handles duplicate names in input (INSERT OR IGNORE)', () => {
-    updateCompanyIndustries('co1', ['FinTech', 'FinTech'])
-    const rows = testDb.prepare(`SELECT * FROM org_company_industries WHERE company_id = 'co1'`).all()
-    expect(rows).toHaveLength(1)
+  it('accepts non-canonical values (UI may permit user-added options)', () => {
+    updateCompany('co1', { industry: 'FoodTech' })
+    const row = testDb
+      .prepare(`SELECT industry FROM org_companies WHERE id = 'co1'`)
+      .get() as { industry: string | null }
+    expect(row.industry).toBe('FoodTech')
   })
 })
 
@@ -372,6 +354,43 @@ describe('setCompanyInvestors', () => {
     expect(subRows).toHaveLength(1)
     expect((subRows[0] as { investor_company_id: string }).investor_company_id).toBe('inv2')
   })
+
+  it('persists array index as position', () => {
+    setCompanyInvestors('portfolio1', 'co_investor', [
+      { id: 'inv2', name: 'a16z' },        // position 0
+      { id: 'inv1', name: 'Sequoia Capital' }, // position 1
+    ])
+    const rows = testDb.prepare(
+      `SELECT investor_company_id, position FROM company_investors
+       WHERE company_id = 'portfolio1' AND investor_type = 'co_investor'
+       ORDER BY position`
+    ).all() as Array<{ investor_company_id: string; position: number }>
+    expect(rows).toEqual([
+      { investor_company_id: 'inv2', position: 0 },
+      { investor_company_id: 'inv1', position: 1 },
+    ])
+  })
+
+  it('reorders positions on subsequent setCompanyInvestors call', () => {
+    setCompanyInvestors('portfolio1', 'co_investor', [
+      { id: 'inv1', name: 'Sequoia Capital' }, // initially position 0
+      { id: 'inv2', name: 'a16z' },        // initially position 1
+    ])
+    // Reorder: a16z first, Sequoia second
+    setCompanyInvestors('portfolio1', 'co_investor', [
+      { id: 'inv2', name: 'a16z' },
+      { id: 'inv1', name: 'Sequoia Capital' },
+    ])
+    const rows = testDb.prepare(
+      `SELECT investor_company_id, position FROM company_investors
+       WHERE company_id = 'portfolio1' AND investor_type = 'co_investor'
+       ORDER BY position`
+    ).all() as Array<{ investor_company_id: string; position: number }>
+    expect(rows).toEqual([
+      { investor_company_id: 'inv2', position: 0 },
+      { investor_company_id: 'inv1', position: 1 },
+    ])
+  })
 })
 
 // ─── 3. getCompany — new fields ───────────────────────────────────────────────
@@ -414,7 +433,7 @@ describe('getCompany — new fields', () => {
       `INSERT INTO company_investors (id, company_id, investor_company_id, investor_type) VALUES (?, ?, ?, ?)`
     ).run(randomUUID(), 'co1', 'inv1', 'co_investor')
     const detail = getCompany('co1')
-    expect(detail?.coInvestorsList).toEqual([{ id: 'inv1', name: 'Tiger Global' }])
+    expect(detail?.coInvestorsList).toEqual([{ id: 'inv1', name: 'Tiger Global', domain: null }])
   })
 
   it('returns priorInvestorsList from join table', () => {
@@ -423,7 +442,7 @@ describe('getCompany — new fields', () => {
       `INSERT INTO company_investors (id, company_id, investor_company_id, investor_type) VALUES (?, ?, ?, ?)`
     ).run(randomUUID(), 'co1', 'inv2', 'prior_investor')
     const detail = getCompany('co1')
-    expect(detail?.priorInvestorsList).toEqual([{ id: 'inv2', name: 'Benchmark' }])
+    expect(detail?.priorInvestorsList).toEqual([{ id: 'inv2', name: 'Benchmark', domain: null }])
   })
 
   it('returns coInvestedIn (reverse link)', () => {
@@ -433,7 +452,7 @@ describe('getCompany — new fields', () => {
       `INSERT INTO company_investors (id, company_id, investor_company_id, investor_type) VALUES (?, ?, ?, ?)`
     ).run(randomUUID(), 'portfolio1', 'linked_co', 'co_investor')
     const detail = getCompany('linked_co')
-    expect(detail?.coInvestedIn).toEqual([{ id: 'portfolio1', name: 'PortfolioCo' }])
+    expect(detail?.coInvestedIn).toEqual([{ id: 'portfolio1', name: 'PortfolioCo', domain: null }])
   })
 })
 
@@ -459,12 +478,10 @@ describe('migration idempotency', () => {
 // ─── 5. IPC COMPANY_UPDATE special-cases ─────────────────────────────────────
 
 describe('IPC COMPANY_UPDATE special-cases', () => {
-  const mockUpdateCompanyIndustries = vi.fn()
   const mockSetCompanyInvestors = vi.fn()
   const mockUpdateCompany = vi.fn(() => ({ id: 'co1', canonicalName: 'Acme' }))
 
   beforeEach(() => {
-    mockUpdateCompanyIndustries.mockReset()
     mockSetCompanyInvestors.mockReset()
     mockUpdateCompany.mockReset()
     mockUpdateCompany.mockReturnValue({ id: 'co1', canonicalName: 'Acme' })
@@ -474,11 +491,6 @@ describe('IPC COMPANY_UPDATE special-cases', () => {
   function runIpcHandler(updates: Record<string, unknown>) {
     let remaining: Record<string, unknown> = { ...updates }
 
-    if ('industries' in remaining) {
-      mockUpdateCompanyIndustries('co1', (remaining.industries as string[] | null) ?? [])
-      const { industries: _, ...rest } = remaining
-      remaining = rest
-    }
     if ('coInvestorsList' in remaining) {
       mockSetCompanyInvestors('co1', 'co_investor', remaining.coInvestorsList)
       const { coInvestorsList: _, ...rest } = remaining
@@ -493,11 +505,10 @@ describe('IPC COMPANY_UPDATE special-cases', () => {
     return remaining
   }
 
-  it('industries key → updateCompanyIndustries called, key removed from remaining', () => {
-    const remaining = runIpcHandler({ industries: ['FinTech'], description: 'A company' })
-    expect(mockUpdateCompanyIndustries).toHaveBeenCalledWith('co1', ['FinTech'])
-    expect(remaining).not.toHaveProperty('industries')
-    expect(remaining).toHaveProperty('description')
+  it('industry key passes through as a normal field (no special case)', () => {
+    const remaining = runIpcHandler({ industry: 'FinTech', description: 'A company' })
+    expect(mockUpdateCompany).toHaveBeenCalledWith('co1', { industry: 'FinTech', description: 'A company' })
+    expect(remaining).toHaveProperty('industry', 'FinTech')
   })
 
   it('coInvestorsList key → setCompanyInvestors called with co_investor type, key removed', () => {
@@ -513,23 +524,11 @@ describe('IPC COMPANY_UPDATE special-cases', () => {
     expect(mockSetCompanyInvestors).toHaveBeenCalledWith('co1', 'prior_investor', investors)
     expect(remaining).not.toHaveProperty('priorInvestorsList')
   })
-
-  it('all three keys present → each handler fires, remaining has only scalar keys', () => {
-    const remaining = runIpcHandler({
-      industries: ['FinTech'],
-      coInvestorsList: [{ id: 'inv1', name: 'Sequoia' }],
-      priorInvestorsList: [{ id: 'inv2', name: 'Benchmark' }],
-      description: 'A company',
-    })
-    expect(mockUpdateCompanyIndustries).toHaveBeenCalledTimes(1)
-    expect(mockSetCompanyInvestors).toHaveBeenCalledTimes(2)
-    expect(Object.keys(remaining)).toEqual(['description'])
-  })
 })
 
-// ─── 6. enrichment — industries normalization ─────────────────────────────────
+// ─── 6. enrichment — industry constraint (canonical only) ────────────────────
 
-describe('enrichment — industries normalization', () => {
+describe('enrichment — industry canonical constraint', () => {
   function makeCompany(overrides: Record<string, unknown> = {}) {
     return {
       id: 'co1',
@@ -542,7 +541,7 @@ describe('enrichment — industries normalization', () => {
       state: null,
       pipelineStage: null,
       fieldSources: null,
-      industries: [] as string[],
+      industry: null as string | null,
       ...overrides,
     }
   }
@@ -559,15 +558,9 @@ describe('enrichment — industries normalization', () => {
 
   beforeEach(() => {
     testDb = buildDb()
-    // Insert a company so the real getCompany() can find it in testDb
     insertCompany(testDb, 'co1', 'Acme Corp')
-    // Insert FinTech industry so getCompany returns industries: ['FinTech'] for the "no change" test
-    const indId = 'ind-fintech'
-    testDb.prepare(`INSERT OR IGNORE INTO industries (id, name) VALUES (?, ?)`).run(indId, 'FinTech')
-    testDb.prepare(`INSERT OR IGNORE INTO org_company_industries (company_id, industry_id, is_primary) VALUES (?, ?, ?)`).run('co1', indId, 1)
     vi.doMock('../main/database/repositories/org-company.repo', () => ({
       getCompany: (...args: unknown[]) => mockGetCompany(...args),
-      updateCompanyIndustries: vi.fn(),
       setCompanyInvestors: vi.fn(),
     }))
     mockGetMeeting.mockReset()
@@ -579,33 +572,34 @@ describe('enrichment — industries normalization', () => {
     mockGetCompany.mockReturnValue(makeCompany())
   })
 
-  it('LLM returns string[] → industries extracted correctly', async () => {
-    mockGetCompany.mockReturnValue(makeCompany({ industries: [] }))
-    const provider = makeProvider(JSON.stringify({ industries: ['FinTech', 'AI/ML'] }))
+  it('LLM returns canonical industry → industry update proposed', async () => {
+    mockGetCompany.mockReturnValue(makeCompany({ industry: null }))
+    const provider = makeProvider(JSON.stringify({ industry: 'FinTech' }))
     const result = await getCompanyEnrichmentProposalsFromMeetings(['meet1'], 'co1', provider)
-    expect(result?.updates.industries).toEqual(['FinTech', 'AI/ML'])
+    expect(result?.updates.industry).toBe('FinTech')
   })
 
-  it('LLM returns comma-joined string "FinTech, AI" → split to ["FinTech", "AI"]', async () => {
-    mockGetCompany.mockReturnValue(makeCompany({ industries: [] }))
-    const provider = makeProvider(JSON.stringify({ industries: 'FinTech, AI' }))
+  it('LLM returns non-canonical industry → snapped to NULL (no update)', async () => {
+    mockGetCompany.mockReturnValue(makeCompany({ industry: null }))
+    const provider = makeProvider(JSON.stringify({ industry: 'Foodtech' }))
     const result = await getCompanyEnrichmentProposalsFromMeetings(['meet1'], 'co1', provider)
-    expect(result?.updates.industries).toEqual(['FinTech', 'AI'])
+    expect(result?.updates.industry).toBeUndefined()
   })
 
-  it('LLM returns null → no industries proposal generated', async () => {
-    mockGetCompany.mockReturnValue(makeCompany({ industries: [] }))
-    const provider = makeProvider(JSON.stringify({ industries: null, description: null }))
+  it('LLM returns null → no industry proposal generated', async () => {
+    mockGetCompany.mockReturnValue(makeCompany({ industry: null }))
+    const provider = makeProvider(JSON.stringify({ industry: null, description: null }))
     const result = await getCompanyEnrichmentProposalsFromMeetings(['meet1'], 'co1', provider)
-    expect(result).toBeNull()  // no changes at all
+    expect(result).toBeNull()
   })
 
-  it('LLM returns same industries as current → no change (isDiff = false)', async () => {
-    mockGetCompany.mockReturnValue(makeCompany({ industries: ['FinTech'] }))
-    const provider = makeProvider(JSON.stringify({ industries: ['FinTech'] }))
+  it('LLM returns same industry as current → no change', async () => {
+    // Set the DB's current value so the real getCompany returns FinTech
+    testDb.prepare(`UPDATE org_companies SET industry = 'FinTech' WHERE id = 'co1'`).run()
+    mockGetCompany.mockReturnValue(makeCompany({ industry: 'FinTech' }))
+    const provider = makeProvider(JSON.stringify({ industry: 'FinTech' }))
     const result = await getCompanyEnrichmentProposalsFromMeetings(['meet1'], 'co1', provider)
-    // No industry diff, no other changes either → null
-    expect(result?.updates.industries).toBeUndefined()
+    expect(result?.updates.industry).toBeUndefined()
   })
 })
 
@@ -616,28 +610,21 @@ describe('listCompanies — conditional JOINs', () => {
     testDb = buildDb()
     insertCompany(testDb, 'co1', 'StartupCo')
     insertCompany(testDb, 'inv1', 'Sequoia Capital')
-    // Add industry
-    testDb.prepare(`INSERT INTO industries (id, name) VALUES ('ind1', 'FinTech')`).run()
-    testDb.prepare(`INSERT INTO org_company_industries (company_id, industry_id) VALUES ('co1', 'ind1')`).run()
+    // Set industry directly on the company column
+    testDb.prepare(`UPDATE org_companies SET industry = 'FinTech' WHERE id = 'co1'`).run()
     // Add co-investor
     testDb.prepare(
       `INSERT INTO company_investors (id, company_id, investor_company_id, investor_type) VALUES ('ci1', 'co1', 'inv1', 'co_investor')`
     ).run()
-    // Mark co1 as visible in companies view
+    // Mark companies as visible in companies view
     testDb.prepare(`UPDATE org_companies SET include_in_companies_view = 1 WHERE id = 'co1'`).run()
     testDb.prepare(`UPDATE org_companies SET include_in_companies_view = 1 WHERE id = 'inv1'`).run()
   })
 
-  it('returns null for industriesCsv when includeIndustries is false', () => {
-    const results = listCompanies({ view: 'all', includeStats: true, includeIndustries: false })
+  it('always returns industry as a scalar column on the company row', () => {
+    const results = listCompanies({ view: 'all', includeStats: true })
     const co = results.find(r => r.id === 'co1')!
-    expect(co.industriesCsv).toBeNull()
-  })
-
-  it('returns industries CSV when includeIndustries is true', () => {
-    const results = listCompanies({ view: 'all', includeStats: true, includeIndustries: true })
-    const co = results.find(r => r.id === 'co1')!
-    expect(co.industriesCsv).toBe('FinTech')
+    expect(co.industry).toBe('FinTech')
   })
 
   it('returns null for coInvestorNames when includeInvestorNames is false', () => {

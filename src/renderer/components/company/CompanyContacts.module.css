@@ -138,3 +138,28 @@
 .contact:hover .removeBtn {
   display: flex;
 }
+
+/* ── Add / link contact button ── */
+.addBtn {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.addBtn:hover {
+  color: var(--color-text-secondary);
+  border-color: var(--color-primary);
+}
+
+.pickerSub {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}

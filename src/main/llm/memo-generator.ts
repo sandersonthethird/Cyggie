@@ -83,7 +83,7 @@ export interface MemoGenerateInput {
     postMoneyValuation?: number | null
     city?: string | null
     state?: string | null
-    industries?: string[]
+    industry?: string | null
     themes?: string[]
   }
   emails?: Array<{ subject: string | null; from: string; date: string | null; body: string }>
@@ -115,7 +115,7 @@ export async function generateMemo(
   if (input.companyDetails.raiseSize) detailParts.push(`Raise: $${input.companyDetails.raiseSize.toFixed(1)}M`)
   if (input.companyDetails.postMoneyValuation) detailParts.push(`Post-money: $${input.companyDetails.postMoneyValuation.toFixed(1)}M`)
   if (input.companyDetails.stage) detailParts.push(`Stage: ${input.companyDetails.stage}`)
-  if (input.companyDetails.industries?.length) detailParts.push(`Industries: ${input.companyDetails.industries.join(', ')}`)
+  if (input.companyDetails.industry) detailParts.push(`Industry: ${input.companyDetails.industry}`)
   if (input.companyDetails.themes?.length) detailParts.push(`Themes: ${input.companyDetails.themes.join(', ')}`)
   if (detailParts.length > 0) parts.push(detailParts.join(' | '))
 

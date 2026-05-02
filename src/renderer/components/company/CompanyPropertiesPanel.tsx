@@ -33,6 +33,7 @@ import {
   TARGET_CUSTOMERS,
   BUSINESS_MODELS,
   PRODUCT_STAGES,
+  INDUSTRY_OPTIONS,
 } from './companyColumns'
 import { useTakeaways } from '../../hooks/useTakeaways'
 import { KeyTakeawaysCard } from '../common/KeyTakeawaysCard'
@@ -239,6 +240,7 @@ export function CompanyPropertiesPanel({
   const businessModelDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'businessModel')
   const productStageDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'productStage')
   const employeeCountDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'employeeCountRange')
+  const industryDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'industry')
 
   const entityTypeOptions = mergeBuiltinOptions(ENTITY_TYPES, entityTypeDef?.optionsJson ?? null)
   const stageOptions = mergeBuiltinOptions(STAGES, stageDef?.optionsJson ?? null)
@@ -247,6 +249,7 @@ export function CompanyPropertiesPanel({
   const targetCustomerOptions = mergeBuiltinOptions(TARGET_CUSTOMERS, targetCustomerDef?.optionsJson ?? null)
   const businessModelOptions = mergeBuiltinOptions(BUSINESS_MODELS, businessModelDef?.optionsJson ?? null)
   const productStageOptions = mergeBuiltinOptions(PRODUCT_STAGES, productStageDef?.optionsJson ?? null)
+  const industryOptions = mergeBuiltinOptions(INDUSTRY_OPTIONS, industryDef?.optionsJson ?? null)
   const employeeRangeOptions = mergeBuiltinOptions(
     EMPLOYEE_RANGES.map(v => ({ value: v, label: v })),
     employeeCountDef?.optionsJson ?? null
@@ -475,11 +478,17 @@ export function CompanyPropertiesPanel({
   handleDoneRef.current = handleDone
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      const target = e.target as Element | null
       if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLButtonElement ||
-        e.target instanceof HTMLSelectElement
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLButtonElement ||
+        target instanceof HTMLSelectElement ||
+        // TipTap / ProseMirror editing surfaces are <div contenteditable="true">.
+        // Without this guard, typing a word containing 'e' inside any inline
+        // editor on the page (NoteCreator, summary editor, etc.) would trigger
+        // the panel's edit-mode shortcut.
+        (target instanceof HTMLElement && target.isContentEditable)
       ) return
       if ((e.key === 'e' || e.key === 'E') && !isEditing) setIsEditing(true)
       if (e.key === 'Escape' && isEditing) void handleDoneRef.current()
@@ -561,10 +570,19 @@ export function CompanyPropertiesPanel({
 
   function save(field: string, value: unknown) {
     const prev = (company as unknown as Record<string, unknown>)[field]
+    const prevPrimaryDomain = company.primaryDomain
     return withOptimisticUpdate(
       () => onUpdate({ [field]: value }),
-      () => window.api.invoke(IPC_CHANNELS.COMPANY_UPDATE, company.id, { [field]: value }),
+      () => window.api.invoke<CompanyDetail | null>(
+        IPC_CHANNELS.COMPANY_UPDATE, company.id, { [field]: value }
+      ),
       () => onUpdate({ [field]: prev }),
+      (result) => {
+        // Surface backend-derived fields (e.g. primary_domain auto-set from website_url).
+        if (result && field !== 'primaryDomain' && result.primaryDomain !== prevPrimaryDomain) {
+          onUpdate({ primaryDomain: result.primaryDomain })
+        }
+      },
     )
   }
 
@@ -799,7 +817,7 @@ export function CompanyPropertiesPanel({
   // pipelineStage and priority are excluded — they live in header chips, not sections
   const hiddenFieldCount = !isEditing && !showAllFields ? (
     hiddenFields.length +
-    ([company.description, company.sector, company.targetCustomer,
+    ([company.description, company.industry, company.targetCustomer,
       company.businessModel, company.productStage, company.foundingYear,
       company.employeeCountRange, company.hqAddress, company.revenueModel,
       company.dealSource, company.warmIntroSource, company.referralContactId,
@@ -999,6 +1017,7 @@ export function CompanyPropertiesPanel({
             productStage: productStageOptions,
             employeeRange: employeeRangeOptions,
             round: roundOptions,
+            industry: industryOptions,
           }}
           builtinDefs={{
             targetCustomer: targetCustomerDef ? { id: targetCustomerDef.id, optionsJson: targetCustomerDef.optionsJson } : undefined,
@@ -1006,6 +1025,7 @@ export function CompanyPropertiesPanel({
             productStage: productStageDef ? { id: productStageDef.id, optionsJson: productStageDef.optionsJson } : undefined,
             employeeCount: employeeCountDef ? { id: employeeCountDef.id, optionsJson: employeeCountDef.optionsJson } : undefined,
             round: roundDef ? { id: roundDef.id, optionsJson: roundDef.optionsJson } : undefined,
+            industry: industryDef ? { id: industryDef.id, optionsJson: industryDef.optionsJson } : undefined,
           }}
           fieldSources={fieldSources}
         />

@@ -29,6 +29,8 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanySummary } from '../../../shared/types/company'
 import { EditableCell } from './EditableCell'
 import { ColumnPicker } from './ColumnPicker'
+import { InvestorChipsCell } from '../crm/InvestorChipsCell'
+import type { InvestorEntry } from '../../hooks/useInvestorChips'
 import {
   COLUMN_DEFS,
   COMPANY_HEADER_KEYS,
@@ -50,7 +52,7 @@ import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFie
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
 import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
-import { useEditCellNav } from '../../hooks/useEditCellNav'
+import { useEditCellNav, getRangePosition } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
 import { HeaderFilter } from '../crm/HeaderFilter'
@@ -235,7 +237,7 @@ export function CompanyTable({
 
   const {
     focusedCell, editCell, setEditCell, cellRange,
-    handleFocusCell, handleStartEdit, handleEndEdit, handleArrowNav, clearFocus
+    handleFocusCell, handleStartEdit, handleEndEdit, handleKeyboardEvent,
   } = useEditCellNav(
     companies.length,
     visibleCols,
@@ -347,29 +349,13 @@ export function CompanyTable({
   })
 
   // ── Composed keyboard handler ──────────────────────────────────────────────
+  // useEditCellNav owns Arrow/Enter/Escape/type-to-edit. Suppress its Escape
+  // when the clipboard hook is in "copied" mode so Esc clears the copy state first.
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Arrow keys for cell navigation (when focused, not editing)
-    if (!editCell && focusedCell && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-      e.preventDefault()
-      const dir = e.key.replace('Arrow', '').toLowerCase() as 'up' | 'down' | 'left' | 'right'
-      handleArrowNav(dir, e.shiftKey)
-      return
-    }
-    // Enter to start editing focused cell
-    if (!editCell && focusedCell && e.key === 'Enter') {
-      e.preventDefault()
-      handleStartEdit(focusedCell.rowIdx, focusedCell.colIdx)
-      return
-    }
-    // Escape to clear focus
-    if (!editCell && focusedCell && e.key === 'Escape' && !copiedCell && !copiedRange) {
-      e.preventDefault()
-      clearFocus()
-      return
-    }
+    if (handleKeyboardEvent(e, { suppressEscape: !!(copiedCell || copiedRange) })) return
     handleClipboardKeyDown(e)
     handleTableKeyDown(e)
-  }, [editCell, focusedCell, copiedCell, copiedRange, handleArrowNav, handleStartEdit, clearFocus, handleClipboardKeyDown, handleTableKeyDown])
+  }, [handleKeyboardEvent, copiedCell, copiedRange, handleClipboardKeyDown, handleTableKeyDown])
 
   // ── Sort ───────────────────────────────────────────────────────────────────
   function handleHeaderClick(col: ColumnDef, e: React.MouseEvent) {
@@ -425,7 +411,21 @@ export function CompanyTable({
         </div>
       )}
 
-      <div className={styles.tableWrapper} ref={scrollRef} tabIndex={0} onKeyDown={handleKeyDown}>
+      <div
+        className={styles.tableWrapper}
+        ref={scrollRef}
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        onMouseDown={(e) => {
+          // Re-focus wrapper after mouse interactions so keyboard shortcuts keep working.
+          // Only refocus if the click target isn't an input/select (don't steal focus from edit mode).
+          const tag = (e.target as HTMLElement).tagName
+          if (tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA') {
+            // Use requestAnimationFrame so the click completes first (e.g. checkbox toggle)
+            requestAnimationFrame(() => scrollRef.current?.focus({ preventScroll: true }))
+          }
+        }}
+      >
         {/* Header row */}
         <div className={styles.headerRow} style={{ gridTemplateColumns: gridCols }}>
           {/* Checkbox */}
@@ -652,12 +652,8 @@ export function CompanyTable({
                   const isCustomSelect = !!customFieldId && col.type === 'select'
 
                   const isCellEditing = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
-                  const isCellHighlighted =
-                    (focusedCell?.rowIdx === dataIndex && focusedCell?.colIdx === colIdx) ||
-                    (cellRange?.colIdx === colIdx && dataIndex >= cellRange.startRow && dataIndex <= cellRange.endRow)
-                  const isCopied =
-                    (copiedCell?.rowIdx === dataIndex && copiedCell?.colIdx === colIdx) ||
-                    (copiedRange?.colIdx === colIdx && dataIndex >= copiedRange.startRow && dataIndex <= copiedRange.endRow)
+                  const focusPos = isCellEditing ? null : getRangePosition(dataIndex, colIdx, cellRange, focusedCell)
+                  const copiedPos = getRangePosition(dataIndex, colIdx, copiedRange, copiedCell)
 
                   // When groupBy is active: scan mode — all cells navigate to detail
                   if (groupBy) {
@@ -675,10 +671,22 @@ export function CompanyTable({
                   }
 
                   if (isCustomSelect && !isCellEditing) {
+                    const chipRangeClass = focusPos
+                      ? focusPos === 'only' ? styles.focusedCell
+                        : focusPos === 'top' ? styles.rangeTop
+                        : focusPos === 'mid' ? styles.rangeMid
+                        : styles.rangeBot
+                      : ''
+                    const chipCopiedClass = copiedPos
+                      ? copiedPos === 'only' ? styles.copiedCell
+                        : copiedPos === 'top' ? styles.copiedRangeTop
+                        : copiedPos === 'mid' ? styles.copiedRangeMid
+                        : styles.copiedRangeBot
+                      : ''
                     return (
                       <div
                         key={col.key}
-                        className={`${styles.chipCell}${isCopied ? ` ${styles.copiedCell}` : ''}${isCellHighlighted ? ` ${styles.focusedCell}` : ''}`}
+                        className={`${styles.chipCell} ${chipRangeClass} ${chipCopiedClass}`.trim()}
                         onClick={(e) => handleFocusCell(dataIndex, colIdx, e.shiftKey)}
                         onDoubleClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
@@ -691,15 +699,77 @@ export function CompanyTable({
                     )
                   }
 
+                  const wrapperCopiedClass = copiedPos
+                    ? copiedPos === 'only' ? styles.copiedCell
+                      : copiedPos === 'top' ? styles.copiedRangeTop
+                      : copiedPos === 'mid' ? styles.copiedRangeMid
+                      : styles.copiedRangeBot
+                    : undefined
+
+                  // Investor chips cell — four column variants:
+                  //   coInvestorNames           → company.coInvestorsList         → patch coInvestorsList
+                  //   priorInvestorNames        → company.priorInvestorsList      → patch priorInvestorsList
+                  //   subsequentInvestorNames   → company.subsequentInvestorsList → patch subsequentInvestorsList
+                  //   leadInvestor              → company.leadInvestorCompany     → patch leadInvestorCompanyId
+                  if (col.type === 'investor_chips') {
+                    let investorList: Array<{ id: string; name: string; domain: string | null }>
+                    let handleSave: (next: InvestorEntry[]) => Promise<void>
+                    if (col.key === 'leadInvestor') {
+                      investorList = company.leadInvestorCompany ? [company.leadInvestorCompany] : []
+                      handleSave = async (next) => {
+                        const patch: Record<string, unknown> = {
+                          leadInvestorCompanyId: next.length > 0 ? next[0].id : null,
+                        }
+                        await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, company.id, patch)
+                        onPatch(company.id, patch)
+                      }
+                    } else {
+                      const variant: 'co' | 'prior' | 'subsequent' =
+                        col.key === 'subsequentInvestorNames' ? 'subsequent'
+                        : col.key === 'priorInvestorNames' ? 'prior'
+                        : 'co'
+                      investorList =
+                        variant === 'subsequent' ? company.subsequentInvestorsList
+                        : variant === 'prior' ? company.priorInvestorsList
+                        : company.coInvestorsList
+                      const patchKey =
+                        variant === 'subsequent' ? 'subsequentInvestorsList'
+                        : variant === 'prior' ? 'priorInvestorsList'
+                        : 'coInvestorsList'
+                      handleSave = async (next) => {
+                        const patch: Record<string, unknown> = { [patchKey]: next }
+                        await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, company.id, patch)
+                        onPatch(company.id, patch)
+                      }
+                    }
+                    return (
+                      <div
+                        key={col.key}
+                        className={`${styles.chipCell} ${wrapperCopiedClass ?? ''}`.trim()}
+                        onClick={(e) => handleFocusCell(dataIndex, colIdx, e.shiftKey)}
+                      >
+                        <InvestorChipsCell
+                          value={investorList}
+                          onSave={handleSave}
+                          isEditing={isCellEditing}
+                          onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
+                          onEndEdit={() => handleEndEdit(dataIndex, colIdx, null)}
+                          scrollContainer={scrollRef.current}
+                          maxChips={col.maxChips}
+                        />
+                      </div>
+                    )
+                  }
+
                   return (
-                    <div key={col.key} className={isCopied ? styles.copiedCell : undefined}>
+                    <div key={col.key} className={wrapperCopiedClass}>
                       <EditableCell
                         value={cellValue}
                         col={col}
-                        isHighlighted={isCellHighlighted && !isCellEditing}
+                        rangePosition={focusPos}
                         isEditing={isCellEditing}
                         initialChar={isCellEditing ? editCell?.initialChar : undefined}
-                        onFocus={() => handleFocusCell(dataIndex, colIdx)}
+                        onFocus={(shiftKey) => handleFocusCell(dataIndex, colIdx, shiftKey)}
                         onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
                         onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
                         onAddOption={

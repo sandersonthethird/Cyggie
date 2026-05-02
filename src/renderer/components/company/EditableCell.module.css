@@ -41,6 +41,17 @@
   border-radius: 0;
 }
 
+/* Suppress browser up/down spinners on numeric inputs — show plain numeric entry. */
+.editInput[type='number']::-webkit-outer-spin-button,
+.editInput[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.editInput[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 .editSelect {
   cursor: pointer;
 }
@@ -118,12 +129,60 @@
 .warmthGray   { background: var(--color-text-tertiary); opacity: 0.5; }
 
 /* ── Clipboard / focus highlight styles ── */
+
+/* Single-cell focus */
 .focusedCell {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
 }
 
+/* Range selection — unified border via inset box-shadow (no layout shift) */
+.rangeTop {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary),
+    inset 0 2px 0 0 var(--color-primary);
+}
+
+.rangeMid {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary);
+}
+
+.rangeBot {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary),
+    inset 0 -2px 0 0 var(--color-primary);
+}
+
+/* Copied cell (dashed) */
 .copiedCell {
   outline: 2px dashed var(--color-primary);
   outline-offset: -2px;
+}
+
+/* Copied range — unified border via inset box-shadow with dashed emulation */
+.copiedRangeTop {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary),
+    inset 0 2px 0 0 var(--color-primary);
+  opacity: 0.85;
+}
+
+.copiedRangeMid {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary);
+  opacity: 0.85;
+}
+
+.copiedRangeBot {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-primary),
+    inset -2px 0 0 0 var(--color-primary),
+    inset 0 -2px 0 0 var(--color-primary);
+  opacity: 0.85;
 }

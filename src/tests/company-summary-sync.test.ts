@@ -80,7 +80,7 @@ function makeCompany(overrides: Partial<CompanySummary> = {}): CompanySummary {
     twitterHandle: null,
     crunchbaseUrl: null,
     angellistUrl: null,
-    sector: null,
+    industry: null,
     targetCustomer: null,
     businessModel: null,
     ...overrides,

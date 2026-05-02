@@ -14,7 +14,9 @@ interface ColumnPickerProps {
 
 export function ColumnPicker({ visibleKeys, allDefs, onChange, onSave, onCreateField }: ColumnPickerProps) {
   const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
   const wrapRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   // Click-outside to close
   useEffect(() => {
@@ -28,6 +30,14 @@ export function ColumnPicker({ visibleKeys, allDefs, onChange, onSave, onCreateF
     return () => document.removeEventListener('mousedown', handle)
   }, [open])
 
+  // Clear search and autofocus when dropdown opens/closes
+  useEffect(() => {
+    if (open) {
+      setSearch('')
+      requestAnimationFrame(() => searchRef.current?.focus())
+    }
+  }, [open])
+
   function toggle(key: string) {
     const next = visibleKeys.includes(key)
       ? visibleKeys.filter((k) => k !== key)
@@ -39,6 +49,10 @@ export function ColumnPicker({ visibleKeys, allDefs, onChange, onSave, onCreateF
   // Always keep the first column (name anchor) visible
   const anchorKey = allDefs[0]?.key
   const toggleable = allDefs.filter((c) => c.key !== anchorKey)
+  const needle = search.toLowerCase()
+  const filtered = needle
+    ? toggleable.filter((c) => c.label.toLowerCase().includes(needle))
+    : toggleable
 
   return (
     <div ref={wrapRef} className={styles.wrap}>
@@ -51,8 +65,17 @@ export function ColumnPicker({ visibleKeys, allDefs, onChange, onSave, onCreateF
       </button>
       {open && (
         <div className={styles.dropdown}>
-          <div className={styles.dropdownHeader}>Columns</div>
-          {toggleable.map((col) => {
+          <div className={styles.searchWrap}>
+            <input
+              ref={searchRef}
+              className={styles.searchInput}
+              type="text"
+              placeholder="Search columns…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          {filtered.map((col) => {
             const on = visibleKeys.includes(col.key)
             return (
               <div key={col.key} className={styles.item} onClick={() => toggle(col.key)}>

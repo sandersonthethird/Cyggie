@@ -42,7 +42,7 @@ export async function queryCompany(companyId: string, question: string, attachme
   const meta: string[] = []
   if (company.stage) meta.push(`Stage: ${company.stage}`)
   if (company.round) meta.push(`Round: ${company.round}`)
-  if (company.industries?.length) meta.push(`Industries: ${company.industries.join(', ')}`)
+  if (company.industry) meta.push(`Industry: ${company.industry}`)
   if (meta.length) parts.push(meta.join(' | '))
   parts.push('')
 

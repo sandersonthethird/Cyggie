@@ -780,6 +780,17 @@
   border-radius: var(--cv-radius);
 }
 
+/* Read-only state: same TipTap editor, no crimson border, click-to-edit cursor.
+   Matches the old .markdown view-mode affordance. */
+.summaryViewing {
+  border-color: transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.summaryViewing:hover {
+  border-color: var(--cv-border);
+}
+
 .enhanceBar {
   display: flex;
   align-items: center;
@@ -851,8 +862,11 @@
   border-radius: var(--cv-radius);
   border: 1px solid transparent;
   transition: border-color 0.15s, background 0.15s;
-  line-height: 1.15;
+  line-height: 1.6;
   font-size: 14px;
+  /* Override .content's inherited pre-wrap, which renders ReactMarkdown's
+     inter-block whitespace text nodes as visible line breaks. */
+  white-space: normal;
 }
 
 .markdown:hover {

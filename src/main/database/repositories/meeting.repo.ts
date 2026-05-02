@@ -515,16 +515,18 @@ export function cleanupStaleRecordings(): number {
 }
 
 /**
- * Delete scheduled meetings whose date has passed (more than 2 hours ago).
- * These are meetings that were prepared but never recorded.
+ * Delete scheduled meetings whose date has passed (more than 2 hours ago)
+ * AND that the user never engaged with (no notes typed). Meetings with
+ * pre-meeting notes are preserved regardless of age.
  */
 export function cleanupExpiredScheduledMeetings(): number {
   const db = getDatabase()
   const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+  const condition = "status = 'scheduled' AND date < ? AND (notes IS NULL OR trim(notes) = '')"
 
   // First get the IDs so we can clean up FTS too
   const expiredRows = db.prepare(
-    "SELECT id FROM meetings WHERE status = 'scheduled' AND date < ?"
+    `SELECT id FROM meetings WHERE ${condition}`
   ).all(twoHoursAgo) as { id: string }[]
 
   if (expiredRows.length === 0) return 0
@@ -536,7 +538,7 @@ export function cleanupExpiredScheduledMeetings(): number {
 
   // Delete the meetings
   const result = db.prepare(
-    "DELETE FROM meetings WHERE status = 'scheduled' AND date < ?"
+    `DELETE FROM meetings WHERE ${condition}`
   ).run(twoHoursAgo)
 
   return result.changes
