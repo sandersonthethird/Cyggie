@@ -31,7 +31,9 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../database/connection'
 import { getCompany, updateCompany } from '../database/repositories/org-company.repo'
-import { listCompanyNotes } from '../database/repositories/company-notes.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+
+const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import { getMeeting } from '../database/repositories/meeting.repo'
 import { bulkCreate as bulkCreateTasks } from '../database/repositories/task.repo'
 import { readTranscript } from '../storage/file-manager'
@@ -220,7 +222,7 @@ export async function generateReconciliationProposals(
       }
     }
 
-    const existingNotes = listCompanyNotes(companyId).slice(0, 5)
+    const existingNotes = _companyNotesRepo.list(companyId).slice(0, 5)
     const excerpts = extractCompanyExcerpts(transcript, companyName)
 
     console.log(

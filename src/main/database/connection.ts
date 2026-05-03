@@ -14,7 +14,6 @@ import { runRecordingPathMigration } from './migrations/011-recording-path'
 import { runCompanyOsCoreMigration } from './migrations/012-company-os-core'
 import { runCompanyOsEmailMigration } from './migrations/013-company-os-email'
 import { runCompanyOsArtifactsMigration } from './migrations/014-company-os-artifacts'
-import { runCompanyOsChatMigration } from './migrations/015-company-os-chat'
 import { runCompanyOsNotesMigration } from './migrations/016-company-os-notes'
 import { runCompanyOsMemoMigration } from './migrations/017-company-os-memo'
 import { runCompanyOsThesisMigration } from './migrations/018-company-os-thesis'
@@ -77,6 +76,11 @@ import { runBackfillCompanyDomainsMigration } from './migrations/074-backfill-co
 import { runCompanyInvestorsPositionMigration } from './migrations/075-company-investors-position'
 import { runLeadInvestorCompanyIdMigration } from './migrations/076-lead-investor-company-id'
 import { runIndustryConsolidationMigration } from './migrations/077-industry-consolidation'
+import { runChatSessionsMigration } from './migrations/078-chat-sessions'
+import { runDropCompanyConversationsMigration } from './migrations/079-drop-company-conversations'
+import { runBackfillMeetingChatsMigration } from './migrations/080-backfill-meeting-chats'
+import { runDropLegacyNotesTablesMigration } from './migrations/081-drop-legacy-notes-tables'
+import { runNotesSourceMeetingUniqueMigration } from './migrations/082-notes-source-meeting-unique'
 
 let db: Database.Database | null = null
 
@@ -99,7 +103,7 @@ export function getDatabase(): Database.Database {
     runCompanyOsCoreMigration(db)
     runCompanyOsEmailMigration(db)
     runCompanyOsArtifactsMigration(db)
-    runCompanyOsChatMigration(db)
+    // Migration 015 removed: company_conversations was never wired to the renderer; tables dropped by migration 079.
     runCompanyOsNotesMigration(db)
     runCompanyOsMemoMigration(db)
     runCompanyOsThesisMigration(db)
@@ -162,6 +166,11 @@ export function getDatabase(): Database.Database {
     runCompanyInvestorsPositionMigration(db)
     runLeadInvestorCompanyIdMigration(db)
     runIndustryConsolidationMigration(db)
+    runChatSessionsMigration(db)
+    runDropCompanyConversationsMigration(db)
+    runBackfillMeetingChatsMigration(db)
+    runDropLegacyNotesTablesMigration(db)
+    runNotesSourceMeetingUniqueMigration(db)
   }
   return db
 }

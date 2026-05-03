@@ -1,5 +1,7 @@
 import * as companyRepo from '../database/repositories/org-company.repo'
-import { listCompanyNotes } from '../database/repositories/company-notes.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+
+const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import { readSummary } from '../storage/file-manager'
 import { getProvider } from './provider-factory'
 
@@ -80,7 +82,7 @@ export async function generateCompanyKeyTakeaways(
   }
 
   // Company notes
-  const notes = listCompanyNotes(companyId)
+  const notes = _companyNotesRepo.list(companyId)
   const noteParts: string[] = []
   for (const note of notes) {
     if (totalChars >= MAX_TOTAL_CONTEXT) break

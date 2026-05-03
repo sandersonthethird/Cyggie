@@ -1,5 +1,7 @@
 import * as contactRepo from '../database/repositories/contact.repo'
-import * as contactNotesRepo from '../database/repositories/contact-notes.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+
+const _contactNotesRepo = makeEntityNotesRepo('contact_id')
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { readSummary, readTranscript } from '../storage/file-manager'
 
@@ -97,7 +99,7 @@ export function buildContactContext(contactId: string): ContactContextResult {
   }
 
   // Contact notes
-  const notes = contactNotesRepo.listContactNotes(contactId)
+  const notes = _contactNotesRepo.list(contactId)
   const noteParts: string[] = []
   let noteTotal = 0
   for (const note of notes) {

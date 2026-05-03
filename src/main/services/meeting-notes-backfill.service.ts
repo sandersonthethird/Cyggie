@@ -7,8 +7,7 @@ import { getDatabase } from '../database/connection'
 import { readSummary } from '../storage/file-manager'
 import { resolveContactsByEmails } from '../database/repositories/contact.repo'
 import { listMeetingCompanies } from '../database/repositories/org-company.repo'
-import { createContactNote } from '../database/repositories/contact-notes.repo'
-import { createCompanyNote } from '../database/repositories/company-notes.repo'
+import { createMeetingCompanionNote } from './note-companion-backfill.service'
 
 interface MeetingRow {
   id: string
@@ -49,8 +48,9 @@ export function backfillMeetingSummaryNotes(userId: string | null): { meetings: 
     try {
       const companies = listMeetingCompanies(meeting.id)
       for (const company of companies) {
-        const note = createCompanyNote({
-          companyId: company.id,
+        const note = createMeetingCompanionNote({
+          entityType: 'company',
+          entityId: company.id,
           title: noteTitle,
           content: noteContent,
           sourceMeetingId: meeting.id
@@ -68,8 +68,9 @@ export function backfillMeetingSummaryNotes(userId: string | null): { meetings: 
         const emailToContactId = resolveContactsByEmails(emails)
         const contactIds = [...new Set(Object.values(emailToContactId))]
         for (const contactId of contactIds) {
-          const note = createContactNote({
-            contactId,
+          const note = createMeetingCompanionNote({
+            entityType: 'contact',
+            entityId: contactId,
             title: noteTitle,
             content: noteContent,
             sourceMeetingId: meeting.id

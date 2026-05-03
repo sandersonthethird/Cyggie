@@ -5,7 +5,9 @@ import * as path from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as repo from '../database/repositories/partner-meeting.repo'
 import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts } from '../database/repositories/org-company.repo'
-import { listCompanyNotes, createCompanyNote } from '../database/repositories/company-notes.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+
+const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import { getProvider } from '../llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
@@ -78,7 +80,7 @@ async function generateBrief(companyId: string): Promise<string | null> {
   }
 
   // Recent company notes (at most 5)
-  const notes = listCompanyNotes(companyId).slice(0, 5)
+  const notes = _companyNotesRepo.list(companyId).slice(0, 5)
 
   // ─── Build prompt ──────────────────────────────────────────────────────────
 
@@ -232,8 +234,8 @@ export function registerPartnerMeetingIpc(): void {
       if (noteContent) {
         const companyName = extractionResult.companyName ?? 'Unknown Company'
         try {
-          const note = createCompanyNote(
-            { companyId, title: `Pitch Deck — ${companyName}`, content: noteContent },
+          const note = _companyNotesRepo.create(
+            { entityId: companyId, title: `Pitch Deck — ${companyName}`, content: noteContent },
             getCurrentUserId()
           )
           createdNoteId = note?.id ?? null

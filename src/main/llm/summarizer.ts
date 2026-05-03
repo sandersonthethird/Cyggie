@@ -16,8 +16,7 @@ import { extractTasksFromSummary } from '../services/task-extraction.service'
 import { getContactSummaryUpdateProposals } from '../services/contact-summary-sync.service'
 import { listMeetingCompanies } from '../database/repositories/org-company.repo'
 import { resolveContactsByEmails } from '../database/repositories/contact.repo'
-import { createContactNote } from '../database/repositories/contact-notes.repo'
-import { createCompanyNote } from '../database/repositories/company-notes.repo'
+import { createMeetingCompanionNote } from '../services/note-companion-backfill.service'
 import { getUser } from '../database/repositories/user.repo'
 import type { SummaryGenerateResult } from '../../shared/types/summary'
 import type { TaskExtractionResult } from '../../shared/types/task'
@@ -158,15 +157,15 @@ export async function generateSummary(
   try {
     const linkedCompaniesForNotes = listMeetingCompanies(meetingId)
     for (const company of linkedCompaniesForNotes) {
-      createCompanyNote(
-        { companyId: company.id, title: noteTitle, content: noteContent, sourceMeetingId: meetingId },
+      createMeetingCompanionNote(
+        { entityType: 'company', entityId: company.id, title: noteTitle, content: noteContent, sourceMeetingId: meetingId },
         userId
       )
     }
     const contactIds = [...new Set(Object.values(emailToContactId))]
     for (const contactId of contactIds) {
-      createContactNote(
-        { contactId, title: noteTitle, content: noteContent, sourceMeetingId: meetingId },
+      createMeetingCompanionNote(
+        { entityType: 'contact', entityId: contactId, title: noteTitle, content: noteContent, sourceMeetingId: meetingId },
         userId
       )
     }

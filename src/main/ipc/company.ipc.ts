@@ -31,7 +31,9 @@ import { extractFromPdf, extractFromUrl, PitchDeckError } from '../services/pitc
 import { generateCompanyKeyTakeaways } from '../llm/company-key-takeaways'
 import { runPitchDeckAnalysis } from '../services/pitch-deck-analysis.service'
 import { queueStubEnrichment } from '../services/stub-enrichment.service'
-import { createCompanyNote } from '../database/repositories/company-notes.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+
+const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import type { PitchDeckIngestPayload, PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
@@ -963,8 +965,8 @@ export function registerCompanyHandlers(): void {
 
         const companyName = extractionResult.companyName ?? 'Unknown'
         const userId = getCurrentUserId()
-        const note = createCompanyNote(
-          { companyId, title: `File Analysis — ${companyName}`, content: noteContent },
+        const note = _companyNotesRepo.create(
+          { entityId: companyId, title: `File Analysis — ${companyName}`, content: noteContent },
           userId
         )
 

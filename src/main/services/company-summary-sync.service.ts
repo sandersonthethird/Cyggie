@@ -1,6 +1,8 @@
 import * as companyRepo from '../database/repositories/org-company.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
-import { listCompanyNotes } from '../database/repositories/company-notes.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+
+const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import { resolveContactsByEmails } from '../database/repositories/contact.repo'
 import { getContact } from '../database/repositories/contact.repo'
 import { listFieldDefinitions, getFieldValuesForEntity } from '../database/repositories/custom-fields.repo'
@@ -864,7 +866,7 @@ export async function getCompanyEnrichmentProposalsFromNotes(
   try {
     if (!companyId) return null
 
-    const notes = listCompanyNotes(companyId)
+    const notes = _companyNotesRepo.list(companyId)
     const validNotes = notes.filter(n => n.content?.trim())
     if (validNotes.length === 0) return null
 

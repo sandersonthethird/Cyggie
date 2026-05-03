@@ -1,5 +1,6 @@
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { contactNotesRepo } from '../database/repositories/contact-notes.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+import { ensureContactMeetingSummaryNotes } from '../services/note-companion-backfill.service'
 import { registerEntityNotesIpc } from './notes-ipc-base'
 
 export function registerContactNotesHandlers(): void {
@@ -13,6 +14,7 @@ export function registerContactNotesHandlers(): void {
     },
     entityIdParam: 'contactId',
     auditType: 'contact_note',
-    repo: contactNotesRepo,
+    repo: makeEntityNotesRepo('contact_id'),
+    onBeforeList: ensureContactMeetingSummaryNotes,
   })
 }

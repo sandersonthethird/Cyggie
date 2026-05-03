@@ -3,7 +3,9 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import * as memoRepo from '../database/repositories/investment-memo.repo'
 import * as artifactRepo from '../database/repositories/artifact.repo'
-import * as notesRepo from '../database/repositories/company-notes.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+
+const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import { exportMemoMarkdownToPdf } from '../services/memo-export.service'
 import { exportMemoToGoogleDoc } from '../drive/google-drive'
 import { getSetting } from '../database/repositories/settings.repo'
@@ -251,7 +253,7 @@ export function registerInvestmentMemoHandlers(): void {
     }
 
     // Gather company notes
-    const notes = notesRepo.listCompanyNotes(companyId)
+    const notes = _companyNotesRepo.list(companyId)
     const noteTexts = notes
       .filter((n) => n.content?.trim())
       .map((n) => (n.title ? `**${n.title}**\n${n.content}` : n.content))
