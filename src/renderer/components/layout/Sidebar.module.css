@@ -201,3 +201,110 @@
 .sidebarCollapsed .bottom {
   align-items: center;
 }
+
+/* ── AI Chats expandable nav item ────────────────────────────────── */
+.aiChatsBlock {
+  display: flex;
+  flex-direction: column;
+}
+
+.aiChatsHeader {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.aiChatsCaret {
+  background: none;
+  border: none;
+  padding: 6px 6px;
+  border-radius: 4px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.aiChatsCaret:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text);
+}
+
+.aiChatsCaretIcon {
+  transition: transform 0.15s ease-out;
+}
+
+.aiChatsCaretIconOpen {
+  transform: rotate(90deg);
+}
+
+.aiChatsRecent {
+  display: flex;
+  flex-direction: column;
+  margin-left: 22px;
+  padding: 2px 0 6px 4px;
+  border-left: 1px solid var(--color-border);
+  animation: aiChatsSlideDown 150ms ease-out;
+}
+
+@keyframes aiChatsSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.aiChatsEmpty {
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.aiChatsRecentItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  min-width: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.aiChatsRecentItem:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text);
+}
+
+.aiChatsRecentItemOpen,
+.aiChatsRecentItemOpen:hover {
+  background: var(--cv-crimson-muted, rgba(185, 28, 28, 0.08));
+  color: var(--cv-crimson, #B91C1C);
+}
+
+.aiChatsPin {
+  color: #D97706;
+  flex-shrink: 0;
+}
+
+.aiChatsRecentLabel {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

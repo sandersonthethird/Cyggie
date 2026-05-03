@@ -1,6 +1,9 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { queryAll, abortAllChat } from '../llm/crm-chat'
+import { withChatPersistence } from '../llm/chat-persistence'
+import { deriveChatContext } from '../../shared/utils/chat-context'
+import { getCurrentUserId } from '../security/current-user'
 import type { ChatAttachment } from '../../shared/types/chat'
 
 export function registerCrmChatHandlers(): void {
@@ -8,7 +11,17 @@ export function registerCrmChatHandlers(): void {
     IPC_CHANNELS.CHAT_QUERY_ALL,
     async (_event, data: { question: string; attachments?: ChatAttachment[] }) => {
       if (!data?.question?.trim()) throw new Error('question is required')
-      return queryAll(data.question.trim(), data.attachments ?? [])
+      const ctx = deriveChatContext({})
+      if (!ctx) throw new Error('Failed to derive chat context')
+      return withChatPersistence({
+        contextId: ctx.contextId,
+        contextKind: ctx.kind,
+        contextLabel: 'Global',
+        userMessage: { content: data.question.trim(), attachments: data.attachments },
+        userId: getCurrentUserId(),
+        runLLM: () => queryAll(data.question.trim(), data.attachments ?? []),
+        extractText: (response: string) => response,
+      })
     }
   )
 

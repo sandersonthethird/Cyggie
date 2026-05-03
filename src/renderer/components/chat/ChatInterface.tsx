@@ -8,6 +8,8 @@ import remarkGfm from 'remark-gfm'
 const MARKDOWN_PLUGINS = [remarkGfm]
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatStore } from '../../stores/chat.store'
+import { useChatHydrate } from '../../hooks/useChatHydrate'
+import { deriveChatContext } from '../../../shared/utils/chat-context'
 import type { ContextOption } from '../../../shared/types/chat'
 import type { UnifiedSearchResponse, UnifiedSearchResult } from '../../../shared/types/unified-search'
 import type { Note } from '../../../shared/types/note'
@@ -154,6 +156,11 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
   const messages = useMemo(() => storedMessages ?? EMPTY_MESSAGES, [storedMessages])
   const addMessage = useChatStore((s) => s.addMessage)
   const clearConversation = useChatStore((s) => s.clearConversation)
+  const openModalList = useChatStore((s) => s.openModalList)
+
+  // Hydrate the bottom-bar conversation from the persisted active session for
+  // this contextId. Skips search-results context (not persisted in v1).
+  useChatHydrate(contextId === 'search-results' ? '' : contextId)
 
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -553,13 +560,8 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
       }
 
       addMessage(contextId, { role: 'assistant', content: response })
-
-      if (meetingId && activeContext === 'meeting') {
-        const allMessages = useChatStore.getState().conversations[contextId]?.messages
-        if (allMessages) {
-          api.invoke(IPC_CHANNELS.MEETING_SAVE_CHAT, meetingId, allMessages)
-        }
-      }
+      // Persistence now flows through chat_sessions on the main side; no
+      // renderer-side MEETING_SAVE_CHAT invocation needed.
     } catch (err) {
       const errStr = String(err)
       if (errStr.includes('abort') || errStr.includes('Abort')) {
@@ -745,6 +747,35 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
               </div>
               <button
                 className={styles.floatingPanelClose}
+                onClick={() => openModalList()}
+                title="Chat history (⌘H)"
+              >
+                🕒
+              </button>
+              <button
+                className={styles.floatingPanelClose}
+                onClick={async () => {
+                  if (contextId === 'search-results') return
+                  // End the active session and clear the in-memory thread so
+                  // the next message starts fresh.
+                  try {
+                    await api.invoke(IPC_CHANNELS.CHAT_SESSION_END_ACTIVE, contextId)
+                  } catch (err) {
+                    console.warn('[ChatInterface] failed to end active session', err)
+                  }
+                  if (isLoading) {
+                    handleStop()
+                    streamedContentRef.current = ''
+                  }
+                  setStreamedContent('')
+                  clearConversation(contextId)
+                }}
+                title="New chat"
+              >
+                +
+              </button>
+              <button
+                className={styles.floatingPanelClose}
                 onClick={() => setFloatingPanelOpen(false)}
                 title="Minimize"
               >
@@ -755,10 +786,17 @@ export default function ChatInterface({ meetingId, meetingIds, contextOptions, p
                 onClick={() => {
                   if (isLoading) {
                     handleStop()
-                    streamedContentRef.current = '' // prevent partial re-add after abort
+                    streamedContentRef.current = ''
                   }
                   setStreamedContent('')
                   setFloatingPanelOpen(false)
+                  // Mark the active session as inactive so the next user
+                  // message starts a fresh thread (matches mental model: ✕ = end).
+                  if (contextId !== 'search-results') {
+                    api.invoke(IPC_CHANNELS.CHAT_SESSION_END_ACTIVE, contextId).catch((err) => {
+                      console.warn('[ChatInterface] end-active failed', err)
+                    })
+                  }
                   clearConversation(contextId)
                 }}
                 title="Close"

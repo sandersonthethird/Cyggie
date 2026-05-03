@@ -58,6 +58,30 @@
 
 ## P2 — AI Chat
 
+### Surface chats in the search-bar dropdown
+**What:** Extend the compact search-bar dropdown (the quick-nav popover) to optionally include chat results. The full /search page already does (chat-history PR); the dropdown does not.
+**Why:** Quick-nav discovery for power users — type a keyword in the search bar and see relevant past chats inline.
+**Pros:** Symmetric with the /search page; the FTS5 search infrastructure already exists.
+**Cons:** Risks crowding the dropdown; needs UX care for ranking entities vs. chats.
+**Context:** The /search page calls `CHAT_SESSION_SEARCH` in parallel with `UNIFIED_SEARCH_QUERY`. The dropdown caller currently only invokes `UNIFIED_SEARCH_QUERY`. Add an opt-in flag or a parallel call from the dropdown component.
+**Effort:** S
+**Priority:** P2
+**Depends on:** Chat-history feature shipped (✅).
+
+---
+
+### "You also asked about this last week" peek banner
+**What:** Subtle one-line banner above the chat input when the current context has prior recent sessions: "You have 2 prior chats about Acme Corp →" linking to the History modal filtered to that context.
+**Why:** Surfaces history at the moment of intent. Reduces "I asked this before" duplication.
+**Pros:** High-impact UX moment; bridges the chat-history modal with the in-flow chat experience.
+**Cons:** Requires UX care — when to show, dismiss persistence, which sessions count. Risk of becoming annoying.
+**Context:** ChatInterface.tsx renders the bottom-bar input. Add a banner that queries `CHAT_SESSION_LIST_RECENT({contextId, limit:3})` on mount and renders if any non-current sessions exist. Persist dismissals per context in localStorage.
+**Effort:** S–M
+**Priority:** P2
+**Depends on:** Chat-history feature shipped (✅).
+
+---
+
 ### Contextual suggested questions in chat
 **What:** Show 3 contextual AI suggestions when user focuses the chat input (before they type anything).
 **Why:** Lowers friction — users see what they can ask; matches the design mockup.
@@ -71,6 +95,42 @@
 ---
 
 ## P3 — AI Chat
+
+### "Continue this thread" cross-context follow-up
+**What:** Chat panel can ask "across all my Acme chats" via FTS5 retrieval before LLM call. Inject relevant prior turns as context.
+**Why:** Cathedral-grade chat platform. Turns chat history into a knowledge substrate rather than independent threads.
+**Pros:** Compounding value of the chat-history feature; differentiating UX.
+**Cons:** Prompt engineering work to inject prior turns without confusing the model; needs careful token budgeting.
+**Context:** With `chat_session_messages_fts` populated, the retrieval is straightforward — query FTS5 for top-k matches in the same context (or globally), pull message content, prepend to the LLM prompt. Wire into `withChatPersistence` or a new helper.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Chat-history feature shipped (✅).
+
+---
+
+### Chat-as-context for memo / key-takeaways generators
+**What:** Memo and key-takeaways generators can pull relevant chat sessions as context when generating outputs.
+**Why:** Closes the loop — chats become an investment of time that pays off in derived artifacts (memos, takeaways).
+**Pros:** Removes "tell the LLM what we discussed" boilerplate; surfaces nuanced reasoning the user explored in chat.
+**Cons:** Token budget pressure; must rank relevance.
+**Context:** memo-generator.ts and company-key-takeaways.ts both build prompts. Add an optional "include recent chat sessions" pass that queries `chat_session_messages_fts` or `listRecent({contextId})` and prepends.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Chat-history feature shipped (✅).
+
+---
+
+### Project-wide encryption-at-rest for SQLite
+**What:** Adopt SQLCipher (or equivalent) for the project's SQLite database.
+**Why:** Stolen-laptop threat model. Chats, contacts, meetings, notes all contain sensitive deal info today, stored in plaintext SQLite.
+**Pros:** Closes a real-world attack vector.
+**Cons:** Driver footprint change; key-management decision (where does the key live?); migration risk.
+**Context:** Project-wide decision, not chat-specific. Consider one-shot migration that re-creates the DB encrypted, or rely on OS-level disk encryption as the threat model. Currently flagged in chat-history plan as deferred.
+**Effort:** L
+**Priority:** P3
+**Depends on:** None.
+
+---
 
 ### Global chat search observability
 **What:** Log which search strategy (Strategy 0 AND co-person, Strategy 1 FTS, Strategy 2 title, Strategy 3 speaker) surfaced each meeting in `queryGlobal`.

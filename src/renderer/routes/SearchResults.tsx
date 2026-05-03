@@ -2,8 +2,29 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { UnifiedSearchResponse, UnifiedSearchResult } from '../../shared/types/unified-search'
+import { useChatStore } from '../stores/chat.store'
+import type { ChatContextKind } from '../../shared/utils/chat-context'
 import styles from './SearchResults.module.css'
 import { api } from '../api'
+
+interface ChatSearchHit {
+  sessionId: string
+  messageId: string
+  contextId: string
+  contextKind: ChatContextKind
+  contextLabel: string | null
+  title: string | null
+  snippet: string
+  lastMessageAt: string
+}
+
+interface PersistedMessage {
+  id: string
+  sessionId: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  createdAt: string
+}
 
 const ENTITY_LABELS: Record<string, string> = {
   company: 'Companies',
@@ -40,15 +61,18 @@ export default function SearchResults() {
   const query = (searchParams.get('q') || '').trim()
 
   const [results, setResults] = useState<UnifiedSearchResponse>(EMPTY_RESULTS)
+  const [chatHits, setChatHits] = useState<ChatSearchHit[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const loadModalSession = useChatStore((s) => s.loadModalSession)
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
     if (!query) {
       setResults(EMPTY_RESULTS)
+      setChatHits([])
       setLoading(false)
       setError(null)
       return
@@ -60,12 +84,14 @@ export default function SearchResults() {
 
     debounceRef.current = setTimeout(async () => {
       try {
-        const response = await api.invoke<UnifiedSearchResponse>(
-          IPC_CHANNELS.UNIFIED_SEARCH_QUERY,
-          query,
-          60
-        )
-        if (!cancelled) setResults(response)
+        const [response, chats] = await Promise.all([
+          api.invoke<UnifiedSearchResponse>(IPC_CHANNELS.UNIFIED_SEARCH_QUERY, query, 60),
+          api.invoke<ChatSearchHit[]>(IPC_CHANNELS.CHAT_SESSION_SEARCH, query, 30),
+        ])
+        if (!cancelled) {
+          setResults(response)
+          setChatHits(chats)
+        }
       } catch (err) {
         if (!cancelled) setError(String(err))
       } finally {
@@ -78,6 +104,24 @@ export default function SearchResults() {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
   }, [query])
+
+  const openChatHit = async (hit: ChatSearchHit) => {
+    try {
+      const messages = await api.invoke<PersistedMessage[]>(
+        IPC_CHANNELS.CHAT_SESSION_LOAD_MESSAGES,
+        hit.sessionId
+      )
+      loadModalSession(
+        hit.sessionId,
+        hit.contextId,
+        hit.contextKind,
+        hit.contextLabel,
+        messages.map((m) => ({ role: m.role, content: m.content }))
+      )
+    } catch (err) {
+      console.warn('[SearchResults] failed to load chat messages', err)
+    }
+  }
 
   const groups = useMemo(() =>
     GROUP_ORDER
@@ -118,7 +162,7 @@ export default function SearchResults() {
       {loading && <div className={styles.meta}>Searching...</div>}
       {error && <div className={styles.error}>{error}</div>}
 
-      {!loading && !error && groups.length === 0 && (
+      {!loading && !error && groups.length === 0 && chatHits.length === 0 && (
         <div className={styles.empty}>No results found for &ldquo;{query}&rdquo;</div>
       )}
 
@@ -151,6 +195,36 @@ export default function SearchResults() {
             ))}
           </section>
         ))}
+        {chatHits.length > 0 && (
+          <section className={styles.group}>
+            <h3 className={styles.groupTitle}>Chats</h3>
+            {chatHits.map((hit) => (
+              <button
+                key={`${hit.sessionId}-${hit.messageId}`}
+                className={styles.resultRow}
+                onClick={() => void openChatHit(hit)}
+              >
+                <div className={styles.resultHeader}>
+                  <span className={styles.resultTitle}>
+                    {hit.title ?? '(Untitled chat)'}
+                  </span>
+                  {hit.lastMessageAt && (
+                    <span className={styles.resultDate}>{formatDate(hit.lastMessageAt)}</span>
+                  )}
+                </div>
+                {hit.contextLabel && (
+                  <span className={styles.resultCompany}>{hit.contextLabel}</span>
+                )}
+                {hit.snippet && (
+                  <span
+                    className={styles.resultSnippet}
+                    dangerouslySetInnerHTML={{ __html: sanitizeSnippet(hit.snippet) }}
+                  />
+                )}
+              </button>
+            ))}
+          </section>
+        )}
       </div>
     </div>
   )

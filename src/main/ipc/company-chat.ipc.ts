@@ -1,67 +1,22 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as companyChatRepo from '../database/repositories/company-chat.repo'
 import { getFlaggedFileIds, toggleFileFlag } from '../database/repositories/company-file-flags.repo'
 import { queryCompany, abortCompanyChat } from '../llm/company-chat'
 import { getCurrentUserId } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
+import { withChatPersistence } from '../llm/chat-persistence'
+import { deriveChatContext } from '../../shared/utils/chat-context'
+import { getDatabase } from '../database/connection'
+import type { ChatAttachment } from '../../shared/types/chat'
+
+function getCompanyName(companyId: string): string | null {
+  const db = getDatabase()
+  const row = db.prepare(`SELECT canonical_name FROM org_companies WHERE id = ?`).get(companyId) as
+    | { canonical_name: string }
+    | undefined
+  return row?.canonical_name ?? null
+}
 
 export function registerCompanyChatHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.COMPANY_CHAT_LIST, (_event, companyId: string) => {
-    if (!companyId) throw new Error('companyId is required')
-    return companyChatRepo.listConversations(companyId)
-  })
-
-  ipcMain.handle(
-    IPC_CHANNELS.COMPANY_CHAT_CREATE,
-    (
-      _event,
-      data: {
-        companyId: string
-        title: string
-        themeId?: string | null
-        modelProvider?: string | null
-        modelName?: string | null
-      }
-    ) => {
-      if (!data?.companyId) throw new Error('companyId is required')
-      if (!data?.title?.trim()) throw new Error('title is required')
-      const userId = getCurrentUserId()
-      const conversation = companyChatRepo.createConversation(data, userId)
-      logAudit(userId, 'company_conversation', conversation.id, 'create', data)
-      return conversation
-    }
-  )
-
-  ipcMain.handle(IPC_CHANNELS.COMPANY_CHAT_MESSAGES, (_event, conversationId: string) => {
-    if (!conversationId) throw new Error('conversationId is required')
-    return companyChatRepo.listMessages(conversationId)
-  })
-
-  ipcMain.handle(
-    IPC_CHANNELS.COMPANY_CHAT_APPEND,
-    (
-      _event,
-      data: {
-        conversationId: string
-        role: 'user' | 'assistant' | 'system'
-        content: string
-        citationsJson?: string | null
-        tokenCount?: number | null
-      }
-    ) => {
-      if (!data?.conversationId) throw new Error('conversationId is required')
-      if (!data?.content?.trim()) throw new Error('content is required')
-      const userId = getCurrentUserId()
-      const message = companyChatRepo.appendMessage(data, userId)
-      logAudit(userId, 'company_conversation_message', message.id, 'create', {
-        conversationId: data.conversationId,
-        role: data.role
-      })
-      return message
-    }
-  )
-
   ipcMain.handle(IPC_CHANNELS.COMPANY_FILE_FLAG_GET, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
     return getFlaggedFileIds(companyId)
@@ -77,9 +32,25 @@ export function registerCompanyChatHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_CHAT_QUERY,
-    async (_event, data: { companyId: string; question: string; attachments?: import('../../shared/types/chat').ChatAttachment[] }) => {
-      if (!data?.companyId || !data?.question?.trim()) throw new Error('companyId and question are required')
-      return queryCompany(data.companyId, data.question.trim(), data.attachments)
+    async (
+      _event,
+      data: { companyId: string; question: string; attachments?: ChatAttachment[] }
+    ) => {
+      if (!data?.companyId || !data?.question?.trim()) {
+        throw new Error('companyId and question are required')
+      }
+      const ctx = deriveChatContext({ companyId: data.companyId })
+      if (!ctx) throw new Error('Failed to derive chat context')
+
+      return withChatPersistence({
+        contextId: ctx.contextId,
+        contextKind: ctx.kind,
+        contextLabel: getCompanyName(data.companyId),
+        userMessage: { content: data.question.trim(), attachments: data.attachments },
+        userId: getCurrentUserId(),
+        runLLM: () => queryCompany(data.companyId, data.question.trim(), data.attachments),
+        extractText: (response: string) => response,
+      })
     }
   )
 

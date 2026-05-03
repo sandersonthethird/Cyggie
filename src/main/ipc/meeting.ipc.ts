@@ -15,7 +15,7 @@ import { syncContactsFromAttendees } from '../database/repositories/contact.repo
 import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName, listMeetingCompanies } from '../database/repositories/org-company.repo'
 import { upsert as upsertCompanyCache, getByDomain as getCompanyCacheByDomain } from '../database/repositories/company.repo'
 import { getDatabase } from '../database/connection'
-import type { ChatMessage, MeetingListFilter } from '../../shared/types/meeting'
+import type { MeetingListFilter } from '../../shared/types/meeting'
 import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
 
@@ -266,14 +266,11 @@ export function registerMeetingHandlers(): void {
     }
   )
 
-  ipcMain.handle(
-    IPC_CHANNELS.MEETING_SAVE_CHAT,
-    (_event, id: string, messages: ChatMessage[]) => {
-      const userId = getCurrentUserId()
-      meetingRepo.updateMeeting(id, { chatMessages: messages }, userId)
-      logAudit(userId, 'meeting', id, 'update', { chatMessageCount: messages.length })
-    }
-  )
+  // MEETING_SAVE_CHAT is a no-op: chat persistence now flows through the
+  // chat_sessions infrastructure (see withChatPersistence in chat.ipc.ts).
+  // The legacy meetings.chat_messages column is read-only; backfilled into
+  // chat_sessions by migration 080.
+  ipcMain.handle(IPC_CHANNELS.MEETING_SAVE_CHAT, () => {})
 
   ipcMain.handle(IPC_CHANNELS.MEETING_CREATE, () => {
     const userId = getCurrentUserId()

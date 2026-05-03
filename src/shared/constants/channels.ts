@@ -177,12 +177,22 @@ export const IPC_CHANNELS = {
   EMAIL_GET: 'email:get',
 
   // Company chat
-  COMPANY_CHAT_LIST: 'company-chat:list',
-  COMPANY_CHAT_CREATE: 'company-chat:create',
-  COMPANY_CHAT_MESSAGES: 'company-chat:messages',
-  COMPANY_CHAT_APPEND: 'company-chat:append',
   COMPANY_CHAT_QUERY: 'company:chat-query',
   COMPANY_CHAT_ABORT: 'company-chat:abort',
+
+  // Chat session history (persistent chats with FTS5 search)
+  CHAT_SESSION_LIST_RECENT: 'chat-session:list-recent',
+  CHAT_SESSION_GET_FOR_CONTEXT: 'chat-session:get-for-context',
+  CHAT_SESSION_LOAD_MESSAGES: 'chat-session:load-messages',
+  CHAT_SESSION_SEARCH: 'chat-session:search',
+  CHAT_SESSION_END_ACTIVE: 'chat-session:end-active',
+  CHAT_SESSION_CREATE_NEW: 'chat-session:create-new',
+  CHAT_SESSION_RENAME: 'chat-session:rename',
+  CHAT_SESSION_PIN: 'chat-session:pin',
+  CHAT_SESSION_UNPIN: 'chat-session:unpin',
+  CHAT_SESSION_ARCHIVE: 'chat-session:archive',
+  CHAT_SESSION_DELETE: 'chat-session:delete',
+  CHAT_SESSION_APPEND_MODAL_TURN: 'chat-session:append-modal-turn',
 
   // Contact chat
   CONTACT_CHAT_QUERY: 'contact-chat:query',

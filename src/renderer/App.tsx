@@ -17,6 +17,7 @@ import LiveRecording from './routes/LiveRecording'
 import SearchResults from './routes/SearchResults'
 import Settings from './routes/Settings'
 import PartnerMeeting from './routes/PartnerMeeting'
+import AIChats from './routes/AIChats'
 import { useCalendar } from './hooks/useCalendar'
 import { useRecordingStore } from './stores/recording.store'
 import { usePreferencesStore } from './stores/preferences.store'
@@ -124,6 +125,7 @@ export default function App() {
               <Route path="/contact/:contactId" element={<ContactDetail />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/partner-meeting" element={<PartnerMeeting />} />
+              <Route path="/ai-chats" element={<AIChats />} />
             </Route>
           )}
         </Routes>

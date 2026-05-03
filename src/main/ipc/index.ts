@@ -31,6 +31,7 @@ import { registerPartnerMeetingIpc } from './partner-meeting.ipc'
 import { registerWindowHandlers } from './window.ipc'
 import { registerCrmChatHandlers } from './crm-chat.ipc'
 import { registerFileHandlers } from './file.ipc'
+import { registerChatSessionHandlers } from './chat-session.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -66,4 +67,5 @@ export function registerAllHandlers(): void {
   registerWindowHandlers()
   registerCrmChatHandlers()
   registerFileHandlers()
+  registerChatSessionHandlers()
 }

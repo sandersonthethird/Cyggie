@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useMatch, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import ChatInterface from '../chat/ChatInterface'
+import ChatHistoryModal from '../chat/ChatHistoryModal'
 import { useAppStore } from '../../stores/app.store'
 import { useRecordingStore } from '../../stores/recording.store'
 import { useChatStore } from '../../stores/chat.store'
@@ -99,6 +100,15 @@ export default function Layout() {
         if (focusChatInput()) {
           event.preventDefault()
         }
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'h') {
+        // ⌘H toggles the chat history modal.
+        const state = useChatStore.getState()
+        if (state.modalOpen) {
+          state.closeModal()
+        } else {
+          state.openModalList()
+        }
+        event.preventDefault()
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -196,6 +206,7 @@ export default function Layout() {
           />
         </div>
       </div>
+      <ChatHistoryModal />
       {bannerEvent && (
         <div className={styles.meetingBanner}>
           <div className={styles.bannerInfo}>
