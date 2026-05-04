@@ -1,7 +1,8 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { getFlaggedFileIds, toggleFileFlag } from '../database/repositories/company-file-flags.repo'
-import { queryCompany, abortCompanyChat } from '../llm/company-chat'
+import { abortCompanyChat } from '../llm/company-chat'
+import { chatDispatch } from '../llm/chat-dispatch'
 import { getCurrentUserId } from '../security/current-user'
 import { withChatPersistence } from '../llm/chat-persistence'
 import { deriveChatContext } from '../../shared/utils/chat-context'
@@ -48,7 +49,11 @@ export function registerCompanyChatHandlers(): void {
         contextLabel: getCompanyName(data.companyId),
         userMessage: { content: data.question.trim(), attachments: data.attachments },
         userId: getCurrentUserId(),
-        runLLM: () => queryCompany(data.companyId, data.question.trim(), data.attachments),
+        runLLM: () => chatDispatch({
+          kind: { kind: 'company', companyId: data.companyId },
+          question: data.question.trim(),
+          attachments: data.attachments,
+        }),
         extractText: (response: string) => response,
       })
     }

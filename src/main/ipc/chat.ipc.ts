@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { queryMeeting, querySearchResults, abortChat } from '../llm/chat'
+import { abortChat } from '../llm/chat'
+import { chatDispatch } from '../llm/chat-dispatch'
 import { generateChatTitle } from '../llm/chat-title'
 import { withChatPersistence } from '../llm/chat-persistence'
 import { deriveChatContext } from '../../shared/utils/chat-context'
@@ -37,7 +38,11 @@ export function registerChatHandlers(): void {
         contextLabel: getMeetingTitle(meetingId),
         userMessage: { content: question.trim(), attachments },
         userId: getCurrentUserId(),
-        runLLM: () => queryMeeting(meetingId, question.trim(), attachments),
+        runLLM: () => chatDispatch({
+          kind: { kind: 'meeting', meetingId },
+          question: question.trim(),
+          attachments,
+        }),
         extractText: (response: string) => response,
       })
     }
@@ -50,7 +55,11 @@ export function registerChatHandlers(): void {
         throw new Error('Meeting IDs and question are required')
       }
       // search-results chats are intentionally NOT persisted (out of scope v1)
-      return querySearchResults(meetingIds, question.trim(), attachments)
+      return chatDispatch({
+        kind: { kind: 'meetings', meetingIds },
+        question: question.trim(),
+        attachments,
+      })
     }
   )
 

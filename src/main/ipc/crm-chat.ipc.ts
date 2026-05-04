@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { queryAll, abortAllChat } from '../llm/crm-chat'
+import { abortAllChat } from '../llm/crm-chat'
+import { chatDispatch } from '../llm/chat-dispatch'
 import { withChatPersistence } from '../llm/chat-persistence'
 import { deriveChatContext } from '../../shared/utils/chat-context'
 import { getCurrentUserId } from '../security/current-user'
@@ -19,7 +20,11 @@ export function registerCrmChatHandlers(): void {
         contextLabel: 'Global',
         userMessage: { content: data.question.trim(), attachments: data.attachments },
         userId: getCurrentUserId(),
-        runLLM: () => queryAll(data.question.trim(), data.attachments ?? []),
+        runLLM: () => chatDispatch({
+          kind: { kind: 'global' },
+          question: data.question.trim(),
+          attachments: data.attachments ?? [],
+        }),
         extractText: (response: string) => response,
       })
     }
