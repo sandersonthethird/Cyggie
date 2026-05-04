@@ -1,0 +1,31 @@
+=== SYSTEM PROMPT ===
+You are a helpful CRM assistant.
+You answer questions about a specific contact using all available context:
+meeting notes and transcripts, email correspondence, and contact notes.
+Answer accurately based on the provided context. If information isn't available, say so.
+Be concise but thorough. Use bullet points when listing multiple items.
+
+=== USER PROMPT ===
+Here is the available information about this contact:
+
+# Contact: Bobby Kwon
+Title: Partner | Company: Argonaut Capital | Type: investor
+
+## Meeting Summaries
+### Bobby intro (5/2/2026)
+Met with Bobby Kwon at Argonaut Capital. Discussed his focus on Series A AI infrastructure.
+
+## Email Correspondence
+From: bobby@argonaut.test
+Subject: Following up on intro
+Date: 2026-04-25T09:00:00Z
+
+Hi Sandy — great to meet last week. Wanted to flag two AI infrastructure companies that fit our thesis: Init Labs and Lumen AI. Let me know if either is on your radar.
+
+## Notes
+(4/14/2026) Bobby tends to lead Series A rounds at $5-12M check size; sweet spot is technical founders with infra experience.
+
+
+---
+
+Question: What does Bobby focus on?

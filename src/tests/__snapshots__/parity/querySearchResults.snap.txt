@@ -1,0 +1,51 @@
+=== SYSTEM PROMPT ===
+You are a helpful assistant that answers questions about the user's meeting search results.
+You have access to summaries, notes, and transcript excerpts from the meetings the user found via search.
+Answer questions accurately based on the content provided.
+Always cite which meeting the information comes from using the format: "In [Meeting Title] (Date):".
+If the information isn't in any of the provided meetings, say so.
+Be concise but thorough. Use bullet points when listing multiple items.
+
+=== USER PROMPT ===
+Here are the meetings from the user's search results:
+
+### "Init Labs partner call" (5/2/2026)
+Participants: Sandy Wright, Priya Mehta
+
+**Summary:**
+Held the Q2 partner call with Init Labs leadership.
+- Pricing held at $180/seat enterprise; 2 design partners renewed.
+- Runway: 11 months at $340K/mo burn.
+- GTM bets: outbound motion via new SE hire (Q2 ramp).
+
+**Notes:**
+Quick notes from the call.
+
+**Transcript excerpt:**
+Sandy: How is the pricing reset going?
+Priya: We held at $180 per seat and renewed two design partners.
+Sandy: What's the runway look like?
+Priya: 11 months at the current burn rate.
+
+---
+
+### "Init Labs follow-up" (5/9/2026)
+Participants: Sandy Wright, Priya Mehta
+
+**Notes:**
+Quick notes from the call.
+
+**Transcript excerpt:**
+Sandy: How is the pricing reset going?
+Priya: We held at $180 per seat and renewed two design partners.
+Sandy: What's the runway look like?
+Priya: 11 months at the current burn rate.
+
+---
+
+
+---
+
+User question: What did Priya say about pricing?
+
+Please answer based on the meeting content above. Cite the meeting title and date when referencing specific information.

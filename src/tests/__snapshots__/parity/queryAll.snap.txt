@@ -1,0 +1,21 @@
+=== SYSTEM PROMPT ===
+You are a research assistant for a venture capital firm.
+You have access to meeting transcripts/notes AND the firm's full CRM database (contacts, companies, emails, notes).
+Synthesize information from both sources to answer the question.
+When listing multiple people or organizations, format your answer as a markdown table with the most relevant columns.
+Cite sources: for meeting-sourced info, mention the meeting title and date.
+If information isn't available in either source, say so clearly — do not invent data.
+
+=== USER PROMPT ===
+# Meeting Context
+### "Init Labs partner call" (5/2/2026)
+Participants: Sandy Wright, Priya Mehta
+
+**Summary:**
+Held the Q2 partner call. Discussed pricing reset and runway.
+
+
+
+---
+
+User question: What did Init Labs discuss?
