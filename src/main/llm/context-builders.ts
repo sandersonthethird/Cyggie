@@ -422,3 +422,27 @@ Be concise but thorough. Use bullet points when listing multiple items.`
  *  the legacy template's citation reminder. */
 export const SEARCH_RESULTS_QUESTION_FOOTER =
   'Please answer based on the meeting content above. Cite the meeting title and date when referencing specific information.'
+
+// ── Global (cross-CRM + meetings) ────────────────────────────────────────
+//
+// The global path's assembly logic stays in crm-chat.ts (where it composes
+// buildMeetingContext from chat.ts + buildCrmContext from crm-chat.ts).
+// Keeping it there avoids a context-builders.ts ↔ chat.ts ↔ crm-chat.ts
+// import cycle that breaks vi.mock interception in the parity test.
+// context-builders.ts only owns the system prompts for global / CRM-only.
+// Step 9's full collapse can revisit the cycle question with cleaner test
+// scaffolding.
+
+/** System prompts — verbatim from legacy crm-chat.ts:47-58. */
+export const QUERY_ALL_SYSTEM_PROMPT = `You are a research assistant for a venture capital firm.
+You have access to meeting transcripts/notes AND the firm's full CRM database (contacts, companies, emails, notes).
+Synthesize information from both sources to answer the question.
+When listing multiple people or organizations, format your answer as a markdown table with the most relevant columns.
+Cite sources: for meeting-sourced info, mention the meeting title and date.
+If information isn't available in either source, say so clearly — do not invent data.`
+
+export const CRM_SYSTEM_PROMPT = `You are a research assistant for a venture capital firm.
+You have access to the firm's CRM: contacts, companies/funds, emails, and notes.
+Answer questions accurately based only on the provided data.
+When listing multiple people or organizations, format your answer as a markdown table with the most relevant columns.
+If nothing in the database matches the query, say so clearly — do not invent data.`

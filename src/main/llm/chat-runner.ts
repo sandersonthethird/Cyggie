@@ -129,8 +129,11 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<string> {
     : args.question
   const imageAtts = args.attachments?.filter((a) => a.type === 'image')
 
+  // Empty prefix → no leading "prefix\n\n". The legacy queryAll path stitches
+  // `${combined}\n\n---\n\nUser question: ...` with NO leading copy; preserve.
+  const prefixBlock = args.userPromptPrefix ? `${args.userPromptPrefix}\n\n` : ''
   const userPrompt =
-    `${args.userPromptPrefix}\n\n${args.context}\n\n---\n\n${args.questionLabel}: ${enhancedQuestion}` +
+    `${prefixBlock}${args.context}\n\n---\n\n${args.questionLabel}: ${enhancedQuestion}` +
     (args.questionFooter ? `\n\n${args.questionFooter}` : '')
 
   const startedAt = Date.now()

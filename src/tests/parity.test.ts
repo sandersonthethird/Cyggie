@@ -125,11 +125,11 @@ vi.mock('../main/database/connection', () => ({
 
 // ── buildMeetingContext stub for queryAll path ──────────────────────────
 //
-// queryAll calls buildMeetingContext from chat.ts. We stub it to a fixed
-// markdown string so the queryAll snapshot focuses on the OUTER composition
-// (how meeting + CRM contexts are joined under QUERY_ALL_SYSTEM_PROMPT).
-// queryMeeting / querySearchResults are tested separately and run the real
-// implementation.
+// queryAll → buildGlobalContext (in context-builders.ts) → buildMeetingContext
+// (still in chat.ts) cross-module, so vi.mock can intercept. Stubbed to a
+// fixed markdown so the queryAll snapshot focuses on the OUTER composition
+// under QUERY_ALL_SYSTEM_PROMPT. queryMeeting / querySearchResults run the
+// real implementation.
 const FIXTURE_MEETING_CONTEXT = `### "Init Labs partner call" (5/2/2026)
 Participants: Sandy Wright, Priya Mehta
 

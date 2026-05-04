@@ -87,21 +87,39 @@ export async function queryMeeting(meetingId: string, question: string, attachme
   })
 }
 
-// buildMeetingContext runs the 4-strategy meeting search and assembles a markdown context
-// string for use in queryAll(). Returns '' if no meetings match — callers should proceed
-// with other context sources rather than treating this as an error.
+export async function querySearchResults(meetingIds: string[], question: string, attachments: ChatAttachment[] = []): Promise<string> {
+  const result = buildSearchResultsContext({ meetingIds })
+
+  if (result.kind === 'response') return result.text
+  if (result.kind === 'error') throw new Error(result.message)
+
+  return runChatTurn({
+    systemPrompt: SEARCH_RESULTS_SYSTEM_PROMPT,
+    context: result.markdown,
+    question,
+    attachments,
+    userPromptPrefix: "Here are the meetings from the user's search results:",
+    questionLabel: 'User question',
+    questionFooter: SEARCH_RESULTS_QUESTION_FOOTER,
+  })
+}
+
+// buildMeetingContext: 4-strategy meeting search assembling a markdown
+// context string for queryAll(). Imported by context-builders.ts/
+// assembleGlobalContext (cross-module so vi.mock can intercept it for the
+// parity baseline test). Step 9 collapses this into context-builders.ts.
 export function buildMeetingContext(question: string): string {
   const keywords = extractKeywords(question)
   const seenIds = new Set<string>()
   const searchResults: { meetingId: string; title: string; date: string; snippet: string; rank: number }[] = []
 
-  // Extract capitalized words that survived stop-word filtering — likely person names
+  // Capitalized words that survived stop-word filtering — likely person names
   const keywordSet = new Set(keywords)
   const potentialNames = (question.match(/\b[A-Z][a-z]{1,}\b/g) ?? [])
-    .filter(n => keywordSet.has(n.toLowerCase()))
-    .map(n => n.toLowerCase())
+    .filter((n) => keywordSet.has(n.toLowerCase()))
+    .map((n) => n.toLowerCase())
 
-  // Strategy 0: AND-based attendee co-occurrence — prioritize meetings where ALL named people appear
+  // Strategy 0: AND-based attendee co-occurrence
   if (potentialNames.length >= 2) {
     const coAttendeeMatches = searchByAllSpeakers(potentialNames, 20)
     for (const m of coAttendeeMatches) {
@@ -112,7 +130,7 @@ export function buildMeetingContext(question: string): string {
     }
   }
 
-  // Strategy 1: OR-based FTS search — find meetings containing ANY keyword
+  // Strategy 1: OR-based FTS keyword search
   if (keywords.length > 0) {
     try {
       const orQuery = buildOrQuery(keywords)
@@ -124,11 +142,11 @@ export function buildMeetingContext(question: string): string {
         }
       }
     } catch {
-      // FTS query error — continue to other strategies
+      /* FTS query error — continue */
     }
   }
 
-  // Strategy 2: Title search — catches meetings whose title matches but may not be FTS-indexed
+  // Strategy 2: Title LIKE search
   if (keywords.length > 0) {
     const titleMatches = searchByTitle(keywords, 20)
     for (const m of titleMatches) {
@@ -152,7 +170,6 @@ export function buildMeetingContext(question: string): string {
 
   if (searchResults.length === 0) return ''
 
-  // Build context from relevant meetings
   const contextParts: string[] = []
 
   for (const result of searchResults.slice(0, 15)) {
@@ -189,7 +206,6 @@ export function buildMeetingContext(question: string): string {
       if (transcript) {
         const excerptLength = meeting.summaryPath ? 1500 : 3000
         let excerpt = transcript
-
         if (transcript.length > excerptLength) {
           if (result.snippet) {
             const snippetText = result.snippet.replace(/<mark>|<\/mark>/g, '').replace(/\.\.\./g, '')
@@ -207,7 +223,6 @@ export function buildMeetingContext(question: string): string {
             excerpt = transcript.substring(0, excerptLength) + '...'
           }
         }
-
         parts.push('**Transcript excerpt:**')
         parts.push(excerpt)
         parts.push('')
@@ -222,21 +237,4 @@ export function buildMeetingContext(question: string): string {
   }
 
   return contextParts.join('\n')
-}
-
-export async function querySearchResults(meetingIds: string[], question: string, attachments: ChatAttachment[] = []): Promise<string> {
-  const result = buildSearchResultsContext({ meetingIds })
-
-  if (result.kind === 'response') return result.text
-  if (result.kind === 'error') throw new Error(result.message)
-
-  return runChatTurn({
-    systemPrompt: SEARCH_RESULTS_SYSTEM_PROMPT,
-    context: result.markdown,
-    question,
-    attachments,
-    userPromptPrefix: "Here are the meetings from the user's search results:",
-    questionLabel: 'User question',
-    questionFooter: SEARCH_RESULTS_QUESTION_FOOTER,
-  })
 }
