@@ -23,6 +23,7 @@ import type { Meeting } from '../../shared/types/meeting'
 import type { TaskListItem } from '../../shared/types/task'
 import styles from './Dashboard.module.css'
 import { api } from '../api'
+import quotes from '../data/quotes.json'
 
 // ─── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -367,6 +368,10 @@ export default function Dashboard() {
     navigate('/companies')
   }, [navigate])
 
+  const today = new Date()
+  const dayKey = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate()
+  const todayQuote = quotes.length > 0 ? quotes[dayKey % quotes.length] : null
+
   return (
     <div className={styles.page}>
 
@@ -374,10 +379,19 @@ export default function Dashboard() {
       <header className={styles.header}>
         <div>
           <h1 className={styles.pageTitle}>Dashboard</h1>
-          <p className={styles.pageSubtitle}>
-            Focus on what matters.
-            {todayCount > 0 && ` You have ${todayCount} meeting${todayCount > 1 ? 's' : ''} today.`}
-          </p>
+          {todayQuote ? (
+            <p className={`${styles.pageSubtitle} ${styles.quoteItalic}`}>
+              {todayQuote.text}{' '}
+              <span className={styles.quoteSource}>— {todayQuote.source}</span>
+            </p>
+          ) : (
+            <p className={styles.pageSubtitle}>Focus on what matters.</p>
+          )}
+          {todayCount > 0 && (
+            <p className={styles.pageSubtitle}>
+              You have {todayCount} meeting{todayCount > 1 ? 's' : ''} today.
+            </p>
+          )}
         </div>
       </header>
 

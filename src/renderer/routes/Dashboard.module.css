@@ -31,6 +31,15 @@
   margin: 4px 0 0;
 }
 
+.quoteItalic {
+  font-style: italic;
+}
+
+.quoteSource {
+  font-style: normal;
+  opacity: 0.75;
+}
+
 /* ── New Record button + dropdown ─────────────────────────────────────────── */
 
 .newMenuContainer {
