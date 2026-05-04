@@ -152,6 +152,7 @@ const { queryMeeting, querySearchResults } = await import('../main/llm/chat')
 const { queryCompany } = await import('../main/llm/company-chat')
 const { queryContact } = await import('../main/llm/contact-chat')
 const { queryAll } = await import('../main/llm/crm-chat')
+const { chatDispatch } = await import('../main/llm/chat-dispatch')
 
 // ── Fixture data ────────────────────────────────────────────────────────
 
@@ -308,6 +309,133 @@ describe('parity baseline — pre-refactor wire format per kind', () => {
     // buildCrmContext sees the empty stub DB → returns '' → only the meeting
     // section appears in the assembled context.
     await queryAll('What did Init Labs discuss?', [])
+
+    await snapshotPrompts('queryAll')
+  })
+})
+
+// ── Post-refactor: same fixtures via chatDispatch ──────────────────────────
+//
+// Re-runs the same 5 fixtures through chatDispatch and asserts byte-identical
+// match against the snapshots locked in commit #1. Any divergence here means
+// a wire-format regression introduced by the unify-chat-paths refactor.
+
+describe('parity verify — same fixtures via chatDispatch produce identical snapshots', () => {
+  it('chatDispatch kind=meeting matches queryMeeting snapshot', async () => {
+    mockGetMeeting.mockReturnValue(meetingFixture())
+    mockReadSummary.mockReturnValue(FIXTURE_SUMMARY)
+    mockReadTranscript.mockReturnValue(FIXTURE_TRANSCRIPT)
+
+    await chatDispatch({
+      kind: { kind: 'meeting', meetingId: 'm1' },
+      question: 'What was the runway discussion?',
+      attachments: [],
+    })
+
+    await snapshotPrompts('queryMeeting')
+  })
+
+  it('chatDispatch kind=meetings matches querySearchResults snapshot', async () => {
+    const m1 = meetingFixture({ id: 'm1', title: 'Init Labs partner call' })
+    const m2 = meetingFixture({
+      id: 'm2',
+      title: 'Init Labs follow-up',
+      date: '2026-05-09T15:00:00Z',
+      transcriptPath: '/fake/transcript-2.txt',
+      summaryPath: null,
+    })
+    mockGetMeeting.mockImplementation((id) => (id === 'm1' ? m1 : id === 'm2' ? m2 : null))
+    mockReadSummary.mockReturnValue(FIXTURE_SUMMARY)
+    mockReadTranscript.mockReturnValue(FIXTURE_TRANSCRIPT)
+
+    await chatDispatch({
+      kind: { kind: 'meetings', meetingIds: ['m1', 'm2'] },
+      question: 'What did Priya say about pricing?',
+      attachments: [],
+    })
+
+    await snapshotPrompts('querySearchResults')
+  })
+
+  it('chatDispatch kind=company matches queryCompany snapshot', async () => {
+    mockGetCompany.mockReturnValue({
+      id: 'co1',
+      canonicalName: 'Init Labs',
+      description: 'AI infrastructure for VC firms',
+      stage: 'Seed',
+      round: '$8M Seed',
+      industry: 'AI infrastructure',
+    })
+    mockListCompanyMeetingSummaryPaths.mockReturnValue([
+      { meetingId: 'm1', title: 'Init Labs partner call', date: FIXTURE_DATE, summaryPath: '/fake/summary.txt' },
+    ])
+    mockListCompanyMeetings.mockReturnValue([
+      { id: 'm1', title: 'Init Labs partner call', date: FIXTURE_DATE },
+    ])
+    mockGetMeeting.mockReturnValue(meetingFixture())
+    mockReadSummary.mockReturnValue(FIXTURE_SUMMARY)
+    mockListCompanyEmails.mockReturnValue([
+      {
+        fromEmail: 'priya@initlabs.test',
+        subject: 'Q2 update + pricing',
+        receivedAt: '2026-05-01T10:00:00Z',
+        sentAt: null,
+        bodyText: 'Hi Sandy, sharing the Q2 update on Init Labs. We held pricing at $180/seat for the enterprise tier; both design partners renewed. Runway sits at 11 months and we expect to push to a Series A in Q3.',
+      },
+    ])
+    mockGetFlaggedFileIds.mockReturnValue(['/fake/init-labs-memo.pdf'])
+    mockReadLocalFile.mockResolvedValue('Init Labs Memo: Investment Thesis\n\nAI infrastructure that abstracts cloud cost optimization. Pricing $180/seat enterprise. Two design partners renewed. Runway 11 months. Q3 Series A target.')
+
+    await chatDispatch({
+      kind: { kind: 'company', companyId: 'co1' },
+      question: 'How is pricing trending?',
+    })
+
+    await snapshotPrompts('queryCompany')
+  })
+
+  it('chatDispatch kind=contact matches queryContact snapshot', async () => {
+    mockGetContact.mockReturnValue({
+      id: 'ct1',
+      fullName: 'Bobby Kwon',
+      title: 'Partner',
+      contactType: 'investor',
+      primaryCompany: { canonicalName: 'Argonaut Capital' },
+      meetings: [{ id: 'm1', title: 'Bobby intro', date: FIXTURE_DATE }],
+    })
+    mockGetMeeting.mockReturnValue(meetingFixture({ id: 'm1', title: 'Bobby intro' }))
+    mockReadSummary.mockReturnValue('Met with Bobby Kwon at Argonaut Capital. Discussed his focus on Series A AI infrastructure.')
+    mockListContactEmails.mockReturnValue([
+      {
+        fromEmail: 'bobby@argonaut.test',
+        subject: 'Following up on intro',
+        receivedAt: '2026-04-25T09:00:00Z',
+        sentAt: null,
+        bodyText: 'Hi Sandy — great to meet last week. Wanted to flag two AI infrastructure companies that fit our thesis: Init Labs and Lumen AI. Let me know if either is on your radar.',
+      },
+    ])
+    mockNotesList.mockReturnValue([
+      {
+        id: 'n1',
+        content: 'Bobby tends to lead Series A rounds at $5-12M check size; sweet spot is technical founders with infra experience.',
+        createdAt: '2026-04-15T00:00:00Z',
+      },
+    ])
+
+    await chatDispatch({
+      kind: { kind: 'contact', contactId: 'ct1' },
+      question: 'What does Bobby focus on?',
+    })
+
+    await snapshotPrompts('queryContact')
+  })
+
+  it('chatDispatch kind=global matches queryAll snapshot', async () => {
+    await chatDispatch({
+      kind: { kind: 'global' },
+      question: 'What did Init Labs discuss?',
+      attachments: [],
+    })
 
     await snapshotPrompts('queryAll')
   })
