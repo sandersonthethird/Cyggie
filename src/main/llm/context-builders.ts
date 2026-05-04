@@ -29,6 +29,7 @@ import { makeEntityNotesRepo } from '../database/repositories/notes-base'
 import { getFlaggedFileIds } from '../database/repositories/company-file-flags.repo'
 
 const _contactNotesRepo = makeEntityNotesRepo('contact_id')
+const _companyNotesRepo = makeEntityNotesRepo('company_id')
 
 // ── BuilderResult — the chatDispatch contract ─────────────────────────
 
@@ -52,6 +53,7 @@ export interface CompanyContextSignals {
   markdown: string
   hasMeetings: boolean
   hasEmails: boolean
+  hasNotes: boolean
   hasFlaggedFiles: boolean
 }
 
@@ -61,6 +63,7 @@ export interface CompanyContextSignals {
 const COMPANY_SUMMARY_CAPS: SectionCaps = { perItem: 8_000, total: 30_000 }
 const COMPANY_TRANSCRIPT_CAPS: SectionCaps = { perItem: 3_000, total: Number.MAX_SAFE_INTEGER }
 const COMPANY_EMAIL_CAPS: SectionCaps = { perItem: 2_000, total: 15_000, maxItems: 20 }
+const COMPANY_NOTE_CAPS: SectionCaps = { perItem: 2_000, total: 8_000 }
 const COMPANY_FILE_CAPS: SectionCaps = { perItem: 6_000, total: 30_000 }
 
 /**
@@ -138,6 +141,17 @@ export async function assembleCompanyContext(companyId: string): Promise<Company
     parts.push('')
   }
 
+  // Notes (added in Step 10 — bonus gap from the original /plan-eng-review).
+  // Contact chat already pulls notes via assembleContactContext; companies
+  // were previously omitted. Same formatNotesSection helper.
+  const notes = _companyNotesRepo.list(companyId)
+  const notesMd = formatNotesSection(notes, COMPANY_NOTE_CAPS)
+  const hasNotes = notesMd.length > 0
+  if (hasNotes) {
+    parts.push(notesMd)
+    parts.push('')
+  }
+
   // Flagged files
   const flaggedIds = getFlaggedFileIds(companyId)
   const filesMd = await formatFlaggedFilesSection(flaggedIds, COMPANY_FILE_CAPS)
@@ -151,6 +165,7 @@ export async function assembleCompanyContext(companyId: string): Promise<Company
     markdown: parts.join('\n'),
     hasMeetings,
     hasEmails,
+    hasNotes,
     hasFlaggedFiles,
   }
 }
@@ -169,7 +184,7 @@ export async function buildCompanyContext(opts: { companyId: string }): Promise<
     throw err
   }
 
-  if (!signals.hasMeetings && !signals.hasEmails && !signals.hasFlaggedFiles) {
+  if (!signals.hasMeetings && !signals.hasEmails && !signals.hasNotes && !signals.hasFlaggedFiles) {
     // Company exists but has no signal yet — degraded LLM call today; from
     // here on, a curated message that won't waste a turn.
     const company = companyRepo.getCompany(opts.companyId)

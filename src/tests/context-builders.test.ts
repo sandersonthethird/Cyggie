@@ -47,6 +47,13 @@ vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
   getFlaggedFileIds: (...args: unknown[]) => mockGetFlaggedFileIds(args[0]),
 }))
 
+const mockCompanyNotesList = vi.fn()
+vi.mock('../main/database/repositories/notes-base', () => ({
+  makeEntityNotesRepo: () => ({
+    list: (id: string) => mockCompanyNotesList(id),
+  }),
+}))
+
 vi.mock('../main/storage/file-manager', () => ({
   readSummary: (...args: unknown[]) => mockReadSummary(args[0]),
   readTranscript: (...args: unknown[]) => mockReadTranscript(args[0]),
@@ -67,6 +74,7 @@ beforeEach(() => {
   mockReadSummary.mockReturnValue(null)
   mockReadTranscript.mockReturnValue(null)
   mockReadLocalFile.mockResolvedValue(null)
+  mockCompanyNotesList.mockReturnValue([])
 })
 
 function makeCompany(over: Record<string, unknown> = {}) {
@@ -134,6 +142,20 @@ describe('assembleCompanyContext', () => {
     const result = await assembleCompanyContext('co1')
     expect(result.hasEmails).toBe(true)
     expect(result.markdown).toContain('## Email Correspondence')
+  })
+
+  it('hasNotes true when a company has notes (Step 10 — bonus gap)', async () => {
+    mockGetCompany.mockReturnValue(makeCompany())
+    mockCompanyNotesList.mockReturnValue([
+      {
+        content: 'Init Labs is exploring a follow-on round in Q4 — keep on radar.',
+        createdAt: '2026-04-15T00:00:00Z',
+      },
+    ])
+    const result = await assembleCompanyContext('co1')
+    expect(result.hasNotes).toBe(true)
+    expect(result.markdown).toContain('## Notes')
+    expect(result.markdown).toContain('keep on radar')
   })
 
   it('hasFlaggedFiles true when a flagged file is readable', async () => {
