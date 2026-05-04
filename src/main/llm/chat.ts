@@ -1,43 +1,30 @@
-import { getProvider } from './provider-factory'
-import { sendProgress } from './send-progress'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker, searchByAllSpeakers } from '../database/repositories/search.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
-import { runChatTurn, abortChatTurn, injectTextAttachments } from './chat-runner'
+import { runChatTurn, abortChatTurn } from './chat-runner'
+import {
+  buildSearchResultsContext,
+  SEARCH_RESULTS_SYSTEM_PROMPT,
+  SEARCH_RESULTS_QUESTION_FOOTER,
+} from './context-builders'
 import type { ChatAttachment } from '../../shared/types/chat'
 
-// Local controller for the legacy `querySearchResults` path which hasn't been
-// migrated to runChatTurn yet (Step 6 of the chat-paths refactor). Once that
-// migration lands, this controller and the dual-abort logic in `abortChat`
-// below get deleted, and `chat.ts` itself collapses into context-builders.ts.
-let chatAbortController: AbortController | null = null
-
 export function abortChat(): void {
-  // Aborts whichever of the two paths is in flight: queryMeeting (now via
-  // runChatTurn / chat-runner's shared controller) and the legacy
-  // querySearchResults (still on the local controller until Step 6).
-  // Both are no-ops if their respective controller isn't holding a turn.
+  // Both queryMeeting and querySearchResults now go through the shared
+  // runChatTurn controller (Step 6 of the chat-paths refactor); this is a
+  // straight delegation now.
   abortChatTurn()
-  chatAbortController?.abort()
-  chatAbortController = null
 }
 
 // Re-exported from chat-runner for backwards compatibility with the still-
-// present legacy paths (contact-chat.ts, company-chat.ts, crm-chat.ts).
-// When those files are deleted in Step 9, this re-export goes with chat.ts.
+// present legacy paths (crm-chat.ts). When that file is deleted in Step 9,
+// this re-export goes with chat.ts.
 export { injectTextAttachments } from './chat-runner'
 
 const MEETING_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about a meeting transcript.
 You have access to the full transcript, any user notes, and the AI-generated summary (if available).
 Answer questions accurately based on what was discussed in the meeting.
 If the information isn't in the transcript, say so.
-Be concise but thorough. Use bullet points when listing multiple items.`
-
-const SEARCH_RESULTS_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about the user's meeting search results.
-You have access to summaries, notes, and transcript excerpts from the meetings the user found via search.
-Answer questions accurately based on the content provided.
-Always cite which meeting the information comes from using the format: "In [Meeting Title] (Date):".
-If the information isn't in any of the provided meetings, say so.
 Be concise but thorough. Use bullet points when listing multiple items.`
 
 export async function queryMeeting(meetingId: string, question: string, attachments: ChatAttachment[] = []): Promise<string> {
@@ -238,86 +225,18 @@ export function buildMeetingContext(question: string): string {
 }
 
 export async function querySearchResults(meetingIds: string[], question: string, attachments: ChatAttachment[] = []): Promise<string> {
-  if (meetingIds.length === 0) {
-    return 'No meetings in the search results to query.'
-  }
+  const result = buildSearchResultsContext({ meetingIds })
 
-  const contextParts: string[] = []
+  if (result.kind === 'response') return result.text
+  if (result.kind === 'error') throw new Error(result.message)
 
-  // Process up to 10 meetings (already ordered by search relevance)
-  for (const id of meetingIds.slice(0, 10)) {
-    const meeting = meetingRepo.getMeeting(id)
-    if (!meeting) continue
-
-    const parts: string[] = []
-    parts.push(`### "${meeting.title}" (${new Date(meeting.date).toLocaleDateString()})`)
-
-    if (meeting.speakerMap && Object.keys(meeting.speakerMap).length > 0) {
-      parts.push(`Participants: ${Object.values(meeting.speakerMap).join(', ')}`)
-    }
-    parts.push('')
-
-    // Prefer summary (concise, high-signal) over full transcript
-    if (meeting.summaryPath) {
-      const summary = readSummary(meeting.summaryPath)
-      if (summary) {
-        parts.push('**Summary:**')
-        parts.push(summary)
-        parts.push('')
-      }
-    }
-
-    if (meeting.notes) {
-      parts.push('**Notes:**')
-      parts.push(meeting.notes)
-      parts.push('')
-    }
-
-    if (meeting.transcriptPath) {
-      const transcript = readTranscript(meeting.transcriptPath)
-      if (transcript) {
-        const excerptLength = meeting.summaryPath ? 1500 : 3000
-        let excerpt = transcript
-
-        if (transcript.length > excerptLength) {
-          excerpt = transcript.substring(0, excerptLength) + '...'
-        }
-
-        parts.push('**Transcript excerpt:**')
-        parts.push(excerpt)
-        parts.push('')
-      }
-    }
-
-    if (parts.length > 2) {
-      contextParts.push(parts.join('\n'))
-      contextParts.push('---')
-      contextParts.push('')
-    }
-  }
-
-  if (contextParts.length === 0) {
-    return 'I couldn\'t load any data from the search result meetings. Please check that transcripts exist.'
-  }
-
-  const context = contextParts.join('\n')
-
-  const enhancedQuestion = injectTextAttachments(question, attachments)
-  const imageAtts = attachments.filter((a) => a.type === 'image')
-
-  const userPrompt = `Here are the meetings from the user's search results:
-
-${context}
-
----
-
-User question: ${enhancedQuestion}
-
-Please answer based on the meeting content above. Cite the meeting title and date when referencing specific information.`
-
-  const provider = getProvider('chat')
-  chatAbortController = new AbortController()
-  const result = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
-  chatAbortController = null
-  return result
+  return runChatTurn({
+    systemPrompt: SEARCH_RESULTS_SYSTEM_PROMPT,
+    context: result.markdown,
+    question,
+    attachments,
+    userPromptPrefix: "Here are the meetings from the user's search results:",
+    questionLabel: 'User question',
+    questionFooter: SEARCH_RESULTS_QUESTION_FOOTER,
+  })
 }

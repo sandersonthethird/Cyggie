@@ -21,6 +21,7 @@
  */
 
 import { formatMeetingsSection, formatEmailsSection, formatNotesSection, formatFlaggedFilesSection, type SectionCaps } from './context-formatters'
+import { readSummary, readTranscript } from '../storage/file-manager'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
@@ -308,3 +309,116 @@ You answer questions about a specific contact using all available context:
 meeting notes and transcripts, email correspondence, and contact notes.
 Answer accurately based on the provided context. If information isn't available, say so.
 Be concise but thorough. Use bullet points when listing multiple items.`
+
+// ── Search results (multi-meeting from a search) ─────────────────────────
+
+/**
+ * Assemble context for a search-results chat (questions like "what did Priya
+ * say about pricing across these 5 meetings?"). The wire format here is
+ * intentionally different from formatMeetingsSection's ## Meeting Summaries
+ * style:
+ *
+ *   ### "Title" (Date)
+ *   Participants: ...
+ *
+ *   **Summary:**
+ *   <summary>
+ *
+ *   **Notes:**
+ *   <user notes from meeting>
+ *
+ *   **Transcript excerpt:**
+ *   <excerpt; 1500 chars when summary exists, 3000 when not>
+ *
+ *   ---
+ *
+ * Each meeting block is followed by `\n---\n\n` (separator + blank). Up to 10
+ * meetings included. The system prompt instructs the LLM to cite using
+ * "In [Meeting Title] (Date):" — that prompt formatting depends on the
+ * `### "..."` quoted title here, so don't change it without coordinating.
+ */
+export function assembleSearchResultsContext(meetingIds: string[]): string {
+  const contextParts: string[] = []
+
+  // Process up to 10 meetings (already ordered by search relevance)
+  for (const id of meetingIds.slice(0, 10)) {
+    const meeting = meetingRepo.getMeeting(id)
+    if (!meeting) continue
+
+    const parts: string[] = []
+    parts.push(`### "${meeting.title}" (${new Date(meeting.date).toLocaleDateString()})`)
+
+    if (meeting.speakerMap && Object.keys(meeting.speakerMap).length > 0) {
+      parts.push(`Participants: ${Object.values(meeting.speakerMap).join(', ')}`)
+    }
+    parts.push('')
+
+    // Prefer summary over transcript
+    if (meeting.summaryPath) {
+      const summary = readSummary(meeting.summaryPath)
+      if (summary) {
+        parts.push('**Summary:**')
+        parts.push(summary)
+        parts.push('')
+      }
+    }
+
+    if (meeting.notes) {
+      parts.push('**Notes:**')
+      parts.push(meeting.notes)
+      parts.push('')
+    }
+
+    if (meeting.transcriptPath) {
+      const transcript = readTranscript(meeting.transcriptPath)
+      if (transcript) {
+        const excerptLength = meeting.summaryPath ? 1500 : 3000
+        const excerpt = transcript.length > excerptLength
+          ? transcript.substring(0, excerptLength) + '...'
+          : transcript
+        parts.push('**Transcript excerpt:**')
+        parts.push(excerpt)
+        parts.push('')
+      }
+    }
+
+    if (parts.length > 2) {
+      contextParts.push(parts.join('\n'))
+      contextParts.push('---')
+      contextParts.push('')
+    }
+  }
+
+  return contextParts.join('\n')
+}
+
+/** chatDispatch entry for search-results chats. Empty input → curated
+ *  response. No-loadable-meetings → different curated response (preserves
+ *  existing behavior). */
+export function buildSearchResultsContext(opts: { meetingIds: string[] }): BuilderResult {
+  if (opts.meetingIds.length === 0) {
+    return { kind: 'response', text: 'No meetings in the search results to query.' }
+  }
+
+  const markdown = assembleSearchResultsContext(opts.meetingIds)
+  if (!markdown) {
+    return {
+      kind: 'response',
+      text: "I couldn't load any data from the search result meetings. Please check that transcripts exist.",
+    }
+  }
+  return { kind: 'context', markdown }
+}
+
+/** Per-kind system prompt — verbatim from legacy chat.ts:30-35. */
+export const SEARCH_RESULTS_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about the user's meeting search results.
+You have access to summaries, notes, and transcript excerpts from the meetings the user found via search.
+Answer questions accurately based on the content provided.
+Always cite which meeting the information comes from using the format: "In [Meeting Title] (Date):".
+If the information isn't in any of the provided meetings, say so.
+Be concise but thorough. Use bullet points when listing multiple items.`
+
+/** Footer appended to the user prompt for search-results chats — preserves
+ *  the legacy template's citation reminder. */
+export const SEARCH_RESULTS_QUESTION_FOOTER =
+  'Please answer based on the meeting content above. Cite the meeting title and date when referencing specific information.'
