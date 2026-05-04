@@ -1,4 +1,4 @@
-import { buildContactContext } from './contact-context-builder'
+import { assembleContactContext } from './context-builders'
 import { getProvider } from './provider-factory'
 
 const SYSTEM_PROMPT = `You are a CRM assistant that summarizes key context about a person for a venture capital team.
@@ -19,7 +19,8 @@ Rules:
 const MAX_OUTPUT_CHARS = 1000
 
 // Module-level AbortController — auto-aborts any in-progress generation when a new one starts.
-// Same pattern as abortContactChat() in contact-chat.ts.
+// Independent of the chat-runner shared controller (this is a key-takeaways
+// generation, not a chat turn — they can run concurrently).
 let ktAbortController: AbortController | null = null
 
 export function abortKeyTakeaways(): void {
@@ -36,14 +37,14 @@ export async function generateKeyTakeaways(
   ktAbortController = new AbortController()
   const signal = ktAbortController.signal
 
-  const { context, hasMeetings, hasEmails, hasNotes } = buildContactContext(contactId)
+  const { markdown, hasMeetings, hasEmails, hasNotes } = assembleContactContext(contactId)
 
   if (!hasMeetings && !hasEmails && !hasNotes) {
     ktAbortController = null
     throw new Error('Not enough context — add notes or sync emails first')
   }
 
-  const userPrompt = `Here is the available information about this contact:\n\n${context}`
+  const userPrompt = `Here is the available information about this contact:\n\n${markdown}`
 
   const provider = getProvider()
   let result: string

@@ -20,10 +20,14 @@
  * one return shape and one job. No dual-API.
  */
 
-import { formatMeetingsSection, formatEmailsSection, formatFlaggedFilesSection, type SectionCaps } from './context-formatters'
+import { formatMeetingsSection, formatEmailsSection, formatNotesSection, formatFlaggedFilesSection, type SectionCaps } from './context-formatters'
 import * as companyRepo from '../database/repositories/org-company.repo'
+import * as contactRepo from '../database/repositories/contact.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
 import { getFlaggedFileIds } from '../database/repositories/company-file-flags.repo'
+
+const _contactNotesRepo = makeEntityNotesRepo('contact_id')
 
 // ── BuilderResult — the chatDispatch contract ─────────────────────────
 
@@ -183,5 +187,124 @@ export async function buildCompanyContext(opts: { companyId: string }): Promise<
 export const COMPANY_SYSTEM_PROMPT = `You are a helpful research assistant for a venture capital firm.
 You answer questions about a specific portfolio company using all available context:
 meeting notes and transcripts, email correspondence, and linked documents.
+Answer accurately based on the provided context. If information isn't available, say so.
+Be concise but thorough. Use bullet points when listing multiple items.`
+
+// ── Contact ──────────────────────────────────────────────────────────────
+
+export interface ContactContextSignals {
+  markdown: string
+  hasMeetings: boolean
+  hasEmails: boolean
+  hasNotes: boolean
+}
+
+// Caps preserved verbatim from contact-context-builder.ts:8-14.
+const CONTACT_SUMMARY_CAPS: SectionCaps = { perItem: 6_000, total: 24_000 }
+const CONTACT_TRANSCRIPT_CAPS: SectionCaps = { perItem: 2_500, total: Number.MAX_SAFE_INTEGER }
+const CONTACT_EMAIL_CAPS: SectionCaps = { perItem: 1_500, total: 12_000, maxItems: 20 }
+const CONTACT_NOTE_CAPS: SectionCaps = { perItem: 2_000, total: 8_000 }
+
+/**
+ * Assemble contact context from repos. Returns markdown + signals so both
+ * `buildContactContext` (chatDispatch) and `contact-key-takeaways` can apply
+ * their own empty-state policies (Issue 1D — one shared assembler, two
+ * thin wrappers).
+ *
+ * Wire format matches the pre-refactor buildContactContext verbatim.
+ */
+export function assembleContactContext(contactId: string): ContactContextSignals {
+  const contact = contactRepo.getContact(contactId)
+  if (!contact) throw new Error('Contact not found')
+
+  const parts: string[] = []
+
+  // Header
+  parts.push(`# Contact: ${contact.fullName}`)
+  const meta: string[] = []
+  if (contact.title) meta.push(`Title: ${contact.title}`)
+  if (contact.primaryCompany) meta.push(`Company: ${contact.primaryCompany.canonicalName}`)
+  if (contact.contactType) meta.push(`Type: ${contact.contactType}`)
+  if (meta.length) parts.push(meta.join(' | '))
+  parts.push('')
+
+  // Meetings (summaries with transcript fallback)
+  const meetingRefs = (contact.meetings ?? []).map((m) => ({
+    id: m.id,
+    title: m.title,
+    date: m.date,
+  }))
+  const meetingsMd = formatMeetingsSection({
+    meetings: meetingRefs,
+    loadFull: (id) => {
+      const full = meetingRepo.getMeeting(id)
+      if (!full) return null
+      return { id: full.id, summaryPath: full.summaryPath, transcriptPath: full.transcriptPath }
+    },
+    summaryCaps: CONTACT_SUMMARY_CAPS,
+    transcriptCaps: CONTACT_TRANSCRIPT_CAPS,
+  })
+  const hasMeetings = meetingsMd.length > 0
+  if (hasMeetings) {
+    parts.push(meetingsMd)
+    parts.push('')
+  }
+
+  // Emails
+  const emails = contactRepo.listContactEmails(contactId)
+  const emailsMd = formatEmailsSection(emails, CONTACT_EMAIL_CAPS)
+  const hasEmails = emailsMd.length > 0
+  if (hasEmails) {
+    parts.push(emailsMd)
+    parts.push('')
+  }
+
+  // Notes
+  const notes = _contactNotesRepo.list(contactId)
+  const notesMd = formatNotesSection(notes, CONTACT_NOTE_CAPS)
+  const hasNotes = notesMd.length > 0
+  if (hasNotes) {
+    parts.push(notesMd)
+    parts.push('')
+  }
+
+  return {
+    markdown: parts.join('\n'),
+    hasMeetings,
+    hasEmails,
+    hasNotes,
+  }
+}
+
+/** chatDispatch entry for contact chats. Wraps `assembleContactContext`
+ *  with the empty-state policy: zero meetings + zero emails + zero notes →
+ *  curated response, no LLM call. */
+export function buildContactContext(opts: { contactId: string }): BuilderResult {
+  let signals: ContactContextSignals
+  try {
+    signals = assembleContactContext(opts.contactId)
+  } catch (err) {
+    if (err instanceof Error && err.message === 'Contact not found') {
+      return { kind: 'error', message: 'Contact not found' }
+    }
+    throw err
+  }
+
+  if (!signals.hasMeetings && !signals.hasEmails && !signals.hasNotes) {
+    const contact = contactRepo.getContact(opts.contactId)
+    const name = contact?.fullName ?? 'this contact'
+    return {
+      kind: 'response',
+      text: `I have very little information about ${name} yet. Try syncing some emails, linking meetings, or adding notes first.`,
+    }
+  }
+
+  return { kind: 'context', markdown: signals.markdown }
+}
+
+/** Per-kind system prompt — verbatim from legacy contact-chat.ts:14-18. */
+export const CONTACT_SYSTEM_PROMPT = `You are a helpful CRM assistant.
+You answer questions about a specific contact using all available context:
+meeting notes and transcripts, email correspondence, and contact notes.
 Answer accurately based on the provided context. If information isn't available, say so.
 Be concise but thorough. Use bullet points when listing multiple items.`
