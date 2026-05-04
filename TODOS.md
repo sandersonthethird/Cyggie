@@ -96,6 +96,18 @@
 
 ## P3 — AI Chat
 
+### Message-list virtualization in PanelThread
+**What:** Add `react-window` (or `@tanstack/react-virtual`) to virtualize PanelThread once chats routinely exceed ~500 messages.
+**Why:** Markdown re-renders during streaming compound with list size. p99 render time will degrade past ~500 messages, especially with the RAG/cross-chat retrieval feature also under P3.
+**Pros:** Future-proofs the longest-running chats; bounded memory.
+**Cons:** Complicates scroll restoration (variable item heights); breaks Cmd+F find-in-page for unmounted messages; "select-all-and-copy-transcript" only grabs mounted ones.
+**Context:** `<PanelThread/>` lives in `src/renderer/components/chat-panel/PanelThread.tsx`. Today it renders all messages directly. Virtualization should preserve the existing `stuckToBottomRef` auto-scroll behavior.
+**Effort:** M
+**Priority:** P3
+**Depends on:** AI Chat side panel shipped (✅).
+
+---
+
 ### "Continue this thread" cross-context follow-up
 **What:** Chat panel can ask "across all my Acme chats" via FTS5 retrieval before LLM call. Inject relevant prior turns as context.
 **Why:** Cathedral-grade chat platform. Turns chat history into a knowledge substrate rather than independent threads.

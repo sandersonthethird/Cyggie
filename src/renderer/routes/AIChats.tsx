@@ -3,7 +3,9 @@ import { useSearchParams } from 'react-router-dom'
 import { Search as SearchIcon, Filter, Calendar as CalendarIcon } from 'lucide-react'
 import { api } from '../api'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
+import { useNavigate } from 'react-router-dom'
 import { useChatStore } from '../stores/chat.store'
+import { useChatPanelStore } from '../stores/chat-panel.store'
 import { useChatActions, type ChatSessionRow } from '../hooks/useChatActions'
 import { deriveChatContext } from '../../shared/utils/chat-context'
 import {
@@ -55,10 +57,17 @@ function pageContextId(pageContext: ChatPageContext | null): string | null {
 
 export default function AIChats() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const loadModalSession = useChatStore((s) => s.loadModalSession)
-  const modalConversation = useChatStore((s) => s.modalConversation)
+  const navigate = useNavigate()
+  const loadPanelSession = useChatStore((s) => s.loadPanelSession)
+  const panelSession = useChatStore((s) => s.panelSession)
   const modalOpen = useChatStore((s) => s.modalOpen)
   const pageContext = useChatStore((s) => s.pageContext)
+  // Panel store integration: row click opens chat in the side panel; subscribe
+  // to lastActionAt so panel mutations refresh the list.
+  const setPanelOpen = useChatPanelStore((s) => s.setOpen)
+  const setOpenSessionId = useChatPanelStore((s) => s.setOpenSessionId)
+  const panelOpenSessionId = useChatPanelStore((s) => s.openSessionId)
+  const lastActionAt = useChatPanelStore((s) => s.lastActionAt)
 
   const actions = useChatActions()
 
@@ -127,6 +136,14 @@ export default function AIChats() {
     prevModalOpen.current = modalOpen
   }, [modalOpen, fetchList])
 
+  // Refetch when the chat panel reports a mutation (pin / rename / send / etc.).
+  // Skips the very first mount since fetchList already runs in the mount effect.
+  const initialActionAt = useRef(lastActionAt)
+  useEffect(() => {
+    if (lastActionAt === initialActionAt.current) return
+    void fetchList()
+  }, [lastActionAt, fetchList])
+
   // Debounced search.
   useEffect(() => {
     const trimmed = searchQuery.trim()
@@ -186,7 +203,7 @@ export default function AIChats() {
           id
         )
         if (cancelled) return
-        loadModalSession(
+        loadPanelSession(
           session.id,
           session.contextId,
           session.contextKind,
@@ -210,7 +227,7 @@ export default function AIChats() {
     return () => {
       cancelled = true
     }
-  }, [loading, sessions, searchParams, setSearchParams, loadModalSession])
+  }, [loading, sessions, searchParams, setSearchParams, loadPanelSession])
 
   const currentPageContextId = useMemo(() => pageContextId(pageContext), [pageContext])
 
@@ -318,23 +335,35 @@ export default function AIChats() {
           IPC_CHANNELS.CHAT_SESSION_LOAD_MESSAGES,
           id
         )
-        loadModalSession(
+        loadPanelSession(
           session.id,
           session.contextId,
           session.contextKind,
           session.contextLabel,
           messages.map((m) => ({ role: m.role, content: m.content }))
         )
+        // Open chat in the new side panel (replacing the legacy modal-only flow).
+        setOpenSessionId(id)
+        setPanelOpen(true)
       } catch (err) {
         console.warn('[AIChats] load messages failed', err)
         await fetchList()
       }
     },
-    [sessions, loadModalSession, fetchList]
+    [sessions, loadPanelSession, fetchList, setOpenSessionId, setPanelOpen]
+  )
+
+  const handleOpenFullScreen = useCallback(
+    (id: string) => {
+      navigate(`/ai-chats/${id}`)
+    },
+    [navigate]
   )
 
   const showingSearch = searchQuery.trim().length >= 2 && searchResults !== null
-  const selectedId = modalConversation?.sessionId ?? null
+  // selected = panel's open session OR legacy modal panelSession (during the
+  // additive period both surfaces drive selection state).
+  const selectedId = panelOpenSessionId ?? panelSession?.sessionId ?? null
 
   // Render
 
@@ -473,6 +502,7 @@ export default function AIChats() {
                           onArchive={() => handleArchive(row.id)}
                           onDelete={() => handleDelete(row.id)}
                           onRename={(t) => handleRename(row.id, t)}
+                          onOpenFullScreen={() => handleOpenFullScreen(row.id)}
                         />
                       </div>
                     ))}

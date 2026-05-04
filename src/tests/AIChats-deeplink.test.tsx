@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * Verifies the URL deep-link flow on the /ai-chats page:
- *   - ?openChat=<id> triggers LOAD_MESSAGES + chatStore.loadModalSession
+ *   - ?openChat=<id> triggers LOAD_MESSAGES + chatStore.loadPanelSession
  *   - the URL param is cleared after consumption
  *   - subsequent rerenders do not re-trigger (one-shot)
  */
@@ -27,7 +27,7 @@ beforeEach(() => {
   // Reset chat store
   useChatStore.setState({
     conversations: {},
-    modalConversation: null,
+    panelSession: null,
     modalOpen: false,
     pageContext: null,
   })
@@ -79,7 +79,7 @@ describe('AIChats — URL deep-link', () => {
 
     // Wait for both the list fetch + the deep-link consume to complete.
     await waitFor(() => {
-      const conv = useChatStore.getState().modalConversation
+      const conv = useChatStore.getState().panelSession
       expect(conv).not.toBeNull()
       expect(conv?.sessionId).toBe('sess-1')
     })
@@ -106,7 +106,7 @@ describe('AIChats — URL deep-link', () => {
     })
 
     // Modal should not have been opened.
-    expect(useChatStore.getState().modalConversation).toBeNull()
+    expect(useChatStore.getState().panelSession).toBeNull()
   })
 
   it('does NOT open the modal when no openChat param is present', async () => {
@@ -125,6 +125,6 @@ describe('AIChats — URL deep-link', () => {
     // LOAD_MESSAGES should never have been invoked.
     const channels = invokeMock.mock.calls.map((c) => c[0])
     expect(channels).not.toContain('chat-session:load-messages')
-    expect(useChatStore.getState().modalConversation).toBeNull()
+    expect(useChatStore.getState().panelSession).toBeNull()
   })
 })

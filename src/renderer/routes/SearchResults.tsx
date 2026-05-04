@@ -65,7 +65,7 @@ export default function SearchResults() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const loadModalSession = useChatStore((s) => s.loadModalSession)
+  const loadPanelSession = useChatStore((s) => s.loadPanelSession)
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -111,7 +111,7 @@ export default function SearchResults() {
         IPC_CHANNELS.CHAT_SESSION_LOAD_MESSAGES,
         hit.sessionId
       )
-      loadModalSession(
+      loadPanelSession(
         hit.sessionId,
         hit.contextId,
         hit.contextKind,

@@ -24,6 +24,7 @@ import { useSidebarMode } from '../../hooks/useSidebarMode'
 import { Tooltip } from '../common/Tooltip'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatStore } from '../../stores/chat.store'
+import { useChatPanelStore } from '../../stores/chat-panel.store'
 import { readAIChatsExpanded, writeAIChatsExpanded } from '../../utils/sidebar-prefs'
 import SearchBar from '../common/SearchBar'
 import defaultLogo from '../../assets/logo.png'
@@ -127,8 +128,10 @@ export default function Sidebar() {
     isPinned: boolean
   }
   const [recentChats, setRecentChats] = useState<RecentChat[]>([])
-  const modalConversation = useChatStore((s) => s.modalConversation)
+  const panelSession = useChatStore((s) => s.panelSession)
   const modalOpen = useChatStore((s) => s.modalOpen)
+  const lastActionAt = useChatPanelStore((s) => s.lastActionAt)
+  const panelOpenSessionId = useChatPanelStore((s) => s.openSessionId)
 
   const fetchRecentChats = () => {
     api
@@ -169,13 +172,22 @@ export default function Sidebar() {
     prevModalOpen.current = modalOpen
   }, [modalOpen])
 
+  // Refetch when the chat panel reports a mutation (pin / send / rename / etc.).
+  // Skips first mount so we don't double-fetch alongside the mount effect above.
+  const initialActionAt = useRef(lastActionAt)
+  useEffect(() => {
+    if (lastActionAt === initialActionAt.current) return
+    fetchRecentChats()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastActionAt])
+
   // Force-collapse when sidebar itself collapses
   useEffect(() => {
     if (collapsed) setAIChatsExpanded(false)
   }, [collapsed])
 
   const openChatId =
-    onAIChatsRoute && modalConversation ? modalConversation.sessionId : null
+    onAIChatsRoute ? (panelOpenSessionId ?? panelSession?.sessionId ?? null) : null
 
   return (
     <nav className={`${styles.sidebar} ${collapsed ? styles.sidebarCollapsed : ''}`}>

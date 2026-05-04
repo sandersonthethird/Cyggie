@@ -10,7 +10,7 @@ interface ChatConversation {
   messages: ChatMessage[]
 }
 
-interface ModalConversation {
+interface PanelSession {
   sessionId: string
   contextId: string
   contextKind: ChatContextKind
@@ -22,12 +22,14 @@ interface ChatState {
   // Bottom-bar conversations keyed by contextId. One slot per context.
   conversations: Record<string, ChatConversation>
 
-  // Detached modal conversation — single slot, persists across navigation
-  // until explicitly closed.
-  modalConversation: ModalConversation | null
+  // Detached panel session — single slot, persists across navigation until
+  // explicitly closed. Used by the AI Chat side panel and (during the
+  // additive period of the rename) the legacy chat history modal.
+  panelSession: PanelSession | null
 
-  // Whether the modal is open. When true with no modalConversation, modal
-  // shows the list view.
+  // Whether the legacy chat-history modal is open. When true with no
+  // panelSession, the modal shows the list view. (Will be moved to
+  // useChatPanelStore.mode='switcher' in step 4 of the panel rollout.)
   modalOpen: boolean
 
   // Current page's entity context — set by detail pages on mount, cleared on unmount
@@ -44,8 +46,8 @@ interface ChatState {
   // (used by useChatHydrate when loading the active session for the current page).
   hydrateConversation: (contextId: string, sessionId: string, messages: ChatMessage[]) => void
 
-  // Modal state
-  loadModalSession: (
+  // Panel session loaders
+  loadPanelSession: (
     sessionId: string,
     contextId: string,
     contextKind: ChatContextKind,
@@ -54,12 +56,12 @@ interface ChatState {
   ) => void
   openModalList: () => void
   closeModal: () => void
-  appendModalMessage: (message: ChatMessage) => void
+  appendPanelMessage: (message: ChatMessage) => void
 }
 
 export const useChatStore = create<ChatState>((set) => ({
   conversations: {},
-  modalConversation: null,
+  panelSession: null,
   modalOpen: false,
   pageContext: null,
 
@@ -74,20 +76,20 @@ export const useChatStore = create<ChatState>((set) => ({
         },
       }
 
-      // Mirror to modal if the modal is showing the same session.
-      let nextModal = state.modalConversation
+      // Mirror to panel if it's showing the same session.
+      let nextPanel = state.panelSession
       if (
-        state.modalConversation &&
+        state.panelSession &&
         existing.sessionId &&
-        state.modalConversation.sessionId === existing.sessionId
+        state.panelSession.sessionId === existing.sessionId
       ) {
-        nextModal = {
-          ...state.modalConversation,
-          messages: [...state.modalConversation.messages, message],
+        nextPanel = {
+          ...state.panelSession,
+          messages: [...state.panelSession.messages, message],
         }
       }
 
-      return { conversations: nextConversations, modalConversation: nextModal }
+      return { conversations: nextConversations, panelSession: nextPanel }
     }),
 
   clearConversation: (contextId: string) =>
@@ -117,10 +119,10 @@ export const useChatStore = create<ChatState>((set) => ({
       },
     })),
 
-  loadModalSession: (sessionId, contextId, contextKind, contextLabel, messages) =>
+  loadPanelSession: (sessionId, contextId, contextKind, contextLabel, messages) =>
     set({
       modalOpen: true,
-      modalConversation: {
+      panelSession: {
         sessionId,
         contextId,
         contextKind,
@@ -131,30 +133,30 @@ export const useChatStore = create<ChatState>((set) => ({
 
   openModalList: () => set({ modalOpen: true }),
 
-  closeModal: () => set({ modalOpen: false, modalConversation: null }),
+  closeModal: () => set({ modalOpen: false, panelSession: null }),
 
-  appendModalMessage: (message: ChatMessage) =>
+  appendPanelMessage: (message: ChatMessage) =>
     set((state) => {
-      if (!state.modalConversation) return {}
+      if (!state.panelSession) return {}
 
-      const nextModal = {
-        ...state.modalConversation,
-        messages: [...state.modalConversation.messages, message],
+      const nextPanel = {
+        ...state.panelSession,
+        messages: [...state.panelSession.messages, message],
       }
 
       // Mirror to the bottom-bar conversation if it's showing the same session.
-      const pageSlot = state.conversations[state.modalConversation.contextId]
+      const pageSlot = state.conversations[state.panelSession.contextId]
       let nextConversations = state.conversations
-      if (pageSlot && pageSlot.sessionId === state.modalConversation.sessionId) {
+      if (pageSlot && pageSlot.sessionId === state.panelSession.sessionId) {
         nextConversations = {
           ...state.conversations,
-          [state.modalConversation.contextId]: {
+          [state.panelSession.contextId]: {
             sessionId: pageSlot.sessionId,
             messages: [...pageSlot.messages, message],
           },
         }
       }
 
-      return { modalConversation: nextModal, conversations: nextConversations }
+      return { panelSession: nextPanel, conversations: nextConversations }
     }),
 }))

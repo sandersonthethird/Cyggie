@@ -1,0 +1,92 @@
+.head {
+  padding: 10px 12px 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  background: var(--color-card-bg);
+}
+
+.titleWrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.005em;
+}
+
+.meta {
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.iconBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  display: inline-grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.iconBtn:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.overflowWrap {
+  position: relative;
+}
+
+.overflowMenu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 160px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  z-index: 100;
+}
+
+.overflowItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.overflowItem:hover {
+  background: var(--color-card-hover);
+}

@@ -13,6 +13,8 @@ interface ChatRowProps {
   onArchive: () => void
   onDelete: () => void
   onRename: (title: string) => Promise<void>
+  /** Optional: open this chat in the dedicated /ai-chats/:id route. */
+  onOpenFullScreen?: () => void
 }
 
 export default function ChatRow({
@@ -24,6 +26,7 @@ export default function ChatRow({
   onArchive,
   onDelete,
   onRename,
+  onOpenFullScreen,
 }: ChatRowProps) {
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(row.title ?? '')
@@ -142,6 +145,17 @@ export default function ChatRow({
               >
                 {row.isPinned ? 'Unpin' : 'Pin'}
               </button>
+              {onOpenFullScreen && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setMenuOpen(false)
+                    onOpenFullScreen()
+                  }}
+                >
+                  Open full screen
+                </button>
+              )}
               <button
                 onClick={(e) => {
                   e.stopPropagation()

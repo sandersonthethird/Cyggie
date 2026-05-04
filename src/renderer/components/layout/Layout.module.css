@@ -81,17 +81,25 @@
 }
 
 .body {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr var(--panel-width, 0px);
   flex: 1;
   overflow: hidden;
+  position: relative;
+  /* respect prefers-reduced-motion via the inline width transition */
+  transition: grid-template-columns 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .body { transition: none; }
 }
 
 .main {
-  flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--color-bg);
+  min-width: 0; /* prevent grid blowout from long inline content */
 }
 
 .content {

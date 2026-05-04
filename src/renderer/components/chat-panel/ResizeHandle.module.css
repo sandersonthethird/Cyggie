@@ -1,0 +1,26 @@
+.handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 5;
+}
+
+.handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 3px;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  transition: background 0.12s;
+}
+
+.handle:hover::after,
+.handleDragging::after {
+  background: var(--cv-crimson, #B91C1C);
+  opacity: 0.5;
+}

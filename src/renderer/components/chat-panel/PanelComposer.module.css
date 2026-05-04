@@ -1,0 +1,211 @@
+.composer {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-card-bg);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composerLarge {
+  padding: 14px 4px 24px;
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--chip-error-text);
+  background: var(--chip-error-bg);
+  padding: 5px 9px;
+  border-radius: 6px;
+}
+.errorDismiss {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  font-size: 14px;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.actionsRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.newChatBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  padding: 3px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.newChatBtn:hover {
+  background: var(--color-card-hover);
+  color: var(--color-text);
+}
+
+.dropZone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dragOver .inputRow {
+  outline: 2px dashed var(--color-primary);
+  outline-offset: 2px;
+}
+
+.dropOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.04);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+  border-radius: 8px;
+  z-index: 1;
+}
+
+.attachmentsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.attachmentChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 3px 6px 3px 4px;
+  font-size: 10.5px;
+  color: var(--color-text);
+  max-width: 200px;
+}
+.attachmentThumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+.attachmentIcon {
+  font-size: 12px;
+}
+.attachmentName {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attachmentRemove {
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.attachmentRemove:hover {
+  color: var(--color-text);
+}
+
+.inputRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 8px 8px 11px;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.inputRow:focus-within {
+  border-color: var(--color-text-tertiary);
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.04);
+}
+
+.composerLarge .inputRow {
+  border-radius: 10px;
+  padding: 12px 12px 12px 16px;
+  gap: 10px;
+}
+
+.input {
+  flex: 1;
+  font-size: 12px;
+  color: var(--color-text);
+  background: transparent;
+  border: none;
+  resize: none;
+  font-family: var(--font-sans);
+  line-height: 1.45;
+  min-height: 18px;
+  max-height: 120px;
+  padding: 0;
+  outline: none;
+}
+.input::placeholder {
+  color: var(--color-text-tertiary);
+}
+.input:disabled {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.composerLarge .input {
+  font-size: 13px;
+}
+
+.sendBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  background: var(--cv-crimson, #B91C1C);
+  border: none;
+  color: #fff;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.sendBtn:hover:not(:disabled) {
+  background: var(--cv-crimson-hover, #991B1B);
+}
+.sendBtn:disabled {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.composerLarge .sendBtn {
+  width: 30px;
+  height: 30px;
+  font-size: 13px;
+}
+
+.stopBtn {
+  background: var(--color-text);
+}
+.stopBtn:hover:not(:disabled) {
+  background: var(--color-text-secondary);
+}

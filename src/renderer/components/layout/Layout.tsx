@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useMatch, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
-import ChatInterface from '../chat/ChatInterface'
-import ChatHistoryModal from '../chat/ChatHistoryModal'
+import { ChatPanelRoot } from '../chat-panel/ChatPanelRoot'
+import { AIChatPanel } from '../chat-panel/AIChatPanel'
+import { ChatToggle } from '../chat-panel/ChatToggle'
 import { useAppStore } from '../../stores/app.store'
 import { useRecordingStore } from '../../stores/recording.store'
 import { useChatStore } from '../../stores/chat.store'
+import { useChatPanelStore } from '../../stores/chat-panel.store'
 import { useSidebarMode } from '../../hooks/useSidebarMode'
+import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import type { Meeting } from '../../../shared/types/meeting'
@@ -26,7 +29,6 @@ export default function Layout() {
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingMeetingId = useRecordingStore((s) => s.meetingId)
   const startRecordingStore = useRecordingStore((s) => s.startRecording)
-  const pageContext = useChatStore((s) => s.pageContext)
   const meetingMatch = useMatch('/meeting/:id')
   const [bannerEvent, setBannerEvent] = useState<CalendarEvent | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState<Set<string>>(new Set())
@@ -100,20 +102,45 @@ export default function Layout() {
         if (focusChatInput()) {
           event.preventDefault()
         }
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'h') {
-        // ⌘H toggles the chat history modal.
-        const state = useChatStore.getState()
-        if (state.modalOpen) {
-          state.closeModal()
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'j') {
+        // ⌘J toggles the AI chat panel. While popped (full-screen route),
+        // ⌘J navigates back to returnTo and closes.
+        const panel = useChatPanelStore.getState()
+        if (panel.popped) {
+          panel.setPopped(false)
+          panel.setOpen(false)
+          if (panel.returnTo) navigate(panel.returnTo)
         } else {
-          state.openModalList()
+          panel.toggleOpen()
         }
+        event.preventDefault()
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'h') {
+        // ⌘H opens the panel in switcher (recents) mode.
+        const panel = useChatPanelStore.getState()
+        if (!panel.isOpen) panel.setOpen(true)
+        panel.setMode(panel.mode === 'switcher' ? 'thread' : 'switcher')
+        event.preventDefault()
+      } else if (event.key === 'Escape') {
+        // Esc closes the panel only when no input is focused (or composer is empty).
+        const panel = useChatPanelStore.getState()
+        if (!panel.isOpen) return
+        const active = document.activeElement as HTMLElement | null
+        const inEditable =
+          active &&
+          (active.tagName === 'INPUT' ||
+            active.tagName === 'TEXTAREA' ||
+            active.isContentEditable)
+        if (inEditable) {
+          // Inside the composer textarea: only close if it's empty.
+          if (active && 'value' in active && (active as HTMLInputElement | HTMLTextAreaElement).value.length > 0) return
+        }
+        panel.setOpen(false)
         event.preventDefault()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [navigate])
 
   useEffect(() => {
     if (!newMenuOpen) return
@@ -156,10 +183,26 @@ export default function Layout() {
     navigate('/tasks')
   }
 
+  // Panel width is driven by the panel store (default 400, resizable). Becomes
+  // 0 when the panel is closed or popped (full-screen route active) so the
+  // grid third column collapses and main reflows.
+  const panelIsOpen = useChatPanelStore((s) => s.isOpen)
+  const panelPopped = useChatPanelStore((s) => s.popped)
+  const panelWidth = useChatPanelStore((s) => s.width)
+  const isNarrow = useMediaQuery('(max-width: 1024px)')
+  // Mobile/narrow viewport: rail becomes an overlay, doesn't take a grid column.
+  const useOverlay = panelIsOpen && !panelPopped && isNarrow
+  const useReflow = panelIsOpen && !panelPopped && !isNarrow
+  const effectivePanelWidth = useReflow ? `${panelWidth}px` : '0px'
+  const closePanel = useChatPanelStore((s) => s.setOpen)
+
   return (
     <div
       className={`${styles.layout} ${sidebarMode === 'collapsed' ? styles.sidebarCollapsed : ''}`}
-      style={{ '--sidebar-width': sidebarMode === 'collapsed' ? 'var(--sidebar-width-collapsed)' : '240px' } as React.CSSProperties}
+      style={{
+        '--sidebar-width': sidebarMode === 'collapsed' ? 'var(--sidebar-width-collapsed)' : '240px',
+        '--panel-width': effectivePanelWidth,
+      } as React.CSSProperties}
     >
       <div className={styles.titlebar}>
         <div className={styles.titlebarControls}>
@@ -191,22 +234,20 @@ export default function Layout() {
               </div>
             )}
           </div>
+          <ChatToggle />
         </div>
       </div>
+      <ChatPanelRoot />
       <div className={styles.body}>
         <Sidebar />
         <div className={styles.main}>
           <div className={styles.content}>
             <Outlet />
           </div>
-          <ChatInterface
-            meetingId={pageContext?.meetingId}
-            meetingIds={pageContext?.meetingIds}
-            contextOptions={pageContext?.contextOptions}
-          />
         </div>
+        {useReflow && <AIChatPanel overlay={false} />}
+        {useOverlay && <AIChatPanel overlay onBackdropTap={() => closePanel(false)} />}
       </div>
-      <ChatHistoryModal />
       {bannerEvent && (
         <div className={styles.meetingBanner}>
           <div className={styles.bannerInfo}>

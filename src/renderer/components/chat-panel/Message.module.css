@@ -1,0 +1,132 @@
+/* Granola-style asymmetric message rows.
+   AI: flat-left (no bubble) + crimson-gradient avatar.
+   User: bubbled-right + slate avatar.
+
+   ┌────┬───────────────────┐    ┌───────────────────┬────┐
+   │ AI │ flat content      │    │   bubbled content │ SW │
+   └────┴───────────────────┘    └───────────────────┴────┘
+*/
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  max-width: 100%;
+}
+
+.rowAi {
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+.rowUser {
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+  margin-left: auto;
+  max-width: 88%;
+}
+
+.avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.avatarUser {
+  background: #1F2937;
+}
+
+.avatarAi {
+  background: linear-gradient(135deg, var(--cv-crimson, #B91C1C) 0%, #7F1D1D 100%);
+}
+
+.body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rowUser .body {
+  align-items: flex-end;
+}
+
+.meta {
+  font-size: 9.5px;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
+.content {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.content p {
+  margin: 0 0 5px;
+}
+.content p:last-child {
+  margin: 0;
+}
+.content ul, .content ol {
+  margin: 4px 0;
+  padding-left: 15px;
+}
+.content li {
+  margin-bottom: 2px;
+}
+.content strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+.content code {
+  font-family: var(--cy-mono, ui-monospace, Menlo, monospace);
+  font-size: 11.5px;
+  background: var(--color-bg-secondary);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.content pre {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  overflow-x: auto;
+}
+.content pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.rowUser .content {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px 10px 3px 10px;
+  padding: 7px 10px;
+  color: var(--color-text);
+}
+
+/* Larger reading sizes for the full-screen route */
+.rowLarge .avatar {
+  width: 30px;
+  height: 30px;
+  font-size: 11px;
+}
+.rowLarge .content {
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+.rowLarge.rowUser .content {
+  padding: 10px 14px;
+  border-radius: 12px 12px 4px 12px;
+}

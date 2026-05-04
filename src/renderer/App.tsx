@@ -18,6 +18,7 @@ import SearchResults from './routes/SearchResults'
 import Settings from './routes/Settings'
 import PartnerMeeting from './routes/PartnerMeeting'
 import AIChats from './routes/AIChats'
+import AIChatFullscreen from './routes/AIChatFullscreen'
 import { useCalendar } from './hooks/useCalendar'
 import { useRecordingStore } from './stores/recording.store'
 import { usePreferencesStore } from './stores/preferences.store'
@@ -126,6 +127,7 @@ export default function App() {
               <Route path="/settings" element={<Settings />} />
               <Route path="/partner-meeting" element={<PartnerMeeting />} />
               <Route path="/ai-chats" element={<AIChats />} />
+              <Route path="/ai-chats/:id" element={<AIChatFullscreen />} />
             </Route>
           )}
         </Routes>
