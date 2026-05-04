@@ -198,8 +198,8 @@ export async function buildCompanyContext(opts: { companyId: string }): Promise<
   return { kind: 'context', markdown: signals.markdown }
 }
 
-/** Per-kind system prompt — verbatim from legacy company-chat.ts:19-23.
- *  Exported alongside the builder so chatDispatch can pair them in step 8. */
+/** Per-kind system prompt. Paired with the builder so chatDispatch can
+ *  invoke {builder, prompt} together. */
 export const COMPANY_SYSTEM_PROMPT = `You are a helpful research assistant for a venture capital firm.
 You answer questions about a specific portfolio company using all available context:
 meeting notes and transcripts, email correspondence, and linked documents.
@@ -443,10 +443,8 @@ export const SEARCH_RESULTS_QUESTION_FOOTER =
 // The global path's assembly logic stays in crm-chat.ts (where it composes
 // buildMeetingContext from chat.ts + buildCrmContext from crm-chat.ts).
 // Keeping it there avoids a context-builders.ts ↔ chat.ts ↔ crm-chat.ts
-// import cycle that breaks vi.mock interception in the parity test.
+// import cycle that broke vi.mock interception in the parity test.
 // context-builders.ts only owns the system prompts for global / CRM-only.
-// Step 9's full collapse can revisit the cycle question with cleaner test
-// scaffolding.
 
 /** System prompts — verbatim from legacy crm-chat.ts:47-58. */
 export const QUERY_ALL_SYSTEM_PROMPT = `You are a research assistant for a venture capital firm.

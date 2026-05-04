@@ -10,15 +10,13 @@ import {
 import type { ChatAttachment } from '../../shared/types/chat'
 
 export function abortChat(): void {
-  // Both queryMeeting and querySearchResults now go through the shared
-  // runChatTurn controller (Step 6 of the chat-paths refactor); this is a
-  // straight delegation now.
+  // Both queryMeeting and querySearchResults route through runChatTurn's
+  // single shared AbortController.
   abortChatTurn()
 }
 
-// Re-exported from chat-runner for backwards compatibility with the still-
-// present legacy paths (crm-chat.ts). When that file is deleted in Step 9,
-// this re-export goes with chat.ts.
+// Re-exported from chat-runner for crm-chat.ts (queryAll's attachment
+// injection runs before runChatTurn).
 export { injectTextAttachments } from './chat-runner'
 
 const MEETING_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about a meeting transcript.
@@ -105,9 +103,9 @@ export async function querySearchResults(meetingIds: string[], question: string,
 }
 
 // buildMeetingContext: 4-strategy meeting search assembling a markdown
-// context string for queryAll(). Imported by context-builders.ts/
-// assembleGlobalContext (cross-module so vi.mock can intercept it for the
-// parity baseline test). Step 9 collapses this into context-builders.ts.
+// context string for queryAll(). Imported cross-module by crm-chat.ts so
+// vi.mock can intercept it for the parity baseline test (same-module calls
+// can't be intercepted by vi.mock).
 export function buildMeetingContext(question: string): string {
   const keywords = extractKeywords(question)
   const seenIds = new Set<string>()

@@ -51,9 +51,10 @@ const MAX_TOTAL_CHARS = 80_000
 // pre-filtering, then fetches linked notes and emails. Returns a markdown context string,
 // or '' if no records match — callers should proceed with other context sources.
 //
-// Exported so context-builders.ts/buildGlobalContext can compose meeting + CRM
-// markdown into a unified BuilderResult. Step 9 of the chat-paths refactor will
-// move this function (and its helpers) into context-builders.ts.
+// Lives here (not in context-builders.ts) because queryAll composes
+// buildMeetingContext + buildCrmContext, and moving either into the same
+// module as the other reintroduces the import cycle that broke vi.mock
+// interception during the refactor. See parity.test.ts for the test.
 export async function buildCrmContext(question: string): Promise<string> {
   const db = getDatabase()
 

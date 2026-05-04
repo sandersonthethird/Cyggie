@@ -1,21 +1,13 @@
 /**
- * Thin shim during the chat-paths refactor.
+ * Thin per-kind dispatcher: chatDispatch({kind:'company'}) lands here.
  *
- * Step 4 of the refactor moved this file's substantive logic — the company
- * overview / meeting summaries / transcripts / emails / flagged-files
- * assembly — into context-builders.ts/{assembleCompanyContext,
- * buildCompanyContext}. This file now only re-exports the IPC-facing
- * functions (queryCompany, abortCompanyChat) so the IPC handler in
- * company-chat.ipc.ts keeps importing from the same place.
- *
- * Step 9 of the refactor will:
- *   - Replace the IPC handler's `runLLM: () => queryCompany(...)` with
- *     `runLLM: () => chatDispatch({ kind: { kind: 'company', companyId }, ... })`
- *   - Delete this file.
- *
- * Until then, queryCompany is a one-liner that delegates to
- * `buildCompanyContext` + `runChatTurn`. abortCompanyChat delegates to
- * `abortChatTurn` (the shared single AbortController).
+ * The substantive context-assembly logic — company overview / meeting
+ * summaries / transcripts / emails / flagged-files / notes — lives in
+ * context-builders.ts ({assembleCompanyContext, buildCompanyContext}).
+ * queryCompany is a one-liner that delegates to buildCompanyContext +
+ * runChatTurn. abortCompanyChat (kept for the COMPANY_CHAT_ABORT IPC
+ * handler) delegates to abortChatTurn — the shared single
+ * AbortController invariant.
  */
 
 import * as companyRepo from '../database/repositories/org-company.repo'

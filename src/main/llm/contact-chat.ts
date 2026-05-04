@@ -1,14 +1,12 @@
 /**
- * Thin shim during the chat-paths refactor.
+ * Thin per-kind dispatcher: chatDispatch({kind:'contact'}) lands here.
  *
- * Step 5 moved this file's substantive logic into context-builders.ts/
- * { assembleContactContext, buildContactContext } per /plan-eng-review
- * Issue 1D. queryContact is now a one-liner that delegates to
- * buildContactContext + runChatTurn. abortContactChat delegates to the
- * shared abortChatTurn.
- *
- * Step 9 will collapse the IPC handler to call chatDispatch directly and
- * delete this file.
+ * The substantive context-assembly logic lives in context-builders.ts
+ * ({assembleContactContext, buildContactContext}) per /plan-eng-review
+ * Issue 1D. queryContact is a one-liner that delegates to
+ * buildContactContext + runChatTurn. abortContactChat (kept for the
+ * CONTACT_CHAT_ABORT IPC handler) delegates to abortChatTurn — the
+ * shared single AbortController invariant.
  */
 
 import { buildContactContext, CONTACT_SYSTEM_PROMPT } from './context-builders'
