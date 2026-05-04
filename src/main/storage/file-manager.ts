@@ -204,6 +204,49 @@ export function renameRecording(
 const READABLE_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.csv'])
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
+/**
+ * Pre-flight validation for files the user is about to flag as chat
+ * context. Returns ok:true when the file can be successfully read by
+ * `readLocalFile`, or ok:false with a typed code describing why not.
+ *
+ *   MISSING            file path doesn't exist on disk
+ *   UNSUPPORTED_FORMAT extension not in READABLE_EXTENSIONS
+ *   TOO_LARGE          size > MAX_FILE_SIZE (10 MB)
+ *
+ * Used by the COMPANY_FILE_FLAG_TOGGLE IPC handler so users get an
+ * inline toast at flag-time instead of silently flagging a file that
+ * `readLocalFile` will later skip during chat assembly.
+ */
+export function validateFileForChatContext(
+  filePath: string
+): { ok: true } | { ok: false; code: 'MISSING' | 'UNSUPPORTED_FORMAT' | 'TOO_LARGE'; message: string } {
+  if (!existsSync(filePath)) {
+    return { ok: false, code: 'MISSING', message: `File not found on disk: ${filePath}` }
+  }
+  const ext = extname(filePath).toLowerCase()
+  if (!READABLE_EXTENSIONS.has(ext)) {
+    return {
+      ok: false,
+      code: 'UNSUPPORTED_FORMAT',
+      message: `Unsupported file format (${ext || 'no extension'}). Supported: ${[...READABLE_EXTENSIONS].join(', ')}.`,
+    }
+  }
+  try {
+    const stat = statSync(filePath)
+    if (stat.size > MAX_FILE_SIZE) {
+      const sizeMb = (stat.size / (1024 * 1024)).toFixed(1)
+      return {
+        ok: false,
+        code: 'TOO_LARGE',
+        message: `File is too large (${sizeMb} MB). Max ${MAX_FILE_SIZE / (1024 * 1024)} MB.`,
+      }
+    }
+  } catch (err) {
+    return { ok: false, code: 'MISSING', message: `Could not stat file: ${String(err)}` }
+  }
+  return { ok: true }
+}
+
 // Minimum character count to consider text extraction successful.
 // Matches MIN_TEXT_LENGTH in pitch-deck-ingestion.service.ts.
 const MIN_PDF_TEXT_LENGTH = 100

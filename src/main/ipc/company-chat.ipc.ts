@@ -7,6 +7,7 @@ import { getCurrentUserId } from '../security/current-user'
 import { withChatPersistence } from '../llm/chat-persistence'
 import { deriveChatContext } from '../../shared/utils/chat-context'
 import { getDatabase } from '../database/connection'
+import { validateFileForChatContext } from '../storage/file-manager'
 import type { ChatAttachment } from '../../shared/types/chat'
 
 function getCompanyName(companyId: string): string | null {
@@ -25,9 +26,25 @@ export function registerCompanyChatHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_FILE_FLAG_TOGGLE,
-    (_event, data: { companyId: string; fileId: string; fileName: string }) => {
+    (
+      _event,
+      data: { companyId: string; fileId: string; fileName: string }
+    ):
+      | { ok: true; flagged: boolean }
+      | { ok: false; code: 'MISSING' | 'UNSUPPORTED_FORMAT' | 'TOO_LARGE'; message: string } => {
       if (!data?.companyId || !data?.fileId) throw new Error('companyId and fileId are required')
-      return toggleFileFlag(data.companyId, data.fileId, data.fileName)
+      const alreadyFlagged = getFlaggedFileIds(data.companyId).includes(data.fileId)
+      if (!alreadyFlagged) {
+        const validation = validateFileForChatContext(data.fileId)
+        if (!validation.ok) {
+          console.warn(
+            `[chat-flag] reject companyId=${data.companyId} fileId=${data.fileId} code=${validation.code}`
+          )
+          return { ok: false, code: validation.code, message: validation.message }
+        }
+      }
+      const flagged = toggleFileFlag(data.companyId, data.fileId, data.fileName)
+      return { ok: true, flagged }
     }
   )
 
