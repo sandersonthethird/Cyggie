@@ -1,139 +1,54 @@
+/**
+ * Thin shim during the chat-paths refactor.
+ *
+ * Step 4 of the refactor moved this file's substantive logic — the company
+ * overview / meeting summaries / transcripts / emails / flagged-files
+ * assembly — into context-builders.ts/{assembleCompanyContext,
+ * buildCompanyContext}. This file now only re-exports the IPC-facing
+ * functions (queryCompany, abortCompanyChat) so the IPC handler in
+ * company-chat.ipc.ts keeps importing from the same place.
+ *
+ * Step 9 of the refactor will:
+ *   - Replace the IPC handler's `runLLM: () => queryCompany(...)` with
+ *     `runLLM: () => chatDispatch({ kind: { kind: 'company', companyId }, ... })`
+ *   - Delete this file.
+ *
+ * Until then, queryCompany is a one-liner that delegates to
+ * `buildCompanyContext` + `runChatTurn`. abortCompanyChat delegates to
+ * `abortChatTurn` (the shared single AbortController).
+ */
+
 import * as companyRepo from '../database/repositories/org-company.repo'
-import * as meetingRepo from '../database/repositories/meeting.repo'
-import { getFlaggedFileIds } from '../database/repositories/company-file-flags.repo'
-import { readSummary, readTranscript, readLocalFile } from '../storage/file-manager'
-import { basename } from 'path'
-import { getProvider } from './provider-factory'
-import { sendProgress } from './send-progress'
-import { injectTextAttachments } from './chat'
+import { buildCompanyContext, COMPANY_SYSTEM_PROMPT } from './context-builders'
+import { runChatTurn, abortChatTurn } from './chat-runner'
 import type { ChatAttachment } from '../../shared/types/chat'
 
-let companyChatAbortController: AbortController | null = null
-
 export function abortCompanyChat(): void {
-  companyChatAbortController?.abort()
-  companyChatAbortController = null
+  abortChatTurn()
 }
 
+export async function queryCompany(
+  companyId: string,
+  question: string,
+  attachments?: ChatAttachment[]
+): Promise<string> {
+  const result = await buildCompanyContext({ companyId })
 
-const SYSTEM_PROMPT = `You are a helpful research assistant for a venture capital firm.
-You answer questions about a specific portfolio company using all available context:
-meeting notes and transcripts, email correspondence, and linked documents.
-Answer accurately based on the provided context. If information isn't available, say so.
-Be concise but thorough. Use bullet points when listing multiple items.`
+  if (result.kind === 'response') return result.text
+  if (result.kind === 'error') throw new Error(result.message)
 
-const MAX_SUMMARY_CHARS = 8000
-const MAX_TRANSCRIPT_CHARS = 3000
-const MAX_EMAIL_BODY_CHARS = 2000
-const MAX_FILE_CHARS = 6000
-const MAX_TOTAL_SUMMARIES = 30000
-const MAX_TOTAL_EMAILS = 15000
-const MAX_TOTAL_FILES = 30000
+  // Re-fetch the company name for the user-prompt prefix. assembleCompanyContext
+  // already loaded the company once; re-fetching here is one extra SQL row
+  // (microseconds). Step 9 collapses this into chatDispatch and we can pass
+  // the name through alongside the BuilderResult.
+  const companyName = companyRepo.getCompany(companyId)?.canonicalName ?? 'this company'
 
-export async function queryCompany(companyId: string, question: string, attachments?: ChatAttachment[]): Promise<string> {
-  const company = companyRepo.getCompany(companyId)
-  if (!company) throw new Error('Company not found')
-
-  const parts: string[] = []
-
-  // Company overview
-  parts.push(`# Company: ${company.canonicalName}`)
-  if (company.description) parts.push(company.description)
-  const meta: string[] = []
-  if (company.stage) meta.push(`Stage: ${company.stage}`)
-  if (company.round) meta.push(`Round: ${company.round}`)
-  if (company.industry) meta.push(`Industry: ${company.industry}`)
-  if (meta.length) parts.push(meta.join(' | '))
-  parts.push('')
-
-  // Meeting summaries
-  const summaryRows = companyRepo.listCompanyMeetingSummaryPaths(companyId)
-  const meetingsWithSummary = new Set(summaryRows.map((r) => r.meetingId))
-  let summaryTotal = 0
-  const summaryParts: string[] = []
-  for (const row of summaryRows) {
-    if (summaryTotal >= MAX_TOTAL_SUMMARIES) break
-    const content = readSummary(row.summaryPath)
-    if (!content) continue
-    const excerpt = content.length > MAX_SUMMARY_CHARS ? content.substring(0, MAX_SUMMARY_CHARS) + '...' : content
-    summaryParts.push(`### ${row.title} (${new Date(row.date).toLocaleDateString()})\n${excerpt}`)
-    summaryTotal += excerpt.length
-  }
-  if (summaryParts.length > 0) {
-    parts.push('## Meeting Summaries')
-    parts.push(summaryParts.join('\n\n'))
-    parts.push('')
-  }
-
-  // Transcripts for meetings without summaries
-  const meetings = companyRepo.listCompanyMeetings(companyId)
-  const transcriptParts: string[] = []
-  for (const meeting of meetings) {
-    if (meetingsWithSummary.has(meeting.id)) continue
-    const full = meetingRepo.getMeeting(meeting.id)
-    if (!full?.transcriptPath) continue
-    const content = readTranscript(full.transcriptPath)
-    if (!content) continue
-    const excerpt = content.length > MAX_TRANSCRIPT_CHARS ? content.substring(0, MAX_TRANSCRIPT_CHARS) + '...' : content
-    transcriptParts.push(`### ${meeting.title} (${new Date(meeting.date).toLocaleDateString()})\n${excerpt}`)
-  }
-  if (transcriptParts.length > 0) {
-    parts.push('## Meeting Transcripts')
-    parts.push(transcriptParts.join('\n\n'))
-    parts.push('')
-  }
-
-  // Emails
-  const emailRefs = companyRepo.listCompanyEmails(companyId).slice(0, 20)
-  const emailParts: string[] = []
-  let emailTotal = 0
-  for (const e of emailRefs) {
-    if (!e.bodyText || e.bodyText.trim().length < 50) continue
-    if (emailTotal >= MAX_TOTAL_EMAILS) break
-    const body = e.bodyText.length > MAX_EMAIL_BODY_CHARS ? e.bodyText.substring(0, MAX_EMAIL_BODY_CHARS) + '...' : e.bodyText
-    const date = e.receivedAt || e.sentAt || ''
-    emailParts.push(`From: ${e.fromEmail}\nSubject: ${e.subject || '(no subject)'}\nDate: ${date}\n\n${body}`)
-    emailTotal += body.length
-  }
-  if (emailParts.length > 0) {
-    parts.push('## Email Correspondence')
-    parts.push(emailParts.join('\n\n---\n\n'))
-    parts.push('')
-  }
-
-  // Flagged files
-  const flaggedIds = getFlaggedFileIds(companyId)
-  const fileParts: string[] = []
-  let fileTotal = 0
-  for (const fileId of flaggedIds) {
-    if (fileTotal >= MAX_TOTAL_FILES) break
-    const content = await readLocalFile(fileId)
-    if (!content || content.trim().length < 50) continue
-    const excerpt = content.length > MAX_FILE_CHARS ? content.substring(0, MAX_FILE_CHARS) + '...' : content
-    fileParts.push(`### ${basename(fileId)}\n${excerpt}`)
-    fileTotal += excerpt.length
-  }
-  if (fileParts.length > 0) {
-    parts.push('## Linked Documents')
-    parts.push(fileParts.join('\n\n'))
-    parts.push('')
-  }
-
-  const context = parts.join('\n')
-
-  const enhancedQuestion = attachments?.length ? injectTextAttachments(question, attachments) : question
-
-  const userPrompt = `Here is the available information about ${company.canonicalName}:
-
-${context}
-
----
-
-Question: ${enhancedQuestion}`
-
-  const provider = getProvider('chat')
-  companyChatAbortController = new AbortController()
-  const result = await provider.generateSummary(SYSTEM_PROMPT, userPrompt, sendProgress, companyChatAbortController.signal)
-  companyChatAbortController = null
-  return result
+  return runChatTurn({
+    systemPrompt: COMPANY_SYSTEM_PROMPT,
+    context: result.markdown,
+    question,
+    attachments,
+    userPromptPrefix: `Here is the available information about ${companyName}:`,
+    questionLabel: 'Question',
+  })
 }
