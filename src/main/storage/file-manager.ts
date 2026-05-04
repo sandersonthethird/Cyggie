@@ -282,6 +282,45 @@ async function extractTextWithPdfjs(buf: Buffer): Promise<string | null> {
   }
 }
 
+/**
+ * In-memory PDF parse cache (Issue 4B). Keyed by `${filePath}|${mtimeMs}|${size}`
+ * so a file edited in place naturally invalidates. Bounded LRU at PDF_CACHE_MAX
+ * entries; oldest evicted on insert. Cache is process-local — sufficient for
+ * typical chat-context reads where the same flagged PDF is read across many
+ * turns within one session.
+ */
+const PDF_CACHE_MAX = 32
+type PdfCacheEntry = { text: string | null }
+const pdfCache = new Map<string, PdfCacheEntry>()
+
+function pdfCacheKey(filePath: string, mtimeMs: number, size: number): string {
+  return `${filePath}|${mtimeMs}|${size}`
+}
+
+function pdfCacheGet(key: string): PdfCacheEntry | undefined {
+  const hit = pdfCache.get(key)
+  if (!hit) return undefined
+  // Refresh recency
+  pdfCache.delete(key)
+  pdfCache.set(key, hit)
+  return hit
+}
+
+function pdfCacheSet(key: string, entry: PdfCacheEntry): void {
+  if (pdfCache.has(key)) pdfCache.delete(key)
+  pdfCache.set(key, entry)
+  while (pdfCache.size > PDF_CACHE_MAX) {
+    const oldest = pdfCache.keys().next().value
+    if (oldest === undefined) break
+    pdfCache.delete(oldest)
+  }
+}
+
+/** Test-only: drop all cached PDF entries. */
+export function clearPdfCache(): void {
+  pdfCache.clear()
+}
+
 export async function readLocalFile(filePath: string): Promise<string | null> {
   try {
     if (!existsSync(filePath)) return null
@@ -290,19 +329,30 @@ export async function readLocalFile(filePath: string): Promise<string | null> {
     const ext = extname(filePath).toLowerCase()
     if (!READABLE_EXTENSIONS.has(ext)) return null
     if (ext === '.pdf') {
+      const cacheKey = pdfCacheKey(filePath, stat.mtimeMs, stat.size)
+      const cached = pdfCacheGet(cacheKey)
+      if (cached) return cached.text
+
       const buf = readFileSync(filePath)
 
-      // Pass 1: pdf-parse (fast, good for standard text-layer PDFs)
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
+      // Pass 1: pdf-parse (fast, good for standard text-layer PDFs).
+      // Dynamic import (not require) so vitest can intercept the module.
+      const pdfParseMod = (await import('pdf-parse')) as
+        | { default: (buf: Buffer) => Promise<{ text: string }> }
+        | ((buf: Buffer) => Promise<{ text: string }>)
+      const pdfParse =
+        typeof pdfParseMod === 'function' ? pdfParseMod : pdfParseMod.default
       const parsed = await pdfParse(buf)
       if (parsed.text && parsed.text.trim().length >= MIN_PDF_TEXT_LENGTH) {
+        pdfCacheSet(cacheKey, { text: parsed.text })
         return parsed.text
       }
 
       // Pass 2: pdfjs-dist (handles more font encodings, ligatures, CID fonts)
       // Falls through to null if still insufficient — triggers vision fallback in ingestion service
-      return await extractTextWithPdfjs(buf)
+      const pdfjsText = await extractTextWithPdfjs(buf)
+      pdfCacheSet(cacheKey, { text: pdfjsText })
+      return pdfjsText
     }
     return readFileSync(filePath, 'utf-8')
   } catch {
