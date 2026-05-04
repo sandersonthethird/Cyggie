@@ -3,23 +3,29 @@ import { sendProgress } from './send-progress'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker, searchByAllSpeakers } from '../database/repositories/search.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
+import { runChatTurn, abortChatTurn, injectTextAttachments } from './chat-runner'
 import type { ChatAttachment } from '../../shared/types/chat'
 
+// Local controller for the legacy `querySearchResults` path which hasn't been
+// migrated to runChatTurn yet (Step 6 of the chat-paths refactor). Once that
+// migration lands, this controller and the dual-abort logic in `abortChat`
+// below get deleted, and `chat.ts` itself collapses into context-builders.ts.
 let chatAbortController: AbortController | null = null
 
 export function abortChat(): void {
+  // Aborts whichever of the two paths is in flight: queryMeeting (now via
+  // runChatTurn / chat-runner's shared controller) and the legacy
+  // querySearchResults (still on the local controller until Step 6).
+  // Both are no-ops if their respective controller isn't holding a turn.
+  abortChatTurn()
   chatAbortController?.abort()
   chatAbortController = null
 }
 
-export function injectTextAttachments(question: string, attachments: ChatAttachment[]): string {
-  const textAtts = attachments.filter((a) => a.type === 'text')
-  if (textAtts.length === 0) return question
-  const sections = textAtts
-    .map((a) => `### ${a.name}\n\`\`\`\n${a.data.substring(0, 50000)}\n\`\`\``)
-    .join('\n\n')
-  return `${question}\n\n## Attached Files\n${sections}`
-}
+// Re-exported from chat-runner for backwards compatibility with the still-
+// present legacy paths (contact-chat.ts, company-chat.ts, crm-chat.ts).
+// When those files are deleted in Step 9, this re-export goes with chat.ts.
+export { injectTextAttachments } from './chat-runner'
 
 const MEETING_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about a meeting transcript.
 You have access to the full transcript, any user notes, and the AI-generated summary (if available).
@@ -84,22 +90,14 @@ export async function queryMeeting(meetingId: string, question: string, attachme
     throw new Error('No transcript available for this meeting')
   }
 
-  const enhancedQuestion = injectTextAttachments(question, attachments)
-  const imageAtts = attachments.filter((a) => a.type === 'image')
-
-  const userPrompt = `Here is the meeting information:
-
-${context}
-
----
-
-User question: ${enhancedQuestion}`
-
-  const provider = getProvider('chat')
-  chatAbortController = new AbortController()
-  const result = await provider.generateSummary(MEETING_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
-  chatAbortController = null
-  return result
+  return runChatTurn({
+    systemPrompt: MEETING_SYSTEM_PROMPT,
+    context,
+    question,
+    attachments,
+    userPromptPrefix: 'Here is the meeting information:',
+    questionLabel: 'User question',
+  })
 }
 
 // buildMeetingContext runs the 4-strategy meeting search and assembles a markdown context
