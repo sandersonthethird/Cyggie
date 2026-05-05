@@ -301,4 +301,46 @@ describe('useNotesAutoSave', () => {
     expect(api.invoke).toHaveBeenCalledTimes(1)
     expect(api.invoke).toHaveBeenCalledWith(IPC_CHANNELS.MEETING_SAVE_SUMMARY, 'meeting-1', 'final')
   })
+
+  it('handleSummaryChangeText("") does not overwrite a previously-persisted non-empty summary', async () => {
+    vi.mocked(api.invoke).mockResolvedValue(undefined)
+    const { result } = renderHook(() => useNotesAutoSave('meeting-1'))
+
+    // Seed savedSummaryRef via reset() — mimics MEETING_GET loading existing content.
+    act(() => {
+      result.current.reset(null, 'persisted summary content')
+    })
+
+    // A spurious empty change (e.g. from setEditable firing onUpdate before content loads).
+    act(() => {
+      result.current.handleSummaryChangeText('')
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    expect(api.invoke).not.toHaveBeenCalledWith(
+      IPC_CHANNELS.MEETING_SAVE_SUMMARY,
+      'meeting-1',
+      ''
+    )
+  })
+
+  it('handleSummaryChangeText("") still saves when the prior summary was also empty', async () => {
+    vi.mocked(api.invoke).mockResolvedValue(undefined)
+    const { result } = renderHook(() => useNotesAutoSave('meeting-1'))
+
+    act(() => {
+      result.current.reset(null, '')
+    })
+    act(() => {
+      result.current.handleSummaryChangeText('')
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    // Saving empty over empty is fine — no edits to clobber.
+    expect(api.invoke).toHaveBeenCalledWith(IPC_CHANNELS.MEETING_SAVE_SUMMARY, 'meeting-1', '')
+  })
 })

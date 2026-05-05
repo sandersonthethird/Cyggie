@@ -79,9 +79,13 @@ export function useTiptapMarkdown(
 
   // Reactively toggle editable when options.editable changes —
   // avoids recreating the editor just to change read/write mode.
+  // Pass emitUpdate=false: TipTap's setEditable defaults to firing a synthetic
+  // `update` event that bypasses ProseMirror's docChanged check, which would
+  // otherwise call onUpdate with the empty initial doc on first mount and
+  // trigger an empty auto-save.
   useEffect(() => {
     if (!editor) return
-    editor.setEditable(options.editable ?? true)
+    editor.setEditable(options.editable ?? true, false)
   }, [editor, options.editable])
 
   // When the editor first mounts, set any content that was queued via loadContent

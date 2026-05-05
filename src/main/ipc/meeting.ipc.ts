@@ -79,8 +79,11 @@ export function registerMeetingHandlers(): void {
       `)
       .all(id) as { id: string; name: string }[]
 
-    // Recover summary from companion notes if the summary file is missing.
-    if (!summary && meeting.status === 'summarized') {
+    // Recover summary from companion notes only when the summary file is genuinely
+    // missing (readSummary returns null). An empty file means the user has
+    // emptied the summary; restoring stale companion-note content would silently
+    // overwrite that intent and any prior edits.
+    if (summary === null && meeting.status === 'summarized') {
       summary = recoverSummaryFromCompanionNote(meeting)
     }
 
