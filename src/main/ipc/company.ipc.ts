@@ -259,6 +259,7 @@ async function listLocalCompanyFiles(
 
     // Case-insensitive check for macOS/Windows filesystem compatibility
     if (!resolved.toLowerCase().startsWith(companyResolved.toLowerCase())) {
+      console.warn(`[chat-files] reject browsePath path=${browsePath} reason=outside-root companyRoot=${companyFolder}`)
       return { companyRoot: companyFolder, files: [] }
     }
 
@@ -455,7 +456,7 @@ export function registerCompanyHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_MERGE,
-    (_event, targetCompanyId: string, sourceCompanyId: string) => {
+    (_event, targetCompanyId: string, sourceCompanyId: string, fieldOverrides?: Record<string, unknown>) => {
       if (!targetCompanyId?.trim() || !sourceCompanyId?.trim()) {
         throw new Error('Both targetCompanyId and sourceCompanyId are required')
       }
@@ -470,7 +471,7 @@ export function registerCompanyHandlers(): void {
         .prepare('SELECT canonical_name FROM org_companies WHERE id = ? LIMIT 1')
         .get(targetCompanyId) as { canonical_name: string } | undefined
 
-      const result = companyRepo.mergeCompanies(targetCompanyId, sourceCompanyId)
+      const result = companyRepo.mergeCompanies(targetCompanyId, sourceCompanyId, fieldOverrides)
 
       // Clean up stale search sources so the old name no longer appears in results
       if (sourceRow && targetRow) {
@@ -492,12 +493,23 @@ export function registerCompanyHandlers(): void {
 
       logAudit(userId, 'company', targetCompanyId, 'update', {
         mergedFrom: sourceCompanyId,
-        relinked: result.relinked
+        relinked: result.relinked,
+        fieldOverrideKeys: fieldOverrides ? Object.keys(fieldOverrides) : []
       })
       logAudit(userId, 'company', sourceCompanyId, 'delete', {
         mergedInto: targetCompanyId
       })
       return result
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_MERGE_PREVIEW,
+    (_event, targetCompanyId: string, sourceCompanyId: string) => {
+      if (!targetCompanyId?.trim() || !sourceCompanyId?.trim()) {
+        throw new Error('Both targetCompanyId and sourceCompanyId are required')
+      }
+      return companyRepo.getCompanyMergePreview(targetCompanyId, sourceCompanyId)
     }
   )
 

@@ -1,6 +1,8 @@
 import { useRef, useCallback, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { Meeting } from '../../../shared/types/meeting'
+import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import { api } from '../../api'
 import { FeedTopBar } from './FeedTopBar'
 import { DayGroup } from './DayGroup'
 import { MeetingsCalendar } from './MeetingsCalendar'
@@ -19,10 +21,31 @@ export function MeetingsFeed({ groupedMeetings, filtered }: MeetingsFeedProps) {
   const searchQuery = searchParams.get('q') ?? ''
   const activeView = searchParams.get('view') === 'calendar' ? 'calendar' : 'timeline'
 
-  const handleSelect = useCallback((id: string) => {
-    if (id.startsWith('cal-')) return
+  const handleSelect = useCallback(async (id: string) => {
+    if (id.startsWith('cal-')) {
+      // Synthetic row from a calendar event with no meeting record yet.
+      // Materialize via MEETING_PREPARE so we have a real id to route to.
+      const m = filtered.find(x => x.id === id)
+      if (!m || !m.calendarEventId) return
+      try {
+        const meeting = await api.invoke<Meeting>(
+          IPC_CHANNELS.MEETING_PREPARE,
+          m.calendarEventId,
+          m.title,
+          m.date,
+          m.meetingPlatform || undefined,
+          m.meetingUrl || undefined,
+          m.attendees || undefined,
+          m.attendeeEmails || undefined,
+        )
+        navigate(`/meeting/${meeting.id}`)
+      } catch (err) {
+        console.error('Failed to open calendar meeting:', err)
+      }
+      return
+    }
     navigate(`/meeting/${id}`)
-  }, [navigate])
+  }, [navigate, filtered])
 
   // Keyboard navigation (timeline view only)
   const flatIds = filtered.map(m => m.id)
@@ -49,7 +72,7 @@ export function MeetingsFeed({ groupedMeetings, filtered }: MeetingsFeedProps) {
     }
 
     if (e.key === 'Enter' && selectedId) {
-      handleSelect(selectedId)
+      void handleSelect(selectedId)
     }
   }, [selectedId, flatIds, handleSelect, activeView])
 

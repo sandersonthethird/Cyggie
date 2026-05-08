@@ -20,9 +20,20 @@ export function normalizeEmail(value: string): string | null {
   return cleaned
 }
 
-export function normalizeDomain(value: string): string | null {
-  const cleaned = value.trim().toLowerCase().replace(/^www\./, '')
+export function normalizeDomain(value: string | null | undefined): string | null {
+  if (!value) return null
+  const trimmed = value.trim().toLowerCase()
+  if (!trimmed) return null
+  // Accept either a hostname or a full URL — strip protocol + path so callers
+  // can pass either shape (e.g. "https://www.foo.com/about" or "www.foo.com").
+  const noProto = trimmed.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+  if (!noProto) return null
+  const cleaned = noProto.replace(/^www\./, '')
   if (!cleaned) return null
+  // A real domain has at least one dot. Reject bare tokens like "www" / "abc"
+  // that slip through when a user types a partial URL and the field saves on blur —
+  // otherwise these end up stored as primary_domain and resist later overwrites.
+  if (!cleaned.includes('.')) return null
   return cleaned
 }
 

@@ -85,6 +85,12 @@ vi.mock('../main/database/repositories/contact.repo', () => ({
 
 vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
   getFlaggedFileIds: (...args: unknown[]) => mockGetFlaggedFileIds(args[0]),
+  getFlaggedFiles: (...args: unknown[]) =>
+    (mockGetFlaggedFileIds(args[0]) as string[]).map((id) => ({
+      fileId: id,
+      fileName: id.split('/').pop() ?? id,
+      mimeType: null,
+    })),
 }))
 
 vi.mock('../main/database/repositories/notes-base', () => ({

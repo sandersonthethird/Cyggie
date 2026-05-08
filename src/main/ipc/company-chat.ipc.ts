@@ -28,14 +28,18 @@ export function registerCompanyChatHandlers(): void {
     IPC_CHANNELS.COMPANY_FILE_FLAG_TOGGLE,
     (
       _event,
-      data: { companyId: string; fileId: string; fileName: string }
+      data: { companyId: string; fileId: string; fileName: string; mimeType?: string }
     ):
       | { ok: true; flagged: boolean }
-      | { ok: false; code: 'MISSING' | 'UNSUPPORTED_FORMAT' | 'TOO_LARGE'; message: string } => {
+      | {
+          ok: false
+          code: 'MISSING' | 'UNSUPPORTED_FORMAT' | 'TOO_LARGE' | 'DRIVE_SCOPE_INSUFFICIENT'
+          message: string
+        } => {
       if (!data?.companyId || !data?.fileId) throw new Error('companyId and fileId are required')
       const alreadyFlagged = getFlaggedFileIds(data.companyId).includes(data.fileId)
       if (!alreadyFlagged) {
-        const validation = validateFileForChatContext(data.fileId)
+        const validation = validateFileForChatContext(data.fileId, data.mimeType)
         if (!validation.ok) {
           console.warn(
             `[chat-flag] reject companyId=${data.companyId} fileId=${data.fileId} code=${validation.code}`
@@ -43,7 +47,7 @@ export function registerCompanyChatHandlers(): void {
           return { ok: false, code: validation.code, message: validation.message }
         }
       }
-      const flagged = toggleFileFlag(data.companyId, data.fileId, data.fileName)
+      const flagged = toggleFileFlag(data.companyId, data.fileId, data.fileName, data.mimeType)
       return { ok: true, flagged }
     }
   )

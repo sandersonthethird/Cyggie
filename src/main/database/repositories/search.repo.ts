@@ -1,6 +1,7 @@
 import { getDatabase } from '../connection'
 import { extractCompanyFromEmail, extractDomainFromEmail } from '../../utils/company-extractor'
 import * as companyRepo from './company.repo'
+import * as orgCompanyRepo from './org-company.repo'
 import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult, CategorizedSuggestions, CompanySuggestion, ContentMatchPreview } from '../../../shared/types/meeting'
 import type {
   UnifiedSearchResponse,
@@ -640,8 +641,15 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
               if (nameParts.some((part) => part.length >= 2 && localPart.includes(part))) {
                 const domain = extractDomainFromEmail(email)
                 if (domain && !companyMap.has(domain)) {
-                  const cached = companyRepo.getByDomain(domain)
-                  const displayName = cached?.displayName || extractCompanyFromEmail(email) || domain
+                  // Authoritative org_companies lookup first (alias-aware), then
+                  // legacy cache. We deliberately do NOT fall back to
+                  // extractCompanyFromEmail here — that regex regenerates a
+                  // company name from the domain label, which would resurrect
+                  // names of explicitly-deleted companies whose attendee emails
+                  // still live in meetings.
+                  const displayName = orgCompanyRepo.getCompanyCanonicalNameByDomain(domain)
+                    || companyRepo.getByDomain(domain)?.displayName
+                  if (!displayName) continue
                   companyMap.set(domain, displayName)
                   foundViaEmail = true
                 }
@@ -663,8 +671,12 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
                 if (nameParts.some((part) => part.length >= 2 && localPart.includes(part))) {
                   const domain = extractDomainFromEmail(entry)
                   if (domain && !companyMap.has(domain)) {
-                    const cached = companyRepo.getByDomain(domain)
-                    const displayName = cached?.displayName || extractCompanyFromEmail(entry) || domain
+                    // See note on the matching block above — same precedence,
+                    // no extractCompanyFromEmail fallback so deleted company
+                    // names can't be resurrected from email metadata.
+                    const displayName = orgCompanyRepo.getCompanyCanonicalNameByDomain(domain)
+                      || companyRepo.getByDomain(domain)?.displayName
+                    if (!displayName) continue
                     companyMap.set(domain, displayName)
                     foundViaEmail = true
                   }
@@ -675,26 +687,17 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
         } catch { /* skip */ }
       }
 
-      // Fallback: include companies from the meeting's companies column (without domain)
-      if (!foundViaEmail && row.companies) {
-        try {
-          const comps: string[] = JSON.parse(row.companies)
-          for (const c of comps) {
-            if (!companyMap.has(c)) companyMap.set(c, c)
-          }
-        } catch { /* skip */ }
-      }
     }
   }
 
-  // 2. Companies: org_companies is the source of truth, supplemented by
-  //    the companies cache table and meetings.companies column.
-  //    Deduplicate by tracking seen canonical names (lowercased) so that
-  //    cache/meeting entries don't create duplicates of existing org companies.
-  // No per-source LIMIT — the final .slice(0, limit) below caps output.
-  const seenCompanyNames = new Set<string>()
-
-  // 2a. org_companies first (authoritative — has domain for logo)
+  // 2. Companies: surface ONLY rows that exist in org_companies (the source
+  //    of truth). The legacy `companies` cache and the `meetings.companies`
+  //    JSON column used to be fallback sources here, but they could resurrect
+  //    deleted-company names whenever new calendar ingest re-derived them
+  //    via website parse / LLM / domain heuristic. The dropdown is for
+  //    surfacing *known* companies — pre-creation guesses (names you've heard
+  //    of but haven't formally created) belong to the search results page,
+  //    not the inline dropdown.
   const orgCompanyRows = db
     .prepare('SELECT id, canonical_name, primary_domain FROM org_companies WHERE canonical_name LIKE ?')
     .all(`%${prefix}%`) as { id: string; canonical_name: string; primary_domain: string | null }[]
@@ -704,42 +707,9 @@ export function getCategorizedSuggestions(prefix: string, limit = 5): Categorize
     if (!companyMap.has(key)) {
       companyMap.set(key, row.canonical_name)
     }
-    seenCompanyNames.add(row.canonical_name.toLowerCase())
   }
 
-  // 2b. companies cache table — skip entries whose name matches an org_company
-  const cachedCompanyRows = db
-    .prepare('SELECT domain, display_name FROM companies WHERE display_name LIKE ?')
-    .all(`%${prefix}%`) as { domain: string; display_name: string }[]
-
-  for (const row of cachedCompanyRows) {
-    if (seenCompanyNames.has(row.display_name.toLowerCase())) continue
-    if (!companyMap.has(row.domain)) {
-      companyMap.set(row.domain, row.display_name)
-      seenCompanyNames.add(row.display_name.toLowerCase())
-    }
-  }
-
-  // 2c. meetings.companies column — skip entries whose name matches an existing result
-  const meetingCompanyRows = db
-    .prepare('SELECT companies FROM meetings WHERE companies IS NOT NULL AND companies LIKE ?')
-    .all(`%${prefix}%`) as { companies: string }[]
-
-  for (const row of meetingCompanyRows) {
-    try {
-      const comps: string[] = JSON.parse(row.companies)
-      for (const c of comps) {
-        if (c.toLowerCase().includes(lower) && !seenCompanyNames.has(c.toLowerCase())) {
-          if (!companyMap.has(c)) {
-            companyMap.set(c, c)
-            seenCompanyNames.add(c.toLowerCase())
-          }
-        }
-      }
-    } catch { /* skip */ }
-  }
-
-  // 2b. Affiliated people: surface people from matched company domains
+  // 3. Affiliated people: surface people from matched company domains
   const matchedDomains = [...companyMap.keys()].filter((k) => k.includes('.'))
   if (matchedDomains.length > 0) {
     const domainConditions = matchedDomains.map(() => 'attendee_emails LIKE ?')
@@ -1172,7 +1142,8 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
           snippet(meetings_fts, 2, '<mark>', '</mark>', '...', 24) AS snippet,
           bm25(meetings_fts) AS bm_rank,
           c.id AS company_id,
-          c.canonical_name AS company_name
+          c.canonical_name AS company_name,
+          c.primary_domain AS company_domain
         FROM meetings_fts
         JOIN meetings m ON m.id = meetings_fts.meeting_id
         LEFT JOIN org_companies c ON c.id = (
@@ -1194,6 +1165,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
       bm_rank: number
       company_id: string | null
       company_name: string | null
+      company_domain: string | null
     }>
 
     meetingRows.forEach((row) => {
@@ -1208,6 +1180,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
         rank,
         companyId: row.company_id,
         companyName: row.company_name,
+        companyDomain: row.company_domain,
         route: `/meeting/${row.id}`,
         citationLabel: `Meeting: ${row.title} (${formatCitationDate(row.date)})`
       })
@@ -1224,7 +1197,8 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
         COALESCE(em.received_at, em.sent_at, em.created_at) AS occurred_at,
         COALESCE(em.snippet, '') AS snippet,
         c.id AS company_id,
-        c.canonical_name AS company_name
+        c.canonical_name AS company_name,
+        c.primary_domain AS company_domain
       FROM email_messages em
       LEFT JOIN org_companies c ON c.id = (
         SELECT l.company_id
@@ -1247,6 +1221,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
     snippet: string
     company_id: string | null
     company_name: string | null
+    company_domain: string | null
   }>
   emailRows.forEach((row) => {
     const rank = 900 + recencyBoost(row.occurred_at)
@@ -1260,6 +1235,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
       rank,
       companyId: row.company_id,
       companyName: row.company_name,
+      companyDomain: row.company_domain,
       route: row.company_id
         ? `/company/${row.company_id}?tab=timeline&filter=emails&focus=${row.id}`
         : '/companies',
@@ -1273,6 +1249,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
         n.id,
         n.company_id,
         c.canonical_name AS company_name,
+        c.primary_domain AS company_domain,
         COALESCE(NULLIF(TRIM(n.title), ''), 'Note') AS title,
         substr(replace(replace(trim(n.content), char(10), ' '), char(13), ' '), 1, 320) AS snippet,
         n.updated_at AS occurred_at
@@ -1289,6 +1266,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
     id: string
     company_id: string | null
     company_name: string | null
+    company_domain: string | null
     title: string
     snippet: string
     occurred_at: string
@@ -1305,6 +1283,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
       rank,
       companyId: row.company_id,
       companyName: row.company_name,
+      companyDomain: row.company_domain,
       route: row.company_id
         ? `/company/${row.company_id}?tab=timeline&filter=notes&focus=${row.id}`
         : '/companies',
@@ -1319,6 +1298,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
         im.id AS memo_id,
         im.company_id,
         c.canonical_name AS company_name,
+        c.primary_domain AS company_domain,
         im.title,
         substr(replace(replace(trim(imv.content_markdown), char(10), ' '), char(13), ' '), 1, 320) AS snippet,
         imv.created_at AS occurred_at
@@ -1335,6 +1315,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
     memo_id: string
     company_id: string | null
     company_name: string | null
+    company_domain: string | null
     title: string
     snippet: string
     occurred_at: string
@@ -1351,6 +1332,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
       rank,
       companyId: row.company_id,
       companyName: row.company_name,
+      companyDomain: row.company_domain,
       route: row.company_id ? `/company/${row.company_id}?tab=memo` : '/companies',
       citationLabel: `Memo: ${row.title} (${formatCitationDate(row.occurred_at)})`
     })
@@ -1397,6 +1379,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
       rank,
       companyId: row.id,
       companyName: row.canonical_name,
+      companyDomain: row.primary_domain,
       route: `/company/${row.id}`,
       citationLabel: `Company: ${row.canonical_name}`
     })
@@ -1411,6 +1394,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
         c.title AS job_title,
         oc.id AS company_id,
         oc.canonical_name AS company_name,
+        oc.primary_domain AS company_domain,
         substr(replace(replace(trim(COALESCE(c.linkedin_headline, c.notes, c.key_takeaways, '')), char(10), ' '), char(13), ' '), 1, 320) AS snippet,
         c.updated_at AS occurred_at
       FROM contacts c
@@ -1435,6 +1419,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
     job_title: string | null
     company_id: string | null
     company_name: string | null
+    company_domain: string | null
     snippet: string
     occurred_at: string
   }>
@@ -1452,6 +1437,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
       rank,
       companyId: row.company_id,
       companyName: row.company_name,
+      companyDomain: row.company_domain,
       route: `/contact/${row.id}`,
       citationLabel: `Contact: ${row.full_name}${row.company_name ? ` (${row.company_name})` : ''}`
     })

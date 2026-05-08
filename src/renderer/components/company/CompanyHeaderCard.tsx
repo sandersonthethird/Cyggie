@@ -14,6 +14,17 @@ const CHIP_LABELS: Record<string, string> = {
   round: 'Last Round',
 }
 
+// Stored twitterHandle may be a bare handle, "@handle", or a full twitter.com / x.com URL.
+// Normalize to a clean canonical https://x.com/<handle> URL.
+function buildXUrl(twitterHandle: string): string {
+  const cleaned = twitterHandle
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/^(www\.|mobile\.)?(twitter\.com|x\.com)\/+/i, '')
+    .replace(/^[@/]+/, '')
+  return `https://x.com/${cleaned}`
+}
+
 function HealthBadge({ lastTouchpoint }: { lastTouchpoint: string | null }) {
   const days = (() => {
     if (!lastTouchpoint) return null
@@ -320,10 +331,17 @@ export function CompanyHeaderCard({
       </div>{/* end headerTopRow */}
 
       {/* Description */}
-      {showDescription && (
-        isEditing ? (
-          <PropertyRow label="Description" value={company.description} type="textarea" editMode={true} onSave={onSaveDescription} />
-        ) : (
+      {isEditing ? (
+        <PropertyRow
+          label="Description"
+          value={company.description}
+          type="textarea"
+          editMode={true}
+          onSave={onSaveDescription}
+          placeholder="Add a description…"
+        />
+      ) : (
+        showDescription && (
           <div className={styles.descriptionWrapper}>
             <div className={styles.propertyWithBadge}>
               <p
@@ -358,7 +376,7 @@ export function CompanyHeaderCard({
               </button>
             )}
             {company.twitterHandle && (
-              <button className={styles.socialIcon} title={`@${company.twitterHandle}`} onClick={() => openExternal(`https://twitter.com/${company.twitterHandle}`)}>
+              <button className={styles.socialIcon} title={`@${company.twitterHandle}`} onClick={() => openExternal(buildXUrl(company.twitterHandle!))}>
                 <AtSign size={16} />
               </button>
             )}

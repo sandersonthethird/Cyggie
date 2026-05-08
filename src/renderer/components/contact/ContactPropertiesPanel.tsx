@@ -28,6 +28,7 @@ import { usePinnedMigration } from '../../hooks/usePinnedMigration'
 import { ContactAvatar } from '../crm/ContactAvatar'
 import { saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
 import { CONTACT_HARDCODED_FIELDS } from '../../constants/contactFields'
+import { Mail } from 'lucide-react'
 import {
   CONTACT_TYPES,
   CONTACT_COLUMN_DEFS,
@@ -1520,9 +1521,10 @@ export function ContactPropertiesPanel({
               <div className={styles.headerActionRow}>
                 {(contact.emails[0] || contact.email) && (
                   <button
-                    className={styles.emailActionBtn}
+                    className={styles.headerIconBtn}
+                    data-tooltip="Email"
                     onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, `mailto:${contact.emails[0] || contact.email}`)}
-                  >Email</button>
+                  ><Mail size={14} /></button>
                 )}
               </div>
             </>

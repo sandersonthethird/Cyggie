@@ -38,10 +38,13 @@ import type {
   CompanyDedupAction,
   CompanyDedupApplyResult,
   CompanyDedupDecision,
-  CompanyDuplicateGroup
+  CompanyDuplicateGroup,
+  CompanyMergePreview
 } from '../../shared/types/company'
 import styles from './Companies.module.css'
 import { api } from '../api'
+import { MergeReviewModal } from '../components/company/MergeReviewModal'
+import { resolveDedupKeep } from '../utils/dedupKeep'
 
 // ─── Smart filter presets ────────────────────────────────────────────────────
 
@@ -233,6 +236,13 @@ export default function Companies() {
   const [dedupActionsByGroup, setDedupActionsByGroup] = useState<Record<string, CompanyDedupAction>>({})
   const [dedupKeepByGroup, setDedupKeepByGroup] = useState<Record<string, string>>({})
   const [dedupSelectedByGroup, setDedupSelectedByGroup] = useState<Record<string, string[]>>({})
+  // Per-group conflict count: total scalar-field conflicts across all
+  // keeper-vs-source pairs in a group with action='merge'. Updated by an
+  // effect below. -1 = not yet computed (or stale); 0 = safe to bulk-apply;
+  // >0 = group needs per-pair Review before merging.
+  const [dedupConflictsByGroup, setDedupConflictsByGroup] = useState<Record<string, number>>({})
+  // The keeper/source pair currently being reviewed, if any.
+  const [reviewMergePair, setReviewMergePair] = useState<{ groupKey: string; targetId: string; sourceId: string } | null>(null)
   const [dedupResult, setDedupResult] = useState<CompanyDedupApplyResult | null>(null)
 
   // ── Column / range / text filters — URL-driven via shared hook ──────────────
@@ -426,7 +436,19 @@ export default function Companies() {
         const action = dedupActionsByGroup[group.key] || 'skip'
         if (action === 'skip') return false
         const validIds = new Set(group.companies.map((c) => c.id))
-        return ((dedupSelectedByGroup[group.key] || []).filter((id) => validIds.has(id))).length >= 2
+        const ready = ((dedupSelectedByGroup[group.key] || []).filter((id) => validIds.has(id))).length >= 2
+        if (!ready) return false
+        // Merge groups with field conflicts must be reviewed individually —
+        // they don't count toward the bulk-apply tally.
+        if (action === 'merge' && (dedupConflictsByGroup[group.key] || 0) > 0) return false
+        return true
+      }).length
+    : 0
+
+  const dedupNeedReviewGroups = dedupGroups
+    ? dedupGroups.filter((group) => {
+        const action = dedupActionsByGroup[group.key] || 'skip'
+        return action === 'merge' && (dedupConflictsByGroup[group.key] || 0) > 0
       }).length
     : 0
 
@@ -539,15 +561,18 @@ export default function Companies() {
     setApplyingDedup(true)
     setError(null)
     try {
+      // Bulk apply only handles groups with no field conflicts. Groups with
+      // conflicts must go through MergeReviewModal via per-row Review.
       const decisions: CompanyDedupDecision[] = dedupGroups.map((group) => {
         const validCompanyIds = new Set(group.companies.map((c) => c.id))
         const selectedCompanyIds = (dedupSelectedByGroup[group.key] || [])
           .filter((id) => validCompanyIds.has(id))
-        const action = dedupActionsByGroup[group.key] || 'skip'
-        const keepPreference = dedupKeepByGroup[group.key] || group.suggestedKeepCompanyId
-        const keepCompanyId = selectedCompanyIds.includes(keepPreference)
-          ? keepPreference
-          : (selectedCompanyIds[0] || group.suggestedKeepCompanyId)
+        const rawAction = dedupActionsByGroup[group.key] || 'skip'
+        // Demote merge groups that have conflicts to 'skip' for the bulk apply.
+        const action = (rawAction === 'merge' && (dedupConflictsByGroup[group.key] || 0) > 0)
+          ? 'skip' as const
+          : rawAction
+        const keepCompanyId = resolveDedupKeep(group, selectedCompanyIds, dedupKeepByGroup[group.key])
         const companyIds = selectedCompanyIds.includes(keepCompanyId)
           ? selectedCompanyIds
           : [keepCompanyId, ...selectedCompanyIds]
@@ -570,7 +595,48 @@ export default function Companies() {
     } finally {
       setApplyingDedup(false)
     }
-  }, [dedupActionsByGroup, dedupGroups, dedupKeepByGroup, dedupSelectedByGroup, fetchCompanies])
+  }, [dedupActionsByGroup, dedupGroups, dedupKeepByGroup, dedupSelectedByGroup, dedupConflictsByGroup, fetchCompanies])
+
+  // ── Conflict preview computation ──────────────────────────────────────────
+  // For every group with action='merge', sum the scalar-field conflicts across
+  // every keeper-vs-source pair. Groups with conflicts > 0 are gated behind a
+  // per-row Review button instead of bulk apply.
+  useEffect(() => {
+    if (!dedupGroups) {
+      setDedupConflictsByGroup({})
+      return
+    }
+    let cancelled = false
+    const compute = async () => {
+      const next: Record<string, number> = {}
+      for (const group of dedupGroups) {
+        const action = dedupActionsByGroup[group.key] || 'skip'
+        if (action !== 'merge') continue
+        const validIds = new Set(group.companies.map((c) => c.id))
+        const selected = (dedupSelectedByGroup[group.key] || []).filter((id) => validIds.has(id))
+        if (selected.length < 2) continue
+        const keep = resolveDedupKeep(group, selected, dedupKeepByGroup[group.key])
+        const sources = selected.filter((id) => id !== keep)
+        let total = 0
+        for (const sourceId of sources) {
+          try {
+            const preview = await api.invoke<CompanyMergePreview>(
+              IPC_CHANNELS.COMPANY_MERGE_PREVIEW, keep, sourceId
+            )
+            total += preview.conflicts.length
+          } catch {
+            // Treat missing previews as needs-review so we don't bulk-apply
+            // a merge whose state we couldn't read.
+            total += 1
+          }
+        }
+        next[group.key] = total
+      }
+      if (!cancelled) setDedupConflictsByGroup(next)
+    }
+    void compute()
+    return () => { cancelled = true }
+  }, [dedupGroups, dedupActionsByGroup, dedupKeepByGroup, dedupSelectedByGroup])
 
   // ── Create modal callbacks ─────────────────────────────────────────────────
   const handleCompanyCreated = useCallback(async (company: CompanySummary) => {
@@ -592,12 +658,23 @@ export default function Companies() {
   return (
     <div className={styles.container}>
       {dedupResult && (
-        <span className={styles.statusBanner}>
-          De-dup reviewed: {dedupResult.reviewedGroups} groups, merged: {dedupResult.mergedGroups}{' '}
-          ({dedupResult.mergedCompanies} companies), deleted: {dedupResult.deletedGroups}{' '}
-          ({dedupResult.deletedCompanies} companies), skipped: {dedupResult.skippedGroups}
-          {dedupResult.failures.length > 0 ? `, failures: ${dedupResult.failures.length}` : ''}
-        </span>
+        <div className={styles.statusBanner}>
+          <div>
+            De-dup reviewed: {dedupResult.reviewedGroups} groups, merged: {dedupResult.mergedGroups}{' '}
+            ({dedupResult.mergedCompanies} companies), deleted: {dedupResult.deletedGroups}{' '}
+            ({dedupResult.deletedCompanies} companies), skipped: {dedupResult.skippedGroups}
+            {dedupResult.failures.length > 0 ? `, failures: ${dedupResult.failures.length}` : ''}
+          </div>
+          {dedupResult.failures.length > 0 && (
+            <ul className={styles.dedupFailureList}>
+              {dedupResult.failures.map((f, i) => (
+                <li key={`${f.groupKey}-${i}`}>
+                  <strong>{f.groupKey}</strong> ({f.action}): {f.reason}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
       {/* Saved views bar + 3-dot menu */}
       <div className={styles.header}>
@@ -820,10 +897,7 @@ export default function Companies() {
                     const validCompanyIds = new Set(group.companies.map((c) => c.id))
                     const selectedCompanyIds = (dedupSelectedByGroup[group.key] || [])
                       .filter((id) => validCompanyIds.has(id))
-                    const keepPreference = dedupKeepByGroup[group.key] || group.suggestedKeepCompanyId
-                    const selectedKeep = selectedCompanyIds.includes(keepPreference)
-                      ? keepPreference
-                      : (selectedCompanyIds[0] || group.suggestedKeepCompanyId)
+                    const selectedKeep = resolveDedupKeep(group, selectedCompanyIds, dedupKeepByGroup[group.key])
                     const keepOptions = group.companies.filter((c) =>
                       selectedCompanyIds.includes(c.id)
                     )
@@ -877,6 +951,12 @@ export default function Companies() {
                                     formatDateTime(company.updatedAt)
                                   ].filter(Boolean).join(' · ')}
                                 </span>
+                                <span className={styles.dedupContactRichness}>
+                                  {company.populatedFieldCount} fields
+                                  {' · '}{company.meetingCount} meetings
+                                  {' · '}{company.emailCount} emails
+                                  {' · '}{company.noteCount} notes
+                                </span>
                               </div>
                             ))}
                           </div>
@@ -911,6 +991,20 @@ export default function Companies() {
                               </option>
                             ))}
                           </select>
+                          {selectedAction === 'merge' && (dedupConflictsByGroup[group.key] || 0) > 0 && (() => {
+                            const firstSource = selectedCompanyIds.find((id) => id !== selectedKeep)
+                            if (!firstSource) return null
+                            return (
+                              <button
+                                type="button"
+                                className={styles.dedupReviewButton}
+                                onClick={() => setReviewMergePair({ groupKey: group.key, targetId: selectedKeep, sourceId: firstSource })}
+                                disabled={applyingDedup}
+                              >
+                                Review ({dedupConflictsByGroup[group.key]} conflict{dedupConflictsByGroup[group.key] === 1 ? '' : 's'})
+                              </button>
+                            )
+                          })()}
                         </td>
                       </tr>
                     )
@@ -921,6 +1015,7 @@ export default function Companies() {
             <div className={styles.dedupFooter}>
               <span className={styles.dedupSummary}>
                 {dedupActionableGroups} group{dedupActionableGroups === 1 ? '' : 's'} ready
+                {dedupNeedReviewGroups > 0 ? ` · ${dedupNeedReviewGroups} need${dedupNeedReviewGroups === 1 ? 's' : ''} review` : ''}
                 {dedupIncompleteGroups > 0 ? ` · ${dedupIncompleteGroups} incomplete` : ''}
               </span>
               <div className={styles.dedupActions}>
@@ -937,14 +1032,33 @@ export default function Companies() {
                   onClick={() => void applyDedupActions()}
                   type="button"
                   disabled={applyingDedup || dedupActionableGroups === 0 || dedupIncompleteGroups > 0}
+                  title={dedupNeedReviewGroups > 0 ? 'Conflict-free groups will be applied; review-required groups will remain.' : undefined}
                 >
-                  {applyingDedup ? 'Applying...' : 'Apply Actions'}
+                  {applyingDedup
+                    ? 'Applying...'
+                    : `Apply ${dedupActionableGroups} Action${dedupActionableGroups === 1 ? '' : 's'}`}
                 </button>
               </div>
             </div>
           </div>
         </div>,
         document.body
+      )}
+
+      {reviewMergePair && (
+        <MergeReviewModal
+          open={true}
+          targetId={reviewMergePair.targetId}
+          sourceId={reviewMergePair.sourceId}
+          onCancel={() => setReviewMergePair(null)}
+          onSuccess={async () => {
+            setReviewMergePair(null)
+            // Refresh both the company list and the dedup groups so the
+            // merged-away source disappears and conflict counts update.
+            await fetchCompanies()
+            await reviewDuplicates(true)
+          }}
+        />
       )}
 
     </div>

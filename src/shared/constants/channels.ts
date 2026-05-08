@@ -53,6 +53,7 @@ export const IPC_CHANNELS = {
   COMPANY_CREATE: 'company:create',
   COMPANY_UPDATE: 'company:update',
   COMPANY_MERGE: 'company:merge',
+  COMPANY_MERGE_PREVIEW: 'company:merge-preview',
   COMPANY_DEDUP_SUSPECTED: 'company:dedup-suspected',
   COMPANY_DEDUP_APPLY: 'company:dedup-apply',
   COMPANY_DELETE: 'company:delete',

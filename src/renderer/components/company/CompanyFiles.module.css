@@ -50,14 +50,86 @@
 .headerRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 4px;
   min-height: 18px;
+  flex-wrap: wrap;
 }
 
 .flaggedCount {
   font-size: 11px;
   color: var(--color-text-tertiary);
+  margin-left: auto;
+}
+
+.backBtn {
+  background: none;
+  border: 1px solid var(--color-border, var(--cv-border, #e5e7eb));
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+  line-height: 1.4;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.backBtn:hover {
+  background: var(--color-bg-secondary);
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.crumbSep {
+  display: inline-flex;
+  align-items: center;
+}
+
+.crumbSlash {
+  color: var(--color-text-tertiary);
+  margin: 0 2px;
+}
+
+.crumb {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-link, var(--cv-crimson, #b91c1c));
+  font-size: 12px;
+  padding: 1px 4px;
+  line-height: 1.4;
+  border-radius: var(--radius-sm, 4px);
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crumb:hover:not(:disabled) {
+  background: var(--color-bg-secondary);
+}
+
+.crumb:disabled {
+  color: var(--color-text);
+  cursor: default;
+  font-weight: 500;
+}
+
+.folderRow {
+  /* visual hint that double-click navigates */
+}
+
+.folderRow .fileName {
+  font-weight: 500;
+}
+
+.folderIcon {
+  margin-right: 2px;
 }
 
 .flagError {
@@ -67,6 +139,43 @@
   border-radius: var(--radius-sm, 4px);
   padding: 6px 10px;
   margin-bottom: 4px;
+}
+
+.reauthBanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--color-text);
+  background: var(--cy-acc-amber-bg, rgba(217, 119, 6, 0.12));
+  border: 1px solid var(--cy-acc-amber, #d97706);
+  border-radius: var(--radius-sm, 4px);
+  padding: 8px 12px;
+  margin-bottom: 6px;
+}
+
+.reauthCopy {
+  flex: 1;
+}
+
+.reauthBtn {
+  background: var(--cv-crimson, #b91c1c);
+  color: white;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm, 4px);
+  white-space: nowrap;
+}
+
+.reauthBtn:hover:not(:disabled) {
+  background: var(--cv-crimson-hover, #991b1b);
+}
+
+.reauthBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .refreshBtn {

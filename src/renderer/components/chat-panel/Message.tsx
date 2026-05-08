@@ -1,11 +1,22 @@
 import { memo, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
+import { injectFindMarks, type FindMatch } from '../../hooks/useFindInPage'
 import styles from './Message.module.css'
 
 const MARKDOWN_PLUGINS = [remarkGfm]
+const REHYPE_PLUGINS = [rehypeRaw]
 
 export type MessageRole = 'user' | 'assistant'
+
+export interface FindHighlight {
+  /** Match offsets relative to this message's `content`. */
+  matches: FindMatch[]
+  /** Index into `matches` of the active match within this message,
+   *  or -1 when the global active match is in some other message. */
+  activeIndex: number
+}
 
 interface MessageProps {
   role: MessageRole
@@ -19,6 +30,33 @@ interface MessageProps {
   large?: boolean
   /** Optional trailing element (e.g., streaming caret indicator). */
   trailing?: ReactNode
+  /** Per-message find slice — when provided, content renders with <mark>
+   *  wrapping every match. Pass undefined for messages with no matches so
+   *  the memoized component doesn't re-render unnecessarily. */
+  findHighlight?: FindHighlight
+}
+
+/**
+ * Build React nodes for plain-text content with matches wrapped in <mark>.
+ * Used for user messages (whitespace: pre-wrap) where injectFindMarks +
+ * dangerouslySetInnerHTML would lose pre-wrap behavior.
+ */
+function plainWithMarks(content: string, hl: FindHighlight): ReactNode {
+  if (hl.matches.length === 0) return content
+  const parts: ReactNode[] = []
+  let cursor = 0
+  for (let i = 0; i < hl.matches.length; i++) {
+    const { start, end } = hl.matches[i]
+    if (start > cursor) parts.push(content.slice(cursor, start))
+    parts.push(
+      <mark key={i} className={i === hl.activeIndex ? 'markActive' : undefined}>
+        {content.slice(start, end)}
+      </mark>,
+    )
+    cursor = end
+  }
+  if (cursor < content.length) parts.push(content.slice(cursor))
+  return parts
 }
 
 /**
@@ -31,8 +69,14 @@ interface MessageProps {
  * `content` per token so the partial-message row should NOT use this component
  * directly — render it inline so it doesn't fight memoization.
  */
-function MessageInner({ role, authorInitials, time, content, plain = false, large = false, trailing }: MessageProps) {
+function MessageInner({ role, authorInitials, time, content, plain = false, large = false, trailing, findHighlight }: MessageProps) {
   const isUser = role === 'user'
+  // Markdown branch: inject <mark> tags into the source string and switch on
+  // rehype-raw so they survive the markdown render. Without find, render as
+  // before (no rehype-raw, plain markdown — keeps the pipeline minimal).
+  const markdownChildren = findHighlight
+    ? injectFindMarks(content, findHighlight.matches, findHighlight.activeIndex)
+    : content
   return (
     <div className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAi} ${large ? styles.rowLarge : ''}`}>
       <div className={`${styles.avatar} ${isUser ? styles.avatarUser : styles.avatarAi}`}>
@@ -42,7 +86,13 @@ function MessageInner({ role, authorInitials, time, content, plain = false, larg
         {time && <div className={styles.meta}>{time}</div>}
         <div className={styles.content}>
           {plain ? (
-            <span style={{ whiteSpace: 'pre-wrap' }}>{content}</span>
+            <span style={{ whiteSpace: 'pre-wrap' }}>
+              {findHighlight ? plainWithMarks(content, findHighlight) : content}
+            </span>
+          ) : findHighlight ? (
+            <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+              {markdownChildren}
+            </ReactMarkdown>
           ) : (
             <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>{content}</ReactMarkdown>
           )}

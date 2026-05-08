@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../connection'
+import { normalizeDomain } from '../../utils/email-parser'
 import type { MeetingRow } from '../schema'
 import type { ChatMessage, Meeting, MeetingCompany, MeetingListFilter, MeetingStatus } from '../../../shared/types/meeting'
 import type { MeetingPlatform } from '../../../shared/constants/meeting-apps'
@@ -59,13 +60,6 @@ function normalizeCompanyName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
-}
-
-function normalizeDomain(value: string | null | undefined): string | null {
-  if (!value) return null
-  const cleaned = value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
-  if (!cleaned) return null
-  return cleaned.replace(/^www\./, '')
 }
 
 function getRegistrableDomain(domain: string): string {
@@ -544,10 +538,27 @@ export function cleanupExpiredScheduledMeetings(): number {
   return result.changes
 }
 
+/**
+ * deleteMeeting — cleanup waterfall.
+ *
+ *   (a) FK CASCADE auto: meeting_company_links, email_attachments,
+ *       meeting_speaker_contact_links, partner_meeting_items (via meeting_id).
+ *   (b) FK SET NULL auto: notes.source_meeting_id.
+ *   (c) Explicit DELETE: meetings_fts (no FK; FTS table indexed on meeting_id).
+ *   (d) No FK / manual cleanup:
+ *       chat_sessions (context_kind='meeting' AND context_id=id) — mig 078.
+ *
+ * Wrapped in a transaction so meetings/FTS/chat_sessions stay atomic.
+ */
 export function deleteMeeting(id: string): boolean {
   const db = getDatabase()
-  const result = db.prepare('DELETE FROM meetings WHERE id = ?').run(id)
-  // Also remove from FTS
-  db.prepare('DELETE FROM meetings_fts WHERE meeting_id = ?').run(id)
-  return result.changes > 0
+  let changes = 0
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM chat_sessions WHERE context_kind = 'meeting' AND context_id = ?`).run(id)
+    db.prepare('DELETE FROM meetings_fts WHERE meeting_id = ?').run(id)
+    const result = db.prepare('DELETE FROM meetings WHERE id = ?').run(id)
+    changes = result.changes
+  })
+  tx()
+  return changes > 0
 }

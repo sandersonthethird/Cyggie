@@ -205,26 +205,40 @@ export function formatNotesSection(notes: NoteRef[], caps: SectionCaps): string 
 
 const MIN_FLAGGED_FILE_CHARS = 50
 
+export interface FlaggedFileRef {
+  fileId: string
+  fileName: string
+  mimeType: string | null
+}
+
 /**
  * Renders user-flagged files (the curated subset of files attached to an
- * entity). `readLocalFile` is async because PDFs / spreadsheets may need
- * parsing. Files that fail to read or are below MIN_FLAGGED_FILE_CHARS are
- * silently skipped — they don't count toward the cap.
+ * entity). `readLocalFile` is async because PDFs / spreadsheets / Drive
+ * native exports may need parsing. Files that fail to read or are below
+ * MIN_FLAGGED_FILE_CHARS are silently skipped — they don't count toward
+ * the cap.
+ *
+ * The `mimeType` field on each file routes the read:
+ *   - `application/vnd.google-apps.*` → Drive export path (reads from Drive API)
+ *   - anything else / null            → local-file path (reads from disk)
  */
 export async function formatFlaggedFilesSection(
-  fileIds: string[],
-  caps: SectionCaps
+  files: FlaggedFileRef[],
+  caps: SectionCaps,
 ): Promise<string> {
   const parts: string[] = []
   let total = 0
-  for (const id of fileIds) {
+  for (const f of files) {
     if (total >= caps.total) break
-    const content = await readLocalFile(id)
+    const content = await readLocalFile(f.fileId, f.mimeType ?? undefined)
     if (!content || content.trim().length < MIN_FLAGGED_FILE_CHARS) continue
     const excerpt = content.length > caps.perItem
       ? content.substring(0, caps.perItem) + '...'
       : content
-    parts.push(`### ${basename(id)}\n${excerpt}`)
+    // Drive IDs aren't human-friendly; prefer the stored fileName, fall
+    // back to basename(id) for legacy local-only flag rows.
+    const label = f.fileName || basename(f.fileId)
+    parts.push(`### ${label}\n${excerpt}`)
     total += excerpt.length
   }
   if (parts.length === 0) return ''

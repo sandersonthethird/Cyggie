@@ -109,7 +109,12 @@ describe('COMPANY_FILE_FLAG_TOGGLE handler', () => {
     })
 
     expect(validateMock).not.toHaveBeenCalled()
-    expect(toggleFileFlagMock).toHaveBeenCalledWith('co-1', '/path/missing.pdf', 'missing.pdf')
+    expect(toggleFileFlagMock).toHaveBeenCalledWith(
+      'co-1',
+      '/path/missing.pdf',
+      'missing.pdf',
+      undefined,
+    )
     expect(result).toEqual({ ok: true, flagged: false })
   })
 
@@ -166,8 +171,26 @@ describe('COMPANY_FILE_FLAG_TOGGLE handler', () => {
       fileId: '/memo.pdf',
       fileName: 'memo.pdf',
     })
-    expect(validateMock).toHaveBeenCalledWith('/memo.pdf')
-    expect(toggleFileFlagMock).toHaveBeenCalledWith('co-1', '/memo.pdf', 'memo.pdf')
+    expect(validateMock).toHaveBeenCalledWith('/memo.pdf', undefined)
+    expect(toggleFileFlagMock).toHaveBeenCalledWith('co-1', '/memo.pdf', 'memo.pdf', undefined)
+    expect(result).toEqual({ ok: true, flagged: true })
+  })
+
+  it('passes mimeType through to validator and toggleFileFlag for Google native files (phase 2)', () => {
+    toggleFileFlagMock.mockReturnValue(true)
+    const result = toggleHandler!(null, {
+      companyId: 'co-1',
+      fileId: '1ABC_doc',
+      fileName: 'Q2 partner memo',
+      mimeType: 'application/vnd.google-apps.document',
+    })
+    expect(validateMock).toHaveBeenCalledWith('1ABC_doc', 'application/vnd.google-apps.document')
+    expect(toggleFileFlagMock).toHaveBeenCalledWith(
+      'co-1',
+      '1ABC_doc',
+      'Q2 partner memo',
+      'application/vnd.google-apps.document',
+    )
     expect(result).toEqual({ ok: true, flagged: true })
   })
 })

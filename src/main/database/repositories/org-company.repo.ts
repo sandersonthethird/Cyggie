@@ -4,7 +4,7 @@ import { jaroWinkler } from '../../utils/jaroWinkler'
 import { UnionFind } from '../../utils/unionFind'
 import { splitCamelCase } from '../../utils/string-utils'
 import { trySegment } from '../../utils/company-extractor'
-import { extractDomainFromWebsiteUrl } from '../../utils/email-parser'
+import { extractDomainFromWebsiteUrl, normalizeDomain } from '../../utils/email-parser'
 import { logAudit } from './audit.repo'
 import type {
   CompanyEntityType,
@@ -25,7 +25,10 @@ import type {
   CompanyDedupApplyResult,
   CompanyDedupDecision,
   CompanyDuplicateGroup,
-  CompanyDuplicateSummary
+  CompanyDuplicateSummary,
+  CompanyMergePreview,
+  MergeFieldDiff,
+  MergeFieldOverrides
 } from '../../../shared/types/company'
 
 interface CompanyRow {
@@ -177,13 +180,6 @@ function normalizeCompanyName(name: string): string {
 
 const COMMON_SECOND_LEVEL_TLDS = new Set(['co', 'com', 'org', 'net', 'gov', 'edu'])
 
-function normalizeDomain(domain: string | null | undefined): string | null {
-  if (!domain) return null
-  const cleaned = domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
-  if (!cleaned) return null
-  return cleaned.replace(/^www\./, '')
-}
-
 function getRegistrableDomain(domain: string): string {
   const labels = domain.split('.').filter(Boolean)
   if (labels.length <= 2) return labels.join('.')
@@ -208,10 +204,22 @@ function parseTimestamp(value: string | null | undefined): number {
   return Date.parse(normalized)
 }
 
-const MAX_FUZZY_CANDIDATES = 500
+const MAX_FUZZY_CANDIDATES = 5000
 const FUZZY_THRESHOLD = 0.88
 
+/**
+ * Order two duplicates so the "best to keep" is sorted first (index 0).
+ * Priority: richest record (more fields + more activity) > most-recently-updated > name > id.
+ * Richness wins over recency because a freshly-created stub often has a newer updated_at
+ * than the curated record that should actually be kept.
+ */
 function compareDuplicateCompanies(a: CompanyDuplicateSummary, b: CompanyDuplicateSummary): number {
+  const richnessScore = (c: CompanyDuplicateSummary) =>
+    c.populatedFieldCount + c.meetingCount + c.emailCount + c.noteCount
+  const aRich = richnessScore(a)
+  const bRich = richnessScore(b)
+  if (aRich !== bRich) return bRich - aRich
+
   const aUpdated = parseTimestamp(a.updatedAt)
   const bUpdated = parseTimestamp(b.updatedAt)
   if (!Number.isNaN(aUpdated) && !Number.isNaN(bUpdated) && aUpdated !== bUpdated) {
@@ -1301,8 +1309,10 @@ export function updateCompany(
     params.push(normalizedPrimaryDomain)
   }
   // Auto-derive primary_domain from websiteUrl when the user edits the website
-  // and primary_domain is currently empty. Skips if the caller is also setting
-  // primaryDomain explicitly, or if the company already has a domain set.
+  // and primary_domain is currently empty OR malformed (no dot — e.g. a stale
+  // "www" left over from a prior save-on-blur of a partially-typed URL). Skips
+  // if the caller is also setting primaryDomain explicitly, or if the company
+  // already has a valid domain set.
   if (data.websiteUrl !== undefined && data.primaryDomain === undefined) {
     const derived = extractDomainFromWebsiteUrl((data.websiteUrl as string | null) ?? null)
     if (derived) {
@@ -1310,7 +1320,7 @@ export function updateCompany(
         .prepare('SELECT primary_domain FROM org_companies WHERE id = ?')
         .get(companyId) as { primary_domain: string | null } | undefined
       const currentDomain = (existing?.primary_domain ?? '').trim()
-      if (!currentDomain) {
+      if (!currentDomain || !currentDomain.includes('.')) {
         normalizedPrimaryDomain = derived
         sets.push('primary_domain = ?')
         params.push(derived)
@@ -1435,6 +1445,21 @@ export function findCompanyIdByDomain(domain: string): string | null {
   return null
 }
 
+/**
+ * Fast lookup of a company's canonical_name by domain (primary_domain or
+ * alias_type='domain'). Used by callers that just need the display string —
+ * avoids the heavy join inside getCompany().
+ */
+export function getCompanyCanonicalNameByDomain(domain: string): string | null {
+  const id = findCompanyIdByDomain(domain)
+  if (!id) return null
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT canonical_name FROM org_companies WHERE id = ? LIMIT 1')
+    .get(id) as { canonical_name: string } | undefined
+  return row?.canonical_name ?? null
+}
+
 export function findCompanyIdByNameOrDomain(
   canonicalName: string,
   primaryDomain?: string | null
@@ -1500,9 +1525,15 @@ export function getEntityTypeByNameOrDomain(
   const companyId = findCompanyIdByNameOrDomain(canonicalName, primaryDomain)
   if (!companyId) return null
 
-  const company = getCompany(companyId)
-  if (!company || company.entityType === 'unknown') return null
-  return company.entityType
+  // Direct read — entity_type is the only field needed, no need for the
+  // heavy join that getCompany() does. This is on the hot path for
+  // getCompanySuggestionsFromEmails which renders inline in the UI.
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT entity_type FROM org_companies WHERE id = ? LIMIT 1')
+    .get(companyId) as { entity_type: CompanyEntityType } | undefined
+  if (!row || row.entity_type === 'unknown') return null
+  return row.entity_type
 }
 
 export function upsertCompanyClassification(data: {
@@ -1560,7 +1591,143 @@ export function upsertCompanyClassification(data: {
   return updated
 }
 
-export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string): CompanyMergeResult {
+// ─── Merge: per-field conflict + auto-fill ────────────────────────────────────
+//
+// MERGEABLE_COLUMNS is the allowlist of org_companies columns that mergeCompanies
+// is allowed to write to the target row. Excludes:
+//   - id, canonical_name (target's name wins by definition; merging it would
+//     defeat the purpose of choosing a keeper)
+//   - normalized_name (derived from canonical_name elsewhere)
+//   - include_in_companies_view (target wins — it represents UX intent)
+//   - created_at / updated_at (timestamps managed elsewhere)
+//   - any computed / denormalized list-view-only column
+//
+// If you add a new scalar column to org_companies, add it here so merges
+// preserve its data. If you add a non-mergeable column (e.g. a derived /
+// computed value), leave it out.
+const MERGEABLE_COLUMNS = [
+  'description', 'primary_domain', 'website_url', 'city', 'state', 'stage',
+  'status', 'crm_provider', 'crm_company_id', 'priority',
+  'post_money_valuation', 'raise_size', 'round', 'pipeline_stage',
+  'founding_year', 'employee_count_range', 'hq_address',
+  'linkedin_company_url', 'twitter_handle', 'crunchbase_url',
+  'angellist_url', 'industry', 'target_customer', 'business_model',
+  'product_stage', 'revenue_model', 'arr', 'burn_rate', 'runway_months',
+  'last_funding_date', 'total_funding_raised', 'lead_investor',
+  'source_type', 'source_entity_type', 'source_entity_id',
+  'relationship_owner', 'deal_source', 'warm_intro_source',
+  'referral_contact_id', 'next_followup_date',
+  'portfolio_fund', 'investment_size', 'ownership_pct',
+  'followon_investment_size', 'total_invested',
+  'investment_mark', 'investment_round', 'initial_investment_security',
+  'date_of_initial_investment', 'initial_round_size',
+  'last_company_valuation', 'followon_check', 'followon_date',
+  'followon_check2', 'followon_date2',
+  'key_takeaways', 'field_sources',
+  'lead_investor_company_id'
+] as const
+
+// Human labels for the merge review UI. Falls back to the column name if a
+// label isn't listed (caller is expected to title-case for display).
+const MERGEABLE_COLUMN_LABELS: Record<string, string> = {
+  description: 'Description',
+  primary_domain: 'Primary domain',
+  website_url: 'Website',
+  city: 'City',
+  state: 'State',
+  stage: 'Stage',
+  status: 'Status',
+  crm_provider: 'CRM provider',
+  crm_company_id: 'CRM company ID',
+  priority: 'Priority',
+  post_money_valuation: 'Post-money valuation',
+  raise_size: 'Raise size',
+  round: 'Round',
+  pipeline_stage: 'Pipeline stage',
+  founding_year: 'Founding year',
+  employee_count_range: 'Employee count',
+  hq_address: 'HQ address',
+  linkedin_company_url: 'LinkedIn URL',
+  twitter_handle: 'X / Twitter',
+  crunchbase_url: 'Crunchbase',
+  angellist_url: 'AngelList',
+  industry: 'Industry',
+  target_customer: 'Target customer',
+  business_model: 'Business model',
+  product_stage: 'Product stage',
+  revenue_model: 'Revenue model',
+  arr: 'ARR',
+  burn_rate: 'Burn rate',
+  runway_months: 'Runway (months)',
+  last_funding_date: 'Last funding date',
+  total_funding_raised: 'Total funding raised',
+  lead_investor: 'Lead investor (text)',
+  source_type: 'Source type',
+  source_entity_type: 'Source entity type',
+  source_entity_id: 'Source entity ID',
+  relationship_owner: 'Relationship owner',
+  deal_source: 'Deal source',
+  warm_intro_source: 'Warm intro source',
+  referral_contact_id: 'Referral contact',
+  next_followup_date: 'Next followup',
+  portfolio_fund: 'Portfolio fund',
+  investment_size: 'Investment size',
+  ownership_pct: 'Ownership %',
+  followon_investment_size: 'Follow-on size',
+  total_invested: 'Total invested',
+  investment_mark: 'Investment mark',
+  investment_round: 'Investment round',
+  initial_investment_security: 'Initial security',
+  date_of_initial_investment: 'Initial investment date',
+  initial_round_size: 'Initial round size',
+  last_company_valuation: 'Last valuation',
+  followon_check: 'Follow-on check',
+  followon_date: 'Follow-on date',
+  followon_check2: 'Follow-on check #2',
+  followon_date2: 'Follow-on date #2',
+  key_takeaways: 'Key takeaways',
+  field_sources: 'Field sources (JSON)',
+  lead_investor_company_id: 'Lead investor (linked)'
+}
+
+/** Empty: null, '', or whitespace-only string. Numbers count as non-empty. */
+function isEmptyValue(v: unknown): boolean {
+  if (v === null || v === undefined) return true
+  if (typeof v === 'string') return v.trim().length === 0
+  return false
+}
+
+function valuesEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a === 'string' && typeof b === 'string') return a.trim() === b.trim()
+  return false
+}
+
+/** Stringify a column value for display in the diff UI. */
+function diffStringify(v: unknown): string | null {
+  if (v === null || v === undefined) return null
+  if (typeof v === 'string') return v
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  return JSON.stringify(v)
+}
+
+/**
+ * Returns the subset of MERGEABLE_COLUMNS that physically exist in the live
+ * org_companies schema. Older DBs may be missing some columns added by ALTER
+ * TABLE migrations; we introspect to stay tolerant. Same pattern as
+ * listSuspectedDuplicateCompanies' richness expression construction.
+ */
+function getMergeableColumnsPresent(): string[] {
+  const db = getDatabase()
+  const cols = db.prepare(`PRAGMA table_info(org_companies)`).all() as Array<{ name: string }>
+  const present = new Set(cols.map((c) => c.name))
+  return MERGEABLE_COLUMNS.filter((c) => present.has(c))
+}
+
+export function getCompanyMergePreview(
+  targetCompanyId: string,
+  sourceCompanyId: string
+): CompanyMergePreview {
   if (!targetCompanyId || !sourceCompanyId) {
     throw new Error('Both targetCompanyId and sourceCompanyId are required')
   }
@@ -1569,15 +1736,158 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
   }
 
   const db = getDatabase()
+  const cols = getMergeableColumnsPresent()
+  const selectCols = ['id', 'canonical_name', ...cols].map((c) => `"${c}"`).join(', ')
   const target = db
-    .prepare('SELECT id, canonical_name FROM org_companies WHERE id = ? LIMIT 1')
-    .get(targetCompanyId) as { id: string; canonical_name: string } | undefined
+    .prepare(`SELECT ${selectCols} FROM org_companies WHERE id = ? LIMIT 1`)
+    .get(targetCompanyId) as Record<string, unknown> | undefined
   const source = db
-    .prepare('SELECT id, canonical_name FROM org_companies WHERE id = ? LIMIT 1')
-    .get(sourceCompanyId) as { id: string; canonical_name: string } | undefined
+    .prepare(`SELECT ${selectCols} FROM org_companies WHERE id = ? LIMIT 1`)
+    .get(sourceCompanyId) as Record<string, unknown> | undefined
+  if (!target) throw new Error('Target company not found')
+  if (!source) throw new Error('Source company not found')
+
+  const conflicts: MergeFieldDiff[] = []
+  const autoFill: MergeFieldDiff[] = []
+  for (const col of cols) {
+    const tv = target[col]
+    const sv = source[col]
+    const tEmpty = isEmptyValue(tv)
+    const sEmpty = isEmptyValue(sv)
+    if (sEmpty) continue              // nothing to bring over
+    if (tEmpty) {
+      autoFill.push({
+        column: col,
+        label: MERGEABLE_COLUMN_LABELS[col] ?? col,
+        targetValue: null,
+        sourceValue: diffStringify(sv)
+      })
+      continue
+    }
+    if (valuesEqual(tv, sv)) continue  // both have the same value — silent
+    conflicts.push({
+      column: col,
+      label: MERGEABLE_COLUMN_LABELS[col] ?? col,
+      targetValue: diffStringify(tv),
+      sourceValue: diffStringify(sv)
+    })
+  }
+
+  // Array unions — pre-compute counts of source rows that would be added to
+  // target. Themes/aliases use INSERT OR IGNORE in mergeCompanies, so the
+  // "added" count is rows on source that don't already exist on target by the
+  // same unique-key columns.
+  const arrayUnions: Array<{ name: string; addedCount: number }> = []
+
+  const themeAdded = db.prepare(`
+    SELECT COUNT(*) AS n FROM org_company_themes s
+    WHERE s.company_id = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM org_company_themes t WHERE t.company_id = ? AND t.theme_id = s.theme_id
+      )
+  `).get(sourceCompanyId, targetCompanyId) as { n: number }
+  if (themeAdded.n > 0) arrayUnions.push({ name: 'Themes', addedCount: themeAdded.n })
+
+  const aliasAdded = db.prepare(`
+    SELECT COUNT(*) AS n FROM org_company_aliases s
+    WHERE s.company_id = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM org_company_aliases t
+        WHERE t.company_id = ? AND t.alias_value = s.alias_value AND t.alias_type = s.alias_type
+      )
+  `).get(sourceCompanyId, targetCompanyId) as { n: number }
+  if (aliasAdded.n > 0) arrayUnions.push({ name: 'Aliases', addedCount: aliasAdded.n })
+
+  const investorAdded = db.prepare(`
+    SELECT COUNT(*) AS n FROM company_investors s
+    WHERE (s.company_id = ? OR s.investor_company_id = ?)
+      AND s.company_id != s.investor_company_id
+      AND NOT EXISTS (
+        SELECT 1 FROM company_investors t
+        WHERE t.company_id = CASE WHEN s.company_id = ? THEN ? ELSE s.company_id END
+          AND t.investor_company_id = CASE WHEN s.investor_company_id = ? THEN ? ELSE s.investor_company_id END
+          AND t.investor_type = s.investor_type
+      )
+  `).get(sourceCompanyId, sourceCompanyId, sourceCompanyId, targetCompanyId, sourceCompanyId, targetCompanyId) as { n: number }
+  if (investorAdded.n > 0) arrayUnions.push({ name: 'Investor relations', addedCount: investorAdded.n })
+
+  return {
+    target: { id: targetCompanyId, canonicalName: String(target.canonical_name) },
+    source: { id: sourceCompanyId, canonicalName: String(source.canonical_name) },
+    conflicts,
+    autoFill,
+    arrayUnions
+  }
+}
+
+export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string, fieldOverrides?: MergeFieldOverrides): CompanyMergeResult {
+  if (!targetCompanyId || !sourceCompanyId) {
+    throw new Error('Both targetCompanyId and sourceCompanyId are required')
+  }
+  if (targetCompanyId === sourceCompanyId) {
+    throw new Error('Target and source companies must be different')
+  }
+
+  const db = getDatabase()
+  // Pull every mergeable column on both rows so we can compute the field
+  // resolution before we relink. Columns that don't exist in this DB are
+  // skipped via the live introspection (see getMergeableColumnsPresent).
+  const mergeableCols = getMergeableColumnsPresent()
+  const selectCols = ['id', 'canonical_name', ...mergeableCols].map((c) => `"${c}"`).join(', ')
+  const target = db
+    .prepare(`SELECT ${selectCols} FROM org_companies WHERE id = ? LIMIT 1`)
+    .get(targetCompanyId) as Record<string, unknown> | undefined
+  const source = db
+    .prepare(`SELECT ${selectCols} FROM org_companies WHERE id = ? LIMIT 1`)
+    .get(sourceCompanyId) as Record<string, unknown> | undefined
 
   if (!target) throw new Error('Target company not found')
   if (!source) throw new Error('Source company not found')
+
+  // Compute the FINAL value for each mergeable column.
+  //
+  //   precedence:  fieldOverrides[col]   (renderer-supplied: explicit pick)
+  //              > source value          (auto-fill: target empty, source has value)
+  //              > target value          (status quo: target wins on conflict)
+  //
+  // Only columns whose final value differs from the current target value are
+  // included in `valueWrites`, so equal-value rows don't generate spurious UPDATEs.
+  const valueWrites: Record<string, unknown> = {}
+  for (const col of mergeableCols) {
+    const tv = target[col]
+    const sv = source[col]
+    const hasOverride = fieldOverrides !== undefined && Object.prototype.hasOwnProperty.call(fieldOverrides, col)
+    let finalValue: unknown
+    if (hasOverride) {
+      finalValue = (fieldOverrides as MergeFieldOverrides)[col]
+    } else if (isEmptyValue(tv) && !isEmptyValue(sv)) {
+      finalValue = sv
+    } else {
+      finalValue = tv
+    }
+    if (!valuesEqual(finalValue, tv)) valueWrites[col] = finalValue
+  }
+  // Cast to a stable shape used downstream.
+  const targetSummary = { id: String(target.id), canonical_name: String(target.canonical_name) }
+  const sourceSummary = { id: String(source.id), canonical_name: String(source.canonical_name) }
+
+  // Collect every domain the source owns (primary_domain + alias domains).
+  // Used inside the transaction to refresh the legacy `companies` cache so
+  // future calendar ingest by these domains returns the target's
+  // canonical_name. Read BEFORE the transaction starts: source's aliases get
+  // moved/deleted inside.
+  const sourceAliasDomainRows = db
+    .prepare(
+      `SELECT alias_value FROM org_company_aliases ` +
+      `WHERE company_id = ? AND alias_type = 'domain'`
+    )
+    .all(sourceCompanyId) as Array<{ alias_value: string }>
+  const sourceCacheDomains = [
+    source.primary_domain,
+    ...sourceAliasDomainRows.map((r) => r.alias_value)
+  ]
+    .filter((d): d is string => typeof d === 'string' && d.length > 0)
+    .map((d) => d.toLowerCase())
 
   const relinked = {
     meetingLinks: 0,
@@ -1624,14 +1934,14 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
       if (!row?.companies) continue
       try {
         const names: string[] = JSON.parse(row.companies)
-        const srcLower = source.canonical_name.toLowerCase()
+        const srcLower = sourceSummary.canonical_name.toLowerCase()
         const hasSource = names.some(n => n.toLowerCase() === srcLower)
         if (!hasSource) continue
-        const tgtLower = target.canonical_name.toLowerCase()
+        const tgtLower = targetSummary.canonical_name.toLowerCase()
         const hasTarget = names.some(n => n.toLowerCase() === tgtLower)
         const updated = names
           .filter(n => n.toLowerCase() !== srcLower)
-          .concat(hasTarget ? [] : [target.canonical_name])
+          .concat(hasTarget ? [] : [targetSummary.canonical_name])
         db.prepare('UPDATE meetings SET companies = ? WHERE id = ?')
           .run(JSON.stringify(updated), meeting_id)
       } catch { /* skip malformed JSON */ }
@@ -1684,6 +1994,20 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
       `)
       .run(targetCompanyId, sourceCompanyId).changes
 
+    // notes has UNIQUE(company_id, source_meeting_id) WHERE both NOT NULL (migration 082).
+    // If both companies have a note from the same meeting, the UPDATE below would collide.
+    // Drop the source-side duplicates first; the target's note (already on the kept company) wins.
+    db.prepare(`
+      DELETE FROM notes
+      WHERE company_id = ?
+        AND source_meeting_id IS NOT NULL
+        AND source_meeting_id IN (
+          SELECT source_meeting_id FROM notes
+          WHERE company_id = ?
+            AND source_meeting_id IS NOT NULL
+        )
+    `).run(sourceCompanyId, targetCompanyId)
+
     relinked.notes = db
       .prepare(`
         UPDATE notes
@@ -1692,13 +2016,8 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
       `)
       .run(targetCompanyId, sourceCompanyId).changes
 
-    relinked.conversations = db
-      .prepare(`
-        UPDATE company_conversations
-        SET company_id = ?, updated_at = datetime('now')
-        WHERE company_id = ?
-      `)
-      .run(targetCompanyId, sourceCompanyId).changes
+    // company_conversations was dropped in migration 079 — skip the relink.
+    relinked.conversations = 0
 
     relinked.memos = db
       .prepare(`
@@ -1748,11 +2067,81 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string)
       .prepare('DELETE FROM org_company_aliases WHERE company_id = ?')
       .run(sourceCompanyId).changes
 
-    db.prepare(`
-      UPDATE org_companies
-      SET updated_at = datetime('now')
-      WHERE id = ?
-    `).run(targetCompanyId)
+    // Per-field merge: write any computed value changes onto the target row.
+    // Both auto-fill (target empty, source has value) and explicit
+    // fieldOverrides land here. updated_at is bumped in the same statement so
+    // the second UPDATE below isn't needed when valueWrites is non-empty.
+    const writeKeys = Object.keys(valueWrites)
+    if (writeKeys.length > 0) {
+      const setClause = writeKeys.map((c) => `"${c}" = ?`).join(', ')
+      const params = writeKeys.map((c) => valueWrites[c] as unknown)
+      db.prepare(
+        `UPDATE org_companies SET ${setClause}, updated_at = datetime('now') WHERE id = ?`
+      ).run(...params, targetCompanyId)
+    } else {
+      db.prepare(`UPDATE org_companies SET updated_at = datetime('now') WHERE id = ?`)
+        .run(targetCompanyId)
+    }
+
+    // Investor relinks (no FK CASCADE will preserve these — we have to do it
+    // manually before source is deleted). Three pieces:
+    //   (a) other companies that pointed at source as their lead investor
+    //   (b) company_investors rows where source is the company_id
+    //   (c) company_investors rows where source is the investor_company_id
+    // INSERT OR IGNORE on the unique (company_id, investor_company_id, investor_type)
+    // dedupes against existing target rows. Self-edges are filtered with `!= ?`.
+    //
+    // Both the column and table are added by later migrations (076, 056); guard
+    // against older DBs (and minimal test fixtures) by introspecting first.
+    const hasLeadInvestorCompanyId = (db
+      .prepare(`PRAGMA table_info(org_companies)`)
+      .all() as Array<{ name: string }>)
+      .some((c) => c.name === 'lead_investor_company_id')
+    if (hasLeadInvestorCompanyId) {
+      db.prepare(
+        `UPDATE org_companies SET lead_investor_company_id = ?, updated_at = datetime('now') WHERE lead_investor_company_id = ? AND id != ?`
+      ).run(targetCompanyId, sourceCompanyId, targetCompanyId)
+    }
+    const hasCompanyInvestors = !!db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='company_investors'`)
+      .get()
+    if (hasCompanyInvestors) {
+      db.prepare(`
+        INSERT OR IGNORE INTO company_investors (id, company_id, investor_company_id, investor_type, position, created_at)
+        SELECT lower(hex(randomblob(16))), ?, investor_company_id, investor_type, position, created_at
+        FROM company_investors WHERE company_id = ? AND investor_company_id != ?
+      `).run(targetCompanyId, sourceCompanyId, targetCompanyId)
+      db.prepare(`
+        INSERT OR IGNORE INTO company_investors (id, company_id, investor_company_id, investor_type, position, created_at)
+        SELECT lower(hex(randomblob(16))), company_id, ?, investor_type, position, created_at
+        FROM company_investors WHERE investor_company_id = ? AND company_id != ?
+      `).run(targetCompanyId, sourceCompanyId, targetCompanyId)
+    }
+
+    // Search-dropdown cache cleanup. Source's alias domains were moved to the
+    // target above (line 1761-1767), so any cache row keyed by an old source
+    // domain is now a legitimate target row. We only delete cache rows whose
+    // display_name still reads as the source name — those would surface a
+    // company that no longer exists. Case-insensitive because email-parse-derived
+    // cache rows often store name variants.
+    // Cache rows keyed by the source's domains now belong to the target —
+    // rewrite their display_name so future calendar ingest from these domains
+    // surfaces the kept company's name instead of the merged-away one.
+    // (Bumping enriched_at lets future enrich callers see this row was just
+    // refreshed.) Do this BEFORE the name-based DELETE below so domain-keyed
+    // rows whose display_name happens to be the source name get rewritten,
+    // not deleted.
+    if (sourceCacheDomains.length > 0) {
+      const placeholders = sourceCacheDomains.map(() => '?').join(', ')
+      db.prepare(
+        `UPDATE companies SET display_name = ?, enriched_at = datetime('now') WHERE domain IN (${placeholders})`
+      ).run(targetSummary.canonical_name, ...sourceCacheDomains)
+    }
+
+    // Catch any leftover cache rows keyed by an unknown domain whose
+    // display_name still reads as the source name.
+    db.prepare('DELETE FROM companies WHERE display_name = ? COLLATE NOCASE')
+      .run(sourceSummary.canonical_name)
 
     db.prepare('DELETE FROM org_companies WHERE id = ?').run(sourceCompanyId)
   })
@@ -1771,18 +2160,49 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
   const normalizedLimit = Number.isFinite(limitGroups)
     ? Math.max(1, Math.min(Math.floor(limitGroups), 200))
     : 30
+  // populated_field_count = sum of CASE-WHEN-NOT-NULL over enrichment columns that
+  // actually exist in this DB (introspected from PRAGMA so older DBs missing some
+  // ALTER TABLE migrations don't fail). Used as a richness proxy when the user picks
+  // which duplicate to keep. Activity counts (meetings/emails/notes) supplement it.
+  const TEXT_RICHNESS_COLUMNS = [
+    'description', 'city', 'state', 'stage', 'employee_count_range',
+    'linkedin_company_url', 'twitter_handle', 'crunchbase_url', 'sector',
+    'target_customer', 'business_model', 'product_stage', 'revenue_model',
+    'lead_investor', 'co_investors', 'round', 'key_takeaways'
+  ]
+  const NUMERIC_RICHNESS_COLUMNS = ['founding_year', 'post_money_valuation', 'raise_size']
+  const existingColumns = new Set(
+    (db.prepare(`PRAGMA table_info(org_companies)`).all() as Array<{ name: string }>).map((r) => r.name)
+  )
+  const richnessExpressions: string[] = []
+  for (const col of TEXT_RICHNESS_COLUMNS) {
+    if (existingColumns.has(col)) {
+      richnessExpressions.push(`(CASE WHEN c.${col} IS NOT NULL AND TRIM(c.${col}) <> '' THEN 1 ELSE 0 END)`)
+    }
+  }
+  for (const col of NUMERIC_RICHNESS_COLUMNS) {
+    if (existingColumns.has(col)) {
+      richnessExpressions.push(`(CASE WHEN c.${col} IS NOT NULL THEN 1 ELSE 0 END)`)
+    }
+  }
+  const richnessSql = richnessExpressions.length > 0 ? richnessExpressions.join(' + ') : '0'
+
   const rows = db
     .prepare(`
       SELECT
-        id,
-        canonical_name,
-        primary_domain,
-        website_url,
-        entity_type,
-        pipeline_stage,
-        updated_at
-      FROM org_companies
-      ORDER BY datetime(updated_at) DESC
+        c.id,
+        c.canonical_name,
+        c.primary_domain,
+        c.website_url,
+        c.entity_type,
+        c.pipeline_stage,
+        c.updated_at,
+        (${richnessSql}) AS populated_field_count,
+        (SELECT COUNT(*) FROM meeting_company_links WHERE company_id = c.id) AS meeting_count,
+        (SELECT COUNT(*) FROM email_company_links   WHERE company_id = c.id) AS email_count,
+        (SELECT COUNT(*) FROM notes                 WHERE company_id = c.id) AS note_count
+      FROM org_companies c
+      ORDER BY datetime(c.updated_at) DESC
     `)
     .all() as Array<{
     id: string
@@ -1792,6 +2212,10 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
     entity_type: CompanyEntityType
     pipeline_stage: CompanyPipelineStage | null
     updated_at: string
+    populated_field_count: number
+    meeting_count: number
+    email_count: number
+    note_count: number
   }>
 
   const groupsByDomain = new Map<string, CompanyDuplicateSummary[]>()
@@ -1805,7 +2229,11 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
       websiteUrl: row.website_url,
       entityType: row.entity_type,
       pipelineStage: row.pipeline_stage,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      populatedFieldCount: row.populated_field_count,
+      meetingCount: row.meeting_count,
+      emailCount: row.email_count,
+      noteCount: row.note_count
     }
     const existing = groupsByDomain.get(domainKey)
     if (existing) {
@@ -1834,27 +2262,84 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
     })
   }
 
-  // ── Fuzzy name pass for companies without a domain match ─────────────────────
+  // ── Fuzzy name pass + cross-pass merge with domain groups ───────────────────
+  //
+  // Fuzzy candidates = ALL rows (not just ungrouped). After Jaro-Winkler
+  // clustering, each cluster (size ≥ 2) is routed by overlap with existing
+  // domain groups:
+  //
+  //   ┌─ overlaps 0 domain groups ─────► emit as fuzzy-only group
+  //   ├─ overlaps exactly 1 domain group ─► extend that group
+  //   │     - append fuzzy-only members (skip ids already in the group)
+  //   │     - recompute suggestedKeep via compareDuplicateCompanies
+  //   │     - set confidence; reason becomes "Same domain + similar names"
+  //   ├─ overlaps 2+ domain groups ──► do nothing (don't merge domains)
+  //   └─ size after dedup < 2 ────► skip
+  //
+  // Perf: skip JW pair comparison when both normalized names map only to
+  // companies already in domain groups — those pairs can never produce a new
+  // emit (same domain group is already clustered; cross-domain-group merging
+  // is forbidden by the "2+" rule).
+  //
+  // Dedup invariant: emittedCompanyIds Set ensures a company appears in at
+  // most one output group.
 
-  const ungroupedRows = rows.filter((r) => !domainGroupedIds.has(r.id))
-  const ungroupedNames = [
-    ...new Set(
-      ungroupedRows
-        .map((r) => r.canonical_name?.trim().toLowerCase())
-        .filter((n): n is string => !!n && n.length > 0)
-    )
-  ]
+  const rowsById = new Map<string, typeof rows[0]>()
+  for (const row of rows) rowsById.set(row.id, row)
 
-  if (ungroupedNames.length > 0 && ungroupedNames.length <= MAX_FUZZY_CANDIDATES) {
+  const normalizedToIds = new Map<string, string[]>()
+  for (const row of rows) {
+    const norm = normalizeCompanyName(row.canonical_name || '')
+    if (!norm) continue
+    const list = normalizedToIds.get(norm)
+    if (list) list.push(row.id)
+    else normalizedToIds.set(norm, [row.id])
+  }
+  const candidateNames = [...normalizedToIds.keys()]
+
+  const emittedCompanyIds = new Set<string>(domainGroupedIds)
+  const companyToDomainGroupIdx = new Map<string, number>()
+  groups.forEach((g, idx) => {
+    for (const c of g.companies) companyToDomainGroupIdx.set(c.id, idx)
+  })
+
+  const allInDomainGroup = (name: string): boolean => {
+    const ids = normalizedToIds.get(name) || []
+    return ids.length > 0 && ids.every((id) => domainGroupedIds.has(id))
+  }
+
+  const buildSummary = (id: string): CompanyDuplicateSummary | null => {
+    const row = rowsById.get(id)
+    if (!row) return null
+    return {
+      id: row.id,
+      canonicalName: row.canonical_name,
+      primaryDomain: row.primary_domain,
+      websiteUrl: row.website_url,
+      entityType: row.entity_type,
+      pipelineStage: row.pipeline_stage,
+      updatedAt: row.updated_at,
+      populatedFieldCount: row.populated_field_count,
+      meetingCount: row.meeting_count,
+      emailCount: row.email_count,
+      noteCount: row.note_count
+    }
+  }
+
+  if (candidateNames.length > 0 && candidateNames.length <= MAX_FUZZY_CANDIDATES) {
     const uf = new UnionFind()
     const maxSimByPair = new Map<string, number>()
 
-    for (let i = 0; i < ungroupedNames.length; i++) {
-      for (let j = i + 1; j < ungroupedNames.length; j++) {
-        const sim = jaroWinkler(ungroupedNames[i]!, ungroupedNames[j]!)
+    for (let i = 0; i < candidateNames.length; i++) {
+      const ni = candidateNames[i]!
+      const niAllDomain = allInDomainGroup(ni)
+      for (let j = i + 1; j < candidateNames.length; j++) {
+        const nj = candidateNames[j]!
+        if (niAllDomain && allInDomainGroup(nj)) continue
+        const sim = jaroWinkler(ni, nj)
         if (sim >= FUZZY_THRESHOLD) {
-          uf.union(ungroupedNames[i]!, ungroupedNames[j]!)
-          const pairKey = `${ungroupedNames[i]}\0${ungroupedNames[j]}`
+          uf.union(ni, nj)
+          const pairKey = `${ni}\0${nj}`
           maxSimByPair.set(pairKey, Math.max(maxSimByPair.get(pairKey) ?? 0, sim))
         }
       }
@@ -1863,45 +2348,79 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
     for (const [, cluster] of uf.clusters()) {
       if (cluster.length < 2) continue
 
+      const clusterRowIds = new Set<string>()
+      for (const name of cluster) {
+        for (const id of normalizedToIds.get(name) || []) clusterRowIds.add(id)
+      }
+      if (clusterRowIds.size < 2) continue
+
+      const overlappedGroupIndexes = new Set<number>()
+      for (const id of clusterRowIds) {
+        const idx = companyToDomainGroupIdx.get(id)
+        if (idx !== undefined) overlappedGroupIndexes.add(idx)
+      }
+
       let maxSim = 0
       for (let i = 0; i < cluster.length; i++) {
         for (let j = i + 1; j < cluster.length; j++) {
-          const pairKey = `${cluster[i]}\0${cluster[j]}`
-          const altKey = `${cluster[j]}\0${cluster[i]}`
-          const sim = maxSimByPair.get(pairKey) ?? maxSimByPair.get(altKey) ?? 0
+          const a = cluster[i]!
+          const b = cluster[j]!
+          const sim = maxSimByPair.get(`${a}\0${b}`) ?? maxSimByPair.get(`${b}\0${a}`) ?? 0
           if (sim > maxSim) maxSim = sim
         }
       }
-
-      const clusterSet = new Set(cluster)
-      const clusterCompanies: CompanyDuplicateSummary[] = ungroupedRows
-        .filter((r) => clusterSet.has(r.canonical_name?.trim().toLowerCase()))
-        .map((r) => ({
-          id: r.id,
-          canonicalName: r.canonical_name,
-          primaryDomain: r.primary_domain,
-          websiteUrl: r.website_url,
-          entityType: r.entity_type,
-          pipelineStage: r.pipeline_stage,
-          updatedAt: r.updated_at
-        }))
-
-      if (clusterCompanies.length < 2) continue
-      const sortedCompanies = [...clusterCompanies].sort(compareDuplicateCompanies)
-      const suggestedKeep = sortedCompanies[0]!
       const confidence = Math.round(maxSim * 100)
 
-      groups.push({
-        key: `fuzzy-name:${cluster.sort().join('|')}`,
-        domain: null,
-        reason: `Similar names (~${confidence}% match)`,
-        suggestedKeepCompanyId: suggestedKeep.id,
-        companies: sortedCompanies,
-        confidence
-      })
+      if (overlappedGroupIndexes.size >= 2) {
+        // Don't merge across domain groups.
+        continue
+      }
+
+      if (overlappedGroupIndexes.size === 0) {
+        const summaries: CompanyDuplicateSummary[] = []
+        for (const id of clusterRowIds) {
+          if (emittedCompanyIds.has(id)) continue
+          const summary = buildSummary(id)
+          if (summary) summaries.push(summary)
+        }
+        if (summaries.length < 2) continue
+        const sorted = [...summaries].sort(compareDuplicateCompanies)
+        sorted.forEach((s) => emittedCompanyIds.add(s.id))
+        groups.push({
+          key: `fuzzy-name:${[...cluster].sort().join('|')}`,
+          domain: null,
+          reason: `Similar names (~${confidence}% match)`,
+          suggestedKeepCompanyId: sorted[0]!.id,
+          companies: sorted,
+          confidence
+        })
+      } else {
+        const groupIdx = overlappedGroupIndexes.values().next().value as number
+        const existing = groups[groupIdx]!
+        const existingIds = new Set(existing.companies.map((c) => c.id))
+        const additions: CompanyDuplicateSummary[] = []
+        for (const id of clusterRowIds) {
+          if (existingIds.has(id)) continue
+          if (emittedCompanyIds.has(id)) continue
+          const summary = buildSummary(id)
+          if (summary) additions.push(summary)
+        }
+        if (additions.length === 0) continue
+        const merged = [...existing.companies, ...additions].sort(compareDuplicateCompanies)
+        additions.forEach((s) => emittedCompanyIds.add(s.id))
+        groups[groupIdx] = {
+          ...existing,
+          companies: merged,
+          suggestedKeepCompanyId: merged[0]!.id,
+          reason: `Same domain: ${existing.domain} + similar names (~${confidence}% match)`,
+          confidence
+        }
+      }
     }
-  } else if (ungroupedNames.length > MAX_FUZZY_CANDIDATES) {
-    console.warn(`[dedup] skipping fuzzy company pass: ${ungroupedNames.length} ungrouped names exceeds MAX_FUZZY_CANDIDATES (${MAX_FUZZY_CANDIDATES})`)
+  } else if (candidateNames.length > MAX_FUZZY_CANDIDATES) {
+    console.warn(
+      `[dedup] fuzzy pass skipped: ${candidateNames.length} companies > MAX_FUZZY_CANDIDATES (${MAX_FUZZY_CANDIDATES}); some duplicates may be missed`
+    )
   }
 
   groups.sort((a, b) => {
@@ -2006,23 +2525,105 @@ export function applyCompanyDedupDecisions(
   return result
 }
 
+/**
+ * deleteCompany — cleanup waterfall for a single company row.
+ *
+ * Tables related to a company are cleaned by one of four mechanisms:
+ *
+ *   (a) FK CASCADE auto                 — declared in migrations, fires when the
+ *                                         org_companies row is deleted.
+ *       meeting_company_links, email_company_links, org_company_contacts,
+ *       deals, investment_memos (+ versions cascade via memo_id),
+ *       investment_memo_versions, org_company_themes, theses, artifacts(*),
+ *       org_company_aliases, company_investors (both directions),
+ *       partner_meeting_items, company_decision_logs.
+ *
+ *   (b) FK SET NULL auto                — column nulled by FK on parent delete.
+ *       contacts.primary_company_id, notes.company_id, tasks.company_id,
+ *       artifacts.company_id (some rows).
+ *
+ *   (c) Explicit DELETE in this fn      — kept for historical reasons; redundant
+ *                                         with (a) but harmless.
+ *
+ *   (d) No FK / manual cleanup          — added in this fn because the schema
+ *                                         has no FK and orphans would be left:
+ *       company_flagged_files          (mig 035 — no FK)
+ *       chat_sessions (context_kind='company' AND context_id=id)  (mig 078 — no FK)
+ *       org_companies.lead_investor_company_id self-reference     (mig 076 — no FK)
+ *       companies cache table          (legacy mig 008 — no FK; populated from
+ *                                       email/meeting parsing)
+ *       meetings.companies JSON        (mig 008 — text column, scrubbed by name)
+ *       meetings.dismissed_companies   (mig 071 — text column, scrubbed by name)
+ *
+ * If you add a new table with a `company_id` column, choose between adding an
+ * `ON DELETE CASCADE`/`SET NULL` FK (preferred, lands in bucket (a)/(b)) or
+ * extending bucket (d) below.
+ */
 export function deleteCompany(companyId: string): void {
   if (!companyId) throw new Error('companyId is required')
 
   const db = getDatabase()
   const company = db
-    .prepare('SELECT id FROM org_companies WHERE id = ? LIMIT 1')
-    .get(companyId) as { id: string } | undefined
+    .prepare('SELECT id, canonical_name, primary_domain FROM org_companies WHERE id = ? LIMIT 1')
+    .get(companyId) as { id: string; canonical_name: string; primary_domain: string | null } | undefined
   if (!company) throw new Error('Company not found')
 
+  // Wildcard-escape for LIKE pre-filter on JSON columns. Names rarely contain
+  // %/_/\ but it costs nothing to be correct, and COLLATE NOCASE handles
+  // mixed-case stored variants.
+  const escapedName = company.canonical_name.replace(/[\\%_]/g, '\\$&')
+  const lowerName = company.canonical_name.toLowerCase()
+
+  // Collect every domain we need to scrub from the legacy `companies` cache.
+  // Cache is keyed by domain, populated from email parsing. A company has
+  // its primary_domain plus 0+ alias domains. Lowercase before bind because
+  // cache.domain is canonically lowercased on write (see extractDomainFromEmail).
+  // Read before the transaction starts — better-sqlite3 is synchronous, so this
+  // is safe and consistent with how `company` is fetched above.
+  const aliasDomainRows = db
+    .prepare(
+      `SELECT alias_value FROM org_company_aliases ` +
+      `WHERE company_id = ? AND alias_type = 'domain'`
+    )
+    .all(companyId) as Array<{ alias_value: string }>
+  const cacheDomains = [
+    company.primary_domain,
+    ...aliasDomainRows.map((r) => r.alias_value)
+  ]
+    .filter((d): d is string => typeof d === 'string' && d.length > 0)
+    .map((d) => d.toLowerCase())
+
+  // Strip the canonical name from a JSON-array-shaped TEXT column on `meetings`.
+  // N+1 by design — single-user CRM scale, deletes are rare.
+  function scrubMeetingsJsonColumn(column: 'companies' | 'dismissed_companies') {
+    const selectSql =
+      `SELECT id, ${column} AS arr FROM meetings ` +
+      `WHERE ${column} IS NOT NULL AND ${column} LIKE ? ESCAPE '\\' COLLATE NOCASE`
+    const updateSql = `UPDATE meetings SET ${column} = ? WHERE id = ?`
+    const rows = db.prepare(selectSql).all(`%${escapedName}%`) as Array<{ id: string; arr: string }>
+    const updateStmt = db.prepare(updateSql)
+    for (const row of rows) {
+      let parsed: unknown
+      try { parsed = JSON.parse(row.arr) } catch { continue }
+      if (!Array.isArray(parsed)) continue
+      const filtered = parsed.filter(
+        (c) => typeof c === 'string' && c.toLowerCase() !== lowerName
+      )
+      if (filtered.length === parsed.length) continue
+      updateStmt.run(filtered.length ? JSON.stringify(filtered) : null, row.id)
+    }
+  }
+
   const tx = db.transaction(() => {
+    // (c) Explicit DELETEs — redundant with FK CASCADE/SET NULL but kept for
+    //     readability of what gets touched.
     db.prepare('DELETE FROM meeting_company_links WHERE company_id = ?').run(companyId)
     db.prepare('DELETE FROM email_company_links WHERE company_id = ?').run(companyId)
     db.prepare('UPDATE contacts SET primary_company_id = NULL, updated_at = datetime(\'now\') WHERE primary_company_id = ?').run(companyId)
     db.prepare('DELETE FROM org_company_contacts WHERE company_id = ?').run(companyId)
     db.prepare('DELETE FROM deals WHERE company_id = ?').run(companyId)
     db.prepare("UPDATE notes SET company_id = NULL, updated_at = datetime('now') WHERE company_id = ?").run(companyId)
-    db.prepare('DELETE FROM company_conversations WHERE company_id = ?').run(companyId)
+    // company_conversations was dropped in migration 079.
     // Delete memo versions first, then memos
     db.prepare('DELETE FROM investment_memo_versions WHERE memo_id IN (SELECT id FROM investment_memos WHERE company_id = ?)').run(companyId)
     db.prepare('DELETE FROM investment_memos WHERE company_id = ?').run(companyId)
@@ -2031,6 +2632,27 @@ export function deleteCompany(companyId: string): void {
     db.prepare('DELETE FROM artifacts WHERE company_id = ?').run(companyId)
     db.prepare('DELETE FROM org_company_aliases WHERE company_id = ?').run(companyId)
     db.prepare('DELETE FROM tasks WHERE company_id = ?').run(companyId)
+
+    // (d) No-FK / manual cleanup.
+    db.prepare('DELETE FROM company_flagged_files WHERE company_id = ?').run(companyId)
+    db.prepare("DELETE FROM chat_sessions WHERE context_kind = 'company' AND context_id = ?").run(companyId)
+    // Self-reference column on org_companies has no FK — clear dangling
+    // pointers from OTHER companies before deleting the target row.
+    db.prepare(
+      "UPDATE org_companies SET lead_investor_company_id = NULL, lead_investor = NULL, updated_at = datetime('now') WHERE lead_investor_company_id = ?"
+    ).run(companyId)
+    // Search-dropdown cache (legacy companies table, no FK to org_companies).
+    // Two passes: by display_name (case-insensitive — cache rows from email
+    // parsing often store lowercase variants) and by every owned domain
+    // (primary_domain + alias domains).
+    db.prepare('DELETE FROM companies WHERE display_name = ? COLLATE NOCASE').run(company.canonical_name)
+    if (cacheDomains.length > 0) {
+      const placeholders = cacheDomains.map(() => '?').join(', ')
+      db.prepare(`DELETE FROM companies WHERE domain IN (${placeholders})`).run(...cacheDomains)
+    }
+    scrubMeetingsJsonColumn('companies')
+    scrubMeetingsJsonColumn('dismissed_companies')
+
     db.prepare('DELETE FROM org_companies WHERE id = ?').run(companyId)
   })
 

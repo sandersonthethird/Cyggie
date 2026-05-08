@@ -501,6 +501,16 @@
 **Effort:** S
 **Depends on:** Header section unification PR (drag-to-header, Change 1).
 
+### Audit header/inline editable fields for asymmetric edit/view gating
+**What:** Sweep `CompanyHeaderCard`, `ContactPropertiesPanel`, and `MeetingDetail` header for fields where a visibility gate wraps BOTH the edit-mode and view-mode branches (the bug class fixed for `description` on company detail). The correct pattern is: gate only the view-mode branch; in edit mode always render the editable PropertyRow (mirroring the Website field at `CompanyHeaderCard.tsx:361-362` and the description fix at `CompanyHeaderCard.tsx:333-365`).
+**Why:** Same UX dead-end as the company description bug — empty fields become uneditable when they should be editable in edit mode. A user trying to fill in an empty field has no affordance to do so.
+**Pros:** Pattern is now established by the description fix. Sweep is mechanical: grep for `show(` / `showField` / similar visibility helpers wrapping a `isEditing ?` ternary.
+**Cons:** Some fields may be intentionally hidden in edit mode (e.g. derived/computed fields). Each find needs a judgment call.
+**Context:** Start by grepping for `isEditing ?` inside `CompanyHeaderCard.tsx`, `ContactPropertiesPanel.tsx`, `MeetingDetail.tsx` and any sibling header components. The fix in `CompanyHeaderCard.tsx` (the description PR) is the reference pattern.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Company description edit-mode fix merged.
+
 
 ---
 
@@ -897,3 +907,31 @@
 **Effort:** M
 **Priority:** P2
 **Depends on:** Company Detail redesign PR merged.
+
+---
+
+## P2 — Companies
+
+### Aliases / "Same as..." UI for user-asserted same-company links
+**What:** Persist user-confirmed same-company assertions in the existing `company_aliases` table (with `alias_type = 'same_as'`) and surface a "Same as..." action on the company detail page kebab menu. Surface aliased companies in the suspected-duplicates list as a separate "user-confirmed" group above fuzzy/domain groups.
+**Why:** Even with the cross-pass merge fix, fuzzy detection has a recall ceiling. Users who know two records are the same (Twitter / X, FedEx / Federal Express) currently have only the destructive merge hammer. Aliases are non-destructive — keep both records, mark them as duplicates of each other, and the merge becomes a one-click action later.
+**Pros:** Closes the long-tail recall gap that fuzzy can never fully close. Reuses existing `company_aliases` schema (no migration needed). Non-destructive — the user can undo.
+**Cons:** New UI surface (kebab menu action + company picker modal). ~1–2 days work.
+**Context:** `company_aliases` table already exists with `(company_id, alias_type, alias_value)`. Add to record kebab menu in `CompanyHeaderCard`; picker over other companies; insert row with `alias_type = 'same_as'`. Update `listSuspectedDuplicateCompanies` to surface user-asserted same-company groups as a separate top tier (always shown, even when fuzzy/domain pass would miss).
+**Effort:** M
+**Priority:** P2
+**Depends on:** Cross-pass dedup fix (this PR) landed.
+
+---
+
+## P3 — Companies
+
+### Surface "fuzzy detection skipped" cap to the renderer
+**What:** Change `listSuspectedDuplicateCompanies` return shape to `{groups, truncated, candidateCount}`; the IPC handler emits `logAppEvent('company.dedup_fuzzy_skipped', ...)` and the Companies page shows a banner ("Detection limited to most recent 5000 companies — some duplicates may be missed") when truncated.
+**Why:** Today the cap-skip case logs `console.warn` only — invisible to users. If the workspace grows past 5000 ungrouped companies, dedup silently degrades.
+**Pros:** No silent failures. User-actionable signal.
+**Cons:** Touches IPC contract (~10 lines) + renderer banner (~20 lines) + test (~5 lines). Probably never hit in practice at the new 5000 cap.
+**Context:** [Companies.tsx:474](src/renderer/routes/Companies.tsx#L474) currently destructures the IPC response as the array directly. Renderer banner: small alert above the dedup group list.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Nothing.

@@ -81,6 +81,8 @@ import { runDropCompanyConversationsMigration } from './migrations/079-drop-comp
 import { runBackfillMeetingChatsMigration } from './migrations/080-backfill-meeting-chats'
 import { runDropLegacyNotesTablesMigration } from './migrations/081-drop-legacy-notes-tables'
 import { runNotesSourceMeetingUniqueMigration } from './migrations/082-notes-source-meeting-unique'
+import { runFlaggedFilesMimeTypeMigration } from './migrations/083-flagged-files-mime-type'
+import { runRepairBadPrimaryDomainsMigration } from './migrations/084-repair-bad-primary-domains'
 
 let db: Database.Database | null = null
 
@@ -171,6 +173,8 @@ export function getDatabase(): Database.Database {
     runBackfillMeetingChatsMigration(db)
     runDropLegacyNotesTablesMigration(db)
     runNotesSourceMeetingUniqueMigration(db)
+    runFlaggedFilesMimeTypeMigration(db)
+    runRepairBadPrimaryDomainsMigration(db)
   }
   return db
 }

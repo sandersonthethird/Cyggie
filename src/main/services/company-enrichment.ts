@@ -17,8 +17,26 @@ function getPersistedEntityType(
 /**
  * Enrich a single domain: resolve its true company name via website fetch + LLM fallback.
  * Returns the display name and caches it.
+ *
+ * Lookup precedence:
+ *   1. org_companies (authoritative — checks primary_domain + domain aliases).
+ *      If a real company is associated with this domain, its canonical_name
+ *      wins. The legacy cache row (which can be stale after merges or renames)
+ *      is rewritten to match so subsequent fast-path cache hits are correct.
+ *   2. legacy `companies` cache (lazy domain → name lookup).
+ *   3. website parse → LLM → domain heuristic (the slow path that populates
+ *      the cache for first-time domains).
  */
 export async function enrichCompany(domain: string): Promise<string> {
+  // 0. Authoritative org_companies lookup — supersedes any cache value.
+  const canonicalName = orgCompanyRepo.getCompanyCanonicalNameByDomain(domain)
+  if (canonicalName) {
+    // Keep the cache warm so the next sync caller (e.g. UI suggestions)
+    // returns the same name without re-doing the join.
+    companyCacheRepo.upsert(domain, canonicalName)
+    return canonicalName
+  }
+
   // 1. Check cache
   const cached = companyCacheRepo.getByDomain(domain)
   if (cached) return cached.displayName
@@ -73,7 +91,8 @@ export async function enrichCompaniesForMeeting(
 
 /**
  * Get enriched company suggestions for a list of emails.
- * Uses cache for instant results, does not trigger enrichment.
+ * Uses org_companies (authoritative) first, then the legacy cache, then a
+ * domain heuristic. Synchronous — does not trigger website/LLM enrichment.
  */
 export function getCompanySuggestionsFromEmails(emails: string[]): CompanySuggestion[] {
   const domains = extractDomainsFromEmails(emails)
@@ -83,7 +102,13 @@ export function getCompanySuggestionsFromEmails(emails: string[]): CompanySugges
   const suggestions: CompanySuggestion[] = []
 
   for (const domain of domains) {
-    const name = cached.get(domain) || domainToTitleCase(domain)
+    // Prefer the authoritative org_companies name (covers post-merge and
+    // post-rename cases where the legacy cache could be stale). Falls back
+    // to the cache, then to a domain heuristic.
+    const name = orgCompanyRepo.getCompanyCanonicalNameByDomain(domain)
+      ?? cached.get(domain)
+      ?? domainToTitleCase(domain)
+
     suggestions.push({
       name,
       domain,

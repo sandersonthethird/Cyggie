@@ -26,7 +26,7 @@ import * as companyRepo from '../database/repositories/org-company.repo'
 import * as contactRepo from '../database/repositories/contact.repo'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { makeEntityNotesRepo } from '../database/repositories/notes-base'
-import { getFlaggedFileIds } from '../database/repositories/company-file-flags.repo'
+import { getFlaggedFiles } from '../database/repositories/company-file-flags.repo'
 
 const _contactNotesRepo = makeEntityNotesRepo('contact_id')
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
@@ -152,9 +152,11 @@ export async function assembleCompanyContext(companyId: string): Promise<Company
     parts.push('')
   }
 
-  // Flagged files
-  const flaggedIds = getFlaggedFileIds(companyId)
-  const filesMd = await formatFlaggedFilesSection(flaggedIds, COMPANY_FILE_CAPS)
+  // Flagged files (mime-aware: dispatches to local readers OR Drive export
+  // depending on the stored mimeType; legacy rows with NULL mimeType take
+  // the local-file path via extension detection inside readLocalFile).
+  const flaggedFiles = getFlaggedFiles(companyId)
+  const filesMd = await formatFlaggedFilesSection(flaggedFiles, COMPANY_FILE_CAPS)
   const hasFlaggedFiles = filesMd.length > 0
   if (hasFlaggedFiles) {
     parts.push(filesMd)

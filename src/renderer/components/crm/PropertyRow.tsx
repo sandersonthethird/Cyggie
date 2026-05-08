@@ -290,6 +290,7 @@ export function PropertyRow({
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={handleKeyDown}
             onBlur={handleBlur}
+            placeholder={placeholder}
             rows={3}
           />
         )

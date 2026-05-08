@@ -38,6 +38,16 @@ interface UseFindInPageOptions {
   isOpen: boolean
   onOpen: () => void
   onClose: () => void
+  /**
+   * When false, skip registering the global Cmd+F / Ctrl+F listener.
+   * Default true.
+   *
+   * Used by surfaces that mount unconditionally but should only respond to
+   * Cmd+F when active — notably the singleton chat-panel <PanelThread> which
+   * is portaled into rail/fullscreen but mounted at app start. Pass
+   * `enabled: panelIsOpen` to gate the keyboard shortcut on visibility.
+   */
+  enabled?: boolean
 }
 
 interface UseFindInPageReturn {
@@ -57,7 +67,8 @@ export function useFindInPage({
   text,
   isOpen,
   onOpen,
-  onClose
+  onClose,
+  enabled = true,
 }: UseFindInPageOptions): UseFindInPageReturn {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -118,8 +129,11 @@ export function useFindInPage({
     return () => clearTimeout(timer)
   }, [activeMatchIndex, isOpen, matchCount])
 
-  // Cmd+F / Ctrl+F keyboard shortcut
+  // Cmd+F / Ctrl+F keyboard shortcut. Skipped when `enabled` is false so a
+  // singleton-mounted surface (e.g., chat panel) doesn't intercept Cmd+F when
+  // it isn't currently visible.
   useEffect(() => {
+    if (!enabled) return
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
         e.preventDefault()
@@ -129,7 +143,7 @@ export function useFindInPage({
     }
     document.addEventListener('keydown', handler, true)
     return () => document.removeEventListener('keydown', handler, true)
-  }, [onOpen])
+  }, [onOpen, enabled])
 
   // Build highlighted content (plain-text nodes — for plain-text surfaces only)
   const highlightedContent = useMemo<ReactNode>(() => {

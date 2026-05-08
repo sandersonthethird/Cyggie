@@ -16,15 +16,32 @@ interface CompanyFilesProps {
 
 type ToggleResult =
   | { ok: true; flagged: boolean }
-  | { ok: false; code: 'MISSING' | 'UNSUPPORTED_FORMAT' | 'TOO_LARGE'; message: string }
+  | {
+      ok: false
+      code: 'MISSING' | 'UNSUPPORTED_FORMAT' | 'TOO_LARGE' | 'DRIVE_SCOPE_INSUFFICIENT'
+      message: string
+    }
 
-const FLAGGABLE_EXTENSIONS = new Set(['pdf', 'txt', 'md', 'csv'])
+const FLAGGABLE_EXTENSIONS = new Set(['pdf', 'txt', 'md', 'csv', 'docx', 'xlsx'])
+const GOOGLE_NATIVE_MIMES = new Set([
+  'application/vnd.google-apps.document',
+  'application/vnd.google-apps.spreadsheet',
+  'application/vnd.google-apps.presentation',
+])
 
 function isFlaggable(file: CompanyDriveFileRef): boolean {
   if (!file.id || file.mimeType === 'folder') return false
+  if (GOOGLE_NATIVE_MIMES.has(file.mimeType)) return true
   const dot = file.name.lastIndexOf('.')
   if (dot < 0) return false
   return FLAGGABLE_EXTENSIONS.has(file.name.slice(dot + 1).toLowerCase())
+}
+
+function googleNativeIcon(mimeType: string): string | null {
+  if (mimeType === 'application/vnd.google-apps.document') return '📄'
+  if (mimeType === 'application/vnd.google-apps.spreadsheet') return '📊'
+  if (mimeType === 'application/vnd.google-apps.presentation') return '📑'
+  return null
 }
 
 /*
@@ -40,41 +57,71 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [pathStack, setPathStack] = useState<{ name: string; path: string }[]>([])
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set())
   const [flagError, setFlagError] = useState<string | null>(null)
+  const [needsDriveReauth, setNeedsDriveReauth] = useState(false)
+  const [reauthBusy, setReauthBusy] = useState(false)
   const flagErrorTimer = useRef<number | null>(null)
 
+  // Reset folder navigation when switching companies. Use functional
+  // setState so the no-op case (already empty) returns the same array
+  // reference and doesn't re-trigger the data effect.
   useEffect(() => {
-    const cached = filesCache.get(companyId)
-    if (cached) {
-      setFiles(cached.files)
-      setCompanyRoot(cached.companyRoot)
-      setLoaded(true)
-      setLoading(false)
-      return
+    setPathStack((prev) => (prev.length === 0 ? prev : []))
+    setLoaded((prev) => (prev ? false : prev))
+  }, [companyId])
+
+  useEffect(() => {
+    let cancelled = false
+    const currentBrowsePath = pathStack[pathStack.length - 1]?.path
+
+    // Only the root view uses the module-level cache. Subfolder views
+    // always re-fetch (deep navigation is exploratory; freshness wins).
+    if (pathStack.length === 0) {
+      const cached = filesCache.get(companyId)
+      if (cached) {
+        setFiles(cached.files)
+        setCompanyRoot(cached.companyRoot)
+        setLoaded(true)
+        setLoading(false)
+        return
+      }
     }
 
     setFiles([])
-    setCompanyRoot(null)
-    setLoaded(false)
     setLoading(true)
+    // NOTE: do NOT reset `loaded` here — it stays true after the first
+    // successful fetch so the header (breadcrumb + Back button) remains
+    // visible during subfolder transitions. If we cleared `loaded`, a
+    // user mid-fetch couldn't click "↑ Back" or breadcrumb segments to
+    // escape a slow request.
     api
-      .invoke<CompanyFilesLookupResult>(IPC_CHANNELS.COMPANY_FILES, companyId)
+      .invoke<CompanyFilesLookupResult>(IPC_CHANNELS.COMPANY_FILES, companyId, currentBrowsePath)
       .then((data) => {
+        if (cancelled) return
         const result: CompanyFilesLookupResult = {
           files: data?.files ?? [],
           companyRoot: data?.companyRoot ?? null,
         }
-        filesCache.set(companyId, result)
+        if (pathStack.length === 0) filesCache.set(companyId, result)
         setFiles(result.files)
         setCompanyRoot(result.companyRoot)
       })
-      .catch(console.error)
-      .finally(() => {
-        setLoaded(true)
-        setLoading(false)
+      .catch((err) => {
+        if (!cancelled) console.error(err)
       })
-  }, [companyId, refreshKey])
+      .finally(() => {
+        if (!cancelled) {
+          setLoaded(true)
+          setLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [companyId, refreshKey, pathStack])
 
   useEffect(() => {
     let cancelled = false
@@ -97,8 +144,26 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
   }, [])
 
   function handleRefresh() {
-    filesCache.delete(companyId)
+    if (pathStack.length === 0) filesCache.delete(companyId)
     setRefreshKey((k) => k + 1)
+  }
+
+  function handleRowClick(file: CompanyDriveFileRef) {
+    if (file.mimeType === 'folder') return
+    openFile(file)
+  }
+
+  function handleRowDoubleClick(file: CompanyDriveFileRef) {
+    if (file.mimeType !== 'folder' || !file.id) return
+    setPathStack((prev) => [...prev, { name: file.name, path: file.id }])
+  }
+
+  function handleBackUp() {
+    setPathStack((prev) => prev.slice(0, -1))
+  }
+
+  function handleBreadcrumbJump(index: number) {
+    setPathStack((prev) => (index === -1 ? [] : prev.slice(0, index + 1)))
   }
 
   function showFlagError(message: string) {
@@ -115,9 +180,21 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
         companyId,
         fileId: file.id,
         fileName: file.name,
+        mimeType: file.mimeType,
       })
+      // An older or malformed response (e.g., the pre-validation handler
+      // that returned a bare boolean) used to silently no-op here. Surface
+      // it instead so the user knows to restart.
+      if (!result || typeof result !== 'object' || !('ok' in result)) {
+        showFlagError('Could not update flag (unexpected response — try restarting the app)')
+        return
+      }
       if (!result.ok) {
-        showFlagError(result.message)
+        if (result.code === 'DRIVE_SCOPE_INSUFFICIENT') {
+          setNeedsDriveReauth(true)
+          return
+        }
+        showFlagError(result.message ?? 'Could not update flag')
         return
       }
       setFlaggedIds((prev) => {
@@ -128,6 +205,22 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
       })
     } catch (err) {
       showFlagError(err instanceof Error ? err.message : 'Could not update flag')
+    }
+  }
+
+  async function handleDriveReauth() {
+    setReauthBusy(true)
+    try {
+      await api.invoke(IPC_CHANNELS.CALENDAR_REAUTHORIZE, 'drive-files')
+      setNeedsDriveReauth(false)
+    } catch (err) {
+      showFlagError(
+        err instanceof Error
+          ? `Reconnect failed: ${err.message}`
+          : 'Reconnect Google Drive failed',
+      )
+    } finally {
+      setReauthBusy(false)
     }
   }
 
@@ -145,32 +238,80 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
     [files, flaggedIds]
   )
 
+  const inSubfolder = pathStack.length > 0
+
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
       {companyRoot && <div className={styles.root_}>Folder: {companyRoot}</div>}
-      {loaded && !loading && (
+      {loaded && (
         <div className={styles.headerRow}>
+          {inSubfolder && (
+            <button className={styles.backBtn} onClick={handleBackUp} title="Up one level">↑ Back</button>
+          )}
+          <nav className={styles.breadcrumb} aria-label="Folder breadcrumb">
+            <button
+              type="button"
+              className={styles.crumb}
+              onClick={() => handleBreadcrumbJump(-1)}
+              disabled={!inSubfolder}
+            >
+              Files
+            </button>
+            {pathStack.map((seg, i) => (
+              <span key={seg.path} className={styles.crumbSep}>
+                <span className={styles.crumbSlash}> / </span>
+                <button
+                  type="button"
+                  className={styles.crumb}
+                  onClick={() => handleBreadcrumbJump(i)}
+                  disabled={i === pathStack.length - 1}
+                >
+                  {seg.name}
+                </button>
+              </span>
+            ))}
+          </nav>
           {flaggableCount > 0 && (
             <span className={styles.flaggedCount}>
-              {flaggedCount} of {flaggableCount} included in chat
+              {flaggedCount} of {flaggableCount} {inSubfolder ? 'in this folder ' : ''}included in chat
             </span>
           )}
           <button className={styles.refreshBtn} onClick={handleRefresh} title="Refresh files">↻</button>
         </div>
       )}
       {flagError && <div className={styles.flagError}>{flagError}</div>}
+      {needsDriveReauth && (
+        <div className={styles.reauthBanner}>
+          <span className={styles.reauthCopy}>
+            Reconnect Google Drive to enable Docs / Sheets / Slides ingestion.
+          </span>
+          <button
+            type="button"
+            className={styles.reauthBtn}
+            onClick={handleDriveReauth}
+            disabled={reauthBusy}
+          >
+            {reauthBusy ? 'Connecting…' : 'Reconnect Google Drive'}
+          </button>
+        </div>
+      )}
       {loading && <div className={styles.loading}>Loading…</div>}
       {loaded && files.length === 0 && (
-        <div className={styles.empty}>No files found. Configure a folder in Settings to see files here.</div>
+        <div className={styles.empty}>
+          {inSubfolder
+            ? 'This folder is empty, or has been moved/renamed since the listing was loaded.'
+            : 'No files found. Configure a folder in Settings to see files here.'}
+        </div>
       )}
       {files.map((file) => {
         const flaggable = isFlaggable(file)
         const flagged = !!file.id && flaggedIds.has(file.id)
+        const isFolder = file.mimeType === 'folder'
         return (
           <div
             key={file.id}
-            className={styles.file}
-            draggable={file.mimeType !== 'folder'}
+            className={`${styles.file} ${isFolder ? styles.folderRow : ''}`}
+            draggable={!isFolder}
             onDragStart={(e) => {
               e.dataTransfer.setData('application/x-cyggie-file', JSON.stringify({
                 path: file.id,
@@ -179,11 +320,19 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
               }))
               e.dataTransfer.effectAllowed = 'copy'
             }}
-            onClick={() => openFile(file)}
+            onClick={() => handleRowClick(file)}
+            onDoubleClick={() => handleRowDoubleClick(file)}
+            title={isFolder ? 'Double-click to open' : undefined}
           >
             <div className={styles.fileMain}>
               <div className={styles.fileNameWrap}>
-                <div className={styles.fileName}>{file.name}</div>
+                <div className={styles.fileName}>
+                  {isFolder && <span className={styles.folderIcon} aria-hidden>📁 </span>}
+                  {!isFolder && googleNativeIcon(file.mimeType) && (
+                    <span className={styles.folderIcon} aria-hidden>{googleNativeIcon(file.mimeType)} </span>
+                  )}
+                  {file.name}
+                </div>
                 <div className={styles.fileMeta}>
                   {file.mimeType && <span className={styles.type}>{file.mimeType.split('/').pop()}</span>}
                   {file.modifiedAt && (
