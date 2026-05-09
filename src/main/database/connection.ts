@@ -83,6 +83,9 @@ import { runDropLegacyNotesTablesMigration } from './migrations/081-drop-legacy-
 import { runNotesSourceMeetingUniqueMigration } from './migrations/082-notes-source-meeting-unique'
 import { runFlaggedFilesMimeTypeMigration } from './migrations/083-flagged-files-mime-type'
 import { runRepairBadPrimaryDomainsMigration } from './migrations/084-repair-bad-primary-domains'
+import { runMemoEvidenceMigration } from './migrations/085-memo-evidence'
+import { runAgentRunsMigration } from './migrations/086-agent-runs'
+import { runAgentRunEventsMigration } from './migrations/087-agent-run-events'
 
 let db: Database.Database | null = null
 
@@ -175,6 +178,9 @@ export function getDatabase(): Database.Database {
     runNotesSourceMeetingUniqueMigration(db)
     runFlaggedFilesMimeTypeMigration(db)
     runRepairBadPrimaryDomainsMigration(db)
+    runMemoEvidenceMigration(db)
+    runAgentRunsMigration(db)
+    runAgentRunEventsMigration(db)
   }
   return db
 }
