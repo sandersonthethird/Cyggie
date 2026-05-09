@@ -16,10 +16,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ── Context builder mock ────────────────────────────────────────────────────
 
-const mockBuildContactContext = vi.fn()
+const mockAssembleContactContext = vi.fn()
 
-vi.mock('../main/llm/contact-context-builder', () => ({
-  buildContactContext: (...args: unknown[]) => mockBuildContactContext(args[0]),
+vi.mock('../main/llm/context-builders', () => ({
+  assembleContactContext: (...args: unknown[]) => mockAssembleContactContext(args[0]),
 }))
 
 // ── Provider mock ───────────────────────────────────────────────────────────
@@ -54,8 +54,8 @@ describe('generateKeyTakeaways', () => {
   })
 
   it('throws "Not enough context" when hasMeetings/hasEmails/hasNotes are all false', async () => {
-    mockBuildContactContext.mockReturnValue({
-      context: '# Contact: Jane Smith\n',
+    mockAssembleContactContext.mockReturnValue({
+      markdown: '# Contact: Jane Smith\n',
       hasMeetings: false,
       hasEmails: false,
       hasNotes: false,
@@ -64,8 +64,8 @@ describe('generateKeyTakeaways', () => {
   })
 
   it('throws "Generation returned empty content" when provider returns empty string', async () => {
-    mockBuildContactContext.mockReturnValue({
-      context: '# Contact: Jane Smith\n## Meeting Summaries\nSome content',
+    mockAssembleContactContext.mockReturnValue({
+      markdown: '# Contact: Jane Smith\n## Meeting Summaries\nSome content',
       hasMeetings: true,
       hasEmails: false,
       hasNotes: false,
@@ -75,8 +75,8 @@ describe('generateKeyTakeaways', () => {
   })
 
   it('throws "Generation returned empty content" when provider returns whitespace', async () => {
-    mockBuildContactContext.mockReturnValue({
-      context: '# Contact: Jane Smith\n## Notes\nSome note',
+    mockAssembleContactContext.mockReturnValue({
+      markdown: '# Contact: Jane Smith\n## Notes\nSome note',
       hasMeetings: false,
       hasEmails: false,
       hasNotes: true,
@@ -86,8 +86,8 @@ describe('generateKeyTakeaways', () => {
   })
 
   it('returns bullets from provider on happy path', async () => {
-    mockBuildContactContext.mockReturnValue({
-      context: '# Contact: Jane Smith\n## Email Correspondence\nEmail body',
+    mockAssembleContactContext.mockReturnValue({
+      markdown: '# Contact: Jane Smith\n## Email Correspondence\nEmail body',
       hasMeetings: false,
       hasEmails: true,
       hasNotes: false,
@@ -99,8 +99,8 @@ describe('generateKeyTakeaways', () => {
   })
 
   it('truncates output to 1000 characters', async () => {
-    mockBuildContactContext.mockReturnValue({
-      context: '# Contact: Jane Smith\n## Notes\nSome note',
+    mockAssembleContactContext.mockReturnValue({
+      markdown: '# Contact: Jane Smith\n## Notes\nSome note',
       hasMeetings: false,
       hasEmails: false,
       hasNotes: true,
@@ -112,8 +112,8 @@ describe('generateKeyTakeaways', () => {
   })
 
   it('passes an AbortSignal to provider.generateSummary', async () => {
-    mockBuildContactContext.mockReturnValue({
-      context: '# Contact: Jane Smith\n## Notes\nSome note',
+    mockAssembleContactContext.mockReturnValue({
+      markdown: '# Contact: Jane Smith\n## Notes\nSome note',
       hasMeetings: false,
       hasEmails: false,
       hasNotes: true,
@@ -124,8 +124,8 @@ describe('generateKeyTakeaways', () => {
   })
 
   it('aborts previous in-flight call when a new one starts', async () => {
-    mockBuildContactContext.mockReturnValue({
-      context: '# Contact: Jane Smith\n## Notes\nSome note',
+    mockAssembleContactContext.mockReturnValue({
+      markdown: '# Contact: Jane Smith\n## Notes\nSome note',
       hasMeetings: false,
       hasEmails: false,
       hasNotes: true,

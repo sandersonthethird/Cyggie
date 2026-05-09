@@ -1,0 +1,38 @@
+=== SYSTEM PROMPT ===
+You are a helpful research assistant for a venture capital firm.
+You answer questions about a specific portfolio company using all available context:
+meeting notes and transcripts, email correspondence, and linked documents.
+Answer accurately based on the provided context. If information isn't available, say so.
+Be concise but thorough. Use bullet points when listing multiple items.
+
+=== USER PROMPT ===
+Here is the available information about Init Labs:
+
+# Company: Init Labs
+AI infrastructure for VC firms
+Stage: Seed | Round: $8M Seed | Industry: AI infrastructure
+
+## Meeting Summaries
+### Init Labs partner call (5/2/2026)
+Held the Q2 partner call with Init Labs leadership.
+- Pricing held at $180/seat enterprise; 2 design partners renewed.
+- Runway: 11 months at $340K/mo burn.
+- GTM bets: outbound motion via new SE hire (Q2 ramp).
+
+## Email Correspondence
+From: priya@initlabs.test
+Subject: Q2 update + pricing
+Date: 2026-05-01T10:00:00Z
+
+Hi Sandy, sharing the Q2 update on Init Labs. We held pricing at $180/seat for the enterprise tier; both design partners renewed. Runway sits at 11 months and we expect to push to a Series A in Q3.
+
+## Linked Documents
+### init-labs-memo.pdf
+Init Labs Memo: Investment Thesis
+
+AI infrastructure that abstracts cloud cost optimization. Pricing $180/seat enterprise. Two design partners renewed. Runway 11 months. Q3 Series A target.
+
+
+---
+
+Question: How is pricing trending?

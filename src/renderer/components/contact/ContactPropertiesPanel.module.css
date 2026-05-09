@@ -1145,20 +1145,40 @@
   row-gap: 8px;
 }
 
-.emailActionBtn {
-  display: inline-block;
-  padding: 5px 14px;
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
+.headerIconBtn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  color: var(--color-text-secondary);
   cursor: pointer;
-  transition: opacity 0.12s;
-  font-family: inherit;
+  flex-shrink: 0;
+  padding: 0;
 }
-.emailActionBtn:hover { opacity: 0.85; }
+.headerIconBtn:hover:not(:disabled) { background: var(--color-hover-bg); color: var(--color-text); }
+.headerIconBtn:disabled { opacity: 0.4; cursor: default; }
+
+.headerIconBtn[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 20;
+}
 
 .linkedinHeaderBtn {
   flex-shrink: 0;

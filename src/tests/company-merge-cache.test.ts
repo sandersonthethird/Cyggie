@@ -114,7 +114,13 @@ function buildDb(): Database.Database {
       created_at TEXT DEFAULT (datetime('now')),
       UNIQUE(company_id, contact_id)
     );
-    CREATE TABLE notes (id TEXT PRIMARY KEY, company_id TEXT, updated_at TEXT DEFAULT (datetime('now')));
+    CREATE TABLE notes (
+      id TEXT PRIMARY KEY,
+      company_id TEXT,
+      contact_id TEXT,
+      source_meeting_id TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
 
     CREATE TABLE themes (id TEXT PRIMARY KEY, name TEXT NOT NULL);
     CREATE TABLE org_company_themes (
@@ -139,6 +145,12 @@ function buildDb(): Database.Database {
     CREATE TABLE audit_log (
       id TEXT PRIMARY KEY, user_id TEXT, entity_type TEXT, entity_id TEXT,
       action TEXT, details TEXT, created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE companies (
+      domain TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      enriched_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `)
   return db
@@ -220,5 +232,83 @@ describe('mergeCompanies – denormalized cache update', () => {
 
     const companies = getMeetingCompanies(testDb, 'meeting-1')
     expect(companies).toEqual(['Acme Corp'])
+  })
+})
+
+describe('mergeCompanies – companies cache cleanup', () => {
+  beforeEach(() => {
+    testDb = buildDb()
+  })
+
+  it('deletes cache rows whose display_name matches the source name (case-insensitive)', () => {
+    insertCompany(testDb, 'target-1', 'Revamp')
+    insertCompany(testDb, 'source-1', 'Get Revamp')
+
+    // Two cache rows that should disappear: exact case and lowercase variant.
+    testDb.prepare(`INSERT INTO companies (domain, display_name) VALUES ('a.example', 'Get Revamp')`).run()
+    testDb.prepare(`INSERT INTO companies (domain, display_name) VALUES ('b.example', 'get revamp')`).run()
+
+    mergeCompanies('target-1', 'source-1')
+
+    const remaining = testDb.prepare(`SELECT domain FROM companies ORDER BY domain`).all()
+    expect(remaining).toEqual([])
+  })
+
+  it("rewrites cache rows keyed by source's primary_domain to use target's canonical_name", () => {
+    // Future calendar ingest from source's domain should surface the target's
+    // name. Before this fix, the cache would still serve the merged-away
+    // source name to enrichCompany on cache hit.
+    insertCompany(testDb, 'target-1', 'Revamp')
+    // source has primary_domain set so the merge picks it up.
+    testDb.prepare(`
+      INSERT INTO org_companies (id, canonical_name, normalized_name, status, entity_type, primary_domain)
+      VALUES ('source-1', 'Get Revamp', 'get revamp', 'active', 'prospect', 'source-domain.example')
+    `).run()
+
+    // Cache row stored "Get Revamp" against source's domain (typical for a
+    // calendar-ingest auto-created company).
+    testDb.prepare(`INSERT INTO companies (domain, display_name) VALUES ('source-domain.example', 'Get Revamp')`).run()
+
+    mergeCompanies('target-1', 'source-1')
+
+    const cacheRow = testDb.prepare(`SELECT domain, display_name FROM companies WHERE domain = ?`).get('source-domain.example') as { domain: string; display_name: string }
+    expect(cacheRow.display_name).toBe('Revamp')
+  })
+
+  it("rewrites cache rows keyed by source's alias domains too", () => {
+    // Source has primary_domain plus an alias domain. After merge, both
+    // domains should serve the target's name from the legacy cache.
+    insertCompany(testDb, 'target-1', 'Revamp')
+    testDb.prepare(`
+      INSERT INTO org_companies (id, canonical_name, normalized_name, status, entity_type, primary_domain)
+      VALUES ('source-1', 'Get Revamp', 'get revamp', 'active', 'prospect', 'src1.example')
+    `).run()
+    testDb.prepare(`
+      INSERT INTO org_company_aliases (id, company_id, alias_value, alias_type)
+      VALUES ('al1', 'source-1', 'src2.example', 'domain')
+    `).run()
+
+    testDb.prepare(`INSERT INTO companies (domain, display_name) VALUES ('src1.example', 'Get Revamp')`).run()
+    testDb.prepare(`INSERT INTO companies (domain, display_name) VALUES ('src2.example', 'Some Other Stale Name')`).run()
+
+    mergeCompanies('target-1', 'source-1')
+
+    const rows = testDb.prepare(`SELECT domain, display_name FROM companies ORDER BY domain`).all()
+    expect(rows).toEqual([
+      { domain: 'src1.example', display_name: 'Revamp' },
+      { domain: 'src2.example', display_name: 'Revamp' }
+    ])
+  })
+
+  it('leaves unrelated cache rows alone', () => {
+    insertCompany(testDb, 'target-1', 'Revamp')
+    insertCompany(testDb, 'source-1', 'Get Revamp')
+
+    testDb.prepare(`INSERT INTO companies (domain, display_name) VALUES ('keep.example', 'KeepCo')`).run()
+
+    mergeCompanies('target-1', 'source-1')
+
+    const remaining = testDb.prepare(`SELECT domain, display_name FROM companies ORDER BY domain`).all()
+    expect(remaining).toEqual([{ domain: 'keep.example', display_name: 'KeepCo' }])
   })
 })

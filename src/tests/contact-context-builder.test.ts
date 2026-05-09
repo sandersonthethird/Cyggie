@@ -1,9 +1,16 @@
 /**
- * Tests for contact-context-builder.ts
+ * Tests for assembleContactContext (in context-builders.ts).
+ *
+ * Per /plan-eng-review Issue 1D, the legacy buildContactContext (in the now-
+ * deleted contact-context-builder.ts) was split into a shared
+ * assembleContactContext (used by chatDispatch AND contact-key-takeaways)
+ * and a thin buildContactContext wrapper that returns BuilderResult. These
+ * tests target the assembler — the wire-format semantics they exercise are
+ * the function's actual contract.
  *
  * Mock boundaries:
  *   - contactRepo.getContact / listContactEmails → vi.mock (avoids full DB schema setup)
- *   - contactNotesRepo.listContactNotes → vi.mock
+ *   - contactNotesRepo (notes-base factory) → vi.mock
  *   - meetingRepo.getMeeting → vi.mock
  *   - readSummary / readTranscript → vi.mock (avoids filesystem access)
  *
@@ -34,8 +41,10 @@ vi.mock('../main/database/repositories/contact.repo', () => ({
   listContactEmails: (...args: unknown[]) => mockListContactEmails(args[0] as string),
 }))
 
-vi.mock('../main/database/repositories/contact-notes.repo', () => ({
-  listContactNotes: (...args: unknown[]) => mockListContactNotes(args[0] as string),
+vi.mock('../main/database/repositories/notes-base', () => ({
+  makeEntityNotesRepo: () => ({
+    list: (...args: unknown[]) => mockListContactNotes(args[0] as string),
+  }),
 }))
 
 vi.mock('../main/database/repositories/meeting.repo', () => ({
@@ -45,9 +54,10 @@ vi.mock('../main/database/repositories/meeting.repo', () => ({
 vi.mock('../main/storage/file-manager', () => ({
   readSummary: (...args: unknown[]) => mockReadSummary(args[0] as string),
   readTranscript: (...args: unknown[]) => mockReadTranscript(args[0] as string),
+  readLocalFile: async () => null,
 }))
 
-const { buildContactContext } = await import('../main/llm/contact-context-builder')
+const { assembleContactContext } = await import('../main/llm/context-builders')
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -111,7 +121,7 @@ function makeContact(overrides: Partial<ContactDetail> = {}): ContactDetail {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe('buildContactContext', () => {
+describe('assembleContactContext', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockListContactEmails.mockReturnValue([])
@@ -123,18 +133,18 @@ describe('buildContactContext', () => {
 
   it('throws "Contact not found" for unknown contactId', () => {
     mockGetContact.mockReturnValue(null)
-    expect(() => buildContactContext('unknown-id')).toThrow('Contact not found')
+    expect(() => assembleContactContext('unknown-id')).toThrow('Contact not found')
   })
 
   it('includes contact name in context header', () => {
     mockGetContact.mockReturnValue(makeContact())
-    const { context } = buildContactContext('c1')
-    expect(context).toContain('# Contact: Jane Smith')
+    const { markdown } = assembleContactContext('c1')
+    expect(markdown).toContain('# Contact: Jane Smith')
   })
 
   it('returns all flags false when contact has no data', () => {
     mockGetContact.mockReturnValue(makeContact())
-    const result = buildContactContext('c1')
+    const result = assembleContactContext('c1')
     expect(result.hasMeetings).toBe(false)
     expect(result.hasEmails).toBe(false)
     expect(result.hasNotes).toBe(false)
@@ -146,10 +156,10 @@ describe('buildContactContext', () => {
     }))
     mockGetMeeting.mockReturnValue({ summaryPath: '/path/to/summary.txt', transcriptPath: null })
     mockReadSummary.mockReturnValue('Great meeting with Jane.')
-    const result = buildContactContext('c1')
+    const result = assembleContactContext('c1')
     expect(result.hasMeetings).toBe(true)
-    expect(result.context).toContain('Meeting Summaries')
-    expect(result.context).toContain('Great meeting with Jane.')
+    expect(result.markdown).toContain('Meeting Summaries')
+    expect(result.markdown).toContain('Great meeting with Jane.')
   })
 
   it('sets hasMeetings true when a meeting has a transcript (no summary)', () => {
@@ -158,9 +168,9 @@ describe('buildContactContext', () => {
     }))
     mockGetMeeting.mockReturnValue({ summaryPath: null, transcriptPath: '/path/to/transcript.txt' })
     mockReadTranscript.mockReturnValue('Speaker: Hello, Jane.')
-    const result = buildContactContext('c1')
+    const result = assembleContactContext('c1')
     expect(result.hasMeetings).toBe(true)
-    expect(result.context).toContain('Meeting Transcripts')
+    expect(result.markdown).toContain('Meeting Transcripts')
   })
 
   it('sets hasEmails true when an email has a body', () => {
@@ -179,9 +189,9 @@ describe('buildContactContext', () => {
       threadMessageCount: 1,
       participants: [],
     }])
-    const result = buildContactContext('c1')
+    const result = assembleContactContext('c1')
     expect(result.hasEmails).toBe(true)
-    expect(result.context).toContain('Email Correspondence')
+    expect(result.markdown).toContain('Email Correspondence')
   })
 
   it('does NOT set hasEmails when email body is too short (< 50 chars)', () => {
@@ -200,7 +210,7 @@ describe('buildContactContext', () => {
       threadMessageCount: 1,
       participants: [],
     }])
-    const result = buildContactContext('c1')
+    const result = assembleContactContext('c1')
     expect(result.hasEmails).toBe(false)
   })
 
@@ -212,9 +222,9 @@ describe('buildContactContext', () => {
       createdAt: '2024-04-01T00:00:00Z',
       updatedAt: '2024-04-01T00:00:00Z',
     }])
-    const result = buildContactContext('c1')
+    const result = assembleContactContext('c1')
     expect(result.hasNotes).toBe(true)
-    expect(result.context).toContain('Notes')
-    expect(result.context).toContain('Jane is interested in Series A')
+    expect(result.markdown).toContain('Notes')
+    expect(result.markdown).toContain('Jane is interested in Series A')
   })
 })

@@ -433,6 +433,7 @@ export default function Notes() {
       if (source) prev.set('importSource', source)
       else prev.delete('importSource')
       prev.delete('folder')
+      prev.delete('filter')
       return prev
     })
   }, [setSearchParams])

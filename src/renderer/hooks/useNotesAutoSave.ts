@@ -101,8 +101,12 @@ export function useNotesAutoSave(meetingId: string | undefined) {
     summaryDraftRef.current = text
     if (summarySaveRef.current) clearTimeout(summarySaveRef.current)
     summarySaveRef.current = setTimeout(() => {
-      void saveSummary(text)
       summarySaveRef.current = null
+      // Refuse to wipe a previously-persisted summary with empty content.
+      // A stray empty onUpdate (e.g. from an editor mount before content loads)
+      // must never clobber the on-disk file.
+      if (text.trim() === '' && savedSummaryRef.current.trim() !== '') return
+      void saveSummary(text)
     }, 1500)
   }, [saveSummary])
 

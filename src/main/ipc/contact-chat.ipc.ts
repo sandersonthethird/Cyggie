@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { queryContact, abortContactChat } from '../llm/contact-chat'
+import { abortContactChat } from '../llm/contact-chat'
+import { chatDispatch } from '../llm/chat-dispatch'
 import { withChatPersistence } from '../llm/chat-persistence'
 import { deriveChatContext } from '../../shared/utils/chat-context'
 import { getCurrentUserId } from '../security/current-user'
@@ -33,7 +34,11 @@ export function registerContactChatHandlers(): void {
         contextLabel: getContactName(data.contactId),
         userMessage: { content: data.question.trim(), attachments: data.attachments },
         userId: getCurrentUserId(),
-        runLLM: () => queryContact(data.contactId, data.question.trim(), data.attachments),
+        runLLM: () => chatDispatch({
+          kind: { kind: 'contact', contactId: data.contactId },
+          question: data.question.trim(),
+          attachments: data.attachments,
+        }),
         extractText: (response: string) => response,
       })
     }

@@ -8,6 +8,7 @@ export interface UnifiedSearchCitation {
   occurredAt: string
   companyId: string | null
   companyName: string | null
+  companyDomain: string | null
   route: string
   citationLabel: string
 }

@@ -81,6 +81,11 @@ import { runDropCompanyConversationsMigration } from './migrations/079-drop-comp
 import { runBackfillMeetingChatsMigration } from './migrations/080-backfill-meeting-chats'
 import { runDropLegacyNotesTablesMigration } from './migrations/081-drop-legacy-notes-tables'
 import { runNotesSourceMeetingUniqueMigration } from './migrations/082-notes-source-meeting-unique'
+import { runFlaggedFilesMimeTypeMigration } from './migrations/083-flagged-files-mime-type'
+import { runRepairBadPrimaryDomainsMigration } from './migrations/084-repair-bad-primary-domains'
+import { runMemoEvidenceMigration } from './migrations/085-memo-evidence'
+import { runAgentRunsMigration } from './migrations/086-agent-runs'
+import { runAgentRunEventsMigration } from './migrations/087-agent-run-events'
 
 let db: Database.Database | null = null
 
@@ -171,8 +176,38 @@ export function getDatabase(): Database.Database {
     runBackfillMeetingChatsMigration(db)
     runDropLegacyNotesTablesMigration(db)
     runNotesSourceMeetingUniqueMigration(db)
+    runFlaggedFilesMimeTypeMigration(db)
+    runRepairBadPrimaryDomainsMigration(db)
+    runMemoEvidenceMigration(db)
+    runAgentRunsMigration(db)
+    runAgentRunEventsMigration(db)
+
+    // Orphan-run garbage collection: any agent_runs row stuck at status='running'
+    // older than the threshold was abandoned by a prior app session (crash or
+    // forced quit). Flip to 'orphaned' so it doesn't block in-flight UI gates.
+    const gcd = gcOrphanedRuns(db)
+    if (gcd > 0) console.log(`[agent-runs] orphan GC marked ${gcd} stuck run(s) as orphaned`)
   }
   return db
+}
+
+/**
+ * Inline orphan-GC. Lives here (rather than imported from run-store.ts) to
+ * avoid a circular `getDatabase` reference during the very first connection
+ * — the run-store version calls getDatabase() which would re-enter this
+ * function. At launch we already hold `db`, so we can act on it directly.
+ */
+function gcOrphanedRuns(db: Database.Database): number {
+  const result = db.prepare(`
+    UPDATE agent_runs
+       SET status = 'orphaned',
+           ended_at = datetime('now'),
+           error_class = 'OrphanedAtLaunch',
+           error_message = 'app exited or crashed during run'
+     WHERE status = 'running'
+       AND datetime(started_at) < datetime('now', '-30 minutes')
+  `).run()
+  return result.changes ?? 0
 }
 
 export function closeDatabase(): void {

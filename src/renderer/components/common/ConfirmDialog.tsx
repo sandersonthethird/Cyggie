@@ -9,6 +9,7 @@ interface ConfirmDialogProps {
   confirmLabel?: string
   cancelLabel?: string
   variant?: 'default' | 'danger'
+  errorMessage?: string | null
   onConfirm: () => void
   onCancel: () => void
 }
@@ -20,6 +21,7 @@ export default function ConfirmDialog({
   confirmLabel = 'OK',
   cancelLabel = 'Cancel',
   variant = 'default',
+  errorMessage = null,
   onConfirm,
   onCancel
 }: ConfirmDialogProps) {
@@ -80,6 +82,9 @@ export default function ConfirmDialog({
           {title}
         </h2>
         <p className={styles.message}>{message}</p>
+        {errorMessage && (
+          <div className={styles.errorBlock} role="alert">{errorMessage}</div>
+        )}
         <div className={styles.actions}>
           <button className={styles.cancelButton} onClick={onCancel}>
             {cancelLabel}

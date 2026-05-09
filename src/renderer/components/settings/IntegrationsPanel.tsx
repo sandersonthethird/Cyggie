@@ -268,7 +268,7 @@ export function IntegrationsPanel({
           <FolderOpen size={14} className={styles.subRowIcon} />
           <div className={styles.subRowInfo}>
             <span className={styles.subRowLabel}>Drive Files</span>
-            <span className={styles.integrationSubtitle}>Browse company folders</span>
+            <span className={styles.integrationSubtitle}>Browse + ingest Docs/Sheets/Slides</span>
           </div>
           <Toggle
             on={hasDriveFilesScope}

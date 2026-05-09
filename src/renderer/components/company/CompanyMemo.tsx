@@ -1,19 +1,31 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { InvestmentMemoVersion, InvestmentMemoVersionSummary, InvestmentMemoWithLatest } from '../../../shared/types/company'
+import type { InvestmentMemoVersion, InvestmentMemoVersionSummary, InvestmentMemoWithLatest, MemoGenerateMeta } from '../../../shared/types/company'
 import { MemoEditModal } from './MemoEditModal'
+import { useNotice } from '../common/NoticeModal'
 import { useFindInPage } from '../../hooks/useFindInPage'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
 import { FindHighlight } from '../../lib/find-highlight-extension'
+import { CritiqueHighlight } from './CritiqueHighlight'
+import { EvidenceSidebar } from './EvidenceSidebar'
+import { ResearchLog } from './ResearchLog'
+import { useRunForCompany, useRuns } from '../../contexts/RunsContext'
 import FindBar from '../common/FindBar'
 import { Spinner } from '../common/Spinner'
 import styles from './CompanyMemo.module.css'
 import { api } from '../../api'
+
+interface StoredMemoEvidence {
+  id: string
+  versionId: string
+  claimText: string
+  isCritique: boolean
+}
 
 interface CompanyMemoProps {
   companyId: string
@@ -21,7 +33,9 @@ interface CompanyMemoProps {
 }
 
 export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
+  const notice = useNotice()
   const [memo, setMemo] = useState<InvestmentMemoWithLatest | null>(null)
+  const [latestGenerateMeta, setLatestGenerateMeta] = useState<MemoGenerateMeta | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [progressText, setProgressText] = useState('')
@@ -67,6 +81,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         Link.configure({ openOnClick: true }),
         ...TABLE_EXTENSIONS,
         FindHighlight,
+        CritiqueHighlight,
       ],
       editable: false,
     },
@@ -125,6 +140,118 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     setViewingVersion(null)
     setVhOpen(false)
   }, [companyId])
+
+  // ─── Stress-test agent integration ────────────────────────────────────
+  const runs = useRuns()
+  const stressRun = useRunForCompany('thesis_stress_test', companyId)
+  const stressInFlight = stressRun?.status === 'running'
+
+  // Cost badge: running average across recent stress-test runs for this company.
+  const [costEstimate, setCostEstimate] = useState<number | null>(null)
+  useEffect(() => {
+    void api
+      .invoke<number | null>(IPC_CHANNELS.AGENT_RUNS_AVERAGE_COST, {
+        kind: 'thesis_stress_test',
+        companyId,
+        lastN: 10,
+      })
+      .then(avg => setCostEstimate(avg))
+      .catch(() => setCostEstimate(null))
+  }, [companyId, stressRun?.status])
+
+  // After a stress-test completes, reload the memo so the new version shows,
+  // and pop the edit modal for review (matches the existing AI-generate flow).
+  useEffect(() => {
+    return runs.onCompletion(run => {
+      if (run.kind !== 'thesis_stress_test' || run.companyId !== companyId) return
+      if (run.status === 'success' && run.versionId) {
+        setLoaded(false)               // re-fetch memo with new version
+        setModalOpen(true)
+      }
+    })
+  }, [runs, companyId])
+
+  // Load evidence rows for the active version → drives critique heatmap +
+  // hover sidebar.
+  const [evidence, setEvidence] = useState<StoredMemoEvidence[]>([])
+  useEffect(() => {
+    if (!displayedVersion?.id) {
+      setEvidence([])
+      return
+    }
+    let cancelled = false
+    void api
+      .invoke<StoredMemoEvidence[]>(IPC_CHANNELS.MEMO_EVIDENCE_LIST_BY_VERSION, displayedVersion.id)
+      .then(rows => { if (!cancelled) setEvidence(rows ?? []) })
+      .catch(() => { if (!cancelled) setEvidence([]) })
+    return () => { cancelled = true }
+  }, [displayedVersion?.id])
+
+  // Push critique claim_text strings into TipTap as decorations (red wavy underline).
+  const critiqueClaims = useMemo(
+    () => evidence.filter(e => e.isCritique).map(e => e.claimText),
+    [evidence]
+  )
+  useEffect(() => {
+    if (!memoEditor) return
+    memoEditor.commands.setCritiqueClaims(critiqueClaims)
+  }, [memoEditor, critiqueClaims])
+
+  // Right-click context-menu lookup: when the user right-clicks anywhere in
+  // the rendered memo, capture the selection (or fall back to the closest
+  // sentence) and open the EvidenceSidebar focused on it.
+  const [activeClaim, setActiveClaim] = useState<string>('')
+  const memoBodyRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = memoBodyRef.current
+    if (!el) return
+    function handleContextMenu(e: MouseEvent) {
+      const selection = window.getSelection()?.toString().trim()
+      if (selection && selection.length >= 6) {
+        e.preventDefault()
+        setActiveClaim(selection)
+      }
+    }
+    function handleClick(e: MouseEvent) {
+      const target = e.target as HTMLElement
+      if (target.classList.contains('critique-highlight')) {
+        const text = target.textContent?.trim() ?? ''
+        if (text) setActiveClaim(text)
+      }
+    }
+    el.addEventListener('contextmenu', handleContextMenu)
+    el.addEventListener('click', handleClick)
+    return () => {
+      el.removeEventListener('contextmenu', handleContextMenu)
+      el.removeEventListener('click', handleClick)
+    }
+  }, [memoEditor])
+
+  async function stressTest() {
+    if (!memo?.latestVersion?.contentMarkdown) return
+    if ((memo.latestVersion.contentMarkdown ?? '').trim().length < 200) {
+      setErrorMsg('Memo is too short to stress-test — generate a memo first')
+      return
+    }
+    setErrorMsg('')
+    try {
+      const result = await api.invoke<{ runId: string }>(
+        IPC_CHANNELS.THESIS_STRESS_TEST_START,
+        { companyId },
+      )
+      // RunsContext picks up the run via the 'started' AgentEvent.
+      // result.runId is also the in-flight controller key.
+      void result
+    } catch (e) {
+      setErrorMsg((e instanceof Error && e.message) || 'Stress-test failed to start')
+    }
+  }
+
+  async function abortStressTest() {
+    if (!stressRun) return
+    await runs.abortRun(stressRun.runId)
+  }
+  // ──────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     return api.on(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE_PROGRESS, (chunk) => {
@@ -245,7 +372,12 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     setGenerating(true)
     setViewingVersion(null)
     try {
-      const result = await api.invoke<{ contentMarkdown: string; version: InvestmentMemoVersion }>(
+      const result = await api.invoke<{
+        contentMarkdown: string
+        version: InvestmentMemoVersion
+        /** Optional in case an old main bundle is running while renderer is fresh during dev hot-reload. */
+        meta?: MemoGenerateMeta
+      }>(
         IPC_CHANNELS.INVESTMENT_MEMO_GENERATE,
         companyId
       )
@@ -256,6 +388,13 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
       setMemo((prev) =>
         prev ? { ...prev, latestVersion: result.version, latestVersionNumber: result.version.versionNumber } : prev
       )
+      if (result.meta) {
+        setLatestGenerateMeta(result.meta)
+        // Toast when pre-research had nothing to query (truly empty company:
+        // no nicheSignal, no description, no industry, no founders).
+        const toast = emptyResearchToastOptions(result.meta)
+        if (toast) notice.show(toast)
+      }
       setModalOpen(true)
     } catch (e) {
       console.error('[CompanyMemo] generate failed:', e)
@@ -371,6 +510,24 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         </button>
         <button
           className={styles.btn}
+          onClick={stressInFlight ? abortStressTest : stressTest}
+          disabled={
+            !memo?.latestVersion?.contentMarkdown ||
+            (memo.latestVersion.contentMarkdown ?? '').trim().length < 200 ||
+            generating ||
+            modalOpen ||
+            !!viewingVersion
+          }
+          title={stressInFlight ? 'Cancel stress-test' : 'Adversarial review of the existing memo'}
+        >
+          {stressInFlight && <Spinner size="sm" />}
+          {stressInFlight ? 'Cancel stress-test' : 'Stress-test'}
+          {!stressInFlight && costEstimate != null ? (
+            <span className={styles.costBadge}>~${costEstimate.toFixed(2)}</span>
+          ) : null}
+        </button>
+        <button
+          className={styles.btn}
           onClick={exportPdf}
           disabled={!memo?.latestVersion || exportingPdf || generating || !!viewingVersion}
         >
@@ -462,7 +619,11 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         />
       )}
 
-      <div className={styles.preview}>
+      {stressRun && (stressInFlight || stressRun.status !== 'success' || stressRun.events.length > 0) && (
+        <ResearchLog run={stressRun} />
+      )}
+
+      <div className={styles.preview} ref={memoBodyRef}>
         {generating ? (
           <pre className={styles.progressText}>{progressText || 'Starting generation…'}</pre>
         ) : loadingVersion ? (
@@ -474,6 +635,16 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         )}
       </div>
 
+      {latestGenerateMeta && displayedVersion?.id === memo?.latestVersion?.id && (
+        <SourcesUsedFooter meta={latestGenerateMeta} />
+      )}
+
+      <EvidenceSidebar
+        versionId={displayedVersion?.id ?? null}
+        activeClaim={activeClaim}
+        onClose={() => setActiveClaim('')}
+      />
+
       {memo && modalOpen && (
         <MemoEditModal
           memo={memo}
@@ -482,6 +653,62 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
           initialFindQuery={findOpen ? findQuery : undefined}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * Build the "Based on N meetings, M notes…" sentence from a MemoGenerateMeta.
+ * Pure function, exported for testing. Returns null when the meta has no
+ * non-zero counts (would render an empty footer).
+ */
+export function buildSourcesUsedSentence(meta: MemoGenerateMeta): string | null {
+  const parts: string[] = []
+  if (meta.meetingCount > 0) parts.push(`${meta.meetingCount} ${meta.meetingCount === 1 ? 'meeting' : 'meetings'}`)
+  const totalNotes = meta.companyNoteCount + meta.contactNoteCount
+  if (totalNotes > 0) {
+    const breakdown = meta.contactNoteCount > 0 ? ` (${meta.contactNoteCount} contact-tagged)` : ''
+    parts.push(`${totalNotes} ${totalNotes === 1 ? 'note' : 'notes'}${breakdown}`)
+  }
+  if (meta.fileCount > 0) parts.push(`${meta.fileCount} ${meta.fileCount === 1 ? 'file' : 'files'}`)
+  if (meta.emailCount > 0) parts.push(`${meta.emailCount} ${meta.emailCount === 1 ? 'email' : 'emails'}`)
+  if (meta.externalResearchQueryCount > 0) {
+    parts.push(`${meta.externalResearchQueryCount} web ${meta.externalResearchQueryCount === 1 ? 'search' : 'searches'}`)
+  }
+  if (parts.length === 0) return null
+  return `Based on ${parts.join(', ')}.`
+}
+
+/**
+ * Decide whether to fire the "skipped web research" toast. Pure decision
+ * function so tests can call it directly without rendering. Returns the
+ * notice options (or null when no toast should fire).
+ */
+export function emptyResearchToastOptions(
+  meta: MemoGenerateMeta | null | undefined,
+): { variant: 'success'; title: string; message: string } | null {
+  if (!meta) return null
+  if (meta.externalResearchQueryCount > 0) return null
+  return {
+    variant: 'success',
+    title: 'Memo generated',
+    message: 'Skipped web research — not enough company info yet',
+  }
+}
+
+/**
+ * Small footer below the rendered memo summarizing the sources the LLM
+ * actually saw. Renders only when a fresh generation just happened (we have
+ * a meta) AND we're viewing the latest version. Drops when the user
+ * navigates to an older version (the meta describes the latest generation,
+ * not arbitrary historical versions).
+ */
+export function SourcesUsedFooter({ meta }: { meta: MemoGenerateMeta }) {
+  const sentence = buildSourcesUsedSentence(meta)
+  if (!sentence) return null
+  return (
+    <div className={styles.sourcesFooter} role="note" aria-label="Sources used to generate this memo">
+      {sentence}
     </div>
   )
 }

@@ -16,6 +16,90 @@ import type { DriveFolderRef } from '../../shared/types/drive'
 type DriveClient = ReturnType<typeof google.drive>
 const DRIVE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder'
 
+// Google native file mime types — exported so the chat-context layer can
+// dispatch on them.
+export const GOOGLE_DOC_MIME = 'application/vnd.google-apps.document'
+export const GOOGLE_SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
+export const GOOGLE_SLIDES_MIME = 'application/vnd.google-apps.presentation'
+
+/** Set of all Google native mimes that ingest into chat context. */
+export const GOOGLE_NATIVE_MIMES: ReadonlySet<string> = new Set([
+  GOOGLE_DOC_MIME,
+  GOOGLE_SHEET_MIME,
+  GOOGLE_SLIDES_MIME,
+])
+
+/** Drive's export mime for "give me an XLSX of this Sheet". */
+const XLSX_EXPORT_MIME =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+export type DriveExportError =
+  | { kind: 'DRIVE_SCOPE_INSUFFICIENT' }
+  | { kind: 'DRIVE_NOT_FOUND' }
+  | { kind: 'DRIVE_OTHER'; message: string }
+
+export type DriveExportResult =
+  | { ok: true; buf: Buffer }
+  | { ok: false; error: DriveExportError }
+
+/**
+ * Export a Google native file (Doc / Sheet / Slides) to bytes for chat
+ * context ingestion.
+ *
+ *   Doc       → text/plain   (utf-8 string in buf)
+ *   Slides    → text/plain   (slide bodies concatenated)
+ *   Sheet     → XLSX         (Buffer; caller pipes through extractXlsxText
+ *                             to reuse phase-1 multi-sheet labelling)
+ *
+ * Errors normalize to a typed shape:
+ *   DRIVE_SCOPE_INSUFFICIENT  the active token only has metadata.readonly;
+ *                             user must re-auth with drive.readonly
+ *   DRIVE_NOT_FOUND           file deleted/moved out of access
+ *   DRIVE_OTHER               anything else (transient network, 5xx, …)
+ *
+ * Token refresh is automatic via googleapis; we don't handle 401 here.
+ */
+export async function exportDriveFile(
+  fileId: string,
+  sourceMimeType: string,
+): Promise<DriveExportResult> {
+  const exportMime =
+    sourceMimeType === GOOGLE_DOC_MIME
+      ? 'text/plain'
+      : sourceMimeType === GOOGLE_SLIDES_MIME
+        ? 'text/plain'
+        : sourceMimeType === GOOGLE_SHEET_MIME
+          ? XLSX_EXPORT_MIME
+          : null
+  if (!exportMime) {
+    return {
+      ok: false,
+      error: { kind: 'DRIVE_OTHER', message: `unsupported source mimeType: ${sourceMimeType}` },
+    }
+  }
+
+  const auth = getDriveFilesOAuth2Client()
+  if (!auth) {
+    return { ok: false, error: { kind: 'DRIVE_SCOPE_INSUFFICIENT' } }
+  }
+
+  try {
+    const drive = google.drive({ version: 'v3', auth })
+    const res = await drive.files.export(
+      { fileId, mimeType: exportMime },
+      { responseType: 'arraybuffer' },
+    )
+    return { ok: true, buf: Buffer.from(res.data as ArrayBuffer) }
+  } catch (err) {
+    const status =
+      (err as { code?: number })?.code ??
+      (err as { response?: { status?: number } })?.response?.status
+    if (status === 403) return { ok: false, error: { kind: 'DRIVE_SCOPE_INSUFFICIENT' } }
+    if (status === 404) return { ok: false, error: { kind: 'DRIVE_NOT_FOUND' } }
+    return { ok: false, error: { kind: 'DRIVE_OTHER', message: String(err) } }
+  }
+}
+
 export interface CompanyDriveLookupResult {
   files: CompanyDriveFileRef[]
   matchedFolderRef: string | null

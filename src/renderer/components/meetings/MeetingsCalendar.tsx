@@ -18,6 +18,8 @@ import {
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { Meeting } from '../../../shared/types/meeting'
 import type { CompanyPipelineStage, CompanyEntityType } from '../../../shared/types/company'
+import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import { api } from '../../api'
 import styles from './MeetingsCalendar.module.css'
 
 // ── Color coding ──────────────────────────────────────────────────────────────
@@ -131,8 +133,27 @@ export function MeetingsCalendar({ meetings }: MeetingsCalendarProps) {
     setSelectedDate(new Date())
   }, [calView])
 
-  const handleClickMeeting = useCallback((meeting: Meeting) => {
-    if (meeting.id.startsWith('cal-')) return
+  const handleClickMeeting = useCallback(async (meeting: Meeting) => {
+    if (meeting.id.startsWith('cal-')) {
+      // Materialize the synthetic calendar row into a real meeting before routing.
+      if (!meeting.calendarEventId) return
+      try {
+        const prepared = await api.invoke<Meeting>(
+          IPC_CHANNELS.MEETING_PREPARE,
+          meeting.calendarEventId,
+          meeting.title,
+          meeting.date,
+          meeting.meetingPlatform || undefined,
+          meeting.meetingUrl || undefined,
+          meeting.attendees || undefined,
+          meeting.attendeeEmails || undefined,
+        )
+        navigate(`/meeting/${prepared.id}`)
+      } catch (err) {
+        console.error('Failed to open calendar meeting:', err)
+      }
+      return
+    }
     navigate(`/meeting/${meeting.id}`)
   }, [navigate])
 

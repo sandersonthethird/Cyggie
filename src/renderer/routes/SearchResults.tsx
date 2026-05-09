@@ -55,6 +55,26 @@ function formatDate(value: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function CompanyLogo({ domain }: { domain: string | null }) {
+  const [stage, setStage] = useState<'clearbit' | 'favicon' | 'none'>(domain ? 'clearbit' : 'none')
+  useEffect(() => { setStage(domain ? 'clearbit' : 'none') }, [domain])
+
+  if (!domain || stage === 'none') {
+    return <div className={styles.resultLogoPlaceholder} aria-hidden />
+  }
+  const src = stage === 'clearbit'
+    ? `https://logo.clearbit.com/${domain}`
+    : `https://www.google.com/s2/favicons?sz=64&domain=${domain}`
+  return (
+    <img
+      src={src}
+      className={styles.resultLogo}
+      alt=""
+      onError={() => setStage(stage === 'clearbit' ? 'favicon' : 'none')}
+    />
+  )
+}
+
 export default function SearchResults() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -176,21 +196,24 @@ export default function SearchResults() {
                 className={styles.resultRow}
                 onClick={() => openResult(item)}
               >
-                <div className={styles.resultHeader}>
-                  <span className={styles.resultTitle}>{item.title}</span>
-                  {item.occurredAt && (
-                    <span className={styles.resultDate}>{formatDate(item.occurredAt)}</span>
+                <CompanyLogo domain={item.companyDomain} />
+                <div className={styles.resultBody}>
+                  <div className={styles.resultHeader}>
+                    <span className={styles.resultTitle}>{item.title}</span>
+                    {item.occurredAt && (
+                      <span className={styles.resultDate}>{formatDate(item.occurredAt)}</span>
+                    )}
+                  </div>
+                  {item.companyName && (
+                    <span className={styles.resultCompany}>{item.companyName}</span>
+                  )}
+                  {item.snippet && (
+                    <span
+                      className={styles.resultSnippet}
+                      dangerouslySetInnerHTML={{ __html: sanitizeSnippet(item.snippet) }}
+                    />
                   )}
                 </div>
-                {item.companyName && (
-                  <span className={styles.resultCompany}>{item.companyName}</span>
-                )}
-                {item.snippet && (
-                  <span
-                    className={styles.resultSnippet}
-                    dangerouslySetInnerHTML={{ __html: sanitizeSnippet(item.snippet) }}
-                  />
-                )}
               </button>
             ))}
           </section>
@@ -204,23 +227,26 @@ export default function SearchResults() {
                 className={styles.resultRow}
                 onClick={() => void openChatHit(hit)}
               >
-                <div className={styles.resultHeader}>
-                  <span className={styles.resultTitle}>
-                    {hit.title ?? '(Untitled chat)'}
-                  </span>
-                  {hit.lastMessageAt && (
-                    <span className={styles.resultDate}>{formatDate(hit.lastMessageAt)}</span>
+                <CompanyLogo domain={null} />
+                <div className={styles.resultBody}>
+                  <div className={styles.resultHeader}>
+                    <span className={styles.resultTitle}>
+                      {hit.title ?? '(Untitled chat)'}
+                    </span>
+                    {hit.lastMessageAt && (
+                      <span className={styles.resultDate}>{formatDate(hit.lastMessageAt)}</span>
+                    )}
+                  </div>
+                  {hit.contextLabel && (
+                    <span className={styles.resultCompany}>{hit.contextLabel}</span>
+                  )}
+                  {hit.snippet && (
+                    <span
+                      className={styles.resultSnippet}
+                      dangerouslySetInnerHTML={{ __html: sanitizeSnippet(hit.snippet) }}
+                    />
                   )}
                 </div>
-                {hit.contextLabel && (
-                  <span className={styles.resultCompany}>{hit.contextLabel}</span>
-                )}
-                {hit.snippet && (
-                  <span
-                    className={styles.resultSnippet}
-                    dangerouslySetInnerHTML={{ __html: sanitizeSnippet(hit.snippet) }}
-                  />
-                )}
               </button>
             ))}
           </section>

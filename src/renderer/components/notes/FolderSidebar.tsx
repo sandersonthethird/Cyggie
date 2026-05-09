@@ -245,7 +245,7 @@ export function FolderSidebar({
       <div
         className={`${styles.folderItem} ${isAllActive ? styles.folderItemActive : ''}`}
         style={{ paddingLeft: '12px' }}
-        onClick={() => { onSelect(null); onSelectImportSource(null) }}
+        onClick={() => onSelect(null)}
       >
         <span className={styles.folderLeafSpacer} />
         <span className={styles.folderName}>All Notes</span>
@@ -307,7 +307,7 @@ export function FolderSidebar({
             <button
               key={src}
               className={`${styles.importSourceChip} ${selectedImportSource === src ? styles.importSourceChipActive : ''}`}
-              onClick={() => { onSelect(null); onSelectImportSource(selectedImportSource === src ? null : src) }}
+              onClick={() => onSelectImportSource(selectedImportSource === src ? null : src)}
             >
               {IMPORT_SOURCE_LABELS[src] ?? src}
             </button>

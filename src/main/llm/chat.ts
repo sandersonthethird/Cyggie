@@ -1,37 +1,28 @@
-import { getProvider } from './provider-factory'
-import { sendProgress } from './send-progress'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker, searchByAllSpeakers } from '../database/repositories/search.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
+import { runChatTurn, abortChatTurn } from './chat-runner'
+import {
+  buildSearchResultsContext,
+  SEARCH_RESULTS_SYSTEM_PROMPT,
+  SEARCH_RESULTS_QUESTION_FOOTER,
+} from './context-builders'
 import type { ChatAttachment } from '../../shared/types/chat'
 
-let chatAbortController: AbortController | null = null
-
 export function abortChat(): void {
-  chatAbortController?.abort()
-  chatAbortController = null
+  // Both queryMeeting and querySearchResults route through runChatTurn's
+  // single shared AbortController.
+  abortChatTurn()
 }
 
-export function injectTextAttachments(question: string, attachments: ChatAttachment[]): string {
-  const textAtts = attachments.filter((a) => a.type === 'text')
-  if (textAtts.length === 0) return question
-  const sections = textAtts
-    .map((a) => `### ${a.name}\n\`\`\`\n${a.data.substring(0, 50000)}\n\`\`\``)
-    .join('\n\n')
-  return `${question}\n\n## Attached Files\n${sections}`
-}
+// Re-exported from chat-runner for crm-chat.ts (queryAll's attachment
+// injection runs before runChatTurn).
+export { injectTextAttachments } from './chat-runner'
 
 const MEETING_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about a meeting transcript.
 You have access to the full transcript, any user notes, and the AI-generated summary (if available).
 Answer questions accurately based on what was discussed in the meeting.
 If the information isn't in the transcript, say so.
-Be concise but thorough. Use bullet points when listing multiple items.`
-
-const SEARCH_RESULTS_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about the user's meeting search results.
-You have access to summaries, notes, and transcript excerpts from the meetings the user found via search.
-Answer questions accurately based on the content provided.
-Always cite which meeting the information comes from using the format: "In [Meeting Title] (Date):".
-If the information isn't in any of the provided meetings, say so.
 Be concise but thorough. Use bullet points when listing multiple items.`
 
 export async function queryMeeting(meetingId: string, question: string, attachments: ChatAttachment[] = []): Promise<string> {
@@ -84,39 +75,49 @@ export async function queryMeeting(meetingId: string, question: string, attachme
     throw new Error('No transcript available for this meeting')
   }
 
-  const enhancedQuestion = injectTextAttachments(question, attachments)
-  const imageAtts = attachments.filter((a) => a.type === 'image')
-
-  const userPrompt = `Here is the meeting information:
-
-${context}
-
----
-
-User question: ${enhancedQuestion}`
-
-  const provider = getProvider('chat')
-  chatAbortController = new AbortController()
-  const result = await provider.generateSummary(MEETING_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
-  chatAbortController = null
-  return result
+  return runChatTurn({
+    systemPrompt: MEETING_SYSTEM_PROMPT,
+    context,
+    question,
+    attachments,
+    userPromptPrefix: 'Here is the meeting information:',
+    questionLabel: 'User question',
+  })
 }
 
-// buildMeetingContext runs the 4-strategy meeting search and assembles a markdown context
-// string for use in queryAll(). Returns '' if no meetings match — callers should proceed
-// with other context sources rather than treating this as an error.
+export async function querySearchResults(meetingIds: string[], question: string, attachments: ChatAttachment[] = []): Promise<string> {
+  const result = buildSearchResultsContext({ meetingIds })
+
+  if (result.kind === 'response') return result.text
+  if (result.kind === 'error') throw new Error(result.message)
+
+  return runChatTurn({
+    systemPrompt: SEARCH_RESULTS_SYSTEM_PROMPT,
+    context: result.markdown,
+    question,
+    attachments,
+    userPromptPrefix: "Here are the meetings from the user's search results:",
+    questionLabel: 'User question',
+    questionFooter: SEARCH_RESULTS_QUESTION_FOOTER,
+  })
+}
+
+// buildMeetingContext: 4-strategy meeting search assembling a markdown
+// context string for queryAll(). Imported cross-module by crm-chat.ts so
+// vi.mock can intercept it for the parity baseline test (same-module calls
+// can't be intercepted by vi.mock).
 export function buildMeetingContext(question: string): string {
   const keywords = extractKeywords(question)
   const seenIds = new Set<string>()
   const searchResults: { meetingId: string; title: string; date: string; snippet: string; rank: number }[] = []
 
-  // Extract capitalized words that survived stop-word filtering — likely person names
+  // Capitalized words that survived stop-word filtering — likely person names
   const keywordSet = new Set(keywords)
   const potentialNames = (question.match(/\b[A-Z][a-z]{1,}\b/g) ?? [])
-    .filter(n => keywordSet.has(n.toLowerCase()))
-    .map(n => n.toLowerCase())
+    .filter((n) => keywordSet.has(n.toLowerCase()))
+    .map((n) => n.toLowerCase())
 
-  // Strategy 0: AND-based attendee co-occurrence — prioritize meetings where ALL named people appear
+  // Strategy 0: AND-based attendee co-occurrence
   if (potentialNames.length >= 2) {
     const coAttendeeMatches = searchByAllSpeakers(potentialNames, 20)
     for (const m of coAttendeeMatches) {
@@ -127,7 +128,7 @@ export function buildMeetingContext(question: string): string {
     }
   }
 
-  // Strategy 1: OR-based FTS search — find meetings containing ANY keyword
+  // Strategy 1: OR-based FTS keyword search
   if (keywords.length > 0) {
     try {
       const orQuery = buildOrQuery(keywords)
@@ -139,11 +140,11 @@ export function buildMeetingContext(question: string): string {
         }
       }
     } catch {
-      // FTS query error — continue to other strategies
+      /* FTS query error — continue */
     }
   }
 
-  // Strategy 2: Title search — catches meetings whose title matches but may not be FTS-indexed
+  // Strategy 2: Title LIKE search
   if (keywords.length > 0) {
     const titleMatches = searchByTitle(keywords, 20)
     for (const m of titleMatches) {
@@ -167,7 +168,6 @@ export function buildMeetingContext(question: string): string {
 
   if (searchResults.length === 0) return ''
 
-  // Build context from relevant meetings
   const contextParts: string[] = []
 
   for (const result of searchResults.slice(0, 15)) {
@@ -204,7 +204,6 @@ export function buildMeetingContext(question: string): string {
       if (transcript) {
         const excerptLength = meeting.summaryPath ? 1500 : 3000
         let excerpt = transcript
-
         if (transcript.length > excerptLength) {
           if (result.snippet) {
             const snippetText = result.snippet.replace(/<mark>|<\/mark>/g, '').replace(/\.\.\./g, '')
@@ -222,7 +221,6 @@ export function buildMeetingContext(question: string): string {
             excerpt = transcript.substring(0, excerptLength) + '...'
           }
         }
-
         parts.push('**Transcript excerpt:**')
         parts.push(excerpt)
         parts.push('')
@@ -237,89 +235,4 @@ export function buildMeetingContext(question: string): string {
   }
 
   return contextParts.join('\n')
-}
-
-export async function querySearchResults(meetingIds: string[], question: string, attachments: ChatAttachment[] = []): Promise<string> {
-  if (meetingIds.length === 0) {
-    return 'No meetings in the search results to query.'
-  }
-
-  const contextParts: string[] = []
-
-  // Process up to 10 meetings (already ordered by search relevance)
-  for (const id of meetingIds.slice(0, 10)) {
-    const meeting = meetingRepo.getMeeting(id)
-    if (!meeting) continue
-
-    const parts: string[] = []
-    parts.push(`### "${meeting.title}" (${new Date(meeting.date).toLocaleDateString()})`)
-
-    if (meeting.speakerMap && Object.keys(meeting.speakerMap).length > 0) {
-      parts.push(`Participants: ${Object.values(meeting.speakerMap).join(', ')}`)
-    }
-    parts.push('')
-
-    // Prefer summary (concise, high-signal) over full transcript
-    if (meeting.summaryPath) {
-      const summary = readSummary(meeting.summaryPath)
-      if (summary) {
-        parts.push('**Summary:**')
-        parts.push(summary)
-        parts.push('')
-      }
-    }
-
-    if (meeting.notes) {
-      parts.push('**Notes:**')
-      parts.push(meeting.notes)
-      parts.push('')
-    }
-
-    if (meeting.transcriptPath) {
-      const transcript = readTranscript(meeting.transcriptPath)
-      if (transcript) {
-        const excerptLength = meeting.summaryPath ? 1500 : 3000
-        let excerpt = transcript
-
-        if (transcript.length > excerptLength) {
-          excerpt = transcript.substring(0, excerptLength) + '...'
-        }
-
-        parts.push('**Transcript excerpt:**')
-        parts.push(excerpt)
-        parts.push('')
-      }
-    }
-
-    if (parts.length > 2) {
-      contextParts.push(parts.join('\n'))
-      contextParts.push('---')
-      contextParts.push('')
-    }
-  }
-
-  if (contextParts.length === 0) {
-    return 'I couldn\'t load any data from the search result meetings. Please check that transcripts exist.'
-  }
-
-  const context = contextParts.join('\n')
-
-  const enhancedQuestion = injectTextAttachments(question, attachments)
-  const imageAtts = attachments.filter((a) => a.type === 'image')
-
-  const userPrompt = `Here are the meetings from the user's search results:
-
-${context}
-
----
-
-User question: ${enhancedQuestion}
-
-Please answer based on the meeting content above. Cite the meeting title and date when referencing specific information.`
-
-  const provider = getProvider('chat')
-  chatAbortController = new AbortController()
-  const result = await provider.generateSummary(SEARCH_RESULTS_SYSTEM_PROMPT, userPrompt, sendProgress, chatAbortController.signal, imageAtts)
-  chatAbortController = null
-  return result
 }

@@ -1,6 +1,7 @@
 
 import { getProvider } from './provider-factory'
 import { buildMemoDocTitle, roundLabel } from '../services/memo-export.service'
+import type { ExternalResearchBundle } from '../services/exa-research'
 
 const MEMO_SYSTEM_PROMPT_TEMPLATE = `You are an experienced venture capital analyst writing investment memos for an investment committee. Write in a professional but direct tone — be specific, data-driven, and opinionated. Avoid vague platitudes.
 
@@ -58,6 +59,7 @@ CRITICAL INSTRUCTIONS:
 - Use **bold** for key metrics and important terms.
 - Be direct and opinionated — state whether something is a strength or concern.
 - If existing memo content is provided, incorporate and improve upon it rather than starting from scratch.
+- For any factual claim derived from the External Research block (market size, recent news, funding events, founder background, competitor names you didn't get from internal data), cite the source inline as [source: <url>] right after the claim. Do NOT cite internal sources.
 - Output clean markdown only. No preamble or commentary.`
 
 export function buildMemoSystemPrompt(titleLine: string): string {
@@ -67,6 +69,38 @@ export function buildMemoSystemPrompt(titleLine: string): string {
 function truncateForContext(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text
   return text.slice(0, maxChars) + '\n\n[...truncated for length]'
+}
+
+/**
+ * Push items into the prompt parts array, truncating each item and stopping
+ * once a collective character cap is reached. Replaces the duplicated
+ * `let totalChars = 0; for (...) { if (totalChars > N) break }` pattern that
+ * previously appeared inline 4× in this file (transcripts, files, emails, and
+ * the new contactNotes block).
+ *
+ *   ┌──────────────────────────────────────────────────────────────┐
+ *   │  Each item is formatted via `format(item)`; the formatted     │
+ *   │  string is then truncated to `perItemCap`. If pushing it      │
+ *   │  would exceed `totalCap`, push the `omittedNotice` and stop.  │
+ *   └──────────────────────────────────────────────────────────────┘
+ */
+function pushUntilCap<T>(
+  parts: string[],
+  items: T[],
+  format: (item: T) => string,
+  options: { perItemCap: number; totalCap: number; omittedNotice: string },
+): void {
+  let totalChars = 0
+  for (const item of items) {
+    if (totalChars > options.totalCap) {
+      parts.push(options.omittedNotice)
+      break
+    }
+    const truncated = truncateForContext(format(item), options.perItemCap)
+    parts.push(truncated)
+    parts.push('')
+    totalChars += truncated.length
+  }
 }
 
 export interface MemoGenerateInput {
@@ -88,6 +122,22 @@ export interface MemoGenerateInput {
   }
   emails?: Array<{ subject: string | null; from: string; date: string | null; body: string }>
   files?: Array<{ name: string; content: string }>
+  /**
+   * Notes tagged to a contact who works at this company (NOT the same as the
+   * company-tagged notes in `notes`). Each entry is already prefixed with
+   * `**Contact: {name}**` by the caller for header context.
+   */
+  contactNotes?: string[]
+  /** LinkedIn-derived background summaries per linked contact (≤8 contacts). */
+  contactKeyTakeaways?: Array<{ name: string; takeaways: string }>
+  /**
+   * Exa pre-research bundle. Optional; when present, the user prompt will
+   * include an "## External Research" block with truncated snippets and the
+   * model is required to inline-cite [source: <url>] on any external claim.
+   * The bundle is best-effort: callers (investment-memo IPC) call
+   * `searchCompanyContext()` which silently degrades to empty on Exa failure.
+   */
+  externalResearch?: ExternalResearchBundle
 }
 
 function buildTitleLine(companyName: string, details: MemoGenerateInput['companyDetails']): string {
@@ -130,20 +180,19 @@ export async function generateMemo(
   // Transcripts for meetings without summaries
   if (input.transcripts.length > 0) {
     parts.push('\n---\n## Meeting Transcripts (no summary available)\n')
-    // Limit total transcript context
-    let totalChars = 0
-    for (const t of input.transcripts) {
-      if (totalChars > 30000) {
-        parts.push(`\n[Additional transcripts omitted for length — ${input.transcripts.length} total]`)
-        break
-      }
-      const truncated = truncateForContext(t.content, 10000)
-      parts.push(`### ${t.title} (${t.date})\n${truncated}\n`)
-      totalChars += truncated.length
-    }
+    pushUntilCap(
+      parts,
+      input.transcripts,
+      t => `### ${t.title} (${t.date})\n${t.content}\n`,
+      {
+        perItemCap: 10000,
+        totalCap: 30000,
+        omittedNotice: `\n[Additional transcripts omitted for length — ${input.transcripts.length} total]`,
+      },
+    )
   }
 
-  // Company notes
+  // Company notes (no collective cap historically — preserved)
   if (input.notes.length > 0) {
     parts.push('\n---\n## Company Notes\n')
     for (const note of input.notes) {
@@ -152,41 +201,87 @@ export async function generateMemo(
     }
   }
 
-  // Company files
+  // Contact-tagged notes (notes attached to a contact who works at this company).
+  // Different source than the company-tagged notes above; complements them.
+  if (input.contactNotes && input.contactNotes.length > 0) {
+    parts.push('\n---\n## Contact Notes\n')
+    pushUntilCap(
+      parts,
+      input.contactNotes,
+      note => note,
+      {
+        perItemCap: 3000,
+        totalCap: 20000,
+        omittedNotice: `\n[Additional contact notes omitted for length]`,
+      },
+    )
+  }
+
+  // Contact key takeaways (LinkedIn-derived founder/operator backgrounds).
+  // Capped at 8 contacts; per-contact 800-char truncation.
+  if (input.contactKeyTakeaways && input.contactKeyTakeaways.length > 0) {
+    parts.push('\n---\n## Contact Profiles\n')
+    for (const ct of input.contactKeyTakeaways.slice(0, 8)) {
+      parts.push(`### ${ct.name}\n${truncateForContext(ct.takeaways, 800)}\n`)
+    }
+  }
+
+  // Company files (drive files flagged as relevant to this company)
   if (input.files && input.files.length > 0) {
     parts.push('\n---\n## Company Documents\n')
-    let totalFileChars = 0
-    for (const file of input.files) {
-      if (totalFileChars > 40000) {
-        parts.push(`\n[Additional files omitted for length]`)
-        break
-      }
-      const truncated = truncateForContext(file.content, 8000)
-      parts.push(`### Document: ${file.name}\n${truncated}\n`)
-      totalFileChars += truncated.length
-    }
+    pushUntilCap(
+      parts,
+      input.files,
+      file => `### Document: ${file.name}\n${file.content}\n`,
+      {
+        perItemCap: 8000,
+        totalCap: 40000,
+        omittedNotice: `\n[Additional files omitted for length]`,
+      },
+    )
   }
 
   // Company emails
   if (input.emails && input.emails.length > 0) {
     parts.push('\n---\n## Email Correspondence\n')
-    let totalEmailChars = 0
-    for (const email of input.emails) {
-      if (totalEmailChars > 20000) {
-        parts.push(`\n[Additional emails omitted for length]`)
-        break
-      }
-      const header = `**From:** ${email.from} | **Subject:** ${email.subject || '(no subject)'} | **Date:** ${email.date || 'unknown'}`
-      const body = truncateForContext(email.body, 3000)
-      parts.push(`${header}\n${body}\n`)
-      totalEmailChars += body.length
-    }
+    pushUntilCap(
+      parts,
+      input.emails,
+      email => {
+        const header = `**From:** ${email.from} | **Subject:** ${email.subject || '(no subject)'} | **Date:** ${email.date || 'unknown'}`
+        return `${header}\n${email.body}\n`
+      },
+      {
+        perItemCap: 3000,   // historical body cap
+        totalCap: 20000,
+        omittedNotice: `\n[Additional emails omitted for length]`,
+      },
+    )
   }
 
   // Existing memo content
   if (input.existingMemo.trim()) {
     parts.push('\n---\n## Existing Memo Draft (incorporate and improve)\n')
     parts.push(truncateForContext(input.existingMemo, 6000))
+  }
+
+  // External research from Exa pre-research pass. Per-result snippets are
+  // already truncated by exa-research.ts; we just structure them here.
+  if (input.externalResearch && input.externalResearch.results.length > 0) {
+    parts.push('\n---\n## External Research (web — cite inline as [source: url])\n')
+    // Group results by query so the model sees what was searched.
+    const byQuery = new Map<string, typeof input.externalResearch.results>()
+    for (const r of input.externalResearch.results) {
+      const list = byQuery.get(r.query) ?? []
+      list.push(r)
+      byQuery.set(r.query, list)
+    }
+    for (const [query, results] of byQuery) {
+      parts.push(`### Search: "${query}"\n`)
+      for (const r of results) {
+        parts.push(`**${r.title ?? r.url}** ${r.publishedDate ? `(${r.publishedDate})` : ''}\n${r.url}\n${r.text}\n`)
+      }
+    }
   }
 
   if (input.summaries.length === 0 && input.transcripts.length === 0 && input.notes.length === 0) {

@@ -6,6 +6,7 @@ import * as artifactRepo from '../database/repositories/artifact.repo'
 import { makeEntityNotesRepo } from '../database/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
+const _contactNotesRepo = makeEntityNotesRepo('contact_id')
 import { exportMemoMarkdownToPdf } from '../services/memo-export.service'
 import { exportMemoToGoogleDoc } from '../drive/google-drive'
 import { getSetting } from '../database/repositories/settings.repo'
@@ -18,6 +19,29 @@ import { basename } from 'path'
 import { getCredential } from '../security/credentials'
 import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
 import type { MemoShareResponse, MemoRevokeResponse } from '../../shared/types/web-share'
+import { searchCompanyContext } from '../services/exa-research'
+import { getFlaggedFiles } from '../database/repositories/company-file-flags.repo'
+import type { MemoGenerateMeta } from '../../shared/types/company'
+import { runStressTestAgent } from '../llm/agents/thesis-stress-test-agent'
+import { startRun, completeRun, makeEventWriter, getRun, listRuns, listRunEvents, averageCostForKind } from '../llm/agents/run-store'
+import { bulkInsert as bulkInsertEvidence, listByVersion as listEvidenceByVersion } from '../database/repositories/memo-evidence.repo'
+import { getDatabase } from '../database/connection'
+import type { AgentEvent } from '../../shared/types/agent-events'
+
+// Module-scope per-runId AbortController map for stress-test concurrency.
+// Each kicked-off run lives in this map until it completes or is aborted.
+// Allowing concurrent runs across windows/companies is intentional (review
+// decision #2). The map gets cleaned up by the run handler itself on
+// completion / failure / abort.
+const _stressTestAbortControllers = new Map<string, AbortController>()
+
+function broadcastAgentEvent(event: AgentEvent): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(IPC_CHANNELS.THESIS_STRESS_TEST_PROGRESS, event)
+    }
+  }
+}
 
 /**
  * Fetches a company favicon and returns it as a base64 data URL.
@@ -277,14 +301,113 @@ export function registerInvestmentMemoHandlers(): void {
       }
     }
 
-    // Read selected local files
-    const files: Array<{ name: string; content: string }> = []
-    for (const fileId of selectedFileIds) {
-      const content = await readLocalFile(fileId)
-      if (content && content.trim().length > 100) {
-        files.push({ name: basename(fileId), content })
+    // Linked contacts (sorted most-engaged first via meetingCount DESC) drive
+    // three downstream things: contact-notes, contact-key-takeaways, and
+    // founder identification for Exa LinkedIn queries.
+    const linkedContacts = companyRepo
+      .listCompanyContacts(companyId)
+      .slice()
+      .sort((a, b) => (b.meetingCount ?? 0) - (a.meetingCount ?? 0))
+
+    // Contact-tagged notes (single batched query — no N+1).
+    // Dedup against company-tagged notes by note id (a note tagged to BOTH a
+    // contact and a company would otherwise appear twice in the prompt).
+    const contactIds = linkedContacts.map(c => c.id)
+    const allContactNotes = contactIds.length > 0
+      ? _contactNotesRepo.listForEntities(contactIds)
+      : []
+    const seenNoteIds = new Set(notes.map(n => n.id))
+    const contactNoteTexts: string[] = []
+    // Group notes by their contact_id so we can iterate in the linkedContacts
+    // (sorted) order — most-engaged contacts' notes hit the 20k cap first.
+    const notesByContact = new Map<string, typeof allContactNotes>()
+    for (const n of allContactNotes) {
+      if (!n.contactId) continue
+      const list = notesByContact.get(n.contactId) ?? []
+      list.push(n)
+      notesByContact.set(n.contactId, list)
+    }
+    for (const contact of linkedContacts) {
+      const cnotes = notesByContact.get(contact.id) ?? []
+      for (const n of cnotes) {
+        if (seenNoteIds.has(n.id)) continue
+        seenNoteIds.add(n.id)
+        if (!n.content?.trim()) continue
+        const prefix = `**Contact: ${contact.fullName}${n.title ? ` — ${n.title}` : ''}**`
+        contactNoteTexts.push(`${prefix}\n${n.content}`)
       }
     }
+
+    // Contact key takeaways (already on listCompanyContacts via key_takeaways
+    // SELECT — no per-contact getContact() round-trip).
+    const contactKeyTakeaways: Array<{ name: string; takeaways: string }> = []
+    for (const contact of linkedContacts.slice(0, 8)) {
+      if (contact.keyTakeaways?.trim()) {
+        contactKeyTakeaways.push({ name: contact.fullName, takeaways: contact.keyTakeaways })
+      }
+    }
+
+    // Drive files: caller-supplied selectedFileIds wins (e.g., a future
+    // pick-files UI); otherwise auto-include all flagged files.
+    // selectedFileIds was always [] in practice — files were never read until now.
+    const flaggedFiles = getFlaggedFiles(companyId)
+    const fileIds = selectedFileIds.length > 0
+      ? selectedFileIds
+      : flaggedFiles.map(f => f.fileId)
+
+    const files: Array<{ name: string; content: string }> = []
+    for (const fileId of fileIds) {
+      const flagged = flaggedFiles.find(f => f.fileId === fileId)
+      const content = await readLocalFile(fileId, flagged?.mimeType ?? undefined)
+      if (content && content.trim().length > 100) {
+        files.push({ name: flagged?.fileName ?? basename(fileId), content })
+      }
+    }
+
+    // Niche signal for Exa pre-research: most recent meeting summary's
+    // first 500 chars (richest, founder's own words). summaryRows is sorted
+    // by datetime(m.date) DESC so summaries[0] is the most recent.
+    const nicheSignal = summaries[0]?.content?.trim()
+      ? summaries[0].content.slice(0, 500)
+      : null
+
+    // Founder identification: title regex; fall back to isPrimary contacts.
+    const FOUNDER_TITLE_RE = /founder|ceo|cto|coo|chief/i
+    const titledFounders = linkedContacts.filter(c => FOUNDER_TITLE_RE.test(c.title ?? ''))
+    const founderNames =
+      titledFounders.length > 0
+        ? titledFounders.slice(0, 2).map(c => c.fullName)
+        : linkedContacts.filter(c => c.isPrimary).slice(0, 2).map(c => c.fullName)
+
+    // Status update with actual counts so the user sees what's being gathered.
+    sendProgress(`Gathering ${meetings.length} meetings, ${notes.length + contactNoteTexts.length} notes, ${fileIds.length} files, ${emails.length} emails...`)
+
+    // Structured log for post-hoc debuggability ("why was this memo thin?").
+    console.info('[memo-gen] context gathered', {
+      companyId,
+      meetings: meetings.length,
+      summaries: summaries.length,
+      transcripts: transcripts.length,
+      companyNotes: notes.length,
+      contactNotes: contactNoteTexts.length,
+      contactKeyTakeaways: contactKeyTakeaways.length,
+      emails: emails.length,
+      flaggedFiles: fileIds.length,
+      hasNicheSignal: !!nicheSignal,
+      founderCount: founderNames.length,
+    })
+
+    sendProgress('Researching external sources...')
+    const externalResearch = await searchCompanyContext({
+      companyName: company.canonicalName,
+      companyDescription: company.description,
+      primaryDomain: company.primaryDomain,
+      industry: company.industry,
+      themes: company.themes,
+      nicheSignal,
+      founderNames,
+    })
+    sendProgress(null)
 
     const generated = await generateMemo({
       companyName: company.canonicalName,
@@ -292,9 +415,12 @@ export function registerInvestmentMemoHandlers(): void {
       summaries,
       transcripts,
       notes: noteTexts,
+      contactNotes: contactNoteTexts,
+      contactKeyTakeaways,
       existingMemo: existingContent,
       emails,
       files,
+      externalResearch,
       companyDetails: {
         stage: company.stage,
         round: company.round,
@@ -324,7 +450,21 @@ export function registerInvestmentMemoHandlers(): void {
       source: 'llm_generate'
     })
 
-    return { success: true, contentMarkdown: generated, version }
+    // Source counts for the renderer's empty-research toast + sources-used footer.
+    const meta: MemoGenerateMeta = {
+      meetingCount: meetings.length,
+      summaryCount: summaries.length,
+      transcriptCount: transcripts.length,
+      companyNoteCount: notes.length,
+      contactNoteCount: contactNoteTexts.length,
+      contactKeyTakeawayCount: contactKeyTakeaways.length,
+      fileCount: files.length,
+      emailCount: emails.length,
+      externalResearchQueryCount: externalResearch.queries.length,
+      externalResearchResultCount: externalResearch.results.length,
+    }
+
+    return { success: true, contentMarkdown: generated, version, meta }
   })
 
   ipcMain.handle(
@@ -428,4 +568,199 @@ export function registerInvestmentMemoHandlers(): void {
       }
     }
   )
+
+  // ───── Thesis Stress-Test Agent ──────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_CHANNELS.THESIS_STRESS_TEST_START,
+    async (
+      _event,
+      payload: { companyId: string }
+    ): Promise<{ runId: string }> => {
+      const companyId = payload?.companyId
+      if (!companyId) throw new Error('companyId is required')
+      const company = companyRepo.getCompany(companyId)
+      if (!company) throw new Error('Company not found')
+
+      const memo = memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName, getCurrentUserId())
+      const existingMarkdown = memo.latestVersion?.contentMarkdown ?? ''
+      if (existingMarkdown.trim().length < 200) {
+        throw new Error('Memo is too short to stress-test (need at least 200 chars). Generate a memo first.')
+      }
+
+      const userId = getCurrentUserId()
+      const runId = startRun({
+        kind: 'thesis_stress_test',
+        companyId,
+        userId,
+        mode: 'stress_test',
+      })
+
+      const controller = new AbortController()
+      _stressTestAbortControllers.set(runId, controller)
+
+      const eventWriter = makeEventWriter(runId)
+      const emit = (event: AgentEvent): void => {
+        eventWriter.appendEvent(event)
+        broadcastAgentEvent(event)
+        // Flush per turn boundary AND per terminal event so the dev dashboard
+        // sees up-to-date traces even on a still-running run.
+        if (event.type === 'iteration_start' || event.type === 'done' || event.type === 'error' || event.type === 'aborted' || event.type === 'cap_exceeded') {
+          eventWriter.flush()
+        }
+      }
+
+      // Kick off async; return runId immediately so the renderer can subscribe.
+      void (async () => {
+        try {
+          const result = await runStressTestAgent({
+            runId,
+            companyId,
+            companyName: company.canonicalName,
+            userId,
+            existingMemoMarkdown: existingMarkdown,
+            signal: controller.signal,
+            emit,
+          })
+
+          if (result.scopeLockWarnings.length > 0) {
+            console.warn('[thesis-stress-test]', runId, 'scope-lock warnings:', result.scopeLockWarnings)
+          }
+
+          if (result.status !== 'success' || !result.submitInput) {
+            completeRun(runId, {
+              status: result.status,
+              iterations: result.iterations,
+              inputTokensTotal: result.inputTokensTotal,
+              outputTokensTotal: result.outputTokensTotal,
+              costEstimateUsd: result.costEstimateUsd,
+              toolCallCount: result.toolCallCount,
+              webSearchCount: result.webSearchCount,
+              errorClass: result.errorClass,
+              errorMessage: result.errorMessage,
+            })
+            return
+          }
+
+          // Persist memo version + evidence rows in a single transaction.
+          const db = getDatabase()
+          let savedVersionId = ''
+          const persist = db.transaction(() => {
+            const version = memoRepo.saveMemoVersion(memo.id, {
+              contentMarkdown: result.submitInput!.markdown,
+              changeNote: 'Stress-tested by research agent',
+            }, userId)
+            savedVersionId = version.id
+            const inserted = bulkInsertEvidence(version.id, result.submitInput!.evidence)
+            console.log(`[thesis-stress-test] ${runId} saved version ${version.id} + ${inserted} evidence rows`)
+          })
+          try {
+            persist()
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            console.error('[thesis-stress-test]', runId, 'persist failed:', errMsg)
+            completeRun(runId, {
+              status: 'failed',
+              iterations: result.iterations,
+              inputTokensTotal: result.inputTokensTotal,
+              outputTokensTotal: result.outputTokensTotal,
+              costEstimateUsd: result.costEstimateUsd,
+              toolCallCount: result.toolCallCount,
+              webSearchCount: result.webSearchCount,
+              errorClass: 'PersistError',
+              errorMessage: errMsg,
+            })
+            broadcastAgentEvent({ type: 'error', runId, errorClass: 'PersistError', message: errMsg })
+            return
+          }
+
+          // Re-emit a 'done' event with the persisted versionId so the renderer
+          // knows where to navigate. (The agent loop's emit fired with empty
+          // versionId since persistence happens here.)
+          broadcastAgentEvent({
+            type: 'done',
+            runId,
+            versionId: savedVersionId,
+            durationMs: result.durationMs,
+            inputTokens: result.inputTokensTotal,
+            outputTokens: result.outputTokensTotal,
+            costEstimateUsd: result.costEstimateUsd,
+            toolCallCount: result.toolCallCount,
+          })
+
+          completeRun(runId, {
+            status: 'success',
+            iterations: result.iterations,
+            inputTokensTotal: result.inputTokensTotal,
+            outputTokensTotal: result.outputTokensTotal,
+            costEstimateUsd: result.costEstimateUsd,
+            toolCallCount: result.toolCallCount,
+            webSearchCount: result.webSearchCount,
+            resultVersionId: savedVersionId,
+          })
+          logAudit(userId, 'investment_memo_version', savedVersionId, 'create', {
+            memoId: memo.id,
+            source: 'thesis_stress_test_agent',
+            runId,
+            costEstimateUsd: result.costEstimateUsd,
+          })
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err)
+          console.error('[thesis-stress-test]', runId, 'unhandled error:', errMsg)
+          completeRun(runId, {
+            status: 'failed',
+            iterations: 0,
+            inputTokensTotal: 0,
+            outputTokensTotal: 0,
+            costEstimateUsd: 0,
+            toolCallCount: 0,
+            webSearchCount: 0,
+            errorClass: 'UnhandledError',
+            errorMessage: errMsg,
+          })
+          broadcastAgentEvent({ type: 'error', runId, errorClass: 'UnhandledError', message: errMsg })
+        } finally {
+          eventWriter.flush()
+          _stressTestAbortControllers.delete(runId)
+        }
+      })()
+
+      return { runId }
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.THESIS_STRESS_TEST_ABORT, (_event, runId: string) => {
+    const controller = _stressTestAbortControllers.get(runId)
+    if (!controller) return { success: false, error: 'no_such_run' }
+    controller.abort()
+    return { success: true }
+  })
+
+  // ───── Memo evidence (read) ──────────────────────────────────────────────
+
+  ipcMain.handle(IPC_CHANNELS.MEMO_EVIDENCE_LIST_BY_VERSION, (_event, versionId: string) => {
+    if (!versionId) throw new Error('versionId is required')
+    return listEvidenceByVersion(versionId)
+  })
+
+  // ───── Agent runs (observability + cost badge) ───────────────────────────
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_RUNS_LIST, (_event, filter?: { companyId?: string; kind?: string; limit?: number }) => {
+    return listRuns(filter)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_RUN_GET, (_event, runId: string) => {
+    if (!runId) throw new Error('runId is required')
+    return getRun(runId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_RUN_LIST_EVENTS, (_event, runId: string) => {
+    if (!runId) throw new Error('runId is required')
+    return listRunEvents(runId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_RUNS_AVERAGE_COST, (_event, payload: { kind: string; companyId?: string; lastN?: number }) => {
+    if (!payload?.kind) throw new Error('kind is required')
+    return averageCostForKind(payload.kind, payload.companyId, payload.lastN)
+  })
 }

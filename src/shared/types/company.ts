@@ -180,6 +180,11 @@ export interface CompanyDuplicateSummary {
   entityType: CompanyEntityType
   pipelineStage: CompanyPipelineStage | null
   updatedAt: string
+  /** Count of populated enrichment fields (out of ~20 tracked), as a proxy for record richness. */
+  populatedFieldCount: number
+  meetingCount: number
+  emailCount: number
+  noteCount: number
 }
 
 export interface CompanyDuplicateGroup {
@@ -215,6 +220,41 @@ export interface CompanyDedupApplyResult {
   failures: CompanyDedupFailure[]
 }
 
+/**
+ * Per-field overrides for mergeCompanies. Keys are snake_case org_companies
+ * column names. Values are the FINAL value to write to the target row before
+ * source is deleted. Caller (renderer) computes the chosen value; the backend
+ * just applies it. Columns not in MERGEABLE_COLUMNS are ignored.
+ */
+export type MergeFieldOverrides = Record<string, unknown>
+
+/** Scalar field comparison for the merge review UI. */
+export interface MergeFieldDiff {
+  /** snake_case DB column. */
+  column: string
+  /** Human-readable label for display. */
+  label: string
+  /** Stringified for display; null when target is missing the value. */
+  targetValue: string | null
+  sourceValue: string | null
+}
+
+/**
+ * Pre-merge preview: classifies every mergeable scalar column on the source vs.
+ * target into conflicts (both have values, differ) or auto-fill (target empty,
+ * source has value). Equal values and both-empty are silently skipped. Array
+ * fields auto-union and surface only as a count.
+ */
+export interface CompanyMergePreview {
+  target: { id: string; canonicalName: string }
+  source: { id: string; canonicalName: string }
+  conflicts: MergeFieldDiff[]
+  /** Source value will be applied to target unless caller overrides to null/target. */
+  autoFill: MergeFieldDiff[]
+  /** For transparency only — these auto-union behind the scenes. */
+  arrayUnions: Array<{ name: string; addedCount: number }>
+}
+
 export interface CompanyMeetingRef {
   id: string
   title: string
@@ -237,11 +277,41 @@ export interface CompanyContactRef {
   title: string | null
   contactType: string | null
   linkedinUrl: string | null
+  /** LinkedIn-derived background summary; populated by contact enrichment. */
+  keyTakeaways: string | null
   isPrimary: boolean
   isPastEmployee?: boolean
   meetingCount: number
   lastInteractedAt: string | null
   updatedAt: string
+}
+
+/**
+ * Counts of internal + external sources used to build a single memo version.
+ * Returned by INVESTMENT_MEMO_GENERATE so the renderer can:
+ *   - fire a "skipped web research" toast when externalResearchQueryCount===0
+ *   - render a "Based on N meetings, M notes…" footer below the memo
+ *
+ *   ┌─────────────────────────────────────────────────────────────────┐
+ *   │  meetingCount + summaryCount + transcriptCount counts the same  │
+ *   │  meetings differently:                                            │
+ *   │    meetingCount     = total meetings linked to the company       │
+ *   │    summaryCount     = subset that had an AI summary loaded       │
+ *   │    transcriptCount  = remainder loaded as raw transcript          │
+ *   │  So summaryCount + transcriptCount ≤ meetingCount.               │
+ *   └─────────────────────────────────────────────────────────────────┘
+ */
+export interface MemoGenerateMeta {
+  meetingCount: number
+  summaryCount: number
+  transcriptCount: number
+  companyNoteCount: number
+  contactNoteCount: number
+  contactKeyTakeawayCount: number
+  fileCount: number
+  emailCount: number
+  externalResearchQueryCount: number
+  externalResearchResultCount: number
 }
 
 export interface CompanyEmailRef {

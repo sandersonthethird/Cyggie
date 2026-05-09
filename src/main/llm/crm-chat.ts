@@ -32,30 +32,16 @@
 
 import { getDatabase } from '../database/connection'
 import { extractKeywords } from '../database/repositories/search.repo'
-import { buildMeetingContext, injectTextAttachments } from './chat'
-import { getProvider } from './provider-factory'
-import { sendProgress } from './send-progress'
+import { buildMeetingContext } from './chat'
+import { runChatTurn, abortChatTurn } from './chat-runner'
+import { QUERY_ALL_SYSTEM_PROMPT, CRM_SYSTEM_PROMPT } from './context-builders'
 import type { ChatAttachment } from '../../shared/types/chat'
 
-let allChatAbortController: AbortController | null = null
-
 export function abortAllChat(): void {
-  allChatAbortController?.abort()
-  allChatAbortController = null
+  // The shared runChatTurn controller now owns abort for queryAll / queryCrm
+  // alongside queryMeeting / querySearchResults / queryCompany / queryContact.
+  abortChatTurn()
 }
-
-const CRM_SYSTEM_PROMPT = `You are a research assistant for a venture capital firm.
-You have access to the firm's CRM: contacts, companies/funds, emails, and notes.
-Answer questions accurately based only on the provided data.
-When listing multiple people or organizations, format your answer as a markdown table with the most relevant columns.
-If nothing in the database matches the query, say so clearly — do not invent data.`
-
-const QUERY_ALL_SYSTEM_PROMPT = `You are a research assistant for a venture capital firm.
-You have access to meeting transcripts/notes AND the firm's full CRM database (contacts, companies, emails, notes).
-Synthesize information from both sources to answer the question.
-When listing multiple people or organizations, format your answer as a markdown table with the most relevant columns.
-Cite sources: for meeting-sourced info, mention the meeting title and date.
-If information isn't available in either source, say so clearly — do not invent data.`
 
 const MAX_NOTE_CHARS = 1500
 const MAX_EMAIL_CHARS = 1500
@@ -64,7 +50,12 @@ const MAX_TOTAL_CHARS = 80_000
 // buildCrmContext queries contacts and companies matching the user's question via keyword
 // pre-filtering, then fetches linked notes and emails. Returns a markdown context string,
 // or '' if no records match — callers should proceed with other context sources.
-async function buildCrmContext(question: string): Promise<string> {
+//
+// Lives here (not in context-builders.ts) because queryAll composes
+// buildMeetingContext + buildCrmContext, and moving either into the same
+// module as the other reintroduces the import cycle that broke vi.mock
+// interception during the refactor. See parity.test.ts for the test.
+export async function buildCrmContext(question: string): Promise<string> {
   const db = getDatabase()
 
   let contactRows: ContactRow[]
@@ -307,17 +298,22 @@ export async function queryCrm(question: string): Promise<string> {
     return "I couldn't find any matching contacts, companies, or notes in your CRM database. Try rephrasing your question."
   }
 
-  const userPrompt = `Here is the relevant CRM data:\n\n${crmCtx}\n\n---\n\nUser question: ${question}`
-
-  const provider = getProvider('chat')
-  allChatAbortController = new AbortController()
-  const result = await provider.generateSummary(CRM_SYSTEM_PROMPT, userPrompt, sendProgress, allChatAbortController.signal)
-  allChatAbortController = null
-  return result
+  return runChatTurn({
+    systemPrompt: CRM_SYSTEM_PROMPT,
+    context: crmCtx,
+    question,
+    userPromptPrefix: 'Here is the relevant CRM data:',
+    questionLabel: 'User question',
+  })
 }
 
 // queryAll answers a question using both meeting transcripts and CRM data.
-// Either source may be empty — the function proceeds with whatever data is available.
+// Either source may be empty — proceeds with whatever is available; both
+// empty → curated response (no LLM call).
+//
+// The composition stays here (not in context-builders.ts) to avoid a cycle
+// between context-builders ↔ chat ↔ crm-chat that breaks vi.mock
+// interception in the parity baseline test.
 export async function queryAll(question: string, attachments: ChatAttachment[] = []): Promise<string> {
   const meetingCtx = buildMeetingContext(question)
   const crmCtx = await buildCrmContext(question)
@@ -330,18 +326,19 @@ export async function queryAll(question: string, attachments: ChatAttachment[] =
     meetingCtx ? `# Meeting Context\n${meetingCtx}` : '',
     crmCtx ? `# CRM Context\n${crmCtx}` : '',
   ].filter(Boolean)
-
   const combined = sections.join('\n\n---\n\n')
-  const enhancedQuestion = injectTextAttachments(question, attachments)
-  const imageAtts = attachments.filter(a => a.type === 'image')
 
-  const userPrompt = `${combined}\n\n---\n\nUser question: ${enhancedQuestion}`
-
-  const provider = getProvider('chat')
-  allChatAbortController = new AbortController()
-  const result = await provider.generateSummary(QUERY_ALL_SYSTEM_PROMPT, userPrompt, sendProgress, allChatAbortController.signal, imageAtts)
-  allChatAbortController = null
-  return result
+  // Legacy queryAll template: `${combined}\n\n---\n\nUser question: ${q}`
+  // (no "Here is the X:" prefix). runChatTurn produces this with empty
+  // userPromptPrefix per the prefix-block special case in chat-runner.ts.
+  return runChatTurn({
+    systemPrompt: QUERY_ALL_SYSTEM_PROMPT,
+    context: combined,
+    question,
+    attachments,
+    userPromptPrefix: '',
+    questionLabel: 'User question',
+  })
 }
 
 // ─── Row types (internal) ──────────────────────────────────────────────────

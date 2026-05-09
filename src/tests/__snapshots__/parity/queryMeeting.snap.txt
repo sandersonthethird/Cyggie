@@ -1,0 +1,33 @@
+=== SYSTEM PROMPT ===
+You are a helpful assistant that answers questions about a meeting transcript.
+You have access to the full transcript, any user notes, and the AI-generated summary (if available).
+Answer questions accurately based on what was discussed in the meeting.
+If the information isn't in the transcript, say so.
+Be concise but thorough. Use bullet points when listing multiple items.
+
+=== USER PROMPT ===
+Here is the meeting information:
+
+Meeting: Init Labs partner call
+Date: 5/2/2026
+Participants: Sandy Wright, Priya Mehta
+
+## Transcript
+Sandy: How is the pricing reset going?
+Priya: We held at $180 per seat and renewed two design partners.
+Sandy: What's the runway look like?
+Priya: 11 months at the current burn rate.
+
+## User Notes
+Quick notes from the call.
+
+## AI Summary
+Held the Q2 partner call with Init Labs leadership.
+- Pricing held at $180/seat enterprise; 2 design partners renewed.
+- Runway: 11 months at $340K/mo burn.
+- GTM bets: outbound motion via new SE hire (Q2 ramp).
+
+
+---
+
+User question: What was the runway discussion?

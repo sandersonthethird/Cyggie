@@ -10,6 +10,7 @@ import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
 import type { CompanyDecisionLog, CompanyDetail } from '../../../shared/types/company'
 import { DecisionLogModal } from '../crm/DecisionLogModal'
 import ConfirmDialog from '../common/ConfirmDialog'
+import { MergeReviewModal } from './MergeReviewModal'
 import { shouldPromptDecisionLog, defaultDecisionType } from '../../utils/decisionLogTrigger'
 import type { CustomFieldWithValue } from '../../../shared/types/custom-fields'
 import { COMPANY_SECTIONS } from '../../../shared/types/custom-fields'
@@ -176,11 +177,12 @@ export function CompanyPropertiesPanel({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [taskModalOpen, setTaskModalOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [mergePickerOpen, setMergePickerOpen] = useState(false)
   const [mergeQuery, setMergeQuery] = useState('')
   const [mergeResults, setMergeResults] = useState<{ id: string; name: string }[]>([])
   const [mergeTarget, setMergeTarget] = useState<{ id: string; name: string } | null>(null)
-  const [merging, setMerging] = useState(false)
+  // merging state lives inside MergeReviewModal now; we just hold the target.
   const [nameError, setNameError] = useState<string | null>(null)
   const [createFieldOpen, setCreateFieldOpen] = useState(false)
   const [createFieldSection, setCreateFieldSection] = useState<string | undefined>(undefined)
@@ -665,14 +667,16 @@ export function CompanyPropertiesPanel({
   async function handleDeleteCompany() {
     if (deleting) return
     setDeleting(true)
+    setDeleteError(null)
     try {
       await api.invoke(IPC_CHANNELS.COMPANY_DELETE, company.id)
+      setConfirmDelete(false)
       navigate('/companies')
     } catch (err) {
       console.error('[CompanyPropertiesPanel] delete failed:', err)
+      setDeleteError(err instanceof Error ? err.message : String(err))
     } finally {
       setDeleting(false)
-      setConfirmDelete(false)
     }
   }
 
@@ -690,20 +694,6 @@ export function CompanyPropertiesPanel({
       ))
       .catch(() => setMergeResults([]))
   }, [mergeQuery, mergePickerOpen, company.id])
-
-  async function handleMergeInto() {
-    if (!mergeTarget || merging) return
-    setMerging(true)
-    try {
-      await api.invoke(IPC_CHANNELS.COMPANY_MERGE, mergeTarget.id, company.id)
-      navigate(`/company/${mergeTarget.id}`)
-    } catch (err) {
-      console.error('[CompanyPropertiesPanel] merge failed:', err)
-    } finally {
-      setMerging(false)
-      setMergeTarget(null)
-    }
-  }
 
   function handleNameKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter') void handleDone()
@@ -1171,8 +1161,28 @@ export function CompanyPropertiesPanel({
         />
       )}
 
-      <ConfirmDialog open={confirmDelete} title="Delete company?" message={`Delete "${company.canonicalName}" and all associated data? This cannot be undone.`} confirmLabel={deleting ? 'Deleting...' : 'Delete'} variant="danger" onConfirm={handleDeleteCompany} onCancel={() => setConfirmDelete(false)} />
-      <ConfirmDialog open={!!mergeTarget} title="Merge companies?" message={`Merge "${company.canonicalName}" into "${mergeTarget?.name ?? ''}"? All meetings, contacts, and notes will be relinked and this company will be deleted.`} confirmLabel={merging ? 'Merging…' : 'Merge'} variant="danger" onConfirm={handleMergeInto} onCancel={() => setMergeTarget(null)} />
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete company?"
+        message={`Delete "${company.canonicalName}" and all associated data? This cannot be undone.`}
+        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
+        variant="danger"
+        errorMessage={deleteError}
+        onConfirm={handleDeleteCompany}
+        onCancel={() => { setConfirmDelete(false); setDeleteError(null) }}
+      />
+      {mergeTarget && (
+        <MergeReviewModal
+          open={!!mergeTarget}
+          targetId={mergeTarget.id}
+          sourceId={company.id}
+          onCancel={() => setMergeTarget(null)}
+          onSuccess={(keptId) => {
+            setMergeTarget(null)
+            navigate(`/company/${keptId}`)
+          }}
+        />
+      )}
     </div>
   )
 }

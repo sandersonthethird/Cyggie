@@ -14,11 +14,16 @@ const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/userinfo.email'
 ]
-const DRIVE_FILES_SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly']
+// Phase 2: bumped from drive.metadata.readonly → drive.readonly so we can
+// `files.export()` Google Docs / Sheets / Slides into chat context. Existing
+// users will be re-prompted lazily when they first try to flag a Drive native
+// file (see DRIVE_SCOPE_INSUFFICIENT path in exportDriveFile / CompanyFiles).
+const DRIVE_FILES_SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
 const CALENDAR_READONLY_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
 const DRIVE_METADATA_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly'
+const DRIVE_READONLY_SCOPE = 'https://www.googleapis.com/auth/drive.readonly'
 const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
 
 const LEGACY_GRANTED_SCOPES_KEY = 'google_granted_scopes'
@@ -283,7 +288,11 @@ export function getDriveFilesOAuth2Client(): InstanceType<typeof google.auth.OAu
   if (filesClient) return filesClient
 
   // Backward compatibility: older installs stored Drive Files scope on the calendar token.
-  if (hasStoredToken(CALENDAR_TOKEN_KEY) && getCalendarGrantedScopes().includes(DRIVE_METADATA_SCOPE)) {
+  if (
+    hasStoredToken(CALENDAR_TOKEN_KEY)
+    && (getCalendarGrantedScopes().includes(DRIVE_METADATA_SCOPE)
+      || getCalendarGrantedScopes().includes(DRIVE_READONLY_SCOPE))
+  ) {
     return getTokenBackedOAuth2Client(CALENDAR_TOKEN_KEY)
   }
 
@@ -316,8 +325,25 @@ export function hasDriveScope(): boolean {
 }
 
 export function hasDriveFilesScope(): boolean {
-  return getCalendarGrantedScopes().includes(DRIVE_METADATA_SCOPE)
-    || getDriveFilesGrantedScopes().includes(DRIVE_METADATA_SCOPE)
+  // drive.readonly is a superset of drive.metadata.readonly, so either grant
+  // counts as having Drive-files access for listing.
+  const calendarScopes = getCalendarGrantedScopes()
+  const driveScopes = getDriveFilesGrantedScopes()
+  return (
+    calendarScopes.includes(DRIVE_METADATA_SCOPE)
+    || calendarScopes.includes(DRIVE_READONLY_SCOPE)
+    || driveScopes.includes(DRIVE_METADATA_SCOPE)
+    || driveScopes.includes(DRIVE_READONLY_SCOPE)
+  )
+}
+
+/** True only when we have content-read (drive.readonly), required to export
+ *  Google Docs / Sheets / Slides. drive.metadata.readonly is NOT sufficient. */
+export function hasDriveContentScope(): boolean {
+  return (
+    getCalendarGrantedScopes().includes(DRIVE_READONLY_SCOPE)
+    || getDriveFilesGrantedScopes().includes(DRIVE_READONLY_SCOPE)
+  )
 }
 
 export function hasGmailScope(): boolean {

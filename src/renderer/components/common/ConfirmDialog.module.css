@@ -102,3 +102,15 @@
 .danger:hover {
   background: #c13030;
 }
+
+.errorBlock {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-danger);
+  border-radius: 8px;
+  background: rgba(220, 53, 69, 0.08);
+  color: var(--color-danger);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}

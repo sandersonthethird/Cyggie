@@ -1,6 +1,8 @@
 import { ipcMain, shell, dialog } from 'electron'
 import { readFileSync } from 'fs'
 import { extname } from 'path'
+import { execFile, spawn } from 'child_process'
+import { promisify } from 'util'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import * as settingsRepo from '../database/repositories/settings.repo'
@@ -18,6 +20,56 @@ import { getDatabase } from '../database/connection'
 import type { MeetingListFilter } from '../../shared/types/meeting'
 import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
 import { logAudit } from '../database/repositories/audit.repo'
+
+const execFileP = promisify(execFile)
+
+const TWITTER_HOSTS = new Set([
+  'twitter.com', 'www.twitter.com', 'mobile.twitter.com',
+  'x.com', 'www.x.com', 'mobile.x.com'
+])
+
+// macOS only: read the bundle ID of whichever app currently handles https://
+async function getDefaultBrowserBundleId(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileP('defaults', [
+      'read',
+      'com.apple.LaunchServices/com.apple.launchservices.secure',
+      'LSHandlers'
+    ])
+    for (const block of stdout.split(/\}\s*,?/)) {
+      if (/LSHandlerURLScheme\s*=\s*"?https"?/.test(block)) {
+        const m = block.match(/LSHandlerRoleAll\s*=\s*"?([\w.\-]+)"?/)
+        if (m) return m[1]
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+async function openInDefaultBrowser(url: string): Promise<boolean> {
+  const bundleId = (await getDefaultBrowserBundleId()) ?? 'com.apple.Safari'
+  // AppleScript "open location" sends the URL straight to the target browser
+  // via Apple Events, which never consults LaunchServices — so the X app's
+  // Universal Links registration on twitter.com / x.com cannot intercept it.
+  const safeUrl = url.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  const safeBundle = bundleId.replace(/"/g, '\\"')
+  const script = `tell application id "${safeBundle}" to open location "${safeUrl}"`
+  try {
+    await execFileP('osascript', ['-e', script])
+    return true
+  } catch {
+    // Fall back to `open -b`, which is still better than shell.openExternal
+    // (which routes through NSWorkspace and triggers Universal Links).
+    try {
+      spawn('open', ['-b', bundleId, url], { detached: true, stdio: 'ignore' }).unref()
+      return true
+    } catch {
+      return false
+    }
+  }
+}
 
 // Pure helpers — exported for unit testing
 export function mergeSpeakerTag(
@@ -79,8 +131,11 @@ export function registerMeetingHandlers(): void {
       `)
       .all(id) as { id: string; name: string }[]
 
-    // Recover summary from companion notes if the summary file is missing.
-    if (!summary && meeting.status === 'summarized') {
+    // Recover summary from companion notes only when the summary file is genuinely
+    // missing (readSummary returns null). An empty file means the user has
+    // emptied the summary; restoring stale companion-note content would silently
+    // overwrite that intent and any prior edits.
+    if (summary === null && meeting.status === 'summarized') {
       summary = recoverSummaryFromCompanionNote(meeting)
     }
 
@@ -418,6 +473,13 @@ export function registerMeetingHandlers(): void {
       } catch {
         // Non-fatal: open without authuser if profile unavailable
       }
+    }
+    // The X (Twitter) macOS app claims Universal Links for twitter.com / x.com,
+    // so shell.openExternal opens both the browser AND the app. Force these URLs
+    // into the user's default browser by targeting it directly.
+    if (process.platform === 'darwin' && TWITTER_HOSTS.has(parsed.hostname)) {
+      const opened = await openInDefaultBrowser(parsed.toString())
+      if (opened) return
     }
     return shell.openExternal(parsed.toString())
   })

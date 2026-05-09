@@ -1,7 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useChatStore } from '../../stores/chat.store'
 import { useChatPanelStore } from '../../stores/chat-panel.store'
+import type { ChatContextKind } from '../../../shared/utils/chat-context'
 import styles from './PanelHeader.module.css'
+
+/**
+ * Map a panelSession's (contextKind, contextId) tuple to the route of the
+ * entity's detail page. Returns null for global chats (no destination) or
+ * when the session hasn't hydrated yet. Prefix-stripping mirrors the scheme
+ * baked in by deriveChatContext (shared/utils/chat-context.ts).
+ */
+function destinationFor(
+  kind: ChatContextKind | undefined,
+  contextId: string | undefined,
+): string | null {
+  if (!kind || !contextId) return null
+  if (kind === 'company') return `/company/${contextId.replace(/^company:/, '')}`
+  if (kind === 'contact') return `/contact/${contextId.replace(/^contact:/, '')}`
+  if (kind === 'meeting') return `/meeting/${contextId}`
+  return null
+}
 
 interface PanelHeaderProps {
   /** Click pop-out → navigate to /ai-chats/:id, set popped=true. */
@@ -18,6 +37,10 @@ interface PanelHeaderProps {
 
 export function PanelHeader({ onPopOut, onClose, onToggleSwitcher, onSaveToNote, mode, totalChats }: PanelHeaderProps) {
   const panelSession = useChatStore((s) => s.panelSession)
+  const navigate = useNavigate()
+  const popped = useChatPanelStore((s) => s.popped)
+  const setPopped = useChatPanelStore((s) => s.setPopped)
+  const setOpen = useChatPanelStore((s) => s.setOpen)
   const [overflowOpen, setOverflowOpen] = useState(false)
   const overflowRef = useRef<HTMLDivElement>(null)
 
@@ -57,6 +80,18 @@ export function PanelHeader({ onPopOut, onClose, onToggleSwitcher, onSaveToNote,
 
   const title = panelSession ? (panelSession.contextLabel ?? 'Chat') : 'AI Chat'
   const messageCount = panelSession?.messages.length ?? 0
+  const dest = destinationFor(panelSession?.contextKind, panelSession?.contextId)
+
+  function goToEntity() {
+    if (!dest) return
+    // When popped to full-screen, also collapse the panel back to the rail
+    // so the user actually sees the destination page underneath.
+    if (popped) {
+      setPopped(false)
+      setOpen(true)
+    }
+    navigate(dest)
+  }
 
   return (
     <div className={styles.head}>
@@ -70,7 +105,19 @@ export function PanelHeader({ onPopOut, onClose, onToggleSwitcher, onSaveToNote,
         ☰
       </button>
       <div className={styles.titleWrap}>
-        <div className={styles.title} title={title}>{title}</div>
+        {dest ? (
+          <button
+            type="button"
+            className={`${styles.title} ${styles.titleLink}`}
+            title={title}
+            aria-label={`Open ${title} detail`}
+            onClick={goToEntity}
+          >
+            {title}
+          </button>
+        ) : (
+          <div className={styles.title} title={title}>{title}</div>
+        )}
         <div className={styles.meta}>
           {messageCount > 0 ? `${messageCount} message${messageCount === 1 ? '' : 's'}` : 'New chat'}
         </div>

@@ -23,7 +23,9 @@ import { useCalendar } from './hooks/useCalendar'
 import { useRecordingStore } from './stores/recording.store'
 import { usePreferencesStore } from './stores/preferences.store'
 import { AudioCaptureProvider } from './contexts/AudioCaptureContext'
+import { RunsProvider } from './contexts/RunsContext'
 import { NoticeModalProvider } from './components/common/NoticeModal'
+import DevAgentRuns from './routes/DevAgentRuns'
 import { IPC_CHANNELS } from '../shared/constants/channels'
 import { api } from './api'
 
@@ -97,6 +99,7 @@ export default function App() {
     <NoticeModalProvider>
     <HashRouter>
       <AudioCaptureProvider>
+        <RunsProvider>
         <PreferencesInit />
         {!isPopOut && <CalendarInit />}
         {!isPopOut && <NotificationPermissionInit />}
@@ -128,9 +131,11 @@ export default function App() {
               <Route path="/partner-meeting" element={<PartnerMeeting />} />
               <Route path="/ai-chats" element={<AIChats />} />
               <Route path="/ai-chats/:id" element={<AIChatFullscreen />} />
+              <Route path="/dev/agent-runs" element={<DevAgentRuns />} />
             </Route>
           )}
         </Routes>
+        </RunsProvider>
       </AudioCaptureProvider>
     </HashRouter>
     </NoticeModalProvider>

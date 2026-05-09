@@ -3389,6 +3389,20 @@ export function applyContactDedupDecisions(
   return result
 }
 
+/**
+ * deleteContact — cleanup waterfall.
+ *
+ *   (a) FK CASCADE auto: contact_emails, org_company_contacts,
+ *       meeting_speaker_contact_links, contact_decision_logs.
+ *   (b) FK SET NULL auto: notes.contact_id, tasks.contact_id,
+ *       email_messages.contact_id (mig 013).
+ *   (d) No FK / manual cleanup:
+ *       chat_sessions (context_kind='contact' AND context_id=id) — mig 078,
+ *         no FK to contacts.
+ *
+ * If you add a new table referencing contact_id, prefer adding an FK with
+ * CASCADE/SET NULL — extending bucket (d) is the fallback.
+ */
 export function deleteContact(contactId: string): void {
   const db = getDatabase()
   const existing = db
@@ -3397,7 +3411,11 @@ export function deleteContact(contactId: string): void {
   if (!existing) {
     return
   }
-  db.prepare(`DELETE FROM contacts WHERE id = ?`).run(contactId)
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM chat_sessions WHERE context_kind = 'contact' AND context_id = ?`).run(contactId)
+    db.prepare(`DELETE FROM contacts WHERE id = ?`).run(contactId)
+  })
+  tx()
 }
 
 export function listContactTimeline(contactId: string): ContactTimelineItem[] {
