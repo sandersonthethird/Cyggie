@@ -38,6 +38,30 @@
   cursor: default;
 }
 
+.costBadge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #6b7280);
+  background: var(--color-bg, transparent);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 3px;
+}
+
+/* Critique heatmap: red wavy underline on claims with active critique
+   evidence rows. Rendered by CritiqueHighlight TipTap extension. */
+:global(.critique-highlight) {
+  text-decoration: underline wavy #dc2626;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+:global(.critique-highlight:hover) {
+  background: rgba(220, 38, 38, 0.06);
+}
+
 
 .errorMsg {
   font-size: 11px;

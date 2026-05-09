@@ -88,6 +88,8 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   templates: 'Templates',
 }
 
+import { AgentLimitsSection } from '../components/settings/AgentLimitsSection'
+
 interface SettingsState {
   deepgramApiKey: string
   llmProvider: LlmProvider
@@ -1156,6 +1158,12 @@ export default function Settings() {
         <p className={styles.hint} style={{ marginTop: 4 }}>
           Requires a Summary template selected on the meeting.
         </p>
+
+        <h4 className={styles.subsectionTitle ?? ''} style={{ marginTop: 24, fontSize: 14, fontWeight: 600 }}>Investment Thesis Agent</h4>
+        <p className={styles.hint} style={{ marginTop: 4 }}>
+          Caps on the multi-turn stress-test agent. Defaults are tuned for typical Sonnet 4.5 runs (~$1.20).
+        </p>
+        <AgentLimitsSection />
       </section>
         </>
       )}
