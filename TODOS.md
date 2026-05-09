@@ -1073,3 +1073,112 @@ The existing `agent_runs.kind` already namespaces variants by use-case.
 **Effort:** M
 **Priority:** P3
 **Depends on:** Phase 1 (✅).
+
+---
+
+## P2/P3 — Investment Thesis Agent (memo-context expansion follow-ups)
+
+These items were deferred from the niche-targeted query + comprehensive
+context expansion landed in `feat(memo-gen): niche-targeted research +
+comprehensive context`. Each is an independent extension.
+
+### LLM-driven niche extraction across all summaries
+**What:** Pre-call the LLM (Haiku, cheap) to write a 1-sentence "what does this
+company do" summary from ALL meeting summaries, and use that as the
+`nicheSignal` instead of the first 500 chars of the most recent summary.
+**Why:** When the most recent meeting is a follow-up that doesn't restate the
+pitch (e.g., "Jane sent over the updated financials"), the first-500-chars
+heuristic produces a weak niche query. An LLM-derived synthesis across all
+summaries captures the company's pitch more reliably.
+**Pros:** Better Exa neural results → better Competition + Market sections in
+the memo. Cheap (Haiku is ~$1/M tokens).
+**Cons:** Adds a 1–2s LLM call to the fast path. Adds another moving part.
+**Context:** Replace the niche-signal derivation in
+`src/main/ipc/investment-memo.ipc.ts` (currently `summaries[0]?.content?.slice(0, 500)`)
+with a call to a new `summarizeNiche(summaries: Array<{title, date, content}>)`
+service. Cache by company_id + summary version hash so re-runs don't re-pay.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Phase 1 niche-targeted memo gen (✅).
+
+---
+
+### Direct LinkedIn-URL fetch for founders with cached URLs
+**What:** When a contact has `linkedinUrl` set, skip the Exa search and
+`web_fetch` the URL directly. The agent's `web_fetch` tool already exists.
+**Why:** Saves an Exa search ($) and gets the actual profile content instead
+of search-result snippets. More accurate Team-section content.
+**Pros:** Cheaper + more accurate. ~30 lines: branch in the IPC handler when
+`founder.linkedinUrl` is set; pass URLs to a new `searchCompanyContextWithFetch`
+that mixes search + fetch.
+**Cons:** `web_fetch` is currently agent-only; would need to expose at the
+service layer too. URL-allowlist check still applies (LinkedIn is public so
+this is fine).
+**Context:** Founders are pulled from `linkedContacts` in
+`src/main/ipc/investment-memo.ipc.ts`. Each `CompanyContactRef` has
+`linkedinUrl: string | null`. Add a parallel "fetch this URL" path inside
+`searchCompanyContext` that runs alongside the search queries.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Phase 1 (✅).
+
+---
+
+### Per-meeting relevance ranking (cap to top N)
+**What:** When a company has 20+ meetings, surface only the top 5 most-relevant
+by recency × topical-fit instead of including all (with the existing
+truncation). Reduces context cost on long-running deals.
+**Why:** A deeply-engaged portfolio company can have 30+ meetings linked. The
+existing pipeline truncates each to 8k chars but still includes all of them.
+Beyond ~20 meetings the value/token ratio degrades.
+**Pros:** Lower token cost + cleaner memo focus on relevant signal.
+**Cons:** "Relevance" is fuzzy; risk of ranking algorithm picking the wrong
+meetings. Probably needs an LLM-driven or semantic-similarity ranker.
+**Context:** Affects the meeting-loading loop in `INVESTMENT_MEMO_GENERATE`.
+Today: `companyRepo.listCompanyMeetingSummaryPaths(companyId)` returns ALL
+matching meetings. New: rank, take top 5, pass forward.
+**Effort:** L
+**Priority:** P3
+**Depends on:** Phase 1 (✅), some kind of ranker (LLM call or embedding similarity).
+
+---
+
+### Auto-detect founder career-history patterns in keyTakeaways
+**What:** Surface "{founder} was [role] at [Co]" sentences in a structured
+Team-section seed block (separate from the contactKeyTakeaways block) so the
+model is less likely to hallucinate or omit experience.
+**Why:** Team section quality is a frequent partner-meeting question. Today
+the model sees a free-text keyTakeaways blob and may skim or restructure it.
+A structured "career_history" array forces attention.
+**Pros:** Better Team section. Small prompt addition.
+**Cons:** Pattern extraction is brittle (regex against natural language);
+better as an LLM call but that adds cost.
+**Context:** The `contact.keyTakeaways` field is rendered as-is into the
+prompt today. New: pre-process via a small NLP/regex step OR an LLM
+extraction call to produce a structured `careerHistory: Array<{role, company, dates?}>`
+which is then formatted into the prompt.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Phase 1 (✅).
+
+---
+
+### `MemoGenerateInput` shape cleanup
+**What:** Group sources into `sources: { meetings, transcripts, companyNotes,
+contactNotes, contactKeyTakeaways, emails, files, externalResearch }` instead
+of 8+ flat fields. Pure refactor.
+**Why:** `MemoGenerateInput` has accreted to 12+ flat fields after the memo-
+context expansion. Adding a new source means another field; readability
+degrades. Grouping by category makes intent obvious and makes the next
+addition a one-liner.
+**Pros:** Cleaner type, easier to extend. Net diff is small (~50 lines, mostly
+moving fields and updating call sites).
+**Cons:** Touches a stable file; risks breaking the existing IPC handler's
+`generateMemo` call. Tests already cover the call shape.
+**Context:** `MemoGenerateInput` lives in `src/main/llm/memo-generator.ts`.
+Single caller is `src/main/ipc/investment-memo.ipc.ts`. Group fields, update
+the call site, update memo-generator's prompt builder (which reads the fields
+inline).
+**Effort:** S
+**Priority:** P2
+**Depends on:** Phase 1 (✅).

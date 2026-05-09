@@ -4,8 +4,9 @@ import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { InvestmentMemoVersion, InvestmentMemoVersionSummary, InvestmentMemoWithLatest } from '../../../shared/types/company'
+import type { InvestmentMemoVersion, InvestmentMemoVersionSummary, InvestmentMemoWithLatest, MemoGenerateMeta } from '../../../shared/types/company'
 import { MemoEditModal } from './MemoEditModal'
+import { useNotice } from '../common/NoticeModal'
 import { useFindInPage } from '../../hooks/useFindInPage'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
@@ -32,7 +33,9 @@ interface CompanyMemoProps {
 }
 
 export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
+  const notice = useNotice()
   const [memo, setMemo] = useState<InvestmentMemoWithLatest | null>(null)
+  const [latestGenerateMeta, setLatestGenerateMeta] = useState<MemoGenerateMeta | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [progressText, setProgressText] = useState('')
@@ -369,7 +372,12 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     setGenerating(true)
     setViewingVersion(null)
     try {
-      const result = await api.invoke<{ contentMarkdown: string; version: InvestmentMemoVersion }>(
+      const result = await api.invoke<{
+        contentMarkdown: string
+        version: InvestmentMemoVersion
+        /** Optional in case an old main bundle is running while renderer is fresh during dev hot-reload. */
+        meta?: MemoGenerateMeta
+      }>(
         IPC_CHANNELS.INVESTMENT_MEMO_GENERATE,
         companyId
       )
@@ -380,6 +388,13 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
       setMemo((prev) =>
         prev ? { ...prev, latestVersion: result.version, latestVersionNumber: result.version.versionNumber } : prev
       )
+      if (result.meta) {
+        setLatestGenerateMeta(result.meta)
+        // Toast when pre-research had nothing to query (truly empty company:
+        // no nicheSignal, no description, no industry, no founders).
+        const toast = emptyResearchToastOptions(result.meta)
+        if (toast) notice.show(toast)
+      }
       setModalOpen(true)
     } catch (e) {
       console.error('[CompanyMemo] generate failed:', e)
@@ -620,6 +635,10 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         )}
       </div>
 
+      {latestGenerateMeta && displayedVersion?.id === memo?.latestVersion?.id && (
+        <SourcesUsedFooter meta={latestGenerateMeta} />
+      )}
+
       <EvidenceSidebar
         versionId={displayedVersion?.id ?? null}
         activeClaim={activeClaim}
@@ -634,6 +653,62 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
           initialFindQuery={findOpen ? findQuery : undefined}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * Build the "Based on N meetings, M notes…" sentence from a MemoGenerateMeta.
+ * Pure function, exported for testing. Returns null when the meta has no
+ * non-zero counts (would render an empty footer).
+ */
+export function buildSourcesUsedSentence(meta: MemoGenerateMeta): string | null {
+  const parts: string[] = []
+  if (meta.meetingCount > 0) parts.push(`${meta.meetingCount} ${meta.meetingCount === 1 ? 'meeting' : 'meetings'}`)
+  const totalNotes = meta.companyNoteCount + meta.contactNoteCount
+  if (totalNotes > 0) {
+    const breakdown = meta.contactNoteCount > 0 ? ` (${meta.contactNoteCount} contact-tagged)` : ''
+    parts.push(`${totalNotes} ${totalNotes === 1 ? 'note' : 'notes'}${breakdown}`)
+  }
+  if (meta.fileCount > 0) parts.push(`${meta.fileCount} ${meta.fileCount === 1 ? 'file' : 'files'}`)
+  if (meta.emailCount > 0) parts.push(`${meta.emailCount} ${meta.emailCount === 1 ? 'email' : 'emails'}`)
+  if (meta.externalResearchQueryCount > 0) {
+    parts.push(`${meta.externalResearchQueryCount} web ${meta.externalResearchQueryCount === 1 ? 'search' : 'searches'}`)
+  }
+  if (parts.length === 0) return null
+  return `Based on ${parts.join(', ')}.`
+}
+
+/**
+ * Decide whether to fire the "skipped web research" toast. Pure decision
+ * function so tests can call it directly without rendering. Returns the
+ * notice options (or null when no toast should fire).
+ */
+export function emptyResearchToastOptions(
+  meta: MemoGenerateMeta | null | undefined,
+): { variant: 'success'; title: string; message: string } | null {
+  if (!meta) return null
+  if (meta.externalResearchQueryCount > 0) return null
+  return {
+    variant: 'success',
+    title: 'Memo generated',
+    message: 'Skipped web research — not enough company info yet',
+  }
+}
+
+/**
+ * Small footer below the rendered memo summarizing the sources the LLM
+ * actually saw. Renders only when a fresh generation just happened (we have
+ * a meta) AND we're viewing the latest version. Drops when the user
+ * navigates to an older version (the meta describes the latest generation,
+ * not arbitrary historical versions).
+ */
+export function SourcesUsedFooter({ meta }: { meta: MemoGenerateMeta }) {
+  const sentence = buildSourcesUsedSentence(meta)
+  if (!sentence) return null
+  return (
+    <div className={styles.sourcesFooter} role="note" aria-label="Sources used to generate this memo">
+      {sentence}
     </div>
   )
 }

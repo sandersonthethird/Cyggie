@@ -6,6 +6,7 @@ import * as artifactRepo from '../database/repositories/artifact.repo'
 import { makeEntityNotesRepo } from '../database/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
+const _contactNotesRepo = makeEntityNotesRepo('contact_id')
 import { exportMemoMarkdownToPdf } from '../services/memo-export.service'
 import { exportMemoToGoogleDoc } from '../drive/google-drive'
 import { getSetting } from '../database/repositories/settings.repo'
@@ -19,6 +20,8 @@ import { getCredential } from '../security/credentials'
 import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
 import type { MemoShareResponse, MemoRevokeResponse } from '../../shared/types/web-share'
 import { searchCompanyContext } from '../services/exa-research'
+import { getFlaggedFiles } from '../database/repositories/company-file-flags.repo'
+import type { MemoGenerateMeta } from '../../shared/types/company'
 import { runStressTestAgent } from '../llm/agents/thesis-stress-test-agent'
 import { startRun, completeRun, makeEventWriter, getRun, listRuns, listRunEvents, averageCostForKind } from '../llm/agents/run-store'
 import { bulkInsert as bulkInsertEvidence, listByVersion as listEvidenceByVersion } from '../database/repositories/memo-evidence.repo'
@@ -298,24 +301,111 @@ export function registerInvestmentMemoHandlers(): void {
       }
     }
 
-    // Read selected local files
-    const files: Array<{ name: string; content: string }> = []
-    for (const fileId of selectedFileIds) {
-      const content = await readLocalFile(fileId)
-      if (content && content.trim().length > 100) {
-        files.push({ name: basename(fileId), content })
+    // Linked contacts (sorted most-engaged first via meetingCount DESC) drive
+    // three downstream things: contact-notes, contact-key-takeaways, and
+    // founder identification for Exa LinkedIn queries.
+    const linkedContacts = companyRepo
+      .listCompanyContacts(companyId)
+      .slice()
+      .sort((a, b) => (b.meetingCount ?? 0) - (a.meetingCount ?? 0))
+
+    // Contact-tagged notes (single batched query — no N+1).
+    // Dedup against company-tagged notes by note id (a note tagged to BOTH a
+    // contact and a company would otherwise appear twice in the prompt).
+    const contactIds = linkedContacts.map(c => c.id)
+    const allContactNotes = contactIds.length > 0
+      ? _contactNotesRepo.listForEntities(contactIds)
+      : []
+    const seenNoteIds = new Set(notes.map(n => n.id))
+    const contactNoteTexts: string[] = []
+    // Group notes by their contact_id so we can iterate in the linkedContacts
+    // (sorted) order — most-engaged contacts' notes hit the 20k cap first.
+    const notesByContact = new Map<string, typeof allContactNotes>()
+    for (const n of allContactNotes) {
+      if (!n.contactId) continue
+      const list = notesByContact.get(n.contactId) ?? []
+      list.push(n)
+      notesByContact.set(n.contactId, list)
+    }
+    for (const contact of linkedContacts) {
+      const cnotes = notesByContact.get(contact.id) ?? []
+      for (const n of cnotes) {
+        if (seenNoteIds.has(n.id)) continue
+        seenNoteIds.add(n.id)
+        if (!n.content?.trim()) continue
+        const prefix = `**Contact: ${contact.fullName}${n.title ? ` — ${n.title}` : ''}**`
+        contactNoteTexts.push(`${prefix}\n${n.content}`)
       }
     }
 
-    // Exa pre-research: 4-5 parallel queries (recent news, funding, competitors,
-    // founders, market size). Best-effort — if Exa is offline or the key is
-    // missing, returns an empty bundle and memo generation proceeds without it.
+    // Contact key takeaways (already on listCompanyContacts via key_takeaways
+    // SELECT — no per-contact getContact() round-trip).
+    const contactKeyTakeaways: Array<{ name: string; takeaways: string }> = []
+    for (const contact of linkedContacts.slice(0, 8)) {
+      if (contact.keyTakeaways?.trim()) {
+        contactKeyTakeaways.push({ name: contact.fullName, takeaways: contact.keyTakeaways })
+      }
+    }
+
+    // Drive files: caller-supplied selectedFileIds wins (e.g., a future
+    // pick-files UI); otherwise auto-include all flagged files.
+    // selectedFileIds was always [] in practice — files were never read until now.
+    const flaggedFiles = getFlaggedFiles(companyId)
+    const fileIds = selectedFileIds.length > 0
+      ? selectedFileIds
+      : flaggedFiles.map(f => f.fileId)
+
+    const files: Array<{ name: string; content: string }> = []
+    for (const fileId of fileIds) {
+      const flagged = flaggedFiles.find(f => f.fileId === fileId)
+      const content = await readLocalFile(fileId, flagged?.mimeType ?? undefined)
+      if (content && content.trim().length > 100) {
+        files.push({ name: flagged?.fileName ?? basename(fileId), content })
+      }
+    }
+
+    // Niche signal for Exa pre-research: most recent meeting summary's
+    // first 500 chars (richest, founder's own words). summaryRows is sorted
+    // by datetime(m.date) DESC so summaries[0] is the most recent.
+    const nicheSignal = summaries[0]?.content?.trim()
+      ? summaries[0].content.slice(0, 500)
+      : null
+
+    // Founder identification: title regex; fall back to isPrimary contacts.
+    const FOUNDER_TITLE_RE = /founder|ceo|cto|coo|chief/i
+    const titledFounders = linkedContacts.filter(c => FOUNDER_TITLE_RE.test(c.title ?? ''))
+    const founderNames =
+      titledFounders.length > 0
+        ? titledFounders.slice(0, 2).map(c => c.fullName)
+        : linkedContacts.filter(c => c.isPrimary).slice(0, 2).map(c => c.fullName)
+
+    // Status update with actual counts so the user sees what's being gathered.
+    sendProgress(`Gathering ${meetings.length} meetings, ${notes.length + contactNoteTexts.length} notes, ${fileIds.length} files, ${emails.length} emails...`)
+
+    // Structured log for post-hoc debuggability ("why was this memo thin?").
+    console.info('[memo-gen] context gathered', {
+      companyId,
+      meetings: meetings.length,
+      summaries: summaries.length,
+      transcripts: transcripts.length,
+      companyNotes: notes.length,
+      contactNotes: contactNoteTexts.length,
+      contactKeyTakeaways: contactKeyTakeaways.length,
+      emails: emails.length,
+      flaggedFiles: fileIds.length,
+      hasNicheSignal: !!nicheSignal,
+      founderCount: founderNames.length,
+    })
+
     sendProgress('Researching external sources...')
     const externalResearch = await searchCompanyContext({
       companyName: company.canonicalName,
+      companyDescription: company.description,
       primaryDomain: company.primaryDomain,
       industry: company.industry,
       themes: company.themes,
+      nicheSignal,
+      founderNames,
     })
     sendProgress(null)
 
@@ -325,6 +415,8 @@ export function registerInvestmentMemoHandlers(): void {
       summaries,
       transcripts,
       notes: noteTexts,
+      contactNotes: contactNoteTexts,
+      contactKeyTakeaways,
       existingMemo: existingContent,
       emails,
       files,
@@ -358,7 +450,21 @@ export function registerInvestmentMemoHandlers(): void {
       source: 'llm_generate'
     })
 
-    return { success: true, contentMarkdown: generated, version }
+    // Source counts for the renderer's empty-research toast + sources-used footer.
+    const meta: MemoGenerateMeta = {
+      meetingCount: meetings.length,
+      summaryCount: summaries.length,
+      transcriptCount: transcripts.length,
+      companyNoteCount: notes.length,
+      contactNoteCount: contactNoteTexts.length,
+      contactKeyTakeawayCount: contactKeyTakeaways.length,
+      fileCount: files.length,
+      emailCount: emails.length,
+      externalResearchQueryCount: externalResearch.queries.length,
+      externalResearchResultCount: externalResearch.results.length,
+    }
+
+    return { success: true, contentMarkdown: generated, version, meta }
   })
 
   ipcMain.handle(

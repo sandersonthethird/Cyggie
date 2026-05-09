@@ -64,6 +64,13 @@ function rowToNote(row: NoteBaseRow): Note {
 
 export interface EntityNotesRepo {
   list(entityId: string): Note[]
+  /**
+   * Batched lookup: returns notes for any of the given entity ids in a single
+   * SQL query (`WHERE entity_fk_col IN (?, ?, ...)`). Caller groups by
+   * entity id from the populated `companyId` / `contactId` field on each Note.
+   * Returns `[]` for an empty input array (no SQL fired).
+   */
+  listForEntities(entityIds: string[]): Note[]
   get(noteId: string): Note | null
   create(
     data: {
@@ -102,6 +109,21 @@ export function makeEntityNotesRepo(entityFkCol: EntityFkCol): EntityNotesRepo {
         ORDER BY is_pinned DESC, datetime(updated_at) DESC
       `)
       .all(entityId) as NoteBaseRow[]
+    return rows.map(rowToNote)
+  }
+
+  function listForEntities(entityIds: string[]): Note[] {
+    if (entityIds.length === 0) return []
+    const db = getDatabase()
+    const placeholders = entityIds.map(() => '?').join(', ')
+    const rows = db
+      .prepare(`
+        SELECT ${SELECT_COLS}
+        FROM notes
+        WHERE ${entityFkCol} IN (${placeholders})
+        ORDER BY is_pinned DESC, datetime(updated_at) DESC
+      `)
+      .all(...entityIds) as NoteBaseRow[]
     return rows.map(rowToNote)
   }
 
@@ -168,5 +190,5 @@ export function makeEntityNotesRepo(entityFkCol: EntityFkCol): EntityNotesRepo {
     return result.changes > 0
   }
 
-  return { list, get, create, update, delete: deleteFn }
+  return { list, listForEntities, get, create, update, delete: deleteFn }
 }

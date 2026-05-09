@@ -64,10 +64,22 @@ export interface ExternalResearchBundle {
 }
 
 interface SearchCompanyContextInput {
+  /** Used only in logs; the company name is NOT in any query (pre-launch companies have no web presence under their name). */
   companyName: string
+  /** Niche-query fallback when nicheSignal is empty/stub. */
+  companyDescription?: string | null
   primaryDomain?: string | null
   industry?: string | null
   themes?: string[] | null
+  /**
+   * Niche-similarity query seed. Caller should pass the most recent meeting
+   * summary's content (truncated). Drives Exa neural search to find competitor
+   * companies / product pages without requiring the company itself to be
+   * discoverable.
+   */
+  nicheSignal?: string | null
+  /** 0–2 founder full names. Each becomes a quoted `"{name}" linkedin` query. */
+  founderNames?: string[]
 }
 
 function makeTimeout<T>(ms: number, label: string): Promise<T> {
@@ -94,6 +106,19 @@ export async function searchCompanyContext(
 
   const queries = buildPreResearchQueries(input)
   const empty: ExternalResearchBundle = { queries, results: [] }
+
+  console.info('[exa-research] niche pre-research', {
+    company: input.companyName,
+    hasNiche: !!buildNicheQuery(input),
+    hasIndustry: !!input.industry?.trim(),
+    founderCount: input.founderNames?.length ?? 0,
+    queryCount: queries.length,
+  })
+
+  if (queries.length === 0) {
+    console.info('[exa-research] empty pre-research — no niche/industry/founders to query')
+    return empty
+  }
 
   const fetches = queries.map(async query => {
     try {
@@ -130,19 +155,57 @@ export async function searchCompanyContext(
   }
 }
 
+/**
+ * Build the per-run query list. Three categories, all niche/founder-targeted
+ * (NOT company-name-targeted) so pre-launch companies with zero web presence
+ * still get useful results:
+ *
+ *   1. Niche-similarity (Exa neural) — describes the SPACE, not the player
+ *   2. Industry market sizing (unchanged) — broad, name-agnostic
+ *   3. Per-founder LinkedIn — founders are findable under their own names
+ *
+ * Returns [] when none of the three has enough seed data (truly empty company).
+ */
 function buildPreResearchQueries(input: SearchCompanyContextInput): string[] {
-  const name = input.companyName.trim()
-  if (!name) return []
-  const queries: string[] = [
-    `"${name}" recent news`,
-    `"${name}" funding round`,
-    `"${name}" competitors`,
-    `"${name}" founders background`,
-  ]
-  if (input.industry) {
-    queries.push(`${input.industry} market size 2025`)
+  const queries: string[] = []
+
+  // 1. Niche-similarity search.
+  const niche = buildNicheQuery(input)
+  if (niche) queries.push(niche)
+
+  // 2. Industry market sizing.
+  if (input.industry?.trim()) {
+    queries.push(`${input.industry.trim()} market size 2025`)
   }
+
+  // 3. Per-founder LinkedIn (top 2; quoted to avoid bag-of-words breaks).
+  // Filter THEN slice — names ≤3 chars (initials, garbage) shouldn't burn the cap.
+  const validFounderNames = (input.founderNames ?? [])
+    .map(n => n.trim())
+    .filter(n => n.length > 3)
+    .slice(0, 2)
+  for (const name of validFounderNames) {
+    queries.push(`"${name}" linkedin`)
+  }
+
   return queries
+}
+
+function buildNicheQuery(input: SearchCompanyContextInput): string | null {
+  // Prefer meeting-derived niche signal (richest, fresh, founder's own words).
+  // Fall back to company.description for companies without summaries yet.
+  const niche =
+    pickNonStub(input.nicheSignal) ??
+    pickNonStub(input.companyDescription)
+  if (!niche) return null
+  // Augment with themes for vertical anchoring; harmless if empty.
+  const themesPart = input.themes?.length ? ` (themes: ${input.themes.join(', ')})` : ''
+  return niche + themesPart
+}
+
+function pickNonStub(s: string | null | undefined): string | null {
+  const trimmed = s?.trim() ?? ''
+  return trimmed.length >= 20 ? trimmed : null
 }
 
 // ─── Agent tools ──────────────────────────────────────────────────────────

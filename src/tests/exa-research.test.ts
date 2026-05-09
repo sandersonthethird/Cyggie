@@ -12,7 +12,7 @@ import { searchCompanyContext, agentWebSearch, agentWebFetch } from '../main/ser
 
 const mockGetCredential = vi.mocked(getCredential)
 
-describe('searchCompanyContext — pre-research for memo-generator', () => {
+describe('searchCompanyContext — niche-targeted pre-research for memo-generator', () => {
   beforeEach(() => {
     clearExaMocks()
     mockGetCredential.mockReset()
@@ -24,26 +24,7 @@ describe('searchCompanyContext — pre-research for memo-generator', () => {
     expect(result).toEqual({ queries: [], results: [] })
   })
 
-  it('runs the expected 4-5 queries when industry is provided', async () => {
-    mockGetCredential.mockReturnValue('test-key')
-    const seenQueries: string[] = []
-    setExaMockResponses({
-      searchAndContents: async (query) => {
-        seenQueries.push(query as string)
-        return { results: [{ url: 'https://e.com', text: 'snippet', title: 't' }] }
-      },
-    })
-    const result = await searchCompanyContext({
-      companyName: 'Acme',
-      industry: 'fintech',
-    })
-    expect(seenQueries).toHaveLength(5)
-    expect(seenQueries).toContain('"Acme" recent news')
-    expect(seenQueries).toContain('fintech market size 2025')
-    expect(result.results.length).toBeGreaterThan(0)
-  })
-
-  it('omits the market-size query when industry is not provided', async () => {
+  it('uses the meeting-derived nicheSignal as the niche query (preferred over description)', async () => {
     mockGetCredential.mockReturnValue('test-key')
     const seenQueries: string[] = []
     setExaMockResponses({
@@ -52,9 +33,163 @@ describe('searchCompanyContext — pre-research for memo-generator', () => {
         return { results: [] }
       },
     })
-    await searchCompanyContext({ companyName: 'Acme' })
-    expect(seenQueries).toHaveLength(4)
-    expect(seenQueries.find(q => q.includes('market size'))).toBeUndefined()
+    await searchCompanyContext({
+      companyName: 'Acme',
+      companyDescription: 'description fallback that should be ignored',
+      nicheSignal: 'AI-driven invoice processing for mid-market SMBs in the US',
+    })
+    // The niche query is the FIRST query and uses the nicheSignal, not the description.
+    expect(seenQueries[0]).toBe('AI-driven invoice processing for mid-market SMBs in the US')
+    expect(seenQueries[0]).not.toContain('description fallback')
+  })
+
+  it('falls back to companyDescription when nicheSignal is empty', async () => {
+    mockGetCredential.mockReturnValue('test-key')
+    const seenQueries: string[] = []
+    setExaMockResponses({
+      searchAndContents: async (query) => {
+        seenQueries.push(query as string)
+        return { results: [] }
+      },
+    })
+    await searchCompanyContext({
+      companyName: 'Acme',
+      companyDescription: 'AI-driven invoice processing for SMBs',
+    })
+    expect(seenQueries[0]).toBe('AI-driven invoice processing for SMBs')
+  })
+
+  it('augments niche query with themes when present', async () => {
+    mockGetCredential.mockReturnValue('test-key')
+    const seenQueries: string[] = []
+    setExaMockResponses({
+      searchAndContents: async (query) => {
+        seenQueries.push(query as string)
+        return { results: [] }
+      },
+    })
+    await searchCompanyContext({
+      companyName: 'Acme',
+      nicheSignal: 'invoice processing for SMBs',
+      themes: ['fintech', 'infrastructure'],
+    })
+    expect(seenQueries[0]).toBe('invoice processing for SMBs (themes: fintech, infrastructure)')
+  })
+
+  it('skips niche query when both nicheSignal and description are stub-y (<20 chars)', async () => {
+    mockGetCredential.mockReturnValue('test-key')
+    const seenQueries: string[] = []
+    setExaMockResponses({
+      searchAndContents: async (query) => {
+        seenQueries.push(query as string)
+        return { results: [] }
+      },
+    })
+    await searchCompanyContext({
+      companyName: 'Acme',
+      nicheSignal: 'too short',
+      companyDescription: '',
+      industry: 'fintech',
+    })
+    // Only the industry query fires.
+    expect(seenQueries).toEqual(['fintech market size 2025'])
+  })
+
+  it('quotes founder names in LinkedIn queries (caps at 2)', async () => {
+    mockGetCredential.mockReturnValue('test-key')
+    const seenQueries: string[] = []
+    setExaMockResponses({
+      searchAndContents: async (query) => {
+        seenQueries.push(query as string)
+        return { results: [] }
+      },
+    })
+    await searchCompanyContext({
+      companyName: 'Acme',
+      founderNames: ['Jane Doe', 'Sam Smith', 'Casey Lee', 'Robin Park', 'Alex Chen'],
+    })
+    expect(seenQueries).toContain('"Jane Doe" linkedin')
+    expect(seenQueries).toContain('"Sam Smith" linkedin')
+    // Only first 2 founders.
+    expect(seenQueries).not.toContain('"Casey Lee" linkedin')
+    expect(seenQueries.filter(q => q.includes('linkedin'))).toHaveLength(2)
+  })
+
+  it('skips founders with names ≤3 chars', async () => {
+    mockGetCredential.mockReturnValue('test-key')
+    const seenQueries: string[] = []
+    setExaMockResponses({
+      searchAndContents: async (query) => {
+        seenQueries.push(query as string)
+        return { results: [] }
+      },
+    })
+    await searchCompanyContext({
+      companyName: 'Acme',
+      founderNames: ['', 'JD', 'Jane Doe'],
+    })
+    expect(seenQueries).toContain('"Jane Doe" linkedin')
+    expect(seenQueries).not.toContain('"" linkedin')
+    expect(seenQueries).not.toContain('"JD" linkedin')
+  })
+
+  it('does NOT fire any company-name-prefixed queries', async () => {
+    mockGetCredential.mockReturnValue('test-key')
+    const seenQueries: string[] = []
+    setExaMockResponses({
+      searchAndContents: async (query) => {
+        seenQueries.push(query as string)
+        return { results: [] }
+      },
+    })
+    await searchCompanyContext({
+      companyName: 'Acme',
+      nicheSignal: 'invoice processing for SMBs',
+      industry: 'fintech',
+      founderNames: ['Jane Doe'],
+    })
+    // Old name-prefixed queries are gone.
+    expect(seenQueries.find(q => q.includes('"Acme"'))).toBeUndefined()
+    expect(seenQueries.find(q => q.includes('Acme recent news'))).toBeUndefined()
+    expect(seenQueries.find(q => q.includes('Acme funding round'))).toBeUndefined()
+    expect(seenQueries.find(q => q.includes('Acme competitors'))).toBeUndefined()
+    expect(seenQueries.find(q => q.includes('Acme founders background'))).toBeUndefined()
+  })
+
+  it('returns empty bundle when truly empty (no nicheSignal, no description, no industry, no founders)', async () => {
+    mockGetCredential.mockReturnValue('test-key')
+    let exaCalled = false
+    setExaMockResponses({
+      searchAndContents: async () => {
+        exaCalled = true
+        return { results: [] }
+      },
+    })
+    const result = await searchCompanyContext({ companyName: 'Acme' })
+    expect(result).toEqual({ queries: [], results: [] })
+    expect(exaCalled).toBe(false)   // no queries built → no Exa call fired
+  })
+
+  it('orders queries: niche first, industry second, founder LinkedIn last', async () => {
+    mockGetCredential.mockReturnValue('test-key')
+    const seenQueries: string[] = []
+    setExaMockResponses({
+      searchAndContents: async (query) => {
+        seenQueries.push(query as string)
+        return { results: [] }
+      },
+    })
+    await searchCompanyContext({
+      companyName: 'Acme',
+      nicheSignal: 'invoice processing for SMBs',
+      industry: 'fintech',
+      founderNames: ['Jane Doe'],
+    })
+    expect(seenQueries).toEqual([
+      'invoice processing for SMBs',
+      'fintech market size 2025',
+      '"Jane Doe" linkedin',
+    ])
   })
 
   it('degrades silently when individual queries fail', async () => {
@@ -63,13 +198,17 @@ describe('searchCompanyContext — pre-research for memo-generator', () => {
     setExaMockResponses({
       searchAndContents: async () => {
         callCount += 1
-        if (callCount <= 2) throw new Error('network')
+        if (callCount <= 1) throw new Error('network')
         return { results: [{ url: 'https://e.com', text: 'snippet' }] }
       },
     })
-    const result = await searchCompanyContext({ companyName: 'Acme' })
-    // 2 failed + 2 succeeded (1 result each) → 2 results total
-    expect(result.results.length).toBe(2)
+    const result = await searchCompanyContext({
+      companyName: 'Acme',
+      nicheSignal: 'invoice processing for SMBs',
+      industry: 'fintech',
+    })
+    // 1 failed + 1 succeeded (1 result) → 1 result total
+    expect(result.results.length).toBe(1)
   })
 
   it('truncates per-result text to ~1500 chars', async () => {
@@ -80,7 +219,10 @@ describe('searchCompanyContext — pre-research for memo-generator', () => {
         results: [{ url: 'https://x.com', text: longText, title: 't' }],
       }),
     })
-    const result = await searchCompanyContext({ companyName: 'Acme' })
+    const result = await searchCompanyContext({
+      companyName: 'Acme',
+      nicheSignal: 'invoice processing for SMBs',
+    })
     expect(result.results[0]!.text.length).toBeLessThan(1700)
     expect(result.results[0]!.text).toContain('truncated')
   })

@@ -2798,6 +2798,7 @@ export function listCompanyContacts(companyId: string): CompanyContactRef[] {
         c.title,
         c.contact_type,
         c.linkedin_url,
+        c.key_takeaways,
         c.updated_at,
         COALESCE(occ.is_primary, 0) AS is_primary,
         COALESCE(ms.meeting_count, 0) AS meeting_count,
@@ -2826,6 +2827,7 @@ export function listCompanyContacts(companyId: string): CompanyContactRef[] {
     title: string | null
     contact_type: string | null
     linkedin_url: string | null
+    key_takeaways: string | null
     updated_at: string
     is_primary: number
     meeting_count: number
@@ -2839,6 +2841,7 @@ export function listCompanyContacts(companyId: string): CompanyContactRef[] {
     title: row.title,
     contactType: row.contact_type,
     linkedinUrl: row.linkedin_url,
+    keyTakeaways: row.key_takeaways,
     isPrimary: row.is_primary === 1,
     meetingCount: row.meeting_count || 0,
     lastInteractedAt: row.last_meeting_at ?? row.updated_at,

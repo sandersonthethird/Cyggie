@@ -277,11 +277,41 @@ export interface CompanyContactRef {
   title: string | null
   contactType: string | null
   linkedinUrl: string | null
+  /** LinkedIn-derived background summary; populated by contact enrichment. */
+  keyTakeaways: string | null
   isPrimary: boolean
   isPastEmployee?: boolean
   meetingCount: number
   lastInteractedAt: string | null
   updatedAt: string
+}
+
+/**
+ * Counts of internal + external sources used to build a single memo version.
+ * Returned by INVESTMENT_MEMO_GENERATE so the renderer can:
+ *   - fire a "skipped web research" toast when externalResearchQueryCount===0
+ *   - render a "Based on N meetings, M notes…" footer below the memo
+ *
+ *   ┌─────────────────────────────────────────────────────────────────┐
+ *   │  meetingCount + summaryCount + transcriptCount counts the same  │
+ *   │  meetings differently:                                            │
+ *   │    meetingCount     = total meetings linked to the company       │
+ *   │    summaryCount     = subset that had an AI summary loaded       │
+ *   │    transcriptCount  = remainder loaded as raw transcript          │
+ *   │  So summaryCount + transcriptCount ≤ meetingCount.               │
+ *   └─────────────────────────────────────────────────────────────────┘
+ */
+export interface MemoGenerateMeta {
+  meetingCount: number
+  summaryCount: number
+  transcriptCount: number
+  companyNoteCount: number
+  contactNoteCount: number
+  contactKeyTakeawayCount: number
+  fileCount: number
+  emailCount: number
+  externalResearchQueryCount: number
+  externalResearchResultCount: number
 }
 
 export interface CompanyEmailRef {
