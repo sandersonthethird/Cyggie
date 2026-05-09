@@ -18,6 +18,27 @@ import { basename } from 'path'
 import { getCredential } from '../security/credentials'
 import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
 import type { MemoShareResponse, MemoRevokeResponse } from '../../shared/types/web-share'
+import { searchCompanyContext } from '../services/exa-research'
+import { runStressTestAgent } from '../llm/agents/thesis-stress-test-agent'
+import { startRun, completeRun, makeEventWriter, getRun, listRuns, listRunEvents, averageCostForKind } from '../llm/agents/run-store'
+import { bulkInsert as bulkInsertEvidence, listByVersion as listEvidenceByVersion } from '../database/repositories/memo-evidence.repo'
+import { getDatabase } from '../database/connection'
+import type { AgentEvent } from '../../shared/types/agent-events'
+
+// Module-scope per-runId AbortController map for stress-test concurrency.
+// Each kicked-off run lives in this map until it completes or is aborted.
+// Allowing concurrent runs across windows/companies is intentional (review
+// decision #2). The map gets cleaned up by the run handler itself on
+// completion / failure / abort.
+const _stressTestAbortControllers = new Map<string, AbortController>()
+
+function broadcastAgentEvent(event: AgentEvent): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(IPC_CHANNELS.THESIS_STRESS_TEST_PROGRESS, event)
+    }
+  }
+}
 
 /**
  * Fetches a company favicon and returns it as a base64 data URL.
@@ -286,6 +307,18 @@ export function registerInvestmentMemoHandlers(): void {
       }
     }
 
+    // Exa pre-research: 4-5 parallel queries (recent news, funding, competitors,
+    // founders, market size). Best-effort — if Exa is offline or the key is
+    // missing, returns an empty bundle and memo generation proceeds without it.
+    sendProgress('Researching external sources...')
+    const externalResearch = await searchCompanyContext({
+      companyName: company.canonicalName,
+      primaryDomain: company.primaryDomain,
+      industry: company.industry,
+      themes: company.themes,
+    })
+    sendProgress(null)
+
     const generated = await generateMemo({
       companyName: company.canonicalName,
       companyDescription: company.description || '',
@@ -295,6 +328,7 @@ export function registerInvestmentMemoHandlers(): void {
       existingMemo: existingContent,
       emails,
       files,
+      externalResearch,
       companyDetails: {
         stage: company.stage,
         round: company.round,
@@ -428,4 +462,199 @@ export function registerInvestmentMemoHandlers(): void {
       }
     }
   )
+
+  // ───── Thesis Stress-Test Agent ──────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_CHANNELS.THESIS_STRESS_TEST_START,
+    async (
+      _event,
+      payload: { companyId: string }
+    ): Promise<{ runId: string }> => {
+      const companyId = payload?.companyId
+      if (!companyId) throw new Error('companyId is required')
+      const company = companyRepo.getCompany(companyId)
+      if (!company) throw new Error('Company not found')
+
+      const memo = memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName, getCurrentUserId())
+      const existingMarkdown = memo.latestVersion?.contentMarkdown ?? ''
+      if (existingMarkdown.trim().length < 200) {
+        throw new Error('Memo is too short to stress-test (need at least 200 chars). Generate a memo first.')
+      }
+
+      const userId = getCurrentUserId()
+      const runId = startRun({
+        kind: 'thesis_stress_test',
+        companyId,
+        userId,
+        mode: 'stress_test',
+      })
+
+      const controller = new AbortController()
+      _stressTestAbortControllers.set(runId, controller)
+
+      const eventWriter = makeEventWriter(runId)
+      const emit = (event: AgentEvent): void => {
+        eventWriter.appendEvent(event)
+        broadcastAgentEvent(event)
+        // Flush per turn boundary AND per terminal event so the dev dashboard
+        // sees up-to-date traces even on a still-running run.
+        if (event.type === 'iteration_start' || event.type === 'done' || event.type === 'error' || event.type === 'aborted' || event.type === 'cap_exceeded') {
+          eventWriter.flush()
+        }
+      }
+
+      // Kick off async; return runId immediately so the renderer can subscribe.
+      void (async () => {
+        try {
+          const result = await runStressTestAgent({
+            runId,
+            companyId,
+            companyName: company.canonicalName,
+            userId,
+            existingMemoMarkdown: existingMarkdown,
+            signal: controller.signal,
+            emit,
+          })
+
+          if (result.scopeLockWarnings.length > 0) {
+            console.warn('[thesis-stress-test]', runId, 'scope-lock warnings:', result.scopeLockWarnings)
+          }
+
+          if (result.status !== 'success' || !result.submitInput) {
+            completeRun(runId, {
+              status: result.status,
+              iterations: result.iterations,
+              inputTokensTotal: result.inputTokensTotal,
+              outputTokensTotal: result.outputTokensTotal,
+              costEstimateUsd: result.costEstimateUsd,
+              toolCallCount: result.toolCallCount,
+              webSearchCount: result.webSearchCount,
+              errorClass: result.errorClass,
+              errorMessage: result.errorMessage,
+            })
+            return
+          }
+
+          // Persist memo version + evidence rows in a single transaction.
+          const db = getDatabase()
+          let savedVersionId = ''
+          const persist = db.transaction(() => {
+            const version = memoRepo.saveMemoVersion(memo.id, {
+              contentMarkdown: result.submitInput!.markdown,
+              changeNote: 'Stress-tested by research agent',
+            }, userId)
+            savedVersionId = version.id
+            const inserted = bulkInsertEvidence(version.id, result.submitInput!.evidence)
+            console.log(`[thesis-stress-test] ${runId} saved version ${version.id} + ${inserted} evidence rows`)
+          })
+          try {
+            persist()
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            console.error('[thesis-stress-test]', runId, 'persist failed:', errMsg)
+            completeRun(runId, {
+              status: 'failed',
+              iterations: result.iterations,
+              inputTokensTotal: result.inputTokensTotal,
+              outputTokensTotal: result.outputTokensTotal,
+              costEstimateUsd: result.costEstimateUsd,
+              toolCallCount: result.toolCallCount,
+              webSearchCount: result.webSearchCount,
+              errorClass: 'PersistError',
+              errorMessage: errMsg,
+            })
+            broadcastAgentEvent({ type: 'error', runId, errorClass: 'PersistError', message: errMsg })
+            return
+          }
+
+          // Re-emit a 'done' event with the persisted versionId so the renderer
+          // knows where to navigate. (The agent loop's emit fired with empty
+          // versionId since persistence happens here.)
+          broadcastAgentEvent({
+            type: 'done',
+            runId,
+            versionId: savedVersionId,
+            durationMs: result.durationMs,
+            inputTokens: result.inputTokensTotal,
+            outputTokens: result.outputTokensTotal,
+            costEstimateUsd: result.costEstimateUsd,
+            toolCallCount: result.toolCallCount,
+          })
+
+          completeRun(runId, {
+            status: 'success',
+            iterations: result.iterations,
+            inputTokensTotal: result.inputTokensTotal,
+            outputTokensTotal: result.outputTokensTotal,
+            costEstimateUsd: result.costEstimateUsd,
+            toolCallCount: result.toolCallCount,
+            webSearchCount: result.webSearchCount,
+            resultVersionId: savedVersionId,
+          })
+          logAudit(userId, 'investment_memo_version', savedVersionId, 'create', {
+            memoId: memo.id,
+            source: 'thesis_stress_test_agent',
+            runId,
+            costEstimateUsd: result.costEstimateUsd,
+          })
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err)
+          console.error('[thesis-stress-test]', runId, 'unhandled error:', errMsg)
+          completeRun(runId, {
+            status: 'failed',
+            iterations: 0,
+            inputTokensTotal: 0,
+            outputTokensTotal: 0,
+            costEstimateUsd: 0,
+            toolCallCount: 0,
+            webSearchCount: 0,
+            errorClass: 'UnhandledError',
+            errorMessage: errMsg,
+          })
+          broadcastAgentEvent({ type: 'error', runId, errorClass: 'UnhandledError', message: errMsg })
+        } finally {
+          eventWriter.flush()
+          _stressTestAbortControllers.delete(runId)
+        }
+      })()
+
+      return { runId }
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.THESIS_STRESS_TEST_ABORT, (_event, runId: string) => {
+    const controller = _stressTestAbortControllers.get(runId)
+    if (!controller) return { success: false, error: 'no_such_run' }
+    controller.abort()
+    return { success: true }
+  })
+
+  // ───── Memo evidence (read) ──────────────────────────────────────────────
+
+  ipcMain.handle(IPC_CHANNELS.MEMO_EVIDENCE_LIST_BY_VERSION, (_event, versionId: string) => {
+    if (!versionId) throw new Error('versionId is required')
+    return listEvidenceByVersion(versionId)
+  })
+
+  // ───── Agent runs (observability + cost badge) ───────────────────────────
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_RUNS_LIST, (_event, filter?: { companyId?: string; kind?: string; limit?: number }) => {
+    return listRuns(filter)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_RUN_GET, (_event, runId: string) => {
+    if (!runId) throw new Error('runId is required')
+    return getRun(runId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_RUN_LIST_EVENTS, (_event, runId: string) => {
+    if (!runId) throw new Error('runId is required')
+    return listRunEvents(runId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_RUNS_AVERAGE_COST, (_event, payload: { kind: string; companyId?: string; lastN?: number }) => {
+    if (!payload?.kind) throw new Error('kind is required')
+    return averageCostForKind(payload.kind, payload.companyId, payload.lastN)
+  })
 }

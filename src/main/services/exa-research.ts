@@ -34,7 +34,7 @@ import { validateUrlForFetch } from '../security/url-allowlist'
  *   │                                                                 │
  *   │    webFetch(url)                                                 │
  *   │      → validateUrlForFetch(url)  ← https + private-IP block      │
- *   │      → exa.contents([url])                                       │
+ *   │      → exa.getContents([url])                                       │
  *   │      → text truncated to ~8000 chars                             │
  *   │                                                                 │
  *   │    Throws or returns {error} envelope so the agent loop can     │
@@ -220,7 +220,7 @@ export async function agentWebFetch(url: string): Promise<AgentWebFetchOutput | 
   if (!exa) return { error: 'Exa API key not configured' }
   try {
     const response = (await Promise.race([
-      exa.contents([url]),
+      exa.getContents([url]),
       makeTimeout(PRE_RESEARCH_TIMEOUT_MS, `Exa web_fetch "${url}"`),
     ])) as { results?: Array<{ url?: string; title?: string; text?: string }> }
     const first = response.results?.[0]

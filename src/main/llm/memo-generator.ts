@@ -1,6 +1,7 @@
 
 import { getProvider } from './provider-factory'
 import { buildMemoDocTitle, roundLabel } from '../services/memo-export.service'
+import type { ExternalResearchBundle } from '../services/exa-research'
 
 const MEMO_SYSTEM_PROMPT_TEMPLATE = `You are an experienced venture capital analyst writing investment memos for an investment committee. Write in a professional but direct tone — be specific, data-driven, and opinionated. Avoid vague platitudes.
 
@@ -58,6 +59,7 @@ CRITICAL INSTRUCTIONS:
 - Use **bold** for key metrics and important terms.
 - Be direct and opinionated — state whether something is a strength or concern.
 - If existing memo content is provided, incorporate and improve upon it rather than starting from scratch.
+- For any factual claim derived from the External Research block (market size, recent news, funding events, founder background, competitor names you didn't get from internal data), cite the source inline as [source: <url>] right after the claim. Do NOT cite internal sources.
 - Output clean markdown only. No preamble or commentary.`
 
 export function buildMemoSystemPrompt(titleLine: string): string {
@@ -88,6 +90,14 @@ export interface MemoGenerateInput {
   }
   emails?: Array<{ subject: string | null; from: string; date: string | null; body: string }>
   files?: Array<{ name: string; content: string }>
+  /**
+   * Exa pre-research bundle. Optional; when present, the user prompt will
+   * include an "## External Research" block with truncated snippets and the
+   * model is required to inline-cite [source: <url>] on any external claim.
+   * The bundle is best-effort: callers (investment-memo IPC) call
+   * `searchCompanyContext()` which silently degrades to empty on Exa failure.
+   */
+  externalResearch?: ExternalResearchBundle
 }
 
 function buildTitleLine(companyName: string, details: MemoGenerateInput['companyDetails']): string {
@@ -187,6 +197,25 @@ export async function generateMemo(
   if (input.existingMemo.trim()) {
     parts.push('\n---\n## Existing Memo Draft (incorporate and improve)\n')
     parts.push(truncateForContext(input.existingMemo, 6000))
+  }
+
+  // External research from Exa pre-research pass. Per-result snippets are
+  // already truncated by exa-research.ts; we just structure them here.
+  if (input.externalResearch && input.externalResearch.results.length > 0) {
+    parts.push('\n---\n## External Research (web — cite inline as [source: url])\n')
+    // Group results by query so the model sees what was searched.
+    const byQuery = new Map<string, typeof input.externalResearch.results>()
+    for (const r of input.externalResearch.results) {
+      const list = byQuery.get(r.query) ?? []
+      list.push(r)
+      byQuery.set(r.query, list)
+    }
+    for (const [query, results] of byQuery) {
+      parts.push(`### Search: "${query}"\n`)
+      for (const r of results) {
+        parts.push(`**${r.title ?? r.url}** ${r.publishedDate ? `(${r.publishedDate})` : ''}\n${r.url}\n${r.text}\n`)
+      }
+    }
   }
 
   if (input.summaries.length === 0 && input.transcripts.length === 0 && input.notes.length === 0) {

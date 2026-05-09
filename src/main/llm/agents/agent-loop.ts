@@ -94,7 +94,10 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
   const pricing = opts.pricing ?? DEFAULT_PRICING
   const terminal = findTerminalTool(opts.tools)
   const registry = buildToolRegistry(opts.tools)
-  const anthropicTools = opts.tools.map(t => t.toAnthropicTool())
+  // Anthropic SDK's `tools` typing is a union of (custom Tool | hosted helpers
+  // like web_search/text_editor). Our tools are custom; cast at the boundary.
+  const anthropicTools = opts.tools.map(t => t.toAnthropicTool()) as unknown as
+    Parameters<Anthropic['messages']['create']>[0]['tools']
 
   let iterations = 0
   let inputTokensTotal = 0

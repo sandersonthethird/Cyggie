@@ -216,6 +216,20 @@ export const IPC_CHANNELS = {
   INVESTMENT_MEMO_SHARE_LINK: 'investment-memo:share-link',
   INVESTMENT_MEMO_REVOKE_SHARE: 'investment-memo:revoke-share',
 
+  // Thesis Stress-Test Agent (multi-turn adversarial agent)
+  THESIS_STRESS_TEST_START: 'thesis-stress-test:start',
+  THESIS_STRESS_TEST_ABORT: 'thesis-stress-test:abort',
+  THESIS_STRESS_TEST_PROGRESS: 'thesis-stress-test:progress',
+
+  // Memo evidence (sidecar to investment_memo_versions)
+  MEMO_EVIDENCE_LIST_BY_VERSION: 'memo-evidence:list-by-version',
+
+  // Agent runs observability (/dev/agent-runs dashboard)
+  AGENT_RUNS_LIST: 'agent-runs:list',
+  AGENT_RUN_GET: 'agent-runs:get',
+  AGENT_RUN_LIST_EVENTS: 'agent-runs:list-events',
+  AGENT_RUNS_AVERAGE_COST: 'agent-runs:average-cost',
+
   // Speaker rename
   MEETING_RENAME_SPEAKERS: 'meeting:rename-speakers',
 

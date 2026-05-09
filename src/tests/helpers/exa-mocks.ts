@@ -75,6 +75,15 @@ export class MockExa {
     if (handlers.contents) return handlers.contents(...args)
     return { results: [] }
   })
+
+  // The actual Exa SDK method is getContents (not contents); exa-research.ts
+  // calls getContents. Mirror to the same handler so tests can keep using
+  // setExaMockResponses({ contents: ... }) as a single switch.
+  getContents = vi.fn(async (...args: unknown[]) => {
+    if (handlers.throwError) throw handlers.throwError
+    if (handlers.contents) return handlers.contents(...args)
+    return { results: [] }
+  })
 }
 
 /**
