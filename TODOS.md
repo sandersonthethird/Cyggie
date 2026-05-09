@@ -935,3 +935,141 @@
 **Effort:** S
 **Priority:** P3
 **Depends on:** Nothing.
+
+---
+
+## P2 — Investment Thesis Agent (Phase 2 follow-ups)
+
+These items were deferred from the Phase 1 Investment Thesis Agent build. Each
+one is an independent extension of the agent infrastructure landed across
+commits `feat(db): migrations 085-087`, `feat(agent): generic tool-use loop …`,
+and `feat(agent): renderer UI`.
+
+### Per-claim identity / `claims` table extraction
+**What:** Extract claims from the memo into a dedicated `claims` table
+(id, version_id, ordinal, text, category). `memo_evidence` and a new
+`claim_critiques` table FK to it instead of carrying the raw `claim_text`
+substring. EvidenceSidebar then looks up by stable `claim_id` instead of
+fuzzy substring matching.
+**Why:** Phase 1 uses fuzzy substring match, which breaks when the rendered
+memo's claim text drifts even slightly from the persisted `claim_text`.
+Stable claim ids enable per-claim re-verification, stale-claim flagging, and
+cross-version claim tracking.
+**Pros:** Unblocks per-claim re-verification (right-click "verify this"),
+per-claim re-research, per-claim staleness — all currently impossible.
+**Cons:** Migration + repo refactor + renderer fuzzy-match removal. ~600 lines.
+The agent's `submit_memo` schema needs to be extended to emit `claim_id` (or
+the post-save step needs to assign ids by ordinal).
+**Context:** Phase 1 schema is in `src/main/database/migrations/085-memo-evidence.ts`.
+Fuzzy lookup lives in `src/renderer/components/company/EvidenceSidebar.tsx:substringMatch()`.
+The agent's output schema is `SubmitMemoInputSchema` in `src/shared/types/thesis.ts`.
+**Effort:** L
+**Priority:** P2
+**Depends on:** Phase 1 stress-test agent merged (✅).
+
+---
+
+### `agent_runs` TTL pruning
+**What:** On startup, after orphan-GC, prune `agent_runs` (and dependent
+`agent_run_events`) rows older than a configurable TTL (default 90 days).
+**Why:** Tables grow unbounded. Each run writes 1 agent_runs row + ~20
+agent_run_events rows; at 30 runs/week that's ~3000 events/week. SQLite
+handles this fine for years, but the `/dev/agent-runs` view will get noisier.
+**Pros:** ~15 lines: a `DELETE FROM agent_runs WHERE datetime(started_at) < datetime('now', '-N days')`
+right after the orphan-GC call in `src/main/database/connection.ts`. Cascade
+on `agent_run_events.run_id` already drops events.
+**Cons:** Loses long-tail historical observability — but the data is for
+debugging, not analytics.
+**Context:** Add `agent.runRetentionDays` setting (default 90). Read at startup
+inside `getDatabase()`. Log how many rows were pruned for observability.
+**Effort:** S
+**Priority:** P2
+**Depends on:** Phase 1 (✅).
+
+---
+
+### Push-notification digest of stress-test concerns
+**What:** Daily/weekly background job that scans the most recent agent_runs
+across the portfolio for `cap_exceeded` runs and high-severity critique
+evidence rows added in the past N days. Emits a push notification: "3 of your
+companies have new high-severity concerns from overnight research."
+**Why:** Surfaces the agent's adversarial work proactively. Today the user
+has to remember to click Stress-test on each company they care about.
+**Pros:** High-leverage UX — the agent works for the user instead of waiting
+to be asked. Reuses existing `notification:start-recording` IPC pattern.
+**Cons:** Needs a background scheduler (not yet present in main); decisions
+around quiet hours, dedup ("seen this concern already"), severity threshold.
+**Context:** New scheduler module under `src/main/services/`. Read recent runs
+from `agent_runs`, recent evidence from `memo_evidence WHERE is_critique=1
+AND severity='high'`. Bind to electron's `Notification` API; the renderer
+already has `NotificationPermissionInit`.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Phase 1 (✅), background scheduler (none today).
+
+---
+
+### Side-by-side memo diff view
+**What:** A two-column "what changed" view comparing two `investment_memo_versions`
+rows. Highlights inserted / removed / modified text at the section level, with
+hover cards showing the agent's reasoning if the version was produced by an
+agent run.
+**Why:** Users today can flip between versions in the dropdown but can't see
+WHAT changed at a glance. Especially valuable post-stress-test (compare
+original vs. critiqued).
+**Pros:** Pure UI feature; existing version data is sufficient. ~250 lines:
+new route `/company/:id/memo-diff?from=A&to=B` plus a diff renderer.
+**Cons:** Markdown diffing with section awareness is non-trivial; off-the-shelf
+diff libs work at line/word level, not section level.
+**Context:** Versions live in `investment_memo_versions`; agent reasoning
+trace lives in `agent_run_events` (link via `agent_runs.result_version_id`).
+Existing version dropdown is in `src/renderer/components/company/CompanyMemo.tsx`.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Phase 1 (✅).
+
+---
+
+### Anthropic hosted web_search swap option
+**What:** When Anthropic's hosted `web_search_20250305` tool stabilizes,
+add it as an alternative backend in `src/main/services/exa-research.ts`,
+controlled by an `agent.webSearchProvider` setting (`exa` | `anthropic`).
+**Why:** Anthropic's tool returns model-friendly snippets without an extra
+API key + dependency. Exa is currently the right pick because we already
+have it; that may change.
+**Pros:** Zero infra (no Exa key needed for users who don't already have one).
+Anthropic tool quality is improving fast.
+**Cons:** Per-search cost is similar; URL allowlist still needs to apply at
+`web_fetch` boundary regardless of search provider; dual-backend code path
+is a maintenance tax until one wins.
+**Context:** `agentWebSearch` and `agentWebFetch` in `src/main/services/exa-research.ts`
+are the swap points. The Anthropic Web Search tool is exposed via the
+`tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: N }]`
+parameter to `messages.create` — would replace the Zod-defined `web_search`
+tool with a hosted one. URL allowlist would live as a wrapper on the agent's
+`tool_result` post-processing rather than at fetch time.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Phase 1 (✅), Anthropic GA of the hosted web_search tool.
+
+---
+
+### A/B prompt experimentation
+**What:** Variant table for system prompts (`agent_prompt_variants`: id, kind,
+label, content, traffic_weight). Agent loop reads the current variant per run
+and records `variant_id` on the `agent_runs` row so post-hoc cost/quality
+analysis can compare variants.
+**Why:** Stress-test prompt engineering is going to evolve. Without runtime
+variant tracking, every prompt iteration is a global change with no way to
+compare before/after rigorously.
+**Pros:** Unlocks principled prompt iteration. ~200 lines: new table, repo,
+prompt-resolver, settings UI for variants.
+**Cons:** Variants without enough N are noisy. Probably don't need this until
+the agent is in regular use.
+**Context:** Today prompts live in `src/main/llm/agents/prompts/*.md` imported
+via `?raw`. Variant lookup would replace the static import with a DB read at
+the start of each run. Add a column to `agent_runs` for `prompt_variant_id`.
+The existing `agent_runs.kind` already namespaces variants by use-case.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Phase 1 (✅).
