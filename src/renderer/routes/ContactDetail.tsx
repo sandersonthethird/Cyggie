@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useLocation, useParams } from 'react-router-dom'
+import type { BackNavState } from '../utils/backNavState'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { ContactDetail as ContactDetailType, ContactMeetingRef } from '../../shared/types/contact'
 import type { ContactSummaryUpdateProposal } from '../../shared/types/summary'
@@ -26,6 +27,8 @@ type ContactTab = 'timeline' | 'meetings' | 'emails' | 'notes' | 'decisions'
 
 export default function ContactDetail() {
   const { contactId: id } = useParams<{ contactId: string }>()
+  const location = useLocation()
+  const stateFrom = (location.state as BackNavState | null)?.from
   const [contact, setContact] = useState<ContactDetailType | null>(null)
   const [loading, setLoading] = useState(true)
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
@@ -345,7 +348,7 @@ export default function ContactDetail() {
         backLabel="Back"
         backFallback="/contacts"
         breadcrumbs={[
-          { label: 'Contacts', href: '/contacts' },
+          { label: 'Contacts', href: stateFrom ?? '/contacts' },
           { label: contact.fullName ?? 'Contact' },
         ]}
       />

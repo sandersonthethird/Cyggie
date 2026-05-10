@@ -16,10 +16,16 @@ import {
   applySelectFilter,
   applyRangeFilter,
   applyTextFilter,
+  applyCustomSelectFilter,
+  applyCustomRangeFilter,
+  applyCustomTextFilter,
+  splitFiltersByCustom,
   type ColumnDef,
   type RangeValue,
   type SortKey,
-  type SortState
+  type SortState,
+  type CustomFieldValuesMap,
+  type CustomFieldTypesMap
 } from '../crm/tableUtils'
 
 // Re-export shared types so existing imports keep working
@@ -596,29 +602,49 @@ export const saveColumnWidths = widthsHelper.save
 
 // ─── Filter ───────────────────────────────────────────────────────────────────
 
+export interface FilterCompaniesOptions {
+  /** Select filter values per field, from useTableFilters.columnFilters. May contain 'custom:' keys. */
+  columnFilters: Record<string, string[]>
+  /** Range bounds per field. May contain 'custom:' keys. */
+  rangeFilters?: Record<string, RangeValue>
+  /** Text queries per field. May contain 'custom:' keys. */
+  textFilters?: Record<string, string>
+  /** Bulk custom field values keyed by [entityId][defId]. From useCustomFieldValues. */
+  customFieldValues?: CustomFieldValuesMap
+  /** Field type per defId, used to dispatch numeric vs. date range comparison. */
+  customFieldTypes?: CustomFieldTypesMap
+}
+
 /**
  * Client-side filter for CompanySummary[].
  *
- * Three-pass chain (all filters AND together):
- *   Pass 1: Select filters — exact match against option values
- *   Pass 2: Range filters — numeric or date inclusive bounds (applyRangeFilter from tableUtils)
- *   Pass 3: Text filters  — case-insensitive contains (applyTextFilter from tableUtils)
+ * Six-pass chain (all filters AND together):
+ *   Pass 1: Built-in select  — exact match on row[field]            (applySelectFilter)
+ *   Pass 2: Built-in range   — numeric or date inclusive bounds      (applyRangeFilter)
+ *   Pass 3: Built-in text    — case-insensitive contains             (applyTextFilter)
+ *   Pass 4: Custom select    — comma-split + intersection            (applyCustomSelectFilter)
+ *   Pass 5: Custom range     — number/date dispatch via field types  (applyCustomRangeFilter)
+ *   Pass 6: Custom text      — case-insensitive contains on customs  (applyCustomTextFilter)
  *
- * Forward-compatible: adding new filterable columns to COLUMN_DEFS requires no changes here.
+ * Custom filter dicts use 'custom:<defId>' keys; splitFiltersByCustom partitions
+ * them and strips the prefix so downstream passes can look up values/types by defId.
  */
 export function filterCompanies(
   companies: CompanySummary[],
-  filters: Record<string, string[]>,
-  rangeFilters?: Record<string, RangeValue>,
-  textFilters?: Record<string, string>
+  opts: FilterCompaniesOptions
 ): CompanySummary[] {
-  // Three-pass chain (all filters AND together):
-  //   Pass 1: Select filters  — exact match against option values (applySelectFilter)
-  //   Pass 2: Range filters   — numeric or date inclusive bounds (applyRangeFilter)
-  //   Pass 3: Text filters    — case-insensitive contains (applyTextFilter)
-  let result = applySelectFilter(companies as unknown as Record<string, unknown>[], filters) as unknown as CompanySummary[]
-  result = applyRangeFilter(result as unknown as Record<string, unknown>[], rangeFilters ?? {}) as unknown as CompanySummary[]
-  result = applyTextFilter(result as unknown as Record<string, unknown>[], textFilters ?? {}) as unknown as CompanySummary[]
+  const { columnFilters, rangeFilters, textFilters, customFieldValues = {}, customFieldTypes = {} } = opts
+
+  const select = splitFiltersByCustom(columnFilters)
+  const range = splitFiltersByCustom(rangeFilters ?? {})
+  const text = splitFiltersByCustom(textFilters ?? {})
+
+  let result = applySelectFilter(companies as unknown as Record<string, unknown>[], select.builtIn) as unknown as CompanySummary[]
+  result = applyRangeFilter(result as unknown as Record<string, unknown>[], range.builtIn) as unknown as CompanySummary[]
+  result = applyTextFilter(result as unknown as Record<string, unknown>[], text.builtIn) as unknown as CompanySummary[]
+  result = applyCustomSelectFilter(result, select.custom, customFieldValues)
+  result = applyCustomRangeFilter(result, range.custom, customFieldValues, customFieldTypes)
+  result = applyCustomTextFilter(result, text.custom, customFieldValues)
   return result
 }
 

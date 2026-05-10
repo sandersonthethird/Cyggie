@@ -808,6 +808,17 @@
   position: relative;
 }
 
+/* Variant C: AddFieldDropdown anchored just below the PropertiesCard.
+   Replaces the legacy sticky edit-mode bar. */
+.addFieldFloating {
+  position: relative;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+.addFieldFloating > * {
+  position: static;
+}
+
 .stickyAddFieldBar {
   position: sticky;
   bottom: 0;

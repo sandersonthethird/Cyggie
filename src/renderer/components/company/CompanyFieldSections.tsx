@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode, type HTMLAttributes } from 'react'
+import { cloneElement, isValidElement, useCallback, useState, type ReactNode, type HTMLAttributes } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { CompanyDetail } from '../../../shared/types/company'
 import { INVESTMENT_SECURITY_OPTIONS, PORTFOLIO_FUND_OPTIONS, STATUS_OPTIONS } from '../../../shared/types/company'
@@ -9,6 +9,10 @@ import { CompanyChip } from '../common/CompanyChip'
 import { PolymorphicEntitySearch } from '../crm/PolymorphicEntitySearch'
 import type { PolymorphicEntity } from '../crm/PolymorphicEntitySearch'
 import { addCustomFieldOption } from '../../utils/customFieldUtils'
+import { CollapsibleSection } from '../crm/CollapsibleSection'
+import { Icon, type IconKey } from '../common/Icon'
+import { COMPANY_HARDCODED_FIELD_MAP } from '../../constants/companyFields'
+import { getVisibleFieldCount, isEmptyValue } from '../../utils/visibleFieldCount'
 import styles from './CompanyPropertiesPanel.module.css'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -113,35 +117,11 @@ export interface CompanyFieldSectionsProps {
 
   // Misc
   fieldSources?: Record<string, { meetingId: string; meetingTitle: string }>
-}
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function SectionHeader({
-  title,
-  collapsible,
-  isCollapsed,
-  onToggle,
-}: {
-  title: string
-  collapsible?: boolean
-  isCollapsed?: boolean
-  onToggle?: () => void
-}) {
-  return (
-    <div className={styles.sectionHeader}>
-      {title}
-      {collapsible && (
-        <button
-          className={styles.sectionCollapseBtn}
-          onClick={onToggle}
-          title={isCollapsed ? 'Expand section' : 'Collapse section'}
-        >
-          {isCollapsed ? '▶' : '▼'}
-        </button>
-      )}
-    </div>
-  )
+  // Variant C: per-section "+ Add" handler (opens AddFieldDropdown scoped to section)
+  onAddInSection?: (sectionKey: string) => void
+  // Variant C: tracks which sections the user has manually toggled (suppresses auto-collapse)
+  hasUserToggledSection?: (sectionKey: string) => boolean
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -176,8 +156,45 @@ export function CompanyFieldSections({
   options,
   builtinDefs,
   fieldSources,
+  onAddInSection,
+  hasUserToggledSection,
 }: CompanyFieldSectionsProps) {
   const navigate = useNavigate()
+
+  // ── Variant C: icon injection helper ──
+  // Auto-inject Icon prop into hardcoded PropertyRow renders by looking up the
+  // field's icon key from COMPANY_HARDCODED_FIELD_MAP. Avoids editing every
+  // <PropertyRow> callsite. For wrapped renders (badge containers), the icon
+  // is silently skipped — those rows already carry their own visual treatment.
+  function withIconForKey(rendered: ReactNode, fieldKey: string): ReactNode {
+    const iconKey = COMPANY_HARDCODED_FIELD_MAP.get(fieldKey)?.icon
+    if (!iconKey) return rendered
+    if (!isValidElement(rendered)) return rendered
+    if (rendered.type !== PropertyRow) return rendered
+    const props = rendered.props as { icon?: ReactNode }
+    if (props.icon) return rendered
+    return cloneElement(
+      rendered as React.ReactElement<{ icon?: ReactNode }>,
+      { icon: <Icon name={iconKey as IconKey} size={11} /> },
+    )
+  }
+
+  // ── Variant C: count visible non-empty hardcoded fields in a section ──
+  function countVisibleHardcoded(fields: Array<{ key: string; visible: boolean }>): number {
+    let n = 0
+    for (const f of fields) {
+      if (!f.visible) continue
+      if (hiddenFields.includes(f.key)) continue
+      n += 1 // visible counted as "has value" — `visible` is gated on `show()` which checks the value
+    }
+    return n
+  }
+  function countCustomNonEmpty(sectionKey: string): number {
+    return customFieldSection.sectionedFields(sectionKey).filter(f => {
+      if (hiddenFields.includes(`custom:${f.id}`)) return false
+      return !isEmptyValue(getPinnedFieldValue(f))
+    }).length
+  }
 
   // ── Source Name Field (polymorphic entity) ──
   const SourceNameField = useCallback(() => {
@@ -362,48 +379,94 @@ export function CompanyFieldSections({
           }}
         >
           {isEditing && <span className={styles.dragHandle}>⠿</span>}
-          <div style={{ flex: 1, minWidth: 0 }}>{field.render()}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>{withIconForKey(field.render(), field.key)}</div>
         </div>
       )
     })
   }
 
-  // ── Section rendering ──
+  // ── Section rendering (Variant C: <CollapsibleSection> shell) ──
+
+  // Hardcoded field arrays extracted so the count helper can read them
+  // without re-running the closures.
+  const overviewFields = (): Array<{ key: string; visible: boolean; render: () => ReactNode }> => [
+    { key: 'industry', visible: show('industry', company.industry), render: () => (
+      <PropertyRow
+        label="Industry"
+        value={company.industry}
+        type="select"
+        options={options.industry}
+        editMode={isEditing}
+        onSave={(v) => save('industry', v)}
+        onAddOption={builtinDefs.industry ? async (opt) => addCustomFieldOption(builtinDefs.industry!.id, builtinDefs.industry!.optionsJson, opt) : undefined}
+      />
+    )},
+    { key: 'targetCustomer', visible: show('targetCustomer', company.targetCustomer), render: () => (
+      <PropertyRow label="Target Customer" value={company.targetCustomer} type="select" options={options.targetCustomer} editMode={isEditing} onSave={(v) => save('targetCustomer', v)} onAddOption={builtinDefs.targetCustomer ? async (opt) => addCustomFieldOption(builtinDefs.targetCustomer!.id, builtinDefs.targetCustomer!.optionsJson, opt) : undefined} />
+    )},
+    { key: 'businessModel', visible: show('businessModel', company.businessModel), render: () => (
+      <PropertyRow label="Business Model" value={company.businessModel} type="select" options={options.businessModel} editMode={isEditing} onSave={(v) => save('businessModel', v)} onAddOption={builtinDefs.businessModel ? async (opt) => addCustomFieldOption(builtinDefs.businessModel!.id, builtinDefs.businessModel!.optionsJson, opt) : undefined} />
+    )},
+    { key: 'productStage', visible: show('productStage', company.productStage), render: () => (
+      <PropertyRow label="Product Stage" value={company.productStage} type="select" options={options.productStage} editMode={isEditing} onSave={(v) => save('productStage', v)} onAddOption={builtinDefs.productStage ? async (opt) => addCustomFieldOption(builtinDefs.productStage!.id, builtinDefs.productStage!.optionsJson, opt) : undefined} />
+    )},
+    { key: 'foundingYear', visible: show('foundingYear', company.foundingYear), render: () => <PropertyRow label="Founded" value={company.foundingYear} type="number" editMode={isEditing} onSave={(v) => save('foundingYear', v)} /> },
+    { key: 'employeeCountRange', visible: show('employeeCountRange', company.employeeCountRange), render: () => (
+      <PropertyRow label="Employees" value={company.employeeCountRange} type="select" options={options.employeeRange} editMode={isEditing} onSave={(v) => save('employeeCountRange', v)} onAddOption={builtinDefs.employeeCount ? async (opt) => addCustomFieldOption(builtinDefs.employeeCount!.id, builtinDefs.employeeCount!.optionsJson, opt) : undefined} />
+    )},
+    { key: 'hqAddress', visible: show('hqAddress', company.hqAddress), render: () => <PropertyRow label="HQ" value={company.hqAddress} type="text" editMode={isEditing} onSave={(v) => save('hqAddress', v)} /> },
+    { key: 'revenueModel', visible: show('revenueModel', company.revenueModel), render: () => <PropertyRow label="Revenue Model" value={company.revenueModel} type="text" editMode={isEditing} onSave={(v) => save('revenueModel', v)} /> },
+  ]
+
+  const pipelineFields = (): Array<{ key: string; visible: boolean; render: () => ReactNode }> => [
+    { key: 'sourceType', visible: show('sourceType', company.sourceType), render: () => (
+      <PropertyRow
+        label="Source Type"
+        value={company.sourceType}
+        type="select"
+        options={[
+          { value: '', label: '—' },
+          { value: 'personal relationship', label: 'Personal Relationship' },
+          { value: 'emerging manager', label: 'Emerging Manager' },
+          { value: 'founder', label: 'Founder' },
+          { value: 'incubator', label: 'Incubator' },
+          { value: 'accelerator', label: 'Accelerator' },
+          { value: 'inbound', label: 'Inbound' },
+          { value: 'later stage VC', label: 'Later Stage VC' },
+          { value: 'LP', label: 'LP' },
+          { value: 'outbound', label: 'Outbound' },
+        ]}
+        editMode={isEditing}
+        onSave={(v) => save('sourceType', v || null)}
+      />
+    )},
+    { key: 'sourceEntityId', visible: show('sourceEntityId', company.sourceEntityId), render: () => <SourceNameField /> },
+    { key: 'dealSource', visible: show('dealSource', company.dealSource), render: () => <PropertyRow label="Deal Source" value={company.dealSource} type="text" editMode={isEditing} onSave={(v) => save('dealSource', v)} /> },
+    { key: 'warmIntroSource', visible: show('warmIntroSource', company.warmIntroSource), render: () => <PropertyRow label="Warm Intro Source" value={company.warmIntroSource} type="text" editMode={isEditing} onSave={(v) => save('warmIntroSource', v)} /> },
+    { key: 'referralContactId', visible: show('referralContactId', company.referralContactId), render: () => <PropertyRow label="Referral Contact" value={company.referralContactId} type="contact_ref" editMode={isEditing} onSave={(v) => save('referralContactId', v)} /> },
+    { key: 'relationshipOwner', visible: show('relationshipOwner', company.relationshipOwner), render: () => <PropertyRow label="Relationship Owner" value={company.relationshipOwner} type="text" editMode={isEditing} onSave={(v) => save('relationshipOwner', v)} /> },
+    { key: 'nextFollowupDate', visible: show('nextFollowupDate', company.nextFollowupDate), render: () => <PropertyRow label="Next Follow-up" value={company.nextFollowupDate} type="date" editMode={isEditing} onSave={(v) => save('nextFollowupDate', v)} /> },
+  ]
 
   function renderSection(sectionKey: string, sectionContainerProps: HTMLAttributes<HTMLDivElement>) {
+    // Variant C decision: 'pipeline' is rendered INSIDE the 'investment' section, not as its own section.
+    if (sectionKey === 'pipeline') return null
+
     switch (sectionKey) {
-      case 'overview': return (
+      case 'overview': {
+        const fields = overviewFields()
+        const count = countVisibleHardcoded(fields) + countCustomNonEmpty('overview')
+        return (
         <div key="overview" {...sectionContainerProps}>
-          <SectionHeader title="Overview" collapsible isCollapsed={isCollapsed('overview')} onToggle={() => toggleSection('overview')} />
-          {!isCollapsed('overview') && (<>
-          {renderHardcodedSection([
-            { key: 'industry', visible: show('industry', company.industry), render: () => (
-              <PropertyRow
-                label="Industry"
-                value={company.industry}
-                type="select"
-                options={options.industry}
-                editMode={isEditing}
-                onSave={(v) => save('industry', v)}
-                onAddOption={builtinDefs.industry ? async (opt) => addCustomFieldOption(builtinDefs.industry!.id, builtinDefs.industry!.optionsJson, opt) : undefined}
-              />
-            )},
-            { key: 'targetCustomer', visible: show('targetCustomer', company.targetCustomer), render: () => (
-              <PropertyRow label="Target Customer" value={company.targetCustomer} type="select" options={options.targetCustomer} editMode={isEditing} onSave={(v) => save('targetCustomer', v)} onAddOption={builtinDefs.targetCustomer ? async (opt) => addCustomFieldOption(builtinDefs.targetCustomer!.id, builtinDefs.targetCustomer!.optionsJson, opt) : undefined} />
-            )},
-            { key: 'businessModel', visible: show('businessModel', company.businessModel), render: () => (
-              <PropertyRow label="Business Model" value={company.businessModel} type="select" options={options.businessModel} editMode={isEditing} onSave={(v) => save('businessModel', v)} onAddOption={builtinDefs.businessModel ? async (opt) => addCustomFieldOption(builtinDefs.businessModel!.id, builtinDefs.businessModel!.optionsJson, opt) : undefined} />
-            )},
-            { key: 'productStage', visible: show('productStage', company.productStage), render: () => (
-              <PropertyRow label="Product Stage" value={company.productStage} type="select" options={options.productStage} editMode={isEditing} onSave={(v) => save('productStage', v)} onAddOption={builtinDefs.productStage ? async (opt) => addCustomFieldOption(builtinDefs.productStage!.id, builtinDefs.productStage!.optionsJson, opt) : undefined} />
-            )},
-            { key: 'foundingYear', visible: show('foundingYear', company.foundingYear), render: () => <PropertyRow label="Founded" value={company.foundingYear} type="number" editMode={isEditing} onSave={(v) => save('foundingYear', v)} /> },
-            { key: 'employeeCountRange', visible: show('employeeCountRange', company.employeeCountRange), render: () => (
-              <PropertyRow label="Employees" value={company.employeeCountRange} type="select" options={options.employeeRange} editMode={isEditing} onSave={(v) => save('employeeCountRange', v)} onAddOption={builtinDefs.employeeCount ? async (opt) => addCustomFieldOption(builtinDefs.employeeCount!.id, builtinDefs.employeeCount!.optionsJson, opt) : undefined} />
-            )},
-            { key: 'hqAddress', visible: show('hqAddress', company.hqAddress), render: () => <PropertyRow label="HQ" value={company.hqAddress} type="text" editMode={isEditing} onSave={(v) => save('hqAddress', v)} /> },
-            { key: 'revenueModel', visible: show('revenueModel', company.revenueModel), render: () => <PropertyRow label="Revenue Model" value={company.revenueModel} type="text" editMode={isEditing} onSave={(v) => save('revenueModel', v)} /> },
-          ], 'overview')}
+          <CollapsibleSection
+            title="Overview"
+            count={count}
+            isCollapsed={isCollapsed('overview')}
+            onToggle={() => toggleSection('overview')}
+            hasUserToggled={hasUserToggledSection?.('overview')}
+            onAdd={onAddInSection ? () => onAddInSection('overview') : undefined}
+          >
+          {renderHardcodedSection(fields, 'overview')}
           {renderSectionedFields('overview')}
 
           {customFieldSection.nullSectionFields().map((field) => {
@@ -429,53 +492,13 @@ export function CompanyFieldSections({
               </div>
             )
           })}
-          </>)}
+          </CollapsibleSection>
         </div>
-      )
+        )
+      }
 
-      case 'pipeline': return (
-        <div key="pipeline" {...sectionContainerProps}>
-          <SectionHeader title="Pipeline" collapsible isCollapsed={isCollapsed('pipeline')} onToggle={() => toggleSection('pipeline')} />
-          {!isCollapsed('pipeline') && (<>
-          {renderHardcodedSection([
-            { key: 'sourceType', visible: show('sourceType', company.sourceType), render: () => (
-              <PropertyRow
-                label="Source Type"
-                value={company.sourceType}
-                type="select"
-                options={[
-                  { value: '', label: '—' },
-                  { value: 'personal relationship', label: 'Personal Relationship' },
-                  { value: 'emerging manager', label: 'Emerging Manager' },
-                  { value: 'founder', label: 'Founder' },
-                  { value: 'incubator', label: 'Incubator' },
-                  { value: 'accelerator', label: 'Accelerator' },
-                  { value: 'inbound', label: 'Inbound' },
-                  { value: 'later stage VC', label: 'Later Stage VC' },
-                  { value: 'LP', label: 'LP' },
-                  { value: 'outbound', label: 'Outbound' },
-                ]}
-                editMode={isEditing}
-                onSave={(v) => save('sourceType', v || null)}
-              />
-            )},
-            { key: 'sourceEntityId', visible: show('sourceEntityId', company.sourceEntityId), render: () => <SourceNameField /> },
-            { key: 'dealSource', visible: show('dealSource', company.dealSource), render: () => <PropertyRow label="Deal Source" value={company.dealSource} type="text" editMode={isEditing} onSave={(v) => save('dealSource', v)} /> },
-            { key: 'warmIntroSource', visible: show('warmIntroSource', company.warmIntroSource), render: () => <PropertyRow label="Warm Intro Source" value={company.warmIntroSource} type="text" editMode={isEditing} onSave={(v) => save('warmIntroSource', v)} /> },
-            { key: 'referralContactId', visible: show('referralContactId', company.referralContactId), render: () => <PropertyRow label="Referral Contact" value={company.referralContactId} type="contact_ref" editMode={isEditing} onSave={(v) => save('referralContactId', v)} /> },
-            { key: 'relationshipOwner', visible: show('relationshipOwner', company.relationshipOwner), render: () => <PropertyRow label="Relationship Owner" value={company.relationshipOwner} type="text" editMode={isEditing} onSave={(v) => save('relationshipOwner', v)} /> },
-            { key: 'nextFollowupDate', visible: show('nextFollowupDate', company.nextFollowupDate), render: () => <PropertyRow label="Next Follow-up" value={company.nextFollowupDate} type="date" editMode={isEditing} onSave={(v) => save('nextFollowupDate', v)} /> },
-          ], 'pipeline')}
-          {renderSectionedFields('pipeline')}
-          </>)}
-        </div>
-      )
-
-      case 'financials': return (
-        <div key="financials" {...sectionContainerProps}>
-          <SectionHeader title="Financials" collapsible isCollapsed={isCollapsed('financials')} onToggle={() => toggleSection('financials')} />
-          {!isCollapsed('financials') && (<>
-          {renderHardcodedSection([
+      case 'financials': {
+        const financialsList: Array<{ key: string; visible: boolean; render: () => ReactNode }> = [
             { key: 'round', visible: show('round', company.round), render: () => (
               <div className={!isEditing && fieldSources?.round ? styles.propertyWithBadge : undefined}>
                 <PropertyRow label="Last Round" value={company.round} type="select" options={[{ value: '', label: '—' }, ...options.round]} editMode={isEditing} onSave={(v) => save('round', v)} onAddOption={builtinDefs.round ? async (opt) => addCustomFieldOption(builtinDefs.round!.id, builtinDefs.round!.optionsJson, opt) : undefined} />
@@ -548,28 +571,41 @@ export function CompanyFieldSections({
                 />
               </div>
             )},
-          ], 'financials')}
-          {company.coInvestedIn.length > 0 && (
-            <div className={styles.propertyRow}>
-              <span className={styles.propertyLabel}>Co-invested in</span>
-              <div className={styles.chipList}>
-                {company.coInvestedIn.map((c) => (
-                  <CompanyChip
-                    key={c.id}
-                    id={c.id}
-                    name={c.name}
-                    domain={c.domain}
-                    readOnly
-                    onClickName={(id) => navigate(`/company/${id}`, { state: { backLabel: company.canonicalName } })}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-          {renderSectionedFields('financials')}
-          </>)}
-        </div>
-      )
+        ]
+        const fcount = countVisibleHardcoded(financialsList) + countCustomNonEmpty('financials') + (company.coInvestedIn.length > 0 ? 1 : 0)
+        return (
+          <div key="financials" {...sectionContainerProps}>
+            <CollapsibleSection
+              title="Financials"
+              count={fcount}
+              isCollapsed={isCollapsed('financials')}
+              onToggle={() => toggleSection('financials')}
+              hasUserToggled={hasUserToggledSection?.('financials')}
+              onAdd={onAddInSection ? () => onAddInSection('financials') : undefined}
+            >
+              {renderHardcodedSection(financialsList, 'financials')}
+              {company.coInvestedIn.length > 0 && (
+                <div className={styles.propertyRow}>
+                  <span className={styles.propertyLabel}>Co-invested in</span>
+                  <div className={styles.chipList}>
+                    {company.coInvestedIn.map((c) => (
+                      <CompanyChip
+                        key={c.id}
+                        id={c.id}
+                        name={c.name}
+                        domain={c.domain}
+                        readOnly
+                        onClickName={(id) => navigate(`/company/${id}`, { state: { backLabel: company.canonicalName } })}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {renderSectionedFields('financials')}
+            </CollapsibleSection>
+          </div>
+        )
+      }
 
       case 'investment': {
         const showInvestment = isEditing || company.entityType === 'portfolio' ||
@@ -577,7 +613,12 @@ export function CompanyFieldSections({
           company.followonInvestmentSize || company.totalInvested ||
           company.investmentMark || company.investmentRound ||
           company.lastCompanyValuation || company.followonCheck ||
-          customFieldSection.sectionedFields('investment').length > 0
+          customFieldSection.sectionedFields('investment').length > 0 ||
+          // Variant C: pipeline fields are merged into Investment, so a non-empty
+          // pipeline field is enough to surface the section.
+          customFieldSection.sectionedFields('pipeline').length > 0 ||
+          company.sourceType || company.dealSource || company.relationshipOwner ||
+          company.nextFollowupDate || company.warmIntroSource
         if (!showInvestment) return null
 
         const portfolioFundOptions = [{ value: '', label: '—' }, ...PORTFOLIO_FUND_OPTIONS.map(o => ({ value: o.value, label: o.label }))]
@@ -585,48 +626,73 @@ export function CompanyFieldSections({
         const statusOptions = STATUS_OPTIONS.map(o => ({ value: o.value, label: o.label }))
         const investmentRoundOptions = [{ value: '', label: '—' }, ...options.round]
 
+        const investmentList: Array<{ key: string; visible: boolean; render: () => ReactNode }> = [
+          { key: 'portfolioFund', visible: show('portfolioFund', company.portfolioFund), render: () => <PropertyRow label="Portfolio" value={company.portfolioFund} type="select" options={portfolioFundOptions} editMode={isEditing} onSave={(v) => save('portfolioFund', v)} /> },
+          { key: 'status', visible: show('status', company.status), render: () => <PropertyRow label="Status" value={company.status} type="select" options={statusOptions} editMode={isEditing} onSave={(v) => save('status', v)} /> },
+          { key: 'investmentSize', visible: show('investmentSize', company.investmentSize), render: () => <PropertyRow label="Initial Investment" value={company.investmentSize} type="text" editMode={isEditing} onSave={(v) => save('investmentSize', v)} /> },
+          { key: 'ownershipPct', visible: show('ownershipPct', company.ownershipPct), render: () => <PropertyRow label="Initial Ownership %" value={company.ownershipPct} type="text" editMode={isEditing} onSave={(v) => save('ownershipPct', v)} /> },
+          { key: 'investmentMark', visible: show('investmentMark', company.investmentMark), render: () => <PropertyRow label="Investment Mark" value={company.investmentMark} type="number" editMode={isEditing} onSave={(v) => save('investmentMark', v)} /> },
+          { key: 'investmentRound', visible: show('investmentRound', company.investmentRound), render: () => <PropertyRow label="Investment Round" value={company.investmentRound} type="select" options={investmentRoundOptions} editMode={isEditing} onSave={(v) => save('investmentRound', v)} /> },
+          { key: 'initialInvestmentSecurity', visible: show('initialInvestmentSecurity', company.initialInvestmentSecurity), render: () => <PropertyRow label="Initial Security" value={company.initialInvestmentSecurity} type="select" options={securityOptions} editMode={isEditing} onSave={(v) => save('initialInvestmentSecurity', v)} /> },
+          { key: 'dateOfInitialInvestment', visible: show('dateOfInitialInvestment', company.dateOfInitialInvestment), render: () => <PropertyRow label="Date of Initial Investment" value={company.dateOfInitialInvestment} type="date" editMode={isEditing} onSave={(v) => save('dateOfInitialInvestment', v)} /> },
+          { key: 'initialRoundSize', visible: show('initialRoundSize', company.initialRoundSize), render: () => <PropertyRow label="Initial Round Size" value={company.initialRoundSize} type="number" editMode={isEditing} onSave={(v) => save('initialRoundSize', v)} /> },
+          { key: 'lastCompanyValuation', visible: show('lastCompanyValuation', company.lastCompanyValuation), render: () => <PropertyRow label="Last Company Valuation" value={company.lastCompanyValuation} type="number" editMode={isEditing} onSave={(v) => save('lastCompanyValuation', v)} /> },
+          { key: 'followonCheck', visible: show('followonCheck', company.followonCheck), render: () => <PropertyRow label="Follow-on Check" value={company.followonCheck} type="number" editMode={isEditing} onSave={(v) => save('followonCheck', v)} /> },
+          { key: 'followonDate', visible: show('followonDate', company.followonDate), render: () => <PropertyRow label="Follow-on Date" value={company.followonDate} type="date" editMode={isEditing} onSave={(v) => save('followonDate', v)} /> },
+          { key: 'followonCheck2', visible: show('followonCheck2', company.followonCheck2), render: () => <PropertyRow label="Follow-on Check 2" value={company.followonCheck2} type="number" editMode={isEditing} onSave={(v) => save('followonCheck2', v)} /> },
+          { key: 'followonDate2', visible: show('followonDate2', company.followonDate2), render: () => <PropertyRow label="Follow-on Date 2" value={company.followonDate2} type="date" editMode={isEditing} onSave={(v) => save('followonDate2', v)} /> },
+          { key: 'followonInvestmentSize', visible: show('followonInvestmentSize', company.followonInvestmentSize), render: () => <PropertyRow label="Follow-on Size" value={company.followonInvestmentSize} type="text" editMode={isEditing} onSave={(v) => save('followonInvestmentSize', v)} /> },
+          { key: 'totalInvested', visible: show('totalInvested', company.totalInvested), render: () => <PropertyRow label="Total Investment" value={company.totalInvested} type="text" editMode={isEditing} onSave={(v) => save('totalInvested', v)} /> },
+        ]
+
+        const pipelineList = pipelineFields()
+        const icount = countVisibleHardcoded(investmentList) + countVisibleHardcoded(pipelineList)
+                      + countCustomNonEmpty('investment') + countCustomNonEmpty('pipeline')
+
         return (
           <div key="investment" {...sectionContainerProps}>
-            <SectionHeader title="Investment" collapsible isCollapsed={isCollapsed('investment')} onToggle={() => toggleSection('investment')} />
-            {!isCollapsed('investment') && (<>
-            {renderHardcodedSection([
-              { key: 'portfolioFund', visible: show('portfolioFund', company.portfolioFund), render: () => <PropertyRow label="Portfolio" value={company.portfolioFund} type="select" options={portfolioFundOptions} editMode={isEditing} onSave={(v) => save('portfolioFund', v)} /> },
-              { key: 'status', visible: show('status', company.status), render: () => <PropertyRow label="Status" value={company.status} type="select" options={statusOptions} editMode={isEditing} onSave={(v) => save('status', v)} /> },
-              { key: 'investmentSize', visible: show('investmentSize', company.investmentSize), render: () => <PropertyRow label="Initial Investment" value={company.investmentSize} type="text" editMode={isEditing} onSave={(v) => save('investmentSize', v)} /> },
-              { key: 'ownershipPct', visible: show('ownershipPct', company.ownershipPct), render: () => <PropertyRow label="Initial Ownership %" value={company.ownershipPct} type="text" editMode={isEditing} onSave={(v) => save('ownershipPct', v)} /> },
-              { key: 'investmentMark', visible: show('investmentMark', company.investmentMark), render: () => <PropertyRow label="Investment Mark" value={company.investmentMark} type="number" editMode={isEditing} onSave={(v) => save('investmentMark', v)} /> },
-              { key: 'investmentRound', visible: show('investmentRound', company.investmentRound), render: () => <PropertyRow label="Investment Round" value={company.investmentRound} type="select" options={investmentRoundOptions} editMode={isEditing} onSave={(v) => save('investmentRound', v)} /> },
-              { key: 'initialInvestmentSecurity', visible: show('initialInvestmentSecurity', company.initialInvestmentSecurity), render: () => <PropertyRow label="Initial Security" value={company.initialInvestmentSecurity} type="select" options={securityOptions} editMode={isEditing} onSave={(v) => save('initialInvestmentSecurity', v)} /> },
-              { key: 'dateOfInitialInvestment', visible: show('dateOfInitialInvestment', company.dateOfInitialInvestment), render: () => <PropertyRow label="Date of Initial Investment" value={company.dateOfInitialInvestment} type="date" editMode={isEditing} onSave={(v) => save('dateOfInitialInvestment', v)} /> },
-              { key: 'initialRoundSize', visible: show('initialRoundSize', company.initialRoundSize), render: () => <PropertyRow label="Initial Round Size" value={company.initialRoundSize} type="number" editMode={isEditing} onSave={(v) => save('initialRoundSize', v)} /> },
-              { key: 'lastCompanyValuation', visible: show('lastCompanyValuation', company.lastCompanyValuation), render: () => <PropertyRow label="Last Company Valuation" value={company.lastCompanyValuation} type="number" editMode={isEditing} onSave={(v) => save('lastCompanyValuation', v)} /> },
-              { key: 'followonCheck', visible: show('followonCheck', company.followonCheck), render: () => <PropertyRow label="Follow-on Check" value={company.followonCheck} type="number" editMode={isEditing} onSave={(v) => save('followonCheck', v)} /> },
-              { key: 'followonDate', visible: show('followonDate', company.followonDate), render: () => <PropertyRow label="Follow-on Date" value={company.followonDate} type="date" editMode={isEditing} onSave={(v) => save('followonDate', v)} /> },
-              { key: 'followonCheck2', visible: show('followonCheck2', company.followonCheck2), render: () => <PropertyRow label="Follow-on Check 2" value={company.followonCheck2} type="number" editMode={isEditing} onSave={(v) => save('followonCheck2', v)} /> },
-              { key: 'followonDate2', visible: show('followonDate2', company.followonDate2), render: () => <PropertyRow label="Follow-on Date 2" value={company.followonDate2} type="date" editMode={isEditing} onSave={(v) => save('followonDate2', v)} /> },
-              { key: 'followonInvestmentSize', visible: show('followonInvestmentSize', company.followonInvestmentSize), render: () => <PropertyRow label="Follow-on Size" value={company.followonInvestmentSize} type="text" editMode={isEditing} onSave={(v) => save('followonInvestmentSize', v)} /> },
-              { key: 'totalInvested', visible: show('totalInvested', company.totalInvested), render: () => <PropertyRow label="Total Investment" value={company.totalInvested} type="text" editMode={isEditing} onSave={(v) => save('totalInvested', v)} /> },
-            ], 'investment')}
-            {renderSectionedFields('investment')}
-            </>)}
+            <CollapsibleSection
+              title="Investment"
+              count={icount}
+              isCollapsed={isCollapsed('investment')}
+              onToggle={() => toggleSection('investment')}
+              hasUserToggled={hasUserToggledSection?.('investment')}
+              onAdd={onAddInSection ? () => onAddInSection('investment') : undefined}
+            >
+              {renderHardcodedSection(investmentList, 'investment')}
+              {renderSectionedFields('investment')}
+              {/* Variant C: pipeline fields rendered inside Investment (not as their own section). */}
+              {renderHardcodedSection(pipelineList, 'pipeline')}
+              {renderSectionedFields('pipeline')}
+            </CollapsibleSection>
           </div>
         )
       }
 
-      case 'links': return (
-        <div key="links" {...sectionContainerProps}>
-          <SectionHeader title="Links" collapsible isCollapsed={isCollapsed('links')} onToggle={() => toggleSection('links')} />
-          {!isCollapsed('links') && (<>
-          {renderHardcodedSection([
-            { key: 'linkedinCompanyUrl', visible: show('linkedinCompanyUrl', company.linkedinCompanyUrl), render: () => <PropertyRow label="LinkedIn" value={company.linkedinCompanyUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinCompanyUrl', v)} /> },
-            { key: 'crunchbaseUrl', visible: show('crunchbaseUrl', company.crunchbaseUrl), render: () => <PropertyRow label="Crunchbase" value={company.crunchbaseUrl} type="url" editMode={isEditing} onSave={(v) => save('crunchbaseUrl', v)} /> },
-            { key: 'angellistUrl', visible: show('angellistUrl', company.angellistUrl), render: () => <PropertyRow label="AngelList" value={company.angellistUrl} type="url" editMode={isEditing} onSave={(v) => save('angellistUrl', v)} /> },
-            { key: 'twitterHandle', visible: show('twitterHandle', company.twitterHandle), render: () => <PropertyRow label="Twitter/X" value={company.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} /> },
-          ], 'links')}
-          {renderSectionedFields('links')}
-          </>)}
-        </div>
-      )
+      case 'links': {
+        const linksList: Array<{ key: string; visible: boolean; render: () => ReactNode }> = [
+          { key: 'linkedinCompanyUrl', visible: show('linkedinCompanyUrl', company.linkedinCompanyUrl), render: () => <PropertyRow label="LinkedIn" value={company.linkedinCompanyUrl} type="url" editMode={isEditing} onSave={(v) => save('linkedinCompanyUrl', v)} /> },
+          { key: 'crunchbaseUrl', visible: show('crunchbaseUrl', company.crunchbaseUrl), render: () => <PropertyRow label="Crunchbase" value={company.crunchbaseUrl} type="url" editMode={isEditing} onSave={(v) => save('crunchbaseUrl', v)} /> },
+          { key: 'angellistUrl', visible: show('angellistUrl', company.angellistUrl), render: () => <PropertyRow label="AngelList" value={company.angellistUrl} type="url" editMode={isEditing} onSave={(v) => save('angellistUrl', v)} /> },
+          { key: 'twitterHandle', visible: show('twitterHandle', company.twitterHandle), render: () => <PropertyRow label="Twitter/X" value={company.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} /> },
+        ]
+        const lcount = countVisibleHardcoded(linksList) + countCustomNonEmpty('links')
+        return (
+          <div key="links" {...sectionContainerProps}>
+            <CollapsibleSection
+              title="Links"
+              count={lcount}
+              isCollapsed={isCollapsed('links')}
+              onToggle={() => toggleSection('links')}
+              hasUserToggled={hasUserToggledSection?.('links')}
+              onAdd={onAddInSection ? () => onAddInSection('links') : undefined}
+            >
+              {renderHardcodedSection(linksList, 'links')}
+              {renderSectionedFields('links')}
+            </CollapsibleSection>
+          </div>
+        )
+      }
 
       default: return null
     }

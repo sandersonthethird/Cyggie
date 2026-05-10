@@ -10,7 +10,17 @@ import {
 } from '../renderer/components/company/companyColumns'
 import { filterContacts } from '../renderer/components/contact/contactColumns'
 import { needsSwap } from '../renderer/components/crm/RangeFilter'
-import { applyRangeFilter, applyTextFilter, applySelectFilter, createColumnWidthsHelper, sortRows } from '../renderer/components/crm/tableUtils'
+import {
+  applyRangeFilter,
+  applyTextFilter,
+  applySelectFilter,
+  applyCustomSelectFilter,
+  applyCustomRangeFilter,
+  applyCustomTextFilter,
+  splitFiltersByCustom,
+  createColumnWidthsHelper,
+  sortRows
+} from '../renderer/components/crm/tableUtils'
 import type { CompanySummary } from '../shared/types/company'
 import type { ContactSummary } from '../shared/types/contact'
 
@@ -147,17 +157,17 @@ describe('filterCompanies', () => {
   ]
 
   it('returns all companies when filters is empty object', () => {
-    expect(filterCompanies(companies, {})).toHaveLength(3)
+    expect(filterCompanies(companies, { columnFilters: {} })).toHaveLength(3)
   })
 
   it('filters by entityType', () => {
-    const result = filterCompanies(companies, { entityType: ['prospect'] })
+    const result = filterCompanies(companies, { columnFilters: { entityType: ['prospect'] } })
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('1')
   })
 
   it('filters by pipelineStage, excluding null pipelineStage records', () => {
-    const result = filterCompanies(companies, { pipelineStage: ['screening'] })
+    const result = filterCompanies(companies, { columnFilters: { pipelineStage: ['screening'] } })
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('1')
     // id='3' has null pipelineStage — must not match
@@ -165,7 +175,7 @@ describe('filterCompanies', () => {
   })
 
   it('filters by priority, excluding null priority records', () => {
-    const result = filterCompanies(companies, { priority: ['high'] })
+    const result = filterCompanies(companies, { columnFilters: { priority: ['high'] } })
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('1')
   })
@@ -173,21 +183,23 @@ describe('filterCompanies', () => {
   it('applies AND logic across multiple active filters', () => {
     // Only id='1' matches prospect AND screening AND high
     const result = filterCompanies(companies, {
-      entityType: ['prospect'],
-      pipelineStage: ['screening'],
-      priority: ['high']
+      columnFilters: {
+        entityType: ['prospect'],
+        pipelineStage: ['screening'],
+        priority: ['high']
+      }
     })
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('1')
   })
 
   it('returns empty array when no companies match', () => {
-    const result = filterCompanies(companies, { entityType: ['customer'] })
+    const result = filterCompanies(companies, { columnFilters: { entityType: ['customer'] } })
     expect(result).toHaveLength(0)
   })
 
   it('multi-select: returns all matching values for a single field', () => {
-    const result = filterCompanies(companies, { entityType: ['prospect', 'portfolio'] })
+    const result = filterCompanies(companies, { columnFilters: { entityType: ['prospect', 'portfolio'] } })
     expect(result.map((c) => c.id).sort()).toEqual(['1', '2'])
   })
 })
@@ -202,21 +214,21 @@ describe('filterCompanies — generic filters', () => {
   ]
 
   it('empty filters passes all companies', () => {
-    expect(filterCompanies(companies, {}).map((c) => c.id)).toEqual(['1', '2', '3'])
+    expect(filterCompanies(companies, { columnFilters: {} }).map((c) => c.id)).toEqual(['1', '2', '3'])
   })
 
   it('single field filter works', () => {
-    expect(filterCompanies(companies, { round: ['seed'] }).map((c) => c.id)).toEqual(['1'])
+    expect(filterCompanies(companies, { columnFilters: { round: ['seed'] } }).map((c) => c.id)).toEqual(['1'])
   })
 
   it('null cell value is excluded when filter is active', () => {
-    const result = filterCompanies(companies, { round: ['seed'] })
+    const result = filterCompanies(companies, { columnFilters: { round: ['seed'] } })
     expect(result.find((c) => c.id === '3')).toBeUndefined()
   })
 
   it('multiple fields are ANDed', () => {
     expect(
-      filterCompanies(companies, { entityType: ['prospect'], round: ['seed'] }).map((c) => c.id)
+      filterCompanies(companies, { columnFilters: { entityType: ['prospect'], round: ['seed'] } }).map((c) => c.id)
     ).toEqual(['1'])
   })
 })
@@ -257,7 +269,7 @@ describe('filterCompanies — range filters', () => {
       makeCompany({ id: '2', createdAt: '2024-01-16 00:00:00' }), // after → exclude
       makeCompany({ id: '3', createdAt: '2024-01-14 23:59:59' })  // before → include
     ]
-    const result = filterCompanies(companies, {}, { createdAt: { max: '2024-01-15' } })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: { createdAt: { max: '2024-01-15' } } })
     expect(result.map((c) => c.id).sort()).toEqual(['1', '3'])
   })
 
@@ -267,7 +279,7 @@ describe('filterCompanies — range filters', () => {
       makeCompany({ id: '2', foundingYear: 2021 }),
       makeCompany({ id: '3', foundingYear: 2019 })
     ]
-    const result = filterCompanies(companies, {}, { foundingYear: { min: '2020', max: '2020' } })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: { foundingYear: { min: '2020', max: '2020' } } })
     expect(result.map((c) => c.id)).toEqual(['1'])
   })
 
@@ -277,7 +289,7 @@ describe('filterCompanies — range filters', () => {
       makeCompany({ id: '2', raiseSize: 10 }),
       makeCompany({ id: '3', raiseSize: 3 })
     ]
-    const result = filterCompanies(companies, {}, { raiseSize: { min: '5' } })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: { raiseSize: { min: '5' } } })
     expect(result.map((c) => c.id).sort()).toEqual(['1', '2'])
   })
 
@@ -287,7 +299,7 @@ describe('filterCompanies — range filters', () => {
       makeCompany({ id: '2', raiseSize: 10 }),
       makeCompany({ id: '3', raiseSize: 3 })
     ]
-    const result = filterCompanies(companies, {}, { raiseSize: { max: '5' } })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: { raiseSize: { max: '5' } } })
     expect(result.map((c) => c.id).sort()).toEqual(['1', '3'])
   })
 
@@ -298,7 +310,7 @@ describe('filterCompanies — range filters', () => {
       makeCompany({ id: '3', raiseSize: 3 }),
       makeCompany({ id: '4', raiseSize: 20 })
     ]
-    const result = filterCompanies(companies, {}, { raiseSize: { min: '5', max: '15' } })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: { raiseSize: { min: '5', max: '15' } } })
     expect(result.map((c) => c.id).sort()).toEqual(['1', '2'])
   })
 
@@ -307,7 +319,7 @@ describe('filterCompanies — range filters', () => {
       makeCompany({ id: '1', raiseSize: 5 }),
       makeCompany({ id: '2', raiseSize: null })
     ]
-    const result = filterCompanies(companies, {}, { raiseSize: { min: '1' } })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: { raiseSize: { min: '1' } } })
     expect(result.map((c) => c.id)).toEqual(['1'])
   })
 
@@ -318,7 +330,7 @@ describe('filterCompanies — range filters', () => {
       makeCompany({ id: '3', raiseSize: null })
     ]
     // An empty-string range should effectively be no filter
-    const result = filterCompanies(companies, {}, { raiseSize: { min: '', max: '' } })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: { raiseSize: { min: '', max: '' } } })
     expect(result.map((c) => c.id)).toEqual(['1', '2', '3'])
   })
 
@@ -327,7 +339,7 @@ describe('filterCompanies — range filters', () => {
       makeCompany({ id: '1', createdAt: '2024-06-01 00:00:00' }),
       makeCompany({ id: '2', createdAt: '2023-12-31 00:00:00' })
     ]
-    const result = filterCompanies(companies, {}, { createdAt: { min: '2024-01-01' } })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: { createdAt: { min: '2024-01-01' } } })
     expect(result.map((c) => c.id)).toEqual(['1'])
   })
 
@@ -337,7 +349,7 @@ describe('filterCompanies — range filters', () => {
       makeCompany({ id: '2', entityType: 'portfolio', raiseSize: 10 }),
       makeCompany({ id: '3', entityType: 'prospect', raiseSize: 2 })
     ]
-    const result = filterCompanies(companies, { entityType: ['prospect'] }, { raiseSize: { min: '5' } })
+    const result = filterCompanies(companies, { columnFilters: { entityType: ['prospect'] }, rangeFilters: { raiseSize: { min: '5' } } })
     expect(result.map((c) => c.id)).toEqual(['1'])
   })
 })
@@ -351,7 +363,7 @@ describe('filterCompanies — text filters', () => {
       makeCompany({ id: '2', industry: 'healthcare' }),
       makeCompany({ id: '3', industry: null })
     ]
-    const result = filterCompanies(companies, {}, {}, { industry: 'fintech' })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: {}, textFilters: { industry: 'fintech' } })
     expect(result.map((c) => c.id)).toEqual(['1'])
   })
 
@@ -360,7 +372,7 @@ describe('filterCompanies — text filters', () => {
       makeCompany({ id: '1', industry: 'FinTech' }),
       makeCompany({ id: '2', industry: null })
     ]
-    const result = filterCompanies(companies, {}, {}, { industry: 'fin' })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: {}, textFilters: { industry: 'fin' } })
     expect(result.map((c) => c.id)).toEqual(['1'])
   })
 
@@ -369,7 +381,7 @@ describe('filterCompanies — text filters', () => {
       makeCompany({ id: '1', industry: 'FinTech' }),
       makeCompany({ id: '2', industry: null })
     ]
-    const result = filterCompanies(companies, {}, {}, { industry: '' })
+    const result = filterCompanies(companies, { columnFilters: {}, rangeFilters: {}, textFilters: { industry: '' } })
     expect(result.map((c) => c.id)).toEqual(['1', '2'])
   })
 
@@ -380,12 +392,11 @@ describe('filterCompanies — text filters', () => {
       makeCompany({ id: '3', entityType: 'portfolio', raiseSize: 10, industry: 'FinTech' }),
       makeCompany({ id: '4', entityType: 'prospect', raiseSize: 2, industry: 'FinTech' })
     ]
-    const result = filterCompanies(
-      companies,
-      { entityType: ['prospect'] },
-      { raiseSize: { min: '5' } },
-      { industry: 'fintech' }
-    )
+    const result = filterCompanies(companies, {
+      columnFilters: { entityType: ['prospect'] },
+      rangeFilters: { raiseSize: { min: '5' } },
+      textFilters: { industry: 'fintech' }
+    })
     expect(result.map((c) => c.id)).toEqual(['1'])
   })
 })
@@ -422,7 +433,7 @@ describe('filterContacts — range + text filters', () => {
       makeContact({ id: 'c2', createdAt: '2024-01-16 00:00:00' }), // after → exclude
       makeContact({ id: 'c3', createdAt: '2024-01-14 23:59:59' })  // before → include
     ]
-    const result = filterContacts(contacts, {}, { createdAt: { max: '2024-01-15' } })
+    const result = filterContacts(contacts, { columnFilters: {}, rangeFilters: { createdAt: { max: '2024-01-15' } } })
     expect(result.map((c) => c.id).sort()).toEqual(['c1', 'c3'])
   })
 
@@ -432,7 +443,7 @@ describe('filterContacts — range + text filters', () => {
       makeContact({ id: 'c2', email: 'bob@corp.com' }),
       makeContact({ id: 'c3', email: null })
     ]
-    const result = filterContacts(contacts, {}, {}, { email: '@gmail' })
+    const result = filterContacts(contacts, { columnFilters: {}, rangeFilters: {}, textFilters: { email: '@gmail' } })
     expect(result.map((c) => c.id)).toEqual(['c1'])
   })
 
@@ -442,7 +453,11 @@ describe('filterContacts — range + text filters', () => {
       makeContact({ id: 'c2', contactType: 'founder', email: 'bob@gmail.com' }),
       makeContact({ id: 'c3', contactType: 'investor', email: 'carol@corp.com' })
     ]
-    const result = filterContacts(contacts, { contactType: ['investor'] }, {}, { email: '@gmail' })
+    const result = filterContacts(contacts, {
+      columnFilters: { contactType: ['investor'] },
+      rangeFilters: {},
+      textFilters: { email: '@gmail' }
+    })
     expect(result.map((c) => c.id)).toEqual(['c1'])
   })
 })
@@ -582,5 +597,220 @@ describe('createColumnWidthsHelper', () => {
     localStorage.setItem(KEY, 'not-json')
     const { load } = createColumnWidthsHelper(KEY)
     expect(load()).toEqual({})
+  })
+})
+
+// ── splitFiltersByCustom ──────────────────────────────────────────────────────
+
+describe('splitFiltersByCustom', () => {
+  it('partitions on `custom:` prefix and strips it from custom keys', () => {
+    const out = splitFiltersByCustom({
+      type: ['investor'],
+      'custom:abc': ['B2B'],
+      pipelineStage: ['screening'],
+      'custom:def': ['urgent'],
+    })
+    expect(out.builtIn).toEqual({ type: ['investor'], pipelineStage: ['screening'] })
+    expect(out.custom).toEqual({ abc: ['B2B'], def: ['urgent'] })
+  })
+
+  it('returns empty objects for empty input', () => {
+    expect(splitFiltersByCustom({})).toEqual({ builtIn: {}, custom: {} })
+  })
+
+  it('handles range-shape values', () => {
+    const out = splitFiltersByCustom({
+      foundingYear: { min: '2020' },
+      'custom:score': { min: '50', max: '100' },
+    })
+    expect(out.builtIn).toEqual({ foundingYear: { min: '2020' } })
+    expect(out.custom).toEqual({ score: { min: '50', max: '100' } })
+  })
+})
+
+// ── applyCustomSelectFilter ───────────────────────────────────────────────────
+
+describe('applyCustomSelectFilter', () => {
+  const rows = [
+    { id: 'a' },
+    { id: 'b' },
+    { id: 'c' },
+  ]
+
+  it('returns identity when no active filters', () => {
+    expect(applyCustomSelectFilter(rows, {}, {})).toEqual(rows)
+  })
+
+  it('single-select: exact match against bare cell value', () => {
+    const values = { a: { focus: 'B2B' }, b: { focus: 'Consumer' }, c: {} }
+    const result = applyCustomSelectFilter(rows, { focus: ['B2B'] }, values)
+    expect(result.map((r) => r.id)).toEqual(['a'])
+  })
+
+  it('multiselect: comma-joined cell value matches if ANY filter value is present', () => {
+    const values = {
+      a: { tags: 'B2B,SaaS' },
+      b: { tags: 'Consumer,Hardware' },
+      c: { tags: 'B2B' },
+    }
+    const result = applyCustomSelectFilter(rows, { tags: ['SaaS'] }, values)
+    expect(result.map((r) => r.id)).toEqual(['a'])
+  })
+
+  it('multiselect: matches when ANY of multiple filter values intersects cell', () => {
+    const values = {
+      a: { tags: 'B2B,SaaS' },
+      b: { tags: 'Consumer' },
+      c: { tags: 'Hardware,B2B' },
+    }
+    const result = applyCustomSelectFilter(rows, { tags: ['SaaS', 'Hardware'] }, values)
+    expect(result.map((r) => r.id).sort()).toEqual(['a', 'c'])
+  })
+
+  it('row excluded when entityId missing from customFieldValues', () => {
+    const values = { a: { focus: 'B2B' } }
+    const result = applyCustomSelectFilter(rows, { focus: ['B2B'] }, values)
+    expect(result.map((r) => r.id)).toEqual(['a'])
+  })
+
+  it('row excluded when cell value is empty string', () => {
+    const values = { a: { focus: '' }, b: { focus: 'B2B' } }
+    const result = applyCustomSelectFilter(rows, { focus: ['B2B'] }, values)
+    expect(result.map((r) => r.id)).toEqual(['b'])
+  })
+})
+
+// ── applyCustomRangeFilter ────────────────────────────────────────────────────
+
+describe('applyCustomRangeFilter', () => {
+  const rows = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+
+  it('returns identity when no active filters', () => {
+    expect(applyCustomRangeFilter(rows, {}, {}, {})).toEqual(rows)
+  })
+
+  it('numeric bounds work even though custom values arrive as strings', () => {
+    const values = { a: { score: '5' }, b: { score: '50' }, c: { score: '100' } }
+    const types = { score: 'number' as const }
+    const result = applyCustomRangeFilter(rows, { score: { min: '10', max: '75' } }, values, types)
+    expect(result.map((r) => r.id)).toEqual(['b'])
+  })
+
+  it('date bounds slice to YYYY-MM-DD for boundary inclusion', () => {
+    const values = {
+      a: { reviewed: '2024-01-15 10:30:00' }, // ON boundary
+      b: { reviewed: '2024-01-16 00:00:00' }, // after
+      c: { reviewed: '2024-01-14 23:59:59' }, // before
+    }
+    const types = { reviewed: 'date' as const }
+    const result = applyCustomRangeFilter(rows, { reviewed: { max: '2024-01-15' } }, values, types)
+    expect(result.map((r) => r.id).sort()).toEqual(['a', 'c'])
+  })
+
+  it('non-numeric string in number-typed field excludes the row (no silent mis-compare)', () => {
+    const values = { a: { score: 'N/A' }, b: { score: '42' }, c: { score: '' } }
+    const types = { score: 'number' as const }
+    const result = applyCustomRangeFilter(rows, { score: { min: '0', max: '100' } }, values, types)
+    expect(result.map((r) => r.id)).toEqual(['b'])
+  })
+
+  it('empty-string min/max are treated as no bound', () => {
+    const values = { a: { score: '5' }, b: { score: '50' } }
+    const types = { score: 'number' as const }
+    const result = applyCustomRangeFilter(rows, { score: { min: '', max: '' } }, values, types)
+    // No active bounds → no filtering performed; identity for all rows (including
+    // 'c' which has no value at all — untouched because the filter is inactive).
+    expect(result.map((r) => r.id)).toEqual(['a', 'b', 'c'])
+  })
+})
+
+// ── applyCustomTextFilter ─────────────────────────────────────────────────────
+
+describe('applyCustomTextFilter', () => {
+  const rows = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+
+  it('returns identity when no active filters', () => {
+    expect(applyCustomTextFilter(rows, {}, {})).toEqual(rows)
+  })
+
+  it('case-insensitive contains on custom values', () => {
+    const values = {
+      a: { notes: 'Urgent followup needed' },
+      b: { notes: 'Boring quarterly check' },
+      c: { notes: 'URGENT must call back' },
+    }
+    const result = applyCustomTextFilter(rows, { notes: 'urgent' }, values)
+    expect(result.map((r) => r.id).sort()).toEqual(['a', 'c'])
+  })
+
+  it('row excluded when cell missing', () => {
+    const values = { a: { notes: 'has content' } }
+    const result = applyCustomTextFilter(rows, { notes: 'content' }, values)
+    expect(result.map((r) => r.id)).toEqual(['a'])
+  })
+})
+
+// ── filterCompanies — custom-field integration ─────────────────────────────────
+
+describe('filterCompanies — custom-field integration', () => {
+  function makeC(id: string, overrides: Partial<CompanySummary> = {}): CompanySummary {
+    return {
+      id,
+      canonicalName: id,
+      normalizedName: id.toLowerCase(),
+      entityType: 'prospect',
+      pipelineStage: null,
+      priority: null,
+      round: null,
+      raiseSize: null,
+      foundingYear: null,
+      industry: null,
+      lastTouchpoint: null,
+      meetingCount: 0,
+      emailCount: 0,
+      contactCount: 0,
+      noteCount: 0,
+      createdAt: '2024-01-01 00:00:00',
+      ...(overrides as Partial<CompanySummary>),
+    } as CompanySummary
+  }
+
+  it('built-in select + custom select compose with AND', () => {
+    const companies = [
+      makeC('1', { entityType: 'prospect' }),
+      makeC('2', { entityType: 'prospect' }),
+      makeC('3', { entityType: 'portfolio' }),
+    ]
+    const customFieldValues = {
+      '1': { focus: 'B2B' },
+      '2': { focus: 'Consumer' },
+      '3': { focus: 'B2B' },
+    }
+    const result = filterCompanies(companies, {
+      columnFilters: { entityType: ['prospect'], 'custom:focus': ['B2B'] },
+      customFieldValues,
+      customFieldTypes: { focus: 'select' },
+    })
+    expect(result.map((c) => c.id)).toEqual(['1'])
+  })
+
+  it('custom range + built-in range compose', () => {
+    const companies = [
+      makeC('1', { raiseSize: 10 }),
+      makeC('2', { raiseSize: 10 }),
+      makeC('3', { raiseSize: 1 }),
+    ]
+    const customFieldValues = {
+      '1': { score: '80' },
+      '2': { score: '40' },
+      '3': { score: '90' },
+    }
+    const result = filterCompanies(companies, {
+      columnFilters: {},
+      rangeFilters: { raiseSize: { min: '5' }, 'custom:score': { min: '70' } },
+      customFieldValues,
+      customFieldTypes: { score: 'number' },
+    })
+    expect(result.map((c) => c.id)).toEqual(['1'])
   })
 })

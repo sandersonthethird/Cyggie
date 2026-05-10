@@ -1,0 +1,64 @@
+.card {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.topBand {
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sections {
+  display: block;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+.hiddenLink {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-text-tertiary);
+  text-underline-offset: 2px;
+  padding: 2px 0;
+}
+
+.hiddenLink:hover {
+  color: var(--color-text);
+}
+
+.footerExtra {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.addPropBtn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  padding: 3px 8px;
+  border-radius: 5px;
+}
+
+.addPropBtn:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}

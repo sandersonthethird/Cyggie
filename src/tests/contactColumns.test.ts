@@ -48,23 +48,23 @@ describe('filterContacts', () => {
   ]
 
   it('returns all contacts when typeFilter is empty', () => {
-    expect(filterContacts(contacts, {})).toHaveLength(4)
+    expect(filterContacts(contacts, { columnFilters: {} })).toHaveLength(4)
   })
 
   it('filters to a single type', () => {
-    const result = filterContacts(contacts, { contactType: ['investor'] })
+    const result = filterContacts(contacts, { columnFilters: { contactType: ['investor'] } })
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('1')
   })
 
   it('filters to multiple types', () => {
-    const result = filterContacts(contacts, { contactType: ['investor', 'founder'] })
+    const result = filterContacts(contacts, { columnFilters: { contactType: ['investor', 'founder'] } })
     expect(result).toHaveLength(2)
     expect(result.map((c) => c.id)).toEqual(['1', '2'])
   })
 
   it('excludes contacts with null contactType even when filter is non-empty', () => {
-    const result = filterContacts(contacts, { contactType: ['investor', 'founder', 'operator'] })
+    const result = filterContacts(contacts, { columnFilters: { contactType: ['investor', 'founder', 'operator'] } })
     expect(result).toHaveLength(3)
     expect(result.map((c) => c.id)).not.toContain('4')
   })

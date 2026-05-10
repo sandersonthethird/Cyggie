@@ -163,10 +163,11 @@
 **Why:** Currently `fetchCompanies()` fetches ALL companies in one query (no limit, as of the 2026-04-14 limit-removal fix). `baseCompanySelect` uses LEFT JOIN aggregates for meeting_count, email_count, note_count, contact_count, and last_touchpoint — O(n) in company count. At 760 companies today this is fast. At 5000+ it will become perceptible (<500ms today; could hit 2–5s at 5k).
 **Pros:** Correct at true scale; opens the door for infinite scroll or page-based navigation. Filtering and sorting would move to the backend, eliminating the client-side JS filter pass.
 **Cons:** Requires moving columnFilters, rangeFilters, and textFilters to the backend query (currently all client-side). The filter URL param → server query translation layer is non-trivial. The Companies table currently supports multi-field sort client-side; server-side would need to replicate `buildCompanyOrderBy` for all sort keys.
-**Context:** `buildUrlFilter` in `src/renderer/components/company/companyColumns.ts` now passes no limit (view: 'all'). `listCompanies` in `src/main/database/repositories/org-company.repo.ts` skips LIMIT/OFFSET when limit is undefined. The full client-side filter chain is `filterCompanies → applySelectFilter → applyRangeFilter → applyTextFilter` in `src/renderer/components/crm/tableUtils.ts`. Start by adding `entityTypes`, `pipelineStage`, and `priority` server-side filter params to `CompanyListFilter`, then update `buildUrlFilter` to pass them when active. Pagination can follow as a second step.
+**Context:** `buildUrlFilter` in `src/renderer/components/company/companyColumns.ts` now passes no limit (view: 'all'). `listCompanies` in `src/main/database/repositories/org-company.repo.ts` skips LIMIT/OFFSET when limit is undefined. The full client-side filter chain is now a 6-pass chain (built-in select/range/text + custom select/range/text) in `filterCompanies` (`companyColumns.ts`), backed by helpers in `src/renderer/components/crm/tableUtils.ts`. Start by adding `entityTypes`, `pipelineStage`, and `priority` server-side filter params to `CompanyListFilter`, then update `buildUrlFilter` to pass them when active. Pagination can follow as a second step.
 **Effort:** XL
 **Priority:** P3
 **Depends on:** None. Can be done incrementally — start with server-side entityType/stage/priority filtering (high value, lower effort) before tackling pagination.
+**Enabled by:** "Preserve filtered/saved view + custom-field URL gap" (back-nav PR) — the URL is now the authoritative source of truth for ALL column filter types (built-in + custom select/multiselect/range/text). Server-side translation can map URL params 1:1 without inventing a new filter wire format.
 
 ---
 
@@ -331,17 +332,6 @@
 **Context:** The threshold is a single constant (`FUZZY_THRESHOLD = 0.88`) defined in both `src/main/database/repositories/contact.repo.ts` and `org-company.repo.ts`. The Jaro-Winkler function is in `src/main/utils/jaroWinkler.ts`. Track false-positive/negative user reports from the dedup UI → adjust constant → re-run test suite.
 **Effort:** S (constant tuning) / M (user dismiss/feedback mechanism)
 **Depends on:** Fuzzy dedup shipped (this PR).
-
----
-
-## P3 — Custom Fields
-
-### URL param persistence for custom field select filters
-**What:** Custom field select filters reset on navigation because `field: null` in `buildCustomFieldColumnDefs` prevents `useTableFilters` from encoding them into URL params.
-**Why:** Users who filter on a custom "Focus" column (e.g. "B2B") lose the filter when they click into a company detail and navigate back.
-**Effort:** M
-**Context:** `useTableFilters` guards on `if (!col.field) continue` before writing URL params. `applySelectFilter` operates on `row[field]`, so if `field: def.fieldKey`, pass-1 filtering silently zeros the result set for custom columns. Fix requires: (1) use `col.key` (not `col.field`) as the URL param key for custom columns, (2) split `selectFilters` dict into built-in vs. custom before calling `applySelectFilter` in pass 1. Start in `useTableFilters.ts` (lines ~75-98) and `filterCompanies`/`filterContacts` in `Companies.tsx`/`Contacts.tsx`.
-**Depends on:** Custom field columns in table (this PR).
 
 ---
 

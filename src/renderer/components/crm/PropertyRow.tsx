@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AddOptionInlineInput } from './AddOptionInlineInput'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { formatCurrency, formatDate } from '../../utils/format'
@@ -7,6 +7,8 @@ import { EntitySearch } from './EntitySearch'
 import { chipStyle } from '../../utils/colorChip'
 import styles from './PropertyRow.module.css'
 import { api } from '../../api'
+
+const EMPTY_DISPLAY = '+ Add'
 
 export type PropertyRowType =
   | 'text'
@@ -43,6 +45,7 @@ interface PropertyRowProps {
   onAddOption?: (newOption: string) => Promise<void>
   readOnly?: boolean
   editMode?: boolean // When true, always renders in edit state (driven by parent)
+  icon?: ReactNode // Optional leading icon rendered to the left of the label
 }
 
 function safeParseTags(value: string | number | boolean | null): string[] {
@@ -63,7 +66,7 @@ function formatValue(
   type: PropertyRowType,
   resolvedLabel?: string | null
 ): string {
-  if (value == null || value === '') return '—'
+  if (value == null || value === '') return EMPTY_DISPLAY
   switch (type) {
     case 'currency':
       return formatCurrency(Number(value))
@@ -89,7 +92,8 @@ export function PropertyRow({
   onSave,
   onAddOption,
   readOnly = false,
-  editMode = false
+  editMode = false,
+  icon
 }: PropertyRowProps) {
   const [editing, setEditing] = useState(false)
   const [addingOption, setAddingOption] = useState(false)
@@ -400,7 +404,7 @@ export function PropertyRow({
               ? triggerChips.map(v => (
                   <span key={v} className={styles.chip} style={chipStyle(v)}>{v}</span>
                 ))
-              : <span className={styles.empty}>—</span>
+              : <span className={styles.empty}>{EMPTY_DISPLAY}</span>
             }
             {!readOnly && <span className={styles.multiselectCaret}>{dropdownOpen ? '▴' : '▾'}</span>}
           </div>
@@ -625,7 +629,7 @@ export function PropertyRow({
   function renderDisplay() {
     if (type === 'tags') {
       const tags = safeParseTags(displayValue)
-      if (tags.length === 0) return <span className={styles.empty}>—</span>
+      if (tags.length === 0) return <span className={styles.empty}>{EMPTY_DISPLAY}</span>
       return (
         <span className={styles.tags}>
           {tags.map((tag) => (
@@ -637,7 +641,7 @@ export function PropertyRow({
 
     if (type === 'url') {
       const url = String(displayValue ?? '')
-      if (!url) return <span className={styles.empty}>—</span>
+      if (!url) return <span className={styles.empty}>{EMPTY_DISPLAY}</span>
       return (
         <a
           className={styles.link}
@@ -650,14 +654,14 @@ export function PropertyRow({
     }
 
     if (type === 'contact_ref' || type === 'company_ref') {
-      if (!displayValue) return <span className={styles.empty}>—</span>
+      if (!displayValue) return <span className={styles.empty}>{EMPTY_DISPLAY}</span>
       return <span>{displayLabel || String(displayValue)}</span>
     }
 
     if (type === 'multiselect' && displayValue) {
       const parsedOpts = safeParseOptions(options)
       const vals = String(displayValue).split(',').map(s => s.trim()).filter(Boolean)
-      if (vals.length === 0) return <span className={styles.empty}>—</span>
+      if (vals.length === 0) return <span className={styles.empty}>{EMPTY_DISPLAY}</span>
       return (
         <span className={styles.chips}>
           {vals.map(v => {
@@ -678,13 +682,16 @@ export function PropertyRow({
     }
 
     const formatted = formatValue(displayValue, type, displayLabel)
-    if (formatted === '—') return <span className={styles.empty}>—</span>
+    if (formatted === EMPTY_DISPLAY) return <span className={styles.empty}>{EMPTY_DISPLAY}</span>
     return <span>{formatted}</span>
   }
 
   return (
     <div className={`${styles.row} ${isActive ? styles.editing : ''}`} onClick={!isActive && !readOnly ? startEdit : undefined}>
-      <span className={styles.label}>{label}</span>
+      <span className={`${styles.label} ${icon ? styles.labelWithIcon : ''}`}>
+        {icon && <span className={styles.labelIcon} aria-hidden>{icon}</span>}
+        <span className={styles.labelText}>{label}</span>
+      </span>
       <span className={styles.value}>
         {isActive ? renderEditor() : renderDisplay()}
         {isActive && saving && <span className={styles.saving}>…</span>}

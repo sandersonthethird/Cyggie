@@ -44,6 +44,8 @@ import { AddTaskModal as AddTaskModalCommon } from '../common/AddTaskModal'
 import { EnrichMethodModal } from '../common/EnrichMethodModal'
 import { CompanyHeaderCard } from './CompanyHeaderCard'
 import { CompanyFieldSections } from './CompanyFieldSections'
+import { PropertiesCard, PropertiesCardFooter } from '../crm/PropertiesCard'
+import { useSectionCollapse } from '../../hooks/useSectionCollapse'
 import styles from './CompanyPropertiesPanel.module.css'
 import { api } from '../../api'
 import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
@@ -257,15 +259,29 @@ export function CompanyPropertiesPanel({
     employeeCountDef?.optionsJson ?? null
   )
 
-  // Per-entity collapsed sections (Change 10)
-  const collapsedSectionsKey = `cyggie:company-collapsed:${company.id}`
-  const collapsedSections = getJSON<string[]>(collapsedSectionsKey, [])
-  function isCollapsed(key: string) { return collapsedSections.includes(key) }
-  function toggleSection(key: string) {
-    const next = collapsedSections.includes(key)
-      ? collapsedSections.filter((k) => k !== key)
-      : [...collapsedSections, key]
-    setJSON(collapsedSectionsKey, next)
+  // Per-entity collapsed sections (extracted into shared useSectionCollapse hook)
+  const sectionCollapse = useSectionCollapse('company', company.id)
+  const isCollapsed = sectionCollapse.isCollapsed
+  const toggleSection = sectionCollapse.toggle
+
+  // Variant C: track which sections the user has manually toggled this session,
+  // so empty sections can auto-collapse without overriding manual expands.
+  const [userToggledSections, setUserToggledSections] = useState<Set<string>>(new Set())
+  function toggleSectionUser(key: string) {
+    setUserToggledSections((prev) => {
+      if (prev.has(key)) return prev
+      const next = new Set(prev); next.add(key); return next
+    })
+    toggleSection(key)
+  }
+  const hasUserToggledSection = (key: string) => userToggledSections.has(key)
+
+  // Variant C: per-section "+ Add" support — track the section the dropdown
+  // is scoped to. When set, the AddFieldDropdown defaults its section selector to it.
+  const [addFieldSection, setAddFieldSection] = useState<string | null>(null)
+  function openAddFieldDropdown(section: string | null) {
+    setAddFieldSection(section)
+    setAddFieldDropdownOpen(true)
   }
 
   // Key Takeaways (AI summary)
@@ -967,68 +983,102 @@ export function CompanyPropertiesPanel({
 
         <ScorecardStrip metrics={scorecardMetrics} />
 
-        <PipelineStepper
-          stages={COMPANY_PIPELINE_STAGES}
-          currentValue={company.pipelineStage}
-          daysInStage={daysInStage}
-          onStageClick={(value) => saveWithDecisionPrompt('pipelineStage', value)}
-        />
+        {/* Variant C: single white card containing stepper / sections / footer */}
+        <PropertiesCard
+          topBand={
+            <PipelineStepper
+              stages={COMPANY_PIPELINE_STAGES}
+              currentValue={company.pipelineStage}
+              daysInStage={daysInStage}
+              onStageClick={(value) => saveWithDecisionPrompt('pipelineStage', value)}
+            />
+          }
+          footer={
+            <PropertiesCardFooter
+              hiddenCount={showAllFields ? 0 : hiddenFieldCount}
+              onShowHidden={hiddenFieldCount > 0 ? () => setShowAllFields(true) : undefined}
+              onAddProperty={() => openAddFieldDropdown(null)}
+            />
+          }
+        >
+          <CompanyFieldSections
+            company={company}
+            isEditing={isEditing}
+            showAllFields={showAllFields}
+            onUpdate={onUpdate}
+            save={save}
+            saveWithDecisionPrompt={saveWithDecisionPrompt}
+            sectionOrder={sectionOrder}
+            hfOrder={hfOrder}
+            customFieldSection={{ sectionedFields, nullSectionFields, draggingFieldId, setDraggingFieldId, draggingOverFieldId, setDraggingOverFieldId, handleWithinSectionDrop, dragOverSection }}
+            fieldVisibility={fieldVisibility}
+            isCollapsed={isCollapsed}
+            toggleSection={toggleSectionUser}
+            show={show}
+            hiddenFields={hiddenFields}
+            onHideField={hideField}
+            onRestoreField={restoreField}
+            customFields={customFields}
+            setCustomFields={setCustomFields}
+            editingFieldId={editingFieldId}
+            editingFieldLabel={editingFieldLabel}
+            setEditingFieldId={setEditingFieldId}
+            setEditingFieldLabel={setEditingFieldLabel}
+            handleFieldLabelSave={handleFieldLabelSave}
+            getPinnedFieldValue={getPinnedFieldValue}
+            handlePinnedFieldSave={handlePinnedFieldSave}
+            syncedSectionDragProps={syncedSectionDragProps}
+            options={{
+              targetCustomer: targetCustomerOptions,
+              businessModel: businessModelOptions,
+              productStage: productStageOptions,
+              employeeRange: employeeRangeOptions,
+              round: roundOptions,
+              industry: industryOptions,
+            }}
+            builtinDefs={{
+              targetCustomer: targetCustomerDef ? { id: targetCustomerDef.id, optionsJson: targetCustomerDef.optionsJson } : undefined,
+              businessModel: businessModelDef ? { id: businessModelDef.id, optionsJson: businessModelDef.optionsJson } : undefined,
+              productStage: productStageDef ? { id: productStageDef.id, optionsJson: productStageDef.optionsJson } : undefined,
+              employeeCount: employeeCountDef ? { id: employeeCountDef.id, optionsJson: employeeCountDef.optionsJson } : undefined,
+              round: roundDef ? { id: roundDef.id, optionsJson: roundDef.optionsJson } : undefined,
+              industry: industryDef ? { id: industryDef.id, optionsJson: industryDef.optionsJson } : undefined,
+            }}
+            fieldSources={fieldSources}
+            onAddInSection={(sectionKey) => openAddFieldDropdown(sectionKey)}
+            hasUserToggledSection={hasUserToggledSection}
+          />
+        </PropertiesCard>
 
-        <CompanyFieldSections
-          company={company}
-          isEditing={isEditing}
-          showAllFields={showAllFields}
-          onUpdate={onUpdate}
-          save={save}
-          saveWithDecisionPrompt={saveWithDecisionPrompt}
-          sectionOrder={sectionOrder}
-          hfOrder={hfOrder}
-          customFieldSection={{ sectionedFields, nullSectionFields, draggingFieldId, setDraggingFieldId, draggingOverFieldId, setDraggingOverFieldId, handleWithinSectionDrop, dragOverSection }}
-          fieldVisibility={fieldVisibility}
-          isCollapsed={isCollapsed}
-          toggleSection={toggleSection}
-          show={show}
-          hiddenFields={hiddenFields}
-          onHideField={hideField}
-          onRestoreField={restoreField}
-          customFields={customFields}
-          setCustomFields={setCustomFields}
-          editingFieldId={editingFieldId}
-          editingFieldLabel={editingFieldLabel}
-          setEditingFieldId={setEditingFieldId}
-          setEditingFieldLabel={setEditingFieldLabel}
-          handleFieldLabelSave={handleFieldLabelSave}
-          getPinnedFieldValue={getPinnedFieldValue}
-          handlePinnedFieldSave={handlePinnedFieldSave}
-          syncedSectionDragProps={syncedSectionDragProps}
-          options={{
-            targetCustomer: targetCustomerOptions,
-            businessModel: businessModelOptions,
-            productStage: productStageOptions,
-            employeeRange: employeeRangeOptions,
-            round: roundOptions,
-            industry: industryOptions,
-          }}
-          builtinDefs={{
-            targetCustomer: targetCustomerDef ? { id: targetCustomerDef.id, optionsJson: targetCustomerDef.optionsJson } : undefined,
-            businessModel: businessModelDef ? { id: businessModelDef.id, optionsJson: businessModelDef.optionsJson } : undefined,
-            productStage: productStageDef ? { id: productStageDef.id, optionsJson: productStageDef.optionsJson } : undefined,
-            employeeCount: employeeCountDef ? { id: employeeCountDef.id, optionsJson: employeeCountDef.optionsJson } : undefined,
-            round: roundDef ? { id: roundDef.id, optionsJson: roundDef.optionsJson } : undefined,
-            industry: industryDef ? { id: industryDef.id, optionsJson: industryDef.optionsJson } : undefined,
-          }}
-          fieldSources={fieldSources}
-        />
-
-        {hiddenFieldCount > 0 && (
-          <button className={styles.showAllBtn} onClick={() => setShowAllFields(true)}>
-            {hiddenFieldCount} field{hiddenFieldCount !== 1 ? 's' : ''} hidden · Show
-          </button>
-        )}
         {showAllFields && !isEditing && (
           <button className={styles.showAllBtn} onClick={() => setShowAllFields(false)}>
             Hide empty fields
           </button>
+        )}
+
+        {/* AddFieldDropdown — opened from PropertiesCard footer "+ Add property"
+            and per-section "+ Add" buttons. No edit-mode gate (Variant C). */}
+        {addFieldDropdownOpen && (
+          <div className={styles.addFieldFloating}>
+            <AddFieldDropdown
+              entityType="company"
+              hardcodedDefs={COMPANY_HARDCODED_FIELDS}
+              customFields={customFields.filter(f => !f.isBuiltin)}
+              addedFields={fieldVisibility.addedFields}
+              hiddenFields={hiddenFields}
+              entityData={company as unknown as Record<string, unknown>}
+              fieldPlacements={fieldVisibility.fieldPlacements}
+              sections={COMPANY_SECTIONS.filter(s => s.key !== 'summary')}
+              defaultSection={addFieldSection ?? undefined}
+              onToggleField={(key, checked) => {
+                if (checked) fieldVisibility.addToAddedFields([key])
+                else fieldVisibility.removeFromAddedFields(key)
+              }}
+              onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
+              onCreateCustomField={() => { setCreateFieldOpen(true); setAddFieldDropdownOpen(false) }}
+              onClose={() => { setAddFieldDropdownOpen(false); setAddFieldSection(null) }}
+            />
+          </div>
         )}
 
         {/* Key Contacts — clickable names */}
@@ -1069,32 +1119,7 @@ export function CompanyPropertiesPanel({
           />
         )}
 
-        {isEditing && (
-          <div className={styles.stickyAddFieldBar}>
-            <div className={styles.addFieldContainer}>
-              <button className={styles.addFieldBtn} onClick={() => setAddFieldDropdownOpen(!addFieldDropdownOpen)}>+ Add field</button>
-              {addFieldDropdownOpen && (
-                <AddFieldDropdown
-                  entityType="company"
-                  hardcodedDefs={COMPANY_HARDCODED_FIELDS}
-                  customFields={customFields.filter(f => !f.isBuiltin)}
-                  addedFields={fieldVisibility.addedFields}
-                  hiddenFields={hiddenFields}
-                  entityData={company as unknown as Record<string, unknown>}
-                  fieldPlacements={fieldVisibility.fieldPlacements}
-                  sections={COMPANY_SECTIONS.filter(s => s.key !== 'summary')}
-                  onToggleField={(key, checked) => {
-                    if (checked) fieldVisibility.addToAddedFields([key])
-                    else fieldVisibility.removeFromAddedFields(key)
-                  }}
-                  onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
-                  onCreateCustomField={() => { setCreateFieldOpen(true); setAddFieldDropdownOpen(false) }}
-                  onClose={() => setAddFieldDropdownOpen(false)}
-                />
-              )}
-            </div>
-          </div>
-        )}
+        {/* Variant C: legacy sticky '+ Add field' bar removed. Footer "+ Add property" handles this affordance. */}
 
         {isEditing && (
           <div className={styles.deleteSection}>

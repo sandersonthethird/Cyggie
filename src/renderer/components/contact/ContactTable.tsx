@@ -14,7 +14,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { buildBackState } from '../../utils/backNavState'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactSummary } from '../../../shared/types/contact'
@@ -124,6 +125,7 @@ export function ContactTable({
   clearSelectionTrigger
 }: ContactTableProps) {
   const navigate = useNavigate()
+  const location = useLocation()
   const { getJSON, setJSON } = usePreferencesStore()
   const { contactDefs } = useCustomFieldStore()
   const summaryKeys = getJSON<string[]>('cyggie:contact-summary-fields', [])
@@ -767,7 +769,7 @@ export function ContactTable({
                     className={`${styles.nameCol} ${styles.nameCell}`}
                     onClick={() => {
                       setEditCell(null)
-                      navigate(`/contact/${contact.id}`, { state: { backLabel: 'Contacts' } })
+                      navigate(`/contact/${contact.id}`, { state: buildBackState(location, 'Contacts') })
                     }}
                   >
                     <span className={styles.nameText}>{contact.fullName}</span>
@@ -791,7 +793,7 @@ export function ContactTable({
                       <div
                         key={col.key}
                         className={isCustomSelect ? styles.chipCell : styles.dataCell}
-                        onClick={() => navigate(`/contact/${contact.id}`, { state: { backLabel: 'Contacts' } })}
+                        onClick={() => navigate(`/contact/${contact.id}`, { state: buildBackState(location, 'Contacts') })}
                       >
                         {isCustomSelect && cellValue ? (
                           <span className={styles.chip} style={chipStyle(cellValue)}>{cellValue}</span>
