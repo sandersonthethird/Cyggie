@@ -8,7 +8,7 @@ vi.mock('../renderer/components/company/CompanyMemo.module.css', () => ({
   default: { sourcesFooter: 'sourcesFooter' },
 }))
 
-const { SourcesUsedFooter, buildSourcesUsedSentence, emptyResearchToastOptions } =
+const { SourcesUsedFooter, buildSourcesUsedSentence, emptyResearchToastOptions, classifyGenerateResponse } =
   await import('../renderer/components/company/CompanyMemo')
 
 afterEach(() => cleanup())
@@ -158,5 +158,66 @@ describe('SourcesUsedFooter (RTL)', () => {
       />
     )
     expect(getByRole('note').textContent).toBe('Based on 1 meeting.')
+  })
+})
+
+const FAKE_VERSION = {
+  id: 'v-1',
+  memoId: 'm-1',
+  versionNumber: 5,
+  contentMarkdown: '# Memo content',
+  changeNote: null,
+  createdAt: '2026-01-01',
+  createdBy: null,
+}
+
+describe('classifyGenerateResponse — cancel flow + branching', () => {
+  it('classifies an aborted response as kind=aborted (no toast, silent return)', () => {
+    const result = classifyGenerateResponse({ success: false, error: 'aborted' as const })
+    expect(result).toEqual({ kind: 'aborted' })
+  })
+
+  it('classifies a result with no contentMarkdown as kind=empty', () => {
+    const result = classifyGenerateResponse({ success: true, version: FAKE_VERSION })
+    expect(result).toEqual({ kind: 'empty' })
+  })
+
+  it('classifies a result with no version as kind=empty', () => {
+    const result = classifyGenerateResponse({ success: true, contentMarkdown: '# memo' })
+    expect(result).toEqual({ kind: 'empty' })
+  })
+
+  it('classifies null/undefined as kind=empty', () => {
+    expect(classifyGenerateResponse(null)).toEqual({ kind: 'empty' })
+    expect(classifyGenerateResponse(undefined)).toEqual({ kind: 'empty' })
+  })
+
+  it('classifies a complete response as kind=success with content + version + meta', () => {
+    const result = classifyGenerateResponse({
+      success: true,
+      contentMarkdown: '# Memo',
+      version: FAKE_VERSION,
+      meta: FULL_META,
+    })
+    expect(result.kind).toBe('success')
+    if (result.kind === 'success') {
+      expect(result.contentMarkdown).toBe('# Memo')
+      expect(result.version).toBe(FAKE_VERSION)
+      expect(result.meta).toBe(FULL_META)
+    }
+  })
+
+  it('aborted classification takes precedence over empty content (defensive)', () => {
+    // Even if the main process returned both an error and (somehow) empty
+    // content, abort wins so we don't show an error toast for a cancellation.
+    const result = classifyGenerateResponse({ success: false, error: 'aborted' as const, contentMarkdown: '' })
+    expect(result).toEqual({ kind: 'aborted' })
+  })
+
+  it('non-aborted error string still classifies as empty (handled by the error toast path)', () => {
+    // Other error codes besides 'aborted' fall through to empty so the user
+    // sees the "Generation returned empty content" message.
+    const result = classifyGenerateResponse({ success: false, error: 'something_else' })
+    expect(result.kind).toBe('empty')
   })
 })

@@ -64,7 +64,10 @@ const COMPANY_SUMMARY_CAPS: SectionCaps = { perItem: 8_000, total: 30_000 }
 const COMPANY_TRANSCRIPT_CAPS: SectionCaps = { perItem: 3_000, total: Number.MAX_SAFE_INTEGER }
 const COMPANY_EMAIL_CAPS: SectionCaps = { perItem: 2_000, total: 15_000, maxItems: 20 }
 const COMPANY_NOTE_CAPS: SectionCaps = { perItem: 2_000, total: 8_000 }
-const COMPANY_FILE_CAPS: SectionCaps = { perItem: 6_000, total: 30_000 }
+// Bumped from 6_000 / 30_000. Pitch decks etc. now fit substantially in chat
+// context per turn. ChatContextSizeBanner shows the running estimate so the
+// user sees what they're about to send to the LLM.
+const COMPANY_FILE_CAPS: SectionCaps = { perItem: 48_000, total: 300_000 }
 
 /**
  * Assemble company context from repos. Returns markdown + flags so

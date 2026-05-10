@@ -224,6 +224,17 @@ export const IPC_CHANNELS = {
   // Memo evidence (sidecar to investment_memo_versions)
   MEMO_EVIDENCE_LIST_BY_VERSION: 'memo-evidence:list-by-version',
 
+  // Memo-generation pre-flight + cancel
+  INVESTMENT_MEMO_PREFLIGHT: 'investment-memo:preflight',
+  INVESTMENT_MEMO_GENERATE_ABORT: 'investment-memo:generate-abort',
+
+  // Chat context-size preflight (drives the banner above chat input)
+  CHAT_CONTEXT_SIZE_PREFLIGHT: 'chat:context-size-preflight',
+
+  // Broadcast: emitted from toggleFileFlag so any chat banner / Files tab
+  // open in another window can refresh in real time.
+  COMPANY_FLAGS_CHANGED: 'company:flags-changed',
+
   // Agent runs observability (/dev/agent-runs dashboard)
   AGENT_RUNS_LIST: 'agent-runs:list',
   AGENT_RUN_GET: 'agent-runs:get',

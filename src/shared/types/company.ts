@@ -314,6 +314,51 @@ export interface MemoGenerateMeta {
   externalResearchResultCount: number
 }
 
+/**
+ * Per-source breakdown of an estimated prompt (chars). All fields are an
+ * upper-bound estimate using the per-source caps in memo-generator.ts +
+ * context-builders.ts. Useful for the "where did the chars come from?"
+ * disclosure in the warning modal.
+ */
+export interface ContextSizeBreakdown {
+  meetings: number
+  notes: number
+  emails: number
+  files: number
+  externalResearch: number
+  contactProfiles: number
+  other: number     // system prompt + company description + themes
+}
+
+/**
+ * Result of a context-size estimate. Returned by both the memo-gen preflight
+ * IPC and the chat-context-size preflight IPC. The renderer uses this to
+ * decide whether to fire the warning modal (memo gen) or render the persistent
+ * banner (chat).
+ *
+ * Estimates are computed from per-source counts + file metadata (mime + bytes
+ * if known) — NO file content is read during preflight. This makes preflight
+ * cheap (<50ms) and safe to call repeatedly (e.g., on every flag-toggle).
+ */
+export interface ContextSizeEstimate {
+  totalChars: number
+  estTokens: number          // chars / 4 (rough approximation)
+  estCostUsd: number         // estTokens * $3 / 1M (Sonnet 4.5 input rate)
+  willTriggerWarning: boolean
+  breakdown: ContextSizeBreakdown
+  fileBreakdown: Array<{ name: string; sizeBytes: number; estChars: number }>
+}
+
+/** IPC return shape for INVESTMENT_MEMO_PREFLIGHT. */
+export interface MemoPreflightResult extends ContextSizeEstimate {
+  flaggedFileCount: number
+}
+
+/** IPC return shape for CHAT_CONTEXT_SIZE_PREFLIGHT. */
+export interface ChatContextSizeEstimate extends ContextSizeEstimate {
+  flaggedFileCount: number
+}
+
 export interface CompanyEmailRef {
   id: string
   subject: string | null

@@ -10,6 +10,13 @@ import * as notesRepo from '../database/repositories/notes.repo'
 import { logAudit } from '../database/repositories/audit.repo'
 import { getCurrentUserId } from '../security/current-user'
 import type { ChatAttachment } from '../../shared/types/chat'
+import * as companyRepo from '../database/repositories/org-company.repo'
+import { getFlaggedFiles } from '../database/repositories/company-file-flags.repo'
+import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+import { estimateChatContext } from '../llm/context-size'
+import type { ChatContextSizeEstimate } from '../../shared/types/company'
+
+const _chatCompanyNotesRepo = makeEntityNotesRepo('company_id')
 
 function getMeetingTitle(meetingId: string): string | null {
   const db = getDatabase()
@@ -98,5 +105,40 @@ export function registerChatHandlers(): void {
       }
       return note
     }
+  )
+
+  /**
+   * Pre-flight context-size estimate for the chat panel banner. Cheap (~30ms);
+   * called on chat-panel mount, on companyId change, and on COMPANY_FLAGS_CHANGED
+   * broadcast (debounced 300ms in the renderer).
+   *
+   * Banner is only shown for company-scoped chat; this handler returns
+   * conservative empty estimates when companyId is missing.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_CONTEXT_SIZE_PREFLIGHT,
+    (_event, companyId: string | null): ChatContextSizeEstimate => {
+      if (!companyId) {
+        return {
+          totalChars: 0,
+          estTokens: 0,
+          estCostUsd: 0,
+          willTriggerWarning: false,
+          breakdown: { meetings: 0, notes: 0, emails: 0, files: 0, externalResearch: 0, contactProfiles: 0, other: 0 },
+          fileBreakdown: [],
+          flaggedFileCount: 0,
+        }
+      }
+      const summaryRows = companyRepo.listCompanyMeetingSummaryPaths(companyId)
+      const companyNotes = _chatCompanyNotesRepo.list(companyId)
+      const flaggedFiles = getFlaggedFiles(companyId)
+      const estimate = estimateChatContext({
+        flaggedFiles: flaggedFiles.map(f => ({ fileName: f.fileName, sizeBytes: 0, mimeType: f.mimeType })),
+        summaryCount: summaryRows.length,
+        companyNoteCount: companyNotes.length,
+        caps: { perItemCap: 48_000, totalCap: 300_000 },
+      })
+      return { ...estimate, flaggedFileCount: flaggedFiles.length }
+    },
   )
 }

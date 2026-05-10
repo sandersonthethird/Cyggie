@@ -21,7 +21,9 @@ import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.con
 import type { MemoShareResponse, MemoRevokeResponse } from '../../shared/types/web-share'
 import { searchCompanyContext } from '../services/exa-research'
 import { getFlaggedFiles } from '../database/repositories/company-file-flags.repo'
-import type { MemoGenerateMeta } from '../../shared/types/company'
+import type { MemoGenerateMeta, MemoPreflightResult } from '../../shared/types/company'
+import { estimateMemoGenContext } from '../llm/context-size'
+import { gatherMemoSourceCounts } from '../llm/memo-context-gatherer'
 import { runStressTestAgent } from '../llm/agents/thesis-stress-test-agent'
 import { startRun, completeRun, makeEventWriter, getRun, listRuns, listRunEvents, averageCostForKind } from '../llm/agents/run-store'
 import { bulkInsert as bulkInsertEvidence, listByVersion as listEvidenceByVersion } from '../database/repositories/memo-evidence.repo'
@@ -34,6 +36,11 @@ import type { AgentEvent } from '../../shared/types/agent-events'
 // decision #2). The map gets cleaned up by the run handler itself on
 // completion / failure / abort.
 const _stressTestAbortControllers = new Map<string, AbortController>()
+
+// Per-companyId AbortController map for memo-gen concurrency. Single-flight
+// per company: re-clicking Generate while in-flight aborts the prior run.
+// Cleaned up in the GENERATE handler's `finally` block.
+const _memoGenerateAbortControllers = new Map<string, AbortController>()
 
 function broadcastAgentEvent(event: AgentEvent): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -248,6 +255,14 @@ export function registerInvestmentMemoHandlers(): void {
     const userId = getCurrentUserId()
     const memoData = memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName, userId)
 
+    // Single-flight per company: re-clicking Generate while in-flight aborts
+    // the prior run. The new run's AbortController replaces the old one in
+    // the map; cleanup happens in `finally`.
+    _memoGenerateAbortControllers.get(companyId)?.abort()
+    const abortController = new AbortController()
+    _memoGenerateAbortControllers.set(companyId, abortController)
+    const signal = abortController.signal
+
     const sendProgress = (text: string | null): void => {
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) {
@@ -256,6 +271,7 @@ export function registerInvestmentMemoHandlers(): void {
       }
     }
 
+    try {
     // Gather meeting summaries
     const summaryRows = companyRepo.listCompanyMeetingSummaryPaths(companyId)
     const summaries: Array<{ title: string; date: string; content: string }> = []
@@ -357,6 +373,9 @@ export function registerInvestmentMemoHandlers(): void {
 
     const files: Array<{ name: string; content: string }> = []
     for (const fileId of fileIds) {
+      // Between-iteration cancel check. PDF parses can take 1-2s each;
+      // without this, Cancel during a 6-file company would lag 10-20s.
+      if (signal.aborted) throw new DOMException('aborted', 'AbortError')
       const flagged = flaggedFiles.find(f => f.fileId === fileId)
       const content = await readLocalFile(fileId, flagged?.mimeType ?? undefined)
       if (content && content.trim().length > 100) {
@@ -406,7 +425,7 @@ export function registerInvestmentMemoHandlers(): void {
       themes: company.themes,
       nicheSignal,
       founderNames,
-    })
+    }, signal)
     sendProgress(null)
 
     const generated = await generateMemo({
@@ -433,7 +452,7 @@ export function registerInvestmentMemoHandlers(): void {
       }
     }, (chunk) => {
       sendProgress(chunk)
-    })
+    }, signal)
 
     sendProgress(null)
 
@@ -465,7 +484,74 @@ export function registerInvestmentMemoHandlers(): void {
     }
 
     return { success: true, contentMarkdown: generated, version, meta }
+    } catch (err) {
+      // Cancel mid-generation surfaces here as AbortError. Return the
+      // structured aborted response — renderer's generate() handles it
+      // without firing an error toast.
+      if ((err as Error).name === 'AbortError' || signal.aborted) {
+        sendProgress(null)
+        return { success: false, error: 'aborted' as const }
+      }
+      throw err
+    } finally {
+      // Only delete if WE put it there (not the in-flight successor).
+      if (_memoGenerateAbortControllers.get(companyId) === abortController) {
+        _memoGenerateAbortControllers.delete(companyId)
+      }
+    }
   })
+
+  ipcMain.handle(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE_ABORT, (_event, companyId: string) => {
+    const ac = _memoGenerateAbortControllers.get(companyId)
+    if (!ac) return { success: false, error: 'no_in_flight_generation' as const }
+    ac.abort()
+    return { success: true as const }
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.INVESTMENT_MEMO_PREFLIGHT,
+    (_event, companyId: string): MemoPreflightResult => {
+      if (!companyId) throw new Error('companyId is required')
+      const company = companyRepo.getCompany(companyId)
+      if (!company) throw new Error('Company not found')
+
+      const counts = gatherMemoSourceCounts(companyId)
+      const summaryMeetingIds = new Set(counts.summaryRows.map(r => r.meetingId))
+      const transcriptCount = counts.meetings.filter(m => !summaryMeetingIds.has(m.id)).length
+
+      const FOUNDER_TITLE_RE = /founder|ceo|cto|coo|chief/i
+      const founderCount = counts.linkedContacts.filter(c => FOUNDER_TITLE_RE.test(c.title ?? '')).length
+      const contactKeyTakeawayCount = counts.linkedContacts.filter(c => c.keyTakeaways?.trim()).length
+
+      const estimate = estimateMemoGenContext({
+        flaggedFiles: counts.flaggedFiles.map(f => ({
+          fileName: f.fileName,
+          sizeBytes: 0,                // size not in flagged_files table; mime fallback used
+          mimeType: f.mimeType,
+        })),
+        meetingCount: counts.meetings.length,
+        summaryCount: counts.summaryRows.length,
+        transcriptCount,
+        companyNoteCount: counts.companyNotes.length,
+        contactNoteCount: counts.contactNotes.length,
+        contactKeyTakeawayCount,
+        emailCount: counts.emails.length,
+        hasNicheSignal: counts.summaryRows.length > 0 || (company.description?.trim().length ?? 0) >= 20,
+        founderCount: Math.min(founderCount, 2),
+        hasIndustryQuery: !!company.industry?.trim(),
+        caps: { perItemCap: 64_000, totalCap: 400_000 },
+      })
+
+      console.info('[memo-gen] preflight', {
+        companyId,
+        totalChars: estimate.totalChars,
+        fileCount: counts.flaggedFiles.length,
+        willTriggerWarning: estimate.willTriggerWarning,
+      })
+
+      return { ...estimate, flaggedFileCount: counts.flaggedFiles.length }
+    },
+  )
 
   ipcMain.handle(
     IPC_CHANNELS.INVESTMENT_MEMO_SHARE_LINK,
