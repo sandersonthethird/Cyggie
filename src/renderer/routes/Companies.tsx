@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStaleGuard } from '../hooks/useStaleGuard'
 import { createPortal } from 'react-dom'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { buildBackState } from '../utils/backNavState'
 import NewCompanyModal from '../components/company/NewCompanyModal'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
@@ -112,6 +113,7 @@ const FIELD_TO_PARAM: Record<string, string> = {
 
 export default function Companies() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const { enabled: companiesEnabled, loading: flagsLoading } = useFeatureFlag('ff_companies_ui_v1')
   // Increments on each mount so fetchCompanies gets a new useCallback ref,
@@ -421,13 +423,28 @@ export default function Companies() {
     if (mutated) localStorage.setItem(STORAGE_KEY, JSON.stringify(existing))
   }, [])
 
+  // ── Custom field types for filter dispatch ────────────────────────────────
+  // applyCustomRangeFilter needs to know if a custom value should be compared
+  // numerically or as a date string. Build a stable Record<defId, fieldType>
+  // map from companyDefs once per defs change.
+  const customFieldTypes = useMemo(
+    () => Object.fromEntries(companyDefs.map((d) => [d.id, d.fieldType])),
+    [companyDefs]
+  )
+
   // ── Derived display list ─────────────────────────────────────────────────────
   const displayCompanies = useMemo(() => {
-    const filtered = filterCompanies(companies, columnFilters, rangeFilters, textFilters)
+    const filtered = filterCompanies(companies, {
+      columnFilters,
+      rangeFilters,
+      textFilters,
+      customFieldValues,
+      customFieldTypes,
+    })
     // Short-circuit: if primary sort is backend-sorted and no secondary sorts, skip client sort
     if (BACKEND_SORT_KEYS.has(sort[0]?.key ?? '') && sort.length === 1) return filtered
     return sortRows(filtered, sort, COLUMN_DEFS)
-  }, [companies, columnFilters, rangeFilters, textFilters, sort])
+  }, [companies, columnFilters, rangeFilters, textFilters, customFieldValues, customFieldTypes, sort])
 
   const groupedRows = useGroupedRows(displayCompanies, groupBy, COMPANY_GROUPABLE_FIELDS, collapsedGroups)
 
@@ -481,7 +498,7 @@ export default function Companies() {
         entityType: 'unknown'
       })
       await fetchCompanies()
-      navigate(`/company/${created.id}`, { state: { backLabel: 'Companies' } })
+      navigate(`/company/${created.id}`, { state: buildBackState(location, 'Companies') })
     },
     [fetchCompanies, navigate]
   )
@@ -642,8 +659,8 @@ export default function Companies() {
   const handleCompanyCreated = useCallback(async (company: CompanySummary) => {
     closeCreateForm()
     await fetchCompanies()
-    navigate(`/company/${company.id}`, { state: { backLabel: 'Companies' } })
-  }, [closeCreateForm, fetchCompanies, navigate])
+    navigate(`/company/${company.id}`, { state: buildBackState(location, 'Companies') })
+  }, [closeCreateForm, fetchCompanies, navigate, location])
 
   // ── Feature flag gate ───────────────────────────────────────────────────────
   if (!flagsLoading && !companiesEnabled) {

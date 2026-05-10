@@ -9,10 +9,16 @@ import {
   applySelectFilter,
   applyRangeFilter,
   applyTextFilter,
+  applyCustomSelectFilter,
+  applyCustomRangeFilter,
+  applyCustomTextFilter,
+  splitFiltersByCustom,
   type ColumnDef,
   type RangeValue,
   type SortKey,
-  type SortState
+  type SortState,
+  type CustomFieldValuesMap,
+  type CustomFieldTypesMap
 } from '../crm/tableUtils'
 import type { GroupableField } from '../company/companyColumns'
 
@@ -197,29 +203,44 @@ export const saveContactColumnWidths = widthsHelper.save
 
 // ─── Filter ───────────────────────────────────────────────────────────────────
 
+export interface FilterContactsOptions {
+  /** Select filter values per field, from useTableFilters.columnFilters. May contain 'custom:' keys. */
+  columnFilters: Record<string, string[]>
+  /** Range bounds per field. May contain 'custom:' keys. */
+  rangeFilters?: Record<string, RangeValue>
+  /** Text queries per field. May contain 'custom:' keys. */
+  textFilters?: Record<string, string>
+  /** Bulk custom field values keyed by [entityId][defId]. From useCustomFieldValues. */
+  customFieldValues?: CustomFieldValuesMap
+  /** Field type per defId, used to dispatch numeric vs. date range comparison. */
+  customFieldTypes?: CustomFieldTypesMap
+}
+
 /**
  * Client-side filter for ContactSummary[].
  *
- * Three-pass chain (all filters AND together):
- *   Pass 1: Select filters — exact match against option values
- *   Pass 2: Range filters — numeric or date inclusive bounds (applyRangeFilter from tableUtils)
- *   Pass 3: Text filters  — case-insensitive contains (applyTextFilter from tableUtils)
+ * Six-pass chain (mirrors filterCompanies — see that doc for the full pipeline):
+ *   built-in select / range / text + custom select / range / text.
  *
- * Forward-compatible: adding new filterable columns to CONTACT_COLUMN_DEFS requires no changes here.
+ * Custom filter dicts use 'custom:<defId>' keys; splitFiltersByCustom partitions
+ * them and strips the prefix so downstream passes can look up values/types by defId.
  */
 export function filterContacts(
   contacts: ContactSummary[],
-  filters: Record<string, string[]>,
-  rangeFilters?: Record<string, RangeValue>,
-  textFilters?: Record<string, string>
+  opts: FilterContactsOptions
 ): ContactSummary[] {
-  // Three-pass chain (all filters AND together):
-  //   Pass 1: Select filters  — exact match against option values (applySelectFilter)
-  //   Pass 2: Range filters   — numeric or date inclusive bounds (applyRangeFilter)
-  //   Pass 3: Text filters    — case-insensitive contains (applyTextFilter)
-  let result = applySelectFilter(contacts as Record<string, unknown>[], filters) as ContactSummary[]
-  result = applyRangeFilter(result as Record<string, unknown>[], rangeFilters ?? {}) as ContactSummary[]
-  result = applyTextFilter(result as Record<string, unknown>[], textFilters ?? {}) as ContactSummary[]
+  const { columnFilters, rangeFilters, textFilters, customFieldValues = {}, customFieldTypes = {} } = opts
+
+  const select = splitFiltersByCustom(columnFilters)
+  const range = splitFiltersByCustom(rangeFilters ?? {})
+  const text = splitFiltersByCustom(textFilters ?? {})
+
+  let result = applySelectFilter(contacts as Record<string, unknown>[], select.builtIn) as ContactSummary[]
+  result = applyRangeFilter(result as Record<string, unknown>[], range.builtIn) as ContactSummary[]
+  result = applyTextFilter(result as Record<string, unknown>[], text.builtIn) as ContactSummary[]
+  result = applyCustomSelectFilter(result, select.custom, customFieldValues)
+  result = applyCustomRangeFilter(result, range.custom, customFieldValues, customFieldTypes)
+  result = applyCustomTextFilter(result, text.custom, customFieldValues)
   return result
 }
 

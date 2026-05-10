@@ -1,7 +1,10 @@
+import type { IconKey } from '../components/common/Icon'
+
 export interface HardcodedFieldDef {
   key: string
   label: string
   defaultSection: string
+  icon?: IconKey
 }
 
 /**
@@ -15,31 +18,31 @@ export interface HardcodedFieldDef {
  */
 export const CONTACT_HARDCODED_FIELDS: HardcodedFieldDef[] = [
   // Contact Info
-  { key: 'phone',               label: 'Phone',            defaultSection: 'contact_info'  },
-  { key: 'linkedinUrl',         label: 'LinkedIn',         defaultSection: 'contact_info'  },
-  { key: 'twitterHandle',       label: 'Twitter/X',        defaultSection: 'contact_info'  },
-  { key: 'city',                label: 'City',             defaultSection: 'contact_info'  },
-  { key: 'state',               label: 'State',            defaultSection: 'contact_info'  },
-  { key: 'timezone',            label: 'Timezone',         defaultSection: 'contact_info'  },
+  { key: 'phone',               label: 'Phone',            defaultSection: 'contact_info', icon: 'phone' },
+  { key: 'linkedinUrl',         label: 'LinkedIn',         defaultSection: 'contact_info', icon: 'link' },
+  { key: 'twitterHandle',       label: 'Twitter/X',        defaultSection: 'contact_info', icon: 'link' },
+  { key: 'city',                label: 'City',             defaultSection: 'contact_info', icon: 'pin' },
+  { key: 'state',               label: 'State',            defaultSection: 'contact_info', icon: 'pin' },
+  { key: 'timezone',            label: 'Timezone',         defaultSection: 'contact_info', icon: 'pin' },
   // Professional
-  { key: 'previousCompanies',   label: 'Prior Company',    defaultSection: 'professional'  },
-  { key: 'university',          label: 'University',       defaultSection: 'professional'  },
-  { key: 'tags',                label: 'Tags',             defaultSection: 'professional'  },
-  { key: 'pronouns',            label: 'Pronouns',         defaultSection: 'professional'  },
+  { key: 'previousCompanies',   label: 'Prior Company',    defaultSection: 'professional', icon: 'briefcase' },
+  { key: 'university',          label: 'University',       defaultSection: 'professional', icon: 'cap' },
+  { key: 'tags',                label: 'Tags',             defaultSection: 'professional', icon: 'tag' },
+  { key: 'pronouns',            label: 'Pronouns',         defaultSection: 'professional', icon: 'user' },
   // Relationship
-  { key: 'talentPipeline',      label: 'Talent Pipeline',  defaultSection: 'relationship'  },
-  { key: 'lastMetEvent',        label: 'Last Met At',      defaultSection: 'relationship'  },
-  { key: 'warmIntroPath',       label: 'Warm Intro Path',  defaultSection: 'relationship'  },
-  { key: 'notes',               label: 'Notes',            defaultSection: 'relationship'  },
+  { key: 'talentPipeline',      label: 'Talent Pipeline',  defaultSection: 'relationship', icon: 'flag' },
+  { key: 'lastMetEvent',        label: 'Last Met At',      defaultSection: 'relationship', icon: 'calendar' },
+  { key: 'warmIntroPath',       label: 'Warm Intro Path',  defaultSection: 'relationship', icon: 'handshake' },
+  { key: 'notes',               label: 'Notes',            defaultSection: 'relationship' },
   // Investor Info
-  { key: 'fundSize',            label: 'Fund Size',        defaultSection: 'investor_info' },
-  { key: 'typicalCheckSizeMin', label: 'Check Size Min',   defaultSection: 'investor_info' },
-  { key: 'typicalCheckSizeMax', label: 'Check Size Max',   defaultSection: 'investor_info' },
-  { key: 'investmentStageFocus',label: 'Stage Focus',      defaultSection: 'investor_info' },
-  { key: 'investmentSectorFocus',label:'Sector Focus',     defaultSection: 'investor_info' },
-  { key: 'investmentSectorFocusNotes', label: 'Sector Focus Notes', defaultSection: 'investor_info' },
-  { key: 'investorStage',       label: 'Investor Stage',   defaultSection: 'investor_info' },
-  { key: 'proudPortfolioCompanies', label: 'Portfolio Cos', defaultSection: 'investor_info' },
+  { key: 'fundSize',            label: 'Fund Size',        defaultSection: 'investor_info', icon: 'money' },
+  { key: 'typicalCheckSizeMin', label: 'Check Size Min',   defaultSection: 'investor_info', icon: 'money' },
+  { key: 'typicalCheckSizeMax', label: 'Check Size Max',   defaultSection: 'investor_info', icon: 'money' },
+  { key: 'investmentStageFocus',label: 'Stage Focus',      defaultSection: 'investor_info', icon: 'flag' },
+  { key: 'investmentSectorFocus',label:'Sector Focus',     defaultSection: 'investor_info', icon: 'tag' },
+  { key: 'investmentSectorFocusNotes', label: 'Sector Focus Notes', defaultSection: 'investor_info', icon: 'tag' },
+  { key: 'investorStage',       label: 'Investor Stage',   defaultSection: 'investor_info', icon: 'flag' },
+  { key: 'proudPortfolioCompanies', label: 'Portfolio Cos', defaultSection: 'investor_info', icon: 'briefcase' },
 ]
 
 /** O(1) lookup by key */

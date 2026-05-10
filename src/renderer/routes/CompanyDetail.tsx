@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useLocation, useParams } from 'react-router-dom'
+import type { BackNavState } from '../utils/backNavState'
 import { Share2 } from 'lucide-react'
 import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
@@ -28,6 +29,8 @@ type CompanyTab = 'timeline' | 'contacts' | 'notes' | 'thesis' | 'memo' | 'files
 
 export default function CompanyDetail() {
   const { companyId: id } = useParams<{ companyId: string }>()
+  const location = useLocation()
+  const stateFrom = (location.state as BackNavState | null)?.from
   const [company, setCompany] = useState<CompanyDetailType | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<CompanyTab>('timeline')
@@ -362,7 +365,7 @@ export default function CompanyDetail() {
         backLabel="Back"
         backFallback="/companies"
         breadcrumbs={[
-          { label: 'Companies', href: '/companies' },
+          { label: 'Companies', href: stateFrom ?? '/companies' },
           { label: entityLabelPlural, href: `/companies?entityType=${company.entityType}` },
           { label: company.canonicalName },
         ]}

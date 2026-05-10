@@ -29,6 +29,9 @@ import { ContactAvatar } from '../crm/ContactAvatar'
 import { saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
 import { CONTACT_HARDCODED_FIELDS } from '../../constants/contactFields'
 import { Mail } from 'lucide-react'
+import { CollapsibleSection } from '../crm/CollapsibleSection'
+import { PropertiesCard, PropertiesCardFooter } from '../crm/PropertiesCard'
+import { useSectionCollapse } from '../../hooks/useSectionCollapse'
 import {
   CONTACT_TYPES,
   CONTACT_COLUMN_DEFS,
@@ -290,15 +293,30 @@ export function ContactPropertiesPanel({
   )
 
   // Per-entity collapsed sections (Change 10)
-  const collapsedSectionsKey = `cyggie:contact-collapsed:${contact.id}`
-  const collapsedSections = getJSON<string[]>(collapsedSectionsKey, [])
-  function isCollapsed(key: string) { return collapsedSections.includes(key) }
-  function toggleSection(key: string) {
-    const next = collapsedSections.includes(key)
-      ? collapsedSections.filter((k) => k !== key)
-      : [...collapsedSections, key]
-    setJSON(collapsedSectionsKey, next)
+  // Variant C: persistence machinery moved to useSectionCollapse hook.
+  const sectionCollapse = useSectionCollapse('contact', contact.id)
+  const isCollapsed = sectionCollapse.isCollapsed
+  const _toggleSectionFromHook = sectionCollapse.toggle
+
+  // Variant C: track which sections the user has manually toggled (suppresses auto-collapse).
+  const [userToggledSections, setUserToggledSections] = useState<Set<string>>(new Set())
+  const hasUserToggledSection = (key: string) => userToggledSections.has(key)
+  function toggleSectionUser(key: string) {
+    setUserToggledSections((prev) => {
+      if (prev.has(key)) return prev
+      const next = new Set(prev); next.add(key); return next
+    })
+    _toggleSectionFromHook(key)
   }
+  // Variant C: per-section "+ Add" support.
+  const [addFieldSection, setAddFieldSection] = useState<string | null>(null)
+  function openAddFieldDropdown(section: string | null) {
+    setAddFieldSection(section)
+    setAddFieldDropdownOpen(true)
+  }
+
+  // toggleSection is the user-facing toggle (records manual interaction for auto-collapse logic).
+  const toggleSection = toggleSectionUser
 
   function togglePinnedKey(key: string, force?: boolean) {
     const next = force === true
@@ -1720,37 +1738,34 @@ export function ContactPropertiesPanel({
         })}
       </div>
 
-      {isEditing && (
-        <div className={styles.addFieldContainer}>
-          <button
-            className={styles.addFieldBtn}
-            onClick={() => setAddFieldDropdownOpen(!addFieldDropdownOpen)}
-          >+ Add field</button>
-          {addFieldDropdownOpen && (
-            <AddFieldDropdown
-              entityType="contact"
-              hardcodedDefs={CONTACT_HARDCODED_FIELDS}
-              customFields={customFields.filter(f => !f.isBuiltin)}
-              addedFields={fieldVisibility.addedFields}
-              hiddenFields={hiddenFields}
-              entityData={contact as Record<string, unknown>}
-              fieldPlacements={fieldVisibility.fieldPlacements}
-              sections={CONTACT_SECTIONS.filter(s => s.key !== 'summary')}
-              onToggleField={(key, checked) => {
-                if (checked) fieldVisibility.addToAddedFields([key])
-                else fieldVisibility.removeFromAddedFields(key)
-              }}
-              onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
-              onCreateCustomField={() => {
-                setCreateFieldOpen(true)
-                setAddFieldDropdownOpen(false)
-              }}
-              onClose={() => setAddFieldDropdownOpen(false)}
-            />
-          )}
-        </div>
-      )}
+      {/* Variant C: legacy sticky '+ Add field' bar removed.
+          PropertiesCard footer "+ Add property" handles this affordance. */}
 
+      <PropertiesCard
+        topBand={
+          <div className={styles.strengthRow}>
+            <span className={styles.strengthLabel}>Strength</span>
+            <div className={styles.segmented}>
+              {(['cold', 'warm', 'hot'] as const).map((s) => (
+                <button
+                  key={s}
+                  className={`${styles.segmentBtn} ${contact.relationshipStrength === s ? styles[s] : ''}`}
+                  onClick={() => save('relationshipStrength', s)}
+                >
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+        }
+        footer={
+          <PropertiesCardFooter
+            hiddenCount={showAllFields ? 0 : hiddenFieldCount}
+            onShowHidden={hiddenFieldCount > 0 ? () => setShowAllFields(true) : undefined}
+            onAddProperty={() => openAddFieldDropdown(null)}
+          />
+        }
+      >
       {sectionOrder.orderedSections.map(sectionKey => {
         const baseDragProps = syncedSectionDragProps(sectionKey)
         const isDraggingThisSection = sectionOrder.draggingSectionKey === sectionKey
@@ -1776,8 +1791,14 @@ export function ContactPropertiesPanel({
         switch (sectionKey) {
           case 'contact_info': return (
             <div key="contact_info" {...sectionContainerProps}>
-              <SectionHeader title="Contact Info" collapsible isCollapsed={isCollapsed('contact_info')} onToggle={() => toggleSection('contact_info')} />
-              {!isCollapsed('contact_info') && (<>
+              <CollapsibleSection
+                title="Contact Info"
+                count={1 /* placeholder; see TODO below for non-empty count */}
+                isCollapsed={isCollapsed('contact_info')}
+                onToggle={() => toggleSection('contact_info')}
+                hasUserToggled={hasUserToggledSection('contact_info')}
+                onAdd={() => openAddFieldDropdown('contact_info')}
+              >
               {renderHardcodedSection([
                 { key: 'twitterHandle', visible: showField('twitterHandle', contact.twitterHandle), render: () => (
                   <HideableRow fieldKey="twitterHandle" isEmpty={!contact.twitterHandle}>
@@ -1815,14 +1836,20 @@ export function ContactPropertiesPanel({
                   </div>
                 )
               })}
-              </>)}
+              </CollapsibleSection>
             </div>
           )
 
           case 'professional': return (
             <div key="professional" {...sectionContainerProps}>
-              <SectionHeader title="Professional" collapsible isCollapsed={isCollapsed('professional')} onToggle={() => toggleSection('professional')} />
-              {!isCollapsed('professional') && (<>
+              <CollapsibleSection
+                title="Professional"
+                count={1 /* placeholder */}
+                isCollapsed={isCollapsed('professional')}
+                onToggle={() => toggleSection('professional')}
+                hasUserToggled={hasUserToggledSection('professional')}
+                onAdd={() => openAddFieldDropdown('professional')}
+              >
               {renderHardcodedSection([
                 { key: 'previousCompanies', visible: showField('previousCompanies', contact.previousCompanies), render: () => (
                   <HideableRow fieldKey="previousCompanies" isEmpty={parsePriorCompanies(contact.previousCompanies).length === 0}>
@@ -1904,7 +1931,6 @@ export function ContactPropertiesPanel({
               ], 'professional')}
               {renderSectionedFields('professional')}
 
-              </>)}
               {(isEditing || contact.otherSocials) && (
                 <>
                   <div className={styles.socialsLabel}>Other Socials</div>
@@ -1914,27 +1940,21 @@ export function ContactPropertiesPanel({
                   />
                 </>
               )}
+              </CollapsibleSection>
             </div>
           )
 
           case 'relationship': return (
             <div key="relationship" {...sectionContainerProps}>
-              <SectionHeader title="Relationship" collapsible isCollapsed={isCollapsed('relationship')} onToggle={() => toggleSection('relationship')} />
-              {!isCollapsed('relationship') && (<>
-              <div className={styles.strengthRow}>
-                <span className={styles.strengthLabel}>Strength</span>
-                <div className={styles.segmented}>
-                  {(['cold', 'warm', 'hot'] as const).map((s) => (
-                    <button
-                      key={s}
-                      className={`${styles.segmentBtn} ${contact.relationshipStrength === s ? styles[s] : ''}`}
-                      onClick={() => save('relationshipStrength', s)}
-                    >
-                      {s.charAt(0).toUpperCase() + s.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <CollapsibleSection
+                title="Relationship"
+                count={1 /* placeholder */}
+                isCollapsed={isCollapsed('relationship')}
+                onToggle={() => toggleSection('relationship')}
+                hasUserToggled={hasUserToggledSection('relationship')}
+                onAdd={() => openAddFieldDropdown('relationship')}
+              >
+              {/* Variant C: relationship-strength control lifted to PropertiesCard topBand. */}
               {renderHardcodedSection([
                 { key: 'talentPipeline', visible: showField('talentPipeline', contact.talentPipeline), render: () => (
                   <HideableRow fieldKey="talentPipeline" isEmpty={!contact.talentPipeline}>
@@ -1975,7 +1995,7 @@ export function ContactPropertiesPanel({
               )}
               {renderSectionedFields('relationship')}
 
-              </>)}
+              </CollapsibleSection>
             </div>
           )
 
@@ -1983,8 +2003,14 @@ export function ContactPropertiesPanel({
             if (contact.contactType !== 'investor' && sectionedFields('investor_info').length === 0) return null
             return (
               <div key="investor_info" {...sectionContainerProps}>
-                <SectionHeader title="Investor Info" collapsible isCollapsed={isCollapsed('investor_info')} onToggle={() => toggleSection('investor_info')} />
-                {!isCollapsed('investor_info') && (<>
+                <CollapsibleSection
+                  title="Investor Info"
+                  count={1 /* placeholder */}
+                  isCollapsed={isCollapsed('investor_info')}
+                  onToggle={() => toggleSection('investor_info')}
+                  hasUserToggled={hasUserToggledSection('investor_info')}
+                  onAdd={() => openAddFieldDropdown('investor_info')}
+                >
                 {contact.contactType === 'investor' && renderHardcodedSection([
                   { key: 'fundSize', visible: showField('fundSize', contact.fundSize), render: () => (
                     <HideableRow fieldKey="fundSize" isEmpty={!contact.fundSize}>
@@ -2037,14 +2063,40 @@ export function ContactPropertiesPanel({
                   )},
                 ], 'investor_info')}
                 {renderSectionedFields('investor_info')}
-  
-                </>)}
+
+                </CollapsibleSection>
               </div>
             )
 
           default: return null
         }
       })}
+      </PropertiesCard>
+
+      {/* AddFieldDropdown — opened from PropertiesCard footer "+ Add property"
+          and per-section "+ Add" buttons (Variant C). No edit-mode gate. */}
+      {addFieldDropdownOpen && (
+        <div className={styles.addFieldFloating}>
+          <AddFieldDropdown
+            entityType="contact"
+            hardcodedDefs={CONTACT_HARDCODED_FIELDS}
+            customFields={customFields.filter(f => !f.isBuiltin)}
+            addedFields={fieldVisibility.addedFields}
+            hiddenFields={hiddenFields}
+            entityData={contact as Record<string, unknown>}
+            fieldPlacements={fieldVisibility.fieldPlacements}
+            sections={CONTACT_SECTIONS.filter(s => s.key !== 'summary')}
+            defaultSection={addFieldSection ?? undefined}
+            onToggleField={(key, checked) => {
+              if (checked) fieldVisibility.addToAddedFields([key])
+              else fieldVisibility.removeFromAddedFields(key)
+            }}
+            onSetSection={(key, section) => fieldVisibility.setFieldPlacement(key, section)}
+            onCreateCustomField={() => { setCreateFieldOpen(true); setAddFieldDropdownOpen(false) }}
+            onClose={() => { setAddFieldDropdownOpen(false); setAddFieldSection(null) }}
+          />
+        </div>
+      )}
 
       {liWorkEntries.length > 0 && (
         <div className={styles.linkedinSection}>
@@ -2095,11 +2147,7 @@ export function ContactPropertiesPanel({
         </div>
       )}
 
-      {hiddenFieldCount > 0 && (
-        <button className={styles.showAllBtn} onClick={() => setShowAllFields(true)}>
-          {hiddenFieldCount} field{hiddenFieldCount !== 1 ? 's' : ''} hidden · Show
-        </button>
-      )}
+      {/* Variant C: hidden-fields toggle is in PropertiesCard footer. */}
       {showAllFields && !isEditing && (
         <button className={styles.showAllBtn} onClick={() => setShowAllFields(false)}>
           Hide empty fields

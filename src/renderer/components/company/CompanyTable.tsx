@@ -23,7 +23,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { buildBackState } from '../../utils/backNavState'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanySummary } from '../../../shared/types/company'
@@ -139,6 +140,7 @@ export function CompanyTable({
   onPatchCustomField
 }: CompanyTableProps) {
   const navigate = useNavigate()
+  const location = useLocation()
   const { getJSON, setJSON } = usePreferencesStore()
   const { companyDefs } = useCustomFieldStore()
   const summaryKeys = getJSON<string[]>('cyggie:company-summary-fields', [])
@@ -629,7 +631,7 @@ export function CompanyTable({
                     className={`${styles.nameCol} ${styles.nameCell}`}
                     onClick={() => {
                       setEditCell(null)
-                      navigate(`/company/${company.id}`, { state: { backLabel: 'Companies' } })
+                      navigate(`/company/${company.id}`, { state: buildBackState(location, 'Companies') })
                     }}
                   >
                     {company.primaryDomain && (
@@ -661,7 +663,7 @@ export function CompanyTable({
                       <div
                         key={col.key}
                         className={isCustomSelect ? styles.chipCell : styles.dataCell}
-                        onClick={() => navigate(`/company/${company.id}`, { state: { backLabel: 'Companies' } })}
+                        onClick={() => navigate(`/company/${company.id}`, { state: buildBackState(location, 'Companies') })}
                       >
                         {isCustomSelect && cellValue ? (
                           <span className={styles.chip} style={chipStyle(cellValue)}>{cellValue}</span>

@@ -5,7 +5,7 @@
  * (no React, no IPC, no DOM dependencies).
  */
 
-import type { CustomFieldDefinition } from '../../../shared/types/custom-fields'
+import type { CustomFieldDefinition, CustomFieldType } from '../../../shared/types/custom-fields'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -113,6 +113,134 @@ export function applyTextFilter<T extends Record<string, unknown>>(
       return String(raw).toLowerCase().includes(query.toLowerCase())
     })
   )
+}
+
+// ─── Custom field filter passes ───────────────────────────────────────────────
+//
+// Custom field column filters use 'custom:<defId>' as their identifier in the
+// URL and in the filter dicts produced by useTableFilters. The cell value for
+// a custom field is NOT on the row scalar — it lives in customFieldValues
+// (a Record<entityId, Record<defId, string>>). These passes mirror the built-in
+// applySelectFilter/applyRangeFilter/applyTextFilter but read from the custom
+// values map instead of row[field].
+
+export type CustomFieldValuesMap = Record<string, Record<string, string>>
+export type CustomFieldTypesMap = Record<string, CustomFieldType>
+
+/**
+ * Partition a filter dict into built-in vs. custom by 'custom:' prefix.
+ * Custom keys are 'custom:<defId>'; built-ins use scalar field names.
+ *
+ *   in:  { type: ['investor'], 'custom:abc': ['B2B'] }
+ *   out: { builtIn: { type: ['investor'] }, custom: { abc: ['B2B'] } }
+ *
+ * Custom keys are stripped of the 'custom:' prefix in the output so callers
+ * can use the bare defId as a lookup key into customFieldValues / customFieldTypes.
+ */
+export function splitFiltersByCustom<V>(
+  filters: Record<string, V>
+): { builtIn: Record<string, V>; custom: Record<string, V> } {
+  const builtIn: Record<string, V> = {}
+  const custom: Record<string, V> = {}
+  for (const [key, value] of Object.entries(filters)) {
+    if (key.startsWith('custom:')) custom[key.slice(7)] = value
+    else builtIn[key] = value
+  }
+  return { builtIn, custom }
+}
+
+/**
+ * Custom-field select filter. Cell values are strings:
+ *   - single-select: bare value, e.g. 'B2B'
+ *   - multiselect:   comma-joined, e.g. 'B2B,SaaS'
+ *
+ * We always split the cell on comma and check intersection with the active
+ * filter values. Single-select reduces to a 1-element list (exact match);
+ * multiselect matches if ANY filter value is in the cell's value list.
+ *
+ * Assumption: option names do not contain commas. Documented data-model
+ * invariant; not validated here.
+ */
+export function applyCustomSelectFilter<T extends { id: string }>(
+  rows: T[],
+  customSelectFilters: Record<string, string[]>,
+  customFieldValues: CustomFieldValuesMap
+): T[] {
+  const active = Object.entries(customSelectFilters).filter(([, v]) => v.length > 0)
+  if (active.length === 0) return rows
+  return rows.filter((row) => {
+    const valuesForRow = customFieldValues[row.id] ?? {}
+    return active.every(([defId, filterValues]) => {
+      const raw = valuesForRow[defId]
+      if (raw == null || raw === '') return false
+      const cellValues = raw.split(',').map((s) => s.trim()).filter(Boolean)
+      return filterValues.some((v) => cellValues.includes(v))
+    })
+  })
+}
+
+/**
+ * Custom-field range filter — numeric or date inclusive bounds against
+ * customFieldValues. Custom values arrive as strings; customFieldTypes
+ * tells us whether to compare numerically or as date strings.
+ *
+ * Non-numeric strings in a number-typed field cause the row to be excluded
+ * (Number(raw) is NaN, fails both bound checks). This is the desired
+ * "row excluded — not silently mis-compared" semantics.
+ *
+ * Date format: SQLite values may arrive as 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS';
+ * slice to 10 chars for lexicographic comparison against <input type="date">.
+ */
+export function applyCustomRangeFilter<T extends { id: string }>(
+  rows: T[],
+  customRangeFilters: Record<string, RangeValue>,
+  customFieldValues: CustomFieldValuesMap,
+  customFieldTypes: CustomFieldTypesMap
+): T[] {
+  const active = Object.entries(customRangeFilters).filter(
+    ([, r]) => (r.min != null && r.min !== '') || (r.max != null && r.max !== '')
+  )
+  if (active.length === 0) return rows
+  return rows.filter((row) => {
+    const valuesForRow = customFieldValues[row.id] ?? {}
+    return active.every(([defId, { min, max }]) => {
+      const raw = valuesForRow[defId]
+      if (raw == null || raw === '') return false
+      const fieldType = customFieldTypes[defId]
+      if (fieldType === 'date') {
+        const dateVal = raw.slice(0, 10)
+        if (min != null && min !== '' && dateVal < min) return false
+        if (max != null && max !== '' && dateVal > max) return false
+        return true
+      }
+      // number / currency — compare numerically. NaN fails both bounds → row excluded.
+      const num = Number(raw)
+      if (Number.isNaN(num)) return false
+      if (min != null && min !== '' && num < Number(min)) return false
+      if (max != null && max !== '' && num > Number(max)) return false
+      return true
+    })
+  })
+}
+
+/**
+ * Custom-field text filter — case-insensitive contains against customFieldValues.
+ */
+export function applyCustomTextFilter<T extends { id: string }>(
+  rows: T[],
+  customTextFilters: Record<string, string>,
+  customFieldValues: CustomFieldValuesMap
+): T[] {
+  const active = Object.entries(customTextFilters).filter(([, v]) => v.trim().length > 0)
+  if (active.length === 0) return rows
+  return rows.filter((row) => {
+    const valuesForRow = customFieldValues[row.id] ?? {}
+    return active.every(([defId, query]) => {
+      const raw = valuesForRow[defId]
+      if (raw == null) return false
+      return raw.toLowerCase().includes(query.toLowerCase())
+    })
+  })
 }
 
 export interface SortKey {
@@ -312,8 +440,11 @@ export async function executeBulkEdit(opts: BulkEditOpts): Promise<BulkEditResul
  * that can be merged with built-in COLUMN_DEFS and passed to the table.
  *
  * Keys are prefixed with 'custom:' to distinguish from built-in columns.
- * field is null so that pass-1 filters (applySelectFilter etc.) skip these
- * columns; a second pass against customFieldValues handles their filtering.
+ * field is null because the cell value is NOT on the row scalar — it lives
+ * in customFieldValues (Record<entityId, Record<defId, string>>) and is
+ * filtered by applyCustomSelectFilter / applyCustomRangeFilter /
+ * applyCustomTextFilter against that map. useTableFilters reads/writes URL
+ * params under col.key (e.g. ?custom:abc123=B2B) so custom filters round-trip.
  */
 export function buildCustomFieldColumnDefs(defs: CustomFieldDefinition[]): ColumnDef[] {
   return defs.map((def) => ({

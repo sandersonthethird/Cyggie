@@ -182,3 +182,76 @@ describe('useTableFilters — fieldToParamMap', () => {
     expect(result.current.paramForField('sector')).toBe('sector')
   })
 })
+
+// ── Custom field column support ────────────────────────────────────────────────
+//
+// Custom columns set field=null and use col.key (e.g. 'custom:abc') as their
+// identifier. Read side must pick them up via col.field ?? col.key.
+
+const CUSTOM_COLS: ColumnDef[] = [
+  { key: 'custom:abc', label: 'Focus', field: null, defaultVisible: false, width: 140, minWidth: 80, sortable: false, editable: true, type: 'select', options: [{ value: 'B2B', label: 'B2B' }, { value: 'SaaS', label: 'SaaS' }] },
+  { key: 'custom:score', label: 'Score', field: null, defaultVisible: false, width: 100, minWidth: 60, sortable: false, editable: true, type: 'number' },
+  { key: 'custom:notes', label: 'Notes', field: null, defaultVisible: false, width: 140, minWidth: 80, sortable: false, editable: true, type: 'text' },
+]
+
+describe('useTableFilters — custom columns', () => {
+  it('reads custom select filter from URL via col.key', () => {
+    const { result } = renderHook(() =>
+      useTableFilters({
+        columnDefs: CUSTOM_COLS,
+        searchParams: makeParams({ 'custom:abc': 'B2B' }),
+        setSearchParams: vi.fn(),
+      })
+    )
+    expect(result.current.columnFilters).toEqual({ 'custom:abc': ['B2B'] })
+  })
+
+  it('reads custom range filter from URL via col.key', () => {
+    const { result } = renderHook(() =>
+      useTableFilters({
+        columnDefs: CUSTOM_COLS,
+        searchParams: makeParams({ 'custom:score_min': '50', 'custom:score_max': '100' }),
+        setSearchParams: vi.fn(),
+      })
+    )
+    expect(result.current.rangeFilters).toEqual({ 'custom:score': { min: '50', max: '100' } })
+  })
+
+  it('reads custom text filter from URL via col.key', () => {
+    const { result } = renderHook(() =>
+      useTableFilters({
+        columnDefs: CUSTOM_COLS,
+        searchParams: makeParams({ 'custom:notes_q': 'urgent' }),
+        setSearchParams: vi.fn(),
+      })
+    )
+    expect(result.current.textFilters).toEqual({ 'custom:notes': 'urgent' })
+  })
+
+  it('drops empty-string values defensively in columnFilters', () => {
+    const { result } = renderHook(() =>
+      useTableFilters({
+        columnDefs: CUSTOM_COLS,
+        searchParams: makeParams({ 'custom:abc': ['B2B', ''] }),
+        setSearchParams: vi.fn(),
+      })
+    )
+    expect(result.current.columnFilters).toEqual({ 'custom:abc': ['B2B'] })
+  })
+
+  it('built-in columns continue to use col.field (regression)', () => {
+    const MIXED: ColumnDef[] = [...TEST_COLS, ...CUSTOM_COLS]
+    const { result } = renderHook(() =>
+      useTableFilters({
+        columnDefs: MIXED,
+        searchParams: makeParams({ type: 'prospect', 'custom:abc': 'B2B' }),
+        setSearchParams: vi.fn(),
+        fieldToParamMap: FIELD_TO_PARAM,
+      })
+    )
+    expect(result.current.columnFilters).toEqual({
+      entityType: ['prospect'],
+      'custom:abc': ['B2B'],
+    })
+  })
+})

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStaleGuard } from '../hooks/useStaleGuard'
 import { createPortal } from 'react-dom'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { buildBackState } from '../utils/backNavState'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useFeatureFlag } from '../hooks/useFeatureFlags'
 import EmptyState from '../components/common/EmptyState'
@@ -136,6 +137,7 @@ const CONTACT_PRESETS: FilterPreset[] = [
 
 export default function Contacts() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const { enabled: contactsEnabled, loading: flagsLoading } = useFeatureFlag('ff_companies_ui_v1')
 
@@ -422,11 +424,11 @@ export default function Contacts() {
         lastName
       })
       await loadContacts(query)
-      navigate(`/contact/${created.id}`, { state: { backLabel: 'Contacts' } })
+      navigate(`/contact/${created.id}`, { state: buildBackState(location, 'Contacts') })
     } catch (e) {
       console.error('[createInline] failed', e)
     }
-  }, [loadContacts, query, navigate])
+  }, [loadContacts, query, navigate, location])
 
   // ── Dedup callbacks ───────────────────────────────────────────────────────
   const reviewDuplicates = useCallback(async (triggeredByRun = false) => {
@@ -854,7 +856,7 @@ export default function Contacts() {
       setNewContactType('')
       setNewLinkedinUrl('')
       setNewCompanyName('')
-      navigate(`/contact/${created.id}`, { state: { backLabel: 'Contacts' } })
+      navigate(`/contact/${created.id}`, { state: buildBackState(location, 'Contacts') })
     } catch (err) {
       setError(String(err))
     }
@@ -923,14 +925,29 @@ export default function Contacts() {
     }
   }, [exaBatchRunning])
 
+  // ── Custom field types for filter dispatch ────────────────────────────────
+  // applyCustomRangeFilter needs to know if a custom value should be compared
+  // numerically or as a date string. Build a stable Record<defId, fieldType>
+  // map from contactDefs once per defs change.
+  const customFieldTypes = useMemo(
+    () => Object.fromEntries(contactDefs.map((d) => [d.id, d.fieldType])),
+    [contactDefs]
+  )
+
   // ── Derived ───────────────────────────────────────────────────────────────
   const filteredContacts = useMemo(() => {
-    let items = filterContacts(contacts, columnFilters, rangeFilters, textFilters) as ContactSummary[]
+    let items = filterContacts(contacts, {
+      columnFilters,
+      rangeFilters,
+      textFilters,
+      customFieldValues,
+      customFieldTypes,
+    }) as ContactSummary[]
     const typeFilter = CONTACT_SCOPE_TO_TYPE[scope]
     if (typeFilter) items = items.filter(c => c.contactType === typeFilter)
     if (talentPipelineFilter) items = items.filter(c => c.talentPipeline === talentPipelineFilter)
     return sortRows(items as Record<string, unknown>[], sort, CONTACT_COLUMN_DEFS) as ContactSummary[]
-  }, [contacts, columnFilters, rangeFilters, textFilters, sort, scope, talentPipelineFilter])
+  }, [contacts, columnFilters, rangeFilters, textFilters, customFieldValues, customFieldTypes, sort, scope, talentPipelineFilter])
 
   const groupedRows = useGroupedRows(filteredContacts as Record<string, unknown>[], groupBy, CONTACT_GROUPABLE_FIELDS, collapsedGroups)
 

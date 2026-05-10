@@ -1,0 +1,64 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 1.5px 7px;
+  border-radius: 99px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.pill[role="button"] { cursor: pointer; }
+.pill[role="button"]:hover { filter: brightness(0.97); }
+
+.label {
+  display: inline-block;
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 99px;
+  background: currentColor;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 2.5px;
+  font-size: 7.5px;
+  font-style: italic;
+  font-weight: 700;
+  color: #fff;
+  background: var(--color-text-tertiary);
+  flex-shrink: 0;
+  letter-spacing: 0;
+}
+
+/* Tone variants — light backgrounds, darker foreground text. */
+.tone-neutral { color: var(--color-text-secondary); background: var(--color-bg-secondary); }
+
+.tone-green   { color: #166534; background: #DCFCE7; }
+.tone-violet  { color: #5B21B6; background: #EDE9FE; }
+.tone-amber   { color: #92400E; background: #FEF3C7; }
+.tone-sky     { color: #075985; background: #E0F2FE; }
+.tone-rose    { color: #9F1239; background: #FFE4E6; }
+
+/* Dark theme — keep tones legible by darkening backgrounds & lifting fg. */
+:global(html.dark) .tone-neutral,
+@media (prefers-color-scheme: dark) {
+  .tone-neutral { color: var(--color-text-secondary); background: var(--color-bg-tertiary); }
+  .tone-green   { color: #86EFAC; background: rgba(22, 101, 52, 0.18); }
+  .tone-violet  { color: #C4B5FD; background: rgba(91, 33, 182, 0.18); }
+  .tone-amber   { color: #FCD34D; background: rgba(146, 64, 14, 0.20); }
+  .tone-sky     { color: #7DD3FC; background: rgba(7, 89, 133, 0.20); }
+  .tone-rose    { color: #FDA4AF; background: rgba(159, 18, 57, 0.20); }
+}

@@ -213,3 +213,99 @@ describe('PropertyRow — mounted guard', () => {
     expect(onSave).toHaveBeenCalledTimes(1)
   })
 })
+
+// ── Variant C: empty state shows "+ Add" instead of em-dash ───────────────────
+
+describe('PropertyRow — Variant C empty state', () => {
+  it('renders "+ Add" for null text values, not em-dash', () => {
+    const { container } = render(
+      React.createElement(PropertyRow, {
+        label: 'Industry',
+        value: null,
+        type: 'text' as const,
+        onSave: vi.fn(),
+      }),
+    )
+    expect(container.textContent).toContain('+ Add')
+    expect(container.textContent).not.toContain('—')
+  })
+
+  it('renders "+ Add" for empty string', () => {
+    const { container } = render(
+      React.createElement(PropertyRow, {
+        label: 'Industry',
+        value: '',
+        type: 'text' as const,
+        onSave: vi.fn(),
+      }),
+    )
+    expect(container.textContent).toContain('+ Add')
+  })
+
+  it('renders "+ Add" for empty url', () => {
+    const { container } = render(
+      React.createElement(PropertyRow, {
+        label: 'Website',
+        value: null,
+        type: 'url' as const,
+        onSave: vi.fn(),
+      }),
+    )
+    expect(container.textContent).toContain('+ Add')
+  })
+
+  it('renders "+ Add" for empty tags', () => {
+    const { container } = render(
+      React.createElement(PropertyRow, {
+        label: 'Tags',
+        value: '',
+        type: 'tags' as const,
+        onSave: vi.fn(),
+      }),
+    )
+    expect(container.textContent).toContain('+ Add')
+  })
+
+  it('does NOT render "+ Add" when value is present', () => {
+    const { container } = render(
+      React.createElement(PropertyRow, {
+        label: 'Industry',
+        value: 'SaaS',
+        type: 'text' as const,
+        onSave: vi.fn(),
+      }),
+    )
+    expect(container.textContent).not.toContain('+ Add')
+    expect(container.textContent).toContain('SaaS')
+  })
+})
+
+// ── Variant C: icon slot ──────────────────────────────────────────────────────
+
+describe('PropertyRow — icon slot', () => {
+  it('renders the icon node when icon prop provided', () => {
+    const { container } = render(
+      React.createElement(PropertyRow, {
+        label: 'HQ',
+        value: 'San Francisco',
+        type: 'text' as const,
+        onSave: vi.fn(),
+        icon: React.createElement('svg', { 'data-testid': 'pin-icon' }),
+      }),
+    )
+    expect(container.querySelector('[data-testid="pin-icon"]')).toBeTruthy()
+  })
+
+  it('does not crash when icon prop is omitted', () => {
+    const { container } = render(
+      React.createElement(PropertyRow, {
+        label: 'HQ',
+        value: 'San Francisco',
+        type: 'text' as const,
+        onSave: vi.fn(),
+      }),
+    )
+    expect(container.textContent).toContain('HQ')
+    expect(container.textContent).toContain('San Francisco')
+  })
+})
