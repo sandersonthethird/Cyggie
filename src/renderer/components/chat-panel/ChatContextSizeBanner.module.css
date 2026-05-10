@@ -1,0 +1,26 @@
+.banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--color-bg-secondary, #f9fafb);
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  font-size: 11px;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.summary {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.manageBtn {
+  background: transparent;
+  border: none;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--color-accent, #2563eb);
+  cursor: pointer;
+}
+.manageBtn:hover { text-decoration: underline; }

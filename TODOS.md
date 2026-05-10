@@ -1182,3 +1182,27 @@ inline).
 **Effort:** S
 **Priority:** P2
 **Depends on:** Phase 1 (✅).
+
+---
+
+## P3 — Memo generation file-read parallelization
+
+### Parallel `readLocalFile` loop in memo-gen IPC
+**What:** Replace the sequential `for (const fileId of fileIds) { await readLocalFile(...) }` in
+`src/main/ipc/investment-memo.ipc.ts` with a concurrency-limited parallel reader (e.g. `pLimit(3)`).
+**Why:** With the bumped 64k per-file / 400k total caps, a company with 6 large PDFs takes
+~6-12s of sequential read time before Exa pre-research even starts. Parallelizing with a
+concurrency limit of 3 cuts that to ~2-4s.
+**Pros:** ~3-4× faster gathering on file-heavy companies. Cancel responsiveness already covered
+by the between-iteration `signal.aborted` check (which can stay; just check before each
+parallel batch dispatch instead).
+**Cons:** Concurrent PDF parses thrash CPU and disk; need a small `pLimit`-style helper or a
+hand-rolled limiter (~15 lines). 10 concurrent parses with no limit can pin the system.
+**Context:** File-read loop is at `src/main/ipc/investment-memo.ipc.ts` lines 374-385. The cap
+of 6 large files is bounded by `MEMO_FILE_TOTAL_CAP = 400_000` chars (~6 files × 64k),
+so concurrency limit of 3 is a reasonable midpoint. Consider lifting to a shared util in
+`src/main/utils/p-limit.ts` if the pattern recurs (unlikely; only readLocalFile loops are
+this slow).
+**Effort:** S
+**Priority:** P3
+**Depends on:** Cancel-aware file-read loop (✅ landed in this PR via between-iteration check).

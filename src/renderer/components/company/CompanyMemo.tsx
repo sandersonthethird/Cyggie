@@ -4,9 +4,10 @@ import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import type { InvestmentMemoVersion, InvestmentMemoVersionSummary, InvestmentMemoWithLatest, MemoGenerateMeta } from '../../../shared/types/company'
+import type { InvestmentMemoVersion, InvestmentMemoVersionSummary, InvestmentMemoWithLatest, MemoGenerateMeta, MemoPreflightResult } from '../../../shared/types/company'
 import { MemoEditModal } from './MemoEditModal'
 import { useNotice } from '../common/NoticeModal'
+import LargeContextWarningModal from './LargeContextWarningModal'
 import { useFindInPage } from '../../hooks/useFindInPage'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
@@ -36,6 +37,13 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
   const notice = useNotice()
   const [memo, setMemo] = useState<InvestmentMemoWithLatest | null>(null)
   const [latestGenerateMeta, setLatestGenerateMeta] = useState<MemoGenerateMeta | null>(null)
+  // Pre-flight modal: when generation context will be large, show file
+  // breakdown + cost estimate and let the user Cancel/Continue.
+  const [largeContextModal, setLargeContextModal] = useState<{
+    preflight: MemoPreflightResult
+    onConfirm: () => void
+    onCancel: () => void
+  } | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [progressText, setProgressText] = useState('')
@@ -372,27 +380,66 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     setGenerating(true)
     setViewingVersion(null)
     try {
+      // Pre-flight: cheap context-size check. When estimated total context
+      // exceeds LARGE_CONTEXT_WARNING_CHARS, show the warning modal so the
+      // user can deselect files (via the Files tab) before paying the LLM cost.
+      let preflight: MemoPreflightResult | null = null
+      try {
+        preflight = await api.invoke<MemoPreflightResult>(
+          IPC_CHANNELS.INVESTMENT_MEMO_PREFLIGHT,
+          companyId,
+        )
+      } catch (preflightErr) {
+        // Preflight failure is non-fatal — proceed to generate without warning.
+        console.warn('[CompanyMemo] preflight failed:', preflightErr)
+      }
+
+      if (preflight?.willTriggerWarning) {
+        const confirmed = await new Promise<boolean>(resolve => {
+          setLargeContextModal({
+            preflight: preflight!,
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false),
+          })
+        })
+        setLargeContextModal(null)
+        if (!confirmed) {
+          // User declined; bail without firing GENERATE.
+          return
+        }
+      }
+
       const result = await api.invoke<{
-        contentMarkdown: string
-        version: InvestmentMemoVersion
+        success: boolean
+        contentMarkdown?: string
+        version?: InvestmentMemoVersion
         /** Optional in case an old main bundle is running while renderer is fresh during dev hot-reload. */
         meta?: MemoGenerateMeta
+        /** Set when the user clicked Cancel mid-generation. */
+        error?: 'aborted' | string
       }>(
         IPC_CHANNELS.INVESTMENT_MEMO_GENERATE,
         companyId
       )
-      if (!result?.contentMarkdown) {
+
+      const classified = classifyGenerateResponse(result)
+      if (classified.kind === 'aborted') {
+        // Cancel mid-generation: silent return (no toast, no error state).
+        return
+      }
+      if (classified.kind === 'empty') {
         setErrorMsg('Generation returned empty content — try again')
         return
       }
+      // classified.kind === 'success'
       setMemo((prev) =>
-        prev ? { ...prev, latestVersion: result.version, latestVersionNumber: result.version.versionNumber } : prev
+        prev ? { ...prev, latestVersion: classified.version, latestVersionNumber: classified.version.versionNumber } : prev
       )
-      if (result.meta) {
-        setLatestGenerateMeta(result.meta)
+      if (classified.meta) {
+        setLatestGenerateMeta(classified.meta)
         // Toast when pre-research had nothing to query (truly empty company:
         // no nicheSignal, no description, no industry, no founders).
-        const toast = emptyResearchToastOptions(result.meta)
+        const toast = emptyResearchToastOptions(classified.meta)
         if (toast) notice.show(toast)
       }
       setModalOpen(true)
@@ -402,6 +449,20 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     } finally {
       setProgressText('')
       setGenerating(false)
+    }
+  }
+
+  /**
+   * Cancel an in-flight memo generation. Fires the abort IPC; the main
+   * process aborts the AbortController, in-flight Exa + LLM calls reject
+   * with AbortError, the GENERATE handler returns { success: false,
+   * error: 'aborted' }, and our generate() try/catch handles it silently.
+   */
+  async function cancelGenerate() {
+    try {
+      await api.invoke(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE_ABORT, companyId)
+    } catch (e) {
+      console.warn('[CompanyMemo] cancel failed:', e)
     }
   }
 
@@ -508,6 +569,15 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
           {generating && <Spinner size="sm" />}
           {generating ? 'Generating…' : 'Generate with AI'}
         </button>
+        {generating && (
+          <button
+            className={styles.btn}
+            onClick={cancelGenerate}
+            title="Cancel in-flight memo generation"
+          >
+            Cancel
+          </button>
+        )}
         <button
           className={styles.btn}
           onClick={stressInFlight ? abortStressTest : stressTest}
@@ -653,6 +723,13 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
           initialFindQuery={findOpen ? findQuery : undefined}
         />
       )}
+
+      <LargeContextWarningModal
+        open={largeContextModal !== null}
+        preflight={largeContextModal?.preflight ?? null}
+        onConfirm={() => largeContextModal?.onConfirm()}
+        onCancel={() => largeContextModal?.onCancel()}
+      />
     </div>
   )
 }
@@ -693,6 +770,43 @@ export function emptyResearchToastOptions(
     variant: 'success',
     title: 'Memo generated',
     message: 'Skipped web research — not enough company info yet',
+  }
+}
+
+/**
+ * Classify a GENERATE IPC response into one of three outcomes the renderer
+ * cares about. Pure function so tests can verify the cancel/empty/success
+ * branches without rendering CompanyMemo (which has TipTap + RunsContext +
+ * dozens of hooks — too heavy for a direct render test).
+ *
+ *   ┌──────────────────────────────────────────────────────────────┐
+ *   │  Inputs                          → Outcome                    │
+ *   │  result.error === 'aborted'      → 'aborted' (silent return,  │
+ *   │                                     no error toast)            │
+ *   │  no contentMarkdown / no version → 'empty' (error toast)       │
+ *   │  otherwise                       → 'success' (commit version) │
+ *   └──────────────────────────────────────────────────────────────┘
+ */
+export type GenerateResponseClassification =
+  | { kind: 'aborted' }
+  | { kind: 'empty' }
+  | { kind: 'success'; contentMarkdown: string; version: InvestmentMemoVersion; meta?: MemoGenerateMeta }
+
+export function classifyGenerateResponse(result: {
+  success?: boolean
+  contentMarkdown?: string
+  version?: InvestmentMemoVersion
+  meta?: MemoGenerateMeta
+  error?: 'aborted' | string
+} | null | undefined): GenerateResponseClassification {
+  if (!result) return { kind: 'empty' }
+  if (result.error === 'aborted') return { kind: 'aborted' }
+  if (!result.contentMarkdown || !result.version) return { kind: 'empty' }
+  return {
+    kind: 'success',
+    contentMarkdown: result.contentMarkdown,
+    version: result.version,
+    meta: result.meta,
   }
 }
 

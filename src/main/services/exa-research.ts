@@ -88,6 +88,27 @@ function makeTimeout<T>(ms: number, label: string): Promise<T> {
   )
 }
 
+/**
+ * Returns a Promise that rejects with AbortError when the signal aborts.
+ * Used as a participant in `Promise.race` alongside Exa requests so a user
+ * cancel propagates immediately. If `signal` is undefined, returns a
+ * Promise that never settles (Promise.race ignores it).
+ */
+function signalRejector<T>(signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((_, reject) => {
+    if (!signal) return
+    if (signal.aborted) {
+      reject(new DOMException('aborted', 'AbortError'))
+      return
+    }
+    signal.addEventListener(
+      'abort',
+      () => reject(new DOMException('aborted', 'AbortError')),
+      { once: true },
+    )
+  })
+}
+
 function truncate(s: string | undefined | null, max: number): string {
   if (!s) return ''
   return s.length <= max ? s : s.slice(0, max) + '\n\n[…truncated]'
@@ -100,6 +121,7 @@ function truncate(s: string | undefined | null, max: number): string {
  */
 export async function searchCompanyContext(
   input: SearchCompanyContextInput,
+  signal?: AbortSignal,
 ): Promise<ExternalResearchBundle> {
   const exa = tryGetExaClient()
   if (!exa) return { queries: [], results: [] }
@@ -120,6 +142,10 @@ export async function searchCompanyContext(
     return empty
   }
 
+  // If the caller already aborted before we started, surface AbortError so
+  // the IPC handler returns the structured aborted response.
+  if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+
   const fetches = queries.map(async query => {
     try {
       const response = (await Promise.race([
@@ -127,6 +153,7 @@ export async function searchCompanyContext(
           numResults: PRE_RESEARCH_RESULTS_PER_QUERY,
         }),
         makeTimeout(PRE_RESEARCH_TIMEOUT_MS, `Exa search "${query}"`),
+        signalRejector<{ results?: never }>(signal),
       ])) as { results?: Array<{ url?: string; title?: string; text?: string; publishedDate?: string }> }
       const out: ExternalResearchResult[] = []
       for (const r of response.results ?? []) {
@@ -141,6 +168,8 @@ export async function searchCompanyContext(
       }
       return out
     } catch (err) {
+      // Propagate cancellation; everything else degrades silently.
+      if ((err as Error).name === 'AbortError') throw err
       console.warn('[exa-research] pre-research query failed:', query, (err as Error).message)
       return []
     }
@@ -150,6 +179,7 @@ export async function searchCompanyContext(
     const allResults = await Promise.all(fetches)
     return { queries, results: allResults.flat() }
   } catch (err) {
+    if ((err as Error).name === 'AbortError') throw err
     console.warn('[exa-research] pre-research aggregate failed:', (err as Error).message)
     return empty
   }

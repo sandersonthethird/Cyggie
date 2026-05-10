@@ -11,6 +11,7 @@ import {
 import type { ChatKind } from '../../lib/chat-channels'
 import type { ChatAttachmentIPC } from '../../lib/chat-attachments'
 import { ContextChip } from './ContextChip'
+import ChatContextSizeBanner from './ChatContextSizeBanner'
 import styles from './PanelComposer.module.css'
 
 interface PanelComposerProps {
@@ -221,8 +222,14 @@ export function PanelComposer({
 
   const showChip = contextOptions.length > 0 && !dismissed
 
+  // Banner only renders for company-scoped chat (other kinds get nothing).
+  // companyId is the chat's pinned company id from the kind prop.
+  const bannerCompanyId = kind.kind === 'company' ? kind.companyId : null
+
   return (
     <div className={`${styles.composer} ${large ? styles.composerLarge : ''}`}>
+      <ChatContextSizeBanner companyId={bannerCompanyId} />
+
       {error && (
         <div className={styles.error}>
           {error}

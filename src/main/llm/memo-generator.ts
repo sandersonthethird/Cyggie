@@ -146,7 +146,8 @@ function buildTitleLine(companyName: string, details: MemoGenerateInput['company
 
 export async function generateMemo(
   input: MemoGenerateInput,
-  onProgress?: (chunk: string) => void
+  onProgress?: (chunk: string) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   const provider = getProvider()
 
@@ -227,6 +228,13 @@ export async function generateMemo(
   }
 
   // Company files (drive files flagged as relevant to this company)
+  // Company files (drive files flagged as relevant to this company).
+  // Caps tuned for full-deck / full-model inclusion: a 30-page pitch deck
+  // produces ~50-60k chars after extraction and now fits whole. Total cap
+  // accommodates ~6 large decks or ~25 short files; combined with the rest
+  // of the prompt context this stays well under Sonnet 4.5's 200k token
+  // window. The renderer warns the user (LargeContextWarningModal) when the
+  // estimated total prompt size > LARGE_CONTEXT_WARNING_CHARS.
   if (input.files && input.files.length > 0) {
     parts.push('\n---\n## Company Documents\n')
     pushUntilCap(
@@ -234,8 +242,8 @@ export async function generateMemo(
       input.files,
       file => `### Document: ${file.name}\n${file.content}\n`,
       {
-        perItemCap: 8000,
-        totalCap: 40000,
+        perItemCap: 64_000,    // was 8_000 — pitch decks now fit whole
+        totalCap: 400_000,     // was 40_000 — ~6 large decks or ~25 short files
         omittedNotice: `\n[Additional files omitted for length]`,
       },
     )
@@ -290,5 +298,5 @@ export async function generateMemo(
 
   const userPrompt = parts.join('\n')
   const titleLine = buildTitleLine(input.companyName, input.companyDetails)
-  return provider.generateSummary(buildMemoSystemPrompt(titleLine), userPrompt, onProgress)
+  return provider.generateSummary(buildMemoSystemPrompt(titleLine), userPrompt, onProgress, signal)
 }

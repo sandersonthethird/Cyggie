@@ -1,5 +1,27 @@
+import { BrowserWindow } from 'electron'
 import { getDatabase } from '../connection'
 import { randomUUID } from 'crypto'
+import { IPC_CHANNELS } from '../../../shared/constants/channels'
+
+/**
+ * Broadcast COMPANY_FLAGS_CHANGED to all renderer windows.
+ * Listeners (e.g. ChatContextSizeBanner) re-fetch their context-size
+ * estimate so the banner stays fresh across windows.
+ *
+ * Wrapped in try/catch because in test environments BrowserWindow may not
+ * be available; the broadcast is best-effort and shouldn't break the toggle.
+ */
+function broadcastFlagsChanged(companyId: string, flagged: boolean): void {
+  try {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.COMPANY_FLAGS_CHANGED, { companyId, flagged })
+      }
+    }
+  } catch {
+    // No-op in non-Electron test environments.
+  }
+}
 
 export interface FlaggedFile {
   fileId: string
@@ -43,6 +65,7 @@ export function toggleFileFlag(
       companyId,
       fileId,
     )
+    broadcastFlagsChanged(companyId, false)
     return false
   }
 
@@ -50,5 +73,6 @@ export function toggleFileFlag(
     `INSERT INTO company_flagged_files (id, company_id, file_id, file_name, mime_type, flagged_at)
      VALUES (?, ?, ?, ?, ?, datetime('now'))`,
   ).run(randomUUID(), companyId, fileId, fileName, mimeType ?? null)
+  broadcastFlagsChanged(companyId, true)
   return true
 }
