@@ -23,6 +23,9 @@ import type { Meeting } from '../../shared/types/meeting'
 import type { TaskListItem } from '../../shared/types/task'
 import styles from './Dashboard.module.css'
 import { api } from '../api'
+import { COMPANY_STAGE_OPTIONS } from '../components/common/PipelineStepper'
+import { DecisionLogModal } from '../components/crm/DecisionLogModal'
+import { shouldPromptDecisionLog, defaultDecisionType } from '../utils/decisionLogTrigger'
 import quotes from '../data/quotes.json'
 
 // ─── Date helpers ──────────────────────────────────────────────────────────────
@@ -90,13 +93,7 @@ const ROUNDS: { value: CompanyRound; label: string }[] = [
   { value: 'series_b', label: 'Series B' }
 ]
 
-const STAGES: { value: CompanyPipelineStage; label: string }[] = [
-  { value: 'screening', label: 'Screening' },
-  { value: 'diligence', label: 'Diligence' },
-  { value: 'decision', label: 'Decision' },
-  { value: 'documentation', label: 'Documentation' },
-  { value: 'pass', label: 'Pass' }
-]
+const STAGES = COMPANY_STAGE_OPTIONS
 
 function formatRound(value: CompanyRound | null): string {
   if (!value) return ''
@@ -131,13 +128,7 @@ const ACTIVITY_ICONS: Record<string, string> = {
   note: '\u270E'
 }
 
-const STAGE_FILTER_OPTIONS: { value: CompanyPipelineStage; label: string }[] = [
-  { value: 'screening',     label: 'Screening' },
-  { value: 'diligence',     label: 'Diligence' },
-  { value: 'decision',      label: 'Decision' },
-  { value: 'documentation', label: 'Documentation' },
-  { value: 'pass',          label: 'Pass' },
-]
+const STAGE_FILTER_OPTIONS = COMPANY_STAGE_OPTIONS
 
 const ENTITY_TYPE_OPTIONS: { value: DashboardEntityTypeFilter; label: string }[] = [
   { value: 'portfolio', label: 'Portfolio' },
@@ -200,6 +191,8 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<DashboardData | null>(null)
   const [pipelineCompanies, setPipelineCompanies] = useState<CompanySummary[]>([])
+  const [pendingDecisionCompany, setPendingDecisionCompany] =
+    useState<{ id: string; stage: CompanyPipelineStage; entityType: string } | null>(null)
   const [openTasks, setOpenTasks] = useState<TaskListItem[]>([])
   const [activityFilter, setActivityFilter] = useState<DashboardActivityFilter>(DEFAULT_ACTIVITY_FILTER)
   const [filterOpen, setFilterOpen] = useState(false)
@@ -506,11 +499,15 @@ export default function Dashboard() {
                       const { companyId, fromStage } = dragInfo
                       setDragInfo(null)
                       setDragOverStage(null)
+                      const movedCompany = pipelineCompanies.find(c => c.id === companyId)
                       setPipelineCompanies(prev =>
                         prev.map(c => c.id === companyId ? { ...c, pipelineStage: stage } : c)
                       )
                       try {
                         await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, companyId, { pipelineStage: stage })
+                        if (movedCompany && shouldPromptDecisionLog(fromStage, stage, movedCompany.entityType ?? 'unknown', movedCompany.entityType ?? 'unknown')) {
+                          setPendingDecisionCompany({ id: companyId, stage, entityType: movedCompany.entityType ?? 'unknown' })
+                        }
                       } catch (err) {
                         console.error('[Dashboard] Failed to update pipeline stage:', err)
                         setPipelineCompanies(prev =>
@@ -724,6 +721,14 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {pendingDecisionCompany && (
+        <DecisionLogModal
+          companyId={pendingDecisionCompany.id}
+          initialDecisionType={defaultDecisionType(pendingDecisionCompany.stage, pendingDecisionCompany.entityType)}
+          onClose={() => setPendingDecisionCompany(null)}
+          onSaved={() => setPendingDecisionCompany(null)}
+        />
+      )}
 
     </div>
   )

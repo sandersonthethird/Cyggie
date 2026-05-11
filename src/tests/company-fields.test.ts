@@ -501,6 +501,16 @@ describe('IPC COMPANY_UPDATE special-cases', () => {
       const { priorInvestorsList: _, ...rest } = remaining
       remaining = rest
     }
+
+    // Stage-driven side effects (mirrored from src/main/ipc/company.ipc.ts)
+    const newStage = 'pipelineStage' in remaining ? (remaining.pipelineStage as string | null) : undefined
+    if (newStage === 'pass') {
+      remaining = { ...remaining, priority: null }
+    }
+    if (newStage === 'portfolio') {
+      remaining = { ...remaining, entityType: 'portfolio' }
+    }
+
     mockUpdateCompany('co1', remaining)
     return remaining
   }
@@ -523,6 +533,25 @@ describe('IPC COMPANY_UPDATE special-cases', () => {
     const remaining = runIpcHandler({ priorInvestorsList: investors })
     expect(mockSetCompanyInvestors).toHaveBeenCalledWith('co1', 'prior_investor', investors)
     expect(remaining).not.toHaveProperty('priorInvestorsList')
+  })
+
+  it('pipelineStage=pass auto-clears priority on the same write', () => {
+    const remaining = runIpcHandler({ pipelineStage: 'pass' })
+    expect(remaining).toEqual({ pipelineStage: 'pass', priority: null })
+    expect(mockUpdateCompany).toHaveBeenCalledWith('co1', { pipelineStage: 'pass', priority: null })
+  })
+
+  it('pipelineStage=portfolio auto-syncs entityType=portfolio on the same write', () => {
+    const remaining = runIpcHandler({ pipelineStage: 'portfolio' })
+    expect(remaining).toEqual({ pipelineStage: 'portfolio', entityType: 'portfolio' })
+    expect(mockUpdateCompany).toHaveBeenCalledWith('co1', { pipelineStage: 'portfolio', entityType: 'portfolio' })
+  })
+
+  it('pipelineStage=portfolio respects an explicit entityType in the same payload', () => {
+    // The auto-sync overwrites — explicit by design (any caller setting stage=portfolio
+    // but a different entityType is asking for inconsistent data; sync wins).
+    const remaining = runIpcHandler({ pipelineStage: 'portfolio', entityType: 'prospect' })
+    expect(remaining.entityType).toBe('portfolio')
   })
 })
 

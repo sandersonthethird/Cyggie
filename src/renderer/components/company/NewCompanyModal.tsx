@@ -33,6 +33,7 @@ import {
 import type { PartnerMeetingDigest } from '../../../shared/types/partner-meeting'
 import { api } from '../../api'
 import { Spinner } from '../common/Spinner'
+import { COMPANY_STAGE_OPTIONS } from '../common/PipelineStepper'
 import styles from './NewCompanyModal.module.css'
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -40,21 +41,14 @@ import styles from './NewCompanyModal.module.css'
 /** Maps a company's pipeline stage to the appropriate digest section. */
 function stageToDigestSection(stage: string | null): 'new_deals' | 'existing_deals' | 'portfolio_updates' | 'passing' {
   if (stage === 'diligence' || stage === 'decision') return 'existing_deals'
-  if (stage === 'documentation') return 'portfolio_updates'
+  if (stage === 'documentation' || stage === 'portfolio') return 'portfolio_updates'
   if (stage === 'pass') return 'passing'
   return 'new_deals'
 }
 
-// ── Constants (reused from Companies.tsx) ───────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────
 
-
-const STAGES: { value: CompanyPipelineStage; label: string }[] = [
-  { value: 'screening',     label: 'Screening'     },
-  { value: 'diligence',     label: 'Diligence'     },
-  { value: 'decision',      label: 'Decision'      },
-  { value: 'documentation', label: 'Documentation' },
-  { value: 'pass',          label: 'Pass'          },
-]
+const STAGES = COMPANY_STAGE_OPTIONS
 
 const PRIORITIES: { value: CompanyPriority; label: string }[] = [
   { value: 'high',   label: 'High'   },

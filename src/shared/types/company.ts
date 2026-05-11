@@ -53,7 +53,17 @@ export const INVESTMENT_SECURITY_OPTIONS: { value: InvestmentSecurityType; label
   { value: 'convertible_note', label: 'Convertible Note' },
   { value: 'common_stock', label: 'Common Stock' },
 ]
-export type CompanyPipelineStage = 'screening' | 'diligence' | 'decision' | 'documentation' | 'pass'
+export type CompanyPipelineStage = 'screening' | 'diligence' | 'decision' | 'documentation' | 'portfolio' | 'pass'
+
+/** All pipeline stage values in canonical order. Source of truth for backend services. */
+export const COMPANY_PIPELINE_STAGE_VALUES: CompanyPipelineStage[] = [
+  'screening', 'diligence', 'decision', 'documentation', 'portfolio', 'pass',
+]
+
+/** Active deal-flow stages — excludes both terminal exits (portfolio + pass). */
+export const COMPANY_ACTIVE_PIPELINE_STAGES: CompanyPipelineStage[] = [
+  'screening', 'diligence', 'decision', 'documentation',
+]
 export type CompanySortBy = 'recent_touch' | 'name'
 
 export interface CompanyListFilter {

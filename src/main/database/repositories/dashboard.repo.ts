@@ -12,6 +12,7 @@ import type {
 import { DEFAULT_ACTIVITY_FILTER } from '../../../shared/types/dashboard'
 import type { PipelineSummaryItem, StalledPipelineCompany } from '../../../shared/types/pipeline'
 import type { CompanyPipelineStage } from '../../../shared/types/company'
+import { COMPANY_PIPELINE_STAGE_VALUES, COMPANY_ACTIVE_PIPELINE_STAGES } from '../../../shared/types/company'
 
 interface CalendarEventLookup {
   id: string
@@ -38,8 +39,9 @@ export function getDashboardThresholds(): {
 const STAGE_LABELS: Record<CompanyPipelineStage, string> = {
   screening: 'Screening',
   diligence: 'Diligence',
-  decision: 'Decision',
-  documentation: 'Documentation',
+  decision: 'Partner',
+  documentation: 'Term Sheet',
+  portfolio: 'Portfolio',
   pass: 'Pass'
 }
 
@@ -56,7 +58,7 @@ function getPipelineStageCounts(): PipelineSummaryItem[] {
 
   const countByStage = new Map(rows.map((r) => [r.pipeline_stage, r.count]))
 
-  const stageOrder: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
+  const stageOrder: CompanyPipelineStage[] = COMPANY_PIPELINE_STAGE_VALUES
   return stageOrder.map((stage) => ({
     pipelineStage: stage,
     label: STAGE_LABELS[stage],
@@ -98,7 +100,7 @@ function listStalledPipelineCompanies(staleDays: number, limit = 20): StalledPip
         FROM org_companies c
         LEFT JOIN meeting_stats ms ON ms.company_id = c.id
         LEFT JOIN email_stats es ON es.company_id = c.id
-        WHERE c.pipeline_stage IN ('screening', 'diligence', 'decision', 'documentation')
+        WHERE c.pipeline_stage IN (${COMPANY_ACTIVE_PIPELINE_STAGES.map((s) => `'${s}'`).join(', ')})
       )
       SELECT
         company_id,
@@ -256,7 +258,7 @@ const ACTIVITY_SQL_NOTE = `
   WHERE n.company_id IS NOT NULL
 `
 
-const VALID_STAGES: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
+const VALID_STAGES: CompanyPipelineStage[] = COMPANY_PIPELINE_STAGE_VALUES
 const VALID_ENTITY_TYPES: DashboardEntityTypeFilter[] = ['portfolio', 'lp', 'vc_fund', 'prospect']
 
 function getActivityFilter(): DashboardActivityFilter {

@@ -98,6 +98,7 @@ const STAGE_STYLE: Record<string, string> = {
   diligence: styles.chipDiligence,
   decision: styles.chipDecision,
   documentation: styles.chipDocumentation,
+  portfolio: styles.chipPortfolio,
   pass: styles.chipPass,
 }
 

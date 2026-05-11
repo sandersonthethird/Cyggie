@@ -481,6 +481,7 @@ tr:hover .addToSyncBtn {
 .chipDiligence     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
 .chipDecision      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
 .chipDocumentation { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.chipPortfolio     { background: var(--chip-success-bg); color: var(--chip-success-text); }
 .chipPass          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 /* Round chip colors — all neutral (metadata) */
@@ -544,6 +545,7 @@ tr:hover .addToSyncBtn {
 .chipCell.chipDiligence        { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
 .chipCell.chipDecision         { background: var(--chip-error-bg);   color: var(--chip-error-text); }
 .chipCell.chipDocumentation    { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.chipCell.chipPortfolio        { background: var(--chip-success-bg); color: var(--chip-success-text); }
 .chipCell.chipPass             { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 .chipCell.chipPreSeed          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 .chipCell.chipSeed             { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }

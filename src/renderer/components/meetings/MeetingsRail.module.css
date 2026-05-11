@@ -91,6 +91,7 @@
 .dotDiligence  { background: var(--chip-warning-text, #92400E); }
 .dotDecision   { background: var(--chip-error-text, #991B1B); }
 .dotClosed     { background: var(--chip-success-text, #047857); }
+.dotPortfolio  { background: var(--chip-success-text, #047857); }
 
 .itemLabel {
   flex: 1;

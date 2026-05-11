@@ -6,10 +6,11 @@ import { ENTITY_TYPE_OPTIONS } from '../../shared/types/company'
 import { useMeetings } from '../hooks/useMeetings'
 import { MeetingsRail } from '../components/meetings/MeetingsRail'
 import { MeetingsFeed } from '../components/meetings/MeetingsFeed'
+import { COMPANY_STAGE_OPTIONS } from '../components/common/PipelineStepper'
 import styles from './MeetingsPage.module.css'
 
 const VALID_BUCKETS = new Set<MeetingBucket>(['all', 'today', 'upcoming', 'past', 'unreviewed'])
-const VALID_STAGES = new Set<CompanyPipelineStage>(['screening', 'diligence', 'decision', 'documentation', 'pass'])
+const VALID_STAGES = new Set<CompanyPipelineStage>(COMPANY_STAGE_OPTIONS.map(s => s.value))
 const VALID_ENTITY_TYPES = new Set<string>(ENTITY_TYPE_OPTIONS.map(o => o.value))
 const VALID_STATUSES = new Set<string>(['scheduled', 'recording', 'transcribed', 'summarized', 'error'])
 

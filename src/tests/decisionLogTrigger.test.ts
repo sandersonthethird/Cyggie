@@ -21,6 +21,11 @@ describe('shouldPromptDecisionLog', () => {
     expect(shouldPromptDecisionLog('diligence', 'pass', 'prospect', 'prospect')).toBe(true)
   })
 
+  // Trigger: stage → 'portfolio'
+  it('returns true when stage changes to portfolio', () => {
+    expect(shouldPromptDecisionLog('documentation', 'portfolio', 'prospect', 'prospect')).toBe(true)
+  })
+
   // Trigger: entityType → 'portfolio'
   it('returns true when entityType changes to portfolio', () => {
     expect(shouldPromptDecisionLog(null, null, 'prospect', 'portfolio')).toBe(true)
@@ -59,6 +64,10 @@ describe('defaultDecisionType', () => {
 
   it('returns Investment Approved for stage=documentation', () => {
     expect(defaultDecisionType('documentation', 'prospect')).toBe('Investment Approved')
+  })
+
+  it('returns Investment Approved for stage=portfolio', () => {
+    expect(defaultDecisionType('portfolio', 'prospect')).toBe('Investment Approved')
   })
 
   it('returns Investment Approved for entityType=portfolio with no stage', () => {
