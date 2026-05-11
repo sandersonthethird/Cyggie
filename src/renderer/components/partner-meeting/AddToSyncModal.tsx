@@ -44,7 +44,7 @@ export const ALL_SECTIONS: DigestSection[] = [
 ]
 
 function autoDetectSection(company: CompanySummary): DigestSection {
-  if (company.entityType === 'portfolio') return 'portfolio_updates'
+  if (company.entityType === 'portfolio' || company.pipelineStage === 'portfolio') return 'portfolio_updates'
   if (company.pipelineStage === 'pass') return 'passing'
   if (company.pipelineStage === 'screening') return 'new_deals'
   if (company.pipelineStage === 'diligence') return 'existing_deals'

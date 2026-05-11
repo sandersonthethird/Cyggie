@@ -1,4 +1,4 @@
-export const DECISION_TRIGGER_STAGES = new Set(['documentation', 'pass'])
+export const DECISION_TRIGGER_STAGES = new Set(['documentation', 'portfolio', 'pass'])
 export const DECISION_TRIGGER_ENTITY_TYPES = new Set(['portfolio'])
 
 export function shouldPromptDecisionLog(
@@ -21,6 +21,8 @@ export function defaultDecisionType(
   newEntityType: string
 ): string {
   if (newStage === 'pass') return 'Pass'
-  if (newStage === 'documentation' || newEntityType === 'portfolio') return 'Investment Approved'
+  if (newStage === 'documentation' || newStage === 'portfolio' || newEntityType === 'portfolio') {
+    return 'Investment Approved'
+  }
   return 'Other'
 }

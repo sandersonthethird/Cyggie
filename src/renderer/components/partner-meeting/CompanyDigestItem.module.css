@@ -163,6 +163,7 @@
 .chipDiligence     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
 .chipDecision      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
 .chipDocumentation { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.chipPortfolio     { background: var(--chip-success-bg); color: var(--chip-success-text); }
 .chipPass          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 .stageChip:hover {

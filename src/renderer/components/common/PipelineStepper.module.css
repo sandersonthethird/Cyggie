@@ -111,3 +111,84 @@
   font-weight: 700;
   color: var(--cy-text, var(--color-text));
 }
+
+/* ── Passed state ─────────────────────────────────────────────────── */
+.passedTrack {
+  opacity: 0.65;
+  position: relative;
+}
+
+.passedDaysLabel {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  white-space: nowrap;
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+
+/* ── Re-open confirm dialog ──────────────────────────────────────── */
+.confirmOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  opacity: 1;
+}
+
+.confirmDialog {
+  background: var(--cy-surface, #fff);
+  border: 1px solid var(--cy-border, var(--color-border));
+  border-radius: 8px;
+  padding: 20px 24px;
+  min-width: 320px;
+  max-width: 420px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  font-size: 13px;
+}
+
+.confirmTitle {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 8px;
+  color: var(--cy-text, var(--color-text));
+}
+
+.confirmBody {
+  color: var(--cy-text-2, var(--color-text-secondary));
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirmCancel,
+.confirmOk {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--cy-border, var(--color-border));
+}
+
+.confirmCancel {
+  background: var(--cy-surface, #fff);
+  color: var(--cy-text, var(--color-text));
+}
+
+.confirmOk {
+  background: var(--cy-brand, #b91c1c);
+  color: #fff;
+  border-color: var(--cy-brand, #b91c1c);
+}
+
+.confirmOk:hover {
+  filter: brightness(1.05);
+}

@@ -86,6 +86,7 @@ import { runRepairBadPrimaryDomainsMigration } from './migrations/084-repair-bad
 import { runMemoEvidenceMigration } from './migrations/085-memo-evidence'
 import { runAgentRunsMigration } from './migrations/086-agent-runs'
 import { runAgentRunEventsMigration } from './migrations/087-agent-run-events'
+import { runPortfolioStageBackfillMigration } from './migrations/088-portfolio-stage-backfill'
 
 let db: Database.Database | null = null
 
@@ -181,6 +182,7 @@ export function getDatabase(): Database.Database {
     runMemoEvidenceMigration(db)
     runAgentRunsMigration(db)
     runAgentRunEventsMigration(db)
+    runPortfolioStageBackfillMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or

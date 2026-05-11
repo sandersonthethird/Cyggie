@@ -46,8 +46,9 @@ import type {
   ApplyReconciliationInput,
   ApplyReconciliationResult,
 } from '../../shared/types/partner-meeting'
+import { COMPANY_PIPELINE_STAGE_VALUES } from '../../shared/types/company'
 
-const VALID_PIPELINE_STAGES = new Set(['screening', 'diligence', 'decision', 'documentation', 'pass'])
+const VALID_PIPELINE_STAGES = new Set<string>(COMPANY_PIPELINE_STAGE_VALUES)
 const VALID_TASK_CATEGORIES = new Set(['action_item', 'decision', 'follow_up'])
 
 // ─── Transcript excerpt extraction ───────────────────────────────────────────
@@ -160,7 +161,7 @@ function buildUserPrompt(params: {
   lines.push('\nRules:')
   lines.push('- noteContent is concise markdown (not a transcript dump)')
   lines.push('- fieldUpdates.field: "description" or "pipelineStage" only')
-  lines.push('- pipelineStage valid values: screening, diligence, decision, documentation, pass')
+  lines.push(`- pipelineStage valid values: ${COMPANY_PIPELINE_STAGE_VALUES.join(', ')}`)
   lines.push('- fieldUpdates: [] if no meaningful CRM changes warranted')
   lines.push('- tasks: action items, decisions, and follow-ups for this company specifically; [] if none')
   lines.push('- tasks[].category: "action_item", "decision", or "follow_up" only')

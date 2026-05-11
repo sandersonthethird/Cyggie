@@ -18,16 +18,12 @@ import { shouldPromptDecisionLog, defaultDecisionType } from '../utils/decisionL
 import { useCustomFieldStore } from '../stores/custom-fields.store'
 import { usePreferencesStore } from '../stores/preferences.store'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../utils/customFieldUtils'
+import { COMPANY_STAGE_OPTIONS, COMPANY_KANBAN_STAGES } from '../components/common/PipelineStepper'
+import { COMPANY_ACTIVE_PIPELINE_STAGES } from '../../shared/types/company'
 import styles from './Pipeline.module.css'
 import { api } from '../api'
 
-const STAGES: { value: CompanyPipelineStage; label: string }[] = [
-  { value: 'screening', label: 'Screening' },
-  { value: 'diligence', label: 'Diligence' },
-  { value: 'decision', label: 'Decision' },
-  { value: 'documentation', label: 'Documentation' },
-  { value: 'pass', label: 'Pass' }
-]
+const STAGES = COMPANY_STAGE_OPTIONS
 
 const PRIORITIES: { value: CompanyPriority; label: string }[] = [
   { value: 'high', label: 'High' },
@@ -129,6 +125,7 @@ const STAGE_STYLE: Record<string, string> = {
   diligence:     styles.chipDiligence,
   decision:      styles.chipDecision,
   documentation: styles.chipDocumentation,
+  portfolio:     styles.chipPortfolio,
   pass:          styles.chipPass,
 }
 
@@ -367,12 +364,12 @@ export default function Pipeline() {
   // AddDeal modal
   const [addDealOpen, setAddDealOpen] = useState(false)
 
-  // Table filters — persisted to preferences. Default excludes 'pass'.
+  // Table filters — persisted to preferences. Default excludes both terminals (pass + portfolio).
   const [filterStages, setFilterStages] = useState<Set<CompanyPipelineStage>>(() => {
     const stored = getJSON<string[] | null>('cyggie:pipeline-filter-stages', null)
     return stored !== null
       ? new Set(stored as CompanyPipelineStage[])
-      : new Set<CompanyPipelineStage>(['screening', 'diligence', 'decision', 'documentation'])
+      : new Set<CompanyPipelineStage>(COMPANY_ACTIVE_PIPELINE_STAGES)
   })
   const [filterPriorities, setFilterPriorities] = useState<Set<CompanyPriority>>(() =>
     new Set(getJSON<string[]>('cyggie:pipeline-filter-priorities', []) as CompanyPriority[])
@@ -518,9 +515,9 @@ export default function Pipeline() {
     return result
   }, [companies, filterStages, filterPriorities, filterRounds, filterQuery, sortColumn, sortDirection])
 
-  // KPI: all non-pass companies, unaffected by filter state
+  // KPI: active deal-flow companies only — excludes both terminals (pass + portfolio)
   const allActiveCompanies = useMemo(() =>
-    companies.filter(c => c.pipelineStage !== 'pass'),
+    companies.filter(c => c.pipelineStage !== 'pass' && c.pipelineStage !== 'portfolio'),
   [companies])
 
   const kpiStats = useMemo(() => ({
@@ -620,7 +617,7 @@ export default function Pipeline() {
       {/* Kanban board — shows all companies, unaffected by filters */}
       {view === 'board' && (
         <div className={styles.board}>
-          {STAGES.map((stage) => {
+          {COMPANY_KANBAN_STAGES.map((stage) => {
             const stageCompanies = companies.filter((c) => c.pipelineStage === stage.value)
             return (
               <div

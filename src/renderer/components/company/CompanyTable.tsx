@@ -60,6 +60,9 @@ import { HeaderFilter } from '../crm/HeaderFilter'
 import { RangeFilter } from '../crm/RangeFilter'
 import { TextFilter } from '../crm/TextFilter'
 import { usePreferencesStore } from '../../stores/preferences.store'
+import { DecisionLogModal } from '../crm/DecisionLogModal'
+import { shouldPromptDecisionLog, defaultDecisionType } from '../../utils/decisionLogTrigger'
+import type { CompanyPipelineStage } from '../../../shared/types/company'
 import styles from './CompanyTable.module.css'
 import { api } from '../../api'
 
@@ -304,12 +307,23 @@ export function CompanyTable({
     setBulkEditing(false)
   }
 
+  // ── Decision-log prompt (fires when stage moves to a terminal value) ────────
+  const [pendingDecisionCompany, setPendingDecisionCompany] =
+    useState<{ id: string; stage: CompanyPipelineStage; entityType: string } | null>(null)
+
   // ── Cell callbacks (for clipboard + inline edit) ────────────────────────────
   const handleCellSave = useCallback(
     async (company: CompanySummary, field: string, newValue: string | null) => {
       const patch: Record<string, unknown> = { [field]: newValue === '' ? null : newValue }
       await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, company.id, patch)
       onPatch(company.id, patch)
+      if (field === 'pipelineStage' && newValue) {
+        const newStage = newValue as CompanyPipelineStage
+        const entityType = company.entityType ?? 'unknown'
+        if (shouldPromptDecisionLog(company.pipelineStage, newStage, entityType, entityType)) {
+          setPendingDecisionCompany({ id: company.id, stage: newStage, entityType })
+        }
+      }
     },
     [onPatch]
   )
@@ -981,6 +995,15 @@ export function CompanyTable({
           <button className={styles.undoBtn} onClick={() => void handleUndo()}>Undo</button>
           <button className={styles.undoDismiss} onClick={dismissUndo}>✕</button>
         </div>
+      )}
+
+      {pendingDecisionCompany && (
+        <DecisionLogModal
+          companyId={pendingDecisionCompany.id}
+          initialDecisionType={defaultDecisionType(pendingDecisionCompany.stage, pendingDecisionCompany.entityType)}
+          onClose={() => setPendingDecisionCompany(null)}
+          onSaved={() => setPendingDecisionCompany(null)}
+        />
       )}
     </>
   )

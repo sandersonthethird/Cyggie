@@ -1,7 +1,6 @@
 import type {
   CompanyEntityType,
   CompanyListFilter,
-  CompanyPipelineStage,
   CompanyPriority,
   CompanyRound,
   CompanySummary,
@@ -9,6 +8,7 @@ import type {
 } from '../../../shared/types/company'
 import { ENTITY_TYPE_OPTIONS, PORTFOLIO_FUND_OPTIONS, INVESTMENT_SECURITY_OPTIONS, STATUS_OPTIONS } from '../../../shared/types/company'
 import { CANONICAL_INDUSTRIES } from '../../../shared/constants/industries'
+import { COMPANY_STAGE_OPTIONS } from '../common/PipelineStepper'
 import {
   createColumnConfigLoader,
   saveColumnConfig as saveColumnConfigBase,
@@ -44,13 +44,7 @@ export interface GroupableField {
 
 export const ENTITY_TYPES = ENTITY_TYPE_OPTIONS
 
-export const STAGES: { value: CompanyPipelineStage; label: string }[] = [
-  { value: 'screening', label: 'Screening' },
-  { value: 'diligence', label: 'Diligence' },
-  { value: 'decision', label: 'Decision' },
-  { value: 'documentation', label: 'Documentation' },
-  { value: 'pass', label: 'Pass' }
-]
+export const STAGES = COMPANY_STAGE_OPTIONS
 
 export const PRIORITIES: { value: CompanyPriority; label: string }[] = [
   { value: 'high', label: 'High' },

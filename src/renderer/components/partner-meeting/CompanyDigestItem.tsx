@@ -21,23 +21,23 @@ import type { CompanyPipelineStage } from '../../../shared/types/company'
 import { DigestItemNotes } from './DigestItemNotes'
 import { api } from '../../api'
 import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
+import { COMPANY_STAGE_OPTIONS } from '../common/PipelineStepper'
+import { DecisionLogModal } from '../crm/DecisionLogModal'
+import { shouldPromptDecisionLog, defaultDecisionType } from '../../utils/decisionLogTrigger'
 import styles from './CompanyDigestItem.module.css'
 
-const STAGE_LABELS: Record<string, string> = {
-  screening: 'Screening',
-  diligence: 'Diligence',
-  decision: 'Decision',
-  documentation: 'Docs',
-  pass: 'Pass',
-}
+const STAGE_LABELS: Record<string, string> = Object.fromEntries(
+  COMPANY_STAGE_OPTIONS.map((s) => [s.value, s.label]),
+)
 
-const STAGE_OPTIONS: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
+const STAGE_OPTIONS: CompanyPipelineStage[] = COMPANY_STAGE_OPTIONS.map((s) => s.value)
 
 const STAGE_CLASS: Record<string, string> = {
   screening:     styles.chipScreening,
   diligence:     styles.chipDiligence,
   decision:      styles.chipDecision,
   documentation: styles.chipDocumentation,
+  portfolio:     styles.chipPortfolio,
   pass:          styles.chipPass,
 }
 
@@ -56,6 +56,7 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
   const [itemCollapsed, setItemCollapsed] = useState(false)
   const [generatingBrief, setGeneratingBrief] = useState(false)
   const [briefGenError, setBriefGenError] = useState(false)
+  const [pendingDecisionStage, setPendingDecisionStage] = useState<CompanyPipelineStage | null>(null)
 
   const saveField = useCallback(async (field: Partial<Parameters<typeof api.invoke>[1]>) => {
     try {
@@ -119,9 +120,16 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
     setStageOpen(false)
     try {
       await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, item.companyId, { pipelineStage: newStage })
-      // DecisionLog entry created automatically by company.ipc — no extra work needed
       if (newStage === 'pass') {
         await saveField({ section: 'passing' })  // saveField has its own try/catch
+      } else if (newStage === 'portfolio') {
+        await saveField({ section: 'portfolio_updates' })
+      }
+      // entityType isn't denormalized on the digest item; pass 'unknown' for both
+      // values — for stage-driven prompts, the entityType arg is only used as a
+      // fallback for defaultDecisionType when stage is null, which never happens here.
+      if (shouldPromptDecisionLog(prevStage, newStage, 'unknown', 'unknown')) {
+        setPendingDecisionStage(newStage)
       }
     } catch (err) {
       console.error('[CompanyDigestItem] stage change failed:', err)
@@ -233,6 +241,15 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
           onSave={handleNotesSave}
         />
       </div>
+
+      {pendingDecisionStage && item.companyId && (
+        <DecisionLogModal
+          companyId={item.companyId}
+          initialDecisionType={defaultDecisionType(pendingDecisionStage, 'unknown')}
+          onClose={() => setPendingDecisionStage(null)}
+          onSaved={() => setPendingDecisionStage(null)}
+        />
+      )}
     </div>
   )
 }

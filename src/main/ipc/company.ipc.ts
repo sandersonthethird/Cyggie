@@ -7,8 +7,6 @@ import { normalizeToken } from '../utils/string-utils'
 import * as companyRepo from '../database/repositories/org-company.repo'
 import { upsert as upsertCompanyCache } from '../database/repositories/company.repo'
 import * as contactRepo from '../database/repositories/contact.repo'
-import { createCompanyDecisionLog } from '../database/repositories/company-decision-log.repo'
-import { autoAddDecisionToDigest } from '../database/repositories/partner-meeting.repo'
 import { getDatabase } from '../database/connection'
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import * as settingsRepo from '../database/repositories/settings.repo'
@@ -396,20 +394,17 @@ export function registerCompanyHandlers(): void {
         }
       }
 
-      // Pre-fetch current pipeline_stage to detect changes
-      let currentStage: string | null = null
       const newStage = 'pipelineStage' in remaining ? (remaining.pipelineStage as string | null) : undefined
 
-      if (newStage !== undefined) {
-        const row = db.prepare('SELECT pipeline_stage FROM org_companies WHERE id = ?').get(companyId) as
-          | { pipeline_stage: string | null }
-          | undefined
-        currentStage = row?.pipeline_stage ?? null
-      }
-
-      // Auto-clear priority when moving to Pass
+      // Stage-driven side effects (matched to terminal-stage semantics).
+      // Pass:      clear priority (it's a closed deal, priority no longer relevant)
+      // Portfolio: auto-promote entity type to 'portfolio' so the two redundant
+      //            fields stay in sync no matter which surface set the stage.
       if (newStage === 'pass') {
         remaining = { ...remaining, priority: null }
+      }
+      if (newStage === 'portfolio') {
+        remaining = { ...remaining, entityType: 'portfolio' }
       }
 
       const updated = companyRepo.updateCompany(companyId, remaining, userId)
@@ -423,30 +418,6 @@ export function registerCompanyHandlers(): void {
           if (newName && updated.primaryDomain) {
             upsertCompanyCache(updated.primaryDomain, newName)
           }
-        }
-      }
-
-      // Auto-log stage changes atomically
-      if (newStage !== undefined && newStage !== currentStage) {
-        try {
-          db.transaction(() => {
-            const decisionType = newStage != null ? 'Stage Change' : 'Pipeline Exit'
-            const rationaleMsg = newStage != null
-              ? `Moved from ${currentStage ?? 'none'} to ${newStage}`
-              : `Removed from pipeline (was: ${currentStage ?? 'none'})`
-            createCompanyDecisionLog({
-              companyId,
-              decisionType,
-              decisionDate: new Date().toISOString().slice(0, 10),
-              rationale: [rationaleMsg]
-            }, userId)
-          })()
-          console.log('[company.ipc] Stage Change logged: companyId=%s, from=%s to=%s', companyId, currentStage, newStage)
-          // Note: CSV imports call companyRepo.updateCompany() directly, bypassing this IPC handler,
-          // so bulk imports do not trigger auto-add to the digest.
-          autoAddDecisionToDigest(companyId, rationaleMsg)
-        } catch (err) {
-          console.error('[company.ipc] Failed to log stage change:', err)
         }
       }
 

@@ -8,6 +8,7 @@ import { getContact } from '../database/repositories/contact.repo'
 import { listFieldDefinitions, getFieldValuesForEntity } from '../database/repositories/custom-fields.repo'
 import { normalizeWhitespace as _normalizeWhitespace, isDifferentText as _isDifferentText, stripMarkdown as _stripMarkdown } from '../utils/summary-text-utils'
 import type { CompanyDetail, CompanyPipelineStage, CompanyRound, CompanySummary } from '../../shared/types/company'
+import { COMPANY_PIPELINE_STAGE_VALUES } from '../../shared/types/company'
 import type {
   CompanySummaryUpdateChange,
   CompanySummaryUpdatePayload,
@@ -612,7 +613,7 @@ async function buildCompanyEnrichmentProposal(
     '  "postMoneyValuation": post-money valuation in millions USD (number or null)',
     '  "city": headquarters city (string or null)',
     '  "state": headquarters state abbreviation (string or null)',
-    '  "pipelineStage": one of [screening, diligence, decision, documentation, pass] or null',
+    `  "pipelineStage": one of [${COMPANY_PIPELINE_STAGE_VALUES.join(', ')}] or null`,
     `  "industry": one of [${INDUSTRY_PROMPT_LIST}] or null (must be exact string match; null if no good fit)`,
   ].join('\n')
 
@@ -682,8 +683,7 @@ async function buildCompanyEnrichmentProposal(
   }
 
   const rawStage = extractString(extracted.pipelineStage) as CompanyPipelineStage | null
-  const validStages: CompanyPipelineStage[] = ['screening', 'diligence', 'decision', 'documentation', 'pass']
-  if (rawStage && validStages.includes(rawStage) && rawStage !== company.pipelineStage) {
+  if (rawStage && COMPANY_PIPELINE_STAGE_VALUES.includes(rawStage) && rawStage !== company.pipelineStage) {
     updates.pipelineStage = rawStage
     changes.push({ field: 'pipelineStage', from: company.pipelineStage, to: rawStage })
   }

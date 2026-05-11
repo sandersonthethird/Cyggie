@@ -3,7 +3,16 @@ import { useAppStore } from '../../stores/app.store'
 import type { MeetingBucket } from '../../../shared/types/meeting'
 import type { CompanyPipelineStage } from '../../../shared/types/company'
 import type { MeetingCounts } from '../../hooks/useMeetings'
+import { COMPANY_KANBAN_STAGES } from '../common/PipelineStepper'
 import styles from './MeetingsRail.module.css'
+
+const STAGE_DOT_CLASS: Record<string, string> = {
+  screening:     styles.dotScreening,
+  diligence:     styles.dotDiligence,
+  decision:      styles.dotDecision,
+  documentation: styles.dotClosed,
+  portfolio:     styles.dotPortfolio,
+}
 
 interface MeetingsRailProps {
   counts: MeetingCounts
@@ -20,10 +29,12 @@ const INBOX_ITEMS: { key: MeetingBucket; label: string; dotClass: string }[] = [
 ]
 
 const STAGE_ITEMS: { key: CompanyPipelineStage; label: string; dotClass: string }[] = [
-  { key: 'screening', label: 'Screening', dotClass: styles.dotScreening },
-  { key: 'diligence', label: 'Diligence', dotClass: styles.dotDiligence },
-  { key: 'decision', label: 'Decision', dotClass: styles.dotDecision },
-  { key: 'documentation', label: 'Closed won', dotClass: styles.dotClosed },
+  ...COMPANY_KANBAN_STAGES.map((s) => ({
+    key: s.value,
+    label: s.label,
+    dotClass: STAGE_DOT_CLASS[s.value] ?? '',
+  })),
+  { key: 'portfolio', label: 'Portfolio', dotClass: styles.dotPortfolio },
 ]
 
 export function MeetingsRail({ counts, activeBucket, activeStage }: MeetingsRailProps) {
