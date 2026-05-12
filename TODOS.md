@@ -1243,3 +1243,124 @@ new IPC channel; user can opt in to sharing.
 **Effort:** S
 **Priority:** P3
 **Depends on:** `useListboxNavigation` hook + SearchBar grouped-results pattern landed.
+
+---
+
+## P1 — Stress-test (Phase 2 follow-ups)
+
+### Apply selected findings → rewrite memo
+**What:** Add checkboxes per concern in the StressTestReportViewer. "Apply N selected" triggers either (a) deterministic append to memo's Risks section or (b) a new memo-rewriter agent run.
+**Why:** Closes the loop on the new product model. Phase 1 made stress-test produce findings without touching the memo; Phase 2 lets the user opt-in concern-by-concern to incorporate findings into a new memo version.
+**Pros:** Completes the "review → incorporate" workflow; preserves analyst control.
+**Cons:** (a) is fast/cheap but loses agent-level rewriting; (b) introduces a new agent type + doubles cost per stress-test+apply cycle.
+**Context:** Selected-state lives on the viewer; new memo version is saved by either programmatic append (simpler) or a memo-rewriter agent (richer). Decide on mechanism after Phase 1 dogfooding. See `src/renderer/components/company/StressTestReportViewer.tsx` for the viewer to extend.
+**Effort:** M (deterministic) or L (agent-driven)
+**Priority:** P1
+**Depends on:** Phase 1 shipped + a week of real usage to inform the mechanism choice.
+
+---
+
+## P2 — Stress-test
+
+### Richer report history surface in subpanel
+**What:** Extend `StressTestReportsSubpanel` with sort (by recency / cost / concern count), filter (by recommendation), search, and virtualization for 50+ rows.
+**Why:** Phase 1 ships a basic list; once users have many reports per memo, scanning gets hard.
+**Pros:** Scales the discovery surface; small UX cost.
+**Cons:** Virtualization adds dependency weight if memos with >50 reports are rare.
+**Context:** Current subpanel at `src/renderer/components/company/StressTestReportsSubpanel.tsx`. `listReportsForMemo` already caps at 50; extend repo signature when pagination lands.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Real usage showing the list growing beyond comfortable scan length.
+
+---
+
+## P2 — Stress-test
+
+### Export stress-test report as markdown
+**What:** Add a Copy/Download button in `StressTestReportViewer` that serializes the report to markdown (summary + numbered concerns + flagged claims with source links).
+**Why:** High value for sharing findings with partners outside the app.
+**Pros:** Simple to build (deterministic template); enables sharing without screenshots.
+**Cons:** Need to think about styling (does markdown preserve severity badges?).
+**Context:** Build the serializer in `src/renderer/lib/stress-test-report-export.ts`; wire to a button next to Dismiss in `StressTestReportViewer`.
+**Effort:** S
+**Priority:** P2
+
+---
+
+## P2 — Stress-test
+
+### Eval suite for stress-test prompt
+**What:** Build a small golden-set evaluator: 5 memos with known weak claims, run the rewritten stress-test prompt against each, assert recommendation + concern count + at least one expected finding per memo.
+**Why:** Phase 1 ships a substantial prompt rewrite. No eval harness exists. A small golden set protects against future prompt regressions.
+**Pros:** Catches prompt-quality regressions in CI.
+**Cons:** Building + maintaining the golden set takes effort; LLM evals are flaky by nature.
+**Context:** No existing `/evals` infrastructure in the repo. Build the harness alongside the first eval pass. The 5 memos can be synthetic or anonymized real memos. Compare LLM judge or rule-based assertions.
+**Effort:** L
+**Priority:** P2
+**Depends on:** Phase 1 dogfooding to identify which dimensions matter most.
+
+---
+
+## P3 — Stress-test
+
+### "Compare with prior report" toggle
+**What:** When a memo has ≥2 stress-test reports, show a diff view in the viewer (concerns that appeared/disappeared since the prior run).
+**Why:** Reveals whether the agent's view shifts when re-run; lets the analyst see what changed (e.g., new evidence appeared).
+**Pros:** Reveals agent variance and tracks resolution of past concerns.
+**Cons:** Concern matching across runs is fuzzy — no stable ids.
+**Context:** Reports table has `memo_id` + `created_at`; query the prior report; concern-match by approximate string similarity on `claim`.
+**Effort:** M
+**Priority:** P3
+
+---
+
+## P3 — Stress-test
+
+### Inline claim quoting / jump-to-claim
+**What:** For each claim-level flag in the viewer, add a "Jump to claim" link that scrolls the underlying memo to the highlighted claim text.
+**Why:** Connects findings to the analyst's prose; reduces context-switching.
+**Pros:** Tight feedback loop.
+**Cons:** Claim-matching against memo prose is fuzzy; broken links degrade trust.
+**Context:** TipTap `CritiqueHighlight` extension already finds claim text in the memo. Use it as the anchor.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Stable claim-text matching.
+
+---
+
+## P3 — Stress-test
+
+### Cost-per-concern stat in run summary
+**What:** Display `$X.XX / concern` in the viewer's run footer.
+**Why:** Quality-vs-cost metric the user can track over time.
+**Pros:** Trivial to compute; surfaces a useful efficiency stat.
+**Cons:** Concerns aren't all equal value; metric is rough.
+**Context:** `report.costEstimateUsd / report.concerns.length` in `StressTestReportViewer`'s footer.
+**Effort:** S
+**Priority:** P3
+
+---
+
+## P3 — Stress-test
+
+### Recommendation icon next to Stress-test button
+**What:** Show a small recommendation pill next to the Stress-test button in the Memo tab toolbar, indicating the latest report's verdict (e.g., "🟡 caveats").
+**Why:** At-a-glance latest verdict without opening anything.
+**Pros:** Single source of truth for "what does the most recent stress-test say".
+**Cons:** Adds clutter to the toolbar.
+**Context:** Read latest report via `listReportsForMemo(memoId).at(0)` on Memo tab mount.
+**Effort:** S
+**Priority:** P3
+
+---
+
+## P3 — Stress-test
+
+### Migrate legacy memo-version stress-tests into reports table
+**What:** Backfill: scan `investment_memo_versions WHERE change_note='Stress-tested by research agent'`, parse Devil's Advocate section + inline evidence, create `stress_test_reports` rows.
+**Why:** Today's legacy stress-test data lives in memo versions; new runs live in `stress_test_reports`. The bifurcation makes report history incomplete.
+**Pros:** Unifies stress-test history across the old and new product models.
+**Cons:** Parsing legacy markdown is brittle; legacy data may not have all the structured fields the new schema requires.
+**Context:** Phase 1 deliberately left legacy memo versions in place; users can still browse them via the version dropdown. This TODO is for if/when we want a unified view.
+**Effort:** M
+**Priority:** P3

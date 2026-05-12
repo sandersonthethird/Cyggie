@@ -5,8 +5,6 @@ import {
   normalizeLegacyHeadings,
   replaceSectionInMarkdown,
   canonicalizeUrl,
-  stressTestTargets,
-  stressTestPassthrough,
   isMemoSectionHeading,
   getSection,
 } from '../main/llm/memo/sections'
@@ -211,32 +209,3 @@ describe('canonicalizeUrl', () => {
   })
 })
 
-describe('stressTestTargets / stressTestPassthrough', () => {
-  it('partitions every memo section exactly once', () => {
-    const targets = new Set(stressTestTargets())
-    const passthrough = new Set(stressTestPassthrough())
-    expect(targets.size + passthrough.size).toBe(MEMO_SECTIONS.length)
-    for (const heading of targets) {
-      expect(passthrough.has(heading)).toBe(false)
-    }
-  })
-
-  it('includes Investment Thesis as a target, not passthrough', () => {
-    expect(stressTestTargets()).toContain('Investment Thesis')
-    expect(stressTestPassthrough()).not.toContain('Investment Thesis')
-  })
-
-  it('includes Business Description, Team, Market, GTM, References as passthrough', () => {
-    const passthrough = new Set(stressTestPassthrough())
-    expect(passthrough.has('Business Description')).toBe(true)
-    expect(passthrough.has('Team')).toBe(true)
-    expect(passthrough.has('Market / Industry')).toBe(true)
-    expect(passthrough.has('Go-To-Market')).toBe(true)
-    expect(passthrough.has('References')).toBe(true)
-  })
-
-  it('Investment Highlights legacy name is NOT in either list', () => {
-    expect(stressTestTargets()).not.toContain('Investment Highlights')
-    expect(stressTestPassthrough()).not.toContain('Investment Highlights')
-  })
-})

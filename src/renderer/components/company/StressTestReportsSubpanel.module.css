@@ -1,0 +1,115 @@
+.container {
+  margin-top: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface, #fafafa);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.header:hover {
+  background: var(--color-surface-hover, #f3f4f6);
+}
+
+.chevron {
+  font-size: 10px;
+  color: var(--color-text-secondary, #6b7280);
+  transition: transform 0.15s;
+  width: 12px;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.title {
+  font-weight: 600;
+  flex: 1;
+}
+
+.count {
+  font-weight: 400;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
+  background: var(--color-card-bg);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row:hover {
+  background: var(--color-surface-hover, #f3f4f6);
+}
+
+.date {
+  color: var(--color-text-secondary, #6b7280);
+  font-variant-numeric: tabular-nums;
+  width: 110px;
+  flex-shrink: 0;
+}
+
+.recPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  flex-shrink: 0;
+}
+
+.recProceed { background: #d1fae5; color: #065f46; }
+.recProceedCaveats { background: #fef3c7; color: #92400e; }
+.recPass { background: #fee2e2; color: #991b1b; }
+.recDigDeeper { background: #dbeafe; color: #1e40af; }
+
+.summaryPreview {
+  flex: 1;
+  color: var(--color-text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.concernCount {
+  color: var(--color-text-secondary, #6b7280);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.empty {
+  padding: 16px 14px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #6b7280);
+  font-style: italic;
+  border-top: 1px solid var(--color-border);
+}

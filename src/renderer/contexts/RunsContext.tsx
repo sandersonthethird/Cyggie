@@ -44,17 +44,25 @@ export interface RunRecord {
   errorMessage?: string
 }
 
-interface State {
+export interface RunsState {
   runs: Map<string, RunRecord>
 }
+type State = RunsState
 
-type Action =
+/**
+ * Caps that TERMINATE the agent-loop. web_searches is intentionally absent:
+ * the loop emits `cap_exceeded` for it but continues iterating (the cap-rejection
+ * tool_result tells the model to wrap up). See agent-loop.ts cap handling.
+ */
+export const TERMINAL_CAPS = new Set<string>(['iterations', 'input_tokens', 'output_tokens'])
+
+export type RunsAction =
   | { type: 'started'; runId: string; kind: string; companyId: string; ts: number }
   | { type: 'event'; event: AgentEvent; ts: number }
   | { type: 'mark_stuck'; runId: string }
   | { type: 'dismiss'; runId: string }
 
-function reducer(state: State, action: Action): State {
+export function runsReducer(state: State, action: RunsAction): State {
   switch (action.type) {
     case 'started': {
       const runs = new Map(state.runs)
@@ -90,7 +98,14 @@ function reducer(state: State, action: Action): State {
           status = 'aborted'
           break
         case 'cap_exceeded':
-          status = 'cap_exceeded'
+          // Only TERMINAL caps end the run. The agent-loop calls finalize()
+          // for iterations / input_tokens / output_tokens caps and continues
+          // on web_searches (it just rejects further search calls). Mirror
+          // that here so the Stress-test button's spinner stays alive while
+          // the agent wraps up after a non-terminal cap.
+          if (TERMINAL_CAPS.has(action.event.cap)) {
+            status = 'cap_exceeded'
+          }
           errorMessage = `${action.event.cap} cap reached (${action.event.used}/${action.event.limit})`
           break
       }
@@ -136,7 +151,7 @@ export interface RunsContextValue {
 const RunsContext = createContext<RunsContextValue | null>(null)
 
 export function RunsProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, { runs: new Map<string, RunRecord>() })
+  const [state, dispatch] = useReducer(runsReducer, { runs: new Map<string, RunRecord>() })
   const completionHandlers = useRef(new Set<(run: RunRecord) => void>())
   const previousStatuses = useRef(new Map<string, RunRecord['status']>())
 

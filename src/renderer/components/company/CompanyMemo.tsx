@@ -18,6 +18,9 @@ import { ResearchLog } from './ResearchLog'
 import { MemoSectionProgress } from './MemoSectionProgress'
 import { MemoSectionsNav } from './MemoSectionsNav'
 import { CitationHoverLayer } from './CitationHoverLayer'
+import { StressTestReportViewer } from './StressTestReportViewer'
+import { StressTestReportsSubpanel } from './StressTestReportsSubpanel'
+import type { StressTestReport } from '../../../shared/types/stress-test-report'
 import { useMemoEvidence } from '../../hooks/useMemoEvidence'
 import { preprocessMemoCitations } from '../../lib/memo-citation-preprocessor'
 import { useRunForCompany, useRuns } from '../../contexts/RunsContext'
@@ -213,17 +216,41 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
       .catch(() => setCostEstimate(null))
   }, [companyId, stressRun?.status])
 
-  // After a stress-test completes, reload the memo so the new version shows,
-  // and pop the edit modal for review (matches the existing AI-generate flow).
+  // After a stress-test completes, open the report viewer with the newly
+  // saved report. Memo is NEVER mutated by stress-test under the new product
+  // model, so we do NOT auto-open the edit modal (Edit button still works).
+  // The versionId field on the 'done' event carries the new stress_test_report
+  // id (agent_runs.result_version_id is reused as a generic artifact ref).
+  const [activeStressReportId, setActiveStressReportId] = useState<string | null>(null)
+  const [activeStressReport, setActiveStressReport] = useState<StressTestReport | null>(null)
+  const [stressReportsRefreshKey, setStressReportsRefreshKey] = useState(0)
   useEffect(() => {
     return runs.onCompletion(run => {
       if (run.kind !== 'thesis_stress_test' || run.companyId !== companyId) return
       if (run.status === 'success' && run.versionId) {
-        setLoaded(false)               // re-fetch memo with new version
-        setModalOpen(true)
+        setActiveStressReportId(run.versionId)
+        setStressReportsRefreshKey(k => k + 1)
       }
     })
   }, [runs, companyId])
+
+  // Fetch the full report when a stress-test just completed.
+  useEffect(() => {
+    if (!activeStressReportId) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const full = await api.invoke<StressTestReport | null>(
+          IPC_CHANNELS.STRESS_TEST_REPORT_GET,
+          activeStressReportId,
+        )
+        if (!cancelled && full) setActiveStressReport(full)
+      } catch (err) {
+        console.error('[stress-test-report] fetch after run failed:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeStressReportId])
 
   // (evidence + preprocessed-markdown moved earlier in the component so they
   // can feed the loadMemoContent useEffect; see top of body.)
@@ -767,6 +794,13 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         )}
       </div>
 
+      {memo?.id && !generating && (
+        <StressTestReportsSubpanel
+          memoId={memo.id}
+          refreshKey={stressReportsRefreshKey}
+        />
+      )}
+
       {/* Hover layer for inline `[¹](url)` citations (Delight #4). Only mounts
           when there's at least one citation→evidence match, so plain memos
           without citations don't attach listeners. */}
@@ -803,6 +837,16 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         onConfirm={() => largeContextModal?.onConfirm()}
         onCancel={() => largeContextModal?.onCancel()}
       />
+
+      {activeStressReport && (
+        <StressTestReportViewer
+          report={activeStressReport}
+          onClose={() => {
+            setActiveStressReport(null)
+            setActiveStressReportId(null)
+          }}
+        />
+      )}
     </div>
   )
 }

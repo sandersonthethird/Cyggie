@@ -25,6 +25,11 @@ import type { MemoGenerateMeta, MemoPreflightResult } from '../../shared/types/c
 import { estimateMemoGenContext } from '../llm/context-size'
 import { gatherMemoSourceCounts } from '../llm/memo-context-gatherer'
 import { runStressTestAgent } from '../llm/agents/thesis-stress-test-agent'
+import {
+  persistStressTestReport,
+  listReportsForMemo,
+  getStressTestReport,
+} from '../database/repositories/stress-test-report.repo'
 import { runMemoProducerAgent } from '../llm/agents/memo-producer-agent'
 import { startRun, completeRun, makeEventWriter, getRun, listRuns, listRunEvents, averageCostForKind } from '../llm/agents/run-store'
 import { listByVersion as listEvidenceByVersion } from '../database/repositories/memo-evidence.repo'
@@ -967,10 +972,6 @@ export function registerInvestmentMemoHandlers(): void {
             emit,
           })
 
-          if (result.scopeLockWarnings.length > 0) {
-            console.warn('[thesis-stress-test]', runId, 'scope-lock warnings:', result.scopeLockWarnings)
-          }
-
           if (result.status !== 'success' || !result.submitInput) {
             completeRun(runId, {
               status: result.status,
@@ -988,21 +989,25 @@ export function registerInvestmentMemoHandlers(): void {
             return
           }
 
-          // Persist memo version + evidence rows in a single transaction via
-          // the shared helper (also used by the memo producer agent).
-          let savedVersionId = ''
+          // Persist as a StressTestReport (new product model: memo untouched).
+          // The prior version_id we reviewed is captured so the report knows
+          // which v(N) it was run against.
+          let savedReportId = ''
           try {
-            const persisted = persistMemoArtifacts({
+            const persisted = persistStressTestReport({
               memoId: memo.id,
-              contentMarkdown: result.submitInput.markdown,
-              changeNote: 'Stress-tested by research agent',
-              userId,
-              evidenceRows: result.submitInput.evidence,
+              runId,
+              priorMemoVersionId: memo.latestVersion!.id,
+              summary: result.submitInput.summary,
+              concerns: result.submitInput.concerns,
+              evidence: result.submitInput.evidence,
+              recommendation: result.submitInput.recommendation,
+              costEstimateUsd: result.costEstimateUsd,
+              durationMs: result.durationMs,
+              toolCallCount: result.toolCallCount,
+              createdBy: userId,
             })
-            savedVersionId = persisted.versionId
-            console.log(
-              `[thesis-stress-test] ${runId} saved version ${persisted.versionId} + ${persisted.evidenceInserted} evidence rows`,
-            )
+            savedReportId = persisted.reportId
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err)
             console.error('[thesis-stress-test]', runId, 'persist failed:', errMsg)
@@ -1023,13 +1028,14 @@ export function registerInvestmentMemoHandlers(): void {
             return
           }
 
-          // Re-emit a 'done' event with the persisted versionId so the renderer
-          // knows where to navigate. (The agent loop's emit fired with empty
-          // versionId since persistence happens here.)
+          // Re-emit a 'done' event with the persisted report id in the
+          // versionId slot. agent_runs.result_version_id is reused as the
+          // artifact reference (memo_version_id for kind='memo_producer',
+          // stress_test_report_id for kind='thesis_stress_test').
           broadcastAgentEvent({
             type: 'done',
             runId,
-            versionId: savedVersionId,
+            versionId: savedReportId,
             durationMs: result.durationMs,
             inputTokens: result.inputTokensTotal,
             outputTokens: result.outputTokensTotal,
@@ -1047,9 +1053,9 @@ export function registerInvestmentMemoHandlers(): void {
             costEstimateUsd: result.costEstimateUsd,
             toolCallCount: result.toolCallCount,
             webSearchCount: result.webSearchCount,
-            resultVersionId: savedVersionId,
+            resultVersionId: savedReportId,
           })
-          logAudit(userId, 'investment_memo_version', savedVersionId, 'create', {
+          logAudit(userId, 'stress_test_report', savedReportId, 'create', {
             memoId: memo.id,
             source: 'thesis_stress_test_agent',
             runId,
@@ -1085,6 +1091,23 @@ export function registerInvestmentMemoHandlers(): void {
     if (!controller) return { success: false, error: 'no_such_run' }
     controller.abort()
     return { success: true }
+  })
+
+  // ───── Stress-test Reports (read-only) ───────────────────────────────────
+
+  ipcMain.handle(IPC_CHANNELS.STRESS_TEST_REPORT_LIST, (_event, memoId: string) => {
+    if (!memoId) throw new Error('memoId is required')
+    try {
+      return listReportsForMemo(memoId)
+    } catch (err) {
+      console.error('[stress-test-report] list failed:', err)
+      return []
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.STRESS_TEST_REPORT_GET, (_event, reportId: string) => {
+    if (!reportId) throw new Error('reportId is required')
+    return getStressTestReport(reportId)
   })
 
   // ───── Memo evidence (read) ──────────────────────────────────────────────
