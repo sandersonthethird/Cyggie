@@ -20,8 +20,13 @@
  *   │                                          to model preamble text, NOT  │
  *   │                                          the API's thinking blocks)   │
  *   │    6. extract tool_use blocks                                        │
- *   │       a. terminal_tool present?       → validate input via Zod;      │
- *   │                                          succeed (or fail-validation)│
+ *   │       a. terminal_tool present?                                       │
+ *   │            validate input via Zod →                                   │
+ *   │              SUCCESS: dispatch any same-turn non-terminal tools      │
+ *   │                       (commit side effects), then finalize('success')│
+ *   │              FAILURE: push tool_result(is_error: true) + dispatch    │
+ *   │                       same-turn non-terminals + continue loop;       │
+ *   │                       model retries terminal on next iteration       │
  *   │       b. max_tokens mid-tool?         → fail (incomplete sequence)   │
  *   │       c. else dispatch each tool;     → push tool_result blocks;     │
  *   │                                          enforce web_search cap       │
@@ -238,19 +243,72 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
     }
 
     if (terminalCall) {
-      // Validate terminal input via the registered tool's Zod schema. If it
-      // fails, surface a tool_result error to the model — but the agent loop
-      // CAN'T retry the terminal itself in the same response, so we fail.
-      // (Anthropic auto-retries the SDK side for malformed tool input on the
-      // next round; if we're here it means input passed JSON Schema but failed
-      // our stricter Zod validation.)
+      // Validate terminal input via the registered tool's Zod schema.
+      //
+      //   ┌──────────────────────────────────────────────────────────────┐
+      //   │  SUCCESS path:                                                │
+      //   │   • Dispatch any same-turn NON-terminal tool_uses BEFORE      │
+      //   │     returning. Their side effects (e.g. cite_source persist) │
+      //   │     must commit even though the conversation is ending — the │
+      //   │     model issued them deliberately.                           │
+      //   │   • Return finalize('success', terminal.input).               │
+      //   │                                                                │
+      //   │  FAILURE path (Zod validation):                                │
+      //   │   • Push a tool_result with is_error: true so the model sees  │
+      //   │     the validation error and can correct on the next          │
+      //   │     iteration (e.g. add the missing sourceUrl for a web      │
+      //   │     evidence row).                                            │
+      //   │   • Also dispatch same-turn non-terminal tool_uses — Anthropic│
+      //   │     requires a tool_result for every tool_use in the prior   │
+      //   │     assistant message.                                        │
+      //   │   • Continue the loop. Bounded by maxIterations.              │
+      //   └──────────────────────────────────────────────────────────────┘
       const dispatch = await terminal.dispatch(terminalCall.input, opts.ctx)
-      if (dispatch.errorClass) {
-        const errMsg = `terminal tool '${terminal.name}' input invalid: ${JSON.stringify(dispatch.output)}`
-        opts.emit({ type: 'tool_error', runId: opts.runId, toolUseId: terminalCall.id, message: errMsg })
-        return finalize('failed', undefined, 'TerminalValidation', errMsg)
+
+      // Helper used by both paths. Skips the terminal tool_use itself.
+      const dispatchSameTurnNonTerminals = async (): Promise<ToolResultBlockParam[]> => {
+        const out: ToolResultBlockParam[] = []
+        for (const tu of toolUses) {
+          if (tu.id === terminalCall.id) continue
+          const otherTool = registry.get(tu.name)
+          if (!otherTool) continue
+          if (opts.signal.aborted) break
+          const r = await otherTool.dispatch(tu.input, opts.ctx)
+          out.push({
+            type: 'tool_result',
+            tool_use_id: tu.id,
+            content: typeof r.output === 'string' ? r.output : JSON.stringify(r.output),
+            is_error: !!r.errorClass,
+          })
+        }
+        return out
       }
-      return finalize('success', terminalCall.input)
+
+      if (!dispatch.errorClass) {
+        // Commit any same-turn non-terminal side effects before ending.
+        // Results are NOT threaded to a next iteration (we return below);
+        // we only care that the handlers ran. Skip the helper entirely when
+        // the terminal was the only tool_use, avoiding wasted iteration.
+        if (toolUses.length > 1) {
+          await dispatchSameTurnNonTerminals()
+        }
+        return finalize('success', terminalCall.input)
+      }
+
+      const errMsg = `terminal tool '${terminal.name}' input invalid: ${JSON.stringify(dispatch.output)}`
+      opts.emit({ type: 'tool_error', runId: opts.runId, toolUseId: terminalCall.id, message: errMsg })
+
+      const toolResults: ToolResultBlockParam[] = [{
+        type: 'tool_result',
+        tool_use_id: terminalCall.id,
+        content: errMsg,
+        is_error: true,
+      }]
+      toolResults.push(...(await dispatchSameTurnNonTerminals()))
+
+      messages.push({ role: 'assistant', content: response.content })
+      messages.push({ role: 'user', content: toolResults })
+      continue
     }
 
     // Dispatch each non-terminal tool. Build tool_result blocks for the next user turn.

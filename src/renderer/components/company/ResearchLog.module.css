@@ -28,8 +28,8 @@
 .status-stuck { background: #f59e0b; animation: pulse 2s ease-in-out infinite; }
 
 @keyframes pulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+  0%, 100% { opacity: 0.5; transform: scale(0.9); }
+  50%      { opacity: 1;   transform: scale(1.18); }
 }
 
 .statusLabel {
@@ -134,4 +134,44 @@
   border-radius: 4px;
   color: #b91c1c;
   font-size: 11px;
+}
+
+/* "Still thinking" indicator anchored at the bottom of the events list while
+   status === 'running'. Three dots fade in a staggered pattern so the user
+   has a continuous "alive" signal during 5-30s gaps between agent events. */
+.thinkingRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  color: var(--text-secondary, #6b7280);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.thinkingDots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.thinkingDots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-secondary, #6b7280);
+  animation: thinking-dot 1.2s ease-in-out infinite;
+}
+
+.thinkingDots span:nth-child(2) { animation-delay: 0.15s; }
+.thinkingDots span:nth-child(3) { animation-delay: 0.30s; }
+
+@keyframes thinking-dot {
+  0%, 80%, 100% { opacity: 0.25; }
+  40%           { opacity: 1; }
+}
+
+.thinkingLabel {
+  /* Slight letter-spacing so "thinking…" reads as deliberate animation
+     label rather than missing content. */
+  letter-spacing: 0.02em;
 }

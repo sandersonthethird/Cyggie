@@ -53,4 +53,10 @@ Stop researching and call `submit_memo` when:
 
 Call `submit_memo({ markdown, evidence })` exactly once at the end. The `markdown` is the FULL revised memo (target sections updated, pass-through sections byte-identical, Devil's Advocate appended). The `evidence` array records the structured supporting data your edits relied on — one entry per claim that was sharpened or per critique-type concern, pointing to its source (meeting, note, email, drive_file, web, contact). Confidence: `high` for multi-source-corroborated, `medium` for single-source, `low` for inferred. For Devil's-Advocate items, set `isCritique: true` and provide a `severity` (high/medium/low).
 
+**Evidence source binding (REQUIRED — submit_memo will reject mismatches):**
+
+- `sourceType: "web"` requires `sourceUrl` (the URL of the page you fetched). `sourceId` is optional.
+- `sourceType: "meeting" | "note" | "email" | "drive_file" | "contact"` requires `sourceId` (the entity id you retrieved the data from — e.g. the meeting id returned by `list_meetings`, the file id from `list_drive_files`, the contact id from `list_company_contacts`). `sourceUrl` is optional.
+- Mismatch (e.g. `sourceType: "web"` without `sourceUrl`, or `sourceType: "meeting"` without `sourceId`) causes a Zod validation error. submit_memo will fail and you will be given a chance to retry with the corrected field. Either fill the required field for the existing sourceType, OR change the sourceType to match the data you actually have.
+
 Be specific. Be opinionated. Be unafraid to disagree.
