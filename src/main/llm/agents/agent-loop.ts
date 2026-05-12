@@ -415,9 +415,18 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
       }
 
       // Web-search budget check (count search-named web tools BEFORE dispatch).
+      // When the cap is hit, surface an ACTIONABLE error so the model stops
+      // calling web_search and finalizes with what it has. Without this,
+      // observed real-world behavior was the model retrying web_search every
+      // iteration and burning through the iteration cap.
       const isWebSearch = tool.category === 'web' && /search/i.test(tu.name)
       if (isWebSearch && webSearchCount >= opts.limits.webSearches) {
-        const err = `web_search cap ${opts.limits.webSearches} reached`
+        const err =
+          `web_search cap reached (${webSearchCount}/${opts.limits.webSearches}). ` +
+          `ACTION: Stop calling web_search — further calls will be rejected the same way. ` +
+          `Use the search results you already have, plus any internal tools (internal_search, ` +
+          `read_document, read_existing_memo) for the rest of your research, then call ` +
+          `${terminal.name} to finalize. Do not call web_search again.`
         opts.emit({
           type: 'cap_exceeded',
           runId: opts.runId,
