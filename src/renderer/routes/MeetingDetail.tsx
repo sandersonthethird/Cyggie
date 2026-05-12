@@ -1195,7 +1195,11 @@ export default function MeetingDetail() {
         const notif = new Notification('Meeting summarized', {
           body: `${totalFieldCount} field${totalFieldCount !== 1 ? 's' : ''} ready to review`
         })
-        notif.onclick = () => window.focus()
+        notif.onclick = () => {
+          window.focus()
+          if (id) navigate(`/meeting/${id}`)
+          notif.close()
+        }
       }
 
       // Refresh existing tasks

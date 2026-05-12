@@ -1048,6 +1048,9 @@ export function createContact(data: {
   title?: string | null
   contactType?: string | null
   linkedinUrl?: string | null
+  phone?: string | null
+  city?: string | null
+  state?: string | null
 }, userId: string | null = null): ContactSummary {
   const db = getDatabase()
   const providedFirstName = (data.firstName || '').trim()
@@ -1126,9 +1129,9 @@ export function createContact(data: {
     db.prepare(`
       INSERT INTO contacts (
         id, full_name, first_name, last_name, normalized_name, email, primary_company_id,
-        title, contact_type, linkedin_url, created_by_user_id, updated_by_user_id, created_at, updated_at
+        title, contact_type, linkedin_url, phone, city, state, created_by_user_id, updated_by_user_id, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     `).run(
       contactId,
       fullName,
@@ -1140,6 +1143,9 @@ export function createContact(data: {
       data.title?.trim() || null,
       data.contactType?.trim() || null,
       data.linkedinUrl ? normalizeLinkedinUrl(data.linkedinUrl) : null,
+      data.phone?.trim() || null,
+      data.city?.trim() || null,
+      data.state?.trim() || null,
       userId,
       userId
     )

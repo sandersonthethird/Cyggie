@@ -141,6 +141,7 @@
 .dataRow {
   border-bottom: 1px solid var(--color-bg-tertiary);
   height: 38px;
+  user-select: none;
 }
 
 .dataRow:hover .checkboxCol,

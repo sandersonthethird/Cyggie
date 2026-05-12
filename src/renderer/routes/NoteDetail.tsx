@@ -23,7 +23,7 @@
  *     navigate away with empty note ──► NOTES_DELETE (fire-and-forget)
  */
 
-import React, { useCallback, useEffect, useRef, useState, Component } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
@@ -38,6 +38,7 @@ import { useEditableTitle } from '../hooks/useEditableTitle'
 import { NoteTagger } from '../components/notes/NoteTagger'
 import { TagSuggestionBanner } from '../components/notes/TagSuggestionBanner'
 import { TiptapBubbleMenu } from '../components/common/TiptapBubbleMenu'
+import { ErrorBoundary } from '../components/common/ErrorBoundary'
 import { api } from '../api'
 import styles from './NoteDetail.module.css'
 import type { Note, TagSuggestion } from '../../shared/types/note'
@@ -45,27 +46,20 @@ import type { Meeting } from '../../shared/types/meeting'
 
 type SaveStatus = 'saved' | 'saving' | 'error'
 
-class NoteErrorBoundary extends Component<
-  { children: React.ReactNode; onBack: () => void },
-  { hasError: boolean }
-> {
-  state = { hasError: false }
-  static getDerivedStateFromError() { return { hasError: true } }
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[NoteDetail] Uncaught error:', error, info)
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
+function NoteErrorBoundary({ children, onBack }: { children: React.ReactNode; onBack: () => void }) {
+  return (
+    <ErrorBoundary
+      fallback={(_error, reset) => (
         <div className={styles.errorBoundary}>
           <p>Something went wrong loading this note.</p>
-          <button onClick={this.props.onBack}>← Back to notes</button>
-          <button onClick={() => this.setState({ hasError: false })}>Retry</button>
+          <button onClick={onBack}>← Back to notes</button>
+          <button onClick={reset}>Retry</button>
         </div>
-      )
-    }
-    return this.props.children
-  }
+      )}
+    >
+      {children}
+    </ErrorBoundary>
+  )
 }
 
 // ---------------------------------------------------------------------------

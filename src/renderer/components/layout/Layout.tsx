@@ -4,6 +4,7 @@ import Sidebar from './Sidebar'
 import { ChatPanelRoot } from '../chat-panel/ChatPanelRoot'
 import { AIChatPanel } from '../chat-panel/AIChatPanel'
 import { ChatToggle } from '../chat-panel/ChatToggle'
+import { PanelOutletProvider } from '../chat-panel/PanelOutletContext'
 import { useAppStore } from '../../stores/app.store'
 import { useRecordingStore } from '../../stores/recording.store'
 import { useChatStore } from '../../stores/chat.store'
@@ -237,17 +238,19 @@ export default function Layout() {
           <ChatToggle />
         </div>
       </div>
-      <ChatPanelRoot />
-      <div className={styles.body}>
-        <Sidebar />
-        <div className={styles.main}>
-          <div className={styles.content}>
-            <Outlet />
+      <PanelOutletProvider>
+        <ChatPanelRoot />
+        <div className={styles.body}>
+          <Sidebar />
+          <div className={styles.main}>
+            <div className={styles.content}>
+              <Outlet />
+            </div>
           </div>
+          {useReflow && <AIChatPanel overlay={false} />}
+          {useOverlay && <AIChatPanel overlay onBackdropTap={() => closePanel(false)} />}
         </div>
-        {useReflow && <AIChatPanel overlay={false} />}
-        {useOverlay && <AIChatPanel overlay onBackdropTap={() => closePanel(false)} />}
-      </div>
+      </PanelOutletProvider>
       {bannerEvent && (
         <div className={styles.meetingBanner}>
           <div className={styles.bannerInfo}>

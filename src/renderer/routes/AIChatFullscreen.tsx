@@ -3,6 +3,7 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useChatPanelStore } from '../stores/chat-panel.store'
 import { useChatStore } from '../stores/chat.store'
 import { useMediaQuery } from '../hooks/useMediaQuery'
+import { usePanelOutlet } from '../components/chat-panel/PanelOutletContext'
 import styles from './AIChatFullscreen.module.css'
 
 /**
@@ -37,9 +38,8 @@ export default function AIChatFullscreen() {
   const returnTo = useChatPanelStore((s) => s.returnTo)
   const setOpenSessionId = useChatPanelStore((s) => s.setOpenSessionId)
   const openSessionId = useChatPanelStore((s) => s.openSessionId)
-  const setMountPointThread = useChatPanelStore((s) => s.setMountPointThread)
-  const setMountPointComposer = useChatPanelStore((s) => s.setMountPointComposer)
   const panelSession = useChatStore((s) => s.panelSession)
+  const { setThreadEl, setComposerEl } = usePanelOutlet()
 
   // Mount: set popped state, sync openSessionId from URL, capture returnTo
   // (don't overwrite an existing returnTo from a previous pop-out).
@@ -97,14 +97,8 @@ export default function AIChatFullscreen() {
       </div>
 
       <div className={styles.column}>
-        <div
-          className={styles.threadSlot}
-          ref={(el) => setMountPointThread(el)}
-        />
-        <div
-          className={styles.composerSlot}
-          ref={(el) => setMountPointComposer(el)}
-        />
+        <div className={styles.threadSlot} ref={setThreadEl} />
+        <div className={styles.composerSlot} ref={setComposerEl} />
       </div>
     </div>
   )
