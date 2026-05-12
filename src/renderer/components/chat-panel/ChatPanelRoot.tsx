@@ -8,6 +8,7 @@ import { useChatStreaming } from '../../hooks/useChatStreaming'
 import { deriveChatContext, type ChatContextKind } from '../../../shared/utils/chat-context'
 import { PanelThread } from './PanelThread'
 import { PanelComposer } from './PanelComposer'
+import { usePanelOutlet } from './PanelOutletContext'
 import type { ChatKind } from '../../lib/chat-channels'
 import type { ChatPageContext, ContextOption } from '../../../shared/types/chat'
 import type { Note } from '../../../shared/types/note'
@@ -58,8 +59,7 @@ export function ChatPanelRoot() {
   const isOpen = useChatPanelStore((s) => s.isOpen)
   const popped = useChatPanelStore((s) => s.popped)
   const bumpAction = useChatPanelStore((s) => s.bumpAction)
-  const mountPointThread = useChatPanelStore((s) => s.mountPointThread)
-  const mountPointComposer = useChatPanelStore((s) => s.mountPointComposer)
+  const { threadEl, composerEl } = usePanelOutlet()
 
   const panelSession = useChatStore((s) => s.panelSession)
   const loadPanelSession = useChatStore((s) => s.loadPanelSession)
@@ -235,16 +235,16 @@ export function ChatPanelRoot() {
   // the rail has mounted its slots. createPortal accepts a non-null Element only.
   return (
     <>
-      {mountPointThread &&
+      {threadEl &&
         createPortal(
           <PanelThread
             isLoading={isLoading}
             streamedContent={streamedContent}
             large={popped}
           />,
-          mountPointThread
+          threadEl
         )}
-      {mountPointComposer &&
+      {composerEl &&
         createPortal(
           <PanelComposer
             kind={currentKind}
@@ -261,7 +261,7 @@ export function ChatPanelRoot() {
             placeholder={placeholder}
             large={popped}
           />,
-          mountPointComposer
+          composerEl
         )}
     </>
   )

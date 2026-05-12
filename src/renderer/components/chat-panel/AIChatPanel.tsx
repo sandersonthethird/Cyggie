@@ -7,6 +7,7 @@ import { useChatActions, type ChatSessionRow } from '../../hooks/useChatActions'
 import { PanelHeader } from './PanelHeader'
 import { PanelSwitcher } from './PanelSwitcher'
 import { ResizeHandle } from './ResizeHandle'
+import { usePanelOutlet } from './PanelOutletContext'
 import styles from './AIChatPanel.module.css'
 
 interface AIChatPanelProps {
@@ -42,12 +43,11 @@ export function AIChatPanel({ overlay, onBackdropTap }: AIChatPanelProps) {
   const setOpen = useChatPanelStore((s) => s.setOpen)
   const setPopped = useChatPanelStore((s) => s.setPopped)
   const setReturnTo = useChatPanelStore((s) => s.setReturnTo)
-  const setMountPointThread = useChatPanelStore((s) => s.setMountPointThread)
-  const setMountPointComposer = useChatPanelStore((s) => s.setMountPointComposer)
   const setOpenSessionId = useChatPanelStore((s) => s.setOpenSessionId)
   const openSessionId = useChatPanelStore((s) => s.openSessionId)
   const lastActionAt = useChatPanelStore((s) => s.lastActionAt)
   const bumpAction = useChatPanelStore((s) => s.bumpAction)
+  const { setThreadEl, setComposerEl } = usePanelOutlet()
 
   // Recents list for switcher mode + the open-session row highlight.
   const [sessions, setSessions] = useState<ChatSessionRow[]>([])
@@ -74,10 +74,12 @@ export function AIChatPanel({ overlay, onBackdropTap }: AIChatPanelProps) {
   const handlePopOut = useCallback(() => {
     if (!openSessionId) return
     setReturnTo(window.location.hash.replace(/^#/, '') || '/')
+    // popped=true alone removes the rail from Layout's render
+    // (useReflow = isOpen && !popped). Keeping isOpen=true means
+    // AIChatFullscreen's mount effect doesn't have to flip it back.
     setPopped(true)
-    setOpen(false)
     navigate(`/ai-chats/${openSessionId}`)
-  }, [openSessionId, setReturnTo, setPopped, setOpen, navigate])
+  }, [openSessionId, setReturnTo, setPopped, navigate])
 
   const handleClose = useCallback(() => {
     setOpen(false)
@@ -157,14 +159,8 @@ export function AIChatPanel({ overlay, onBackdropTap }: AIChatPanelProps) {
           />
         ) : (
           <>
-            <div
-              className={styles.threadSlot}
-              ref={(el) => setMountPointThread(el)}
-            />
-            <div
-              className={styles.composerSlot}
-              ref={(el) => setMountPointComposer(el)}
-            />
+            <div className={styles.threadSlot} ref={setThreadEl} />
+            <div className={styles.composerSlot} ref={setComposerEl} />
           </>
         )}
       </aside>

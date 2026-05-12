@@ -182,6 +182,9 @@ export default function Contacts() {
   const [newContactType, setNewContactType] = useState('')
   const [newLinkedinUrl, setNewLinkedinUrl] = useState('')
   const [newCompanyName, setNewCompanyName] = useState('')
+  const [newPhone, setNewPhone] = useState('')
+  const [newCity, setNewCity] = useState('')
+  const [newState, setNewState] = useState('')
   const createCardRef = useRef<HTMLDivElement>(null)
 
   // ── Dedup ─────────────────────────────────────────────────────────────────
@@ -845,7 +848,10 @@ export default function Contacts() {
           title: newTitle.trim() || null,
           contactType: newContactType || null,
           linkedinUrl: newLinkedinUrl.trim() || null,
-          companyName: newCompanyName.trim() || null
+          companyName: newCompanyName.trim() || null,
+          phone: newPhone.trim() || null,
+          city: newCity.trim() || null,
+          state: newState.trim() || null
         }
       )
       closeCreateForm()
@@ -856,6 +862,9 @@ export default function Contacts() {
       setNewContactType('')
       setNewLinkedinUrl('')
       setNewCompanyName('')
+      setNewPhone('')
+      setNewCity('')
+      setNewState('')
       navigate(`/contact/${created.id}`, { state: buildBackState(location, 'Contacts') })
     } catch (err) {
       setError(String(err))
@@ -1299,6 +1308,34 @@ export default function Contacts() {
                 placeholder="Company name"
                 value={newCompanyName}
                 onChange={(e) => setNewCompanyName(e.target.value)}
+              />
+            </div>
+            <div className={styles.createField}>
+              <label className={styles.createLabel}>Phone</label>
+              <input
+                className={styles.input}
+                type="tel"
+                placeholder="+1 555 123 4567"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+              />
+            </div>
+            <div className={styles.createField}>
+              <label className={styles.createLabel}>City</label>
+              <input
+                className={styles.input}
+                placeholder="e.g. San Francisco"
+                value={newCity}
+                onChange={(e) => setNewCity(e.target.value)}
+              />
+            </div>
+            <div className={styles.createField}>
+              <label className={styles.createLabel}>State</label>
+              <input
+                className={styles.input}
+                placeholder="e.g. CA"
+                value={newState}
+                onChange={(e) => setNewState(e.target.value)}
               />
             </div>
           </div>

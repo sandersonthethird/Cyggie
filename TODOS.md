@@ -1196,3 +1196,26 @@ this slow).
 **Effort:** S
 **Priority:** P3
 **Depends on:** Cancel-aware file-read loop (✅ landed in this PR via between-iteration check).
+
+---
+
+### Error telemetry forwarder
+**What:** Forward errors caught by `src/renderer/components/common/ErrorBoundary.tsx`
+to a real telemetry sink — Sentry, Datadog, or a main-process file logger over IPC.
+Today `componentDidCatch` only calls `console.error`, which is invisible unless the
+user happens to have devtools open.
+**Why:** This app is being actively iterated on. Bugs like the chat-panel
+white-screen would surface immediately if production crashes were captured.
+Without it, we depend on users noticing, reproducing, and reporting.
+**Pros:** Real-world failure modes surface without user effort; faster debug
+cycles; existing error boundary is the natural hook point.
+**Cons:** Greenfield infra in this app (no telemetry today); adds an external
+dependency or local logging surface; privacy review needed for any data
+leaving the user's machine.
+**Context:** `ErrorBoundary` was extracted alongside the chat-panel pop-out fix.
+The `componentDidCatch` method is the single hook point — any sink we pick plugs
+in there. Simplest stack: write to a JSON file in `app.getPath('logs')` via a
+new IPC channel; user can opt in to sharing.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Decision on telemetry stack.

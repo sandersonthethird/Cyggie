@@ -101,6 +101,9 @@ export function registerContactHandlers(): void {
         contactType?: string | null
         linkedinUrl?: string | null
         companyName?: string | null
+        phone?: string | null
+        city?: string | null
+        state?: string | null
       }
     ) => {
       if (!data?.fullName?.trim()) throw new Error('fullName is required')

@@ -26,8 +26,55 @@ import { AudioCaptureProvider } from './contexts/AudioCaptureContext'
 import { RunsProvider } from './contexts/RunsContext'
 import { NoticeModalProvider } from './components/common/NoticeModal'
 import DevAgentRuns from './routes/DevAgentRuns'
+import { ErrorBoundary } from './components/common/ErrorBoundary'
 import { IPC_CHANNELS } from '../shared/constants/channels'
 import { api } from './api'
+
+// Renderer-wide fallback. Renders only when an uncaught exception bubbles
+// out of every component below the root <ErrorBoundary/>. Reload is the
+// recovery path — transient state (draft messages, scroll positions) is
+// lost; persisted state is preserved.
+function RootErrorFallback() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100vh',
+        gap: '12px',
+        padding: '24px',
+        background: 'var(--color-bg)',
+        color: 'var(--color-text)',
+        fontFamily: 'inherit',
+      }}
+      role="alert"
+    >
+      <h2 style={{ margin: 0, fontSize: '18px' }}>Something went wrong</h2>
+      <p style={{ margin: 0, color: 'var(--color-text-secondary)', fontSize: '13px' }}>
+        Reload the app to recover. Your saved data is safe.
+      </p>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        style={{
+          padding: '8px 18px',
+          background: 'var(--cv-crimson, #B91C1C)',
+          color: '#fff',
+          border: 'none',
+          borderRadius: '6px',
+          fontSize: '13px',
+          fontWeight: 600,
+          cursor: 'pointer',
+          marginTop: '8px',
+        }}
+      >
+        Reload
+      </button>
+    </div>
+  )
+}
 
 function CalendarInit() {
   useCalendar()
@@ -96,48 +143,50 @@ function NotificationListener() {
 export default function App() {
   const isPopOut = new URLSearchParams(window.location.search).get('popout') === 'true'
   return (
-    <NoticeModalProvider>
-    <HashRouter>
-      <AudioCaptureProvider>
-        <RunsProvider>
-        <PreferencesInit />
-        {!isPopOut && <CalendarInit />}
-        {!isPopOut && <NotificationPermissionInit />}
-        {!isPopOut && <NotificationListener />}
-        <Routes>
-          {isPopOut ? (
-            <>
-              <Route path="/note/new" element={<NoteDetail />} />
-              <Route path="/note/:id" element={<NoteDetailLoaded />} />
-              <Route path="*" element={null} />
-            </>
-          ) : (
-            <Route element={<Layout />}>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/meetings" element={<MeetingsPage />} />
-              <Route path="/tasks" element={<Tasks />} />
-              <Route path="/search" element={<SearchResults />} />
-              <Route path="/notes" element={<Notes />} />
-              <Route path="/note/new" element={<NoteDetail />} />
-              <Route path="/note/:id" element={<NoteDetailLoaded />} />
-              <Route path="/recording" element={<LiveRecording />} />
-              <Route path="/pipeline" element={<Pipeline />} />
-              <Route path="/meeting/:id" element={<MeetingDetail />} />
-              <Route path="/companies" element={<Companies />} />
-              <Route path="/company/:companyId" element={<CompanyDetail />} />
-              <Route path="/contacts" element={<Contacts />} />
-              <Route path="/contact/:contactId" element={<ContactDetail />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/partner-meeting" element={<PartnerMeeting />} />
-              <Route path="/ai-chats" element={<AIChats />} />
-              <Route path="/ai-chats/:id" element={<AIChatFullscreen />} />
-              <Route path="/dev/agent-runs" element={<DevAgentRuns />} />
-            </Route>
-          )}
-        </Routes>
-        </RunsProvider>
-      </AudioCaptureProvider>
-    </HashRouter>
-    </NoticeModalProvider>
+    <ErrorBoundary fallback={() => <RootErrorFallback />}>
+      <NoticeModalProvider>
+      <HashRouter>
+        <AudioCaptureProvider>
+          <RunsProvider>
+          <PreferencesInit />
+          {!isPopOut && <CalendarInit />}
+          {!isPopOut && <NotificationPermissionInit />}
+          {!isPopOut && <NotificationListener />}
+          <Routes>
+            {isPopOut ? (
+              <>
+                <Route path="/note/new" element={<NoteDetail />} />
+                <Route path="/note/:id" element={<NoteDetailLoaded />} />
+                <Route path="*" element={null} />
+              </>
+            ) : (
+              <Route element={<Layout />}>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/meetings" element={<MeetingsPage />} />
+                <Route path="/tasks" element={<Tasks />} />
+                <Route path="/search" element={<SearchResults />} />
+                <Route path="/notes" element={<Notes />} />
+                <Route path="/note/new" element={<NoteDetail />} />
+                <Route path="/note/:id" element={<NoteDetailLoaded />} />
+                <Route path="/recording" element={<LiveRecording />} />
+                <Route path="/pipeline" element={<Pipeline />} />
+                <Route path="/meeting/:id" element={<MeetingDetail />} />
+                <Route path="/companies" element={<Companies />} />
+                <Route path="/company/:companyId" element={<CompanyDetail />} />
+                <Route path="/contacts" element={<Contacts />} />
+                <Route path="/contact/:contactId" element={<ContactDetail />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/partner-meeting" element={<PartnerMeeting />} />
+                <Route path="/ai-chats" element={<AIChats />} />
+                <Route path="/ai-chats/:id" element={<AIChatFullscreen />} />
+                <Route path="/dev/agent-runs" element={<DevAgentRuns />} />
+              </Route>
+            )}
+          </Routes>
+          </RunsProvider>
+        </AudioCaptureProvider>
+      </HashRouter>
+      </NoticeModalProvider>
+    </ErrorBoundary>
   )
 }

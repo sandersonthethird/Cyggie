@@ -102,6 +102,7 @@ async function showMeetingNotification(event: CalendarEvent): Promise<void> {
 
     // Focus Cyggie window and start recording
     focusAndRecord(event)
+    notification.close()
     activeNotifications.delete(notification)
   })
 

@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import {
   detectDeckPlatform,
@@ -124,6 +125,7 @@ export default function NewCompanyModal({
   onCreated,
   onClose,
 }: NewCompanyModalProps) {
+  const navigate = useNavigate()
   const [step, setStep] = useState<Step>('source-picker')
   const [formState, setFormState] = useState<CreateFormState>({ ...EMPTY_FORM, pipelineStage: defaultStage ?? '' })
   const [extractedResult, setExtractedResult] = useState<PitchDeckExtractionResult | null>(null)
@@ -320,10 +322,15 @@ export default function NewCompanyModal({
           // Deck path: runs LLM analysis + note creation + brief extraction
           api.invoke(IPC_CHANNELS.PARTNER_MEETING_ADD_PITCH_DECK_COMPANY, created.id, extractedResult)
             .then(() => {
-              new Notification('Added to partner sync', {
+              const notif = new Notification('Added to partner sync', {
                 body: `${companyName} was added to this week's partner sync with an AI-generated brief.`,
                 silent: true,
               })
+              notif.onclick = () => {
+                window.focus()
+                navigate(`/company/${created.id}`)
+                notif.close()
+              }
             })
             .catch((err: unknown) => console.error('[NewCompanyModal] pitch deck partner sync failed:', err))
         } else {
@@ -335,10 +342,15 @@ export default function NewCompanyModal({
                 companyId: created.id,
                 section: stageToDigestSection(formState.pipelineStage || null),
               }).then(() => {
-                new Notification('Added to partner sync', {
+                const notif = new Notification('Added to partner sync', {
                   body: `${companyName} was added to this week's partner sync.`,
                   silent: true,
                 })
+                notif.onclick = () => {
+                  window.focus()
+                  navigate(`/company/${created.id}`)
+                  notif.close()
+                }
               })
             })
             .catch((err: unknown) => console.error('[NewCompanyModal] manual partner sync add failed:', err))

@@ -13,12 +13,10 @@ import { getJSON, setJSON, removeKey } from '../lib/safe-storage'
  *   TRANSIENT (per-process):
  *     popped, returnTo, hasUnread, lastActionAt
  *     draftBySession, dismissedContextChips
- *     mountPointThread, mountPointComposer  ← portal targets, set by Rail/Fullscreen
  *
- * Why mountPoint* is state (not a ref): React.createPortal re-renders to a new
- * container only when the container value changes; refs don't trigger re-render
- * when reassigned. Storing the target as Zustand state means popping out (rail
- * unmounts → fullscreen mounts → setState fires) reliably swaps the portal.
+ * Portal mount points (the DOM nodes <ChatPanelRoot/> portals into) live in
+ * React Context via PanelOutletContext.tsx — not in this store. Refs are tied
+ * to React tree lifetimes, not to global app state.
  */
 
 export type ChatPanelMode = 'thread' | 'switcher'
@@ -59,11 +57,6 @@ interface ChatPanelState {
   /** Per-session in-memory dismissal of the context chip. Lifetime: process. */
   dismissedContextChips: Set<string>
 
-  /** DOM nodes to portal PanelThread / PanelComposer into. Set via ref
-   *  callbacks by AIChatPanel (rail) and AIChatFullscreen (route). */
-  mountPointThread: HTMLDivElement | null
-  mountPointComposer: HTMLDivElement | null
-
   // Actions
   setOpen: (open: boolean) => void
   toggleOpen: () => void
@@ -77,8 +70,6 @@ interface ChatPanelState {
   setDraft: (sessionId: string, text: string) => void
   clearDraft: (sessionId: string) => void
   dismissContextChip: (sessionId: string) => void
-  setMountPointThread: (el: HTMLDivElement | null) => void
-  setMountPointComposer: (el: HTMLDivElement | null) => void
 }
 
 // ── Initial state ────────────────────────────────────────────────────────
@@ -139,8 +130,6 @@ export const useChatPanelStore = create<ChatPanelState>((set, get) => ({
   lastActionAt: 0,
   draftBySession: {},
   dismissedContextChips: new Set<string>(),
-  mountPointThread: null,
-  mountPointComposer: null,
 
   setOpen: (isOpen) => {
     set({ isOpen, hasUnread: isOpen ? false : get().hasUnread })
@@ -189,9 +178,6 @@ export const useChatPanelStore = create<ChatPanelState>((set, get) => ({
     next.add(sessionId)
     set({ dismissedContextChips: next })
   },
-
-  setMountPointThread: (el) => set({ mountPointThread: el }),
-  setMountPointComposer: (el) => set({ mountPointComposer: el }),
 }))
 
 /** Internal: exposed for tests that want to reset between cases. */
@@ -207,7 +193,5 @@ export const __resetChatPanelStore = () => {
     lastActionAt: 0,
     draftBySession: {},
     dismissedContextChips: new Set(),
-    mountPointThread: null,
-    mountPointComposer: null,
   })
 }
