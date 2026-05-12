@@ -55,6 +55,49 @@
 }
 .toggle:hover { background: var(--surface, #fff); }
 
+.chevronBtn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-secondary, #6b7280);
+  padding: 2px 4px;
+  margin-right: 2px;
+  line-height: 1;
+}
+.chevronBtn:hover { color: var(--text, #111); }
+
+.dismissBtn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-secondary, #6b7280);
+  padding: 0 6px;
+  border-radius: 4px;
+}
+.dismissBtn:hover {
+  background: var(--surface, #fff);
+  color: var(--text, #111);
+}
+
+.rowDismissBtn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-secondary, #6b7280);
+  padding: 0 6px;
+  border-radius: 4px;
+  margin-left: auto;
+}
+.rowDismissBtn:hover {
+  background: var(--surface, #fff);
+  color: var(--text, #111);
+}
+
 .events {
   max-height: 240px;
   overflow-y: auto;

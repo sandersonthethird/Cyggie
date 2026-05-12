@@ -1,18 +1,31 @@
 /**
  * MemoEditModal — rich text editor modal for investment memos.
  *
- * Data flow:
- *   mount ──► loadContent(memo.latestVersion.contentMarkdown)
- *   user types ──► onUpdate → setContentDraft → useDebounce(800ms)
- *               ──► INVESTMENT_MEMO_SAVE_VERSION ──► onSaved(version)
- *               ──► savedContentRef.current = contentDraft (prevents re-save)
- *   close ──► flush: if contentDraft !== savedContentRef → final save ──► onClose()
- *
- * Spurious-save guard:
- *   savedContentRef is initialized to memo.latestVersion.contentMarkdown before
- *   loadContent is called. Tiptap normalizes markdown on first onUpdate — the
- *   debounced save only fires if debouncedContent !== savedContentRef.current.
- *   After each successful save, savedContentRef.current = contentDraft.
+ *   ┌──────────────────────────────────────────────────────────────────┐
+ *   │  Explicit-save model (no autosave)                                │
+ *   │                                                                   │
+ *   │   mount ──► loadContent(memo.latestVersion.contentMarkdown)       │
+ *   │                                                                   │
+ *   │   user types ──► onUpdate → setContentDraft                       │
+ *   │                  (no autosave; dirty pill shows "Unsaved")        │
+ *   │                                                                   │
+ *   │   user presses ⌘S or clicks Save ──► doSave(contentDraft)         │
+ *   │                                       │                            │
+ *   │                                       └─ savedContentRef = content │
+ *   │                                          dirty=false                │
+ *   │                                                                   │
+ *   │   close (X / Esc / overlay click):                                │
+ *   │     clean state    → onClose immediately                          │
+ *   │     dirty state    → ConfirmDialog: Discard | Save | Cancel       │
+ *   │                       Save → doSave → onClose                     │
+ *   │                       Discard → onClose                           │
+ *   │                       Cancel → return to editing                  │
+ *   │                                                                   │
+ *   │  Why no autosave: previous debounced-autosave model created       │
+ *   │  spurious "blank-change-note" versions (v3+) because Tiptap's     │
+ *   │  markdown serialization is non-deterministic enough that the      │
+ *   │  spurious-save guard lost races. Explicit > clever.               │
+ *   └──────────────────────────────────────────────────────────────────┘
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -24,9 +37,9 @@ import Link from '@tiptap/extension-link'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { InvestmentMemoVersion, InvestmentMemoWithLatest } from '../../../shared/types/company'
 import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
+import ConfirmDialog from '../common/ConfirmDialog'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
-import { useDebounce } from '../../hooks/useDebounce'
 import { useFindInPage } from '../../hooks/useFindInPage'
 import FindBar from '../common/FindBar'
 import { api } from '../../api'
@@ -102,15 +115,15 @@ function MemoEditModalInner({ memo, onSaved, onClose, initialFindQuery }: MemoEd
     loadContent(initialContent)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced auto-save
-  const debouncedContent = useDebounce(contentDraft, 800)
+  // Dirty state: contentDraft differs from the last-saved snapshot. Drives
+  // the "Unsaved" pill, Save button enabled-state, and close-confirm dialog.
+  const isDirty = contentDraft !== savedContentRef.current
 
-  useEffect(() => {
-    if (debouncedContent === savedContentRef.current) return
-    doSave(debouncedContent)
-  }, [debouncedContent]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Close-confirm dialog state for the dirty-close path.
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false)
 
-  async function doSave(content: string) {
+  async function doSave(content: string): Promise<boolean> {
+    if (saveStatus === 'saving') return false
     setSaveStatus('saving')
     try {
       const version = await api.invoke<InvestmentMemoVersion>(
@@ -124,45 +137,71 @@ function MemoEditModalInner({ memo, onSaved, onClose, initialFindQuery }: MemoEd
       // Clear "Saved" indicator after 2s
       if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current)
       saveStatusTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2000)
+      return true
     } catch {
       setSaveStatus('error')
+      return false
     }
   }
 
-  const handleClose = useCallback(async () => {
-    if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current)
-    if (contentDraft !== savedContentRef.current) {
-      try {
-        const version = await api.invoke<InvestmentMemoVersion>(
-          IPC_CHANNELS.INVESTMENT_MEMO_SAVE_VERSION,
-          memo.id,
-          { contentMarkdown: contentDraft, changeNote: null }
-        )
-        savedContentRef.current = contentDraft
-        onSaved(version)
-      } catch {
-        // Best-effort flush — close anyway
-      }
-    }
-    onClose()
-  }, [contentDraft, memo.id, onSaved, onClose])
+  const handleSave = useCallback(() => {
+    if (!isDirty) return
+    void doSave(contentDraft)
+  }, [isDirty, contentDraft]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Close intent: if clean, close immediately. If dirty, open the
+  // Discard/Save/Cancel confirm dialog.
+  const requestClose = useCallback(() => {
+    if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current)
+    if (!isDirty) {
+      onClose()
+      return
+    }
+    setConfirmDiscardOpen(true)
+  }, [isDirty, onClose])
+
+  // From within the confirm dialog: SAVE → save then close on success.
+  const handleConfirmSaveAndClose = useCallback(async () => {
+    const saved = await doSave(contentDraft)
+    if (saved) {
+      setConfirmDiscardOpen(false)
+      onClose()
+    }
+    // If save fails, leave the dialog open with the save-failed pill behind.
+  }, [contentDraft]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // From within the confirm dialog: DISCARD → close without saving.
+  const handleConfirmDiscard = useCallback(() => {
+    setConfirmDiscardOpen(false)
+    onClose()
+  }, [onClose])
+
+  // Keyboard: Escape closes (with dirty-confirm); ⌘S / Ctrl+S saves.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // ⌘S / Ctrl+S — save (preventDefault so the OS/browser doesn't capture it).
+      if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault()
+        // Don't fire save while find bar has focus (let it handle its own
+        // shortcuts in the future without conflict).
+        if (findOpenRef.current) return
+        handleSave()
+        return
+      }
       if (e.key === 'Escape') {
         // If find bar is open, let FindBar's own Escape handler close it first.
-        // findOpenRef.current is still true on this event even though setFindOpen(false)
-        // was called by FindBar — state update hasn't flushed yet.
         if (findOpenRef.current) return
-        void handleClose()
+        // If the confirm dialog is open, let IT handle Escape.
+        if (confirmDiscardOpen) return
+        requestClose()
       }
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [handleClose])
+  }, [handleSave, requestClose, confirmDiscardOpen])
 
   return createPortal(
-    <div className={styles.overlay} onClick={() => void handleClose()}>
+    <div className={styles.overlay} onClick={requestClose}>
       <div
         className={styles.modal}
         role="dialog"
@@ -172,12 +211,21 @@ function MemoEditModalInner({ memo, onSaved, onClose, initialFindQuery }: MemoEd
         {/* Header */}
         <div className={styles.header}>
           <span className={styles.title}>{memo.title}</span>
-          <span className={styles.saveStatus}>
-            {saveStatus === 'saving' && 'Saving…'}
-            {saveStatus === 'saved' && 'Saved'}
-            {saveStatus === 'error' && 'Save failed'}
+          <span className={`${styles.saveStatus} ${isDirty && saveStatus !== 'saving' ? styles.saveStatusDirty : ''} ${saveStatus === 'error' ? styles.saveStatusError : ''}`}>
+            {saveStatus === 'saving' ? 'Saving…' :
+             saveStatus === 'error' ? 'Save failed — retry' :
+             isDirty ? 'Unsaved changes' :
+             saveStatus === 'saved' ? 'Saved' : ''}
           </span>
-          <button className={styles.doneBtn} onClick={() => void handleClose()}>
+          <button
+            className={styles.saveBtn}
+            onClick={handleSave}
+            disabled={!isDirty || saveStatus === 'saving'}
+            title="Save (⌘S)"
+          >
+            Save
+          </button>
+          <button className={styles.doneBtn} onClick={requestClose}>
             Done
           </button>
         </div>
@@ -202,6 +250,19 @@ function MemoEditModalInner({ memo, onSaved, onClose, initialFindQuery }: MemoEd
         </div>
         <TiptapBubbleMenu editor={editor} />
       </div>
+
+      <ConfirmDialog
+        open={confirmDiscardOpen}
+        title="Unsaved changes"
+        message="You have unsaved changes. Save them, discard them, or keep editing?"
+        cancelLabel="Keep editing"
+        secondaryLabel="Discard"
+        confirmLabel="Save"
+        onCancel={() => setConfirmDiscardOpen(false)}
+        onSecondary={handleConfirmDiscard}
+        onConfirm={() => void handleConfirmSaveAndClose()}
+        errorMessage={saveStatus === 'error' ? 'Save failed — please retry.' : null}
+      />
     </div>,
     document.body
   )

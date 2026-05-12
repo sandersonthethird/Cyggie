@@ -90,9 +90,26 @@
 }
 
 .confirmButton:focus-visible,
-.cancelButton:focus-visible {
+.cancelButton:focus-visible,
+.secondaryButton:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+.secondaryButton {
+  padding: 7px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.secondaryButton:hover {
+  background: var(--color-bg-secondary);
 }
 
 .danger {
