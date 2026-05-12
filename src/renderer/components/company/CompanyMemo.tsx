@@ -108,10 +108,25 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
   // Rewrite `[source: <url>]` → `[¹](<url>)` before loading into TipTap, so
   // hovering a citation in the rendered memo can resolve back to its
   // evidence row. bySource is the URL→rows lookup the hover layer consumes.
-  const { processedMarkdown: processedMemoMarkdown, bySource: citationBySource } = useMemo(() => {
+  const {
+    processedMarkdown: processedMemoMarkdown,
+    bySource: citationBySource,
+    citationUrls,
+  } = useMemo(() => {
     const raw = displayedVersion?.contentMarkdown ?? ''
-    if (!raw) return { processedMarkdown: '', bySource: new Map() }
-    return preprocessMemoCitations(raw, evidence)
+    if (!raw) {
+      return {
+        processedMarkdown: '',
+        bySource: new Map<string, readonly import('../../../shared/types/memo-evidence').StoredMemoEvidence[]>(),
+        citationUrls: new Set<string>(),
+      }
+    }
+    const result = preprocessMemoCitations(raw, evidence)
+    // Set of canonical URLs the preprocessor rewrote. The hover layer uses
+    // this as its discriminator (rather than bySource) so citation markers
+    // without matching evidence rows still get the minimal domain popover.
+    const urls = new Set(result.citationNumber.keys())
+    return { ...result, citationUrls: urls }
   }, [displayedVersion?.contentMarkdown, evidence])
 
   // Load the active version's markdown into the editor whenever it changes.
@@ -755,8 +770,12 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
       {/* Hover layer for inline `[¹](url)` citations (Delight #4). Only mounts
           when there's at least one citation→evidence match, so plain memos
           without citations don't attach listeners. */}
-      {!generating && displayedVersion?.contentMarkdown && citationBySource.size > 0 && (
-        <CitationHoverLayer containerRef={memoBodyRef} bySource={citationBySource} />
+      {!generating && displayedVersion?.contentMarkdown && citationUrls.size > 0 && (
+        <CitationHoverLayer
+          containerRef={memoBodyRef}
+          bySource={citationBySource}
+          citationUrls={citationUrls}
+        />
       )}
 
       {latestGenerateMeta && displayedVersion?.id === memo?.latestVersion?.id && (
