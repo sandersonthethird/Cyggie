@@ -19,9 +19,19 @@ The roster is filtered by gates (Valuation is only present for Series A+; Refere
 5-6 bullets if there are that many genuinely compelling, well-supported items. 3-4 bullets if fewer hold up. **Omit the section entirely** (do not call submit_section for it) if no compelling thesis can be articulated from the inputs. Each bullet should be a complete, opinionated claim — **bold** the key claim, then a one-sentence justification.
 
 ## Business Description (narrative)
-- What the company does and its core product
+- What the company does and its core product (one or two sentences — high-level)
 - How it makes money (revenue model, pricing)
 - Who the target customer is
+- **Long-term vision** — quote or paraphrase the founder's articulated 5–10 year view of where the company is going. Be specific about scale, market position, or product expansion. If the founder hasn't articulated a vision in the available data, note that explicitly (e.g. "No long-term vision was articulated in the available meeting/note data").
+
+**DO NOT cover product UX, the specific problem being solved, or solution mechanics — those belong in the Product section below.**
+
+## Product (narrative)
+- **User experience** — how the user actually uses the product. Be specific about the surface (web app, mobile app, API, hardware, etc.) and the core workflows.
+- **Problem being solved** — the specific pain point or job-to-be-done. Be concrete: who feels this pain, when, and how acutely.
+- **How the product solves it** — the mechanism by which the product addresses the problem. What's the key insight or capability that makes it work?
+
+**DO NOT cover revenue model, target customer demographics, or company overview — those belong in Business Description.**
 
 ## Market / Industry (research)
 - Description of the industry and competitive landscape
@@ -31,7 +41,11 @@ The roster is filtered by gates (Valuation is only present for Series A+; Refere
 Bullet points listing the main categories of competitors with specific company names. Use `web_search` to surface both incumbents AND emerging startups. Cite each competitor mention via `cite_source`.
 
 ## Team (narrative)
-One bullet per founder and key executive. If a LinkedIn URL is in the External Research bundle, reference their background from it. Use `web_search` for additional founder background only if the External Research bundle is thin.
+One bullet per founder and key executive.
+
+**Render each team member's name as a markdown link to their LinkedIn URL when a URL is available** in the External Research bundle or CRM contact records. Format: `**[Jane Doe](https://linkedin.com/in/janedoe)**` — bold for emphasis, link target is the LinkedIn URL. If no LinkedIn URL is available for that person, use plain bold text: `**Jane Doe**`. Do NOT use `web_search` to find missing LinkedIn URLs — link only what's already in the available data.
+
+Reference each member's background from their LinkedIn URL in the bundle. Use `web_search` for additional founder background only if the External Research bundle is thin (NOT just to find a LinkedIn URL).
 
 ## Traction / Financials (narrative)
 - Revenue figures (if available)
@@ -55,7 +69,7 @@ For each reference, provide 3-4 bullets with key takeaways relevant to evaluatin
 
 For **Executive Summary, Investment Thesis, and Risks**, begin your section body with a `<thinking>...</thinking>` block where you reason through the synthesis — what evidence supports each bullet, what counter-points you considered, why your recommendation is what it is. The assembler will strip the `<thinking>` block before persisting; it is for the integrity of your reasoning, not for the reader.
 
-**Other sections (Business Description, Market, Competition, Team, Traction, GTM, Valuation, References) should NOT include a `<thinking>` block.** Be direct.
+**Other sections (Business Description, Product, Market, Competition, Team, Traction, GTM, Valuation, References) should NOT include a `<thinking>` block.** Be direct.
 
 # Tools
 

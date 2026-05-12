@@ -56,14 +56,15 @@ export const MEMO_SECTIONS: readonly MemoSection[] = [
   { heading: 'Executive Summary',     kind: 'synthesis', ordinal: 1,  required: true,  gate: null },
   { heading: 'Investment Thesis',     kind: 'synthesis', ordinal: 2,  required: false, gate: 'has_substantive_thesis' },
   { heading: 'Business Description',  kind: 'narrative', ordinal: 3,  required: true,  gate: null },
-  { heading: 'Market / Industry',     kind: 'research',  ordinal: 4,  required: true,  gate: null },
-  { heading: 'Competition',           kind: 'research',  ordinal: 5,  required: true,  gate: null },
-  { heading: 'Team',                  kind: 'narrative', ordinal: 6,  required: true,  gate: null },
-  { heading: 'Traction / Financials', kind: 'narrative', ordinal: 7,  required: true,  gate: null },
-  { heading: 'Go-To-Market',          kind: 'narrative', ordinal: 8,  required: true,  gate: null },
-  { heading: 'Valuation',             kind: 'research',  ordinal: 9,  required: false, gate: 'series_a_plus' },
-  { heading: 'Risks',                 kind: 'synthesis', ordinal: 10, required: true,  gate: null },
-  { heading: 'References',            kind: 'narrative', ordinal: 11, required: false, gate: 'has_reference_calls' },
+  { heading: 'Product',               kind: 'narrative', ordinal: 4,  required: true,  gate: null },
+  { heading: 'Market / Industry',     kind: 'research',  ordinal: 5,  required: true,  gate: null },
+  { heading: 'Competition',           kind: 'research',  ordinal: 6,  required: true,  gate: null },
+  { heading: 'Team',                  kind: 'narrative', ordinal: 7,  required: true,  gate: null },
+  { heading: 'Traction / Financials', kind: 'narrative', ordinal: 8,  required: true,  gate: null },
+  { heading: 'Go-To-Market',          kind: 'narrative', ordinal: 9,  required: true,  gate: null },
+  { heading: 'Valuation',             kind: 'research',  ordinal: 10, required: false, gate: 'series_a_plus' },
+  { heading: 'Risks',                 kind: 'synthesis', ordinal: 11, required: true,  gate: null },
+  { heading: 'References',            kind: 'narrative', ordinal: 12, required: false, gate: 'has_reference_calls' },
 ] as const
 
 export type MemoSectionHeading = SharedHeading
