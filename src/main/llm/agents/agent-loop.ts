@@ -145,6 +145,11 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
   let toolCallCount = 0
   let webSearchCount = 0
 
+  // Auto-strip safety net: when the model fails terminal Zod twice on the
+  // same array-indexed paths, the loop strips those rows and finalizes.
+  // Indexed by iteration; only iters with terminal-validation failures append.
+  const failedPathsByIter: string[][] = []
+
   // Prompt-cache breakpoint #3 (of 3): the initial user message contains the
   // scaffold (company overview, notes, transcripts, Exa research) — stable
   // across all iterations within a run. Wrap as an array with cache_control
@@ -345,7 +350,39 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
         return finalize('success', terminalCall.input)
       }
 
-      const errMsg = `terminal tool '${terminal.name}' input invalid: ${JSON.stringify(dispatch.output)}`
+      // Record the failed paths for this iteration so the auto-strip safety
+      // net can detect same-paths-twice-in-a-row.
+      const failedPaths = extractZodIssuePaths(dispatch.output)
+      failedPathsByIter.push(failedPaths)
+
+      // ── Auto-strip safety net ────────────────────────────────────────
+      // If the SAME array-indexed paths failed in the previous iteration
+      // too, the model can't self-correct. Strip those rows from the input
+      // and re-dispatch. On pass, finalize as success with a tool_error
+      // event so the trace UI surfaces what we did.
+      const repeatedArrayPaths = repeatedArrayPathsAcrossLastTwo(failedPathsByIter)
+      if (repeatedArrayPaths.length > 0) {
+        const stripped = stripArrayIndicesFromInput(terminalCall.input, repeatedArrayPaths)
+        if (stripped !== null) {
+          const retryDispatch = await terminal.dispatch(stripped, opts.ctx)
+          if (!retryDispatch.errorClass) {
+            opts.emit({
+              type: 'tool_error',
+              runId: opts.runId,
+              toolUseId: terminalCall.id,
+              message:
+                `auto-stripped ${repeatedArrayPaths.length} row(s) after repeated ` +
+                `validation failure: ${repeatedArrayPaths.join(', ')}`,
+            })
+            if (toolUses.length > 1) {
+              await dispatchSameTurnNonTerminals()
+            }
+            return finalize('success', stripped)
+          }
+        }
+      }
+
+      const errMsg = formatTerminalValidationError(terminal.name, dispatch.output)
       opts.emit({ type: 'tool_error', runId: opts.runId, toolUseId: terminalCall.id, message: errMsg })
 
       const toolResults: ToolResultBlockParam[] = [{
@@ -642,4 +679,127 @@ function summarize(toolName: string, output: unknown): string {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
+}
+
+// ─── terminal-validation recovery helpers ────────────────────────────────
+//
+// Contract source of truth: define-tool.ts:101 wraps Zod issues as
+//   { error: "invalid_input: path.a: msg; path.b: msg" }
+// using formatZodIssues at define-tool.ts:169 (separator: '; ').
+// The contract test in agent-loop.test.ts locks this shape.
+
+/**
+ * Format a terminal-tool Zod validation failure into a multi-line, structured
+ * message the model can act on in one iteration. Without the explicit ACTION
+ * directive, models (especially Haiku) sometimes mis-recover by running more
+ * research tools instead of just re-calling the terminal tool. The directive
+ * tells the model exactly what to do AND what NOT to do.
+ */
+function formatTerminalValidationError(toolName: string, dispatchOutput: unknown): string {
+  const paths = extractZodIssueLines(dispatchOutput)
+  if (paths.length === 0) {
+    // Envelope didn't match the expected shape; fall back to the legacy form
+    // so the model still sees the raw error.
+    return `terminal tool '${toolName}' input invalid: ${JSON.stringify(dispatchOutput)}`
+  }
+  return [
+    `terminal tool '${toolName}' input invalid.`,
+    'Validation errors:',
+    ...paths.map(p => `  • ${p}`),
+    `ACTION: Immediately re-call ${toolName} with the SAME memo markdown and SAME ` +
+      `evidence array, fixing only the field(s) listed above. If you cannot fix a ` +
+      `row, remove it from the evidence array. Do NOT call web_search, web_fetch, ` +
+      `or any other research tools — you already have what you need.`,
+  ].join('\n')
+}
+
+/**
+ * Pull the raw "path: message" lines out of the define-tool.ts envelope.
+ * Returns ['evidence.2.sourceUrl: web evidence requires a sourceUrl', …]
+ * or [] if the envelope shape doesn't match.
+ */
+function extractZodIssueLines(dispatchOutput: unknown): string[] {
+  if (!dispatchOutput || typeof dispatchOutput !== 'object') return []
+  const raw = (dispatchOutput as { error?: unknown }).error
+  if (typeof raw !== 'string') return []
+  const body = raw.replace(/^invalid_input:\s*/, '')
+  if (body === raw) return []   // envelope prefix missing → not our shape
+  return body.split(';').map(s => s.trim()).filter(Boolean)
+}
+
+/**
+ * Extract just the Zod issue path strings (left of the first ':') from the
+ * envelope. Used by the auto-strip safety net to compare path sets across
+ * iterations.
+ */
+function extractZodIssuePaths(dispatchOutput: unknown): string[] {
+  return extractZodIssueLines(dispatchOutput)
+    .map(line => line.split(':')[0]?.trim() ?? '')
+    .filter(Boolean)
+}
+
+/**
+ * Given paths like ['evidence.2.sourceUrl', 'evidence.4.sourceUrl'], return
+ * a deep-cloned `input` with `input.evidence[2]` and `input.evidence[4]`
+ * removed. Skips paths that don't look like `<array>.<index>.<rest>` since
+ * we can only safely strip indexed array elements (a top-level field like
+ * `markdown: required` has no row to remove).
+ *
+ * Returns `null` if no array indices were found to strip.
+ */
+function stripArrayIndicesFromInput(input: unknown, paths: string[]): unknown | null {
+  if (!input || typeof input !== 'object') return null
+  // Group indices by array key: { evidence: Set(2, 4), … }
+  const byArrayKey = new Map<string, Set<number>>()
+  for (const p of paths) {
+    const parts = p.split('.')
+    if (parts.length < 2) continue
+    const key = parts[0]
+    const idx = Number(parts[1])
+    if (!Number.isInteger(idx) || idx < 0) continue
+    if (!byArrayKey.has(key)) byArrayKey.set(key, new Set())
+    byArrayKey.get(key)!.add(idx)
+  }
+  if (byArrayKey.size === 0) return null
+
+  // Structured clone preserves nested objects; we only mutate the named arrays.
+  const cloned = JSON.parse(JSON.stringify(input)) as Record<string, unknown>
+  let didStrip = false
+  for (const [key, indices] of byArrayKey) {
+    const arr = cloned[key]
+    if (!Array.isArray(arr)) continue
+    // Drop highest index first so earlier indices remain valid during splice.
+    const sorted = [...indices].sort((a, b) => b - a)
+    for (const i of sorted) {
+      if (i < arr.length) {
+        arr.splice(i, 1)
+        didStrip = true
+      }
+    }
+  }
+  return didStrip ? cloned : null
+}
+
+/**
+ * Compute the array-indexed paths that failed in BOTH the latest two
+ * iterations. Used as the trigger for the auto-strip safety net: same paths
+ * twice in a row → the model can't self-correct → strip and salvage.
+ *
+ * Returns only paths shaped like `<key>.<integer>.<rest>` (e.g.
+ * `evidence.2.sourceUrl`). Top-level paths (e.g. `markdown`) and object-only
+ * paths (e.g. `meta.foo`) are excluded — those have no array row to remove.
+ */
+function repeatedArrayPathsAcrossLastTwo(failedPathsByIter: string[][]): string[] {
+  if (failedPathsByIter.length < 2) return []
+  const prev = new Set(failedPathsByIter[failedPathsByIter.length - 2])
+  const curr = failedPathsByIter[failedPathsByIter.length - 1]
+  const out: string[] = []
+  for (const p of curr) {
+    if (!prev.has(p)) continue
+    const parts = p.split('.')
+    if (parts.length < 2) continue
+    if (!Number.isInteger(Number(parts[1]))) continue
+    out.push(p)
+  }
+  return out
 }
