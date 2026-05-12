@@ -1,7 +1,5 @@
-import { useEffect, useState } from 'react'
 import { ConfidenceChip } from './ConfidenceChip'
-import { api } from '../../api'
-import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import { useMemoEvidence } from '../../hooks/useMemoEvidence'
 import styles from './EvidenceSidebar.module.css'
 
 /**
@@ -20,20 +18,7 @@ import styles from './EvidenceSidebar.module.css'
  *   └────────────────────────────────────────────────────────────────┘
  */
 
-interface StoredMemoEvidence {
-  id: string
-  versionId: string
-  claimText: string
-  claimCategory: string | null
-  sourceType: string
-  sourceId: string | null
-  sourceUrl: string | null
-  snippet: string
-  confidence: 'high' | 'medium' | 'low'
-  severity: 'high' | 'medium' | 'low' | null
-  isCritique: boolean
-  createdAt: string
-}
+import type { StoredMemoEvidence } from '../../../shared/types/memo-evidence'
 
 export interface EvidenceSidebarProps {
   versionId: string | null
@@ -43,23 +28,8 @@ export interface EvidenceSidebarProps {
 }
 
 export function EvidenceSidebar({ versionId, activeClaim, onClose }: EvidenceSidebarProps) {
-  const [allEvidence, setAllEvidence] = useState<StoredMemoEvidence[]>([])
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (!versionId) {
-      setAllEvidence([])
-      return
-    }
-    let cancelled = false
-    setLoading(true)
-    void api
-      .invoke<StoredMemoEvidence[]>(IPC_CHANNELS.MEMO_EVIDENCE_LIST_BY_VERSION, versionId)
-      .then(rows => { if (!cancelled) setAllEvidence(rows ?? []) })
-      .catch(() => { if (!cancelled) setAllEvidence([]) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [versionId])
+  const { evidence: allEvidence, loaded } = useMemoEvidence(versionId)
+  const loading = !loaded
 
   // Filter to the active claim. Use loose substring matching in either
   // direction so minor edits between the rendered memo and the persisted

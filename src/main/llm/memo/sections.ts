@@ -203,35 +203,7 @@ export function replaceSectionInMarkdown(md: string, heading: string, newBody: s
 
 // ─── URL canonicalization for the web_fetch allowlist ────────────────────
 
-/**
- * Canonical form for allowlist comparison. Two URLs that resolve to the same
- * resource should canonicalize to the same string.
- *
- *   - Lowercase host
- *   - Strip default ports (:80 for http, :443 for https)
- *   - Strip trailing slash from path (except root "/")
- *   - Preserve case-sensitive path + query
- *
- * Returns null if the URL is malformed (caller treats as not-allowlisted).
- */
-export function canonicalizeUrl(input: string): string | null {
-  let u: URL
-  try {
-    u = new URL(input)
-  } catch {
-    return null
-  }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-  u.hostname = u.hostname.toLowerCase()
-  if (
-    (u.protocol === 'http:' && u.port === '80') ||
-    (u.protocol === 'https:' && u.port === '443')
-  ) {
-    u.port = ''
-  }
-  if (u.pathname.length > 1 && u.pathname.endsWith('/')) {
-    u.pathname = u.pathname.replace(/\/+$/, '')
-  }
-  // URL re-serialization is canonical for our purposes.
-  return u.toString()
-}
+// Re-exported from shared/lib so the citation preprocessor (renderer) and
+// the producer agent's web_fetch allowlist (main) share byte-identical
+// canonicalization. Implementation lives in src/shared/lib/url-canonical.ts.
+export { canonicalizeUrl } from '../../../shared/lib/url-canonical'

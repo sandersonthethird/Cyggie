@@ -1,0 +1,84 @@
+.popover {
+  position: fixed;
+  z-index: 9999;
+  min-width: 240px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 10px 12px;
+  background: var(--color-bg, #fff);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+  /* Centered horizontally on the anchor, opens downward. */
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.multiHeader {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.row {
+  margin: 0;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.claim {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.35;
+}
+
+.snippet {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  line-height: 1.35;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
+.urlLink {
+  font-size: 11px;
+  color: var(--color-accent, #4a8cf7);
+  text-decoration: none;
+}
+
+.urlLink:hover {
+  text-decoration: underline;
+}

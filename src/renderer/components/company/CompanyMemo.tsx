@@ -17,18 +17,16 @@ import { EvidenceSidebar } from './EvidenceSidebar'
 import { ResearchLog } from './ResearchLog'
 import { MemoSectionProgress } from './MemoSectionProgress'
 import { MemoSectionsNav } from './MemoSectionsNav'
+import { CitationHoverLayer } from './CitationHoverLayer'
+import { useMemoEvidence } from '../../hooks/useMemoEvidence'
+import { preprocessMemoCitations } from '../../lib/memo-citation-preprocessor'
 import { useRunForCompany, useRuns } from '../../contexts/RunsContext'
 import FindBar from '../common/FindBar'
 import { Spinner } from '../common/Spinner'
 import styles from './CompanyMemo.module.css'
 import { api } from '../../api'
 
-interface StoredMemoEvidence {
-  id: string
-  versionId: string
-  claimText: string
-  isCritique: boolean
-}
+import type { StoredMemoEvidence } from '../../../shared/types/memo-evidence'
 
 interface CompanyMemoProps {
   companyId: string
@@ -102,12 +100,31 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     [companyId, displayedVersion?.id],
   )
 
+  // Load evidence rows for the active version. Drives critique heatmap,
+  // hover sidebar, section-source popover, AND the inline citation
+  // preprocessor.
+  const { evidence, loaded: evidenceLoaded } = useMemoEvidence(displayedVersion?.id)
+
+  // Rewrite `[source: <url>]` → `[¹](<url>)` before loading into TipTap, so
+  // hovering a citation in the rendered memo can resolve back to its
+  // evidence row. bySource is the URL→rows lookup the hover layer consumes.
+  const { processedMarkdown: processedMemoMarkdown, bySource: citationBySource } = useMemo(() => {
+    const raw = displayedVersion?.contentMarkdown ?? ''
+    if (!raw) return { processedMarkdown: '', bySource: new Map() }
+    return preprocessMemoCitations(raw, evidence)
+  }, [displayedVersion?.contentMarkdown, evidence])
+
   // Load the active version's markdown into the editor whenever it changes.
+  // BLOCK on evidence load completing so the citation preprocessor sees the
+  // matching evidence rows and rewrites `[source: url]` → `[¹](url)` BEFORE
+  // TipTap's first setContent. Otherwise the user briefly sees raw [source:]
+  // text, then a content swap resets scroll + find-in-page state.
   // The editor is recreated on the deps above, so this fires once per recreation.
   useEffect(() => {
     if (!memoEditor) return
-    loadMemoContent(displayedVersion?.contentMarkdown ?? '')
-  }, [memoEditor, displayedVersion?.contentMarkdown]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!evidenceLoaded) return
+    loadMemoContent(processedMemoMarkdown)
+  }, [memoEditor, processedMemoMarkdown, evidenceLoaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Guard: Cmd+F must not open find in the background when modal is active
   const handleFindOpen = useCallback(
@@ -193,21 +210,8 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     })
   }, [runs, companyId])
 
-  // Load evidence rows for the active version → drives critique heatmap +
-  // hover sidebar.
-  const [evidence, setEvidence] = useState<StoredMemoEvidence[]>([])
-  useEffect(() => {
-    if (!displayedVersion?.id) {
-      setEvidence([])
-      return
-    }
-    let cancelled = false
-    void api
-      .invoke<StoredMemoEvidence[]>(IPC_CHANNELS.MEMO_EVIDENCE_LIST_BY_VERSION, displayedVersion.id)
-      .then(rows => { if (!cancelled) setEvidence(rows ?? []) })
-      .catch(() => { if (!cancelled) setEvidence([]) })
-    return () => { cancelled = true }
-  }, [displayedVersion?.id])
+  // (evidence + preprocessed-markdown moved earlier in the component so they
+  // can feed the loadMemoContent useEffect; see top of body.)
 
   // Push critique claim_text strings into TipTap as decorations (red wavy underline).
   const critiqueClaims = useMemo(
@@ -715,6 +719,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         <MemoSectionsNav
           companyId={companyId}
           markdown={displayedVersion.contentMarkdown}
+          evidence={evidence}
           busy={generating || producerInFlight}
           onSectionRefreshed={(version) => {
             setMemo((prev) =>
@@ -724,6 +729,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
             )
           }}
           onError={(msg) => setErrorMsg(msg)}
+          onOpenSidebar={setActiveClaim}
         />
       )}
 
@@ -745,6 +751,13 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
           <EditorContent editor={memoEditor} />
         )}
       </div>
+
+      {/* Hover layer for inline `[¹](url)` citations (Delight #4). Only mounts
+          when there's at least one citation→evidence match, so plain memos
+          without citations don't attach listeners. */}
+      {!generating && displayedVersion?.contentMarkdown && citationBySource.size > 0 && (
+        <CitationHoverLayer containerRef={memoBodyRef} bySource={citationBySource} />
+      )}
 
       {latestGenerateMeta && displayedVersion?.id === memo?.latestVersion?.id && (
         <SourcesUsedFooter meta={latestGenerateMeta} />
