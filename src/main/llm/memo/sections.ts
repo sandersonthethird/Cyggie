@@ -1,3 +1,8 @@
+import {
+  MEMO_SECTION_HEADINGS,
+  type MemoSectionHeading as SharedHeading,
+} from '../../../shared/constants/memo-sections'
+
 /**
  * Single source of truth for memo section structure.
  *
@@ -61,7 +66,25 @@ export const MEMO_SECTIONS: readonly MemoSection[] = [
   { heading: 'References',            kind: 'narrative', ordinal: 11, required: false, gate: 'has_reference_calls' },
 ] as const
 
-export type MemoSectionHeading = (typeof MEMO_SECTIONS)[number]['heading']
+export type MemoSectionHeading = SharedHeading
+
+// Build-time invariant: the shared heading list must match the heading
+// field of the richer roster. Drift between the two breaks the section-
+// streaming UI and the section-refresh nav.
+{
+  const richerHeadings = MEMO_SECTIONS.map((s) => s.heading)
+  for (let i = 0; i < MEMO_SECTION_HEADINGS.length; i++) {
+    if (MEMO_SECTION_HEADINGS[i] !== richerHeadings[i]) {
+      throw new Error(
+        `MEMO_SECTION_HEADINGS / MEMO_SECTIONS drift at index ${i}: ` +
+          `shared has "${MEMO_SECTION_HEADINGS[i]}" but main has "${richerHeadings[i]}"`,
+      )
+    }
+  }
+  if (MEMO_SECTION_HEADINGS.length !== richerHeadings.length) {
+    throw new Error('MEMO_SECTION_HEADINGS length mismatch with MEMO_SECTIONS')
+  }
+}
 
 const HEADING_SET = new Set(MEMO_SECTIONS.map((s) => s.heading))
 const BY_HEADING = new Map(MEMO_SECTIONS.map((s) => [s.heading, s]))
