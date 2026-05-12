@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore, selectHasActiveFilters } from '../../stores/app.store'
+import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CategorizedSuggestions, ContentMatchPreview } from '../../../shared/types/meeting'
 import type { CompanySummary } from '../../../shared/types/company'
@@ -28,7 +29,6 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
   const setSearchFilter = useAppStore((s) => s.setSearchFilter)
   const [categorized, setCategorized] = useState<CategorizedSuggestions>({ people: [], companies: [], contacts: [], meetings: [], notes: [], contentMatches: [] })
   const [showSuggestions, setShowSuggestions] = useState(false)
-  const [activeSuggestion, setActiveSuggestion] = useState(-1)
   const suggestRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -62,6 +62,23 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
     for (const cm of categorized.contentMatches) items.push({ type: 'content', label: cm.title, id: cm.entityId, route: cm.route, snippet: cm.snippet, context: cm.context, entityType: cm.entityType })
     return items
   }, [categorized])
+
+  // ↑/↓/Esc come from the shared hook; Enter is intercepted by the site
+  // because it has a fallback (navigate to /search?q=…) when no suggestion
+  // is highlighted. initialIndex=-1 preserves the "Enter without arrowing
+  // → search page" behavior; wrap=true preserves the existing cycle behavior.
+  // listRef is intentionally not wired — items are nested inside section divs,
+  // so the hook's scroll-into-view (children[activeIndex]) would scroll to
+  // sections, not items. Pre-refactor SearchBar didn't have scroll-into-view.
+  const { activeIndex, setActiveIndex, onKeyDown: hookKeyDown } = useListboxNavigation(
+    flatItems,
+    {
+      initialIndex: -1,
+      wrap: true,
+      onSelect: () => {},
+      onEscape: () => setShowSuggestions(false),
+    }
+  )
 
   useEffect(() => {
     if (isEntityListPage) {
@@ -112,7 +129,7 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
         const hasResults = dedupedResults.people.length > 0 || results.companies.length > 0 || results.contacts.length > 0 || results.meetings.length > 0 || results.notes.length > 0 || results.contentMatches.length > 0
         setShowSuggestions(hasResults)
         if (hasResults) setShowFilterPanel(false)
-        setActiveSuggestion(-1)
+        setActiveIndex(-1)
       } catch (err) {
         console.error('Failed to fetch categorized suggestions:', err)
       }
@@ -137,7 +154,7 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
   const handleSuggestionSelect = useCallback(async (item: typeof flatItems[number]) => {
     setShowSuggestions(false)
     setCategorized({ people: [], companies: [], contacts: [], meetings: [], notes: [], contentMatches: [] })
-    setActiveSuggestion(-1)
+    setActiveIndex(-1)
     setValue(item.label)
     setSearchQuery(item.label)
     setSearchFilter(null)
@@ -266,25 +283,17 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      if (showSuggestions && activeSuggestion >= 0 && activeSuggestion < flatItems.length) {
-        void handleSuggestionSelect(flatItems[activeSuggestion])
+      if (showSuggestions && activeIndex >= 0 && activeIndex < flatItems.length) {
+        void handleSuggestionSelect(flatItems[activeIndex])
       } else if (value.trim()) {
         setShowSuggestions(false)
         navigate(`/search?q=${encodeURIComponent(value.trim())}`)
       }
       return
     }
-    if (!showSuggestions || flatItems.length === 0) return
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setActiveSuggestion((prev) => (prev + 1) % flatItems.length)
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setActiveSuggestion((prev) => (prev <= 0 ? flatItems.length - 1 : prev - 1))
-    } else if (e.key === 'Escape') {
-      setShowSuggestions(false)
-    }
-  }, [showSuggestions, flatItems, activeSuggestion, handleSuggestionSelect, value, navigate])
+    if (!showSuggestions) return
+    hookKeyDown(e)
+  }, [showSuggestions, flatItems, activeIndex, handleSuggestionSelect, value, navigate, hookKeyDown])
 
   const handleFilterToggle = useCallback(() => {
     setShowFilterPanel(!showFilterPanel)
@@ -342,9 +351,9 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
                   return (
                     <div
                       key={`person-${name}`}
-                      className={`${styles.suggestionItem} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
+                      className={`${styles.suggestionItem} ${i === activeIndex ? styles.suggestionActive : ''}`}
                       onMouseDown={() => { void handleSuggestionSelect({ type: 'person', label: name }) }}
-                      onMouseEnter={() => setActiveSuggestion(i)}
+                      onMouseEnter={() => setActiveIndex(i)}
                     >
                       {name}
                     </div>
@@ -360,9 +369,9 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
                   return (
                     <div
                       key={`company-${company.domain || company.name}`}
-                      className={`${styles.suggestionItem} ${styles.companySuggestion} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
+                      className={`${styles.suggestionItem} ${styles.companySuggestion} ${i === activeIndex ? styles.suggestionActive : ''}`}
                       onMouseDown={() => { void handleSuggestionSelect({ type: 'company', label: company.name, domain: company.domain }) }}
-                      onMouseEnter={() => setActiveSuggestion(i)}
+                      onMouseEnter={() => setActiveIndex(i)}
                     >
                       {company.domain && (
                         <img
@@ -386,9 +395,9 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
                   return (
                     <div
                       key={`contact-${ct.id}`}
-                      className={`${styles.suggestionItem} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
+                      className={`${styles.suggestionItem} ${i === activeIndex ? styles.suggestionActive : ''}`}
                       onMouseDown={() => { void handleSuggestionSelect({ type: 'contact', label: ct.label, id: ct.id }) }}
-                      onMouseEnter={() => setActiveSuggestion(i)}
+                      onMouseEnter={() => setActiveIndex(i)}
                     >
                       {ct.label}
                       {ct.context && (
@@ -407,9 +416,9 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
                   return (
                     <div
                       key={`meeting-${m.id}`}
-                      className={`${styles.suggestionItem} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
+                      className={`${styles.suggestionItem} ${i === activeIndex ? styles.suggestionActive : ''}`}
                       onMouseDown={() => { void handleSuggestionSelect({ type: 'meeting', label: m.title, id: m.id }) }}
-                      onMouseEnter={() => setActiveSuggestion(i)}
+                      onMouseEnter={() => setActiveIndex(i)}
                     >
                       {m.title}
                     </div>
@@ -425,9 +434,9 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
                   return (
                     <div
                       key={`note-${n.id}`}
-                      className={`${styles.suggestionItem} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
+                      className={`${styles.suggestionItem} ${i === activeIndex ? styles.suggestionActive : ''}`}
                       onMouseDown={() => { void handleSuggestionSelect({ type: 'note', label: n.label, id: n.id }) }}
-                      onMouseEnter={() => setActiveSuggestion(i)}
+                      onMouseEnter={() => setActiveIndex(i)}
                     >
                       {n.label}
                       {n.context && (
@@ -452,9 +461,9 @@ export default function SearchBar({ placeholder = 'Search meetings...', autoFocu
                   return (
                     <div
                       key={`content-${cm.entityType}-${cm.entityId}`}
-                      className={`${styles.suggestionItem} ${styles.contentSuggestion} ${i === activeSuggestion ? styles.suggestionActive : ''}`}
+                      className={`${styles.suggestionItem} ${styles.contentSuggestion} ${i === activeIndex ? styles.suggestionActive : ''}`}
                       onMouseDown={() => { void handleSuggestionSelect({ type: 'content', label: cm.title, id: cm.entityId, route: cm.route }) }}
-                      onMouseEnter={() => setActiveSuggestion(i)}
+                      onMouseEnter={() => setActiveIndex(i)}
                     >
                       <span className={styles.contentTypeBadge}>{cm.entityType}</span>
                       <span className={styles.contentTitle}>{cm.title}</span>

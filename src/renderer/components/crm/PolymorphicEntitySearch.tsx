@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { api } from '../../api'
+import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import styles from './PolymorphicEntitySearch.module.css'
 import type { CompanySummary } from '../../../shared/types/company'
 import type { ContactSummary } from '../../../shared/types/contact'
@@ -28,12 +29,19 @@ export function PolymorphicEntitySearch({
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<PolymorphicEntity[]>([])
   const [searching, setSearching] = useState(false)
-  const [activeIndex, setActiveIndex] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchIdRef = useRef(0)
+
+  const { activeIndex, setActiveIndex, onKeyDown, listRef } = useListboxNavigation(
+    results,
+    {
+      initialIndex: -1,
+      onSelect: (item) => onSelect(item),
+      onEscape: onClose
+    }
+  )
 
   // Focus on mount, load initial results
   useEffect(() => {
@@ -86,13 +94,6 @@ export function PolymorphicEntitySearch({
     })
   }
 
-  // Scroll active item into view
-  useEffect(() => {
-    if (activeIndex < 0 || !dropdownRef.current) return
-    const item = dropdownRef.current.children[activeIndex] as HTMLElement | undefined
-    item?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex])
-
   // Close on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -112,24 +113,9 @@ export function PolymorphicEntitySearch({
         placeholder={placeholder}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') { onClose(); return }
-          if (results.length === 0) return
-          if (e.key === 'ArrowDown') {
-            e.preventDefault()
-            setActiveIndex((i) => Math.min(i + 1, results.length - 1))
-          } else if (e.key === 'ArrowUp') {
-            e.preventDefault()
-            setActiveIndex((i) => Math.max(i - 1, 0))
-          } else if (e.key === 'Enter') {
-            e.preventDefault()
-            if (activeIndex >= 0 && activeIndex < results.length) {
-              onSelect(results[activeIndex])
-            }
-          }
-        }}
+        onKeyDown={onKeyDown}
       />
-      <div className={styles.dropdown} ref={dropdownRef}>
+      <div className={styles.dropdown} ref={listRef as React.RefObject<HTMLDivElement>}>
         {searching ? (
           <div className={styles.empty}>Searching…</div>
         ) : results.length === 0 ? (

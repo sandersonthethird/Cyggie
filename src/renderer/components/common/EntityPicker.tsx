@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PickerState } from '../../hooks/usePicker'
+import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import styles from './EntityPicker.module.css'
 
 interface EntityPickerProps<T extends { id: string }> {
@@ -11,6 +12,8 @@ interface EntityPickerProps<T extends { id: string }> {
   onCreate?: (query: string) => void
 }
 
+type NavItem<T> = { kind: 'result'; item: T } | { kind: 'create'; query: string }
+
 export function EntityPicker<T extends { id: string }>({
   picker,
   renderItem,
@@ -20,9 +23,7 @@ export function EntityPicker<T extends { id: string }>({
   onCreate
 }: EntityPickerProps<T>) {
   const [query, setQuery] = useState('')
-  const [activeIndex, setActiveIndex] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
 
   // Focus input on mount and load initial results
@@ -35,18 +36,6 @@ export function EntityPicker<T extends { id: string }>({
   useEffect(() => {
     picker.search(query)
   }, [query]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Reset active index when results change
-  useEffect(() => {
-    setActiveIndex(-1)
-  }, [picker.results])
-
-  // Scroll active item into view
-  useEffect(() => {
-    if (activeIndex < 0 || !dropdownRef.current) return
-    const item = dropdownRef.current.children[activeIndex] as HTMLElement | undefined
-    item?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex])
 
   // Close on outside click
   useEffect(() => {
@@ -61,7 +50,29 @@ export function EntityPicker<T extends { id: string }>({
 
   const { results, searching } = picker
   const hasCreate = !!onCreate && !!query.trim()
-  const totalItems = results.length + (hasCreate ? 1 : 0)
+
+  const navItems = useMemo<NavItem<T>[]>(() => {
+    const list: NavItem<T>[] = results.map((item) => ({ kind: 'result' as const, item }))
+    if (hasCreate) list.push({ kind: 'create', query: query.trim() })
+    return list
+  }, [results, hasCreate, query])
+
+  const { activeIndex, setActiveIndex, onKeyDown, listRef } = useListboxNavigation<NavItem<T>>(
+    navItems,
+    {
+      initialIndex: -1,
+      onEscape: onClose,
+      onSelect: (entry) => {
+        if (entry.kind === 'result') onSelect(entry.item)
+        else if (onCreate) onCreate(entry.query)
+      }
+    }
+  )
+
+  // Reset active index when results identity changes (new query batch).
+  useEffect(() => {
+    setActiveIndex(-1)
+  }, [results, setActiveIndex])
 
   return (
     <div className={styles.picker} ref={rootRef}>
@@ -71,26 +82,9 @@ export function EntityPicker<T extends { id: string }>({
         placeholder={placeholder}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') { onClose(); return }
-          if (totalItems === 0) return
-          if (e.key === 'ArrowDown') {
-            e.preventDefault()
-            setActiveIndex((i) => Math.min(i + 1, totalItems - 1))
-          } else if (e.key === 'ArrowUp') {
-            e.preventDefault()
-            setActiveIndex((i) => Math.max(i - 1, 0))
-          } else if (e.key === 'Enter') {
-            e.preventDefault()
-            if (activeIndex >= 0 && activeIndex < results.length) {
-              onSelect(results[activeIndex])
-            } else if (hasCreate && activeIndex === results.length) {
-              onCreate!(query.trim())
-            }
-          }
-        }}
+        onKeyDown={onKeyDown}
       />
-      <div className={styles.dropdown} ref={dropdownRef}>
+      <div className={styles.dropdown} ref={listRef as React.RefObject<HTMLDivElement>}>
         {searching ? (
           <div className={styles.empty}>Searching…</div>
         ) : results.length === 0 && !hasCreate ? (

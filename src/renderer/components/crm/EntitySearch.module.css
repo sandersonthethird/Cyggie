@@ -45,6 +45,7 @@
   cursor: pointer;
 }
 
-.option:hover {
+.option:hover,
+.optionActive {
   background: var(--color-bg-secondary);
 }

@@ -4,6 +4,7 @@ import { useHeaderChipOrder } from '../../hooks/useHeaderChipOrder'
 import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
 import { useFieldVisibility } from '../../hooks/useFieldVisibility'
 import { useSectionOrder } from '../../hooks/useSectionOrder'
+import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactDetail, LinkedInWorkEntry, LinkedInEducationEntry } from '../../../shared/types/contact'
@@ -230,10 +231,42 @@ export function ContactPropertiesPanel({
   const [companyDraft, setCompanyDraft] = useState(contact.primaryCompany?.canonicalName ?? '')
   const [companyAutocomplete, setCompanyAutocomplete] = useState<CompanySummary[] | null>(null)
   const companyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const companyAutocompleteItems = useMemo(() => companyAutocomplete ?? [], [companyAutocomplete])
+  const {
+    activeIndex: companyActiveIdx,
+    setActiveIndex: setCompanyActiveIdx,
+    onKeyDown: companyAutocompleteKeyDown,
+    listRef: companyAutocompleteRef,
+  } = useListboxNavigation(companyAutocompleteItems, {
+    initialIndex: 0,
+    onSelect: (c) => {
+      setCompanyDraft(c.canonicalName)
+      setCompanyAutocomplete(null)
+      void saveCompany(c.canonicalName)
+    },
+    onEscape: () => setCompanyAutocomplete(null),
+  })
+
   // Prior Company multi-value state
   const [priorCompanyDrafts, setPriorCompanyDrafts] = useState<PriorCompanyEntry[]>(() => parsePriorCompanies(contact.previousCompanies))
   const [priorCompanyAutocomplete, setPriorCompanyAutocomplete] = useState<{ index: number; results: CompanySummary[] } | null>(null)
   const priorCompanyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const priorCompanyAutocompleteItems = useMemo(
+    () => priorCompanyAutocomplete?.results ?? [],
+    [priorCompanyAutocomplete]
+  )
+  const {
+    activeIndex: priorCompanyActiveIdx,
+    setActiveIndex: setPriorCompanyActiveIdx,
+    onKeyDown: priorCompanyAutocompleteKeyDown,
+    listRef: priorCompanyAutocompleteRef,
+  } = useListboxNavigation(priorCompanyAutocompleteItems, {
+    initialIndex: 0,
+    onSelect: (c) => {
+      selectPriorCompanyAutocomplete({ name: c.canonicalName, companyId: c.id })
+    },
+    onEscape: () => setPriorCompanyAutocomplete(null),
+  })
   const firstNameInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [sessionNewFields, setSessionNewFields] = useState<string[] | null>(null)
@@ -626,6 +659,7 @@ export function ContactPropertiesPanel({
       try {
         const results = await api.invoke<CompanySummary[]>(IPC_CHANNELS.COMPANY_LIST, { query: value.trim(), limit: 6 })
         setCompanyAutocomplete(results ?? [])
+        setCompanyActiveIdx(0)
       } catch { /* ignore */ }
     }, 200)
   }
@@ -652,6 +686,7 @@ export function ContactPropertiesPanel({
       try {
         const results = await api.invoke<CompanySummary[]>(IPC_CHANNELS.COMPANY_LIST, { query: value.trim(), limit: 6 })
         setPriorCompanyAutocomplete({ index, results: results ?? [] })
+        setPriorCompanyActiveIdx(0)
       } catch { /* ignore */ }
     }, 200)
   }
@@ -1354,17 +1389,22 @@ export function ContactPropertiesPanel({
                 value={companyDraft}
                 placeholder="Company"
                 onChange={(e) => handleCompanyInput(e.target.value)}
+                onKeyDown={companyAutocompleteKeyDown}
                 onBlur={() => {
                   setTimeout(() => setCompanyAutocomplete(null), 150)
                   void saveCompany(companyDraft)
                 }}
               />
               {companyAutocomplete && companyAutocomplete.length > 0 && (
-                <div className={styles.priorCompanyAutocomplete}>
-                  {companyAutocomplete.map(c => (
+                <div
+                  className={styles.priorCompanyAutocomplete}
+                  ref={companyAutocompleteRef as React.RefObject<HTMLDivElement>}
+                >
+                  {companyAutocomplete.map((c, i) => (
                     <div
                       key={c.id}
-                      className={styles.priorCompanyAutocompleteItem}
+                      className={`${styles.priorCompanyAutocompleteItem} ${i === companyActiveIdx ? styles.priorCompanyAutocompleteItemActive : ''}`}
+                      onMouseEnter={() => setCompanyActiveIdx(i)}
                       onMouseDown={(e) => {
                         e.preventDefault()
                         setCompanyDraft(c.canonicalName)
@@ -1864,6 +1904,7 @@ export function ContactPropertiesPanel({
                                 value={priorCompanyName(entry)}
                                 placeholder="Company name"
                                 onChange={(e) => handlePriorCompanyInput(i, e.target.value)}
+                                onKeyDown={priorCompanyAutocomplete?.index === i ? priorCompanyAutocompleteKeyDown : undefined}
                                 onBlur={() => {
                                   setTimeout(() => setPriorCompanyAutocomplete(null), 150)
                                   savePriorCompanies(priorCompanyDrafts)
@@ -1878,11 +1919,15 @@ export function ContactPropertiesPanel({
                                 }}
                               >×</button>
                               {priorCompanyAutocomplete?.index === i && priorCompanyAutocomplete.results.length > 0 && (
-                                <div className={styles.priorCompanyAutocomplete}>
-                                  {priorCompanyAutocomplete.results.map(c => (
+                                <div
+                                  className={styles.priorCompanyAutocomplete}
+                                  ref={priorCompanyAutocompleteRef as React.RefObject<HTMLDivElement>}
+                                >
+                                  {priorCompanyAutocomplete.results.map((c, idx) => (
                                     <div
                                       key={c.id}
-                                      className={styles.priorCompanyAutocompleteItem}
+                                      className={`${styles.priorCompanyAutocompleteItem} ${idx === priorCompanyActiveIdx ? styles.priorCompanyAutocompleteItemActive : ''}`}
+                                      onMouseEnter={() => setPriorCompanyActiveIdx(idx)}
                                       onMouseDown={(e) => { e.preventDefault(); selectPriorCompanyAutocomplete({ name: c.canonicalName, companyId: c.id }) }}
                                     >{c.canonicalName}</div>
                                   ))}

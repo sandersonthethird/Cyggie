@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AddOptionInlineInput } from './AddOptionInlineInput'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { formatCurrency, formatDate } from '../../utils/format'
 import { useDebounce } from '../../hooks/useDebounce'
+import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import { EntitySearch } from './EntitySearch'
 import { chipStyle } from '../../utils/colorChip'
 import styles from './PropertyRow.module.css'
@@ -137,10 +138,36 @@ export function PropertyRow({
   // Multiselect dropdown state
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [draftSelected, setDraftSelected] = useState<string[]>([])
-  const [focusedIndex, setFocusedIndex] = useState(-1)
   const [search, setSearch] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  // Lifted out of renderEditor() so the keyboard hook can see them at the top
+  // of the component (hooks can't live inside conditional render branches).
+  const multiselectParsed = useMemo(
+    () => (type === 'multiselect' ? safeParseOptions(options) : []),
+    [type, options]
+  )
+  const multiselectFiltered = useMemo(
+    () => (search
+      ? multiselectParsed.filter((o) => optionLabel(o).toLowerCase().includes(search.toLowerCase()))
+      : multiselectParsed),
+    [multiselectParsed, search]
+  )
+
+  // Hook owns ↑/↓; site keeps Space (toggle), Enter/Escape (close+save).
+  // listRef intentionally not used — the dropdown mixes a search input + Clear-all
+  // button with the option rows, so children[activeIndex] wouldn't map cleanly.
+  // Pre-refactor PropertyRow had no scroll-into-view either.
+  const {
+    activeIndex: focusedIndex,
+    setActiveIndex: setFocusedIndex,
+    onKeyDown: hookKeyDown,
+  } = useListboxNavigation(multiselectFiltered, {
+    initialIndex: -1,
+    wrap: true,
+    onSelect: () => {},
+  })
 
   const debouncedEdit = useDebounce(editValue, 300)
 
@@ -356,10 +383,8 @@ export function PropertyRow({
       }
 
       case 'multiselect': {
-        const parsedOpts = safeParseOptions(options)
-        const filteredOpts = search
-          ? parsedOpts.filter(o => optionLabel(o).toLowerCase().includes(search.toLowerCase()))
-          : parsedOpts
+        const parsedOpts = multiselectParsed
+        const filteredOpts = multiselectFiltered
 
         if (addingOption) {
           return (
@@ -423,22 +448,20 @@ export function PropertyRow({
               tabIndex={-1}
               onKeyDown={(e) => {
                 const opts = filteredOpts
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault()
-                  setFocusedIndex(i => opts.length === 0 ? -1 : (i + 1) % opts.length)
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  setFocusedIndex(i => opts.length === 0 ? -1 : (i - 1 + opts.length) % opts.length)
-                } else if (e.key === ' ' && focusedIndex >= 0 && focusedIndex < opts.length) {
+                if (e.key === ' ' && focusedIndex >= 0 && focusedIndex < opts.length) {
                   e.preventDefault()
                   const val = optionValue(opts[focusedIndex])
                   setDraftSelected(prev =>
                     prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]
                   )
-                } else if (e.key === 'Escape' || e.key === 'Enter') {
+                  return
+                }
+                if (e.key === 'Escape' || e.key === 'Enter') {
                   e.preventDefault()
                   closeAndSave()
+                  return
                 }
+                hookKeyDown(e)
               }}
             >
               {/* Search input — only when 5+ options */}

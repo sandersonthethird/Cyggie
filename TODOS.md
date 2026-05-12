@@ -1219,3 +1219,27 @@ new IPC channel; user can opt in to sharing.
 **Effort:** M
 **Priority:** P3
 **Depends on:** Decision on telemetry stack.
+
+---
+
+### TextFilter: arrow-key navigation on suggestions
+**What:** Wire `src/renderer/components/crm/TextFilter.tsx` to the `useListboxNavigation` hook so arrow keys + Enter select from filter suggestions. Today only Esc/Enter are handled (lines 57-59).
+**Why:** Inconsistent with the autocomplete-keyboard work landing in the keyboard-nav refactor PR — every other autocomplete in the app supports arrows after that PR; this one was deferred to keep scope manageable.
+**Pros:** ~5-min change once the hook exists; restores keyboard parity across all dropdowns.
+**Cons:** None significant.
+**Context:** Keyboard handler at `TextFilter.tsx:57-59`. Follow the pattern used in the post-refactor `EntitySearch.tsx` (input + flat list + dropdown) — almost identical shape.
+**Effort:** S
+**Priority:** P3
+**Depends on:** `useListboxNavigation` hook landed in autocomplete-keyboard refactor.
+
+---
+
+### CommandPalette: arrow-key navigation on grouped results
+**What:** Wire `src/renderer/components/common/CommandPalette.tsx` grouped results to `useListboxNavigation`. Currently only Escape is handled (lines 112-119); arrow keys do nothing on the grouped result list (lines 175-199).
+**Why:** A command palette without keyboard navigation is broken UX for keyboard-first users.
+**Pros:** Standardizes on the hook used everywhere else.
+**Cons:** Grouped results require the same flatten-in-site pattern used by SearchBar in the refactor PR — non-trivial because skipped section headers must be rendered alongside the keyboard-navigable rows. Deserves its own QA pass.
+**Context:** Use SearchBar's post-refactor pattern as the reference (flatten groups into `selectableItems[]`, render headers as decorative siblings).
+**Effort:** S
+**Priority:** P3
+**Depends on:** `useListboxNavigation` hook + SearchBar grouped-results pattern landed.

@@ -29,6 +29,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useInvestorChips, type InvestorEntry } from '../../hooks/useInvestorChips'
+import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import { CompanyChip } from '../common/CompanyChip'
 import type { CompanySummary } from '../../../shared/types/company'
 import styles from './InvestorChipsCell.module.css'
@@ -101,7 +102,6 @@ export function InvestorChipsCell({
   const [input, setInput] = useState('')
   const [popoverPos, setPopoverPos] = useState<PopoverPos | null>(null)
   const [dedupCandidate, setDedupCandidate] = useState<DedupCandidate | null>(null)
-  const [activeSuggestionIdx, setActiveSuggestionIdx] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
@@ -286,18 +286,29 @@ export function InvestorChipsCell({
     }
   }, [chips, parseList, findOrCreate, addChip])
 
-  // ── Search effect ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!isEditing) return
-    search(input)
-    setActiveSuggestionIdx(0)
-  }, [input, isEditing, search])
-
   // ── Filter suggestions (drop already-added) ────────────────────────────────
   const filteredSuggestions = useMemo(
     () => suggestions.filter((s) => !chips.some((c) => c.id === s.id)),
     [suggestions, chips]
   )
+
+  // Keyboard nav. Enter / Tab / Backspace are handled by the site's own
+  // handler below (top-hit prefix-match auto-add, Tab confirm-and-close,
+  // Backspace pops the last chip); the hook only owns ↑/↓.
+  const { activeIndex, setActiveIndex, onKeyDown: hookKeyDown, listRef } = useListboxNavigation(
+    filteredSuggestions,
+    {
+      initialIndex: 0,
+      onSelect: () => {},
+    }
+  )
+
+  // ── Search effect ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isEditing) return
+    search(input)
+    setActiveIndex(0)
+  }, [input, isEditing, search]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Commit current input as a chip ─────────────────────────────────────────
   const commitInput = useCallback(async () => {
@@ -336,11 +347,11 @@ export function InvestorChipsCell({
         return
       }
       // If user navigated to a specific suggestion, pick that
-      if (filteredSuggestions[activeSuggestionIdx] && activeSuggestionIdx < filteredSuggestions.length) {
-        const sel = filteredSuggestions[activeSuggestionIdx]
+      if (filteredSuggestions[activeIndex] && activeIndex < filteredSuggestions.length) {
+        const sel = filteredSuggestions[activeIndex]
         // Only auto-pick suggestion if it's a clear match (top hit) — otherwise commitInput's
         // logic decides between exact/fuzzy/create.
-        const isTopHit = activeSuggestionIdx === 0 && filteredSuggestions.length > 0
+        const isTopHit = activeIndex === 0 && filteredSuggestions.length > 0
         if (isTopHit && input.trim().length >= 3 && normalizeName(sel.canonicalName).startsWith(normalizeName(input.trim()))) {
           addChip({ id: sel.id, name: sel.canonicalName, domain: sel.primaryDomain ?? null })
           setInput('')
@@ -370,20 +381,10 @@ export function InvestorChipsCell({
       return
     }
 
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setActiveSuggestionIdx((i) => Math.min(filteredSuggestions.length - 1, i + 1))
-      return
-    }
-
-    if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setActiveSuggestionIdx((i) => Math.max(0, i - 1))
-      return
-    }
+    hookKeyDown(e)
   }, [
-    dedupCandidate, input, chips, filteredSuggestions, activeSuggestionIdx,
-    handleCommitAndClose, commitInput, addChip,
+    dedupCandidate, input, chips, filteredSuggestions, activeIndex,
+    handleCommitAndClose, commitInput, addChip, hookKeyDown,
   ])
 
   // ── Dedup confirm handlers ─────────────────────────────────────────────────
@@ -491,13 +492,13 @@ export function InvestorChipsCell({
             Enter to add · Backspace removes last · Esc to close
           </div>
           {filteredSuggestions.length > 0 && (
-            <ul className={styles.suggestionList}>
+            <ul className={styles.suggestionList} ref={listRef as React.RefObject<HTMLUListElement>}>
               {filteredSuggestions.slice(0, 8).map((s, idx) => (
                 <li key={s.id}>
                   <button
                     type="button"
-                    className={`${styles.suggestionItem} ${idx === activeSuggestionIdx ? styles.active : ''}`}
-                    onMouseEnter={() => setActiveSuggestionIdx(idx)}
+                    className={`${styles.suggestionItem} ${idx === activeIndex ? styles.active : ''}`}
+                    onMouseEnter={() => setActiveIndex(idx)}
                     onClick={() => {
                       addChip({ id: s.id, name: s.canonicalName, domain: s.primaryDomain ?? null })
                       setInput('')

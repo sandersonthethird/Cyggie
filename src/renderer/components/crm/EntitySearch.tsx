@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useDebounce } from '../../hooks/useDebounce'
+import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import styles from './EntitySearch.module.css'
 
 interface EntitySearchProps {
@@ -20,6 +21,19 @@ export function EntitySearch({ entityType, onSelect, placeholder }: EntitySearch
   const [open, setOpen] = useState(false)
   const debouncedQuery = useDebounce(query, 250)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  function handleSelect(result: SearchResult) {
+    onSelect(result.id, result.label)
+    setQuery('')
+    setResults([])
+    setOpen(false)
+  }
+
+  const { activeIndex, setActiveIndex, onKeyDown, listRef } = useListboxNavigation(results, {
+    initialIndex: 0,
+    onSelect: handleSelect,
+    onEscape: () => setOpen(false),
+  })
 
   useEffect(() => {
     if (!debouncedQuery.trim()) {
@@ -42,16 +56,10 @@ export function EntitySearch({ entityType, onSelect, placeholder }: EntitySearch
           }))
         )
         setOpen(true)
+        setActiveIndex(0)
       })
       .catch(() => setResults([]))
-  }, [debouncedQuery, entityType])
-
-  function handleSelect(result: SearchResult) {
-    onSelect(result.id, result.label)
-    setQuery('')
-    setResults([])
-    setOpen(false)
-  }
+  }, [debouncedQuery, entityType, setActiveIndex])
 
   return (
     <div className={styles.root} ref={inputRef as React.RefObject<HTMLDivElement>}>
@@ -59,14 +67,20 @@ export function EntitySearch({ entityType, onSelect, placeholder }: EntitySearch
         className={styles.input}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={onKeyDown}
         placeholder={placeholder ?? `Search ${entityType}…`}
         onFocus={() => debouncedQuery && setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
       />
       {open && results.length > 0 && (
-        <div className={styles.dropdown}>
-          {results.map((r) => (
-            <button key={r.id} className={styles.option} onMouseDown={() => handleSelect(r)}>
+        <div className={styles.dropdown} ref={listRef as React.RefObject<HTMLDivElement>}>
+          {results.map((r, i) => (
+            <button
+              key={r.id}
+              className={`${styles.option} ${i === activeIndex ? styles.optionActive : ''}`}
+              onMouseEnter={() => setActiveIndex(i)}
+              onMouseDown={() => handleSelect(r)}
+            >
               {r.label}
             </button>
           ))}

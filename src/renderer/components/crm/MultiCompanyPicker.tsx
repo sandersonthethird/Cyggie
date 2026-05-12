@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useInvestorChips, type InvestorEntry } from '../../hooks/useInvestorChips'
+import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import { CompanyChip } from '../common/CompanyChip'
 import styles from './MultiCompanyPicker.module.css'
 
@@ -46,7 +47,6 @@ export function MultiCompanyPicker({ value, onChange, readOnly = false, maxChips
   const navigate = useNavigate()
   const [adding, setAdding] = useState(false)
   const [input, setInput] = useState('')
-  const [activeIdx, setActiveIdx] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -65,6 +65,22 @@ export function MultiCompanyPicker({ value, onChange, readOnly = false, maxChips
     [suggestions, entries]
   )
 
+  // Keyboard nav over the filtered suggestions. Enter is intercepted below
+  // (top-hit prefix-match auto-add) before it can reach the hook, so we
+  // route the hook's onSelect to a no-op — site owns Enter end-to-end.
+  const { activeIndex, setActiveIndex, onKeyDown: hookKeyDown, listRef } = useListboxNavigation(
+    filtered,
+    {
+      initialIndex: 0,
+      onSelect: () => {},
+      onEscape: () => {
+        setAdding(false)
+        setInput('')
+        setError(null)
+      }
+    }
+  )
+
   useEffect(() => {
     if (adding) inputRef.current?.focus()
   }, [adding])
@@ -72,8 +88,8 @@ export function MultiCompanyPicker({ value, onChange, readOnly = false, maxChips
   useEffect(() => {
     if (!adding) return
     search(input)
-    setActiveIdx(0)
-  }, [input, adding, search])
+    setActiveIndex(0)
+  }, [input, adding, search]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Click outside closes adding mode
   useEffect(() => {
@@ -140,12 +156,14 @@ export function MultiCompanyPicker({ value, onChange, readOnly = false, maxChips
     }
   }, [input, filtered, addEntry, fuzzyMatch, findOrCreate])
 
+  // Enter is intercepted here for top-hit prefix-match auto-add (preserved
+  // pre-refactor behavior); the hook handles ↑/↓/Esc.
   const handleKeyDown = useCallback(async (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      if (filtered[activeIdx] && activeIdx < filtered.length && input.trim()) {
-        const sel = filtered[activeIdx]
-        const isTopHit = activeIdx === 0
+      if (filtered[activeIndex] && activeIndex < filtered.length && input.trim()) {
+        const sel = filtered[activeIndex]
+        const isTopHit = activeIndex === 0
         if (isTopHit && input.trim().length >= 3 && normalizeName(sel.canonicalName).startsWith(normalizeName(input.trim()))) {
           addEntry({ id: sel.id, name: sel.canonicalName, domain: sel.primaryDomain ?? null })
           setInput('')
@@ -155,24 +173,8 @@ export function MultiCompanyPicker({ value, onChange, readOnly = false, maxChips
       await commitInput()
       return
     }
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      setAdding(false)
-      setInput('')
-      setError(null)
-      return
-    }
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setActiveIdx((i) => Math.min(filtered.length - 1, i + 1))
-      return
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setActiveIdx((i) => Math.max(0, i - 1))
-      return
-    }
-  }, [activeIdx, filtered, input, addEntry, commitInput])
+    hookKeyDown(e)
+  }, [activeIndex, filtered, input, addEntry, commitInput, hookKeyDown])
 
   return (
     <div ref={wrapRef} className={styles.container}>
@@ -215,6 +217,7 @@ export function MultiCompanyPicker({ value, onChange, readOnly = false, maxChips
             />
             {filtered.length > 0 && (
               <ul
+                ref={listRef as React.RefObject<HTMLUListElement>}
                 style={{
                   position: 'absolute',
                   top: '100%',
@@ -236,7 +239,7 @@ export function MultiCompanyPicker({ value, onChange, readOnly = false, maxChips
                   <li key={s.id}>
                     <button
                       type="button"
-                      onMouseEnter={() => setActiveIdx(idx)}
+                      onMouseEnter={() => setActiveIndex(idx)}
                       onClick={() => {
                         addEntry({ id: s.id, name: s.canonicalName, domain: s.primaryDomain ?? null })
                         setInput('')
@@ -245,7 +248,7 @@ export function MultiCompanyPicker({ value, onChange, readOnly = false, maxChips
                       style={{
                         width: '100%',
                         textAlign: 'left',
-                        background: idx === activeIdx ? 'var(--color-bg-secondary)' : 'transparent',
+                        background: idx === activeIndex ? 'var(--color-bg-secondary)' : 'transparent',
                         border: 'none',
                         padding: '5px 8px',
                         fontSize: 12,
