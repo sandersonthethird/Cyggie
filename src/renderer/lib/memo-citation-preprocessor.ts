@@ -72,11 +72,24 @@ export function toSuperscript(n: number): string {
   return out
 }
 
-// Matches `[source: <url>]` where url is http(s)://… stopping at whitespace
-// or `]`. Captures the raw URL (group 1).
+// Matches the producer's inline citation patterns. The original spec was
+// `[source: <url>]` (brackets around the whole thing) but in practice the
+// model frequently emits `source: [<url>]` (brackets around just the URL,
+// which markdown then auto-links). Accept BOTH so the rewrite catches all
+// real-world output, including memos already in the DB.
+//
+// Patterns matched (both produce the same capture group 1 = url):
+//   1.  [source: https://x.com]    — original spec
+//   2.  source: [https://x.com]    — what the model often emits
+//
+// The non-capturing alternation handles the variant prefix; the trailing `]`
+// is shared between both forms.
+//
+//   - case-insensitive `source` (model sometimes capitalizes)
 //   - `\s*` after `source:` allows missing space
-//   - `[^\s\]]+` excludes whitespace AND `]` so the bracket terminates cleanly
-const CITATION_RE = /\[source:\s*(https?:\/\/[^\s\]]+)\]/g
+//   - `[^\s\)\]]+` for URL excludes whitespace, `)` and `]` so the bracket
+//     terminates cleanly without swallowing punctuation
+const CITATION_RE = /(?:\[source:\s*|source:\s*\[)(https?:\/\/[^\s\)\]]+)\]/gi
 
 /**
  * Preprocess a memo's markdown to convert inline `[source: <url>]` patterns

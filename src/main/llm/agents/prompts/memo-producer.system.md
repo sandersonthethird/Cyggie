@@ -88,6 +88,8 @@ Call only when every required section in the roster has been submitted. Validati
 
 For factual claims about market size, competitor names, founder background, funding events: inline-cite as `[source: <url>]` for web sources, and call `cite_source` to record the structured evidence. Internal facts (from meetings, notes, files) do not need inline citations — but **call `cite_source` for them too** so the persisted evidence trail is complete.
 
+**Exact citation format (must match):** the literal characters `[source: ` then the full URL then `]`. The opening `[` comes BEFORE `source:`, not after — i.e. write `[source: https://example.com/path]`, NOT `source: [https://example.com/path]`. The renderer's preprocessor rewrites both forms to numbered superscripts but the first form is canonical.
+
 # Stop conditions
 
 Call `done({})` when:

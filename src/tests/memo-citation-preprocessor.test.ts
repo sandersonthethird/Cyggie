@@ -71,6 +71,36 @@ describe('preprocessMemoCitations', () => {
     expect(processedMarkdown).toBe('Claim A [¹](https://gartner.com/report).')
   })
 
+  it('replaces the alternate `source: [url]` form the model often emits', () => {
+    // Real-world output the model produces despite the prompt saying otherwise.
+    // Critical: existing memos in the DB use THIS form; the regex must catch it
+    // so users get the hover popover without regenerating.
+    const markdown = 'Claim A source: [https://gartner.com/report].'
+    const { processedMarkdown } = preprocessMemoCitations(markdown, [row()])
+    expect(processedMarkdown).toBe('Claim A [¹](https://gartner.com/report).')
+  })
+
+  it('accepts case-insensitive Source: prefix', () => {
+    const markdown = 'Claim Source: [https://x.com/a].'
+    const { processedMarkdown } = preprocessMemoCitations(markdown, [
+      row({ sourceUrl: 'https://x.com/a' }),
+    ])
+    expect(processedMarkdown).toBe('Claim [¹](https://x.com/a).')
+  })
+
+  it('handles a mix of both formats in the same memo', () => {
+    const markdown =
+      'A [source: https://x.com/a]. B source: [https://x.com/b]. Same again [source: https://x.com/a].'
+    const evidence = [
+      row({ id: 'a', sourceUrl: 'https://x.com/a' }),
+      row({ id: 'b', sourceUrl: 'https://x.com/b' }),
+    ]
+    const { processedMarkdown } = preprocessMemoCitations(markdown, evidence)
+    expect(processedMarkdown).toBe(
+      'A [¹](https://x.com/a). B [²](https://x.com/b). Same again [¹](https://x.com/a).',
+    )
+  })
+
   it('numbers multiple unique URLs in order of first appearance', () => {
     const markdown = 'A [source: https://x.com/a]. B [source: https://x.com/b].'
     const evidence = [
