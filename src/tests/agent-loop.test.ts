@@ -602,3 +602,113 @@ describe('runAgentLoop — recoverable terminal-tool validation', () => {
     expect(citeSourceCallCount).toBe(1)
   })
 })
+
+describe('runAgentLoop — prompt caching', () => {
+  it('tags system, last tool, and initial user message with cache_control', async () => {
+    const client = buildScriptedClient([
+      buildFinalToolCallResponse({
+        toolName: 'submit_memo',
+        toolUseId: 'tu1',
+        toolInput: { markdown: '# Memo', evidence: [] },
+      }),
+    ])
+    const tools = [makeListMeetingsTool(), makeWebSearchTool(), makeSubmitMemoTool()]
+    const opts = makeOpts(client, tools)
+    await runAgentLoop(opts)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const createMock = (client.messages.create as unknown as { mock: { calls: any[][] } })
+    const params = createMock.mock.calls[0][0]
+
+    // Breakpoint #1 — system prompt is wrapped as array w/ cache_control.
+    expect(Array.isArray(params.system)).toBe(true)
+    expect(params.system[0]).toMatchObject({
+      type: 'text',
+      text: 'sys',
+      cache_control: { type: 'ephemeral' },
+    })
+
+    // Breakpoint #2 — the LAST tool is tagged.
+    expect(params.tools.length).toBeGreaterThan(0)
+    const lastTool = params.tools[params.tools.length - 1]
+    expect(lastTool.cache_control).toEqual({ type: 'ephemeral' })
+    // Earlier tools should NOT carry cache_control.
+    for (let i = 0; i < params.tools.length - 1; i++) {
+      expect(params.tools[i].cache_control).toBeUndefined()
+    }
+
+    // Breakpoint #3 — initial user message content[0].
+    expect(Array.isArray(params.messages[0].content)).toBe(true)
+    expect(params.messages[0].content[0]).toMatchObject({
+      type: 'text',
+      text: 'go',
+      cache_control: { type: 'ephemeral' },
+    })
+  })
+
+  it('passes ttl:"1h" through to all cache_control blocks when cacheTtl="1h"', async () => {
+    const client = buildScriptedClient([
+      buildFinalToolCallResponse({
+        toolName: 'submit_memo',
+        toolUseId: 'tu1',
+        toolInput: { markdown: '# Memo', evidence: [] },
+      }),
+    ])
+    const opts = { ...makeOpts(client, [makeSubmitMemoTool()]), cacheTtl: '1h' as const }
+    await runAgentLoop(opts)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const createMock = (client.messages.create as unknown as { mock: { calls: any[][] } })
+    const params = createMock.mock.calls[0][0]
+    const expected = { type: 'ephemeral', ttl: '1h' }
+    expect(params.system[0].cache_control).toEqual(expected)
+    expect(params.tools[params.tools.length - 1].cache_control).toEqual(expected)
+    expect(params.messages[0].content[0].cache_control).toEqual(expected)
+  })
+
+  it('accumulates cache tokens and factors them into costEstimateUsd at the correct rates', async () => {
+    // Iter 1 — cache write (creation tokens >0).
+    // Iter 2 — cache read (read tokens >0); model calls submit_memo.
+    const client = buildScriptedClient([
+      buildToolUseResponse({
+        toolCalls: [{ id: 'tu1', name: 'list_meetings', input: {} }],
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 100,
+          cache_creation_input_tokens: 10_000,
+          cache_read_input_tokens: 0,
+        },
+      }),
+      buildFinalToolCallResponse({
+        toolName: 'submit_memo',
+        toolUseId: 'tu2',
+        toolInput: { markdown: '# Memo', evidence: [] },
+        usage: {
+          input_tokens: 200,
+          output_tokens: 50,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 10_000,
+        },
+      }),
+    ])
+    const opts = makeOpts(client, [makeListMeetingsTool(), makeSubmitMemoTool()])
+    const result = await runAgentLoop(opts)
+
+    expect(result.status).toBe('success')
+    expect(result.cacheCreateTokensTotal).toBe(10_000)
+    expect(result.cacheReadTokensTotal).toBe(10_000)
+    // input_tokens_total sums input + cache_creation + cache_read (full context width).
+    // 1000+10000+0 + 200+0+10000 = 21_200
+    expect(result.inputTokensTotal).toBe(21_200)
+    expect(result.outputTokensTotal).toBe(150)
+
+    // Cost math at pricing {inputPerM: 3, outputPerM: 15}:
+    //   input         21_200 *  3.000  =  63_600
+    //   cache_read    10_000 *  0.300  =   3_000  (0.1× input rate)
+    //   cache_create  10_000 *  3.750  =  37_500  (1.25× input rate)
+    //   output           150 * 15.000  =   2_250
+    //                                  ──────────
+    //                                   106_350 / 1e6  =  $0.10635
+    expect(result.costEstimateUsd).toBeCloseTo(0.10635, 6)
+  })
+})
