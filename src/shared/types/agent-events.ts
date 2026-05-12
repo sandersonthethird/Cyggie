@@ -89,6 +89,23 @@ export type AgentEvent =
       type: 'aborted'
       runId: string
     }
+  | {
+      // Emitted by the memo producer agent when it begins working on a
+      // section. The renderer surfaces this in CompanyMemo's section
+      // skeleton, switching that section to "in progress" state.
+      type: 'section_started'
+      runId: string
+      heading: string
+      ordinal: number
+    }
+  | {
+      // Emitted when the memo producer agent's submit_section tool fires.
+      // The renderer fills that section's body in place.
+      type: 'section_completed'
+      runId: string
+      heading: string
+      bodyLength: number
+    }
 
 export type AgentEventByType = {
   [T in AgentEvent['type']]: Extract<AgentEvent, { type: T }>

@@ -22,34 +22,35 @@ import { getAgentLimits, type AgentLimits } from './limits'
 import { SubmitMemoInputSchema, type SubmitMemoInput } from '../../../shared/types/thesis'
 import type { AgentEvent } from '../../../shared/types/agent-events'
 import { getCredential } from '../../security/credentials'
+import { stressTestPassthrough, stressTestTargets } from '../memo/sections'
 // Vite ?raw inlines the markdown content as a string at build time.
 import THESIS_SYSTEM_PROMPT from './prompts/thesis-stress-test.system.md?raw'
 
 const MODEL_ID = 'claude-sonnet-4-5-20250929'
 
 /**
- * Sections the stress-test agent is ALLOWED to modify. All other
- * top-level `## Heading` sections must pass through byte-identical to the
- * input memo. This list is also embedded in the system prompt — keep them
- * in sync if you edit one.
+ * Section axes for the stress-test agent's scope-lock validator. Derived
+ * from MEMO_SECTIONS so a rename or section-roster change in one place
+ * propagates here automatically.
+ *
+ *   ┌────────────────────────────────────────────────────────────────┐
+ *   │  TARGET sections (agent MAY rewrite): synthesis-kind + a few    │
+ *   │     research/narrative conclusory ones (Competition, Traction,  │
+ *   │     Valuation). Plus Devil's Advocate, which is appended to    │
+ *   │     the output and has no input counterpart.                    │
+ *   │  PASSTHROUGH (agent must NOT modify; byte-identical required): │
+ *   │     everything else in the roster.                              │
+ *   └────────────────────────────────────────────────────────────────┘
+ *
+ * If you rename a section, only MEMO_SECTIONS needs updating; both the
+ * arrays below and the system prompt's heading list rebuild from it.
  */
 const TARGET_SECTION_HEADINGS = [
-  'Executive Summary',
-  'Investment Highlights',
-  'Competition',
-  'Traction / Financials',
-  'Valuation',
-  'Risks',
-  'Devil\'s Advocate',           // appended; not in input
+  ...stressTestTargets(),
+  "Devil's Advocate",           // appended; not in input
 ] as const
 
-const PASSTHROUGH_SECTION_HEADINGS = [
-  'Business Description',
-  'Market / Industry',
-  'Team',
-  'Go-To-Market',
-  'References',
-] as const
+const PASSTHROUGH_SECTION_HEADINGS = stressTestPassthrough() as readonly string[]
 
 export interface RunStressTestAgentInput {
   runId: string

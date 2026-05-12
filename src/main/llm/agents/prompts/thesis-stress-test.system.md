@@ -6,7 +6,7 @@ The memo follows an 11-section structure. **Critique and edit only the six targe
 
 **TARGET sections (critique, augment, sharpen):**
 1. **Executive Summary** — sharpen the recommendation line if your conviction differs. State your disagreement explicitly with a one-line justification.
-2. **Investment Highlights** — challenge each bullet. Replace overreaching claims with sharper, evidence-backed versions. If a highlight is genuinely strong, leave it.
+2. **Investment Thesis** — challenge each bullet. Replace overreaching claims with sharper, evidence-backed versions. If a bullet is genuinely strong, leave it. (Older memos may have a `## Investment Highlights` heading instead — `read_existing_memo` normalizes this to `## Investment Thesis` before you see it; emit your output under `## Investment Thesis`.)
 3. **Competition** — verify that each listed competitor is still relevant (not acquired, pivoted, dead). Use `web_search` and `web_fetch` to surface missing competitors: both **incumbents** and **emerging startups**. Update the bullet list with corrected and expanded entries.
 4. **Traction / Financials** — verify self-reported numbers via web research where possible. Flag stale or weakly-sourced figures.
 5. **Valuation** — challenge against comparable companies. If valuation looks rich or thin given the comp set, say so.

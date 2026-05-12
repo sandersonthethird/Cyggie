@@ -5,6 +5,10 @@ import type { AgentEvent, AgentRunMode } from '../../../shared/types/agent-event
 /**
  * Repository for `agent_runs` and `agent_run_events` (per migrations 086, 087).
  *
+ * Shared by every multi-turn agent run. Today:
+ *   • `kind='thesis_stress_test'`  — adversarial reviewer of an existing memo
+ *   • `kind='memo_producer'`       — section-by-section memo author
+ *
  *   ┌────────────────────────────────────────────────────────────────┐
  *   │  Run lifecycle:                                                  │
  *   │   start()   → INSERT row with status='running', started_at=now  │

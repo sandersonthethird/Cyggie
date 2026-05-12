@@ -1,0 +1,86 @@
+.root {
+  padding: 16px 20px;
+  font-family: var(--font-sans, -apple-system, sans-serif);
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.header {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.activity {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  margin-bottom: 12px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.sections {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sections li {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.section_pending {
+  color: var(--color-text-tertiary);
+  opacity: 0.6;
+}
+
+.section_running {
+  color: var(--color-text);
+  font-weight: 500;
+  background: var(--color-bg-secondary);
+}
+
+.section_completed {
+  color: var(--color-text);
+}
+
+.marker {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  text-align: center;
+}
+
+.section_completed .marker {
+  color: var(--color-success, #2a9d4a);
+}
+
+.section_running .marker {
+  color: var(--color-accent, #4a8cf7);
+}
+
+.label {
+  font-size: 13px;
+}
+
+.byteLen {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.spinner {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--color-accent, #4a8cf7);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}

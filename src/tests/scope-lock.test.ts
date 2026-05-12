@@ -6,7 +6,7 @@ const ORIGINAL = `# Acme — Series A — $5M
 ## Executive Summary
 Acme is a fintech startup. We recommend proceeding to a partner meeting.
 
-## Investment Highlights
+## Investment Thesis
 - Strong founder
 - Big TAM
 
@@ -45,7 +45,7 @@ const STRESS_TESTED_OK = `# Acme — Series A — $5M
 ## Executive Summary
 Acme is a fintech startup. We recommend passing — see Devil's Advocate.
 
-## Investment Highlights
+## Investment Thesis
 - Strong founder, but TAM may be inflated (see Devil's Advocate #1)
 - Top-quartile growth
 
@@ -131,7 +131,7 @@ describe('scopeLockCheck', () => {
     const warnings = scopeLockCheck(ORIGINAL, STRESS_TESTED_OK)
     // Target sections were edited (Exec Summary, Highlights, Competition, Traction,
     // Valuation, Risks); none of these should produce warnings.
-    expect(warnings.find(w => w.includes('Investment Highlights'))).toBeUndefined()
+    expect(warnings.find(w => w.includes('Investment Thesis'))).toBeUndefined()
     expect(warnings.find(w => w.includes('Competition'))).toBeUndefined()
     expect(warnings.find(w => w.includes('Risks'))).toBeUndefined()
   })

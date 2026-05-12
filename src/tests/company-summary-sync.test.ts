@@ -148,7 +148,7 @@ describe('extractDescription — fallback behavior', () => {
 
 Acme builds AI-powered tools for enterprise sales teams. Founded by Jane Smith, raising $3M. We recommend passing.
 
-## Investment Highlights
+## Investment Thesis
 
 - Strong team
 `

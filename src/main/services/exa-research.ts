@@ -3,22 +3,28 @@ import { validateUrlForFetch } from '../security/url-allowlist'
 
 /**
  * Exa-backed research utilities used by:
- *   1. memo-generator.ts pre-research pass — searchCompanyContext()
- *   2. The thesis-stress-test agent's web_search and web_fetch tools
+ *   1. memo-generator.ts / memo-producer-agent pre-research pass — searchCompanyContext()
+ *   2. The thesis-stress-test agent and memo-producer agent's web_search and web_fetch tools
  *
  *   ┌────────────────────────────────────────────────────────────────┐
  *   │  searchCompanyContext(input):                                   │
  *   │                                                                 │
- *   │    For company "Acme" in industry "fintech" with themes [...]:  │
- *   │      query "Acme fintech recent news"                           │
- *   │      query "Acme funding round"                                 │
- *   │      query "fintech market size 2025"                           │
- *   │      query "Acme competitors"                                   │
- *   │      query "Acme founders background"                           │
+ *   │    Four query categories (no company-name queries — pre-launch  │
+ *   │    companies have no web presence under their name):            │
+ *   │      1. Niche-similarity neural search (meeting-summary seed     │
+ *   │         + themes) — surfaces adjacent companies / product pages │
+ *   │      2. Industry market sizing — "{industry} market size 2025"  │
+ *   │      3. Explicit competitors — "{description-snippet}           │
+ *   │         competitors alternatives" (keyword-led; complements 1)  │
+ *   │      4. Per-contact LinkedIn — when contact has linkedinUrl     │
+ *   │         in CRM: exa.getContents([url]) direct fetch.            │
+ *   │         When no URL: `"{name}" linkedin` search fallback.       │
  *   │                                                                 │
- *   │    All run in parallel, top-3 results each, ~1.5k chars/result. │
+ *   │    All run in parallel; top-3 results per search query,         │
+ *   │    ~1.5k chars/result; LinkedIn fetches ~8k chars/result.       │
  *   │    Aggregated into a single { queries[], results[] } object the │
- *   │    memo-generator inlines under "## External Research".          │
+ *   │    memo generator inlines under "## External Research" and the  │
+ *   │    producer agent uses to populate its web_fetch allowlist.     │
  *   │                                                                 │
  *   │    NEVER throws. Returns an empty bundle if Exa is not          │
  *   │    configured or any network failure occurs. Memo gen must      │
@@ -66,7 +72,7 @@ export interface ExternalResearchBundle {
 interface SearchCompanyContextInput {
   /** Used only in logs; the company name is NOT in any query (pre-launch companies have no web presence under their name). */
   companyName: string
-  /** Niche-query fallback when nicheSignal is empty/stub. */
+  /** Niche-query fallback when nicheSignal is empty/stub. Also seeds the explicit competitors query. */
   companyDescription?: string | null
   primaryDomain?: string | null
   industry?: string | null
@@ -78,9 +84,27 @@ interface SearchCompanyContextInput {
    * discoverable.
    */
   nicheSignal?: string | null
-  /** 0–2 founder full names. Each becomes a quoted `"{name}" linkedin` query. */
+  /** 0–2 founder full names. Each becomes a quoted `"{name}" linkedin` query. Used only when no `linkedinContacts` entry exists for the founder. */
   founderNames?: string[]
+  /**
+   * Contacts with stored LinkedIn URLs. Each becomes a direct `exa.getContents`
+   * fetch (more precise than a text search for the founder's name). Producer
+   * agent passes its top contacts; legacy memo generator does not.
+   */
+  linkedinContacts?: Array<{ name: string; url: string }>
 }
+
+/**
+ * Internal query representation. The pre-research dispatcher handles both
+ * shapes uniformly: 'search' uses exa.searchAndContents; 'fetch' uses
+ * exa.getContents on a known URL.
+ */
+type PreQuery =
+  | { kind: 'search'; query: string }
+  | { kind: 'fetch'; url: string; label: string }
+
+/** Per-result chars for direct LinkedIn fetches (full page vs. snippet). */
+const PRE_RESEARCH_FETCH_CHARS = 8000
 
 function makeTimeout<T>(ms: number, label: string): Promise<T> {
   return new Promise((_, reject) =>
@@ -126,19 +150,26 @@ export async function searchCompanyContext(
   const exa = tryGetExaClient()
   if (!exa) return { queries: [], results: [] }
 
-  const queries = buildPreResearchQueries(input)
+  const preQueries = buildPreResearchQueries(input)
+  // Public `queries` field is the human-readable string form (search query
+  // text, or `LinkedIn: {name}` label for direct fetches).
+  const queries = preQueries.map((q) => (q.kind === 'search' ? q.query : q.label))
   const empty: ExternalResearchBundle = { queries, results: [] }
 
-  console.info('[exa-research] niche pre-research', {
+  const fetchQueryCount = preQueries.filter((q) => q.kind === 'fetch').length
+  const searchQueryCount = preQueries.length - fetchQueryCount
+  console.info('[exa-research] pre-research', {
     company: input.companyName,
     hasNiche: !!buildNicheQuery(input),
     hasIndustry: !!input.industry?.trim(),
-    founderCount: input.founderNames?.length ?? 0,
-    queryCount: queries.length,
+    hasCompetitors: hasCompetitorsSeed(input),
+    linkedinFetchCount: fetchQueryCount,
+    founderSearchCount: searchQueryCount - (buildNicheQuery(input) ? 1 : 0) - (input.industry?.trim() ? 1 : 0) - (hasCompetitorsSeed(input) ? 1 : 0),
+    queryCount: preQueries.length,
   })
 
-  if (queries.length === 0) {
-    console.info('[exa-research] empty pre-research — no niche/industry/founders to query')
+  if (preQueries.length === 0) {
+    console.info('[exa-research] empty pre-research — no seeds to query')
     return empty
   }
 
@@ -146,37 +177,60 @@ export async function searchCompanyContext(
   // the IPC handler returns the structured aborted response.
   if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
 
-  const fetches = queries.map(async query => {
+  const dispatched = preQueries.map(async (q) => {
     try {
+      if (q.kind === 'search') {
+        const response = (await Promise.race([
+          exa.searchAndContents(q.query, { numResults: PRE_RESEARCH_RESULTS_PER_QUERY }),
+          makeTimeout(PRE_RESEARCH_TIMEOUT_MS, `Exa search "${q.query}"`),
+          signalRejector<{ results?: never }>(signal),
+        ])) as { results?: Array<{ url?: string; title?: string; text?: string; publishedDate?: string }> }
+        const out: ExternalResearchResult[] = []
+        for (const r of response.results ?? []) {
+          if (!r.url) continue
+          out.push({
+            url: r.url,
+            title: r.title ?? null,
+            text: truncate(r.text, PRE_RESEARCH_RESULT_CHARS),
+            publishedDate: r.publishedDate ?? null,
+            query: q.query,
+          })
+        }
+        return out
+      }
+
+      // q.kind === 'fetch' — direct exa.getContents on a known URL.
+      // Validate URL shape first (https + no private IPs).
+      const validation = await validateUrlForFetch(q.url)
+      if (!validation.ok) {
+        console.warn('[exa-research] linkedin fetch rejected:', q.url, validation.message)
+        return []
+      }
       const response = (await Promise.race([
-        exa.searchAndContents(query, {
-          numResults: PRE_RESEARCH_RESULTS_PER_QUERY,
-        }),
-        makeTimeout(PRE_RESEARCH_TIMEOUT_MS, `Exa search "${query}"`),
+        exa.getContents([q.url]),
+        makeTimeout(PRE_RESEARCH_TIMEOUT_MS, `Exa fetch "${q.url}"`),
         signalRejector<{ results?: never }>(signal),
       ])) as { results?: Array<{ url?: string; title?: string; text?: string; publishedDate?: string }> }
-      const out: ExternalResearchResult[] = []
-      for (const r of response.results ?? []) {
-        if (!r.url) continue
-        out.push({
-          url: r.url,
-          title: r.title ?? null,
-          text: truncate(r.text, PRE_RESEARCH_RESULT_CHARS),
-          publishedDate: r.publishedDate ?? null,
-          query,
-        })
-      }
-      return out
+      const first = response.results?.[0]
+      if (!first?.text) return []
+      return [{
+        url: first.url ?? q.url,
+        title: first.title ?? null,
+        text: truncate(first.text, PRE_RESEARCH_FETCH_CHARS),
+        publishedDate: first.publishedDate ?? null,
+        query: q.label,
+      }]
     } catch (err) {
       // Propagate cancellation; everything else degrades silently.
       if ((err as Error).name === 'AbortError') throw err
-      console.warn('[exa-research] pre-research query failed:', query, (err as Error).message)
+      const id = q.kind === 'search' ? q.query : q.url
+      console.warn('[exa-research] pre-research query failed:', id, (err as Error).message)
       return []
     }
   })
 
   try {
-    const allResults = await Promise.all(fetches)
+    const allResults = await Promise.all(dispatched)
     return { queries, results: allResults.flat() }
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
@@ -186,39 +240,70 @@ export async function searchCompanyContext(
 }
 
 /**
- * Build the per-run query list. Three categories, all niche/founder-targeted
+ * Build the per-run query list. Four categories, all niche-/founder-targeted
  * (NOT company-name-targeted) so pre-launch companies with zero web presence
  * still get useful results:
  *
  *   1. Niche-similarity (Exa neural) — describes the SPACE, not the player
- *   2. Industry market sizing (unchanged) — broad, name-agnostic
- *   3. Per-founder LinkedIn — founders are findable under their own names
+ *   2. Industry market sizing — broad, name-agnostic
+ *   3. Explicit competitors — keyword-led, complements (1)
+ *   4. Per-contact LinkedIn — direct fetch when URL known, search fallback otherwise
  *
- * Returns [] when none of the three has enough seed data (truly empty company).
+ * Returns [] when nothing has enough seed data (truly empty company).
  */
-function buildPreResearchQueries(input: SearchCompanyContextInput): string[] {
-  const queries: string[] = []
+function buildPreResearchQueries(input: SearchCompanyContextInput): PreQuery[] {
+  const out: PreQuery[] = []
 
   // 1. Niche-similarity search.
   const niche = buildNicheQuery(input)
-  if (niche) queries.push(niche)
+  if (niche) out.push({ kind: 'search', query: niche })
 
   // 2. Industry market sizing.
   if (input.industry?.trim()) {
-    queries.push(`${input.industry.trim()} market size 2025`)
+    out.push({ kind: 'search', query: `${input.industry.trim()} market size 2025` })
   }
 
-  // 3. Per-founder LinkedIn (top 2; quoted to avoid bag-of-words breaks).
-  // Filter THEN slice — names ≤3 chars (initials, garbage) shouldn't burn the cap.
+  // 3. Explicit competitors query — keyword-led, complements neural niche search.
+  // Pre-launch companies still get useful results because we never use the
+  // company name (only description/industry seeds).
+  const competitorsSeed = buildCompetitorsSeed(input)
+  if (competitorsSeed) {
+    out.push({ kind: 'search', query: `${competitorsSeed} competitors alternatives` })
+  }
+
+  // 4a. Per-contact LinkedIn DIRECT FETCH (when URL stored on contact).
+  // Skips a search hop; more accurate; populates the producer agent's
+  // web_fetch allowlist via the result URL.
+  const linkedinFetches = (input.linkedinContacts ?? [])
+    .filter((c) => c.name?.trim().length > 3 && c.url?.trim())
+    .slice(0, 4) // cap to avoid runaway when many contacts have URLs
+  const fetchedNames = new Set(linkedinFetches.map((c) => c.name.trim().toLowerCase()))
+  for (const c of linkedinFetches) {
+    out.push({ kind: 'fetch', url: c.url.trim(), label: `LinkedIn: ${c.name.trim()}` })
+  }
+
+  // 4b. Per-founder LinkedIn SEARCH FALLBACK (when no URL was supplied).
+  // Skip names already covered by a direct fetch (4a).
   const validFounderNames = (input.founderNames ?? [])
-    .map(n => n.trim())
-    .filter(n => n.length > 3)
+    .map((n) => n.trim())
+    .filter((n) => n.length > 3 && !fetchedNames.has(n.toLowerCase()))
     .slice(0, 2)
   for (const name of validFounderNames) {
-    queries.push(`"${name}" linkedin`)
+    out.push({ kind: 'search', query: `"${name}" linkedin` })
   }
 
-  return queries
+  return out
+}
+
+function buildCompetitorsSeed(input: SearchCompanyContextInput): string | null {
+  const desc = pickNonStub(input.companyDescription)
+  if (desc) return desc.slice(0, 200)
+  if (input.industry?.trim()) return input.industry.trim()
+  return null
+}
+
+function hasCompetitorsSeed(input: SearchCompanyContextInput): boolean {
+  return buildCompetitorsSeed(input) !== null
 }
 
 function buildNicheQuery(input: SearchCompanyContextInput): string | null {

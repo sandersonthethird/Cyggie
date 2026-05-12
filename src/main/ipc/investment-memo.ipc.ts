@@ -25,9 +25,11 @@ import type { MemoGenerateMeta, MemoPreflightResult } from '../../shared/types/c
 import { estimateMemoGenContext } from '../llm/context-size'
 import { gatherMemoSourceCounts } from '../llm/memo-context-gatherer'
 import { runStressTestAgent } from '../llm/agents/thesis-stress-test-agent'
+import { runMemoProducerAgent } from '../llm/agents/memo-producer-agent'
 import { startRun, completeRun, makeEventWriter, getRun, listRuns, listRunEvents, averageCostForKind } from '../llm/agents/run-store'
-import { bulkInsert as bulkInsertEvidence, listByVersion as listEvidenceByVersion } from '../database/repositories/memo-evidence.repo'
-import { getDatabase } from '../database/connection'
+import { listByVersion as listEvidenceByVersion } from '../database/repositories/memo-evidence.repo'
+import { persistMemoArtifacts } from '../llm/memo/persist'
+import { isMemoSectionHeading } from '../llm/memo/sections'
 import type { AgentEvent } from '../../shared/types/agent-events'
 
 // Module-scope per-runId AbortController map for stress-test concurrency.
@@ -66,6 +68,189 @@ async function fetchLogoAsDataUrl(domain: string): Promise<string | null> {
     return `data:${mime};base64,${buffer.toString('base64')}`
   } catch {
     return null
+  }
+}
+
+/**
+ * Run the memo producer agent and translate its result into the IPC response
+ * shape expected by the renderer (`{ success, contentMarkdown, version, meta }`).
+ *
+ *   ┌────────────────────────────────────────────────────────────────────┐
+ *   │  start agent_runs row (kind='memo_producer')                        │
+ *   │  emit AgentEvents → THESIS_STRESS_TEST_PROGRESS channel + run_events│
+ *   │  run runMemoProducerAgent (gather, allocate, loop, assemble, persist)│
+ *   │  complete agent_runs row                                            │
+ *   │  return shape compatible with the legacy GENERATE caller             │
+ *   └────────────────────────────────────────────────────────────────────┘
+ *
+ * AbortError propagates to the IPC handler's outer catch and becomes
+ * `{success:false, aborted:true}`.
+ */
+async function runProducerAgent(input: {
+  companyId: string
+  companyName: string
+  memoId: string
+  userId: string
+  signal: AbortSignal
+  /** When set, agent produces just this one section (Delight #5). */
+  refreshSectionOnly?: string
+}): Promise<{
+  success: boolean
+  contentMarkdown?: string
+  version?: { id: string; versionNumber: number }
+  meta?: MemoGenerateMeta & {
+    runId: string
+    sectionsSubmitted: string[]
+    sectionsMissing: string[]
+  }
+  error?: string
+  errorCode?: string
+}> {
+  const runId = startRun({
+    kind: 'memo_producer',
+    companyId: input.companyId,
+    userId: input.userId,
+    mode: 'cold',
+  })
+
+  const eventWriter = makeEventWriter(runId)
+  const emit = (event: AgentEvent): void => {
+    eventWriter.appendEvent(event)
+    broadcastAgentEvent(event)
+    if (
+      event.type === 'iteration_start' ||
+      event.type === 'done' ||
+      event.type === 'error' ||
+      event.type === 'aborted' ||
+      event.type === 'cap_exceeded' ||
+      event.type === 'section_completed'
+    ) {
+      eventWriter.flush()
+    }
+  }
+
+  // Validate refreshSectionOnly upfront, before we kick off the agent.
+  const refreshSectionOnly =
+    input.refreshSectionOnly && isMemoSectionHeading(input.refreshSectionOnly)
+      ? input.refreshSectionOnly
+      : undefined
+  if (input.refreshSectionOnly && !refreshSectionOnly) {
+    completeRun(runId, {
+      status: 'failed',
+      iterations: 0,
+      inputTokensTotal: 0,
+      outputTokensTotal: 0,
+      costEstimateUsd: 0,
+      toolCallCount: 0,
+      webSearchCount: 0,
+      errorClass: 'InvalidSection',
+      errorMessage: `unknown section heading: "${input.refreshSectionOnly}"`,
+    })
+    return { success: false, error: `Unknown section heading: ${input.refreshSectionOnly}`, errorCode: 'invalid_section' }
+  }
+
+  try {
+    const result = await runMemoProducerAgent({
+      runId,
+      companyId: input.companyId,
+      memoId: input.memoId,
+      userId: input.userId,
+      signal: input.signal,
+      emit,
+      refreshSectionOnly,
+    })
+
+    completeRun(runId, {
+      status: result.status,
+      iterations: result.iterations,
+      inputTokensTotal: result.inputTokensTotal,
+      outputTokensTotal: result.outputTokensTotal,
+      costEstimateUsd: result.costEstimateUsd,
+      toolCallCount: result.toolCallCount,
+      webSearchCount: result.webSearchCount,
+      errorClass: result.errorClass,
+      errorMessage: result.errorMessage,
+      resultVersionId: result.resultVersionId,
+    })
+
+    if (result.status === 'aborted') {
+      throw new DOMException('aborted', 'AbortError')
+    }
+
+    if (result.status !== 'success' || !result.assembledMarkdown || !result.resultVersionId) {
+      return {
+        success: false,
+        error: result.errorMessage ?? 'Memo generation failed',
+        errorCode: result.errorClass ?? 'failed',
+      }
+    }
+
+    logAudit(input.userId, 'investment_memo_version', result.resultVersionId, 'create', {
+      memoId: input.memoId,
+      source: 'memo_producer_agent',
+      runId,
+      costEstimateUsd: result.costEstimateUsd,
+    })
+
+    // Coerce producer meta to MemoGenerateMeta-compatible shape so the
+    // renderer's existing sources-used footer works without changes.
+    const meta: MemoGenerateMeta & {
+      runId: string
+      sectionsSubmitted: string[]
+      sectionsMissing: string[]
+    } = {
+      meetingCount: result.meta.transcriptsKept + result.meta.transcriptsDisplaced,
+      summaryCount: 0, // producer doesn't distinguish; left for compat
+      transcriptCount: result.meta.transcriptsKept,
+      companyNoteCount: 0,
+      contactNoteCount: 0,
+      contactKeyTakeawayCount: 0,
+      fileCount: 0, // agent fetched files on-demand via read_document
+      emailCount: 0,
+      externalResearchQueryCount: result.meta.externalResearchQueryCount,
+      externalResearchResultCount: result.meta.externalResearchResultCount,
+      runId,
+      sectionsSubmitted: result.sectionsSubmitted,
+      sectionsMissing: result.sectionsMissing,
+    }
+
+    return {
+      success: true,
+      contentMarkdown: result.assembledMarkdown,
+      version: {
+        id: result.resultVersionId,
+        versionNumber: 0, // renderer reads version via INVESTMENT_MEMO_GET_VERSION if needed
+      },
+      meta,
+    }
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      completeRun(runId, {
+        status: 'aborted',
+        iterations: 0,
+        inputTokensTotal: 0,
+        outputTokensTotal: 0,
+        costEstimateUsd: 0,
+        toolCallCount: 0,
+        webSearchCount: 0,
+      })
+      throw err
+    }
+    const errMsg = err instanceof Error ? err.message : String(err)
+    completeRun(runId, {
+      status: 'failed',
+      iterations: 0,
+      inputTokensTotal: 0,
+      outputTokensTotal: 0,
+      costEstimateUsd: 0,
+      toolCallCount: 0,
+      webSearchCount: 0,
+      errorClass: 'UnhandledError',
+      errorMessage: errMsg,
+    })
+    return { success: false, error: errMsg, errorCode: 'unhandled_error' }
+  } finally {
+    eventWriter.flush()
   }
 }
 
@@ -267,6 +452,33 @@ export function registerInvestmentMemoHandlers(): void {
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) {
           win.webContents.send(IPC_CHANNELS.INVESTMENT_MEMO_GENERATE_PROGRESS, text)
+        }
+      }
+    }
+
+    // ───── Producer-agent path (default; flag-gated for one-release rollback) ─
+    // settings.agent.memoProducer === 'false' opts out to the legacy single-call
+    // path below. The producer agent does its own context gathering, runs the
+    // multi-turn agent loop with per-section tools, and persists in one txn.
+    const memoProducerEnabled = getSetting('agent.memoProducer') !== 'false'
+    if (memoProducerEnabled) {
+      try {
+        const result = await runProducerAgent({
+          companyId,
+          companyName: company.canonicalName,
+          memoId: memoData.id,
+          userId,
+          signal,
+        })
+        return result
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return { success: false, aborted: true } as const
+        }
+        throw err
+      } finally {
+        if (_memoGenerateAbortControllers.get(companyId) === abortController) {
+          _memoGenerateAbortControllers.delete(companyId)
         }
       }
     }
@@ -508,6 +720,50 @@ export function registerInvestmentMemoHandlers(): void {
     return { success: true as const }
   })
 
+  // Per-section refresh (Delight #5). Re-runs the producer agent against
+  // current data with a single-section roster; the new section markdown
+  // replaces the old section in the memo. New version persisted with a
+  // `Refreshed section: X` change note. Reuses the per-company mutex.
+  ipcMain.handle(
+    IPC_CHANNELS.INVESTMENT_MEMO_REGENERATE_SECTION,
+    async (
+      _event,
+      payload: { companyId: string; sectionHeading: string },
+    ) => {
+      const { companyId, sectionHeading } = payload ?? {}
+      if (!companyId) throw new Error('companyId is required')
+      if (!sectionHeading) throw new Error('sectionHeading is required')
+
+      const company = companyRepo.getCompany(companyId)
+      if (!company) throw new Error('Company not found')
+      const userId = getCurrentUserId()
+      const memoData = memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName, userId)
+
+      _memoGenerateAbortControllers.get(companyId)?.abort()
+      const abortController = new AbortController()
+      _memoGenerateAbortControllers.set(companyId, abortController)
+      try {
+        return await runProducerAgent({
+          companyId,
+          companyName: company.canonicalName,
+          memoId: memoData.id,
+          userId,
+          signal: abortController.signal,
+          refreshSectionOnly: sectionHeading,
+        })
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return { success: false, aborted: true } as const
+        }
+        throw err
+      } finally {
+        if (_memoGenerateAbortControllers.get(companyId) === abortController) {
+          _memoGenerateAbortControllers.delete(companyId)
+        }
+      }
+    },
+  )
+
   ipcMain.handle(
     IPC_CHANNELS.INVESTMENT_MEMO_PREFLIGHT,
     (_event, companyId: string): MemoPreflightResult => {
@@ -728,20 +984,21 @@ export function registerInvestmentMemoHandlers(): void {
             return
           }
 
-          // Persist memo version + evidence rows in a single transaction.
-          const db = getDatabase()
+          // Persist memo version + evidence rows in a single transaction via
+          // the shared helper (also used by the memo producer agent).
           let savedVersionId = ''
-          const persist = db.transaction(() => {
-            const version = memoRepo.saveMemoVersion(memo.id, {
-              contentMarkdown: result.submitInput!.markdown,
-              changeNote: 'Stress-tested by research agent',
-            }, userId)
-            savedVersionId = version.id
-            const inserted = bulkInsertEvidence(version.id, result.submitInput!.evidence)
-            console.log(`[thesis-stress-test] ${runId} saved version ${version.id} + ${inserted} evidence rows`)
-          })
           try {
-            persist()
+            const persisted = persistMemoArtifacts({
+              memoId: memo.id,
+              contentMarkdown: result.submitInput.markdown,
+              changeNote: 'Stress-tested by research agent',
+              userId,
+              evidenceRows: result.submitInput.evidence,
+            })
+            savedVersionId = persisted.versionId
+            console.log(
+              `[thesis-stress-test] ${runId} saved version ${persisted.versionId} + ${persisted.evidenceInserted} evidence rows`,
+            )
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err)
             console.error('[thesis-stress-test]', runId, 'persist failed:', errMsg)

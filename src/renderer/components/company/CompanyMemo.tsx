@@ -15,6 +15,8 @@ import { FindHighlight } from '../../lib/find-highlight-extension'
 import { CritiqueHighlight } from './CritiqueHighlight'
 import { EvidenceSidebar } from './EvidenceSidebar'
 import { ResearchLog } from './ResearchLog'
+import { MemoSectionProgress } from './MemoSectionProgress'
+import { MemoSectionsNav } from './MemoSectionsNav'
 import { useRunForCompany, useRuns } from '../../contexts/RunsContext'
 import FindBar from '../common/FindBar'
 import { Spinner } from '../common/Spinner'
@@ -76,6 +78,10 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
   const vhMenuRef = useRef<HTMLDivElement>(null)
 
   const displayedVersion = viewingVersion ?? memo?.latestVersion ?? null
+  const isUntouchedTemplate =
+    !viewingVersion &&
+    memo?.latestVersionNumber === 1 &&
+    memo?.latestVersion?.changeNote === 'Initial draft'
 
   // Read-only TipTap editor for the memo preview. Recreated on company switch
   // and on version switch so it loads the right content for the active version.
@@ -153,6 +159,14 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
   const runs = useRuns()
   const stressRun = useRunForCompany('thesis_stress_test', companyId)
   const stressInFlight = stressRun?.status === 'running'
+
+  // ─── Memo producer agent integration ──────────────────────────────────
+  // The producer agent broadcasts AgentEvents (including section_started /
+  // section_completed) on the same THESIS_STRESS_TEST_PROGRESS channel that
+  // RunsContext listens to. We pick out the producer run for this company
+  // here so the MemoSectionProgress component can render section state.
+  const producerRun = useRunForCompany('memo_producer', companyId)
+  const producerInFlight = producerRun?.status === 'running'
 
   // Cost badge: running average across recent stress-test runs for this company.
   const [costEstimate, setCostEstimate] = useState<number | null>(null)
@@ -693,15 +707,42 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         <ResearchLog run={stressRun} />
       )}
 
+      {/* Section-refresh nav (Delight #5). Only shown when we have a
+          displayable memo (not during initial generation; not on empty
+          template). Refresh in flight reuses the per-company mutex with
+          legacy GENERATE — disabled while either is running. */}
+      {!generating && displayedVersion?.contentMarkdown && !isUntouchedTemplate && (
+        <MemoSectionsNav
+          companyId={companyId}
+          markdown={displayedVersion.contentMarkdown}
+          busy={generating || producerInFlight}
+          onSectionRefreshed={(version) => {
+            setMemo((prev) =>
+              prev
+                ? { ...prev, latestVersion: version, latestVersionNumber: version.versionNumber }
+                : prev,
+            )
+          }}
+          onError={(msg) => setErrorMsg(msg)}
+        />
+      )}
+
       <div className={styles.preview} ref={memoBodyRef}>
         {generating ? (
-          <pre className={styles.progressText}>{progressText || 'Starting generation…'}</pre>
+          // Section-by-section progress when the producer agent is the
+          // active backend; falls back to the legacy text-stream preview
+          // for the legacy single-call path.
+          producerRun && producerRun.events.length > 0 ? (
+            <MemoSectionProgress events={producerRun.events} status={producerRun.status} />
+          ) : (
+            <pre className={styles.progressText}>{progressText || 'Starting generation…'}</pre>
+          )
         ) : loadingVersion ? (
           <div className={styles.loading}>Loading version…</div>
-        ) : displayedVersion?.contentMarkdown ? (
-          <EditorContent editor={memoEditor} />
+        ) : isUntouchedTemplate || !displayedVersion?.contentMarkdown ? (
+          <div className={styles.empty}>No memo yet. Click Generate with AI to create one.</div>
         ) : (
-          <div className={styles.empty}>No memo content yet. Click Edit or Generate with AI to get started.</div>
+          <EditorContent editor={memoEditor} />
         )}
       </div>
 
