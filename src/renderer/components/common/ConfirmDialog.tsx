@@ -8,6 +8,14 @@ interface ConfirmDialogProps {
   message: string
   confirmLabel?: string
   cancelLabel?: string
+  /**
+   * Optional middle button between Cancel and Confirm. When both
+   * `secondaryLabel` and `onSecondary` are provided, the dialog renders three
+   * buttons: Cancel | Secondary | Confirm. Used for Save/Discard/Cancel-style
+   * flows (e.g. MemoEditModal's close-with-unsaved-changes).
+   */
+  secondaryLabel?: string
+  onSecondary?: () => void
   variant?: 'default' | 'danger'
   errorMessage?: string | null
   onConfirm: () => void
@@ -20,6 +28,8 @@ export default function ConfirmDialog({
   message,
   confirmLabel = 'OK',
   cancelLabel = 'Cancel',
+  secondaryLabel,
+  onSecondary,
   variant = 'default',
   errorMessage = null,
   onConfirm,
@@ -89,6 +99,11 @@ export default function ConfirmDialog({
           <button className={styles.cancelButton} onClick={onCancel}>
             {cancelLabel}
           </button>
+          {secondaryLabel && onSecondary && (
+            <button className={styles.secondaryButton} onClick={onSecondary}>
+              {secondaryLabel}
+            </button>
+          )}
           <button
             ref={confirmRef}
             className={`${styles.confirmButton}${variant === 'danger' ? ` ${styles.danger}` : ''}`}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentEvent } from '../../../shared/types/agent-events'
-import type { RunRecord } from '../../contexts/RunsContext'
+import { useRuns, type RunRecord } from '../../contexts/RunsContext'
 import styles from './ResearchLog.module.css'
 
 /**
@@ -25,7 +25,13 @@ const COLLAPSED_TAIL_LENGTH = 5
 export function ResearchLog({ run }: { run: RunRecord | null }) {
   const [showAll, setShowAll] = useState(false)
   const [expandedThinking, setExpandedThinking] = useState<Set<number>>(new Set())
+  const [collapsed, setCollapsed] = useState(false)
+  // Per-row dismissals for cap_exceeded rows. Indices match `run.events`.
+  // Local-only state: dismisses are a visual filter; the persisted run trace
+  // still has the event. Reset when the run id changes.
+  const [dismissedEventIndices, setDismissedEventIndices] = useState<Set<number>>(new Set())
   const containerRef = useRef<HTMLDivElement>(null)
+  const { dismissRun } = useRuns()
 
   // Auto-scroll to bottom while running.
   useEffect(() => {
@@ -41,15 +47,32 @@ export function ResearchLog({ run }: { run: RunRecord | null }) {
     return () => clearTimeout(t)
   }, [run?.status, run?.runId])
 
+  // Reset per-row dismissals + box-collapse state when the run identity
+  // changes (new run starts in the same memo).
+  useEffect(() => {
+    setDismissedEventIndices(new Set())
+    setCollapsed(false)
+  }, [run?.runId])
+
   if (!run) return null
 
   const isRunning = run.status === 'running'
+  // Visible event tuples carry their original index so per-row dismiss can
+  // address an event by stable identity (slice() rebases indices otherwise).
+  const eventsWithIndex = run.events.map((event, i) => ({ event, i }))
+  const filteredEvents = eventsWithIndex.filter(e => !dismissedEventIndices.has(e.i))
   const visibleEvents = showAll || isRunning
-    ? run.events
-    : run.events.slice(-COLLAPSED_TAIL_LENGTH)
+    ? filteredEvents
+    : filteredEvents.slice(-COLLAPSED_TAIL_LENGTH)
 
-  const total = run.events.length
+  const total = filteredEvents.length
   const hidden = total - visibleEvents.length
+
+  // Header chevron — collapse the whole event list. Header stays visible.
+  // Header dismiss (×) — only visible in terminal states; calls
+  // RunsContext.dismissRun(runId) to remove the run from the in-memory map
+  // (does NOT delete persisted agent_runs / agent_run_events rows).
+  const isTerminal = !isRunning && run.status !== 'stuck'
 
   // .status-running already has a pulse animation in CSS; we enhanced it to
   // also scale so the alive signal is visible in peripheral vision during the
@@ -59,47 +82,77 @@ export function ResearchLog({ run }: { run: RunRecord | null }) {
   return (
     <section className={styles.log} aria-live="polite">
       <header className={styles.header}>
+        <button
+          className={styles.chevronBtn}
+          onClick={() => setCollapsed(c => !c)}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? 'Expand research log' : 'Collapse research log'}
+          title={collapsed ? 'Expand' : 'Collapse'}
+        >
+          {collapsed ? '▸' : '▾'}
+        </button>
         <span className={statusDotClass} />
         <span className={styles.statusLabel}>{statusLabel(run.status)}</span>
         <span className={styles.runId}>run {run.runId.slice(0, 8)}</span>
-        {hidden > 0 ? (
+        {!collapsed && hidden > 0 ? (
           <button className={styles.toggle} onClick={() => setShowAll(true)}>
             Show full trace ({hidden} earlier)
           </button>
-        ) : run.status !== 'running' && total > COLLAPSED_TAIL_LENGTH ? (
+        ) : !collapsed && run.status !== 'running' && total > COLLAPSED_TAIL_LENGTH ? (
           <button className={styles.toggle} onClick={() => setShowAll(false)}>
-            Collapse
+            Collapse list
           </button>
         ) : null}
+        {isTerminal && (
+          <button
+            className={styles.dismissBtn}
+            onClick={() => dismissRun(run.runId)}
+            aria-label="Dismiss research log"
+            title="Dismiss"
+          >
+            ×
+          </button>
+        )}
       </header>
-      <div className={styles.events} ref={containerRef}>
-        {visibleEvents.length === 0 ? (
-          <p className={styles.empty}>Waiting for the agent to start…</p>
-        ) : (
-          visibleEvents.map((event, i) => (
-            <EventRow
-              key={i}
-              event={event}
-              expanded={expandedThinking.has(i)}
-              onToggleThinking={() => toggleSetItem(setExpandedThinking, i)}
-            />
-          ))
-        )}
-        {/* Animated "alive" indicator anchored at the bottom of the event
-            list. Rides the auto-scroll so users always see it while running,
-            even during 5-30s quiet stretches between events. */}
-        {isRunning && (
-          <div className={styles.thinkingRow}>
-            <span className={styles.thinkingDots} aria-hidden="true">
-              <span /><span /><span />
-            </span>
-            <span className={styles.thinkingLabel}>thinking…</span>
+      {!collapsed && (
+        <>
+          <div className={styles.events} ref={containerRef}>
+            {visibleEvents.length === 0 ? (
+              <p className={styles.empty}>Waiting for the agent to start…</p>
+            ) : (
+              visibleEvents.map(({ event, i }) => (
+                <EventRow
+                  key={i}
+                  event={event}
+                  expanded={expandedThinking.has(i)}
+                  onToggleThinking={() => toggleSetItem(setExpandedThinking, i)}
+                  onDismiss={event.type === 'cap_exceeded'
+                    ? () => setDismissedEventIndices(prev => {
+                        const next = new Set(prev)
+                        next.add(i)
+                        return next
+                      })
+                    : undefined}
+                />
+              ))
+            )}
+            {/* Animated "alive" indicator anchored at the bottom of the event
+                list. Rides the auto-scroll so users always see it while running,
+                even during 5-30s quiet stretches between events. */}
+            {isRunning && (
+              <div className={styles.thinkingRow}>
+                <span className={styles.thinkingDots} aria-hidden="true">
+                  <span /><span /><span />
+                </span>
+                <span className={styles.thinkingLabel}>thinking…</span>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      {run.errorMessage ? (
-        <p className={styles.errorMessage}>{run.errorMessage}</p>
-      ) : null}
+          {run.errorMessage ? (
+            <p className={styles.errorMessage}>{run.errorMessage}</p>
+          ) : null}
+        </>
+      )}
     </section>
   )
 }
@@ -108,10 +161,14 @@ function EventRow({
   event,
   expanded,
   onToggleThinking,
+  onDismiss,
 }: {
   event: AgentEvent
   expanded: boolean
   onToggleThinking: () => void
+  /** When set, the row renders a × button that calls this on click. Only
+   * provided by the parent for cap_exceeded rows under the new dismiss UX. */
+  onDismiss?: () => void
 }) {
   switch (event.type) {
     case 'started':
@@ -143,6 +200,7 @@ function EventRow({
           icon="⚠"
           label={`Cap reached: ${event.cap} (${event.used}/${event.limit}) — raise in Settings → Agents`}
           warn
+          onDismiss={onDismiss}
         />
       )
     case 'done':
@@ -164,6 +222,7 @@ function Row({
   warn,
   error,
   success,
+  onDismiss,
 }: {
   icon: string
   label: string
@@ -172,6 +231,7 @@ function Row({
   warn?: boolean
   error?: boolean
   success?: boolean
+  onDismiss?: () => void
 }) {
   const cls = [
     styles.row,
@@ -185,6 +245,16 @@ function Row({
     <div className={cls}>
       <span className={styles.icon}>{icon}</span>
       <span className={styles.label}>{label}</span>
+      {onDismiss && (
+        <button
+          className={styles.rowDismissBtn}
+          onClick={onDismiss}
+          aria-label="Dismiss this notice"
+          title="Dismiss"
+        >
+          ×
+        </button>
+      )}
     </div>
   )
 }

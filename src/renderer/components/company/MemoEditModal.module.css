@@ -58,6 +58,37 @@
   flex-shrink: 0;
 }
 
+.saveStatusDirty {
+  color: #92400e;
+}
+
+.saveStatusError {
+  color: #991b1b;
+}
+
+.saveBtn {
+  flex-shrink: 0;
+  padding: 5px 14px;
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.saveBtn:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.saveBtn:disabled {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border);
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
 .doneBtn {
   flex-shrink: 0;
   padding: 5px 14px;
