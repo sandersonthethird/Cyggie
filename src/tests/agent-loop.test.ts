@@ -183,7 +183,7 @@ describe('runAgentLoop — caps', () => {
     expect(opts.events.find(e => e.type === 'cap_exceeded' && e.cap === 'iterations')).toBeDefined()
   })
 
-  it('enforces web_search cap: surfaces error to model, agent continues', async () => {
+  it('enforces web_search cap: surfaces actionable error to model, agent continues', async () => {
     const client = buildScriptedClient([
       buildToolUseResponse({
         toolCalls: [{ id: 'tu1', name: 'web_search', input: { query: 'a' } }],
@@ -202,6 +202,25 @@ describe('runAgentLoop — caps', () => {
     expect(result.status).toBe('success')
     expect(result.webSearchCount).toBe(1)
     expect(opts.events.some(e => e.type === 'cap_exceeded' && e.cap === 'web_searches')).toBe(true)
+
+    // The tool_result content the model receives must be actionable — it must
+    // tell the model to stop searching and finalize via the terminal tool.
+    // We check this by capturing the next API call's messages and inspecting
+    // the most recent user/tool_result block.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const createMock = (client.messages.create as unknown as { mock: { calls: any[][] } })
+    // After iteration 2 (the rejected web_search), iteration 3's call sees the
+    // tool_result in messages. Look at the last call's messages array.
+    const lastCallParams = createMock.mock.calls[createMock.mock.calls.length - 1][0]
+    const lastUserMsg = lastCallParams.messages[lastCallParams.messages.length - 1]
+    const blocks = Array.isArray(lastUserMsg.content) ? lastUserMsg.content : []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const toolResult = blocks.find((b: any) => b.type === 'tool_result' && b.is_error)
+    expect(toolResult).toBeDefined()
+    const content = String(toolResult.content)
+    expect(content).toContain('web_search cap reached')
+    expect(content).toContain('ACTION: Stop calling web_search')
+    expect(content).toContain('submit_memo to finalize')
   })
 })
 

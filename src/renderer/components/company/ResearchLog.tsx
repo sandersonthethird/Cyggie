@@ -138,7 +138,13 @@ function EventRow({
     case 'final_text_chunk':
       return null   // streamed memo body — surfaced elsewhere
     case 'cap_exceeded':
-      return <Row icon="⚠" label={`Cap reached: ${event.cap} (${event.used}/${event.limit})`} warn />
+      return (
+        <Row
+          icon="⚠"
+          label={`Cap reached: ${event.cap} (${event.used}/${event.limit}) — raise in Settings → Agents`}
+          warn
+        />
+      )
     case 'done':
       return <Row icon="✓" label={`Done — $${event.costEstimateUsd.toFixed(2)}, ${(event.durationMs / 1000).toFixed(0)}s, ${event.toolCallCount} tool calls`} success />
     case 'error':
