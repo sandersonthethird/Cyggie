@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { getDatabase } from '../connection'
 import type { EvidenceRow } from '../../../shared/types/thesis'
+import type { StoredMemoEvidence } from '../../../shared/types/memo-evidence'
+
+// Re-export so existing callers `import { StoredMemoEvidence } from '...memo-evidence.repo'` continue to work.
+export type { StoredMemoEvidence }
 
 /**
  * Repository for `memo_evidence` rows (sidecar to `investment_memo_versions`).
@@ -22,21 +26,6 @@ import type { EvidenceRow } from '../../../shared/types/thesis'
  *   └────────────────────────────────────────────────────────────────┘
  */
 
-export interface StoredMemoEvidence {
-  id: string
-  versionId: string
-  claimText: string
-  claimCategory: string | null
-  sourceType: string
-  sourceId: string | null
-  sourceUrl: string | null
-  snippet: string
-  confidence: 'high' | 'medium' | 'low'
-  severity: 'high' | 'medium' | 'low' | null
-  isCritique: boolean
-  createdAt: string
-}
-
 interface MemoEvidenceRow {
   id: string
   version_id: string
@@ -49,6 +38,7 @@ interface MemoEvidenceRow {
   confidence: string
   severity: string | null
   is_critique: number
+  section: string | null
   created_at: string
 }
 
@@ -65,6 +55,7 @@ function rowToStored(row: MemoEvidenceRow): StoredMemoEvidence {
     confidence: row.confidence as StoredMemoEvidence['confidence'],
     severity: (row.severity as StoredMemoEvidence['severity']) ?? null,
     isCritique: row.is_critique === 1,
+    section: row.section ?? null,
     createdAt: row.created_at,
   }
 }
@@ -80,8 +71,8 @@ export function bulkInsert(versionId: string, rows: EvidenceRow[]): number {
   const stmt = db.prepare(`
     INSERT OR IGNORE INTO memo_evidence (
       id, version_id, claim_text, claim_category, source_type,
-      source_id, source_url, snippet, confidence, severity, is_critique
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      source_id, source_url, snippet, confidence, severity, is_critique, section
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   let inserted = 0
   for (const row of rows) {
@@ -97,6 +88,7 @@ export function bulkInsert(versionId: string, rows: EvidenceRow[]): number {
       row.confidence,
       row.severity ?? null,
       row.isCritique ? 1 : 0,
+      row.section ?? null,
     )
     if (result.changes > 0) inserted += 1
   }

@@ -336,6 +336,9 @@ function citeSource(state: MemoProducerRunState) {
         snippet: input.snippet,
         confidence: input.confidence,
         isCritique: false,
+        // Persisted to memo_evidence.section (migration 090). Drives the
+        // section hover popover in the memo viewer.
+        section: input.section,
       }
       state.evidenceBuffer.push(row)
       return { ok: true, total: state.evidenceBuffer.length }

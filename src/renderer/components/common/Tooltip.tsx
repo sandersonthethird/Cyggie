@@ -1,10 +1,13 @@
 import { createPortal } from 'react-dom'
-import { useCallback, useRef, useState, type ReactNode } from 'react'
+import React, { useCallback, useRef, useState, type ReactNode } from 'react'
 import styles from './Tooltip.module.css'
 
 interface TooltipProps {
-  /** Text shown in the tooltip */
-  content: string
+  /**
+   * Text or rich content shown in the tooltip / popover. When ReactNode,
+   * the wrapper applies a max-width so list-style layouts don't overflow.
+   */
+  content: string | ReactNode
   /** Which side of the trigger to show on (default: 'top') */
   side?: 'top' | 'right' | 'bottom'
   /** Hover delay in ms before showing (default: 400) */
@@ -74,18 +77,35 @@ export function Tooltip({ content, side = 'top', delay = 400, children }: Toolti
       ? 'translateX(-50%)'
       : 'translate(-50%, -100%)'
 
+  // Non-string content is a richer popover (lists, grouped sources, etc.).
+  // Apply a max-width via inline style so layouts don't overflow on narrow
+  // viewports. String content keeps the existing single-line behavior.
+  const isRichContent = typeof content !== 'string'
+  const tooltipStyle: React.CSSProperties = {
+    top: pos.top,
+    left: pos.left,
+    transform,
+    ...(isRichContent ? { maxWidth: 'min(360px, calc(100vw - 32px))' } : {}),
+  }
+
   return (
     <div
       ref={wrapperRef}
       className={styles.wrapper}
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
+      // Mirror hover triggers on focus so keyboard navigation surfaces the
+      // tooltip when the wrapped trigger receives focus. Tabbing into a
+      // <button> child triggers onFocus on the wrapper via React's event
+      // bubbling.
+      onFocus={handleEnter}
+      onBlur={handleLeave}
     >
       {children}
       {visible && createPortal(
         <div
           className={styles.tooltip}
-          style={{ top: pos.top, left: pos.left, transform }}
+          style={tooltipStyle}
         >
           {content}
         </div>,

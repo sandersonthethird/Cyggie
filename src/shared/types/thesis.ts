@@ -65,6 +65,13 @@ export const EvidenceRowSchema = z
     confidence: ConfidenceSchema,
     severity: SeveritySchema.nullable().optional(),
     isCritique: z.boolean().default(false),
+    /**
+     * The memo section this evidence row belongs to (e.g. "Market / Industry").
+     * Populated by the producer agent's cite_source tool; null for stress-test
+     * agent rows and legacy rows (pre-migration 090). Used by the section
+     * hover popover to attribute evidence back to its source section.
+     */
+    section: z.string().nullable().optional(),
   })
   .superRefine((row, ctx) => {
     // Internal source rows must have a sourceId; web rows must have a sourceUrl.

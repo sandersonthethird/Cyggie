@@ -65,7 +65,7 @@ function toolByName(state: MemoProducerRunState, name: string) {
 describe('cite_source', () => {
   beforeEach(() => mockWebSearch.mockReset())
 
-  it('buffers a valid evidence row', async () => {
+  it('buffers a valid evidence row, persisting section for the hover popover', async () => {
     const state = makeState()
     const tool = toolByName(state, 'cite_source')
     const result = await tool.dispatch(
@@ -82,6 +82,11 @@ describe('cite_source', () => {
     expect(result.errorClass).toBeUndefined()
     expect(state.evidenceBuffer).toHaveLength(1)
     expect(state.evidenceBuffer[0].claimText).toBe('TAM is $50B')
+    // Regression guard: pre-migration-090, the section field was validated by
+    // the tool but dropped before insert. After migration 090 + the producer
+    // tool plumbing change, section MUST persist on the buffered EvidenceRow
+    // so the section hover popover (Delight #1) can attribute the row.
+    expect(state.evidenceBuffer[0].section).toBe('Market / Industry')
   })
 
   it('rejects unknown section heading', async () => {

@@ -71,3 +71,118 @@
   opacity: 0.4;
   cursor: default;
 }
+
+/* Source-count chip next to the section heading. */
+.countChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  margin: 0 2px;
+  border-radius: 8px;
+  background: var(--color-accent-subtle, rgba(74, 140, 247, 0.12));
+  color: var(--color-accent, #4a8cf7);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* ─── Section sources popover (Delight #1) ────────────────────────────── */
+
+.popover {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--color-text);
+  text-align: left;
+}
+
+.popoverHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.popoverTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.popoverCount {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent, #4a8cf7);
+}
+
+.popoverGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.popoverGroupLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 2px 0;
+}
+
+.popoverRows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.popoverRow {
+  margin: 0;
+}
+
+.popoverRowBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.popoverRowBtn:hover,
+.popoverRowBtn:focus-visible {
+  background: var(--color-bg-secondary);
+  outline: none;
+}
+
+.popoverClaim {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.popoverSnippet {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  line-height: 1.3;
+}
