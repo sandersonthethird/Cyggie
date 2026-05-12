@@ -1,5 +1,8 @@
 /**
- * Generic Anthropic tool-use agent loop.
+ * Generic Anthropic tool-use agent loop. Shared by:
+ *   • thesis-stress-test-agent — terminal tool: submit_memo
+ *   • memo-producer-agent      — terminal tool: done (called after N
+ *                                non-terminal submit_section calls)
  *
  *   ┌─────────────────────────────────────────────────────────────────────┐
  *   │  while (iter < cap):                                                 │
@@ -8,7 +11,14 @@
  *   │    3. pre-check input_tokens cap      → emit 'cap_exceeded', return  │
  *   │    4. messages.create  (with retry)   → 401 fail-fast; 5xx retry 1×; │
  *   │                                          429 retry 2× w/ Retry-After  │
- *   │    5. accumulate usage; emit 'thinking' for any text block            │
+ *   │       enableThinking? add `thinking`  → Anthropic extended thinking; │
+ *   │                                          response includes thinking  │
+ *   │                                          AND text blocks; loop reads │
+ *   │                                          only text. Used by producer.│
+ *   │    5. accumulate usage; emit 'thinking' event for any text block      │
+ *   │                                          (legacy event name; refers   │
+ *   │                                          to model preamble text, NOT  │
+ *   │                                          the API's thinking blocks)   │
  *   │    6. extract tool_use blocks                                        │
  *   │       a. terminal_tool present?       → validate input via Zod;      │
  *   │                                          succeed (or fail-validation)│
@@ -19,8 +29,9 @@
  *   │  iteration cap reached → emit 'cap_exceeded'                          │
  *   └─────────────────────────────────────────────────────────────────────┘
  *
- * Stop condition: model called the terminal tool (e.g. 'submit_memo'). The
- * loop reads the already-Zod-validated input as the structured run output.
+ * Stop condition: model called the terminal tool. For the producer agent
+ * that's `done({})` — its Zod refinement validates that all required
+ * sections were submitted via prior non-terminal submit_section calls.
  *
  * Context budget: tool results are aggressively pre-truncated to
  * TOOL_RESULT_PRE_TRUNC_CHARS at receipt; AND tool results older than
@@ -72,6 +83,16 @@ export interface RunAgentLoopOptions {
   kind: string
   mode: AgentRunMode
   companyId: string
+  /**
+   * When true, every iteration's messages.create call enables Anthropic
+   * extended thinking. The model self-allocates thinking tokens up to
+   * `thinkingBudgetTokens` (default 2048; clamped to Anthropic's 1024 min).
+   * Thinking content blocks are NOT emitted as 'thinking' events to avoid
+   * leaking model reasoning to the renderer — only the text content blocks
+   * are surfaced. Caller (the producer agent) is the consumer.
+   */
+  enableThinking?: boolean
+  thinkingBudgetTokens?: number
 }
 
 export interface AgentRunResult {
@@ -148,13 +169,22 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
 
     let response: Message
     try {
-      response = await callWithRetry(opts.client, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const params: any = {
         model: opts.model,
         max_tokens: 8192,
         system: opts.systemPrompt,
         tools: anthropicTools,
         messages,
-      }, opts.signal)
+      }
+      if (opts.enableThinking) {
+        // Anthropic requires budget_tokens >= 1024 when thinking is enabled.
+        params.thinking = {
+          type: 'enabled',
+          budget_tokens: Math.max(1024, opts.thinkingBudgetTokens ?? 2048),
+        }
+      }
+      response = await callWithRetry(opts.client, params, opts.signal)
     } catch (err) {
       const errClass = err instanceof Error ? err.name : 'Error'
       const errMsg = err instanceof Error ? err.message : String(err)

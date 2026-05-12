@@ -64,4 +64,19 @@ export class OpenAIProvider implements LLMProvider {
     })
     return res.choices[0]?.message?.content || ''
   }
+
+  /**
+   * OpenAI has no native extended-thinking API. Pass through to
+   * generateSummary — the prompt-level `<thinking>` block instruction in
+   * the system prompt still applies; quality degrades gracefully.
+   */
+  async streamWithThinking(
+    systemPrompt: string,
+    userPrompt: string,
+    _thinkingBudgetTokens: number,
+    onProgress?: (chunk: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    return this.generateSummary(systemPrompt, userPrompt, onProgress, signal)
+  }
 }
