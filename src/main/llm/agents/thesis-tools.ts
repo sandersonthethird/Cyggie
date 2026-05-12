@@ -13,7 +13,7 @@
  *   │   web:                                                            │
  *   │     - web_search, web_fetch (URL allowlist enforced inside)      │
  *   │   terminal:                                                       │
- *   │     - submit_memo (the agent's stop signal)                      │
+ *   │     - submit_review (the agent's stop signal — produces a Report)│
  *   │                                                                 │
  *   │  ctx.companyId is the run's pinned company. Tools that take a    │
  *   │  `companyId` param ignore any model-supplied value and use ctx — │
@@ -23,7 +23,7 @@
  */
 
 import { defineTool, z, type Tool, type ToolContext } from './define-tool'
-import { SubmitMemoInputSchema } from '../../../shared/types/thesis'
+import { SubmitReviewInputSchema } from '../../../shared/types/stress-test-report'
 import { agentWebSearch, agentWebFetch } from '../../services/exa-research'
 import { normalizeLegacyHeadings } from '../memo/sections'
 
@@ -311,13 +311,13 @@ const webFetch = defineTool({
 
 // ─── Terminal tool ───────────────────────────────────────────────────────
 
-const submitMemo = defineTool({
-  name: 'submit_memo',
+const submitReview = defineTool({
+  name: 'submit_review',
   description:
-    'Submit the FINAL revised investment memo. Pass the full markdown plus structured evidence rows. After this call the agent loop terminates.',
+    "Submit the stress-test report. You do NOT rewrite the memo — produce a structured write-up of weaknesses. Required: a summary, a recommendation (proceed | proceed_with_caveats | pass | dig_deeper), and 3–8 numbered concerns. Each concern names the analyst's claim, the evidence weakening it, and what would need to be true for the original thesis to hold. Use evidence[] with isCritique=true for claim-level flags tied to specific sources. After this call the agent loop terminates.",
   terminal: true,
   category: 'terminal',
-  input: SubmitMemoInputSchema,
+  input: SubmitReviewInputSchema,
   output: { maxChars: 100 },
   handler: () => ({ ok: true }),
 })
@@ -347,7 +347,7 @@ export const THESIS_STRESS_TEST_TOOLS: Tool[] = [
   readContactProfile,
   webSearch,
   webFetch,
-  submitMemo,
+  submitReview,
 ] as unknown as Tool[]
 
-export const SUBMIT_MEMO_TOOL_NAME = submitMemo.name
+export const SUBMIT_REVIEW_TOOL_NAME = submitReview.name

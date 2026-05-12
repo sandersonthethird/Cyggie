@@ -221,6 +221,10 @@ export const IPC_CHANNELS = {
   THESIS_STRESS_TEST_ABORT: 'thesis-stress-test:abort',
   THESIS_STRESS_TEST_PROGRESS: 'thesis-stress-test:progress',
 
+  // Stress-test Reports (read-only Phase 1)
+  STRESS_TEST_REPORT_LIST: 'stress-test-report:list',
+  STRESS_TEST_REPORT_GET: 'stress-test-report:get',
+
   // Memo evidence (sidecar to investment_memo_versions)
   MEMO_EVIDENCE_LIST_BY_VERSION: 'memo-evidence:list-by-version',
 

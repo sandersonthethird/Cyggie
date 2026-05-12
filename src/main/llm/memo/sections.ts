@@ -97,27 +97,6 @@ export function getSection(heading: string): MemoSection | undefined {
   return BY_HEADING.get(heading)
 }
 
-/**
- * The stress-test agent rewrites "conclusory" sections and leaves "descriptive"
- * sections byte-identical. We treat synthesis + Competition + Traction +
- * Valuation as the rewrite targets — these match the legacy hard-coded list
- * (with Investment Highlights renamed to Investment Thesis).
- */
-export function stressTestTargets(): readonly string[] {
-  return MEMO_SECTIONS.filter(
-    (s) =>
-      s.kind === 'synthesis' ||
-      s.heading === 'Competition' ||
-      s.heading === 'Traction / Financials' ||
-      s.heading === 'Valuation',
-  ).map((s) => s.heading)
-}
-
-export function stressTestPassthrough(): readonly string[] {
-  const targets = new Set(stressTestTargets())
-  return MEMO_SECTIONS.filter((s) => !targets.has(s.heading)).map((s) => s.heading)
-}
-
 // ─── Stage gating ─────────────────────────────────────────────────────────
 
 /**
