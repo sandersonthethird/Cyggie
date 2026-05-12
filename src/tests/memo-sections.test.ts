@@ -11,12 +11,32 @@ import {
 
 describe('MEMO_SECTIONS roster', () => {
   it('has 11 sections', () => {
-    expect(MEMO_SECTIONS.length).toBe(11)
+    expect(MEMO_SECTIONS.length).toBe(12)
   })
 
   it('ordinals are sequential starting at 1', () => {
     const ordinals = MEMO_SECTIONS.map((s) => s.ordinal)
-    expect(ordinals).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    expect(ordinals).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+  })
+
+  it('Product is a required narrative section at ordinal 4', () => {
+    const s = getSection('Product')!
+    expect(s).toBeDefined()
+    expect(s.kind).toBe('narrative')
+    expect(s.ordinal).toBe(4)
+    expect(s.required).toBe(true)
+    expect(s.gate).toBe(null)
+  })
+
+  it('Product slots between Business Description (ord 3) and Market (ord 5)', () => {
+    expect(getSection('Business Description')!.ordinal).toBe(3)
+    expect(getSection('Product')!.ordinal).toBe(4)
+    expect(getSection('Market / Industry')!.ordinal).toBe(5)
+  })
+
+  it('shifts downstream sections by one (Team is now ord 7, References ord 12)', () => {
+    expect(getSection('Team')!.ordinal).toBe(7)
+    expect(getSection('References')!.ordinal).toBe(12)
   })
 
   it('Executive Summary is required and synthesis', () => {

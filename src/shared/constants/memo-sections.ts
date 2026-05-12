@@ -12,6 +12,7 @@ export const MEMO_SECTION_HEADINGS = [
   'Executive Summary',
   'Investment Thesis',
   'Business Description',
+  'Product',
   'Market / Industry',
   'Competition',
   'Team',
