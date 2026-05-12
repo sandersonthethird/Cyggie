@@ -23,10 +23,9 @@ import { SubmitMemoInputSchema, type SubmitMemoInput } from '../../../shared/typ
 import type { AgentEvent } from '../../../shared/types/agent-events'
 import { getCredential } from '../../security/credentials'
 import { stressTestPassthrough, stressTestTargets } from '../memo/sections'
+import { getAgentModelId, getCacheTtl, EXTENDED_CACHE_TTL_BETA } from './model-tier'
 // Vite ?raw inlines the markdown content as a string at build time.
 import THESIS_SYSTEM_PROMPT from './prompts/thesis-stress-test.system.md?raw'
-
-const MODEL_ID = 'claude-sonnet-4-5-20250929'
 
 /**
  * Section axes for the stress-test agent's scope-lock validator. Derived
@@ -83,6 +82,8 @@ export async function runStressTestAgent(
       iterations: 0,
       inputTokensTotal: 0,
       outputTokensTotal: 0,
+      cacheReadTokensTotal: 0,
+      cacheCreateTokensTotal: 0,
       costEstimateUsd: 0,
       toolCallCount: 0,
       webSearchCount: 0,
@@ -93,7 +94,14 @@ export async function runStressTestAgent(
     }
   }
 
-  const client = new Anthropic({ apiKey })
+  const model = getAgentModelId()
+  const cacheTtl = getCacheTtl()
+  const client = new Anthropic({
+    apiKey,
+    ...(cacheTtl === '1h'
+      ? { defaultHeaders: { 'anthropic-beta': EXTENDED_CACHE_TTL_BETA } }
+      : {}),
+  })
   const limits = input.limits ?? getAgentLimits()
 
   const initialUserMessage =
@@ -104,7 +112,7 @@ export async function runStressTestAgent(
 
   const result = await runAgentLoop({
     client,
-    model: MODEL_ID,
+    model,
     systemPrompt: THESIS_SYSTEM_PROMPT,
     initialUserMessage,
     tools: THESIS_STRESS_TEST_TOOLS,
@@ -121,6 +129,7 @@ export async function runStressTestAgent(
     kind: 'thesis_stress_test',
     mode: 'stress_test',
     companyId: input.companyId,
+    cacheTtl,
   })
 
   if (result.status !== 'success' || !result.terminalToolInput) {

@@ -41,6 +41,17 @@ export interface AgentRunCompletion {
   iterations: number
   inputTokensTotal: number
   outputTokensTotal: number
+  /**
+   * Tokens served from Anthropic prompt cache (billed at 0.1× input rate).
+   * Optional for back-compat with callers that don't track caching; defaults
+   * to 0 when omitted.
+   */
+  cacheReadTokensTotal?: number
+  /**
+   * Tokens written to Anthropic prompt cache (billed at 1.25× input rate).
+   * Optional for back-compat; defaults to 0 when omitted.
+   */
+  cacheCreateTokensTotal?: number
   costEstimateUsd: number
   toolCallCount: number
   webSearchCount: number
@@ -61,6 +72,10 @@ export interface StoredAgentRun {
   iterations: number
   inputTokensTotal: number
   outputTokensTotal: number
+  /** Tokens served from Anthropic prompt cache. 0 for pre-migration-091 runs. */
+  cacheReadTokensTotal: number
+  /** Tokens written to Anthropic prompt cache. 0 for pre-migration-091 runs. */
+  cacheCreateTokensTotal: number
   costEstimateUsd: number
   toolCallCount: number
   webSearchCount: number
@@ -81,6 +96,8 @@ interface AgentRunRow {
   iterations: number
   input_tokens_total: number
   output_tokens_total: number
+  cache_read_input_tokens_total: number | null
+  cache_creation_input_tokens_total: number | null
   cost_estimate_usd: number
   tool_call_count: number
   web_search_count: number
@@ -102,6 +119,8 @@ function rowToStored(row: AgentRunRow): StoredAgentRun {
     iterations: row.iterations,
     inputTokensTotal: row.input_tokens_total,
     outputTokensTotal: row.output_tokens_total,
+    cacheReadTokensTotal: row.cache_read_input_tokens_total ?? 0,
+    cacheCreateTokensTotal: row.cache_creation_input_tokens_total ?? 0,
     costEstimateUsd: row.cost_estimate_usd,
     toolCallCount: row.tool_call_count,
     webSearchCount: row.web_search_count,
@@ -138,6 +157,8 @@ export function completeRun(runId: string, completion: AgentRunCompletion): void
            iterations = ?,
            input_tokens_total = ?,
            output_tokens_total = ?,
+           cache_read_input_tokens_total = ?,
+           cache_creation_input_tokens_total = ?,
            cost_estimate_usd = ?,
            tool_call_count = ?,
            web_search_count = ?,
@@ -151,6 +172,8 @@ export function completeRun(runId: string, completion: AgentRunCompletion): void
     completion.iterations,
     completion.inputTokensTotal,
     completion.outputTokensTotal,
+    completion.cacheReadTokensTotal ?? 0,
+    completion.cacheCreateTokensTotal ?? 0,
     completion.costEstimateUsd,
     completion.toolCallCount,
     completion.webSearchCount,

@@ -89,6 +89,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 }
 
 import { AgentLimitsSection } from '../components/settings/AgentLimitsSection'
+import { AgentModelTierSection } from '../components/settings/AgentModelTierSection'
 
 interface SettingsState {
   deepgramApiKey: string
@@ -1164,6 +1165,12 @@ export default function Settings() {
           Caps on the multi-turn stress-test agent. Defaults are tuned for typical Sonnet 4.5 runs (~$1.20).
         </p>
         <AgentLimitsSection />
+
+        <h4 className={styles.subsectionTitle ?? ''} style={{ marginTop: 24, fontSize: 14, fontWeight: 600 }}>Model tier &amp; prompt caching</h4>
+        <p className={styles.hint} style={{ marginTop: 4 }}>
+          Applies to both the memo producer and stress-test agents. Reads happen at run start.
+        </p>
+        <AgentModelTierSection />
       </section>
         </>
       )}

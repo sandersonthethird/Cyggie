@@ -98,6 +98,14 @@ export interface RunAgentLoopOptions {
    */
   enableThinking?: boolean
   thinkingBudgetTokens?: number
+  /**
+   * Anthropic prompt-cache TTL. Defaults to '5m' (ephemeral). When '1h', the
+   * caller MUST construct its Anthropic client with the matching beta header
+   * (`extended-cache-ttl-2025-04-11`) — see model-tier.ts EXTENDED_CACHE_TTL_BETA.
+   * The loop only applies the value to cache_control blocks; client-side
+   * headers are the caller's responsibility.
+   */
+  cacheTtl?: '5m' | '1h'
 }
 
 export interface AgentRunResult {
@@ -107,6 +115,10 @@ export interface AgentRunResult {
   iterations: number
   inputTokensTotal: number
   outputTokensTotal: number
+  /** Tokens read from Anthropic prompt cache. Billed at 0.1× input rate. */
+  cacheReadTokensTotal: number
+  /** Tokens written to Anthropic prompt cache. Billed at 1.25× input rate. */
+  cacheCreateTokensTotal: number
   costEstimateUsd: number
   toolCallCount: number
   webSearchCount: number
@@ -128,10 +140,26 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
   let iterations = 0
   let inputTokensTotal = 0
   let outputTokensTotal = 0
+  let cacheReadTokensTotal = 0
+  let cacheCreateTokensTotal = 0
   let toolCallCount = 0
   let webSearchCount = 0
+
+  // Prompt-cache breakpoint #3 (of 3): the initial user message contains the
+  // scaffold (company overview, notes, transcripts, Exa research) — stable
+  // across all iterations within a run. Wrap as an array with cache_control
+  // so iterations 2+ hit cache for this prefix.
+  const cacheControl: { type: 'ephemeral'; ttl?: '1h' } = { type: 'ephemeral' }
+  if (opts.cacheTtl === '1h') cacheControl.ttl = '1h'
+
   let messages: MessageParam[] = [
-    { role: 'user', content: opts.initialUserMessage },
+    {
+      role: 'user',
+      content: [
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { type: 'text', text: opts.initialUserMessage, cache_control: cacheControl } as any,
+      ],
+    },
   ]
 
   opts.emit({
@@ -174,12 +202,28 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
 
     let response: Message
     try {
+      // Cache breakpoints #1 (system) + #2 (tools): wrap system as a content
+      // block array w/ cache_control, and tag the LAST tool with cache_control
+      // (caches everything up to and including it). Combined with the initial
+      // user message (breakpoint #3, set above when initializing `messages`),
+      // we use 3 of Anthropic's 4 allowed breakpoints per request.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const systemBlocks: any = [
+        { type: 'text', text: opts.systemPrompt, cache_control: cacheControl },
+      ]
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const toolsWithCache: any = anthropicTools
+        ? (anthropicTools as unknown as unknown[]).map((t, i, arr) =>
+            i === arr.length - 1 ? { ...(t as object), cache_control: cacheControl } : t,
+          )
+        : anthropicTools
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const params: any = {
         model: opts.model,
         max_tokens: 8192,
-        system: opts.systemPrompt,
-        tools: anthropicTools,
+        system: systemBlocks,
+        tools: toolsWithCache,
         messages,
       }
       if (opts.enableThinking) {
@@ -204,6 +248,12 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
 
     inputTokensTotal += getInputTokens(response.usage)
     outputTokensTotal += response.usage.output_tokens ?? 0
+    // Anthropic populates cache_*_tokens fields when prompt caching is
+    // active. SDK types these as number | null; coerce to 0 for accounting.
+    // input_tokens excludes cached portions, so accumulating these
+    // separately yields a complete picture of the request size.
+    cacheReadTokensTotal += response.usage.cache_read_input_tokens ?? 0
+    cacheCreateTokensTotal += response.usage.cache_creation_input_tokens ?? 0
 
     // Emit thinking text if present.
     const textBlocks = response.content.filter(b => b.type === 'text')
@@ -404,8 +454,15 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
     errorClass?: string,
     errorMessage?: string,
   ): AgentRunResult {
+    // Cost math factors all four token streams at their Anthropic-published
+    // rates. cache_read at 0.1× input, cache_creation at 1.25× input.
+    // For pre-caching runs (no cache fields), both totals are 0 and this
+    // reduces to the original (input × in + output × out) formula.
     const cost =
-      (inputTokensTotal * pricing.inputPerM + outputTokensTotal * pricing.outputPerM) / 1_000_000
+      (inputTokensTotal * pricing.inputPerM +
+        cacheReadTokensTotal * pricing.inputPerM * 0.1 +
+        cacheCreateTokensTotal * pricing.inputPerM * 1.25 +
+        outputTokensTotal * pricing.outputPerM) / 1_000_000
     if (status === 'success') {
       opts.emit({
         type: 'done',
@@ -424,6 +481,8 @@ export async function runAgentLoop(opts: RunAgentLoopOptions): Promise<AgentRunR
       iterations,
       inputTokensTotal,
       outputTokensTotal,
+      cacheReadTokensTotal,
+      cacheCreateTokensTotal,
       costEstimateUsd: cost,
       toolCallCount,
       webSearchCount,

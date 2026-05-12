@@ -34,6 +34,12 @@ import { buildMemoProducerTools, type MemoProducerRunState } from './memo-produc
 import { getAgentLimits, type AgentLimits } from './limits'
 import { getCredential } from '../../security/credentials'
 import { getSetting } from '../../database/repositories/settings.repo'
+import {
+  getAgentModelId,
+  getCacheTtl,
+  HAIKU_MODEL_ID,
+  EXTENDED_CACHE_TTL_BETA,
+} from './model-tier'
 import type { AgentEvent } from '../../../shared/types/agent-events'
 import type { EvidenceRow } from '../../../shared/types/thesis'
 import {
@@ -56,8 +62,6 @@ import { getFlaggedFiles } from '../../database/repositories/company-file-flags.
 import { makeEntityNotesRepo } from '../../database/repositories/notes-base'
 import { readSummary, readTranscript } from '../../storage/file-manager'
 
-const MODEL_ID = 'claude-sonnet-4-5-20250929'
-const HAIKU_MODEL_ID = 'claude-haiku-4-5-20251001'
 const SETTING_EXTENDED_THINKING = 'agent.memoProducerExtendedThinking'
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
 
@@ -112,7 +116,17 @@ export async function runMemoProducerAgent(
   if (!apiKey) {
     return emptyResult('AuthenticationError', 'Claude API key not configured')
   }
-  const client = new Anthropic({ apiKey })
+  const model = getAgentModelId()
+  const cacheTtl = getCacheTtl()
+  // 1h cache TTL requires the extended-cache-ttl beta header. If the account
+  // isn't entitled the API returns 400; user can flip agent.cacheTtl back to
+  // '5m' in Settings as the safe fallback.
+  const client = new Anthropic({
+    apiKey,
+    ...(cacheTtl === '1h'
+      ? { defaultHeaders: { 'anthropic-beta': EXTENDED_CACHE_TTL_BETA } }
+      : {}),
+  })
   const limits = input.limits ?? getAgentLimits()
   const extendedThinkingEnabled = getSetting(SETTING_EXTENDED_THINKING) !== 'false' // default true
 
@@ -231,7 +245,7 @@ export async function runMemoProducerAgent(
   try {
     allocated = await allocateContext({
       anthropic: client,
-      model: MODEL_ID,
+      model,
       meetings: transcriptInputs,
       scaffold,
       summarize: async (m) => summarizeTranscriptWithHaiku(client, m),
@@ -282,7 +296,7 @@ export async function runMemoProducerAgent(
   const tools = buildMemoProducerTools(state)
   const result = await runAgentLoop({
     client,
-    model: MODEL_ID,
+    model,
     systemPrompt,
     initialUserMessage,
     tools,
@@ -301,6 +315,7 @@ export async function runMemoProducerAgent(
     companyId: input.companyId,
     enableThinking: extendedThinkingEnabled,
     thinkingBudgetTokens: 2048,
+    cacheTtl,
   })
 
   // ─── Assemble + threshold check ───────────────────────────────────────
@@ -566,6 +581,8 @@ function emptyResult(errorClass: string, errorMessage: string): RunMemoProducerR
     iterations: 0,
     inputTokensTotal: 0,
     outputTokensTotal: 0,
+    cacheReadTokensTotal: 0,
+    cacheCreateTokensTotal: 0,
     costEstimateUsd: 0,
     toolCallCount: 0,
     webSearchCount: 0,
