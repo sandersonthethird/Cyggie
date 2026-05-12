@@ -482,36 +482,92 @@ describe('runAgentLoop — recoverable terminal-tool validation', () => {
     // tool_error fired on the first (malformed) attempt.
     const toolErrors = opts.events.filter(e => e.type === 'tool_error')
     expect(toolErrors).toHaveLength(1)
-    expect((toolErrors[0] as { message: string }).message).toContain('sourceUrl')
+    const errMsg = (toolErrors[0] as { message: string }).message
+    // New actionable envelope: bullets + ACTION directive + Do-NOT guidance.
+    expect(errMsg).toContain('Validation errors:')
+    expect(errMsg).toContain('ACTION:')
+    expect(errMsg).toContain('Do NOT call web_search')
+    expect(errMsg).toMatch(/•\s+evidence\.0\.sourceUrl/)
     // Final terminal input is the corrected payload.
     expect(result.terminalToolInput).toMatchObject({
       evidence: [{ claimText: 'fixed', sourceUrl: 'https://example.com' }],
     })
   })
 
-  it('exits with cap_exceeded when the model keeps producing malformed terminal input', async () => {
-    // Iteration cap = 3; model returns malformed every time.
-    const malformedResponses = Array.from({ length: 10 }, (_, i) =>
+  it('locks the define-tool.ts envelope contract: parses {error: "invalid_input: a; b"} into bullets', async () => {
+    // Two distinct Zod issues in one terminal call. Both should surface as
+    // bullets in the model-visible message, and the auto-strip-able path
+    // (array-indexed) should NOT trigger auto-strip on its first failure —
+    // the model still gets one chance to self-correct.
+    const client = buildScriptedClient([
+      // Iter 1: two issues — one indexed, one indexed too. First failure only.
       buildFinalToolCallResponse({
         toolName: 'submit_memo',
-        toolUseId: `tu-bad-${i}`,
+        toolUseId: 'tu-bad-1',
         toolInput: {
           markdown: '# Memo',
-          evidence: [{ claimText: 'broken', sourceType: 'web' }],
+          evidence: [
+            { claimText: 'a', sourceType: 'web' },
+            { claimText: 'b', sourceType: 'web' },
+          ],
         },
       }),
-    )
-    const client = buildScriptedClient(malformedResponses)
+      // Iter 2: corrected.
+      buildFinalToolCallResponse({
+        toolName: 'submit_memo',
+        toolUseId: 'tu-fix',
+        toolInput: {
+          markdown: '# Memo',
+          evidence: [
+            { claimText: 'a', sourceType: 'web', sourceUrl: 'https://a.com' },
+            { claimText: 'b', sourceType: 'web', sourceUrl: 'https://b.com' },
+          ],
+        },
+      }),
+    ])
     const opts = makeOpts(client, [makeStrictSubmitMemoTool()])
-    opts.limits = { iterations: 3, webSearches: 3, inputTokens: 100_000 }
     const result = await runAgentLoop(opts)
-    // The loop bounded by iterations cap fires cap_exceeded eventually.
-    expect(['cap_exceeded', 'failed']).toContain(result.status)
-    // Each iteration emits a tool_error on the malformed terminal call.
+    expect(result.status).toBe('success')
     const toolErrors = opts.events.filter(e => e.type === 'tool_error')
-    expect(toolErrors.length).toBeGreaterThanOrEqual(2)
-    // Never finalized as success.
-    expect(opts.events.find(e => e.type === 'done')).toBeUndefined()
+    expect(toolErrors).toHaveLength(1)
+    const msg = (toolErrors[0] as { message: string }).message
+    // Both indexed paths appear as bullets.
+    expect(msg).toMatch(/•\s+evidence\.0\.sourceUrl/)
+    expect(msg).toMatch(/•\s+evidence\.1\.sourceUrl/)
+    // ACTION line names the tool by name.
+    expect(msg).toContain("re-call submit_memo")
+  })
+
+  it('auto-strips offending array rows after the same path fails twice in a row', async () => {
+    // Simulates Haiku-style mis-recovery: the model can't (or won't) fix the
+    // bad row. After two consecutive failures on the same indexed path,
+    // the loop strips the row and finalizes as success.
+    const sameBadInput = {
+      markdown: '# Memo',
+      evidence: [
+        { claimText: 'good', sourceType: 'web', sourceUrl: 'https://good.com' },
+        { claimText: 'broken', sourceType: 'web' },                  // index 1: no sourceUrl
+      ],
+    }
+    const client = buildScriptedClient([
+      buildFinalToolCallResponse({ toolName: 'submit_memo', toolUseId: 'tu1', toolInput: sameBadInput }),
+      buildFinalToolCallResponse({ toolName: 'submit_memo', toolUseId: 'tu2', toolInput: sameBadInput }),
+    ])
+    const opts = makeOpts(client, [makeStrictSubmitMemoTool()])
+    const result = await runAgentLoop(opts)
+    expect(result.status).toBe('success')
+    // Stripped: only the GOOD row remains.
+    expect(result.terminalToolInput).toMatchObject({
+      evidence: [{ claimText: 'good', sourceUrl: 'https://good.com' }],
+    })
+    expect((result.terminalToolInput as { evidence: unknown[] }).evidence).toHaveLength(1)
+    // A tool_error event surfaces what we did so the trace UI shows it.
+    const toolErrors = opts.events.filter(e => e.type === 'tool_error')
+    const autoStripEvent = toolErrors.find(e =>
+      (e as { message: string }).message.includes('auto-stripped'),
+    )
+    expect(autoStripEvent).toBeDefined()
+    expect((autoStripEvent as { message: string }).message).toContain('evidence.1.sourceUrl')
   })
 
   it('on terminal FAILURE, also dispatches same-turn non-terminal tool_uses', async () => {
