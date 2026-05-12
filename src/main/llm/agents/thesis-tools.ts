@@ -25,6 +25,7 @@
 import { defineTool, z, type Tool, type ToolContext } from './define-tool'
 import { SubmitMemoInputSchema } from '../../../shared/types/thesis'
 import { agentWebSearch, agentWebFetch } from '../../services/exa-research'
+import { normalizeLegacyHeadings } from '../memo/sections'
 
 import * as companyRepo from '../../database/repositories/org-company.repo'
 import * as memoRepo from '../../database/repositories/investment-memo.repo'
@@ -47,10 +48,14 @@ const readExistingMemo = defineTool({
   handler: (_input, ctx: ToolContext) => {
     const memo = memoRepo.getLatestMemoForCompany(ctx.companyId)
     if (!memo || !memo.latestVersion) return { error: 'no_memo_yet' }
+    // Transparently rewrite pre-rename "## Investment Highlights" headings
+    // to "## Investment Thesis" so the agent operates on the current section
+    // roster regardless of which memo version it's stress-testing. Persisted
+    // markdown on disk stays untouched (history preserved).
     return {
       memoId: memo.id,
       versionNumber: memo.latestVersion.versionNumber,
-      contentMarkdown: memo.latestVersion.contentMarkdown,
+      contentMarkdown: normalizeLegacyHeadings(memo.latestVersion.contentMarkdown),
       changeNote: memo.latestVersion.changeNote,
       createdAt: memo.latestVersion.createdAt,
     }

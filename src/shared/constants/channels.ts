@@ -227,6 +227,9 @@ export const IPC_CHANNELS = {
   // Memo-generation pre-flight + cancel
   INVESTMENT_MEMO_PREFLIGHT: 'investment-memo:preflight',
   INVESTMENT_MEMO_GENERATE_ABORT: 'investment-memo:generate-abort',
+  // Per-section refresh (Delight #5): regenerates a single section against
+  // current data; bumps memo version with a `Refreshed section: X` note.
+  INVESTMENT_MEMO_REGENERATE_SECTION: 'investment-memo:regenerate-section',
 
   // Chat context-size preflight (drives the banner above chat input)
   CHAT_CONTEXT_SIZE_PREFLIGHT: 'chat:context-size-preflight',
