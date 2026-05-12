@@ -43,17 +43,23 @@ export function ResearchLog({ run }: { run: RunRecord | null }) {
 
   if (!run) return null
 
-  const visibleEvents = showAll || run.status === 'running'
+  const isRunning = run.status === 'running'
+  const visibleEvents = showAll || isRunning
     ? run.events
     : run.events.slice(-COLLAPSED_TAIL_LENGTH)
 
   const total = run.events.length
   const hidden = total - visibleEvents.length
 
+  // .status-running already has a pulse animation in CSS; we enhanced it to
+  // also scale so the alive signal is visible in peripheral vision during the
+  // 5-30s quiet stretches between agent events.
+  const statusDotClass = `${styles.statusDot} ${styles[`status-${run.status}`]}`
+
   return (
     <section className={styles.log} aria-live="polite">
       <header className={styles.header}>
-        <span className={`${styles.statusDot} ${styles[`status-${run.status}`]}`} />
+        <span className={statusDotClass} />
         <span className={styles.statusLabel}>{statusLabel(run.status)}</span>
         <span className={styles.runId}>run {run.runId.slice(0, 8)}</span>
         {hidden > 0 ? (
@@ -78,6 +84,17 @@ export function ResearchLog({ run }: { run: RunRecord | null }) {
               onToggleThinking={() => toggleSetItem(setExpandedThinking, i)}
             />
           ))
+        )}
+        {/* Animated "alive" indicator anchored at the bottom of the event
+            list. Rides the auto-scroll so users always see it while running,
+            even during 5-30s quiet stretches between events. */}
+        {isRunning && (
+          <div className={styles.thinkingRow}>
+            <span className={styles.thinkingDots} aria-hidden="true">
+              <span /><span /><span />
+            </span>
+            <span className={styles.thinkingLabel}>thinking…</span>
+          </div>
         )}
       </div>
       {run.errorMessage ? (
