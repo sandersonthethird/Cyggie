@@ -16,14 +16,37 @@ import type Database from 'better-sqlite3'
  *   │   • If a memo or memo_version is later deleted, an orphan report  │
  *   │     row is fine — better than losing the report at write time.    │
  *   │   • The same pattern is used elsewhere in this app (e.g.           │
- *   │     `agent_runs.result_version_id` is a free-form text reference   │
- *   │     under both producer and stress-test kinds).                    │
+ *   │     `agent_runs.result_version_id` after migration 094).           │
  *   │                                                                   │
- *   │  Drop is safe: every persist under migration 092 failed, so the   │
- *   │  table has zero rows.                                              │
+ *   │  CRITICAL idempotency note: migrations run on every app launch.   │
+ *   │  This migration ONLY drops + recreates the table when it still   │
+ *   │  has FKs (from migration 092). Once 093 has run, the table has   │
+ *   │  no FKs, so subsequent launches no-op. Without this guard, the   │
+ *   │  DROP wiped any persisted reports on every restart.               │
  *   └──────────────────────────────────────────────────────────────────┘
  */
 export function runStressTestReportsNoFkMigration(db: Database.Database): void {
+  // Idempotency guard: only act when the table still has FKs from 092.
+  // If the table doesn't exist yet (fresh DB; 092 just created it), the
+  // foreign_key_list returns 0 rows — but in that case 092 just ran with
+  // the FK schema, so we still want to drop + recreate. Distinguish by
+  // checking table existence too.
+  const tableExists = db.prepare(`
+    SELECT 1 FROM sqlite_master WHERE type='table' AND name='stress_test_reports'
+  `).get() !== undefined
+
+  if (!tableExists) {
+    // Shouldn't happen (092 runs first), but bail safely if it does.
+    return
+  }
+
+  const fks = db.prepare(`PRAGMA foreign_key_list(stress_test_reports)`).all() as unknown[]
+  if (fks.length === 0) {
+    // Already FK-free — this migration already ran on a prior launch.
+    // Do NOT drop the table; that would wipe persisted reports.
+    return
+  }
+
   db.exec(`
     DROP TABLE IF EXISTS stress_test_reports;
 
