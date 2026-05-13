@@ -91,6 +91,7 @@ import { runTranscriptSummariesMigration } from './migrations/089-transcript-sum
 import { runMemoEvidenceSectionMigration } from './migrations/090-memo-evidence-section'
 import { runAgentRunsCacheTokensMigration } from './migrations/091-agent-runs-cache-tokens'
 import { runStressTestReportsMigration } from './migrations/092-stress-test-reports'
+import { runStressTestReportsNoFkMigration } from './migrations/093-stress-test-reports-no-fk'
 
 let db: Database.Database | null = null
 
@@ -191,6 +192,7 @@ export function getDatabase(): Database.Database {
     runMemoEvidenceSectionMigration(db)
     runAgentRunsCacheTokensMigration(db)
     runStressTestReportsMigration(db)
+    runStressTestReportsNoFkMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or

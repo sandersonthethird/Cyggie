@@ -94,7 +94,17 @@ export function persistStressTestReport(input: PersistInput): { reportId: string
     input.toolCallCount,
     input.createdBy,
   )
-  console.info('[stress-test-report] saved', id, 'for memo', input.memoId)
+  // Structured log: lets us correlate report id to memo / run / prior version
+  // from /dev/agent-runs and main-process console without re-querying the DB.
+  console.info('[stress-test-report] saved', {
+    reportId: id,
+    memoId: input.memoId,
+    runId: input.runId,
+    priorMemoVersionId: input.priorMemoVersionId,
+    recommendation: input.recommendation,
+    concernCount: input.concerns.length,
+    evidenceCount: input.evidence.length,
+  })
   return { reportId: id }
 }
 
