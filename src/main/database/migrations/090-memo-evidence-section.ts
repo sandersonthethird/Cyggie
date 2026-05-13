@@ -21,12 +21,23 @@ import type Database from 'better-sqlite3'
  *   │  SQLite treats NULL as distinct in UNIQUE indexes — legacy rows  │
  *   │  with section=NULL won't collide with each other or with new      │
  *   │  rows that have a section value.                                  │
+ *   │                                                                   │
+ *   │  Idempotency: ALTER TABLE ADD COLUMN fails on duplicate column,  │
+ *   │  so we check PRAGMA table_info first. Index recreation uses       │
+ *   │  DROP IF EXISTS + CREATE; no-op on re-run.                        │
  *   └──────────────────────────────────────────────────────────────────┘
  */
-export function runMemoEvidenceSectionMigration(db: Database.Database): void {
-  db.exec(`
-    ALTER TABLE memo_evidence ADD COLUMN section TEXT;
+function columnExists(db: Database.Database, tableName: string, columnName: string): boolean {
+  const cols = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>
+  return cols.some((c) => c.name === columnName)
+}
 
+export function runMemoEvidenceSectionMigration(db: Database.Database): void {
+  if (!columnExists(db, 'memo_evidence', 'section')) {
+    db.exec(`ALTER TABLE memo_evidence ADD COLUMN section TEXT`)
+  }
+
+  db.exec(`
     DROP INDEX IF EXISTS uq_memo_evidence_internal;
     DROP INDEX IF EXISTS uq_memo_evidence_web;
 
