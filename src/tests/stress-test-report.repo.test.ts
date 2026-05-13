@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { runAgentRunsMigration } from '../main/database/migrations/086-agent-runs'
 import { runStressTestReportsMigration } from '../main/database/migrations/092-stress-test-reports'
+import { runStressTestReportsNoFkMigration } from '../main/database/migrations/093-stress-test-reports-no-fk'
 
 vi.mock('../main/database/connection', () => ({
   getDatabase: vi.fn(),
@@ -45,7 +46,11 @@ function makeDb(): Database.Database {
   `)
   runAgentRunsMigration(db)
   runStressTestReportsMigration(db)
-  // Seed an agent_runs row to satisfy FK from stress_test_reports.run_id.
+  // Migration 093 drops the FK-enforced table and recreates it without FK
+  // constraints. Tests exercise the post-093 schema (matches production).
+  runStressTestReportsNoFkMigration(db)
+  // Seed an agent_runs row for the happy-path test (still a real row, just
+  // not FK-enforced anymore).
   db.exec(`
     INSERT INTO agent_runs (id, kind, company_id, user_id, mode, status)
       VALUES ('run-1', 'thesis_stress_test', 'co-1', 'u-1', 'stress_test', 'running');
@@ -127,5 +132,22 @@ describe('stress-test-report.repo', () => {
     db.exec(`UPDATE stress_test_reports SET concerns_json = 'not-json'`)
     const rows = listReportsForMemo('memo-1')
     expect(rows[0].concernCount).toBe(0)
+  })
+
+  it('persist succeeds even when FK target rows do NOT exist (migration 093 dropped FK enforcement)', () => {
+    // Locks the new semantics: stress_test_reports is observability data;
+    // orphan rows are acceptable. Pre-093, this would throw
+    // "FOREIGN KEY constraint failed" because none of these ids exist.
+    const orphanInput = {
+      ...baseInput,
+      memoId: 'memo-does-not-exist',
+      runId: 'run-does-not-exist',
+      priorMemoVersionId: 'v-does-not-exist',
+      createdBy: 'user-does-not-exist',
+    }
+    expect(() => persistStressTestReport(orphanInput)).not.toThrow()
+    const list = listReportsForMemo('memo-does-not-exist')
+    expect(list).toHaveLength(1)
+    expect(list[0].recommendation).toBe('proceed_with_caveats')
   })
 })
