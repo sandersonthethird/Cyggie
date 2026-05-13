@@ -224,15 +224,27 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
   const [activeStressReportId, setActiveStressReportId] = useState<string | null>(null)
   const [activeStressReport, setActiveStressReport] = useState<StressTestReport | null>(null)
   const [stressReportsRefreshKey, setStressReportsRefreshKey] = useState(0)
+  // Latest report id for THIS memo, used to drive the "Reports" button in the
+  // MemoSectionsNav (only rendered when a report exists). Independent of the
+  // post-completion auto-open path — this stays populated across navigation
+  // and refresh, so the user always has a one-click way back to the report.
+  const [latestStressReportId, setLatestStressReportId] = useState<string | null>(null)
   useEffect(() => {
     return runs.onCompletion(run => {
       if (run.kind !== 'thesis_stress_test' || run.companyId !== companyId) return
       if (run.status === 'success' && run.versionId) {
         setActiveStressReportId(run.versionId)
         setStressReportsRefreshKey(k => k + 1)
+        // Toast banner so the user always sees the run finished, even if
+        // they were on a different tab when the agent returned.
+        notice.show({
+          variant: 'success',
+          title: 'Stress-test complete',
+          message: 'Report saved. Click "Reports" in the Sections bar to view, or scroll to the Stress-test reports section.',
+        })
       }
     })
-  }, [runs, companyId])
+  }, [runs, companyId, notice])
 
   // Fetch the full report when a stress-test just completed.
   useEffect(() => {
@@ -251,6 +263,37 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     })()
     return () => { cancelled = true }
   }, [activeStressReportId])
+
+  // Track the LATEST report id for this memo. Drives the "Reports" button
+  // in MemoSectionsNav (visible only when a report exists). Refreshes when
+  // the memo changes or after a new stress-test run persists.
+  useEffect(() => {
+    if (!memo?.id) {
+      setLatestStressReportId(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const list = await api.invoke<Array<{ id: string }>>(
+          IPC_CHANNELS.STRESS_TEST_REPORT_LIST,
+          memo.id,
+        )
+        if (cancelled) return
+        setLatestStressReportId(list && list.length > 0 ? list[0].id : null)
+      } catch (err) {
+        console.error('[stress-test-report] list-for-button failed:', err)
+        if (!cancelled) setLatestStressReportId(null)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [memo?.id, stressReportsRefreshKey])
+
+  // Click handler for the Reports button: opens the viewer with the latest report.
+  const openLatestReport = useCallback(() => {
+    if (!latestStressReportId) return
+    setActiveStressReportId(latestStressReportId)
+  }, [latestStressReportId])
 
   // (evidence + preprocessed-markdown moved earlier in the component so they
   // can feed the loadMemoContent useEffect; see top of body.)
@@ -772,6 +815,8 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
           }}
           onError={(msg) => setErrorMsg(msg)}
           onOpenSidebar={setActiveClaim}
+          hasStressTestReport={latestStressReportId !== null}
+          onOpenLatestReport={openLatestReport}
         />
       )}
 

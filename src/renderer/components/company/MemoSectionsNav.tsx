@@ -44,6 +44,10 @@ interface MemoSectionsNavProps {
   onError: (msg: string) => void
   /** Called when the user clicks an evidence row in the section popover. */
   onOpenSidebar?: (claimText: string) => void
+  /** When true, render a leading "Reports" button that opens the latest stress-test report. */
+  hasStressTestReport?: boolean
+  /** Click handler for the "Reports" button. */
+  onOpenLatestReport?: () => void
 }
 
 interface RefreshResponse {
@@ -101,6 +105,8 @@ export function MemoSectionsNav({
   onSectionRefreshed,
   onError,
   onOpenSidebar,
+  hasStressTestReport,
+  onOpenLatestReport,
 }: MemoSectionsNavProps) {
   const headings = useMemo(() => parseSectionHeadings(markdown), [markdown])
   const evidenceBySection = useMemo(() => groupEvidenceBySection(evidence), [evidence])
@@ -132,6 +138,17 @@ export function MemoSectionsNav({
   return (
     <div className={styles.root}>
       <div className={styles.label}>Sections</div>
+      {hasStressTestReport && onOpenLatestReport && (
+        <button
+          type="button"
+          className={styles.reportsBtn}
+          onClick={onOpenLatestReport}
+          title="Open latest stress-test report"
+          aria-label="Open latest stress-test report"
+        >
+          📋 Reports
+        </button>
+      )}
       <ul className={styles.list}>
         {headings.map((h) => {
           const isThis = refreshingHeading === h
