@@ -1043,24 +1043,51 @@ export function registerInvestmentMemoHandlers(): void {
             toolCallCount: result.toolCallCount,
           })
 
-          completeRun(runId, {
-            status: 'success',
-            iterations: result.iterations,
-            inputTokensTotal: result.inputTokensTotal,
-            outputTokensTotal: result.outputTokensTotal,
-            cacheReadTokensTotal: result.cacheReadTokensTotal,
-            cacheCreateTokensTotal: result.cacheCreateTokensTotal,
-            costEstimateUsd: result.costEstimateUsd,
-            toolCallCount: result.toolCallCount,
-            webSearchCount: result.webSearchCount,
-            resultVersionId: savedReportId,
-          })
-          logAudit(userId, 'stress_test_report', savedReportId, 'create', {
-            memoId: memo.id,
-            source: 'thesis_stress_test_agent',
-            runId,
-            costEstimateUsd: result.costEstimateUsd,
-          })
+          // ── Step 3: mark the run complete (UPDATE agent_runs) ──────────
+          try {
+            completeRun(runId, {
+              status: 'success',
+              iterations: result.iterations,
+              inputTokensTotal: result.inputTokensTotal,
+              outputTokensTotal: result.outputTokensTotal,
+              cacheReadTokensTotal: result.cacheReadTokensTotal,
+              cacheCreateTokensTotal: result.cacheCreateTokensTotal,
+              costEstimateUsd: result.costEstimateUsd,
+              toolCallCount: result.toolCallCount,
+              webSearchCount: result.webSearchCount,
+              resultVersionId: savedReportId,
+            })
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            console.error('[thesis-stress-test]', runId, 'STEP:completeRun failed:', errMsg)
+            broadcastAgentEvent({
+              type: 'tool_error',
+              runId,
+              toolUseId: '',
+              message: `step:completeRun ${errMsg}`,
+            })
+            // Report is already persisted — don't lose the run.
+          }
+
+          // ── Step 4: audit log (best-effort; FK violations no longer
+          // throw because audit.repo now demotes them to warnings) ────────
+          try {
+            logAudit(userId, 'stress_test_report', savedReportId, 'create', {
+              memoId: memo.id,
+              source: 'thesis_stress_test_agent',
+              runId,
+              costEstimateUsd: result.costEstimateUsd,
+            })
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            console.error('[thesis-stress-test]', runId, 'STEP:logAudit failed:', errMsg)
+            broadcastAgentEvent({
+              type: 'tool_error',
+              runId,
+              toolUseId: '',
+              message: `step:logAudit ${errMsg}`,
+            })
+          }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err)
           console.error('[thesis-stress-test]', runId, 'unhandled error:', errMsg)
@@ -1077,7 +1104,15 @@ export function registerInvestmentMemoHandlers(): void {
           })
           broadcastAgentEvent({ type: 'error', runId, errorClass: 'UnhandledError', message: errMsg })
         } finally {
-          eventWriter.flush()
+          // ── Step 5: flush event buffer to agent_run_events. Demoted to
+          // warning so a missing FK target on this final write can't kill
+          // a run that otherwise completed successfully.
+          try {
+            eventWriter.flush()
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            console.warn('[thesis-stress-test]', runId, 'STEP:eventWriter.flush failed:', errMsg)
+          }
           _stressTestAbortControllers.delete(runId)
         }
       })()

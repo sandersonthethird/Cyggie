@@ -92,6 +92,7 @@ import { runMemoEvidenceSectionMigration } from './migrations/090-memo-evidence-
 import { runAgentRunsCacheTokensMigration } from './migrations/091-agent-runs-cache-tokens'
 import { runStressTestReportsMigration } from './migrations/092-stress-test-reports'
 import { runStressTestReportsNoFkMigration } from './migrations/093-stress-test-reports-no-fk'
+import { runAgentRunsDropVersionFkMigration } from './migrations/094-agent-runs-drop-version-fk'
 
 let db: Database.Database | null = null
 
@@ -193,6 +194,7 @@ export function getDatabase(): Database.Database {
     runAgentRunsCacheTokensMigration(db)
     runStressTestReportsMigration(db)
     runStressTestReportsNoFkMigration(db)
+    runAgentRunsDropVersionFkMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or
