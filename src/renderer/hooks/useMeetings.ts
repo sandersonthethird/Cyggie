@@ -5,6 +5,7 @@ import type { Meeting, MeetingBucket, MeetingListFilter, MeetingStatus } from '.
 import type { CompanyEntityType, CompanyPipelineStage } from '../../shared/types/company'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import { api } from '../api'
+import { ipcCache } from '../api/ipcCache'
 
 // ── Helpers (exported for testing) ──────────────────────────────────────────
 
@@ -172,7 +173,11 @@ export function useMeetings(options?: UseMeetingsOptions) {
 
   const fetchMeetings = useCallback(
     async (filter?: MeetingListFilter) => {
-      const result = await api.invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, filter)
+      const result = await ipcCache.get<Meeting[]>(
+        IPC_CHANNELS.MEETING_LIST,
+        filter ?? null,
+        () => api.invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, filter),
+      )
       setMeetings(result)
     },
     [setMeetings]

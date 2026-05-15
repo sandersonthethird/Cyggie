@@ -44,6 +44,7 @@ import type {
 } from '../../shared/types/company'
 import styles from './Companies.module.css'
 import { api } from '../api'
+import { ipcCache } from '../api/ipcCache'
 import { MergeReviewModal } from '../components/company/MergeReviewModal'
 import { resolveDedupKeep } from '../utils/dedupKeep'
 
@@ -116,8 +117,11 @@ export default function Companies() {
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const { enabled: companiesEnabled, loading: flagsLoading } = useFeatureFlag('ff_companies_ui_v1')
-  // Increments on each mount so fetchCompanies gets a new useCallback ref,
-  // forcing the useEffect to re-run and fetch fresh data after back-navigation.
+  // mountId was added to force a refetch after back-navigation. Unclear if it
+  // does anything useful: it's stable within a mount (so doesn't affect
+  // re-render fetches) and on remount the component starts fresh anyway (so
+  // fetchCompanies is already a new function). Verify in DevTools with
+  // `[ipc-perf] COMPANY_LIST` logs before removing.
   const [mountId] = useState(() => Date.now())
 
   // ── URL-derived state ───────────────────────────────────────────────────────
@@ -355,7 +359,11 @@ export default function Companies() {
         includeInvestorNames: needsInvestorNames,
       })
       if (stubsView) filter.view = 'stubs'
-      const results = await api.invoke<CompanySummary[]>(IPC_CHANNELS.COMPANY_LIST, filter)
+      const results = await ipcCache.get<CompanySummary[]>(
+        IPC_CHANNELS.COMPANY_LIST,
+        filter,
+        () => api.invoke<CompanySummary[]>(IPC_CHANNELS.COMPANY_LIST, filter),
+      )
       if (isStale()) return
       setCompanies(results)
     } catch (err) {

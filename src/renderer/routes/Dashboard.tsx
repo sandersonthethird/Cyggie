@@ -23,6 +23,7 @@ import type { Meeting } from '../../shared/types/meeting'
 import type { TaskListItem } from '../../shared/types/task'
 import styles from './Dashboard.module.css'
 import { api } from '../api'
+import { ipcCache } from '../api/ipcCache'
 import { COMPANY_STAGE_OPTIONS } from '../components/common/PipelineStepper'
 import { DecisionLogModal } from '../components/crm/DecisionLogModal'
 import { shouldPromptDecisionLog, defaultDecisionType } from '../utils/decisionLogTrigger'
@@ -170,11 +171,11 @@ function platformIcon(platform: string): React.ReactNode {
   return <MapPin size={11} strokeWidth={1.5} />
 }
 
-// Consolidated priority → tag mapping (replaces two separate functions)
-const PRIORITY_TAG_MAP: Record<CompanyPriority, { label: string; className: string }> = {
-  high:         { label: 'HIGH INTENT',  className: styles.tagHighIntent },
-  further_work: { label: 'FURTHER WORK', className: styles.tagFurtherWork },
-  monitor:      { label: 'STEADY',       className: styles.tagSteady },
+const PRIORITY_TAG_LABELS: Record<CompanyPriority, string> = {
+  high:    'HIGH INTENT',
+  medium:  'MEDIUM',
+  monitor: 'STEADY',
+  low:     'LOW',
 }
 
 // ─── Dashboard ─────────────────────────────────────────────────────────────────
@@ -277,13 +278,14 @@ export default function Dashboard() {
     setLoading(true)
     setError(null)
     try {
+      const taskFilter = { status: ['open', 'in_progress'], limit: 5 }
       const [result, pipelineData, tasks] = await Promise.all([
-        api.invoke<DashboardData>(IPC_CHANNELS.DASHBOARD_GET),
-        api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST),
-        api.invoke<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, {
-          status: ['open', 'in_progress'],
-          limit: 5
-        })
+        ipcCache.get<DashboardData>(IPC_CHANNELS.DASHBOARD_GET, null,
+          () => api.invoke<DashboardData>(IPC_CHANNELS.DASHBOARD_GET)),
+        ipcCache.get<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST, null,
+          () => api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST)),
+        ipcCache.get<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, taskFilter,
+          () => api.invoke<TaskListItem[]>(IPC_CHANNELS.TASK_LIST, taskFilter)),
       ])
       if (isStale()) return
       setData(result)
@@ -524,7 +526,7 @@ export default function Dashboard() {
                       <div className={styles.kanbanEmpty}>No deals</div>
                     )}
                     {companies.slice(0, 3).map(company => {
-                      const tag = company.priority ? PRIORITY_TAG_MAP[company.priority] : null
+                      const tagLabel = company.priority ? PRIORITY_TAG_LABELS[company.priority] : null
                       const moneyStr = company.raiseSize ? `$${company.raiseSize}M` : null
                       const roundStr = formatRound(company.round)
                       const meta = [moneyStr, roundStr].filter(Boolean).join(' · ')
@@ -542,9 +544,9 @@ export default function Dashboard() {
                         >
                           <span className={styles.dealName}>{company.canonicalName}</span>
                           {meta && <span className={styles.dealMeta}>{meta}</span>}
-                          {tag && (
-                            <span className={`${styles.statusTag} ${tag.className}`}>
-                              {tag.label}
+                          {tagLabel && (
+                            <span className={styles.statusTag} data-priority={company.priority ?? undefined}>
+                              {tagLabel}
                             </span>
                           )}
                         </button>

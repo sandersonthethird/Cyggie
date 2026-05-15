@@ -13,6 +13,8 @@ import {
   format
 } from 'date-fns'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import { api } from '../../api'
+import { ipcCache } from '../../api/ipcCache'
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import type { Meeting } from '../../../shared/types/meeting'
 import CalendarBadge from '../meetings/CalendarBadge'
@@ -97,8 +99,13 @@ export default function MiniCalendar({
     const dateFrom = startOfMonth(viewedMonth).toISOString()
     const dateTo = startOfMonth(addMonths(viewedMonth, 1)).toISOString()
 
-    window.api
-      .invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, { dateFrom, dateTo })
+    const args = { dateFrom, dateTo }
+    ipcCache
+      .get<Meeting[]>(
+        IPC_CHANNELS.MEETING_LIST,
+        args,
+        () => api.invoke<Meeting[]>(IPC_CHANNELS.MEETING_LIST, args),
+      )
       .then((meetings) => {
         const now = new Date()
         const past = meetings.filter(

@@ -6,19 +6,29 @@
  * fetch/WebSocket without touching any call sites.
  */
 
+import { ipcCache, MUTATION_INVALIDATIONS } from './ipcCache'
+
 const SLOW_INVOKE_MS = 50
 
 function instrumentedInvoke<T>(channel: string, ...args: unknown[]): Promise<T> {
-  if (!import.meta.env.DEV) return window.api.invoke<T>(channel, ...args)
-  const start = performance.now()
-  return window.api.invoke<T>(channel, ...args).finally(() => {
-    const ms = performance.now() - start
-    if (ms >= SLOW_INVOKE_MS) {
-      console.warn(`[ipc-perf] ${channel} ${ms.toFixed(1)}ms`)
-    } else {
-      console.debug(`[ipc-perf] ${channel} ${ms.toFixed(1)}ms`)
-    }
-  })
+  const start = import.meta.env.DEV ? performance.now() : 0
+  return window.api.invoke<T>(channel, ...args)
+    .then((value) => {
+      const toInvalidate = MUTATION_INVALIDATIONS[channel]
+      if (toInvalidate) {
+        for (const target of toInvalidate) ipcCache.invalidate(target)
+      }
+      return value
+    })
+    .finally(() => {
+      if (!import.meta.env.DEV) return
+      const ms = performance.now() - start
+      if (ms >= SLOW_INVOKE_MS) {
+        console.warn(`[ipc-perf] ${channel} ${ms.toFixed(1)}ms`)
+      } else {
+        console.debug(`[ipc-perf] ${channel} ${ms.toFixed(1)}ms`)
+      }
+    })
 }
 
 export const api = {

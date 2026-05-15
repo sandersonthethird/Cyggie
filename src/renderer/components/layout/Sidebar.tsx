@@ -29,6 +29,7 @@ import { readAIChatsExpanded, writeAIChatsExpanded } from '../../utils/sidebar-p
 import SearchBar from '../common/SearchBar'
 import defaultLogo from '../../assets/logo.png'
 import { api } from '../../api'
+import { ipcCache } from '../../api/ipcCache'
 
 export default function Sidebar() {
   const navigate = useNavigate()
@@ -134,13 +135,24 @@ export default function Sidebar() {
   const panelOpenSessionId = useChatPanelStore((s) => s.openSessionId)
 
   const fetchRecentChats = () => {
-    api
-      .invoke<Array<{
+    const args = { limit: 8 }
+    ipcCache
+      .get<Array<{
         id: string
         title: string | null
         previewText: string | null
         isPinned: boolean
-      }>>(IPC_CHANNELS.CHAT_SESSION_LIST_RECENT, { limit: 8 })
+      }>>(
+        IPC_CHANNELS.CHAT_SESSION_LIST_RECENT,
+        args,
+        () => api.invoke<Array<{
+          id: string
+          title: string | null
+          previewText: string | null
+          isPinned: boolean
+        }>>(IPC_CHANNELS.CHAT_SESSION_LIST_RECENT, args),
+        { ttlMs: 10_000 },
+      )
       .then((rows) => {
         if (!rows) return
         // Pinned-first within the 8.
@@ -174,9 +186,12 @@ export default function Sidebar() {
 
   // Refetch when the chat panel reports a mutation (pin / send / rename / etc.).
   // Skips first mount so we don't double-fetch alongside the mount effect above.
+  // The cache is invalidated explicitly because not every chat-panel signal
+  // corresponds 1:1 to a known mutation channel in MUTATION_INVALIDATIONS.
   const initialActionAt = useRef(lastActionAt)
   useEffect(() => {
     if (lastActionAt === initialActionAt.current) return
+    ipcCache.invalidate(IPC_CHANNELS.CHAT_SESSION_LIST_RECENT)
     fetchRecentChats()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastActionAt])

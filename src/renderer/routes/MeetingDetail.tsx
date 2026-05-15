@@ -46,6 +46,7 @@ import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import styles from './MeetingDetail.module.css'
 import { api } from '../api'
+import { ipcCache } from '../api/ipcCache'
 import { useNotesAutoSave } from '../hooks/useNotesAutoSave'
 
 /**
@@ -746,7 +747,11 @@ export default function MeetingDetail() {
   }, [loadMeeting])
 
   useEffect(() => {
-    api.invoke<MeetingTemplate[]>(IPC_CHANNELS.TEMPLATE_LIST).then((result) => {
+    ipcCache.get<MeetingTemplate[]>(
+      IPC_CHANNELS.TEMPLATE_LIST,
+      null,
+      () => api.invoke<MeetingTemplate[]>(IPC_CHANNELS.TEMPLATE_LIST),
+    ).then((result) => {
       setTemplates(result)
       if (result.length > 0) setSelectedTemplateId(result[0].id)
     })
