@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, protocol, shell } from 'electron'
 import { join, normalize, extname } from 'path'
 import { existsSync, statSync, createReadStream } from 'fs'
 import { Readable } from 'stream'
@@ -9,7 +9,8 @@ import { registerAllHandlers } from './ipc'
 import { initializeStorage, setStoragePath, getRecordingsDir, getStoragePath } from './storage/paths'
 import * as settingsRepo from './database/repositories/settings.repo'
 import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from './database/repositories/meeting.repo'
-import { cleanupOrphanedTempFiles } from './video/video-writer'
+import { cleanupOrphanedTempFiles, getActiveRecordingMeetingId } from './video/video-writer'
+import { getPendingFinalizations } from './ipc/video.ipc'
 import { getCurrentUserId } from './security/current-user'
 
 // Register privileged schemes before app.whenReady:
@@ -326,8 +327,55 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => {
+/**
+ * Quit safety: two concerns layered on top of the normal quit flow.
+ *
+ * 1. Active recording (user clicked Quit while still recording): prompt.
+ *    The recording isn't stopped yet so there are no pending finalizations
+ *    to await; the user must decide whether to stop+save or cancel.
+ *
+ * 2. Pending video finalizations (user already clicked Stop but the
+ *    background ffmpeg flush hasn't completed): block quit until they
+ *    finish so the file lands on disk. VIDEO_STOP returns optimistically
+ *    in ~10ms but finalization can take 2–5s.
+ */
+let isAwaitingPendingFinalize = false
+
+app.on('before-quit', (event) => {
   isQuitting = true
+
+  // Concern (1): active in-progress recording.
+  const activeMeetingId = getActiveRecordingMeetingId()
+  if (activeMeetingId) {
+    const choice = dialog.showMessageBoxSync({
+      type: 'warning',
+      buttons: ['Cancel', 'Quit anyway'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Recording in progress',
+      message: 'A meeting is currently recording.',
+      detail: 'If you quit now, the in-progress recording will be lost. Stop the recording first to save it.',
+    })
+    if (choice === 0) {
+      // Cancel quit; let the user stop the recording manually.
+      event.preventDefault()
+      isQuitting = false
+      return
+    }
+    // Falls through to concern (2) — there may be pending finalizations too.
+  }
+
+  // Concern (2): pending background finalizations from a recent VIDEO_STOP.
+  const pending = getPendingFinalizations()
+  if (pending.size > 0 && !isAwaitingPendingFinalize) {
+    event.preventDefault()
+    isAwaitingPendingFinalize = true
+    console.log(`[before-quit] awaiting ${pending.size} pending video finalization(s)`)
+    Promise.allSettled([...pending.values()]).finally(() => {
+      console.log('[before-quit] finalizations complete, quitting')
+      app.quit()
+    })
+  }
 })
 
 app.on('window-all-closed', () => {
