@@ -876,9 +876,10 @@ export function listPipelineCompanies(filter?: {
          END,
          CASE c.priority
            WHEN 'high' THEN 0
-           WHEN 'further_work' THEN 1
+           WHEN 'medium' THEN 1
            WHEN 'monitor' THEN 2
-           ELSE 3
+           WHEN 'low' THEN 3
+           ELSE 4
          END,
          c.canonical_name ASC
        LIMIT 500`
@@ -1027,9 +1028,7 @@ export function getCompany(companyId: string): CompanyDetail | null {
     sourceEntityName = r?.full_name ?? null
   }
 
-  const coInvestorsList = getCompanyInvestors(db, companyId, 'co_investor')
-  const priorInvestorsList = getCompanyInvestors(db, companyId, 'prior_investor')
-  const subsequentInvestorsList = getCompanyInvestors(db, companyId, 'subsequent_investor')
+  const { co_investor: coInvestorsList, prior_investor: priorInvestorsList, subsequent_investor: subsequentInvestorsList } = getCompanyInvestorsByType(db, companyId)
   const coInvestedIn = getCompanyCoInvestedIn(db, companyId)
   const coInvestorOverlaps = getCoInvestorOverlaps(companyId)
 
@@ -1063,6 +1062,42 @@ function getCompanyInvestors(
     return rows.map((r) => ({ id: r.id, name: r.name, domain: r.domain ?? null }))
   } catch {
     return []
+  }
+}
+
+type InvestorType = 'co_investor' | 'prior_investor' | 'subsequent_investor'
+type InvestorRow = { id: string; name: string; domain: string | null }
+
+export function getCompanyInvestorsByType(
+  db: ReturnType<typeof getDatabase>,
+  companyId: string,
+): Record<InvestorType, InvestorRow[]> {
+  const empty: Record<InvestorType, InvestorRow[]> = {
+    co_investor: [],
+    prior_investor: [],
+    subsequent_investor: [],
+  }
+  try {
+    const rows = db
+      .prepare(`
+        SELECT
+          ci.investor_company_id AS id,
+          oc.canonical_name AS name,
+          oc.primary_domain AS domain,
+          ci.investor_type AS investor_type
+        FROM company_investors ci
+        JOIN org_companies oc ON oc.id = ci.investor_company_id
+        WHERE ci.company_id = ?
+          AND ci.investor_type IN ('co_investor', 'prior_investor', 'subsequent_investor')
+        ORDER BY ci.investor_type, ci.position, ci.created_at
+      `)
+      .all(companyId) as Array<InvestorRow & { investor_type: InvestorType }>
+    for (const r of rows) {
+      empty[r.investor_type].push({ id: r.id, name: r.name, domain: r.domain ?? null })
+    }
+    return empty
+  } catch {
+    return empty
   }
 }
 
