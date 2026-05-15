@@ -1,4 +1,4 @@
-import { desktopCapturer, ipcMain, session } from 'electron'
+import { BrowserWindow, desktopCapturer, ipcMain, session } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import {
   startVideoFile,
@@ -10,6 +10,34 @@ import {
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { buildRecordingFilename } from '../storage/file-manager'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
+
+/**
+ * Pending video finalizations keyed by meetingId.
+ *
+ * VIDEO_STOP returns optimistically after ~10ms and runs finalizeVideoFile
+ * (FFmpeg flush + optional concat, typically 2–5s) in the background. We
+ * keep the resulting Promise here so the app's before-quit handler can
+ * await all in-flight finalizations and avoid losing recordings on quit.
+ *
+ * Lifecycle:
+ *   VIDEO_STOP   →   set(meetingId, promise)
+ *                ↓
+ *   finalize ok  →   updateMeeting({recordingPath}) + broadcast FINALIZED
+ *   finalize err →   broadcast FINALIZE_ERROR (DB untouched)
+ *                ↓
+ *   .finally()   →   delete(meetingId)
+ */
+const pendingFinalizations = new Map<string, Promise<void>>()
+
+export function getPendingFinalizations(): Map<string, Promise<void>> {
+  return pendingFinalizations
+}
+
+function broadcast(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload)
+  }
+}
 
 const BROWSER_NAMES = ['google chrome', 'chrome', 'safari', 'microsoft edge', 'arc', 'firefox', 'brave browser', 'chromium']
 
@@ -68,12 +96,28 @@ export function registerVideoHandlers(): void {
       meeting.date,
       meeting.attendees
     )
+    const previousRecordingPath = meeting.recordingPath || undefined
 
-    await finalizeVideoFile(meetingId, filename, meeting.recordingPath || undefined)
-
-    meetingRepo.updateMeeting(meetingId, {
-      recordingPath: filename
-    })
+    // Run finalization in the background — UI unblocks immediately. DB is
+    // updated only on success so VIDEO_GET_PATH never sees a path to a
+    // missing file. Failure broadcasts an error event the renderer must
+    // surface; silence would be a data-loss bug.
+    const finalizePromise = (async () => {
+      try {
+        await finalizeVideoFile(meetingId, filename, previousRecordingPath)
+        meetingRepo.updateMeeting(meetingId, { recordingPath: filename })
+        broadcast(IPC_CHANNELS.VIDEO_FINALIZED, { meetingId, filename })
+      } catch (err) {
+        console.error(`[VIDEO_STOP] finalize failed for ${meetingId}:`, err)
+        broadcast(IPC_CHANNELS.VIDEO_FINALIZE_ERROR, {
+          meetingId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      } finally {
+        pendingFinalizations.delete(meetingId)
+      }
+    })()
+    pendingFinalizations.set(meetingId, finalizePromise)
 
     return { success: true, filename }
   })

@@ -23,6 +23,21 @@ let activeRecording: ActiveRecording | null = null
 const playbackConversionJobs = new Map<string, Promise<string>>()
 const encoderListCache = new Map<string, Set<string>>()
 
+/**
+ * Returns the meetingId of the currently-active (in-progress, not yet stopped)
+ * video recording, or null if none. The before-quit handler uses this to
+ * prompt the user when they try to quit mid-recording.
+ *
+ * "Active" here means recording is ongoing — once VIDEO_STOP fires and
+ * finalizeVideoFile sets activeRecording=null, this returns null even though
+ * finalization may still be running in the background (track that separately
+ * via pendingFinalizations in video.ipc.ts).
+ */
+export function getActiveRecordingMeetingId(): string | null {
+  if (!activeRecording || activeRecording.isFinalizing) return null
+  return activeRecording.meetingId
+}
+
 interface EncoderConfig {
   video: string
   audio: 'aac' | null
