@@ -18,36 +18,44 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
   const videoCapture = useVideoCapture()
   const isRecording = useRecordingStore((s) => s.isRecording)
   const isPaused = useRecordingStore((s) => s.isPaused)
-  const setError = useRecordingStore((s) => s.setError)
-  const addTranscriptSegment = useRecordingStore((s) => s.addTranscriptSegment)
-  const setInterimSegment = useRecordingStore((s) => s.setInterimSegment)
-  const setDuration = useRecordingStore((s) => s.setDuration)
-  const setSpeakerCount = useRecordingStore((s) => s.setSpeakerCount)
-  const setChannelMode = useRecordingStore((s) => s.setChannelMode)
   const startedRef = useRef(false)
+
+  // Refs keep handlers stable: IPC listeners (registered once below) read
+  // current values via *.current without re-subscribing on every render.
+  // Without this, the listener effect's dep array would include hook returns
+  // that change identity each render, churning api.on/api.off ~once per
+  // second while recording (driven by the duration timer).
+  const audioCaptureRef = useRef(audioCapture)
+  const videoCaptureRef = useRef(videoCapture)
+  useEffect(() => { audioCaptureRef.current = audioCapture })
+  useEffect(() => { videoCaptureRef.current = videoCapture })
 
   // Auto-start audio capture when recording begins
   useEffect(() => {
+    const store = useRecordingStore.getState()
     if (isRecording && !startedRef.current) {
       startedRef.current = true
-      audioCapture.start().catch((err) => setError(String(err)))
+      audioCaptureRef.current.start().catch((err) => store.setError(String(err)))
     }
     if (!isRecording) {
       startedRef.current = false
     }
-  }, [isRecording, audioCapture, setError])
+  }, [isRecording])
 
-  // IPC listeners for transcript, status, and error updates
+  // IPC listeners — registered exactly once on mount. Handlers read live
+  // store state via getState() and live hook values via refs, so they never
+  // close over stale data despite the empty dep array.
   useEffect(() => {
     const unsubTranscript = api.on(
       IPC_CHANNELS.RECORDING_TRANSCRIPT_UPDATE,
       (segment: unknown) => {
         const seg = segment as TranscriptSegment
+        const store = useRecordingStore.getState()
         if (seg.isFinal) {
-          addTranscriptSegment(seg)
-          setInterimSegment(null)
+          store.addTranscriptSegment(seg)
+          store.setInterimSegment(null)
         } else {
-          setInterimSegment(seg)
+          store.setInterimSegment(seg)
         }
       }
     )
@@ -56,26 +64,27 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       IPC_CHANNELS.RECORDING_STATUS,
       (status: unknown) => {
         const s = status as RecordingStatus
-        if (!s.isPaused) setDuration(s.durationSeconds)
-        setSpeakerCount(s.speakerCount)
-        if (s.channelMode) setChannelMode(s.channelMode)
+        const store = useRecordingStore.getState()
+        if (!s.isPaused) store.setDuration(s.durationSeconds)
+        store.setSpeakerCount(s.speakerCount)
+        if (s.channelMode) store.setChannelMode(s.channelMode)
       }
     )
 
     const unsubError = api.on(IPC_CHANNELS.RECORDING_ERROR, (err: unknown) => {
-      setError(String(err))
+      useRecordingStore.getState().setError(String(err))
     })
 
     const unsubAutoStop = api.on(IPC_CHANNELS.RECORDING_AUTO_STOP, async () => {
-      if (!useRecordingStore.getState().isRecording) return
+      const store = useRecordingStore.getState()
+      if (!store.isRecording) return
       console.log('[AutoStop] Received auto-stop signal, stopping recording')
-      // Capture meetingId before stopRecording() clears it
-      const meetingId = useRecordingStore.getState().meetingId
+      const meetingId = store.meetingId
       try {
-        if (videoCapture.isVideoRecording) {
-          await videoCapture.stop()
+        if (videoCaptureRef.current.isVideoRecording) {
+          await videoCaptureRef.current.stop()
         }
-        audioCapture.stop()
+        audioCaptureRef.current.stop()
         await api.invoke(IPC_CHANNELS.RECORDING_STOP)
         useRecordingStore.getState().stopRecording()
         if (meetingId) useRecordingStore.getState().markAutoStopped(meetingId)
@@ -90,16 +99,17 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       unsubError()
       unsubAutoStop()
     }
-  }, [addTranscriptSegment, setInterimSegment, setDuration, setSpeakerCount, setChannelMode, setError, audioCapture, videoCapture])
+  }, [])
 
   // Duration timer — local tick for responsive updates between IPC status messages
   useEffect(() => {
     if (!isRecording || isPaused) return
     const interval = setInterval(() => {
-      setDuration(Math.floor((Date.now() - (useRecordingStore.getState().startTime || Date.now())) / 1000))
+      const store = useRecordingStore.getState()
+      store.setDuration(Math.floor((Date.now() - (store.startTime || Date.now())) / 1000))
     }, 1000)
     return () => clearInterval(interval)
-  }, [isRecording, isPaused, setDuration])
+  }, [isRecording, isPaused])
 
   return (
     <AudioCaptureContext.Provider value={{ audioCapture, videoCapture }}>
