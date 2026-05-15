@@ -16,8 +16,28 @@ import {
 } from '../calendar/google-calendar'
 import { startMeetingNotifier, stopMeetingNotifier } from '../calendar/meeting-notifier'
 import { enrichDomainsFromCalendarEvents } from '../services/company-enrichment'
+import { persistentCache } from '../cache/persistent-cache'
 
 let pollingInterval: ReturnType<typeof setInterval> | null = null
+
+const CALENDAR_LOOKAHEAD_HOURS = 720
+const CALENDAR_CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
+
+function calendarCacheKey(): string {
+  // Scope cache by user so multi-account doesn't serve cross-account data.
+  // Anonymous fallback when no account is connected — those calls fail
+  // upstream anyway, so the key doesn't matter much.
+  const email = getCalendarAccountEmail() ?? 'anonymous'
+  return `calendar-events-${email}-${CALENDAR_LOOKAHEAD_HOURS}`
+}
+
+async function fetchAndEnrichCalendarEvents(): Promise<Awaited<ReturnType<typeof getUpcomingEvents>>> {
+  const events = await getUpcomingEvents(CALENDAR_LOOKAHEAD_HOURS)
+  enrichDomainsFromCalendarEvents(events).catch((err) =>
+    console.error('[Company Enrichment] Calendar events enrichment failed:', err)
+  )
+  return events
+}
 
 export function registerCalendarHandlers(): void {
   ipcMain.handle(
@@ -39,12 +59,16 @@ export function registerCalendarHandlers(): void {
     return { connected: false }
   })
 
+  // Disk-backed cache so cold-start app launches don't pay the 1.5–2s
+  // Google API latency. CALENDAR_REFRESH below bypasses the cache when the
+  // renderer wants a guaranteed-fresh read.
   ipcMain.handle(IPC_CHANNELS.CALENDAR_EVENTS, async () => {
-    const events = await getUpcomingEvents(720)
-    enrichDomainsFromCalendarEvents(events).catch((err) =>
-      console.error('[Company Enrichment] Calendar events enrichment failed:', err)
-    )
-    return events
+    return persistentCache.get(calendarCacheKey(), CALENDAR_CACHE_TTL_MS, fetchAndEnrichCalendarEvents)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CALENDAR_REFRESH, async () => {
+    persistentCache.invalidate(calendarCacheKey())
+    return fetchAndEnrichCalendarEvents()
   })
 
   ipcMain.handle(
@@ -55,11 +79,9 @@ export function registerCalendarHandlers(): void {
   )
 
   ipcMain.handle(IPC_CHANNELS.CALENDAR_SYNC, async () => {
-    const events = await getUpcomingEvents(720)
-    enrichDomainsFromCalendarEvents(events).catch((err) =>
-      console.error('[Company Enrichment] Calendar sync enrichment failed:', err)
-    )
-    return events
+    // CALENDAR_SYNC is an explicit user-initiated refresh — bypass cache.
+    persistentCache.invalidate(calendarCacheKey())
+    return fetchAndEnrichCalendarEvents()
   })
 
   ipcMain.handle(IPC_CHANNELS.CALENDAR_REAUTHORIZE, async (_event, target?: 'calendar' | 'drive-files') => {

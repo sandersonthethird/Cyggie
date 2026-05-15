@@ -3,6 +3,9 @@ import { useAppStore } from '../stores/app.store'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import { api } from '../api'
+import { ipcCache } from '../api/ipcCache'
+
+const CALENDAR_CACHE_TTL_MS = 5 * 60 * 1000
 
 export function useCalendar() {
   const calendarEvents = useAppStore((s) => s.calendarEvents)
@@ -11,13 +14,33 @@ export function useCalendar() {
   const setCalendarConnected = useAppStore((s) => s.setCalendarConnected)
   const pollRef = useRef<ReturnType<typeof setInterval>>()
 
+  // Normal fetch — hits the in-session ipcCache (5-min TTL) so re-mounts and
+  // multiple consumers don't re-invoke. The main-process persistent cache
+  // covers cross-restart. `refresh` below bypasses both layers.
   const fetchEvents = useCallback(async () => {
     try {
-      const events = await api.invoke<CalendarEvent[]>(IPC_CHANNELS.CALENDAR_EVENTS)
+      const events = await ipcCache.get<CalendarEvent[]>(
+        IPC_CHANNELS.CALENDAR_EVENTS,
+        null,
+        () => api.invoke<CalendarEvent[]>(IPC_CHANNELS.CALENDAR_EVENTS),
+        { ttlMs: CALENDAR_CACHE_TTL_MS },
+      )
       console.log('[useCalendar] Fetched events:', events.length, events.map((e) => e.title))
       setCalendarEvents(events)
     } catch (err) {
       console.error('Failed to fetch calendar events:', err)
+    }
+  }, [setCalendarEvents])
+
+  // Manual / polling refresh — bypasses both cache layers. CALENDAR_REFRESH
+  // is in MUTATION_INVALIDATIONS, so the api wrapper auto-clears the
+  // renderer-side cache for CALENDAR_EVENTS as soon as this call resolves.
+  const refreshEvents = useCallback(async () => {
+    try {
+      const events = await api.invoke<CalendarEvent[]>(IPC_CHANNELS.CALENDAR_REFRESH)
+      setCalendarEvents(events)
+    } catch (err) {
+      console.error('Failed to refresh calendar events:', err)
     }
   }, [setCalendarEvents])
 
@@ -59,21 +82,22 @@ export function useCalendar() {
     init()
   }, [setCalendarConnected, fetchEvents])
 
-  // Poll every 5 minutes
+  // Poll every 5 minutes — uses refreshEvents so the cache doesn't just hit
+  // and produce stale data forever (both cache TTLs are 5 min in-session).
   useEffect(() => {
     if (!calendarConnected) return
 
-    pollRef.current = setInterval(fetchEvents, 5 * 60 * 1000)
+    pollRef.current = setInterval(refreshEvents, 5 * 60 * 1000)
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [calendarConnected, fetchEvents])
+  }, [calendarConnected, refreshEvents])
 
   return {
     calendarEvents,
     calendarConnected,
     connect,
     disconnect: disconnectCalendar,
-    refresh: fetchEvents
+    refresh: refreshEvents,
   }
 }

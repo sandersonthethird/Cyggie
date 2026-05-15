@@ -130,4 +130,8 @@ export const MUTATION_INVALIDATIONS: Record<string, readonly string[]> = {
   'template:create':  ['template:list'],
   'template:update':  ['template:list'],
   'template:delete':  ['template:list'],
+  // Calendar refresh is itself "mutation-like" — it bypasses the persistent
+  // cache on the main side and we want the renderer-side cache to drop too.
+  'calendar:refresh': ['calendar:events'],
+  'calendar:sync':    ['calendar:events'],
 }
