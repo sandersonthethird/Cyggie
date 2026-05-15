@@ -20,6 +20,7 @@ export interface MeetingRow {
   attendees: string | null
   attendee_emails: string | null
   companies: string | null
+  dismissed_companies: string | null
   chat_messages: string | null
   recording_path: string | null
   status: string

@@ -2054,7 +2054,16 @@ export function syncContactsFromAttendees(
   const ownerEmail = userId ? (getUser(userId)?.email ?? null) : null
   const { candidates, invalid } = buildCandidateMap(attendees, attendeeEmails, ownerEmail)
   const result = applyCandidates(candidates, userId)
-  autoLinkContactsByDomain(5000, userId)
+  // autoLinkContactsByDomain scans up to 5000 unlinked contacts and does N+1
+  // queries per row. Defer to next tick so MEETING_PREPARE (the common caller)
+  // returns immediately and the click-into-meeting navigation isn't blocked.
+  // The work still runs in the same process; we just stop gating the response
+  // on it.
+  setImmediate(() => {
+    try { autoLinkContactsByDomain(5000, userId) } catch (err) {
+      console.error('[autoLinkContactsByDomain] background pass failed:', err)
+    }
+  })
   return {
     ...result,
     invalid

@@ -355,14 +355,27 @@ export function listMeetings(filter?: MeetingListFilter): Meeting[] {
     : (hasOffset ? 'LIMIT -1' : '')
   const offset = hasOffset ? `OFFSET ${Math.floor(Number(filter!.offset))}` : ''
 
+  // Explicit column list: omits transcript_segments and chat_messages because
+  // list views never need them and they can be many MB per row. The detail
+  // view (MEETING_GET) still uses SELECT * and rowToMeeting falls back to
+  // null when those fields aren't present on the row object.
   const rows = db
     .prepare(`
-      SELECT m.*,
-             c.id AS company_id,
-             c.canonical_name AS company_name,
-             c.primary_domain AS company_domain,
-             c.stage AS company_stage,
-             c.entity_type AS company_entity_type
+      SELECT
+        m.id, m.title, m.date, m.duration_seconds,
+        m.calendar_event_id, m.meeting_platform, m.meeting_url,
+        m.transcript_path, m.summary_path, m.notes,
+        m.transcript_drive_id, m.summary_drive_id,
+        m.template_id, m.speaker_count, m.speaker_map,
+        m.attendees, m.attendee_emails,
+        m.companies, m.dismissed_companies,
+        m.recording_path, m.status,
+        m.created_at, m.updated_at,
+        c.id AS company_id,
+        c.canonical_name AS company_name,
+        c.primary_domain AS company_domain,
+        c.stage AS company_stage,
+        c.entity_type AS company_entity_type
       FROM meetings m
       LEFT JOIN meeting_company_links mcl ON mcl.meeting_id = m.id
       LEFT JOIN org_companies c ON c.id = mcl.company_id
