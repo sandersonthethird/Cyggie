@@ -35,23 +35,37 @@ export default function Layout() {
   const [bannerDismissed, setBannerDismissed] = useState<Set<string>>(new Set())
   const [recordingError, setRecordingError] = useState<string | null>(null)
 
-  // Check every 30s for meetings about to start
+  // Refs let the 30s interval read live values without re-creating the interval
+  // every time the inputs change. The interval is mounted once and reads from
+  // *.current; mutations elsewhere update the refs via the sync effects below.
+  const calendarEventsRef = useRef(calendarEvents)
+  const dismissedEventIdsRef = useRef(dismissedEventIds)
+  const bannerDismissedRef = useRef(bannerDismissed)
+  useEffect(() => { calendarEventsRef.current = calendarEvents }, [calendarEvents])
+  useEffect(() => { dismissedEventIdsRef.current = dismissedEventIds }, [dismissedEventIds])
+  useEffect(() => { bannerDismissedRef.current = bannerDismissed }, [bannerDismissed])
+
+  const checkUpcomingMeeting = useCallback(() => {
+    const now = Date.now()
+    const upcoming = calendarEventsRef.current.find((e) => {
+      if (dismissedEventIdsRef.current.has(e.id)) return false
+      if (bannerDismissedRef.current.has(e.id)) return false
+      const start = new Date(e.startTime).getTime()
+      const timeUntil = start - now
+      return timeUntil > 0 && timeUntil <= NOTIFY_BEFORE_MS
+    })
+    setBannerEvent(upcoming ?? null)
+  }, [])
+
+  // Re-check synchronously whenever inputs change, so the banner is responsive
+  // to dismissals and new calendar events without waiting up to 30s.
+  useEffect(() => { checkUpcomingMeeting() }, [calendarEvents, dismissedEventIds, bannerDismissed, checkUpcomingMeeting])
+
+  // 30s background poll — set up once, never re-created.
   useEffect(() => {
-    const check = () => {
-      const now = Date.now()
-      const upcoming = calendarEvents.find((e) => {
-        if (dismissedEventIds.has(e.id)) return false
-        if (bannerDismissed.has(e.id)) return false
-        const start = new Date(e.startTime).getTime()
-        const timeUntil = start - now
-        return timeUntil > 0 && timeUntil <= NOTIFY_BEFORE_MS
-      })
-      setBannerEvent(upcoming ?? null)
-    }
-    check()
-    const id = setInterval(check, 30_000)
+    const id = setInterval(checkUpcomingMeeting, 30_000)
     return () => clearInterval(id)
-  }, [calendarEvents, dismissedEventIds, bannerDismissed])
+  }, [checkUpcomingMeeting])
 
   const handleBannerRecord = useCallback(async (event: CalendarEvent) => {
     if (isRecording) return
