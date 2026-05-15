@@ -93,14 +93,44 @@ import { runAgentRunsCacheTokensMigration } from './migrations/091-agent-runs-ca
 import { runStressTestReportsMigration } from './migrations/092-stress-test-reports'
 import { runStressTestReportsNoFkMigration } from './migrations/093-stress-test-reports-no-fk'
 import { runAgentRunsDropVersionFkMigration } from './migrations/094-agent-runs-drop-version-fk'
+import { runPriorityRenameFurtherWorkMigration } from './migrations/095-priority-rename-further-work'
 
 let db: Database.Database | null = null
+
+const SLOW_QUERY_MS = 20
+
+function instrumentDatabase(database: Database.Database): void {
+  if (!import.meta.env.DEV) return
+  const originalPrepare = database.prepare.bind(database)
+  database.prepare = ((sql: string) => {
+    const stmt = originalPrepare(sql)
+    const time = <Args extends unknown[], R>(method: 'run' | 'get' | 'all' | 'iterate', fn: (...args: Args) => R) =>
+      function (this: unknown, ...args: Args): R {
+        const start = performance.now()
+        try {
+          return fn.apply(stmt, args) as R
+        } finally {
+          const ms = performance.now() - start
+          if (ms >= SLOW_QUERY_MS) {
+            const trimmed = sql.replace(/\s+/g, ' ').trim().slice(0, 120)
+            console.warn(`[sql-perf] ${method} ${ms.toFixed(1)}ms — ${trimmed}`)
+          }
+        }
+      }
+    stmt.run = time('run', stmt.run.bind(stmt)) as typeof stmt.run
+    stmt.get = time('get', stmt.get.bind(stmt)) as typeof stmt.get
+    stmt.all = time('all', stmt.all.bind(stmt)) as typeof stmt.all
+    stmt.iterate = time('iterate', stmt.iterate.bind(stmt)) as typeof stmt.iterate
+    return stmt
+  }) as typeof database.prepare
+}
 
 export function getDatabase(): Database.Database {
   if (!db) {
     db = new Database(getDatabasePath())
     db.pragma('journal_mode = WAL')
     db.pragma('foreign_keys = ON')
+    instrumentDatabase(db)
     runMigrations(db)
     runFtsMigration(db)
     runNotesMigration(db)
@@ -195,6 +225,7 @@ export function getDatabase(): Database.Database {
     runStressTestReportsMigration(db)
     runStressTestReportsNoFkMigration(db)
     runAgentRunsDropVersionFkMigration(db)
+    runPriorityRenameFurtherWorkMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or
