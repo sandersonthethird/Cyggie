@@ -645,6 +645,19 @@ export default function MeetingDetail() {
     }
   }, [videoPath, videoBlobUrl])
 
+  // When the main process broadcasts VIDEO_FINALIZED for this meeting (after
+  // VIDEO_STOP's background ffmpeg flush completes), re-fetch the path so
+  // the player picks up the just-saved file. AudioCaptureContext listens for
+  // the event and bumps lastVideoFinalizedAt; we read that as a refresh signal.
+  const lastVideoFinalizedAt = useRecordingStore((s) => s.lastVideoFinalizedAt)
+  const lastVideoFinalizedMeetingId = useRecordingStore((s) => s.lastVideoFinalizedMeetingId)
+  useEffect(() => {
+    if (!id || !lastVideoFinalizedAt || lastVideoFinalizedMeetingId !== id) return
+    api.invoke<string | null>(IPC_CHANNELS.VIDEO_GET_PATH, id)
+      .then((path) => { if (loadIdRef.current === id) setVideoPath(path) })
+      .catch((err) => console.error('[MeetingDetail] Refresh video path after finalize failed:', err))
+  }, [id, lastVideoFinalizedAt, lastVideoFinalizedMeetingId])
+
   const loadMeeting = useCallback(async () => {
     if (!id) return
     loadIdRef.current = id  // mark this as the active load

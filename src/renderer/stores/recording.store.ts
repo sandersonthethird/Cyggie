@@ -18,6 +18,11 @@ interface RecordingState {
   // Tracks meetings that were stopped automatically (calendar end time / silence).
   // Hides "Continue Recording" for the session — resets on app restart.
   autoStoppedMeetingIds: Set<string>
+  // Bumped when the main process broadcasts VIDEO_FINALIZED. Views that show
+  // a recording (MeetingDetail) read this as a refresh signal and re-fetch
+  // VIDEO_GET_PATH so the player picks up the just-finalized file.
+  lastVideoFinalizedAt: number | null
+  lastVideoFinalizedMeetingId: string | null
 
   startRecording: (meetingId: string, meetingPlatform?: string | null) => void
   stopRecording: () => void
@@ -31,6 +36,7 @@ interface RecordingState {
   setError: (error: string | null) => void
   clearTranscript: () => void
   markAutoStopped: (meetingId: string) => void
+  markVideoFinalized: (meetingId: string) => void
 }
 
 export const useRecordingStore = create<RecordingState>((set) => ({
@@ -46,6 +52,8 @@ export const useRecordingStore = create<RecordingState>((set) => ({
   channelMode: null,
   error: null,
   autoStoppedMeetingIds: new Set<string>(),
+  lastVideoFinalizedAt: null,
+  lastVideoFinalizedMeetingId: null,
 
   startRecording: (meetingId, meetingPlatform) =>
     set({
@@ -101,5 +109,8 @@ export const useRecordingStore = create<RecordingState>((set) => ({
   markAutoStopped: (meetingId) =>
     set((state) => ({
       autoStoppedMeetingIds: new Set([...state.autoStoppedMeetingIds, meetingId])
-    }))
+    })),
+
+  markVideoFinalized: (meetingId) =>
+    set({ lastVideoFinalizedAt: Date.now(), lastVideoFinalizedMeetingId: meetingId })
 }))

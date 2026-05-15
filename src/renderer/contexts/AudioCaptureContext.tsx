@@ -93,11 +93,27 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       }
     })
 
+    // Video finalize events — main process runs ffmpeg finalization in the
+    // background after VIDEO_STOP returns, then broadcasts one of these.
+    const unsubVideoFinalized = api.on(IPC_CHANNELS.VIDEO_FINALIZED, (payload: unknown) => {
+      const p = payload as { meetingId: string; filename: string }
+      console.log(`[VideoFinalize] Finalized ${p.meetingId} → ${p.filename}`)
+      useRecordingStore.getState().markVideoFinalized(p.meetingId)
+    })
+
+    const unsubVideoFinalizeError = api.on(IPC_CHANNELS.VIDEO_FINALIZE_ERROR, (payload: unknown) => {
+      const p = payload as { meetingId: string; error: string }
+      console.error(`[VideoFinalize] Failed for ${p.meetingId}:`, p.error)
+      useRecordingStore.getState().setError(`Video recording failed to save: ${p.error}`)
+    })
+
     return () => {
       unsubTranscript()
       unsubStatus()
       unsubError()
       unsubAutoStop()
+      unsubVideoFinalized()
+      unsubVideoFinalizeError()
     }
   }, [])
 
