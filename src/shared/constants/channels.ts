@@ -28,6 +28,10 @@ export const IPC_CHANNELS = {
   CALENDAR_SYNC: 'calendar:sync',
   CALENDAR_IS_CONNECTED: 'calendar:is-connected',
   CALENDAR_REAUTHORIZE: 'calendar:reauthorize',
+  // Bypasses both cache layers (in-session ipcCache + persistent disk cache)
+  // and fetches fresh from Google. Used by the 5-min polling loop and any
+  // manual-refresh path.
+  CALENDAR_REFRESH: 'calendar:refresh',
 
   // Gmail
   GMAIL_CONNECT: 'gmail:connect',
@@ -311,6 +315,10 @@ export const IPC_CHANNELS = {
   VIDEO_FIND_WINDOW: 'video:find-window',
   VIDEO_SET_WINDOW_SOURCE: 'video:set-window-source',
   VIDEO_CLEAR_WINDOW_SOURCE: 'video:clear-window-source',
+  // Broadcast events fired by the main process when background finalization
+  // (after VIDEO_STOP returns optimistically) completes or fails.
+  VIDEO_FINALIZED: 'video:finalized',
+  VIDEO_FINALIZE_ERROR: 'video:finalize-error',
 
   // Tasks
   TASK_LIST: 'task:list',
