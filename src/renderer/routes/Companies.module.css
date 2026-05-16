@@ -86,44 +86,7 @@
 .actionsMenuItem:hover { background: var(--color-card-hover); }
 .actionsMenuItem:disabled { opacity: 0.5; cursor: default; }
 
-/* ── Filter chips row ── */
-.filterRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  flex-shrink: 0;
-  min-height: 36px;
-}
-
-.filterChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px 2px 10px;
-  border-radius: 8px;
-  background: var(--chip-process-bg);
-  color: var(--chip-process-text);
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.filterChipX {
-  background: none;
-  border: none;
-  padding: 0 2px;
-  font-size: 13px;
-  line-height: 1;
-  color: var(--chip-process-text);
-  opacity: 0.7;
-  cursor: pointer;
-}
-
-.filterChipX:hover {
-  opacity: 1;
-}
+/* Filter chip classes moved to src/renderer/components/crm/FilterChips.module.css */
 
 /* ── Filter picker ── */
 .filterPickerWrap {
@@ -203,19 +166,7 @@
   flex-shrink: 0;
 }
 
-.filterClearAll {
-  background: none;
-  border: none;
-  padding: 2px 6px;
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  margin-left: 2px;
-}
-
-.filterClearAll:hover {
-  color: var(--color-danger);
-}
+/* .filterClearAll moved to FilterChips.module.css */
 
 /* ── Toolbar row 2 (group-by + clear sort + smart filters) ── */
 .toolbarRow2 {

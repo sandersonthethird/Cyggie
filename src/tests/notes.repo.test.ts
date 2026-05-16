@@ -158,6 +158,30 @@ describe('notes.repo', () => {
     })
   })
 
+  describe('listNotes meetingTitle denormalization', () => {
+    it('populates meetingTitle for notes with sourceMeetingId', () => {
+      testDb.exec(`INSERT INTO meetings VALUES ('mtg-x', 'Discovery Call — Acme')`)
+      const note = createNote({ content: 'standup notes', sourceMeetingId: 'mtg-x' })!
+      const fetched = listNotes('all').find(n => n.id === note.id)!
+      expect(fetched.meetingTitle).toBe('Discovery Call — Acme')
+    })
+
+    it('returns null meetingTitle for notes without a sourceMeetingId', () => {
+      const note = createNote({ content: 'no meeting' })!
+      const fetched = listNotes('all').find(n => n.id === note.id)!
+      expect(fetched.meetingTitle).toBeNull()
+    })
+
+    it('returns null meetingTitle when sourceMeetingId points at a deleted meeting', () => {
+      // Note created with a valid meeting then meeting deleted — LEFT JOIN yields null
+      testDb.exec(`INSERT INTO meetings VALUES ('mtg-y', 'Soon-to-be-deleted')`)
+      const note = createNote({ content: 'orphan-bound', sourceMeetingId: 'mtg-y' })!
+      testDb.exec(`DELETE FROM meetings WHERE id = 'mtg-y'`)
+      const fetched = listNotes('all').find(n => n.id === note.id)!
+      expect(fetched.meetingTitle).toBeNull()
+    })
+  })
+
   describe('listNotes dedup (source_meeting_id)', () => {
     beforeEach(() => {
       testDb.exec(`INSERT INTO org_companies VALUES ('co1', 'Acme')`)

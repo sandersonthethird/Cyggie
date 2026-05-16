@@ -23,6 +23,8 @@ interface UseEmailSyncReturn {
   syncResult: IngestResult | null
   lastSyncedLabel: string
   progressMsg: string | null
+  /** Numeric progress for rendering a <progress> bar. Null during discovery and while idle. */
+  progress: { fetched: number; total: number } | null
   handleSync: () => Promise<void>
   handleCancel: () => void
 }
@@ -73,6 +75,7 @@ export function useEmailSync(
   const [syncError, setSyncError] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<IngestResult | null>(null)
   const [progressMsg, setProgressMsg] = useState<string | null>(null)
+  const [progress, setProgress] = useState<{ fetched: number; total: number } | null>(null)
   const [lastSyncedLabel, setLastSyncedLabel] = useState<string>(
     () => getLastSyncedLabel(storageKey)
   )
@@ -83,6 +86,7 @@ export function useEmailSync(
     setSyncError(null)
     setSyncResult(null)
     setProgressMsg('Discovering emails…')
+    setProgress(null)
 
     const unsubscribe = api.on(
       channels.progress,
@@ -92,8 +96,10 @@ export function useEmailSync(
           if (!matchesEntity(p) || !isMountedRef.current) return
           if (p.phase === 'discovering') {
             setProgressMsg('Discovering emails…')
+            setProgress(null)
           } else {
             setProgressMsg(`Fetching ${p.fetched} of ${p.total}…`)
+            setProgress({ fetched: p.fetched, total: p.total })
           }
         } catch {
           // Prevent unhandled errors in IPC listener
@@ -114,6 +120,7 @@ export function useEmailSync(
     } finally {
       unsubscribe()
       setProgressMsg(null)
+      setProgress(null)
       if (isMountedRef.current) setIsSyncing(false)
     }
   }
@@ -152,6 +159,7 @@ export function useEmailSync(
     syncResult,
     lastSyncedLabel,
     progressMsg,
+    progress,
     handleSync,
     handleCancel,
   }

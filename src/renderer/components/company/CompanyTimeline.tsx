@@ -49,6 +49,7 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
     syncResult,
     lastSyncedLabel,
     progressMsg,
+    progress,
     handleSync,
     handleCancel
   } = useEmailSync('company', companyId, () => setLoaded(false))
@@ -171,6 +172,13 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
           <span className={styles.lastSynced}>{lastSyncedLabel}</span>
           {progressMsg && isSyncing && (
             <span className={styles.progressMsg}>{progressMsg}</span>
+          )}
+          {progress && progress.total > 0 && isSyncing && (
+            <progress
+              value={progress.fetched}
+              max={progress.total}
+              style={{ width: 120, height: 6, marginLeft: 8 }}
+            />
           )}
           <button
             className={styles.syncBtn}

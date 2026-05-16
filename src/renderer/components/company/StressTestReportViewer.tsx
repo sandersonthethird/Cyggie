@@ -6,6 +6,8 @@ import type {
   Severity,
 } from '../../../shared/types/stress-test-report'
 import type { EvidenceRow } from '../../../shared/types/thesis'
+import { useTimedError } from '../../hooks/useTimedError'
+import { serializeStressTestReportToMarkdown } from '../../lib/stress-test-report-export'
 import styles from './StressTestReportViewer.module.css'
 
 interface Props {
@@ -62,6 +64,18 @@ export function StressTestReportViewer({ report, onClose }: Props) {
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  const copyToast = useTimedError(2000)
+  async function handleExportMarkdown() {
+    try {
+      const md = serializeStressTestReportToMarkdown(report)
+      await navigator.clipboard.writeText(md)
+      copyToast.show('Copied!')
+    } catch (err) {
+      console.error('[StressTestReportViewer] copy failed:', err)
+      copyToast.show('Copy failed')
+    }
+  }
+
   const evidenceCritiques = report.evidence.filter(e => e.isCritique)
   const evidenceContext = report.evidence.filter(e => !e.isCritique)
 
@@ -70,6 +84,22 @@ export function StressTestReportViewer({ report, onClose }: Props) {
       <div className={styles.modal} onClick={e => e.stopPropagation()}>
         <div className={styles.header}>
           <h2 className={styles.title}>Stress-test report — {formatRelativeTime(report.createdAt)}</h2>
+          <button
+            onClick={() => void handleExportMarkdown()}
+            aria-label="Copy as markdown"
+            title="Copy report as markdown"
+            style={{
+              background: 'none',
+              border: '1px solid var(--color-border, #ccc)',
+              borderRadius: 4,
+              padding: '4px 10px',
+              fontSize: 12,
+              cursor: 'pointer',
+              marginRight: 8,
+            }}
+          >
+            {copyToast.error ? copyToast.error : 'Copy as MD'}
+          </button>
           <button className={styles.closeBtn} onClick={onClose} aria-label="Close">×</button>
         </div>
 

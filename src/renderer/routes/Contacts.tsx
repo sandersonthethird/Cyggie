@@ -9,6 +9,7 @@ import EmptyState from '../components/common/EmptyState'
 import { ContactTable } from '../components/contact/ContactTable'
 import { ViewsBar } from '../components/crm/ViewsBar'
 import { CreateCustomFieldModal } from '../components/crm/CreateCustomFieldModal'
+import { FilterChips } from '../components/crm/FilterChips'
 import {
   CONTACT_COLUMN_DEFS,
   CONTACT_DEFAULT_VISIBLE_KEYS,
@@ -1355,64 +1356,16 @@ export default function Contacts() {
       )}
 
       {/* ── Filter chips ── */}
-      {activeFilterCount > 0 && (
-        <div className={styles.filterRow}>
-          {/* Select filter chips */}
-          {Object.entries(columnFilters).flatMap(([field, values]) => {
-            const col = CONTACT_COLUMN_DEFS.find((c) => c.field === field)
-            return values.map((v) => {
-              const label = col?.options?.find((o) => o.value === v)?.label ?? v
-              return (
-                <span key={`${field}:${v}`} className={styles.filterChip}>
-                  {col?.label ?? field}: {label}
-                  <button
-                    className={styles.filterChipX}
-                    onClick={() => handleColumnFilter(field, (columnFilters[field] ?? []).filter((p) => p !== v))}
-                  >
-                    ×
-                  </button>
-                </span>
-              )
-            })
-          })}
-          {/* Range filter chips */}
-          {Object.entries(rangeFilters).map(([field, { min, max }]) => {
-            const col = CONTACT_COLUMN_DEFS.find((c) => c.field === field)
-            const fmt = (v: string) =>
-              col?.type === 'date'
-                ? new Date(v + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                : `${col?.prefix ?? ''}${v}${col?.suffix ?? ''}`
-            const rangeLabel =
-              min && max && min === max ? `= ${fmt(min)}`
-              : min && max ? `${fmt(min)} – ${fmt(max)}`
-              : min ? `≥ ${fmt(min)}`
-              : `≤ ${fmt(max!)}`
-            return (
-              <span key={`range:${field}`} className={styles.filterChip}>
-                {col?.label ?? field}: {rangeLabel}
-                <button className={styles.filterChipX} onClick={() => handleRangeFilter(field, {})}>
-                  ×
-                </button>
-              </span>
-            )
-          })}
-          {/* Text filter chips */}
-          {Object.entries(textFilters).map(([field, value]) => {
-            const col = CONTACT_COLUMN_DEFS.find((c) => c.field === field)
-            return (
-              <span key={`text:${field}`} className={styles.filterChip}>
-                {col?.label ?? field}: &ldquo;{value}&rdquo;
-                <button className={styles.filterChipX} onClick={() => handleTextFilter(field, '')}>
-                  ×
-                </button>
-              </span>
-            )
-          })}
-          <button className={styles.filterClearAll} onClick={clearAllFilters}>
-            Clear all
-          </button>
-        </div>
-      )}
+      <FilterChips
+        columnFilters={columnFilters}
+        rangeFilters={rangeFilters}
+        textFilters={textFilters}
+        columnDefs={CONTACT_COLUMN_DEFS}
+        onColumnFilter={handleColumnFilter}
+        onRangeFilter={handleRangeFilter}
+        onTextFilter={handleTextFilter}
+        clearAllFilters={clearAllFilters}
+      />
 
       {/* ── Table ── */}
       {!flagsLoading && !loading && contacts.length === 0 && !query && !showCreate ? (

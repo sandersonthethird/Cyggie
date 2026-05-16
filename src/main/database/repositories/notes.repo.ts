@@ -39,6 +39,7 @@ function rowToNote(row: NoteRow): Note {
     importSource: row.import_source ?? null,
     companyName: row.company_name ?? null,
     contactName: row.contact_name ?? null,
+    meetingTitle: row.meeting_title ?? null,
   }
 }
 
@@ -59,10 +60,12 @@ const BASE_SELECT = `
     n.folder_path,
     n.import_source,
     c.canonical_name AS company_name,
-    ct.full_name AS contact_name
+    ct.full_name AS contact_name,
+    m.title AS meeting_title
   FROM notes n
   LEFT JOIN org_companies c ON c.id = n.company_id
   LEFT JOIN contacts ct ON ct.id = n.contact_id
+  LEFT JOIN meetings m ON m.id = n.source_meeting_id
 `
 
 /** Build folder filter clause and bindings (GLOB for index-safe prefix match). */

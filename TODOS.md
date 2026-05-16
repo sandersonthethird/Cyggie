@@ -291,15 +291,6 @@
 
 ## P2 — CRM Tables
 
-### FilterChips shared component
-**What:** Extract filter chip rendering JSX from `Companies.tsx` and `Contacts.tsx` into a shared `<FilterChips>` component.
-**Why:** ~70 lines of near-identical JSX in each route file (select chips, range chips, text chips, clear-all button). Currently duplicated because CSS modules are per-route.
-**Effort:** S
-**Context:** Both routes use `useTableFilters` and have the same chip rendering pattern. Create `src/renderer/components/crm/FilterChips.tsx` + `FilterChips.module.css`. Move chip styles out of `Companies.module.css` and `Contacts.module.css` into the shared CSS module. Props: `{ columnFilters, rangeFilters, textFilters, columnDefs, onColumnFilter, onRangeFilter, onTextFilter, clearAllFilters }` — all available from the `useTableFilters` hook return value.
-**Depends on:** `useTableFilters` hook (already landed).
-
----
-
 ## P2 — Custom Fields
 
 ### Option management: rename, delete, reorder
@@ -398,14 +389,6 @@
 
 ## P2 — Email Sync
 
-### Determinate progress bar during email discovery
-**What:** Show a progress bar (not just text) once the total message count is known.
-**Why:** The current "Fetching 42 of 312…" text is helpful but a visual progress bar would make long syncs much less anxiety-inducing.
-**Effort:** S
-**Context:** The `COMPANY_EMAIL_INGEST_PROGRESS` and `CONTACT_EMAIL_INGEST_PROGRESS` channels already emit `{ phase, fetched, total }`. The `total` is known after the discovering phase completes. Add a `<progress>` element or a CSS-based bar to the sync row in `CompanyTimeline.tsx` and `ContactEmails.tsx`.
-
----
-
 ## P1 — Layout Persistence
 
 ### Cross-device layout sync
@@ -450,37 +433,7 @@
 
 ## P2 — Notes Import
 
-### Filter Notes by import source (filter pill UI)
-**What:** Add a dedicated filter pill in the Notes view to show only notes imported from a specific source (Apple Notes, Notion, generic).
-**Why:** After importing hundreds of notes, users need a way to find them quickly — especially to review or clean up the import. Without a source filter, imported notes are mixed invisibly into the full notes list.
-**Pros:** Makes import verifiable and actionable; enables "find all imported from Notion" workflows.
-**Cons:** Low complexity — the hard parts (schema, type, IPC) are already done. Remaining work is a UI filter pill only.
-**Context:** Schema is complete: `import_source TEXT` column exists (migration 057), `Note` type exposes `importSource`, `createNote` writes it. The `FolderSidebar` already renders import sources as chips (visible when import sources exist). The remaining work is: expose this as a filter option in the filter pill row in Notes.tsx (or integrate into the sidebar chips more prominently). ~1 hour of UI work.
-**Effort:** S
-**Depends on:** Nothing — schema and backend are already in place.
-
-
----
-
 ## P2 — Notes
-
-### Use meeting title as note card title fallback
-**What:** When a note has no explicit `title` but has a `sourceMeetingId`, display the linked meeting's title as the note card title in the Notes list.
-**Why:** Meeting-sourced notes created without a typed title currently fall back to the first line of content (which may be blank or a heading), making them hard to identify in the list.
-**Pros:** Makes meeting-sourced notes clearly identifiable by their meeting name without any user action.
-**Cons:** Requires a JOIN to the `meetings` table in `listNotes()`, or adding a denormalized `meeting_title` column to `notes` (migration needed). The JOIN approach is simpler but adds query cost.
-**Context:** `listNotes()` is in `src/main/database/repositories/notes.repo.ts`. The `firstLine` extraction in `src/renderer/routes/Notes.tsx` (~line 541) already has a fallback chain — adding `note.meetingTitle` as the second priority (after `note.title`, before content extraction) is the right insertion point. The JOIN would add `m.title AS meeting_title` to the existing LEFT JOINs in the base SELECT.
-**Effort:** S
-**Depends on:** None
-
-### Enable `onCreate` in Notes.tsx bulk-tag company picker
-**What:** Pass `onCreate={handleCreateBulkCompany}` to the `EntityPicker` in the Notes.tsx bulk-tag flow so users can create a new company inline while tagging notes.
-**Why:** Users bulk-tagging notes to a newly-created company currently have to navigate to the Companies view to create it first, then return to Notes to tag — two round-trips for what should be a single action.
-**Pros:** Makes bulk-tagging self-contained; reuses `COMPANY_FIND_OR_CREATE` IPC and `EntityPicker.onCreate` added in the company-swap PR.
-**Cons:** Minimal — async `handleCreateBulkCompany` callback mirrors `NoteTagger.handleCreateCompany` verbatim.
-**Context:** Notes bulk-tag picker is in `src/renderer/routes/Notes.tsx` around the company `EntityPicker` usage. Add `handleCreateBulkCompany` async callback (`api.invoke(COMPANY_FIND_OR_CREATE, name)` → set selected company), pass as `onCreate`. Pattern is identical to `NoteTagger.tsx` — see `src/renderer/components/notes/NoteTagger.tsx:42-55` for reference.
-**Effort:** S
-**Depends on:** Company swap PR (`COMPANY_FIND_OR_CREATE` IPC + `EntityPicker.onCreate`)
 
 ---
 
@@ -1074,17 +1027,6 @@ new IPC channel; user can opt in to sharing.
 ---
 
 ## P2 — Stress-test
-
-### Export stress-test report as markdown
-**What:** Add a Copy/Download button in `StressTestReportViewer` that serializes the report to markdown (summary + numbered concerns + flagged claims with source links).
-**Why:** High value for sharing findings with partners outside the app.
-**Pros:** Simple to build (deterministic template); enables sharing without screenshots.
-**Cons:** Need to think about styling (does markdown preserve severity badges?).
-**Context:** Build the serializer in `src/renderer/lib/stress-test-report-export.ts`; wire to a button next to Dismiss in `StressTestReportViewer`.
-**Effort:** S
-**Priority:** P2
-
----
 
 ## P2 — Stress-test
 

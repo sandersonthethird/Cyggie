@@ -22,6 +22,7 @@ export function ContactEmails({ contactId, hasEmail = true, className }: Contact
     syncResult,
     lastSyncedLabel,
     progressMsg,
+    progress,
     handleSync,
     handleCancel
   } = useEmailSync('contact', contactId, () => setLoaded(false), { disabled: !hasEmail })
@@ -56,6 +57,13 @@ export function ContactEmails({ contactId, hasEmail = true, className }: Contact
           <span className={styles.lastSynced}>{lastSyncedLabel}</span>
           {progressMsg && isSyncing && (
             <span className={styles.progressMsg}>{progressMsg}</span>
+          )}
+          {progress && progress.total > 0 && isSyncing && (
+            <progress
+              value={progress.fetched}
+              max={progress.total}
+              style={{ width: 120, height: 6, marginLeft: 8 }}
+            />
           )}
           <button
             className={styles.syncBtn}

@@ -16,6 +16,7 @@ export interface Note {
   // Denormalized from JOIN, only present on list queries
   companyName?: string | null
   contactName?: string | null
+  meetingTitle?: string | null
 }
 
 export type NoteFilterView = 'all' | 'untagged' | 'tagged' | 'unfoldered'

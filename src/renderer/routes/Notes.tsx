@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { usePicker } from '../hooks/usePicker'
 import { usePanelResize } from '../hooks/usePanelResize'
+import { useTimedError } from '../hooks/useTimedError'
 import { EntityPicker } from '../components/common/EntityPicker'
 import { FolderSidebar, INBOX_SENTINEL } from '../components/notes/FolderSidebar'
 import NotePaneEditor from '../components/notes/NotePaneEditor'
@@ -60,6 +61,7 @@ interface NoteCardProps {
 
 const NoteCard = memo(function NoteCard({ note, index, isActive, isSelected, bulkMode, onCardClick, onCheckbox }: NoteCardProps) {
   const title = note.title ||
+    note.meetingTitle ||
     stripMarkdownPreview(note.content.split('\n').find(l => l.trim()) || '') ||
     ''
   return (
@@ -124,6 +126,10 @@ export default function Notes() {
 
   const companyPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
   const contactPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST)
+
+  // Bulk-tag company create: re-entrancy guard + inline error UX
+  const creatingBulkCompanyRef = useRef(false)
+  const bulkCreateError = useTimedError(4000)
 
   // Panel resize for the folder sidebar (left pane)
   const { leftWidth: folderPaneWidth, dividerProps: folderDividerProps } = usePanelResize({
@@ -374,6 +380,22 @@ export default function Notes() {
     if (failed > 0) showToast(`${succeeded} tagged · ${failed} failed`)
     else showToast(`${succeeded} note${succeeded !== 1 ? 's' : ''} tagged`)
   }, [selectedIds, fetchNotes, showToast])
+
+  const handleCreateBulkCompany = useCallback(async (name: string) => {
+    if (creatingBulkCompanyRef.current) return
+    creatingBulkCompanyRef.current = true
+    try {
+      const company = await api.invoke<CompanySummary>(IPC_CHANNELS.COMPANY_FIND_OR_CREATE, name.trim())
+      if (company) {
+        await handleBulkTag('companyId', company.id)
+      }
+    } catch (err) {
+      console.error('[Notes] Failed to create company from bulk-tag:', err)
+      bulkCreateError.show(err instanceof Error ? err.message : 'Failed to create company')
+    } finally {
+      creatingBulkCompanyRef.current = false
+    }
+  }, [handleBulkTag, bulkCreateError])
 
   const handleUndo = useCallback(async () => {
     if (!undoData) return
@@ -685,6 +707,7 @@ export default function Notes() {
                     renderItem={(c) => c.canonicalName}
                     onSelect={(c) => void handleBulkTag('companyId', c.id)}
                     onClose={() => setBulkPicker(null)}
+                    onCreate={(name) => void handleCreateBulkCompany(name)}
                   />
                 ) : bulkPicker === 'contact' ? (
                   <EntityPicker<ContactSummary>
@@ -708,6 +731,11 @@ export default function Notes() {
                   </>
                 )}
               </div>
+              {bulkCreateError.error && (
+                <span style={{ color: '#c0392b', fontSize: '12px', marginLeft: '8px' }}>
+                  {bulkCreateError.error}
+                </span>
+              )}
             </div>
           ) : (
             !searchQuery && filter !== 'unfoldered' && !selectedFolder && (
