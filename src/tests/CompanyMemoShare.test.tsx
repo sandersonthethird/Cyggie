@@ -63,7 +63,7 @@ vi.mock('../renderer/components/common/NoticeModal', () => ({
 
 // useRuns / useRunForCompany throw if not wrapped in RunsProvider; stub for tests.
 vi.mock('../renderer/contexts/RunsContext', () => ({
-  useRuns: () => ({ runs: {}, dismissRun: vi.fn(), startRun: vi.fn(), appendEvent: vi.fn(), completeRun: vi.fn() }),
+  useRuns: () => ({ runs: {}, dismissRun: vi.fn(), startRun: vi.fn(), appendEvent: vi.fn(), completeRun: vi.fn(), onCompletion: vi.fn(() => () => {}) }),
   useRunForCompany: () => null,
   RunsProvider: ({ children }: { children: React.ReactNode }) => children,
 }))
@@ -118,15 +118,17 @@ async function loadMemo() {
 
 // --- Tests ---
 
-// TODO: Phase 5 audit deferred for all describe blocks in this file.
-// Every test fails with "Cannot read properties of undefined (reading 'then')".
-// The api.invoke vi.fn() returns undefined but production code calls .then()
-// on the result. Fix is per-test: each test needs api.invoke.mockResolvedValue(...)
-// for whichever channel it exercises. Mechanical work, but it's many small
-// per-test setups, not a single fix.
-
-describe.skip('CompanyMemo — PDF export', () => {
-  beforeEach(() => { vi.clearAllMocks() })
+describe('CompanyMemo — PDF export', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    invokeMock.mockReset()
+    // CompanyMemo issues several api.invoke calls on mount (stress-test
+    // report, version list, etc.) before the user action triggers
+    // SHARE_LINK / EXPORT_PDF / REVOKE. Default to a benign resolved value
+    // so those mount-time calls don't crash with `.then on undefined`.
+    // Tests override the relevant call with mockResolvedValueOnce.
+    invokeMock.mockResolvedValue(null)
+  })
   afterEach(cleanup)
 
   it('disables Export PDF when memo has no latestVersion', async () => {
@@ -153,8 +155,17 @@ describe.skip('CompanyMemo — PDF export', () => {
   })
 })
 
-describe.skip('CompanyMemo — Share', () => {
-  beforeEach(() => { vi.clearAllMocks() })
+describe('CompanyMemo — Share', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    invokeMock.mockReset()
+    // CompanyMemo issues several api.invoke calls on mount (stress-test
+    // report, version list, etc.) before the user action triggers
+    // SHARE_LINK / EXPORT_PDF / REVOKE. Default to a benign resolved value
+    // so those mount-time calls don't crash with `.then on undefined`.
+    // Tests override the relevant call with mockResolvedValueOnce.
+    invokeMock.mockResolvedValue(null)
+  })
   afterEach(cleanup)
 
   it('invokes INVESTMENT_MEMO_SHARE_LINK and shows URL row on success', async () => {
@@ -181,8 +192,17 @@ describe.skip('CompanyMemo — Share', () => {
   })
 })
 
-describe.skip('CompanyMemo — Copy link', () => {
-  beforeEach(() => { vi.clearAllMocks() })
+describe('CompanyMemo — Copy link', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    invokeMock.mockReset()
+    // CompanyMemo issues several api.invoke calls on mount (stress-test
+    // report, version list, etc.) before the user action triggers
+    // SHARE_LINK / EXPORT_PDF / REVOKE. Default to a benign resolved value
+    // so those mount-time calls don't crash with `.then on undefined`.
+    // Tests override the relevant call with mockResolvedValueOnce.
+    invokeMock.mockResolvedValue(null)
+  })
   afterEach(cleanup)
 
   it('copies URL to clipboard and shows Copied! for 2s', async () => {
@@ -197,8 +217,17 @@ describe.skip('CompanyMemo — Copy link', () => {
   })
 })
 
-describe.skip('CompanyMemo — Open in browser', () => {
-  beforeEach(() => { vi.clearAllMocks() })
+describe('CompanyMemo — Open in browser', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    invokeMock.mockReset()
+    // CompanyMemo issues several api.invoke calls on mount (stress-test
+    // report, version list, etc.) before the user action triggers
+    // SHARE_LINK / EXPORT_PDF / REVOKE. Default to a benign resolved value
+    // so those mount-time calls don't crash with `.then on undefined`.
+    // Tests override the relevant call with mockResolvedValueOnce.
+    invokeMock.mockResolvedValue(null)
+  })
   afterEach(cleanup)
 
   it('calls shell:open-external with shareUrl when Open is clicked', async () => {
@@ -212,8 +241,17 @@ describe.skip('CompanyMemo — Open in browser', () => {
   })
 })
 
-describe.skip('CompanyMemo — Revoke', () => {
-  beforeEach(() => { vi.clearAllMocks() })
+describe('CompanyMemo — Revoke', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    invokeMock.mockReset()
+    // CompanyMemo issues several api.invoke calls on mount (stress-test
+    // report, version list, etc.) before the user action triggers
+    // SHARE_LINK / EXPORT_PDF / REVOKE. Default to a benign resolved value
+    // so those mount-time calls don't crash with `.then on undefined`.
+    // Tests override the relevant call with mockResolvedValueOnce.
+    invokeMock.mockResolvedValue(null)
+  })
   afterEach(cleanup)
 
   it('invokes INVESTMENT_MEMO_REVOKE_SHARE and clears URL row', async () => {
