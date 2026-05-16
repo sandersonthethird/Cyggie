@@ -19,6 +19,11 @@ export const IPC_CHANNELS = {
   RECORDING_ERROR: 'recording:error',
   RECORDING_AUTO_STOP: 'recording:auto-stop',
   RECORDING_SYSTEM_AUDIO_STATUS: 'recording:system-audio-status',
+  // Broadcast events fired by the main process when background transcript
+  // finalization (after RECORDING_STOP returns optimistically) completes or
+  // fails. Mirrors VIDEO_FINALIZED / VIDEO_FINALIZE_ERROR.
+  RECORDING_FINALIZED: 'recording:finalized',
+  RECORDING_FINALIZE_ERROR: 'recording:finalize-error',
 
   // Calendar
   CALENDAR_CONNECT: 'calendar:connect',
