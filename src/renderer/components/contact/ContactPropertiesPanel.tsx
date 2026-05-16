@@ -29,10 +29,9 @@ import { SocialsEditor } from '../crm/SocialsEditor'
 import { AddFieldDropdown } from '../crm/AddFieldDropdown'
 import { computeChipDelta } from '../../utils/chip-delta'
 import { usePinnedMigration } from '../../hooks/usePinnedMigration'
-import { ContactAvatar } from '../crm/ContactAvatar'
+import { ContactHeaderCard } from './ContactHeaderCard'
 import { saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
 import { CONTACT_HARDCODED_FIELDS } from '../../constants/contactFields'
-import { Mail } from 'lucide-react'
 import { CollapsibleSection } from '../crm/CollapsibleSection'
 import { PropertiesCard, PropertiesCardFooter } from '../crm/PropertiesCard'
 import { useSectionCollapse } from '../../hooks/useSectionCollapse'
@@ -40,7 +39,6 @@ import {
   CONTACT_TYPES,
   CONTACT_COLUMN_DEFS,
 } from './contactColumns'
-import { RecordKebabMenu } from '../common/RecordKebabMenu'
 import { EnrichMethodModal } from '../common/EnrichMethodModal'
 import { Spinner } from '../common/Spinner'
 import styles from './ContactPropertiesPanel.module.css'
@@ -1262,255 +1260,54 @@ export function ContactPropertiesPanel({
         </div>
       )}
 
-      {/* Header */}
-      <div className={styles.header}>
-        <ContactAvatar name={contact.fullName} size="lg" />
-        <div className={styles.headerMeta}>
-          {/* 3-dot kebab menu — upper right of headerMeta (hidden during edit mode) */}
-          {!isEditing && (
-            <div className={styles.kebabPosition}>
-              <RecordKebabMenu groups={[
-                [
-                  { label: 'Edit record', onClick: () => { sessionAddedFields.current = [...fieldVisibility.addedFields]; setIsEditing(true) } },
-                  { label: 'Enrich', onClick: () => setEnrichMethodModalOpen(true) },
-                ],
-                [
-                  { label: 'Merge into', onClick: () => { setMergeQuery(''); setMergePickerOpen(true) } },
-                ],
-                [
-                  { label: 'Delete contact', onClick: () => setConfirmDelete(true), destructive: true },
-                ],
-              ]} />
-            </div>
-          )}
-          {isEditing ? (
-            <div className={styles.nameInputRow}>
-              <input
-                ref={firstNameInputRef}
-                className={styles.nameInput}
-                placeholder="First name"
-                value={firstNameDraft}
-                onChange={(e) => setFirstNameDraft(e.target.value)}
-                onKeyDown={handleNameKeyDown}
-              />
-              <input
-                className={styles.nameInput}
-                placeholder="Last name"
-                value={lastNameDraft}
-                onChange={(e) => setLastNameDraft(e.target.value)}
-                onKeyDown={handleNameKeyDown}
-              />
-            </div>
-          ) : (
-            <div className={styles.name}>{contact.fullName}</div>
-          )}
-          {isEditing ? (
-            <div className={styles.companyEditWrapper}>
-              <input
-                className={styles.priorCompanyInput}
-                value={companyDraft}
-                placeholder="Company"
-                onChange={(e) => handleCompanyInput(e.target.value)}
-                onKeyDown={companyAutocompleteKeyDown}
-                onBlur={() => {
-                  setTimeout(() => setCompanyAutocomplete(null), 150)
-                  void saveCompany(companyDraft)
-                }}
-              />
-              {companyAutocomplete && companyAutocomplete.length > 0 && (
-                <div
-                  className={styles.priorCompanyAutocomplete}
-                  ref={companyAutocompleteRef as React.RefObject<HTMLDivElement>}
-                >
-                  {companyAutocomplete.map((c, i) => (
-                    <div
-                      key={c.id}
-                      className={`${styles.priorCompanyAutocompleteItem} ${i === companyActiveIdx ? styles.priorCompanyAutocompleteItemActive : ''}`}
-                      onMouseEnter={() => setCompanyActiveIdx(i)}
-                      onMouseDown={(e) => {
-                        e.preventDefault()
-                        setCompanyDraft(c.canonicalName)
-                        setCompanyAutocomplete(null)
-                        void saveCompany(c.canonicalName)
-                      }}
-                    >{c.canonicalName}</div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : contact.primaryCompany ? (
-            <div className={styles.companyRow}>
-              <button
-                className={styles.companyLink}
-                onClick={() => navigate(`/company/${contact.primaryCompany!.id}`, { state: { backLabel: contact.fullName } })}
-              >
-                {contact.primaryCompany.canonicalName}
-              </button>
-            </div>
-          ) : null}
-          {contact.title && (
-            <div className={styles.titleRow}>
-              <span>{contact.title}</span>
-              {fieldSources?.title && (
-                <span className={styles.sourceBadge} title={`From: ${fieldSources.title.meetingTitle}`}>📋</span>
-              )}
-            </div>
-          )}
-          {contact.linkedinHeadline && !isEditing && (
-            <div className={styles.linkedinHeadline}>{contact.linkedinHeadline}</div>
-          )}
-          {/* Contact type + last touch — always visible in header */}
-          <div className={styles.headerChipRow}>
-            {renderChipById('contactType')}
-            {!isEditing && <LastTouchBadge lastTouchpoint={lastTouchpoint ?? contact.lastTouchpoint} />}
-          </div>
-          {/* Edit-mode actions */}
-          {isEditing && (
-            <div className={styles.editActions}>
-              {sessionNewFields !== null ? (
-                <div className={styles.applyPrompt}>
-                  {(() => {
-                    function fieldLabel(key: string): string {
-                      if (key.startsWith('custom:')) {
-                        const id = key.slice(7)
-                        return customFields.find(f => f.id === id)?.label ?? key
-                      }
-                      return CONTACT_COLUMN_DEFS.find(d => d.key === key)?.label ?? key
-                    }
-                    const promptPrefix = sessionNewFields.length > 0
-                      ? `Show ${sessionNewFields.map(fieldLabel).join(', ')} on`
-                      : 'Apply layout changes to'
-                    return <span>{promptPrefix} <strong>all contacts</strong>?</span>
-                  })()}
-                  <button className={styles.applyAllBtn} onClick={handleApplyToAll}>All contacts</button>
-                  <button className={styles.applyOneBtn} onClick={handleJustThisContact}>Just {contact.fullName}</button>
-                </div>
-              ) : (
-                <>
-                  <div className={styles.editBtnRow}>
-                    <button className={styles.saveBtn} onClick={() => void handleDone()}>Save</button>
-                    <button className={styles.cancelBtn} onClick={handleCancel}>Cancel</button>
-                    <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">Reset Layout</button>
-                  </div>
-                  {metaSaveError.error && (
-                    <div style={{ color: '#c0392b', fontSize: '12px', marginTop: '4px', padding: '0 8px' }}>
-                      {metaSaveError.error}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-          {/* Contact meta — edit inputs or read-only display */}
-          {isEditing ? (
-            <div className={styles.metaEditBlock}>
-              <div className={styles.metaRow}>
-                <span className={styles.metaIcon}>✉</span>
-                <input
-                  className={styles.metaInput}
-                  value={emailDraft}
-                  onChange={(e) => setEmailDraft(e.target.value)}
-                  placeholder="Email address"
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                />
-              </div>
-              <div className={styles.metaRow}>
-                <svg className={styles.metaIconSvg} width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
-                </svg>
-                <input
-                  className={styles.metaInput}
-                  value={linkedinDraft}
-                  onChange={(e) => setLinkedinDraft(e.target.value)}
-                  placeholder="LinkedIn URL"
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                />
-              </div>
-              <div className={styles.metaRow}>
-                <span className={styles.metaIcon}>📞</span>
-                <input
-                  className={styles.metaInput}
-                  value={phoneDraft}
-                  onChange={(e) => setPhoneDraft(e.target.value)}
-                  placeholder="Phone"
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                />
-              </div>
-              <div className={styles.metaRow}>
-                <span className={styles.metaIcon}>📍</span>
-                <input
-                  className={`${styles.metaInput} ${styles.metaInputHalf}`}
-                  value={cityDraft}
-                  onChange={(e) => setCityDraft(e.target.value)}
-                  placeholder="City"
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                />
-                <input
-                  className={`${styles.metaInput} ${styles.metaInputHalf}`}
-                  value={stateDraft}
-                  onChange={(e) => setStateDraft(e.target.value)}
-                  placeholder="State"
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                />
-              </div>
-            </div>
-          ) : (
-            <>
-              {(contact.emails[0] || contact.email) && (
-                <div
-                  className={`${styles.metaRow} ${styles.metaRowCopyable}`}
-                  onClick={() => copyMeta((contact.emails[0] || contact.email)!, 'email')}
-                  title="Click to copy"
-                >
-                  <span className={styles.metaIcon}>✉</span>
-                  <span className={styles.metaValue}>{contact.emails[0] || contact.email}</span>
-                  {copiedMeta === 'email' && <span className={styles.copiedToast}>Copied!</span>}
-                </div>
-              )}
-              {contact.linkedinUrl && (
-                <div className={styles.metaRow}>
-                  <svg className={styles.metaIconSvg} width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
-                  </svg>
-                  <span
-                    className={styles.metaLink}
-                    onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, contact.linkedinUrl!)}
-                    title={contact.linkedinUrl}
-                  >
-                    {contact.linkedinUrl.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}
-                  </span>
-                </div>
-              )}
-              {contact.phone && (
-                <div
-                  className={`${styles.metaRow} ${styles.metaRowCopyable}`}
-                  onClick={() => copyMeta(contact.phone!, 'phone')}
-                  title="Click to copy"
-                >
-                  <span className={styles.metaIcon}>📞</span>
-                  <span className={styles.metaValue}>{contact.phone}</span>
-                  {copiedMeta === 'phone' && <span className={styles.copiedToast}>Copied!</span>}
-                </div>
-              )}
-              {(contact.city || contact.state) && (
-                <div className={styles.metaRow}>
-                  <span className={styles.metaIcon}>📍</span>
-                  <span className={styles.metaValue}>{[contact.city, contact.state].filter(Boolean).join(', ')}</span>
-                </div>
-              )}
-              <div className={styles.headerActionRow}>
-                {(contact.emails[0] || contact.email) && (
-                  <button
-                    className={styles.headerIconBtn}
-                    data-tooltip="Email"
-                    onClick={() => void api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, `mailto:${contact.emails[0] || contact.email}`)}
-                  ><Mail size={14} /></button>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+      {/* Header — extracted to ContactHeaderCard */}
+      <ContactHeaderCard
+        contact={contact}
+        isEditing={isEditing}
+        lastTouchpoint={lastTouchpoint}
+        fieldSources={fieldSources}
+        customFields={customFields}
+        firstNameDraft={firstNameDraft}
+        setFirstNameDraft={setFirstNameDraft}
+        lastNameDraft={lastNameDraft}
+        setLastNameDraft={setLastNameDraft}
+        emailDraft={emailDraft}
+        setEmailDraft={setEmailDraft}
+        linkedinDraft={linkedinDraft}
+        setLinkedinDraft={setLinkedinDraft}
+        phoneDraft={phoneDraft}
+        setPhoneDraft={setPhoneDraft}
+        cityDraft={cityDraft}
+        setCityDraft={setCityDraft}
+        stateDraft={stateDraft}
+        setStateDraft={setStateDraft}
+        companyDraft={companyDraft}
+        setCompanyDraft={setCompanyDraft}
+        companyAutocomplete={companyAutocomplete}
+        setCompanyAutocomplete={setCompanyAutocomplete}
+        companyActiveIdx={companyActiveIdx}
+        setCompanyActiveIdx={setCompanyActiveIdx}
+        handleCompanyInput={handleCompanyInput}
+        companyAutocompleteKeyDown={companyAutocompleteKeyDown}
+        companyAutocompleteRef={companyAutocompleteRef}
+        saveCompany={saveCompany}
+        firstNameInputRef={firstNameInputRef}
+        handleNameKeyDown={handleNameKeyDown}
+        onStartEditing={() => { sessionAddedFields.current = [...fieldVisibility.addedFields]; setIsEditing(true) }}
+        onEnrichClick={() => setEnrichMethodModalOpen(true)}
+        onMergeStart={() => { setMergeQuery(''); setMergePickerOpen(true) }}
+        onDeleteClick={() => setConfirmDelete(true)}
+        handleDone={handleDone}
+        handleCancel={handleCancel}
+        handleApplyToAll={handleApplyToAll}
+        handleJustThisContact={handleJustThisContact}
+        handleResetLayout={handleResetLayout}
+        sessionNewFields={sessionNewFields}
+        metaSaveError={metaSaveError.error}
+        copyMeta={copyMeta}
+        copiedMeta={copiedMeta}
+        contactTypeChip={renderChipById('contactType')}
+      />
       </div>
 
       {/* Key Takeaways card — shared component (collapsible, useTakeaways hook) */}
