@@ -25,6 +25,8 @@ import { logAudit } from '../database/repositories/audit.repo'
 import type { TranscriptResult } from '../deepgram/types'
 import type { TranscriptSegment } from '../../shared/types/recording'
 import { DEFAULT_DEEPGRAM_KEYWORDS } from '../../shared/constants/deepgram-keywords'
+import { addPending, removePending, getPending } from './_finalizations'
+import { broadcast } from './_broadcast'
 
 let audioCapture: AudioCapture | null = null
 let deepgramClient: DeepgramStreamingClient | null = null
@@ -48,6 +50,58 @@ const DEBUG_TRANSCRIPTION =
 function getMainWindow(): BrowserWindow | null {
   const windows = BrowserWindow.getAllWindows()
   return windows.length > 0 ? windows[0] : null
+}
+
+/**
+ * Reset all module-level recording state to "not recording". Called from
+ * the sync phase of RECORDING_STOP *before* the background finalize IIFE
+ * starts, so a subsequent RECORDING_START sees a clean slate even while
+ * the previous meeting's transcript is still being written in the
+ * background.
+ *
+ * Single source of truth — adding new module state for recording must
+ * also be reset here, or it will leak across recordings.
+ */
+function resetRecordingState(): void {
+  audioCapture = null
+  deepgramClient = null
+  transcriptAssembler = null
+  autoStop = null
+  currentMeetingId = null
+  recordingStartTime = null
+  isPaused = false
+  monoMode = false
+  switchingToMono = false
+  deepgramApiKey = null
+  deepgramMaxSpeakers = undefined
+  deepgramKeytermsCache = []
+  calendarSelfName = null
+  calendarAttendees = []
+  calendarAttendeeEmails = []
+  calendarEndTime = null
+}
+
+/** Dev-only step timer for the background finalize pipeline. */
+function timeStep<T>(label: string, fn: () => T): T {
+  if (!import.meta.env.DEV) return fn()
+  const start = performance.now()
+  try {
+    return fn()
+  } finally {
+    const ms = performance.now() - start
+    console.debug(`[recording-finalize] ${label} ${ms.toFixed(1)}ms`)
+  }
+}
+
+async function timeStepAsync<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  if (!import.meta.env.DEV) return fn()
+  const start = performance.now()
+  try {
+    return await fn()
+  } finally {
+    const ms = performance.now() - start
+    console.debug(`[recording-finalize] ${label} ${ms.toFixed(1)}ms`)
+  }
 }
 
 function sendToRenderer(channel: string, data: unknown): void {
@@ -192,6 +246,22 @@ export function registerRecordingHandlers(): void {
       }
       throw new Error('Already recording')
     }
+
+    // Same-meeting race: if a previous RECORDING_STOP is still finalizing the
+    // transcript for the meeting we're about to (re-)start, wait for it. The
+    // background's `meetingRepo.updateMeeting({status:'transcribed', transcriptSegments, ...})`
+    // would otherwise race with our about-to-be-created fresh transcript and
+    // could overwrite work-in-progress data. This adds at most a few seconds
+    // to "Continue Recording" only when the user clicks it before the previous
+    // finalize has flushed.
+    if (appendToMeetingId) {
+      const pending = getPending('recording', appendToMeetingId)
+      if (pending) {
+        console.log(`[Recording] Awaiting previous finalize for ${appendToMeetingId} before continuing`)
+        await pending
+      }
+    }
+
     const userId = getCurrentUserId()
 
     const deepgramKey = getCredential('deepgramApiKey')
@@ -512,162 +582,161 @@ export function registerRecordingHandlers(): void {
     if (!currentMeetingId) {
       throw new Error('Not recording')
     }
-    const userId = getCurrentUserId()
 
+    // SYNC PHASE: snapshot everything the background work needs, then null
+    // module state so the next RECORDING_START sees a clean slate. The
+    // background IIFE closes over the locals — it doesn't read module state.
+    const userId = getCurrentUserId()
     const meetingId = currentMeetingId
     const duration = recordingStartTime
       ? Math.floor((Date.now() - recordingStartTime) / 1000)
       : 0
+    const snapshot = {
+      deepgramClient,
+      transcriptAssembler,
+      calendarSelfName,
+      calendarAttendees: calendarAttendees.slice(),
+    }
 
-    // Stop audio capture
     audioCapture?.stop()
-
-    // Ask Deepgram to flush buffered text before closing the stream so tail-end
-    // utterances are less likely to be dropped.
-    try {
-      await deepgramClient?.finalizeAndClose({
-        quietMs: 900,
-        maxWaitMs: 9000,
-        closeWaitMs: 3500
-      })
-    } catch (err) {
-      console.warn('[Recording] Deepgram finalize close failed, forcing close:', err)
-      await deepgramClient?.close()
-    }
-
-    // Finalize transcript - promote any pending interim segment
-    const meeting = meetingRepo.getMeeting(meetingId)
-
-    if (transcriptAssembler) {
-      transcriptAssembler.finalize()
-      transcriptAssembler.correctSpeakerBoundaries()
-
-      const diagnostics = transcriptAssembler.getDiagnostics()
-      console.log(
-        '[Recording] Transcript diagnostics:',
-        `mode=${diagnostics.channelMode}`,
-        `speakers=${diagnostics.speakerCount}`,
-        `segments=${diagnostics.totalSegments}`,
-        `suppressedSwitches=${diagnostics.totalSuppressedSwitches}`
-      )
-
-      // Merge phantom speakers created by Deepgram diarization.
-      // When we know the expected participant count from the calendar,
-      // short segments from extra speakers get folded into the prior speaker.
-      if (calendarAttendees.length > 0) {
-        const expectedSpeakers = 1 + calendarAttendees.length
-        transcriptAssembler.consolidateSpeakers(expectedSpeakers)
-      }
-
-      // Build speaker labels only for speakers that actually appear in the
-      // finalized transcript (post-processing may have eliminated some).
-      const actualSpeakerIds = transcriptAssembler.getFinalizedSpeakerIds()
-      const speakerCount = actualSpeakerIds.size
-
-      const allNames: string[] = []
-      if (calendarSelfName || calendarAttendees.length > 0) {
-        allNames.push(calendarSelfName || 'You')
-        allNames.push(...calendarAttendees)
-      }
-
-      const speakerMap: Record<number, string> = {}
-      const detectedMode = transcriptAssembler.getChannelMode()
-      if (detectedMode === 'multichannel') {
-        // Multichannel: speaker 0 = self (mic channel), speaker 1+ = remote participants
-        for (const id of actualSpeakerIds) {
-          speakerMap[id] = allNames[id] || `Speaker ${id + 1}`
-        }
-      } else {
-        // Diarization (or still detecting): Deepgram assigns speaker IDs
-        // arbitrarily. Speaker 0 is NOT necessarily "self". Assign names
-        // in sorted order; the user can rename speakers after the fact.
-        const sortedIds = [...actualSpeakerIds].sort((a, b) => a - b)
-        for (let i = 0; i < sortedIds.length; i++) {
-          speakerMap[sortedIds[i]] = allNames[i] || `Speaker ${sortedIds[i] + 1}`
-        }
-      }
-
-      const rawTranscriptMd = transcriptAssembler.toMarkdown(speakerMap)
-
-      // Proper noun correction: fix CRM company/contact name misspellings in transcript
-      let transcriptMd = rawTranscriptMd
-      try {
-        const contactNames = listContactsLight({ limit: 200 }).map((c) => c.fullName).filter(Boolean) as string[]
-        const companyNames = listCompanies({ view: 'all' }).map((c) => c.canonicalName).filter(Boolean) as string[]
-        const crmNames = [...contactNames, ...companyNames]
-        if (crmNames.length > 0) {
-          // Apply correction line-by-line, skipping speaker-label lines
-          // to prevent fuzzy matches from corrupting speaker names/emails.
-          const lines = rawTranscriptMd.split('\n')
-          transcriptMd = lines.map((line) =>
-            line.startsWith('**') && line.includes('** [')
-              ? line
-              : correctProperNouns(line, crmNames)
-          ).join('\n')
-        }
-      } catch (err) {
-        console.warn('[Recording] Proper noun correction failed, using raw transcript:', err)
-        transcriptMd = rawTranscriptMd
-      }
-
-      const transcriptPath = writeTranscript(meetingId, transcriptMd, meeting?.title, meeting?.date, meeting?.attendees)
-      const fullText = transcriptAssembler.getFullText()
-
-      // Update meeting record
-      meetingRepo.updateMeeting(meetingId, {
-        durationSeconds: duration,
-        transcriptPath,
-        transcriptSegments: transcriptAssembler.getSerializableState(),
-        speakerCount,
-        speakerMap,
-        status: 'transcribed'
-      }, userId)
-      logAudit(userId, 'meeting', meetingId, 'update', {
-        status: 'transcribed',
-        transcript: true
-      })
-
-      // Index for search
-      if (meeting) {
-        indexMeeting(meetingId, meeting.title, fullText)
-      }
-
-      // Upload transcript to Drive (fire-and-forget)
-      if (hasDriveScope()) {
-        const fullPath = join(getTranscriptsDir(), transcriptPath)
-        uploadTranscript(fullPath)
-          .then(({ driveId }) => {
-            meetingRepo.updateMeeting(meetingId, { transcriptDriveId: driveId }, userId)
-            console.log('[Drive] Transcript uploaded:', driveId)
-          })
-          .catch((err) => {
-            console.error('[Drive] Failed to upload transcript:', err)
-          })
-      }
-    }
-
-    // Cleanup
     autoStop?.stop()
-    autoStop = null
-    audioCapture = null
-    deepgramClient = null
-    transcriptAssembler = null
-    currentMeetingId = null
-    recordingStartTime = null
-    isPaused = false
-    monoMode = false
-    switchingToMono = false
-    deepgramApiKey = null
-    deepgramMaxSpeakers = undefined
-    deepgramKeytermsCache = []
-    calendarSelfName = null
-    calendarAttendees = []
-    calendarAttendeeEmails = []
-    calendarEndTime = null
+    resetRecordingState()
 
-    // Update tray
     const win = getMainWindow()
     if (win) updateTrayMenu(win, false)
+
+    // BACKGROUND: deepgram flush, transcript assembly, DB writes, drive
+    // upload. UI is already unblocked. Broadcasts a finalize event so the
+    // renderer can refresh the meeting view + run auto-enhance.
+    const finalizePromise = (async () => {
+      try {
+        try {
+          await timeStepAsync('deepgram-close', () => snapshot.deepgramClient?.finalizeAndClose({
+            quietMs: 900,
+            maxWaitMs: 9000,
+            closeWaitMs: 3500,
+          }) ?? Promise.resolve())
+        } catch (err) {
+          console.warn('[Recording] Deepgram finalize close failed, forcing close:', err)
+          await snapshot.deepgramClient?.close()
+        }
+
+        const meeting = meetingRepo.getMeeting(meetingId)
+        const assembler = snapshot.transcriptAssembler
+        if (assembler) {
+          timeStep('transcript-assemble', () => {
+            assembler.finalize()
+            assembler.correctSpeakerBoundaries()
+          })
+
+          const diagnostics = assembler.getDiagnostics()
+          console.log(
+            '[Recording] Transcript diagnostics:',
+            `mode=${diagnostics.channelMode}`,
+            `speakers=${diagnostics.speakerCount}`,
+            `segments=${diagnostics.totalSegments}`,
+            `suppressedSwitches=${diagnostics.totalSuppressedSwitches}`,
+          )
+
+          if (snapshot.calendarAttendees.length > 0) {
+            const expectedSpeakers = 1 + snapshot.calendarAttendees.length
+            assembler.consolidateSpeakers(expectedSpeakers)
+          }
+
+          const actualSpeakerIds = assembler.getFinalizedSpeakerIds()
+          const speakerCount = actualSpeakerIds.size
+
+          const allNames: string[] = []
+          if (snapshot.calendarSelfName || snapshot.calendarAttendees.length > 0) {
+            allNames.push(snapshot.calendarSelfName || 'You')
+            allNames.push(...snapshot.calendarAttendees)
+          }
+
+          const speakerMap: Record<number, string> = {}
+          const detectedMode = assembler.getChannelMode()
+          if (detectedMode === 'multichannel') {
+            for (const id of actualSpeakerIds) {
+              speakerMap[id] = allNames[id] || `Speaker ${id + 1}`
+            }
+          } else {
+            const sortedIds = [...actualSpeakerIds].sort((a, b) => a - b)
+            for (let i = 0; i < sortedIds.length; i++) {
+              speakerMap[sortedIds[i]] = allNames[i] || `Speaker ${sortedIds[i] + 1}`
+            }
+          }
+
+          const rawTranscriptMd = assembler.toMarkdown(speakerMap)
+
+          let transcriptMd = rawTranscriptMd
+          try {
+            transcriptMd = timeStep('name-correction', () => {
+              const contactNames = listContactsLight({ limit: 200 }).map((c) => c.fullName).filter(Boolean) as string[]
+              const companyNames = listCompanies({ view: 'all' }).map((c) => c.canonicalName).filter(Boolean) as string[]
+              const crmNames = [...contactNames, ...companyNames]
+              if (crmNames.length === 0) return rawTranscriptMd
+              const lines = rawTranscriptMd.split('\n')
+              return lines.map((line) =>
+                line.startsWith('**') && line.includes('** [')
+                  ? line
+                  : correctProperNouns(line, crmNames),
+              ).join('\n')
+            })
+          } catch (err) {
+            console.warn('[Recording] Proper noun correction failed, using raw transcript:', err)
+            transcriptMd = rawTranscriptMd
+          }
+
+          const transcriptPath = timeStep('write-transcript',
+            () => writeTranscript(meetingId, transcriptMd, meeting?.title, meeting?.date, meeting?.attendees))
+          const fullText = assembler.getFullText()
+
+          timeStep('db-update', () => meetingRepo.updateMeeting(meetingId, {
+            durationSeconds: duration,
+            transcriptPath,
+            transcriptSegments: assembler.getSerializableState(),
+            speakerCount,
+            speakerMap,
+            status: 'transcribed',
+          }, userId))
+          logAudit(userId, 'meeting', meetingId, 'update', {
+            status: 'transcribed',
+            transcript: true,
+          })
+
+          if (meeting) {
+            timeStep('fts-index', () => indexMeeting(meetingId, meeting.title, fullText))
+          }
+
+          if (hasDriveScope()) {
+            const fullPath = join(getTranscriptsDir(), transcriptPath)
+            uploadTranscript(fullPath)
+              .then(({ driveId }) => {
+                meetingRepo.updateMeeting(meetingId, { transcriptDriveId: driveId }, userId)
+                console.log('[Drive] Transcript uploaded:', driveId)
+              })
+              .catch((err) => {
+                console.error('[Drive] Failed to upload transcript:', err)
+              })
+          }
+        }
+
+        broadcast(IPC_CHANNELS.RECORDING_FINALIZED, { meetingId, durationSeconds: duration })
+      } catch (err) {
+        console.error(`[RECORDING_STOP] background finalize failed for ${meetingId}:`, err)
+        try {
+          meetingRepo.updateMeeting(meetingId, { status: 'error' }, userId)
+        } catch (dbErr) {
+          console.error('[RECORDING_STOP] best-effort error-status write also failed:', dbErr)
+        }
+        broadcast(IPC_CHANNELS.RECORDING_FINALIZE_ERROR, {
+          meetingId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      } finally {
+        removePending('recording', meetingId)
+      }
+    })()
+    addPending('recording', meetingId, finalizePromise)
 
     return { meetingId, duration }
   })
