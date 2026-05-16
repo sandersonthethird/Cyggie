@@ -175,6 +175,10 @@ export function normalizeForCompare(value: string | null | undefined): string {
   return value.trim().toLowerCase()
 }
 
+// Local import for use within this file. The re-export below makes these
+// available to other modules that import from contact-utils.
+import { parseTimestamp } from '../../utils/db-utils'
+
 // Re-export SQLITE_DATETIME_RE / parseTimestamp / pickLatestTimestamp /
 // setLatestMapValue / parseJsonArray from db-utils for backward compatibility.
 // These were originally defined here; the canonical source is now

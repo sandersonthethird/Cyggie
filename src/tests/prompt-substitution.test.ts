@@ -8,7 +8,7 @@ describe('memo-producer system prompt substitution', () => {
     const prompt = buildMemoProducerSystemPrompt([...MEMO_SECTIONS])
     expect(prompt).toContain('Founder (TEAM)')
     expect(prompt).toContain('Business model (AIM)')
-    expect(prompt).toContain('Code-is-easy filters')
+    expect(prompt).toContain('Additional filters to apply')
     expect(prompt).not.toMatch(/###[A-Z_]+###/)
   })
 })
@@ -22,7 +22,7 @@ describe('thesis-stress-test system prompt substitution', () => {
     // Criteria content absent (was previously bundled; now removed).
     expect(prompt).not.toContain('Founder (TEAM)')
     expect(prompt).not.toContain('Business model (AIM)')
-    expect(prompt).not.toContain('Code-is-easy filters')
+    expect(prompt).not.toContain('Additional filters to apply')
     // No placeholder leaked.
     expect(prompt).not.toMatch(/###[A-Z_]+###/)
   })

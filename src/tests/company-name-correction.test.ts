@@ -44,6 +44,10 @@ function insertCompany(id: string, name: string): void {
 describe('fixConcatenatedCompanyNames', () => {
   beforeEach(() => {
     testDb = buildTestDbFull()
+    // FK enforcement off: this test seeds ad-hoc company IDs that don't
+    // satisfy production's FK constraints — but we're exercising the rename
+    // logic, not referential integrity.
+    testDb.pragma('foreign_keys = OFF')
   })
 
   // ─── Step 1: CamelCase ──────────────────────────────────────────────────────
