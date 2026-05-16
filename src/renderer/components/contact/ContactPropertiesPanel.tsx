@@ -5,7 +5,9 @@ import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
 import { useFieldVisibility } from '../../hooks/useFieldVisibility'
 import { useSectionOrder } from '../../hooks/useSectionOrder'
 import { useListboxNavigation } from '../../hooks/useListboxNavigation'
+import { useTakeaways } from '../../hooks/useTakeaways'
 import { useTimedError } from '../../hooks/useTimedError'
+import { KeyTakeawaysCard } from '../common/KeyTakeawaysCard'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactDetail, LinkedInWorkEntry, LinkedInEducationEntry } from '../../../shared/types/contact'
@@ -260,23 +262,17 @@ export function ContactPropertiesPanel({
   const sessionAddedFields = useRef<string[]>([])
   const markChanged = useCallback(() => { sessionChanges.current = true }, [])
 
-  // Key Takeaways state
-  const [ktText, setKtText] = useState<string>(contact.keyTakeaways ?? '')
-  const [ktEditing, setKtEditing] = useState(false)
-  const [ktGenerating, setKtGenerating] = useState(false)
-  const [ktStreaming, setKtStreaming] = useState('')
-  const [ktError, setKtError] = useState<string | null>(null)
-  const ktGeneratedAtKey = `cyggie:kt-generated-at:${contact.id}`
-  const [ktGeneratedAt, setKtGeneratedAt] = useState<string | null>(() => localStorage.getItem(ktGeneratedAtKey))
-  const hasNewMeetingsSinceKt = useMemo(() => {
-    if (!ktGeneratedAt) return false
-    return contact.meetings.some((m) => m.date > ktGeneratedAt)
-  }, [contact.meetings, ktGeneratedAt])
-  const showKtGenerate = !ktText && !ktGenerating && !ktEditing
-  const showKtUpdate = !!ktText && !ktGenerating && !ktEditing && hasNewMeetingsSinceKt
+  // Key Takeaways — shared hook handles all state + streaming + persistence
+  const kt = useTakeaways({
+    entityType: 'contact',
+    entityId: contact.id,
+    savedText: contact.keyTakeaways ?? null,
+    onUpdate: (updates) => onUpdate(updates),
+    hasNewDataSince: (generatedAt) =>
+      contact.meetings.some((m) => m.date > generatedAt),
+  })
+
   const [copiedMeta, setCopiedMeta] = useState<string | null>(null)
-  const ktTextareaRef = useRef<HTMLTextAreaElement>(null)
-  const generatingForContactIdRef = useRef<string | null>(null)
   const copiedMetaTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { getJSON, setJSON } = usePreferencesStore()
@@ -538,23 +534,6 @@ export function ContactPropertiesPanel({
     return () => document.removeEventListener('keydown', onKey)
   }, [isEditing])
 
-  // Sync ktText when contact changes (e.g. navigating to a different contact)
-  useEffect(() => {
-    setKtText(contact.keyTakeaways ?? '')
-    setKtEditing(false)
-  }, [contact.id, contact.keyTakeaways])
-
-  // Mount-scoped progress listener — receives chunks from the backend KT generation
-  // NOTE: api.on callback is (payload) NOT (_e, payload) — bridge strips event arg
-  useEffect(() => {
-    return api.on(IPC_CHANNELS.CONTACT_KEY_TAKEAWAYS_PROGRESS, (payload) => {
-      if (payload === null) return // sentinel — final state set in .then()
-      const { contactId, chunk } = payload as { contactId: string; chunk: string }
-      if (contactId !== generatingForContactIdRef.current) return // stale: different contact
-      setKtStreaming((prev) => prev + chunk)
-    })
-  }, [])
-
   // Auto-generate on first visit when contact has data but no saved takeaways —
   // gated on the `autoGenerateKeyTakeaways` setting (default OFF).
   useEffect(() => {
@@ -571,57 +550,12 @@ export function ContactPropertiesPanel({
       if (v !== 'true') return
       const hasData = contact.meetings.length > 0 || contact.emailCount > 0 || contact.noteCount > 0
       if (!contact.keyTakeaways && hasData) {
-        void handleGenerateTakeaways()
+        kt.generate()
       }
     })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact.id]) // only run when contact changes, not on every render
-
-  // No `if (ktGenerating) return` guard — backend AbortController handles concurrent requests
-  async function handleGenerateTakeaways() {
-    const thisContactId = contact.id
-    generatingForContactIdRef.current = thisContactId
-    setKtGenerating(true)
-    setKtStreaming('')
-    setKtError(null)
-    try {
-      const result = await api.invoke<{ success: boolean; contactId: string; keyTakeaways: string }>(
-        IPC_CHANNELS.CONTACT_KEY_TAKEAWAYS_GENERATE, thisContactId
-      )
-      if (generatingForContactIdRef.current !== thisContactId) return // stale — new contact running
-      setKtText(result.keyTakeaways)
-      onUpdate({ keyTakeaways: result.keyTakeaways })
-      const now = new Date().toISOString()
-      localStorage.setItem(ktGeneratedAtKey, now)
-      setKtGeneratedAt(now)
-    } catch (err) {
-      if (generatingForContactIdRef.current !== thisContactId) return // stale — aborted by new contact
-      const msg = err instanceof Error ? err.message : String(err)
-      if (/abort/i.test(msg)) return // silently ignore cancelled streams
-      setKtError(msg || 'Generation failed — try again')
-    } finally {
-      if (generatingForContactIdRef.current === thisContactId) {
-        setKtStreaming('')
-        setKtGenerating(false)
-        generatingForContactIdRef.current = null
-      }
-    }
-  }
-
-  async function handleSaveKtText() {
-    const trimmed = (ktTextareaRef.current?.value ?? ktText).trim()
-    setKtEditing(false)
-    setKtText(trimmed)
-    onUpdate({ keyTakeaways: trimmed || null })
-    try {
-      await api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { keyTakeaways: trimmed || null })
-    } catch (err) {
-      console.error('[KT] Save failed:', err)
-      setKtError('Save failed — please try again')
-      setKtEditing(true) // re-open edit so user doesn't lose their text
-    }
-  }
 
   function copyMeta(value: string, key: string) {
     if (copiedMetaTimeoutRef.current) clearTimeout(copiedMetaTimeoutRef.current)
@@ -1579,73 +1513,12 @@ export function ContactPropertiesPanel({
       </div>
       </div>
 
-      {/* Key Takeaways card */}
-      <div className={styles.ktCard}>
-        <div className={styles.ktHeader}>
-          <span className={styles.ktTitle} onClick={() => toggleSection('key_takeaways')} style={{ cursor: 'pointer' }}>Key Takeaways</span>
-          {!isCollapsed('key_takeaways') && (
-            <div className={styles.ktActions}>
-              {!ktGenerating && !ktEditing && ktText && (
-                <button className={styles.ktEditBtn} onClick={() => { setKtEditing(true); setKtError(null) }}>Edit</button>
-              )}
-              {(showKtGenerate || showKtUpdate) && (
-                <button
-                  className={styles.ktGenerateBtn}
-                  onClick={() => void handleGenerateTakeaways()}
-                >
-                  {showKtUpdate ? '✨ Update' : '✨ Generate'}
-                </button>
-              )}
-              {ktGenerating && (
-                <span className={styles.ktGenerateBtn} style={{ opacity: 0.6 }}>Generating…</span>
-              )}
-            </div>
-          )}
-          <button
-            className={styles.sectionCollapseBtn}
-            onClick={() => toggleSection('key_takeaways')}
-            title={isCollapsed('key_takeaways') ? 'Expand section' : 'Collapse section'}
-          >
-            {isCollapsed('key_takeaways') ? '▶' : '▼'}
-          </button>
-        </div>
-        <div className={`${styles.ktBody} ${isCollapsed('key_takeaways') ? styles.ktBodyCollapsed : ''}`}>
-          <div className={styles.ktBodyInner}>
-          {ktEditing ? (
-            <>
-              <textarea
-                ref={ktTextareaRef}
-                className={styles.ktTextarea}
-                defaultValue={ktText}
-                autoFocus
-                onKeyDown={(e) => { if (e.key === 'Escape') setKtEditing(false) }}
-              />
-              <div className={styles.ktSaveActions}>
-                <button className={styles.ktSaveBtn} onClick={() => void handleSaveKtText()}>Save</button>
-                <button className={styles.ktCancelBtn} onClick={() => setKtEditing(false)}>Cancel</button>
-              </div>
-            </>
-          ) : ktGenerating ? (
-            <div className={styles.ktBullets}>
-              {(ktStreaming || '').split('\n').filter(Boolean).map((line, i) => (
-                <div key={i} className={styles.ktBullet}>{line}</div>
-              ))}
-              {!ktStreaming && <div className={styles.ktEmpty}>Generating takeaways…</div>}
-              <span className={styles.ktCursor}>▋</span>
-            </div>
-          ) : ktText ? (
-            <div className={styles.ktBullets}>
-              {ktText.split('\n').filter(Boolean).map((line, i) => (
-                <div key={i} className={styles.ktBullet}>{line}</div>
-              ))}
-            </div>
-          ) : (
-            <div className={styles.ktEmpty}>Click ✨ Generate to create AI-powered insights</div>
-          )}
-          {ktError && <div className={styles.ktError}>{ktError}</div>}
-          </div>
-        </div>
-      </div>
+      {/* Key Takeaways card — shared component (collapsible, useTakeaways hook) */}
+      <KeyTakeawaysCard
+        kt={kt}
+        collapsed={isCollapsed('key_takeaways')}
+        onToggleCollapsed={() => toggleSection('key_takeaways')}
+      />
 
       <div className={styles.bodyCard}>
       {/* LinkedIn status row: enriching / refreshed-ago / errors / login-required sign-in */}

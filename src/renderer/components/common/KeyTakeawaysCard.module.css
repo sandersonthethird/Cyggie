@@ -183,7 +183,15 @@
   margin-top: 2px;
 }
 
-/* Generate button (shown when no takeaways exist) */
+/* Empty-state message shown inside the card when there are no takeaways. */
+.emptyState {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--cy-text-3, #6b7280);
+  padding: 4px 0;
+}
+
+/* Generate button (legacy — kept for any external consumers; no longer used internally) */
 .generateBtn {
   display: flex;
   align-items: center;
