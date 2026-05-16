@@ -81,16 +81,13 @@ describe('useTiptapMarkdown', () => {
     expect(setContentSpy).not.toHaveBeenCalled()
   })
 
-  // TODO: deferred from Phase 5 audit — setContent spy not called with expected args.
-  // Likely a tiptap behavior change; needs investigation alongside the matching
-  // failure in useNoteEditor.test.ts.
-  it.skip('calls setContent with { contentType: "markdown" } after loadContent is called', async () => {
+  it('calls setContent with parsed HTML (not raw markdown) after loadContent is called', async () => {
     const { result } = renderHook(() => useTiptapMarkdown({ extensions: [] }))
     act(() => result.current.loadContent('**bold** text'))
     await waitFor(() => {
       expect(setContentSpy).toHaveBeenCalledWith(
-        '**bold** text',
-        expect.objectContaining({ contentType: 'markdown' }),
+        expect.stringContaining('<strong>bold</strong>'),
+        expect.objectContaining({ emitUpdate: false }),
       )
     })
   })

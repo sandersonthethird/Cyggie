@@ -302,21 +302,19 @@ describe('useNoteEditor', () => {
     expect(result.current.note?.title).toBe('Test Note')
   })
 
-  // TODO: deferred from Phase 5 audit — paired with the matching skip in
-  // useTiptapMarkdown.test.ts. setContent spy not called with expected args;
-  // suspect a tiptap behavior change.
-  it.skip('calls setContent with { contentType: "markdown" } after note loads (Approach E)', async () => {
+  it('calls setContent with parsed HTML after note loads', async () => {
     const note = makeNote({ content: '## Hello\n- item one' })
     vi.mocked(api.invoke).mockResolvedValueOnce(note)
 
     renderHook(() => useNoteEditor('note-1'))
 
-    // Approach E: after load, useTiptapMarkdown calls loadContent → recreates editor →
-    // useEffect fires → editor.commands.setContent(markdown, { contentType: 'markdown' })
+    // After load, useTiptapMarkdown.loadContent parses markdown → HTML via
+    // `marked`, then calls editor.commands.setContent(html, { emitUpdate: false }).
+    // We assert HTML shape (not exact bytes) since marked's output may drift.
     await waitFor(() => {
       expect(setContentSpy).toHaveBeenCalledWith(
-        '## Hello\n- item one',
-        expect.objectContaining({ contentType: 'markdown' }),
+        expect.stringMatching(/<h2>.*Hello.*<\/h2>/),
+        expect.objectContaining({ emitUpdate: false }),
       )
     })
   })
