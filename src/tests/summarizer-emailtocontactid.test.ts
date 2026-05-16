@@ -12,8 +12,7 @@
  *   - search.repo           → vi.fn()
  *   - company-summary-sync  → returns []
  *   - org-company.repo      → returns [] for listMeetingCompanies
- *   - contact-notes.repo    → spy (createContactNote) ← key assertion
- *   - company-notes.repo    → vi.fn()
+ *   - services/note-companion-backfill → spy (createMeetingCompanionNote) ← key assertion
  *   - contact.repo          → resolveContactsByEmails returns { id, fullName } objects
  *   - task-extraction       → returns { proposed: [] }
  *   - contact-summary-sync  → returns []
@@ -89,20 +88,16 @@ vi.mock('../main/database/repositories/org-company.repo', () => ({
   listMeetingCompanies: () => [],
 }))
 
-// ─── Mock: company-notes.repo ─────────────────────────────────────────────────
+// ─── Mock: note-companion-backfill.service (KEY SPY) ─────────────────────────
+// Production routes both contact-side and company-side companion notes through
+// createMeetingCompanionNote. The regression we're catching is that the
+// contact-side call must receive a string `entityId` (extracted from
+// resolveContactsByEmails's { id, fullName } shape), not the whole object.
 
-const mockCreateCompanyNote = vi.fn()
+const mockCreateCompanionNote = vi.fn()
 
-vi.mock('../main/database/repositories/company-notes.repo', () => ({
-  createCompanyNote: (...args: unknown[]) => mockCreateCompanyNote(...args),
-}))
-
-// ─── Mock: contact-notes.repo (KEY SPY) ──────────────────────────────────────
-
-const mockCreateContactNote = vi.fn()
-
-vi.mock('../main/database/repositories/contact-notes.repo', () => ({
-  createContactNote: (...args: unknown[]) => mockCreateContactNote(...args),
+vi.mock('../main/services/note-companion-backfill.service', () => ({
+  createMeetingCompanionNote: (...args: unknown[]) => mockCreateCompanionNote(...args),
 }))
 
 // ─── Mock: contact.repo ───────────────────────────────────────────────────────
@@ -180,15 +175,19 @@ describe('generateSummary — emailToContactId regression', () => {
     mockUpdateMeeting.mockReturnValue(undefined)
   })
 
-  // TODO: deferred from Phase 5 audit — createContactNote spy was not called.
-  // Likely a missing mock or a production path that's been refactored away.
-  it.skip('passes string contactId (not object) to createContactNote', async () => {
+  it('passes string entityId (not object) to createMeetingCompanionNote for contacts', async () => {
     await generateSummary('m1', 't1', null)
 
-    expect(mockCreateContactNote).toHaveBeenCalledOnce()
-    const [payload] = mockCreateContactNote.mock.calls[0]
-    // Before the fix, contactId would be { id: 'c1', fullName: 'Alice Smith' }
-    expect(payload.contactId).toBe('c1')
-    expect(typeof payload.contactId).toBe('string')
+    // Find the contact-side call (entityType='contact'). The summarizer also
+    // makes company-side calls — those are not the regression target.
+    const contactCall = mockCreateCompanionNote.mock.calls.find(
+      (call) => (call[0] as { entityType: string }).entityType === 'contact'
+    )
+    expect(contactCall).toBeDefined()
+
+    const [payload] = contactCall!
+    // Before the fix, entityId would be { id: 'c1', fullName: 'Alice Smith' }
+    expect(payload.entityId).toBe('c1')
+    expect(typeof payload.entityId).toBe('string')
   })
 })
