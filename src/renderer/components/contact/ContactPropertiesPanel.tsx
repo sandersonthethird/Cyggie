@@ -18,24 +18,19 @@ import { daysSince, formatCurrency, formatDate } from '../../utils/format'
 import { usePreferencesStore } from '../../stores/preferences.store'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
-import { PropertyRow, type PropertyRowType } from '../crm/PropertyRow'
 import { chipStyle } from '../../utils/colorChip'
 import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
 import { ChipSelect } from '../crm/ChipSelect'
-import { TagPicker } from '../crm/TagPicker'
 import { INDUSTRY_OPTIONS } from '../company/companyColumns'
-import { SocialsEditor } from '../crm/SocialsEditor'
 import { AddFieldDropdown } from '../crm/AddFieldDropdown'
 import { computeChipDelta } from '../../utils/chip-delta'
 import { usePinnedMigration } from '../../hooks/usePinnedMigration'
+import { ContactFieldSections } from './ContactFieldSections'
 import { ContactHeaderCard } from './ContactHeaderCard'
 import { ContactModalsCollection } from './ContactModalsCollection'
 import { saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
 import { CONTACT_HARDCODED_FIELDS } from '../../constants/contactFields'
-import { CollapsibleSection } from '../crm/CollapsibleSection'
 import { PropertiesCard, PropertiesCardFooter } from '../crm/PropertiesCard'
-import { HideableRow as SharedHideableRow } from '../crm/HideableRow'
-import { DraggableFieldRow } from '../crm/DraggableFieldRow'
 import { useSectionCollapse } from '../../hooks/useSectionCollapse'
 import {
   CONTACT_TYPES,
@@ -155,19 +150,6 @@ function formatPinnedValue(value: unknown, type: string, options?: { value: stri
     case 'currency': return formatCurrency(Number(value))
     case 'date': return formatDate(String(value))
     default: return String(value)
-  }
-}
-
-function filteredOtherSocials(otherSocials: string | null, linkedinUrl: string | null): string | null {
-  if (!linkedinUrl || !otherSocials) return otherSocials
-  try {
-    const obj = JSON.parse(otherSocials) as Record<string, string>
-    const filtered = Object.fromEntries(
-      Object.entries(obj).filter(([k]) => k.toLowerCase() !== 'linkedin')
-    )
-    return Object.keys(filtered).length > 0 ? JSON.stringify(filtered) : null
-  } catch {
-    return otherSocials
   }
 }
 
@@ -924,136 +906,6 @@ export function ContactPropertiesPanel({
     setJSON('cyggie:contact-hidden-fields', hiddenFields.filter(k => k !== key))
   }
 
-  function renderSectionedFields(sectionKey: string) {
-    const opts = (field: (typeof customFields)[0]) => {
-      try { return field.optionsJson ? JSON.parse(field.optionsJson) : [] } catch { return [] }
-    }
-    return sectionedFields(sectionKey).map((field) => {
-      const fieldKey = `custom:${field.id}`
-      if (hiddenFields.includes(fieldKey) && !isEditing && !showAllFields) return null
-      const isDropTarget = draggingOverFieldId === field.id && draggingFieldId !== field.id
-      return (
-        <DraggableFieldRow
-          key={field.id}
-          isEditing={isEditing}
-          isDragTarget={isDropTarget}
-          onDragStart={() => setDraggingFieldId(field.id)}
-          onDragEnd={() => { setDraggingFieldId(null); setDraggingOverFieldId(null) }}
-          onDragOver={(e) => {
-            e.preventDefault()
-            if (isEditing && draggingOverFieldId !== field.id) setDraggingOverFieldId(field.id)
-          }}
-          onDrop={(e) => {
-            e.stopPropagation()
-            if (isEditing) handleWithinSectionDrop(field.id)
-          }}
-        >
-          {isEditing && editingFieldId === field.id ? (
-            <input
-              className={styles.inlineRenameInput}
-              autoFocus
-              value={editingFieldLabel}
-              onChange={(e) => setEditingFieldLabel(e.target.value)}
-              onBlur={() => handleFieldLabelSave(field.id, editingFieldLabel)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleFieldLabelSave(field.id, editingFieldLabel)
-                if (e.key === 'Escape') setEditingFieldId(null)
-              }}
-            />
-          ) : (
-          <HideableRow fieldKey={fieldKey}>
-            <PropertyRow
-              label={field.label}
-              value={getPinnedFieldValue(field)}
-              type={field.fieldType as import('../crm/PropertyRow').PropertyRowType}
-              options={opts(field)}
-              editMode={isEditing}
-              onSave={(val) => handlePinnedFieldSave(field, val)}
-              onAddOption={
-                (field.fieldType === 'select' || field.fieldType === 'multiselect')
-                  ? async (newOption) => {
-                      const opt = newOption.trim().slice(0, 200)
-                      await addCustomFieldOption(field.id, field.optionsJson, opt)
-                      setCustomFields(prev => prev.map(f => {
-                        if (f.id !== field.id) return f
-                        const cur: string[] = (() => { try { return JSON.parse(f.optionsJson ?? '[]') } catch { return [] } })()
-                        return { ...f, optionsJson: JSON.stringify([...cur, opt]) }
-                      }))
-                    }
-                  : undefined
-              }
-            />
-            {isEditing && (
-              <button
-                className={styles.renameFieldBtn}
-                title="Rename field"
-                onClick={() => { setEditingFieldId(field.id); setEditingFieldLabel(field.label) }}
-              >✎</button>
-            )}
-          </HideableRow>
-          )}
-        </DraggableFieldRow>
-      )
-    })
-  }
-
-  function renderHardcodedSection(
-    fields: Array<{ key: string; visible: boolean; render: () => ReactNode }>,
-    sectionKey: string
-  ) {
-    const ordered = hfOrder.applyOrder(fields, sectionKey)
-    return ordered.map((field) => {
-      if (!field.visible) return null
-      const isDropTarget = hfOrder.draggingOverKey === field.key && hfOrder.draggingKey !== field.key
-      return (
-        <DraggableFieldRow
-          key={field.key}
-          isEditing={isEditing}
-          isDragTarget={isDropTarget}
-          onDragStart={() => hfOrder.setDraggingKey(field.key)}
-          onDragEnd={() => { hfOrder.setDraggingKey(null); hfOrder.setDraggingOverKey(null) }}
-          onDragOver={(e) => {
-            e.preventDefault()
-            if (isEditing && hfOrder.draggingOverKey !== field.key) hfOrder.setDraggingOverKey(field.key)
-          }}
-          onDrop={(e) => {
-            e.stopPropagation()
-            if (isEditing && hfOrder.draggingKey) {
-              hfOrder.reorder(sectionKey, hfOrder.draggingKey, field.key, ordered.map((f) => f.key))
-            }
-          }}
-        >
-          <div style={{ flex: 1, minWidth: 0 }}>{field.render()}</div>
-        </DraggableFieldRow>
-      )
-    })
-  }
-
-  // Thin parent-scoped wrapper around the shared <SharedHideableRow> atom — preserves
-  // existing callsites (passing just fieldKey + isEmpty) while routing hide/restore
-  // through the contact-panel's state setters and addedFields cleanup path.
-  function HideableRow({ fieldKey, isEmpty, children }: { fieldKey: string; isEmpty?: boolean; children: ReactNode }) {
-    return (
-      <SharedHideableRow
-        fieldKey={fieldKey}
-        isEmpty={isEmpty}
-        isHidden={hiddenFields.includes(fieldKey)}
-        isEditing={isEditing}
-        showAllFields={showAllFields}
-        onHide={(key, empty) => {
-          if (empty && fieldVisibility.addedFields.includes(key)) {
-            fieldVisibility.removeFromAddedFields(key)
-          } else {
-            hideField(key)
-          }
-        }}
-        onRestore={restoreField}
-      >
-        {children}
-      </SharedHideableRow>
-    )
-  }
-
   function renderPinnedChip(key: string) {
     if (key.startsWith('custom:')) {
       const id = key.slice(7)
@@ -1414,316 +1266,62 @@ export function ContactPropertiesPanel({
           />
         }
       >
-      {sectionOrder.orderedSections.map(sectionKey => {
-        const baseDragProps = syncedSectionDragProps(sectionKey)
-        const isDraggingThisSection = sectionOrder.draggingSectionKey === sectionKey
-        const isDropTargetForSection = sectionOrder.dragOverSectionKey === sectionKey && !isDraggingThisSection
-        const sectionContainerProps: HTMLAttributes<HTMLDivElement> = {
-          ...baseDragProps,
-          className: [
-            isDraggingThisSection ? styles.sectionDragging : '',
-            isDropTargetForSection || (isEditing && dragOverSection === sectionKey) ? styles.dropTarget : '',
-          ].filter(Boolean).join(' '),
-          ...(isEditing ? {
-            draggable: true,
-            onDragStart: (e) => { e.stopPropagation(); sectionOrder.setDraggingSectionKey(sectionKey) },
-            onDragEnd: () => { sectionOrder.setDraggingSectionKey(null); sectionOrder.setDragOverSectionKey(null) },
-            onDragOver: (e) => {
-              e.preventDefault()
-              sectionOrder.setDragOverSectionKey(sectionKey)
-              baseDragProps.onDragOver?.(e)
-            },
-          } : {}),
-        }
-
-        switch (sectionKey) {
-          case 'contact_info': return (
-            <div key="contact_info" {...sectionContainerProps}>
-              <CollapsibleSection
-                title="Contact Info"
-                count={1 /* placeholder; see TODO below for non-empty count */}
-                isCollapsed={isCollapsed('contact_info')}
-                onToggle={() => toggleSection('contact_info')}
-                hasUserToggled={hasUserToggledSection('contact_info')}
-                onAdd={() => openAddFieldDropdown('contact_info')}
-              >
-              {renderHardcodedSection([
-                { key: 'twitterHandle', visible: showField('twitterHandle', contact.twitterHandle), render: () => (
-                  <HideableRow fieldKey="twitterHandle" isEmpty={!contact.twitterHandle}>
-                    <PropertyRow label="Twitter/X" value={contact.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} />
-                  </HideableRow>
-                )},
-                { key: 'timezone', visible: showField('timezone', contact.timezone), render: () => (
-                  <HideableRow fieldKey="timezone" isEmpty={!contact.timezone}>
-                    <PropertyRow label="Timezone" value={contact.timezone} type="text" editMode={isEditing} onSave={(v) => save('timezone', v)} />
-                  </HideableRow>
-                )},
-              ], 'contact_info')}
-              {renderSectionedFields('contact_info')}
-
-              {nullSectionFields().map((field) => {
-                const opts = (() => { try { return field.optionsJson ? JSON.parse(field.optionsJson) : [] } catch { return [] } })()
-                return (
-                  <div
-                    key={field.id}
-                    className={styles.sectionedFieldRow}
-                    title="No section assigned — drag to reassign"
-                    draggable={isEditing}
-                    onDragStart={() => setDraggingFieldId(field.id)}
-                    onDragEnd={() => setDraggingFieldId(null)}
-                  >
-                    {isEditing && <span className={styles.dragHandle}>⠿</span>}
-                    <PropertyRow
-                      label={field.label}
-                      value={getPinnedFieldValue(field)}
-                      type={field.fieldType as PropertyRowType}
-                      options={opts}
-                      editMode={isEditing}
-                      onSave={(val) => handlePinnedFieldSave(field, val)}
-                    />
-                  </div>
-                )
-              })}
-              </CollapsibleSection>
-            </div>
-          )
-
-          case 'professional': return (
-            <div key="professional" {...sectionContainerProps}>
-              <CollapsibleSection
-                title="Professional"
-                count={1 /* placeholder */}
-                isCollapsed={isCollapsed('professional')}
-                onToggle={() => toggleSection('professional')}
-                hasUserToggled={hasUserToggledSection('professional')}
-                onAdd={() => openAddFieldDropdown('professional')}
-              >
-              {renderHardcodedSection([
-                { key: 'previousCompanies', visible: showField('previousCompanies', contact.previousCompanies), render: () => (
-                  <HideableRow fieldKey="previousCompanies" isEmpty={parsePriorCompanies(contact.previousCompanies).length === 0}>
-                    <div className={styles.priorCompanyField}>
-                      <div className={styles.priorCompanyLabel}>Prior Company</div>
-                      {isEditing ? (
-                        <div className={styles.priorCompanyList}>
-                          {priorCompanyDrafts.map((entry, i) => (
-                            <div key={i} className={styles.priorCompanyEntry}>
-                              <input
-                                className={styles.priorCompanyInput}
-                                value={priorCompanyName(entry)}
-                                placeholder="Company name"
-                                onChange={(e) => handlePriorCompanyInput(i, e.target.value)}
-                                onKeyDown={priorCompanyAutocomplete?.index === i ? priorCompanyAutocompleteKeyDown : undefined}
-                                onBlur={() => {
-                                  setTimeout(() => setPriorCompanyAutocomplete(null), 150)
-                                  savePriorCompanies(priorCompanyDrafts)
-                                }}
-                              />
-                              <button
-                                className={styles.priorCompanyRemoveBtn}
-                                onClick={() => {
-                                  const next = priorCompanyDrafts.filter((_, j) => j !== i)
-                                  setPriorCompanyDrafts(next)
-                                  savePriorCompanies(next)
-                                }}
-                              >×</button>
-                              {priorCompanyAutocomplete?.index === i && priorCompanyAutocomplete.results.length > 0 && (
-                                <div
-                                  className={styles.priorCompanyAutocomplete}
-                                  ref={priorCompanyAutocompleteRef as React.RefObject<HTMLDivElement>}
-                                >
-                                  {priorCompanyAutocomplete.results.map((c, idx) => (
-                                    <div
-                                      key={c.id}
-                                      className={`${styles.priorCompanyAutocompleteItem} ${idx === priorCompanyActiveIdx ? styles.priorCompanyAutocompleteItemActive : ''}`}
-                                      onMouseEnter={() => setPriorCompanyActiveIdx(idx)}
-                                      onMouseDown={(e) => { e.preventDefault(); selectPriorCompanyAutocomplete({ name: c.canonicalName, companyId: c.id }) }}
-                                    >{c.canonicalName}</div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                          <button
-                            className={styles.priorCompanyAddBtn}
-                            onClick={() => setPriorCompanyDrafts(prev => [...prev, ''])}
-                          >+ Add Prior Company</button>
-                        </div>
-                      ) : (
-                        <div className={styles.priorCompanyViewList}>
-                          {parsePriorCompanies(contact.previousCompanies).map((entry, i) => {
-                            const name = priorCompanyName(entry)
-                            const companyId = typeof entry === 'object' ? entry.companyId : null
-                            return (
-                              <span key={i} className={styles.priorCompanyViewEntry}>
-                                {companyId ? (
-                                  <button className={styles.companyLink} onClick={() => navigate(`/company/${companyId}`, { state: { backLabel: contact.fullName } })}>{name}</button>
-                                ) : name}
-                              </span>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </HideableRow>
-                )},
-                { key: 'university', visible: showField('university', contact.university) && liEduEntries.length === 0, render: () => (
-                  <HideableRow fieldKey="university" isEmpty={!contact.university}>
-                    <PropertyRow label="University" value={contact.university} type="text" editMode={isEditing} onSave={(v) => save('university', v)} />
-                  </HideableRow>
-                )},
-                { key: 'tags', visible: showField('tags', contact.tags), render: () => (
-                  <HideableRow fieldKey="tags" isEmpty={!contact.tags}>
-                    <PropertyRow label="Tags" value={contact.tags} type="tags" editMode={isEditing} onSave={(v) => save('tags', v)} />
-                  </HideableRow>
-                )},
-                { key: 'pronouns', visible: showField('pronouns', contact.pronouns), render: () => (
-                  <HideableRow fieldKey="pronouns" isEmpty={!contact.pronouns}>
-                    <PropertyRow label="Pronouns" value={contact.pronouns} type="text" editMode={isEditing} onSave={(v) => save('pronouns', v)} />
-                  </HideableRow>
-                )},
-              ], 'professional')}
-              {renderSectionedFields('professional')}
-
-              {(isEditing || contact.otherSocials) && (
-                <>
-                  <div className={styles.socialsLabel}>Other Socials</div>
-                  <SocialsEditor
-                    value={filteredOtherSocials(contact.otherSocials, contact.linkedinUrl)}
-                    onSave={(json) => save('otherSocials', json)}
-                  />
-                </>
-              )}
-              </CollapsibleSection>
-            </div>
-          )
-
-          case 'relationship': return (
-            <div key="relationship" {...sectionContainerProps}>
-              <CollapsibleSection
-                title="Relationship"
-                count={1 /* placeholder */}
-                isCollapsed={isCollapsed('relationship')}
-                onToggle={() => toggleSection('relationship')}
-                hasUserToggled={hasUserToggledSection('relationship')}
-                onAdd={() => openAddFieldDropdown('relationship')}
-              >
-              {/* Variant C: relationship-strength control lifted to PropertiesCard topBand. */}
-              {renderHardcodedSection([
-                { key: 'talentPipeline', visible: showField('talentPipeline', contact.talentPipeline), render: () => (
-                  <HideableRow fieldKey="talentPipeline" isEmpty={!contact.talentPipeline}>
-                    <PropertyRow
-                      label="Talent Pipeline"
-                      value={contact.talentPipeline}
-                      type="select"
-                      editMode={isEditing}
-                      options={[{ value: '', label: '—' }, ...talentPipelineOptions]}
-                      onSave={(v) => save('talentPipeline', v || null)}
-                      onAddOption={talentPipelineDef ? async (opt) => addCustomFieldOption(talentPipelineDef.id, talentPipelineDef.optionsJson, opt) : undefined}
-                    />
-                  </HideableRow>
-                )},
-                { key: 'lastMetEvent', visible: showField('lastMetEvent', contact.lastMetEvent), render: () => (
-                  <HideableRow fieldKey="lastMetEvent" isEmpty={!contact.lastMetEvent}>
-                    <PropertyRow label="Last Met At" value={contact.lastMetEvent} type="text" editMode={isEditing} onSave={(v) => save('lastMetEvent', v)} />
-                  </HideableRow>
-                )},
-                { key: 'warmIntroPath', visible: showField('warmIntroPath', contact.warmIntroPath), render: () => (
-                  <HideableRow fieldKey="warmIntroPath" isEmpty={!contact.warmIntroPath}>
-                    <PropertyRow label="Warm Intro Path" value={contact.warmIntroPath} type="textarea" editMode={isEditing} onSave={(v) => save('warmIntroPath', v)} />
-                  </HideableRow>
-                )},
-                { key: 'notes', visible: showField('notes', contact.notes), render: () => (
-                  <HideableRow fieldKey="notes" isEmpty={!contact.notes}>
-                    <PropertyRow label="Notes" value={contact.notes} type="textarea" editMode={isEditing} onSave={(v) => save('notes', v)} />
-                  </HideableRow>
-                )},
-              ], 'relationship')}
-              {contact.talentPipeline === 'fundraising' && onRequestCreateCompany && (
-                <div className={styles.fundraisingCallout}>
-                  <span>Ready to move to pipeline?</span>
-                  <button className={styles.fundraisingCalloutBtn} onClick={onRequestCreateCompany}>
-                    Create company record &rarr;
-                  </button>
-                </div>
-              )}
-              {renderSectionedFields('relationship')}
-
-              </CollapsibleSection>
-            </div>
-          )
-
-          case 'investor_info':
-            if (contact.contactType !== 'investor' && sectionedFields('investor_info').length === 0) return null
-            return (
-              <div key="investor_info" {...sectionContainerProps}>
-                <CollapsibleSection
-                  title="Investor Info"
-                  count={1 /* placeholder */}
-                  isCollapsed={isCollapsed('investor_info')}
-                  onToggle={() => toggleSection('investor_info')}
-                  hasUserToggled={hasUserToggledSection('investor_info')}
-                  onAdd={() => openAddFieldDropdown('investor_info')}
-                >
-                {contact.contactType === 'investor' && renderHardcodedSection([
-                  { key: 'fundSize', visible: showField('fundSize', contact.fundSize), render: () => (
-                    <HideableRow fieldKey="fundSize" isEmpty={!contact.fundSize}>
-                      <PropertyRow label="Fund Size" value={contact.fundSize} type="currency" editMode={isEditing} onSave={(v) => save('fundSize', v)} />
-                    </HideableRow>
-                  )},
-                  { key: 'typicalCheckSizeMin', visible: showField('typicalCheckSizeMin', contact.typicalCheckSizeMin), render: () => (
-                    <HideableRow fieldKey="typicalCheckSizeMin" isEmpty={!contact.typicalCheckSizeMin}>
-                      <PropertyRow label="Check Size Min" value={contact.typicalCheckSizeMin} type="currency" editMode={isEditing} onSave={(v) => save('typicalCheckSizeMin', v)} />
-                    </HideableRow>
-                  )},
-                  { key: 'typicalCheckSizeMax', visible: showField('typicalCheckSizeMax', contact.typicalCheckSizeMax), render: () => (
-                    <HideableRow fieldKey="typicalCheckSizeMax" isEmpty={!contact.typicalCheckSizeMax}>
-                      <PropertyRow label="Check Size Max" value={contact.typicalCheckSizeMax} type="currency" editMode={isEditing} onSave={(v) => save('typicalCheckSizeMax', v)} />
-                    </HideableRow>
-                  )},
-                  { key: 'investmentStageFocus', visible: showField('investmentStageFocus', contact.investmentStageFocus), render: () => (
-                    <HideableRow fieldKey="investmentStageFocus" isEmpty={!contact.investmentStageFocus}>
-                      <PropertyRow label="Stage Focus" value={contact.investmentStageFocus} type="text" editMode={isEditing} onSave={(v) => save('investmentStageFocus', v)} />
-                    </HideableRow>
-                  )},
-                  { key: 'investmentSectorFocus', visible: showField('investmentSectorFocus', contact.investmentSectorFocus), render: () => (
-                    <HideableRow fieldKey="investmentSectorFocus" isEmpty={!contact.investmentSectorFocus}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                        <span style={{ minWidth: 120, color: 'var(--text-muted)' }}>Sector Focus</span>
-                        <TagPicker
-                          value={contact.investmentSectorFocus}
-                          options={sectorFocusOptions}
-                          isEditing={isEditing}
-                          onSave={(v) => save('investmentSectorFocus', v)}
-                          onAddOption={sectorFocusDef ? async (opt) => addCustomFieldOption(sectorFocusDef.id, sectorFocusDef.optionsJson, opt) : undefined}
-                        />
-                      </div>
-                    </HideableRow>
-                  )},
-                  { key: 'investmentSectorFocusNotes', visible: showField('investmentSectorFocusNotes', contact.investmentSectorFocusNotes), render: () => (
-                    <HideableRow fieldKey="investmentSectorFocusNotes" isEmpty={!contact.investmentSectorFocusNotes}>
-                      <PropertyRow label="Sector Focus Notes" value={contact.investmentSectorFocusNotes} type="text" editMode={isEditing} onSave={(v) => save('investmentSectorFocusNotes', v)} />
-                    </HideableRow>
-                  )},
-                  { key: 'investorStage', visible: showField('investorStage', contact.investorStage), render: () => (
-                    <HideableRow fieldKey="investorStage" isEmpty={!contact.investorStage}>
-                      <PropertyRow label="Investor Stage" value={contact.investorStage} type="text" editMode={isEditing} onSave={(v) => save('investorStage', v)} />
-                    </HideableRow>
-                  )},
-                  { key: 'proudPortfolioCompanies', visible: showField('proudPortfolioCompanies', contact.proudPortfolioCompanies), render: () => (
-                    <HideableRow fieldKey="proudPortfolioCompanies" isEmpty={!contact.proudPortfolioCompanies}>
-                      <PropertyRow label="Portfolio Cos" value={contact.proudPortfolioCompanies} type="text" editMode={isEditing} onSave={(v) => save('proudPortfolioCompanies', v)} />
-                    </HideableRow>
-                  )},
-                ], 'investor_info')}
-                {renderSectionedFields('investor_info')}
-
-                </CollapsibleSection>
-              </div>
-            )
-
-          default: return null
-        }
-      })}
+      <ContactFieldSections
+        contact={contact}
+        isEditing={isEditing}
+        showAllFields={showAllFields}
+        save={save}
+        sectionOrder={sectionOrder}
+        hfOrder={hfOrder}
+        customFieldSection={{
+          sectionedFields,
+          nullSectionFields,
+          draggingFieldId,
+          setDraggingFieldId,
+          draggingOverFieldId,
+          setDraggingOverFieldId,
+          handleWithinSectionDrop,
+          dragOverSection,
+        }}
+        fieldVisibility={fieldVisibility}
+        isCollapsed={isCollapsed}
+        toggleSection={toggleSection}
+        hasUserToggledSection={hasUserToggledSection}
+        showField={showField}
+        hiddenFields={hiddenFields}
+        hideField={hideField}
+        restoreField={restoreField}
+        customFields={customFields}
+        setCustomFields={setCustomFields}
+        editingFieldId={editingFieldId}
+        editingFieldLabel={editingFieldLabel}
+        setEditingFieldId={setEditingFieldId}
+        setEditingFieldLabel={setEditingFieldLabel}
+        handleFieldLabelSave={handleFieldLabelSave}
+        getPinnedFieldValue={getPinnedFieldValue}
+        handlePinnedFieldSave={handlePinnedFieldSave}
+        syncedSectionDragProps={syncedSectionDragProps}
+        openAddFieldDropdown={openAddFieldDropdown}
+        priorCompany={{
+          drafts: priorCompanyDrafts,
+          setDrafts: setPriorCompanyDrafts,
+          autocomplete: priorCompanyAutocomplete,
+          setAutocomplete: setPriorCompanyAutocomplete,
+          activeIdx: priorCompanyActiveIdx,
+          setActiveIdx: setPriorCompanyActiveIdx,
+          onKeyDown: priorCompanyAutocompleteKeyDown,
+          listRef: priorCompanyAutocompleteRef,
+          onInput: handlePriorCompanyInput,
+          selectFromAutocomplete: selectPriorCompanyAutocomplete,
+          save: savePriorCompanies,
+        }}
+        liEduEntries={liEduEntries}
+        talentPipelineDef={talentPipelineDef}
+        talentPipelineOptions={talentPipelineOptions}
+        sectorFocusDef={sectorFocusDef}
+        sectorFocusOptions={sectorFocusOptions}
+        onRequestCreateCompany={onRequestCreateCompany}
+      />
       </PropertiesCard>
 
       {/* AddFieldDropdown — opened from PropertiesCard footer "+ Add property"
