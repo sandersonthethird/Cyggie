@@ -19,7 +19,7 @@
 import type { ContactDetail } from '../../../shared/types/contact'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { EnrichMethodModal } from '../common/EnrichMethodModal'
-import styles from './ContactPropertiesPanel.module.css'
+import { MergePicker } from '../crm/MergePicker'
 
 function formatRelativeTime(isoString: string | null | undefined): string {
   if (!isoString) return ''
@@ -145,39 +145,16 @@ export function ContactModalsCollection({
         onCancel={() => setMergeTarget(null)}
       />
 
-      {mergePickerOpen && (
-        <div className={styles.mergePickerOverlay} onClick={() => setMergePickerOpen(false)}>
-          <div className={styles.mergePicker} onClick={e => e.stopPropagation()}>
-            <p className={styles.mergePickerTitle}>
-              Merge &ldquo;{contact.fullName}&rdquo; into:
-            </p>
-            <input
-              autoFocus
-              className={styles.mergePickerInput}
-              placeholder="Search contacts…"
-              value={mergeQuery}
-              onChange={e => setMergeQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Escape' && setMergePickerOpen(false)}
-            />
-            <div className={styles.mergePickerList}>
-              {mergeResults.map(r => (
-                <button
-                  key={r.id}
-                  className={styles.mergePickerOption}
-                  onClick={() => { setMergeTarget(r); setMergePickerOpen(false) }}
-                >
-                  {r.name}
-                </button>
-              ))}
-              {mergeResults.length === 0 && (
-                <span className={styles.mergePickerEmpty}>
-                  {mergeQuery ? 'No contacts found' : 'Start typing to search…'}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <MergePicker
+        open={mergePickerOpen}
+        onClose={() => setMergePickerOpen(false)}
+        entityNoun="contact"
+        currentEntityName={contact.fullName}
+        query={mergeQuery}
+        onQueryChange={setMergeQuery}
+        results={mergeResults}
+        onSelect={target => { setMergeTarget(target); setMergePickerOpen(false) }}
+      />
     </>
   )
 }

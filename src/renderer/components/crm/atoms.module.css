@@ -1,0 +1,155 @@
+/**
+ * Shared atom CSS for crm/ components (MergePicker, HideableRow, DraggableFieldRow).
+ *
+ * Sourced from ContactPropertiesPanel.module.css with two values reconciled
+ * against CompanyPropertiesPanel.module.css per eng-review decision 1A:
+ *   - .mergePicker max-width  → calc(100vw - 48px) (Company's, more deliberate)
+ *   - .mergePickerInput bg    → var(--color-card-bg) (Contact's, more semantic)
+ *
+ * Both panels' module.css copies of these classes are removed in the same PR.
+ */
+
+/* ── MergePicker overlay ─────────────────────────────────────────────── */
+
+.mergePickerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.mergePicker {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mergePickerTitle {
+  font-size: 13px;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.mergePickerInput {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  box-sizing: border-box;
+  outline: none;
+}
+
+.mergePickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mergePickerOption {
+  text-align: left;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.mergePickerEmpty {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding: 4px 10px;
+}
+
+/* ── HideableRow ─────────────────────────────────────────────────────── */
+
+.hideable {
+  display: flex;
+  align-items: flex-start;
+  position: relative;
+}
+
+.hideableContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.fieldHidden {
+  opacity: 0.45;
+}
+
+.hideBtn {
+  flex-shrink: 0;
+  align-self: center;
+  opacity: 0;
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  color: var(--color-text-secondary, #6b7280);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: opacity 0.1s;
+}
+
+.hideable:hover .hideBtn {
+  opacity: 1;
+}
+
+.hideBtn:hover {
+  background: var(--color-bg-secondary, #f3f4f6);
+}
+
+.restoreBtn {
+  flex-shrink: 0;
+  align-self: center;
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  color: var(--color-text-secondary, #6b7280);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.restoreBtn:hover {
+  background: var(--color-bg-secondary, #f3f4f6);
+}
+
+/* ── DraggableFieldRow ───────────────────────────────────────────────── */
+
+.sectionedFieldRow {
+  display: flex;
+  align-items: center;
+}
+
+.dragHandle {
+  cursor: grab;
+  opacity: 0.4;
+  margin-right: 4px;
+  user-select: none;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.dragOverFieldIndicator {
+  border-top: 2px solid var(--color-primary);
+  border-radius: 2px;
+}

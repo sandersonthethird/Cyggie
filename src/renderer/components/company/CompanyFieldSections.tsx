@@ -13,6 +13,8 @@ import { CollapsibleSection } from '../crm/CollapsibleSection'
 import { Icon, type IconKey } from '../common/Icon'
 import { COMPANY_HARDCODED_FIELD_MAP } from '../../constants/companyFields'
 import { getVisibleFieldCount, isEmptyValue } from '../../utils/visibleFieldCount'
+import { HideableRow } from '../crm/HideableRow'
+import { DraggableFieldRow } from '../crm/DraggableFieldRow'
 import styles from './CompanyPropertiesPanel.module.css'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -251,29 +253,15 @@ export function CompanyFieldSections({
     return null
   }, [company.sourceEntityId, company.sourceEntityType, company.sourceEntityName, isEditing, onUpdate, navigate, company.canonicalName])
 
-  // ── HideableRow ──
-  function HideableRow({ fieldKey, isEmpty, children }: { fieldKey: string; isEmpty?: boolean; children: ReactNode }) {
-    const isHidden = hiddenFields.includes(fieldKey)
-    return (
-      <div className={`${styles.hideable} ${isHidden ? styles.fieldHidden : ''}`}>
-        <div className={styles.hideableContent}>{children}</div>
-        {(showAllFields || isEditing) && (
-          isHidden
-            ? <button className={styles.restoreBtn} title="Restore field" onClick={() => onRestoreField(fieldKey)}>↺</button>
-            : <button
-                className={styles.hideBtn}
-                title="Hide field"
-                onClick={() => {
-                  if (isEmpty && fieldVisibility.addedFields.includes(fieldKey)) {
-                    fieldVisibility.removeFromAddedFields(fieldKey)
-                  } else {
-                    onHideField(fieldKey)
-                  }
-                }}
-              >×</button>
-        )}
-      </div>
-    )
+  // ── Hide handler: routes "hide an empty added-but-unsaved field" to the
+  // addedFields cleanup path instead of a no-op hide. Cross-panel pattern; the
+  // shared <HideableRow> atom passes (fieldKey, isEmpty) into this callback.
+  function handleHide(fieldKey: string, isEmpty: boolean) {
+    if (isEmpty && fieldVisibility.addedFields.includes(fieldKey)) {
+      fieldVisibility.removeFromAddedFields(fieldKey)
+    } else {
+      onHideField(fieldKey)
+    }
   }
 
   // ── Render helpers ──
@@ -286,11 +274,12 @@ export function CompanyFieldSections({
       const fieldKey = `custom:${field.id}`
       if (hiddenFields.includes(fieldKey) && !isEditing && !showAllFields) return null
       const isDropTarget = customFieldSection.draggingOverFieldId === field.id && customFieldSection.draggingFieldId !== field.id
+      const value = getPinnedFieldValue(field)
       return (
-        <div
+        <DraggableFieldRow
           key={field.id}
-          className={`${styles.sectionedFieldRow} ${isDropTarget ? styles.dragOverFieldIndicator : ''}`}
-          draggable={isEditing}
+          isEditing={isEditing}
+          isDragTarget={isDropTarget}
           onDragStart={() => customFieldSection.setDraggingFieldId(field.id)}
           onDragEnd={() => { customFieldSection.setDraggingFieldId(null); customFieldSection.setDraggingOverFieldId(null) }}
           onDragOver={(e) => {
@@ -302,7 +291,6 @@ export function CompanyFieldSections({
             if (isEditing) customFieldSection.handleWithinSectionDrop(field.id)
           }}
         >
-          {isEditing && <span className={styles.dragHandle}>⠿</span>}
           {isEditing && editingFieldId === field.id ? (
             <input
               className={styles.inlineRenameInput}
@@ -316,10 +304,18 @@ export function CompanyFieldSections({
               }}
             />
           ) : (
-          <HideableRow fieldKey={fieldKey}>
+          <HideableRow
+            fieldKey={fieldKey}
+            isEmpty={isEmptyValue(value)}
+            isHidden={hiddenFields.includes(fieldKey)}
+            isEditing={isEditing}
+            showAllFields={showAllFields}
+            onHide={handleHide}
+            onRestore={onRestoreField}
+          >
             <PropertyRow
               label={field.label}
-              value={getPinnedFieldValue(field)}
+              value={value}
               type={field.fieldType as PropertyRowType}
               options={opts(field)}
               editMode={isEditing}
@@ -347,7 +343,7 @@ export function CompanyFieldSections({
             )}
           </HideableRow>
           )}
-        </div>
+        </DraggableFieldRow>
       )
     })
   }
@@ -361,10 +357,10 @@ export function CompanyFieldSections({
       if (!field.visible) return null
       const isDropTarget = hfOrder.draggingOverKey === field.key && hfOrder.draggingKey !== field.key
       return (
-        <div
+        <DraggableFieldRow
           key={field.key}
-          className={`${styles.sectionedFieldRow} ${isDropTarget ? styles.dragOverFieldIndicator : ''}`}
-          draggable={isEditing}
+          isEditing={isEditing}
+          isDragTarget={isDropTarget}
           onDragStart={() => hfOrder.setDraggingKey(field.key)}
           onDragEnd={() => { hfOrder.setDraggingKey(null); hfOrder.setDraggingOverKey(null) }}
           onDragOver={(e) => {
@@ -378,9 +374,8 @@ export function CompanyFieldSections({
             }
           }}
         >
-          {isEditing && <span className={styles.dragHandle}>⠿</span>}
           <div style={{ flex: 1, minWidth: 0 }}>{withIconForKey(field.render(), field.key)}</div>
-        </div>
+        </DraggableFieldRow>
       )
     })
   }

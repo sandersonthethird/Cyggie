@@ -22,8 +22,8 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { EnrichMethodModal } from '../common/EnrichMethodModal'
 import { DecisionLogModal } from '../crm/DecisionLogModal'
+import { MergePicker } from '../crm/MergePicker'
 import { MergeReviewModal } from './MergeReviewModal'
-import styles from './CompanyPropertiesPanel.module.css'
 
 interface MergeTarget {
   id: string
@@ -99,37 +99,16 @@ export function CompanyModalsCollection({
 
   return (
     <>
-      {mergePickerOpen && (
-        <div className={styles.mergePickerOverlay} onClick={() => setMergePickerOpen(false)}>
-          <div className={styles.mergePicker} onClick={e => e.stopPropagation()}>
-            <p className={styles.mergePickerTitle}>Merge &ldquo;{company.canonicalName}&rdquo; into:</p>
-            <input
-              autoFocus
-              className={styles.mergePickerInput}
-              placeholder="Search companies…"
-              value={mergeQuery}
-              onChange={e => setMergeQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Escape' && setMergePickerOpen(false)}
-            />
-            <div className={styles.mergePickerList}>
-              {mergeResults.map(r => (
-                <button
-                  key={r.id}
-                  className={styles.mergePickerOption}
-                  onClick={() => { setMergeTarget(r); setMergePickerOpen(false) }}
-                >
-                  {r.name}
-                </button>
-              ))}
-              {mergeResults.length === 0 && (
-                <span className={styles.mergePickerEmpty}>
-                  {mergeQuery ? 'No companies found' : 'Start typing to search…'}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <MergePicker
+        open={mergePickerOpen}
+        onClose={() => setMergePickerOpen(false)}
+        entityNoun="company"
+        currentEntityName={company.canonicalName}
+        query={mergeQuery}
+        onQueryChange={setMergeQuery}
+        results={mergeResults}
+        onSelect={target => { setMergeTarget(target); setMergePickerOpen(false) }}
+      />
 
       {showDecisionModal && (
         <DecisionLogModal

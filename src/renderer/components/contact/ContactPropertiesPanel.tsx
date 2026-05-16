@@ -34,6 +34,8 @@ import { saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../u
 import { CONTACT_HARDCODED_FIELDS } from '../../constants/contactFields'
 import { CollapsibleSection } from '../crm/CollapsibleSection'
 import { PropertiesCard, PropertiesCardFooter } from '../crm/PropertiesCard'
+import { HideableRow as SharedHideableRow } from '../crm/HideableRow'
+import { DraggableFieldRow } from '../crm/DraggableFieldRow'
 import { useSectionCollapse } from '../../hooks/useSectionCollapse'
 import {
   CONTACT_TYPES,
@@ -931,10 +933,10 @@ export function ContactPropertiesPanel({
       if (hiddenFields.includes(fieldKey) && !isEditing && !showAllFields) return null
       const isDropTarget = draggingOverFieldId === field.id && draggingFieldId !== field.id
       return (
-        <div
+        <DraggableFieldRow
           key={field.id}
-          className={`${styles.sectionedFieldRow} ${isDropTarget ? styles.dragOverFieldIndicator : ''}`}
-          draggable={isEditing}
+          isEditing={isEditing}
+          isDragTarget={isDropTarget}
           onDragStart={() => setDraggingFieldId(field.id)}
           onDragEnd={() => { setDraggingFieldId(null); setDraggingOverFieldId(null) }}
           onDragOver={(e) => {
@@ -942,11 +944,10 @@ export function ContactPropertiesPanel({
             if (isEditing && draggingOverFieldId !== field.id) setDraggingOverFieldId(field.id)
           }}
           onDrop={(e) => {
-            e.stopPropagation() // prevent cross-section drop handler from also firing
+            e.stopPropagation()
             if (isEditing) handleWithinSectionDrop(field.id)
           }}
         >
-          {isEditing && <span className={styles.dragHandle}>⠿</span>}
           {isEditing && editingFieldId === field.id ? (
             <input
               className={styles.inlineRenameInput}
@@ -991,7 +992,7 @@ export function ContactPropertiesPanel({
             )}
           </HideableRow>
           )}
-        </div>
+        </DraggableFieldRow>
       )
     })
   }
@@ -1005,10 +1006,10 @@ export function ContactPropertiesPanel({
       if (!field.visible) return null
       const isDropTarget = hfOrder.draggingOverKey === field.key && hfOrder.draggingKey !== field.key
       return (
-        <div
+        <DraggableFieldRow
           key={field.key}
-          className={`${styles.sectionedFieldRow} ${isDropTarget ? styles.dragOverFieldIndicator : ''}`}
-          draggable={isEditing}
+          isEditing={isEditing}
+          isDragTarget={isDropTarget}
           onDragStart={() => hfOrder.setDraggingKey(field.key)}
           onDragEnd={() => { hfOrder.setDraggingKey(null); hfOrder.setDraggingOverKey(null) }}
           onDragOver={(e) => {
@@ -1022,35 +1023,34 @@ export function ContactPropertiesPanel({
             }
           }}
         >
-          {isEditing && <span className={styles.dragHandle}>⠿</span>}
           <div style={{ flex: 1, minWidth: 0 }}>{field.render()}</div>
-        </div>
+        </DraggableFieldRow>
       )
     })
   }
 
-  function HideableRow({ fieldKey, isEmpty, children, onHide }: { fieldKey: string; isEmpty?: boolean; children: ReactNode; onHide?: () => void }) {
-    const isHidden = hiddenFields.includes(fieldKey)
+  // Thin parent-scoped wrapper around the shared <SharedHideableRow> atom — preserves
+  // existing callsites (passing just fieldKey + isEmpty) while routing hide/restore
+  // through the contact-panel's state setters and addedFields cleanup path.
+  function HideableRow({ fieldKey, isEmpty, children }: { fieldKey: string; isEmpty?: boolean; children: ReactNode }) {
     return (
-      <div className={`${styles.hideable} ${isHidden ? styles.fieldHidden : ''}`}>
-        <div className={styles.hideableContent}>{children}</div>
-        {(showAllFields || isEditing) && (
-          isHidden
-            ? <button className={styles.restoreBtn} title="Restore field" onClick={() => restoreField(fieldKey)}>↺</button>
-            : <button
-                className={styles.hideBtn}
-                title="Hide field"
-                onClick={() => {
-                  onHide?.()
-                  if (isEmpty && fieldVisibility.addedFields.includes(fieldKey)) {
-                    fieldVisibility.removeFromAddedFields(fieldKey)
-                  } else {
-                    hideField(fieldKey)
-                  }
-                }}
-              >×</button>
-        )}
-      </div>
+      <SharedHideableRow
+        fieldKey={fieldKey}
+        isEmpty={isEmpty}
+        isHidden={hiddenFields.includes(fieldKey)}
+        isEditing={isEditing}
+        showAllFields={showAllFields}
+        onHide={(key, empty) => {
+          if (empty && fieldVisibility.addedFields.includes(key)) {
+            fieldVisibility.removeFromAddedFields(key)
+          } else {
+            hideField(key)
+          }
+        }}
+        onRestore={restoreField}
+      >
+        {children}
+      </SharedHideableRow>
     )
   }
 
