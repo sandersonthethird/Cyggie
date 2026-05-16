@@ -287,15 +287,14 @@ describe('formatFlaggedFilesSection', () => {
     expect(await formatFlaggedFilesSection([], generousCaps)).toBe('')
   })
 
-  // TODO: deferred from Phase 5 audit — "The path argument must be of type
-  // string. Received undefined" — formatFlaggedFilesSection now requires a
-  // path argument that the test mocks aren't providing. Suspect production
-  // refactor; needs mock update.
-  it.skip('renders header + ### filename + content', async () => {
+  it('renders header + ### filename + content', async () => {
     mockReadLocalFile.mockResolvedValue(
       'Init Labs Memo: Investment Thesis. AI infrastructure with $180/seat enterprise pricing.'
     )
-    const out = await formatFlaggedFilesSection(['/fake/init-labs-memo.pdf'], generousCaps)
+    const out = await formatFlaggedFilesSection(
+      [{ fileId: '/fake/init-labs-memo.pdf', fileName: 'init-labs-memo.pdf', mimeType: null }],
+      generousCaps,
+    )
     expect(out).toContain('## Linked Documents')
     expect(out).toContain('### init-labs-memo.pdf')
     expect(out).toContain('Init Labs Memo')
@@ -307,8 +306,7 @@ describe('formatFlaggedFilesSection', () => {
     expect(out).toBe('')
   })
 
-  // TODO: deferred — same root cause as the preceding skipped test.
-  it.skip('skips files with content < 50 chars; remaining files still render', async () => {
+  it('skips files with content < 50 chars; remaining files still render', async () => {
     mockReadLocalFile.mockImplementation(async (p) => {
       if (p === '/short.pdf') return 'tiny'
       if (p === '/long.pdf') {
@@ -316,24 +314,35 @@ describe('formatFlaggedFilesSection', () => {
       }
       return null
     })
-    const out = await formatFlaggedFilesSection(['/short.pdf', '/long.pdf'], generousCaps)
+    const out = await formatFlaggedFilesSection(
+      [
+        { fileId: '/short.pdf', fileName: 'short.pdf', mimeType: null },
+        { fileId: '/long.pdf', fileName: 'long.pdf', mimeType: null },
+      ],
+      generousCaps,
+    )
     expect(out).toContain('### long.pdf')
     expect(out).not.toContain('### short.pdf')
   })
 
-  // TODO: deferred — same root cause as the preceding skipped tests.
-  it.skip('truncates excerpts above perItem cap', async () => {
+  it('truncates excerpts above perItem cap', async () => {
     mockReadLocalFile.mockResolvedValue('Z'.repeat(2000))
-    const out = await formatFlaggedFilesSection(['/big.pdf'], { perItem: 100, total: 1000 })
+    const out = await formatFlaggedFilesSection(
+      [{ fileId: '/big.pdf', fileName: 'big.pdf', mimeType: null }],
+      { perItem: 100, total: 1000 },
+    )
     expect(out).toMatch(/Z{100}\.\.\./)
   })
 
-  // TODO: deferred — same root cause as the preceding skipped tests.
-  it.skip('stops adding more files once total cap reached', async () => {
+  it('stops adding more files once total cap reached', async () => {
     mockReadLocalFile.mockResolvedValue('Y'.repeat(80))
     const out = await formatFlaggedFilesSection(
-      ['/a.pdf', '/b.pdf', '/c.pdf'],
-      { perItem: 80, total: 100 }
+      [
+        { fileId: '/a.pdf', fileName: 'a.pdf', mimeType: null },
+        { fileId: '/b.pdf', fileName: 'b.pdf', mimeType: null },
+        { fileId: '/c.pdf', fileName: 'c.pdf', mimeType: null },
+      ],
+      { perItem: 80, total: 100 },
     )
     expect(out).toContain('### a.pdf')
     expect(out).not.toContain('### c.pdf')
