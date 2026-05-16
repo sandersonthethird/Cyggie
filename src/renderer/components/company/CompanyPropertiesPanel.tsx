@@ -9,9 +9,6 @@ import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
 import type { CompanyDecisionLog, CompanyDetail } from '../../../shared/types/company'
-import { DecisionLogModal } from '../crm/DecisionLogModal'
-import ConfirmDialog from '../common/ConfirmDialog'
-import { MergeReviewModal } from './MergeReviewModal'
 import { shouldPromptDecisionLog, defaultDecisionType } from '../../utils/decisionLogTrigger'
 import type { CustomFieldWithValue } from '../../../shared/types/custom-fields'
 import { COMPANY_SECTIONS } from '../../../shared/types/custom-fields'
@@ -42,9 +39,9 @@ import { KeyTakeawaysCard } from '../common/KeyTakeawaysCard'
 import { ScorecardStrip, type ScorecardMetric } from '../common/ScorecardStrip'
 import { PipelineStepper, COMPANY_PIPELINE_STAGES } from '../common/PipelineStepper'
 import { AddTaskModal as AddTaskModalCommon } from '../common/AddTaskModal'
-import { EnrichMethodModal } from '../common/EnrichMethodModal'
 import { CompanyHeaderCard } from './CompanyHeaderCard'
 import { CompanyFieldSections } from './CompanyFieldSections'
+import { CompanyModalsCollection } from './CompanyModalsCollection'
 import { PropertiesCard, PropertiesCardFooter } from '../crm/PropertiesCard'
 import { useSectionCollapse } from '../../hooks/useSectionCollapse'
 import styles from './CompanyPropertiesPanel.module.css'
@@ -1109,85 +1106,34 @@ export function CompanyPropertiesPanel({
         )}
       </div>{/* end bodyCard */}
 
-      {/* ═══ Modals (fixed position, outside card flow) ═══ */}
-      {mergePickerOpen && (
-        <div className={styles.mergePickerOverlay} onClick={() => setMergePickerOpen(false)}>
-          <div className={styles.mergePicker} onClick={e => e.stopPropagation()}>
-            <p className={styles.mergePickerTitle}>Merge &ldquo;{company.canonicalName}&rdquo; into:</p>
-            <input autoFocus className={styles.mergePickerInput} placeholder="Search companies…" value={mergeQuery} onChange={e => setMergeQuery(e.target.value)} onKeyDown={e => e.key === 'Escape' && setMergePickerOpen(false)} />
-            <div className={styles.mergePickerList}>
-              {mergeResults.map(r => (
-                <button key={r.id} className={styles.mergePickerOption} onClick={() => { setMergeTarget(r); setMergePickerOpen(false) }}>{r.name}</button>
-              ))}
-              {mergeResults.length === 0 && <span className={styles.mergePickerEmpty}>{mergeQuery ? 'No companies found' : 'Start typing to search…'}</span>}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showDecisionModal && (
-        <DecisionLogModal
-          companyId={company.id}
-          initialDecisionType={decisionTriggerType}
-          onClose={() => setShowDecisionModal(false)}
-          onSaved={() => {
-            void window.api.invoke<CompanyDecisionLog | null>(IPC_CHANNELS.COMPANY_DECISION_LOG_GET_LATEST, company.id).then(d => setLatestDecision(d ?? null))
-            setShowDecisionModal(false)
-          }}
-        />
-      )}
-
-      {editDecisionId && (
-        <DecisionLogModal
-          companyId={company.id}
-          logId={editDecisionId}
-          onClose={() => setEditDecisionId(null)}
-          onSaved={() => {
-            void window.api.invoke<CompanyDecisionLog | null>(IPC_CHANNELS.COMPANY_DECISION_LOG_GET_LATEST, company.id).then(d => setLatestDecision(d ?? null))
-            setEditDecisionId(null)
-          }}
-          onDeleted={() => { setLatestDecision(null); setEditDecisionId(null) }}
-        />
-      )}
-
-      {onEnrich && (
-        <EnrichMethodModal
-          open={enrichMethodModalOpen}
-          onClose={() => setEnrichMethodModalOpen(false)}
-          title="Enrich company"
-          subtitle="Choose a source to enrich this company's profile."
-          methods={[
-            { icon: '📄', label: 'From a file (PDF)', description: 'Upload a pitch deck or document', onClick: () => onEnrich('pdf') },
-            { icon: '🔗', label: 'From a URL', description: 'Extract from a webpage', onClick: () => onEnrich('url') },
-            { icon: '✨', label: 'From meetings', description: showEnrichBanner ? `${enrichMeetingCount} new meeting${enrichMeetingCount !== 1 ? 's' : ''} available` : 'No new meetings', onClick: () => onEnrich('meetings'), disabled: !showEnrichBanner },
-            { icon: '📝', label: 'From notes', description: 'Extract from company notes', onClick: () => onEnrich('notes') },
-            { icon: '✉️', label: 'From emails', description: 'Extract from email threads', onClick: () => onEnrich('emails') },
-          ]}
-        />
-      )}
-
-      <ConfirmDialog
-        open={confirmDelete}
-        title="Delete company?"
-        message={`Delete "${company.canonicalName}" and all associated data? This cannot be undone.`}
-        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
-        variant="danger"
-        errorMessage={deleteError.error}
-        onConfirm={handleDeleteCompany}
-        onCancel={() => { setConfirmDelete(false); deleteError.clear() }}
+      {/* ═══ Modals (fixed position, outside card flow) — extracted ═══ */}
+      <CompanyModalsCollection
+        company={company}
+        mergePickerOpen={mergePickerOpen}
+        setMergePickerOpen={setMergePickerOpen}
+        mergeQuery={mergeQuery}
+        setMergeQuery={setMergeQuery}
+        mergeResults={mergeResults}
+        mergeTarget={mergeTarget}
+        setMergeTarget={setMergeTarget}
+        showDecisionModal={showDecisionModal}
+        setShowDecisionModal={setShowDecisionModal}
+        decisionTriggerType={decisionTriggerType}
+        editDecisionId={editDecisionId}
+        setEditDecisionId={setEditDecisionId}
+        setLatestDecision={setLatestDecision}
+        enrichMethodModalOpen={enrichMethodModalOpen}
+        setEnrichMethodModalOpen={setEnrichMethodModalOpen}
+        onEnrich={onEnrich}
+        showEnrichBanner={showEnrichBanner ?? false}
+        enrichMeetingCount={enrichMeetingCount ?? 0}
+        confirmDelete={confirmDelete}
+        setConfirmDelete={setConfirmDelete}
+        deleting={deleting}
+        deleteErrorMessage={deleteError.error}
+        clearDeleteError={deleteError.clear}
+        onDeleteCompany={handleDeleteCompany}
       />
-      {mergeTarget && (
-        <MergeReviewModal
-          open={!!mergeTarget}
-          targetId={mergeTarget.id}
-          sourceId={company.id}
-          onCancel={() => setMergeTarget(null)}
-          onSuccess={(keptId) => {
-            setMergeTarget(null)
-            navigate(`/company/${keptId}`)
-          }}
-        />
-      )}
     </div>
   )
 }

@@ -2,7 +2,9 @@
  * Tests for getCompanyEnrichmentProposalsFromNotes() in company-summary-sync.service.ts
  *
  * Mock boundaries:
- *   - company-notes.repo (listCompanyNotes) → vi.fn() stub
+ *   - notes-base.makeEntityNotesRepo → returns a stub whose `list()` is
+ *     controlled by mockListCompanyNotes. (Production builds the company
+ *     notes repo via makeEntityNotesRepo('company_id') at module load.)
  *   - org-company.repo (getCompany) → vi.fn() stub
  *   - custom-fields.repo (listFieldDefinitions, getFieldValuesForEntity) → vi.fn() stubs
  *   - contact.repo → vi.fn() stubs (required by same module)
@@ -32,8 +34,18 @@ vi.mock('../main/storage/file-manager', () => ({
 
 const mockListCompanyNotes = vi.fn()
 
-vi.mock('../main/database/repositories/company-notes.repo', () => ({
-  listCompanyNotes: (...args: unknown[]) => mockListCompanyNotes(...args),
+// Production builds the company notes repo via makeEntityNotesRepo at module
+// load. Mock the factory to return a stub whose `list()` is the test's
+// controllable mock.
+vi.mock('../main/database/repositories/notes-base', () => ({
+  makeEntityNotesRepo: () => ({
+    list: (...args: unknown[]) => mockListCompanyNotes(...args),
+    get: vi.fn(),
+    listForEntities: vi.fn(() => []),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+  }),
 }))
 
 const mockListFieldDefinitions = vi.fn()
@@ -164,10 +176,7 @@ describe('getCompanyEnrichmentProposalsFromNotes', () => {
     expect(result).toBeNull()
   })
 
-  // TODO: Phase 5 audit deferred — these 3 tests return null instead of a
-  // proposal. Either the LLM provider mock isn't being called or the function
-  // gates the proposal differently than the test expects. Needs investigation.
-  it.skip('returns proposal with changes when LLM extracts new values', async () => {
+  it('returns proposal with changes when LLM extracts new values', async () => {
     mockListCompanyNotes.mockReturnValue([makeNote()])
     mockGetCompany.mockReturnValue(makeCompany({ description: null }))
     const result = await getCompanyEnrichmentProposalsFromNotes(
