@@ -15,7 +15,8 @@
  *   network error:  fetch throws → returns network_error
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
+import type Database from 'better-sqlite3'
 
 // --- Mocks ---
 
@@ -23,6 +24,13 @@ const handleMock = vi.fn()
 vi.mock('electron', () => ({
   ipcMain: { handle: handleMock },
   app: { getPath: () => '/tmp' },
+}))
+
+// resolvedSpeakerMap inside the handler calls getDatabase(). Stub it with an
+// in-memory production schema, populated by beforeAll below.
+let _testDb: Database.Database | null = null
+vi.mock('../main/database/connection', () => ({
+  getDatabase: () => _testDb,
 }))
 
 const getNoteMock = vi.fn()
@@ -41,8 +49,9 @@ vi.mock('../main/ipc/note-hydration', () => ({
   hydrateCompanionNote: hydrateCompanionNoteMock,
 }))
 
+const getCredentialMock = vi.fn()
 vi.mock('../main/security/credentials', () => ({
-  getCredential: vi.fn(),
+  getCredential: getCredentialMock,
 }))
 
 vi.mock('../main/storage/file-manager', () => ({
@@ -82,16 +91,18 @@ const BASE_NOTE = {
 
 // --- Tests ---
 
-// TODO: Phase 5 audit deferred — 8 of 10 tests in this describe block fail
-// because the WEB_SHARE_API_SECRET / api_key setting isn't mocked. Production
-// returns `no_api_key` when missing; tests expect the post-key code path.
-// Each test needs its own mockGetSetting('webShareApiKey').mockReturnValue(...)
-// — mechanical but per-test.
-describe.skip('WEB_SHARE_CREATE_NOTE IPC handler', () => {
+describe('WEB_SHARE_CREATE_NOTE IPC handler', () => {
+  beforeAll(async () => {
+    const { buildTestDbFull } = await import('./_fixtures/test-db')
+    _testDb = buildTestDbFull()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
-    // Re-register handlers by resetting and re-importing is complex;
-    // instead rely on the fact that handleMock captured calls at import time.
+    // Production handler returns { error: 'no_api_key' } early when
+    // getCredential returns falsy. Provide a key so each test exercises
+    // the post-key code path.
+    getCredentialMock.mockReturnValue('test-api-key')
   })
 
   it('registers the WEB_SHARE_CREATE_NOTE handler', () => {
@@ -146,9 +157,14 @@ describe.skip('WEB_SHARE_CREATE_NOTE IPC handler', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ Authorization: 'Bearer test-secret' }),
-        body: JSON.stringify({ title: 'Q1 Review', contentMarkdown: BASE_NOTE.content }),
       })
     )
+    // Body shape is { title, contentMarkdown, claudeApiKey, claudeModel,
+    // logoUrl, firmName, brandColor } — assert just the note fields we care
+    // about so the test stays stable when settings are added.
+    const callBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)
+    expect(callBody.title).toBe('Q1 Review')
+    expect(callBody.contentMarkdown).toBe(BASE_NOTE.content)
     fetchSpy.mockRestore()
   })
 
