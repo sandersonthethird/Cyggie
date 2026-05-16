@@ -41,6 +41,13 @@ vi.mock('../renderer/api', () => ({
   },
 }))
 
+// useNotice throws if not wrapped in NoticeModalProvider; stub it for
+// component tests that don't care about notification UX.
+vi.mock('../renderer/components/common/NoticeModal', () => ({
+  useNotice: () => ({ show: vi.fn() }),
+  NoticeModalProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
+
 // Recording store uses selector pattern: useRecordingStore(s => s.field)
 vi.mock('../renderer/stores/recording.store', () => {
   const state = {
@@ -63,10 +70,33 @@ vi.mock('../renderer/stores/recording.store', () => {
 })
 
 // Chat store: useChatStore.getState() is called directly in loadMeeting
-vi.mock('../renderer/stores/chat.store', () => ({
-  useChatStore: Object.assign(vi.fn(() => ({})), {
-    getState: vi.fn(() => ({ conversations: {}, addMessage: vi.fn() })),
+vi.mock('../renderer/stores/chat.store', () => {
+  const state = {
+    conversations: {},
+    pageContext: null,
+    setPageContext: vi.fn(),
+    addMessage: vi.fn(),
+  }
+  return {
+    useChatStore: Object.assign(
+      vi.fn((selector?: (s: typeof state) => unknown) => (selector ? selector(state) : state)),
+      { getState: vi.fn(() => state) },
+    ),
+  }
+})
+
+// RunsProvider: tests render components that call useRuns/useRunForCompany
+// without a real provider.
+vi.mock('../renderer/contexts/RunsContext', () => ({
+  useRuns: () => ({
+    runs: {},
+    dismissRun: vi.fn(),
+    startRun: vi.fn(),
+    appendEvent: vi.fn(),
+    completeRun: vi.fn(),
   }),
+  useRunForCompany: () => null,
+  RunsProvider: ({ children }: { children: React.ReactNode }) => children,
 }))
 
 vi.mock('../renderer/contexts/AudioCaptureContext', () => ({

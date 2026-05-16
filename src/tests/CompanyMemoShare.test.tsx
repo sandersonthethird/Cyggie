@@ -55,6 +55,19 @@ Object.defineProperty(navigator, 'clipboard', {
 vi.mock('react-markdown', () => ({ default: ({ children }: { children: string }) => React.createElement('div', null, children) }))
 vi.mock('rehype-raw', () => ({ default: {} }))
 
+// useNotice throws if not wrapped in NoticeModalProvider; stub for tests.
+vi.mock('../renderer/components/common/NoticeModal', () => ({
+  useNotice: () => ({ show: vi.fn() }),
+  NoticeModalProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
+
+// useRuns / useRunForCompany throw if not wrapped in RunsProvider; stub for tests.
+vi.mock('../renderer/contexts/RunsContext', () => ({
+  useRuns: () => ({ runs: {}, dismissRun: vi.fn(), startRun: vi.fn(), appendEvent: vi.fn(), completeRun: vi.fn() }),
+  useRunForCompany: () => null,
+  RunsProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
+
 vi.mock('../renderer/components/company/MemoEditModal', () => ({
   MemoEditModal: () => null,
 }))
