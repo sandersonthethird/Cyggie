@@ -14,6 +14,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
+import { buildTestDbFull } from './_fixtures/test-db'
 
 // ─── Mock: database connection ────────────────────────────────────────────────
 
@@ -141,23 +142,8 @@ function makeAbortController() {
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  // Fresh in-memory DB with minimal notes table
-  testDb = new Database(':memory:')
-  testDb.exec(`
-    CREATE TABLE IF NOT EXISTS notes (
-      id TEXT PRIMARY KEY,
-      company_id TEXT,
-      contact_id TEXT,
-      title TEXT,
-      content TEXT NOT NULL DEFAULT '',
-      source_digest_id TEXT,
-      is_pinned INTEGER NOT NULL DEFAULT 0,
-      created_by_user_id TEXT,
-      updated_by_user_id TEXT,
-      created_at TEXT,
-      updated_at TEXT
-    )
-  `)
+  // Fresh in-memory DB with full production schema via the shared fixture.
+  testDb = buildTestDbFull()
 
   vi.clearAllMocks()
 

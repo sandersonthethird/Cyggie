@@ -1,8 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runMemoEvidenceMigration } from '../main/database/migrations/085-memo-evidence'
-import { runAgentRunsMigration } from '../main/database/migrations/086-agent-runs'
-import { runAgentRunEventsMigration } from '../main/database/migrations/087-agent-run-events'
+import { buildTestDbFull } from './_fixtures/test-db'
 
 vi.mock('../main/database/connection', () => ({
   getDatabase: vi.fn(),
@@ -18,23 +16,16 @@ import { bulkInsert, listByVersion, listCritiquesByVersion } from '../main/datab
 const mockGetDb = vi.mocked(getDatabase)
 
 function makeDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('foreign_keys = ON')
-  // Prerequisite tables for FK targets
-  db.exec(`
-    CREATE TABLE investment_memo_versions (
-      id TEXT PRIMARY KEY,
-      memo_id TEXT NOT NULL,
-      version_number INTEGER NOT NULL,
-      content_markdown TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    INSERT INTO investment_memo_versions (id, memo_id, version_number, content_markdown)
-      VALUES ('v-1', 'memo-1', 1, '# Memo');
-  `)
-  runMemoEvidenceMigration(db)
-  runAgentRunsMigration(db)
-  runAgentRunEventsMigration(db)
+  const db = buildTestDbFull()
+  // Disable foreign keys for this test — it exercises run-store insert/update
+  // logic against canonical schema, not referential integrity. Production
+  // satisfies FKs via the natural insertion order; tests use ad-hoc IDs.
+  db.pragma('foreign_keys = OFF')
+  // Seed an investment_memo_versions row used as resultVersionId target.
+  db.prepare(
+    `INSERT INTO investment_memo_versions (id, memo_id, version_number, content_markdown)
+     VALUES ('v-1', 'memo-1', 1, '# Memo')`
+  ).run()
   return db
 }
 

@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
+import { buildTestDbFull } from './_fixtures/test-db'
 
 let testDb: Database.Database
 
@@ -26,54 +27,7 @@ vi.mock('../main/database/connection', () => ({
 const { listCompanies } = await import('../main/database/repositories/org-company.repo')
 
 // Minimal schema — only columns referenced by baseCompanySelectLight
-function buildDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.exec(`
-    CREATE TABLE org_companies (
-      id TEXT PRIMARY KEY,
-      canonical_name TEXT NOT NULL,
-      normalized_name TEXT NOT NULL DEFAULT '',
-      description TEXT,
-      primary_domain TEXT,
-      website_url TEXT,
-      city TEXT,
-      state TEXT,
-      stage TEXT,
-      status TEXT NOT NULL DEFAULT 'active',
-      crm_provider TEXT,
-      crm_company_id TEXT,
-      entity_type TEXT NOT NULL DEFAULT 'unknown',
-      include_in_companies_view INTEGER NOT NULL DEFAULT 1,
-      classification_source TEXT NOT NULL DEFAULT 'manual',
-      classification_confidence REAL,
-      priority TEXT,
-      post_money_valuation REAL,
-      raise_size REAL,
-      round TEXT,
-      pipeline_stage TEXT,
-      portfolio_fund TEXT,
-      field_sources TEXT,
-      key_takeaways TEXT,
-      investment_size TEXT,
-      ownership_pct TEXT,
-      followon_investment_size TEXT,
-      total_invested TEXT,
-      investment_mark REAL,
-      investment_round TEXT,
-      initial_investment_security TEXT,
-      date_of_initial_investment TEXT,
-      initial_round_size REAL,
-      last_company_valuation REAL,
-      followon_check REAL,
-      followon_date TEXT,
-      followon_check_2 REAL,
-      followon_date_2 TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `)
-  return db
-}
+// Schema comes from the shared test-db fixture (runs production migrations).
 
 function insertCompany(db: Database.Database, name: string, entityType = 'portfolio'): string {
   const id = randomUUID()
@@ -86,7 +40,7 @@ function insertCompany(db: Database.Database, name: string, entityType = 'portfo
 
 describe('listCompanies — limit behavior', () => {
   beforeEach(() => {
-    testDb = buildDb()
+    testDb = buildTestDbFull()
   })
 
   it('returns exactly limit rows when limit is set', () => {
