@@ -25,6 +25,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const handleMock = vi.fn()
 vi.mock('electron', () => ({
   ipcMain: { handle: handleMock },
+  app: { getPath: () => '/tmp' },
 }))
 
 const getMeetingMock = vi.fn()
