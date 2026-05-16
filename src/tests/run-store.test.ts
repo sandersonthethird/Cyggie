@@ -189,11 +189,11 @@ describe('run-store + memo-evidence integration', () => {
       expect(listByVersion('v-1')).toHaveLength(2)
     })
 
-    // TODO: deferred from Phase 5 audit — expected dedup count is 0 but got 1.
-    // Likely a partial-unique-index behavior change in production code; needs
-    // a careful look at memo-evidence.repo bulkInsert + the migration that
-    // defines the partial unique index.
-    it.skip('skips duplicate internal rows (partial unique index)', () => {
+    it('skips duplicate internal rows (partial unique index)', () => {
+      // Migration 090 expanded the partial UNIQUE index to include `section`.
+      // SQLite treats NULL as not-equal-to-NULL in UNIQUE constraints, so two
+      // rows with section=NULL are considered distinct. Set a non-null section
+      // so dedup actually kicks in.
       const dup = {
         claimText: 'claim',
         sourceType: 'meeting' as const,
@@ -201,6 +201,7 @@ describe('run-store + memo-evidence integration', () => {
         snippet: 's',
         confidence: 'high' as const,
         isCritique: false,
+        section: 'thesis',
       }
       bulkInsert('v-1', [dup])
       const inserted2 = bulkInsert('v-1', [dup])
