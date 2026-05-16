@@ -26,6 +26,7 @@
  * below in the same order it appears in connection.ts.
  */
 import Database from 'better-sqlite3'
+import { vi } from 'vitest'
 import { runMigrations } from '../../main/database/migrations/001-initial-schema'
 import { runFtsMigration } from '../../main/database/migrations/002-fts5-tables'
 import { runNotesMigration } from '../../main/database/migrations/003-notes-column'
@@ -243,4 +244,34 @@ export function buildTestDb(opts?: { migrations?: MigrationFn[] }): Database.Dat
 /** Shorthand for the common case: every migration in order. */
 export function buildTestDbFull(): Database.Database {
   return buildTestDb()
+}
+
+/**
+ * vi.mock factory for `../main/database/repositories/notes-base`.
+ *
+ * Production builds entity-scoped note repos at module load via
+ * `makeEntityNotesRepo('company_id'|'contact_id')`. Tests that need to
+ * control the .list() return value should mock the factory itself —
+ * this helper returns a stub whose .list() forwards to the caller's
+ * vi.fn(). Other methods (get/listForEntities/create/update/delete)
+ * are no-op vi.fn() stubs.
+ *
+ * Usage:
+ *   import { notesBaseMockFactory } from './_fixtures/test-db'
+ *   const mockListCompanyNotes = vi.fn()
+ *   vi.mock('../main/database/repositories/notes-base',
+ *           () => notesBaseMockFactory(mockListCompanyNotes))
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function notesBaseMockFactory(listMock: (...args: unknown[]) => any) {
+  return {
+    makeEntityNotesRepo: () => ({
+      list: (...args: unknown[]) => listMock(...args),
+      get: vi.fn(),
+      listForEntities: vi.fn(() => []),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+    }),
+  }
 }

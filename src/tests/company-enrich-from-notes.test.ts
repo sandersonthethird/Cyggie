@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { notesBaseMockFactory } from './_fixtures/test-db'
 
 vi.mock('../main/database/connection', () => ({ getDatabase: vi.fn() }))
 
@@ -35,18 +36,8 @@ vi.mock('../main/storage/file-manager', () => ({
 const mockListCompanyNotes = vi.fn()
 
 // Production builds the company notes repo via makeEntityNotesRepo at module
-// load. Mock the factory to return a stub whose `list()` is the test's
-// controllable mock.
-vi.mock('../main/database/repositories/notes-base', () => ({
-  makeEntityNotesRepo: () => ({
-    list: (...args: unknown[]) => mockListCompanyNotes(...args),
-    get: vi.fn(),
-    listForEntities: vi.fn(() => []),
-    create: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-  }),
-}))
+// load. Shared helper in _fixtures/test-db.ts forwards .list() to the mock.
+vi.mock('../main/database/repositories/notes-base', () => notesBaseMockFactory(mockListCompanyNotes))
 
 const mockListFieldDefinitions = vi.fn()
 const mockGetFieldValuesForEntity = vi.fn()
