@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, act, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, act, cleanup, fireEvent, within } from '@testing-library/react'
 import React from 'react'
 
 // --- Mocks ---
@@ -131,17 +131,20 @@ describe('MemoEditModal', () => {
     })
   })
 
-  // TODO: Phase 5 audit deferred — the next 3 tests all fail with mock/timing
-  // issues around auto-save. Each needs api.invoke mock + timer control fixes.
-  it.skip('calls INVESTMENT_MEMO_SAVE_VERSION when editor content changes', async () => {
+  // Production removed auto-save in favor of explicit Save (button or ⌘S)
+  // and a confirm-discard dialog on close-while-dirty. These tests verify
+  // the new flow.
+  it('fires INVESTMENT_MEMO_SAVE_VERSION when the Save button is clicked after content changes', async () => {
     const { onSaved } = renderModal()
     await waitFor(() => expect(loadContentMock).toHaveBeenCalled())
 
     const newContent = '## Updated Executive Summary\n\nRevised content here.'
+    act(() => { capturedOnUpdate?.({ editor: makeFakeEditor(newContent) }) })
+
     const savedVersion = { ...MEMO.latestVersion!, versionNumber: 3, contentMarkdown: newContent }
     invokeMock.mockResolvedValueOnce(savedVersion)
 
-    act(() => { capturedOnUpdate?.({ editor: makeFakeEditor(newContent) }) })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
@@ -153,57 +156,45 @@ describe('MemoEditModal', () => {
     expect(onSaved).toHaveBeenCalledWith(savedVersion)
   })
 
-  it.skip('calls INVESTMENT_MEMO_SAVE_VERSION on close when there are unsaved changes', async () => {
+  it('fires INVESTMENT_MEMO_SAVE_VERSION when the confirm-discard dialog Save is clicked', async () => {
     const { onClose, onSaved } = renderModal()
     await waitFor(() => expect(loadContentMock).toHaveBeenCalled())
 
-    // Simulate user typing (sets contentDraft but debounce hasn't fired yet via auto-save)
-    // We test the flush path by setting up content that differs from savedContentRef
-    const pendingContent = '## New heading\n\nPending edit not yet auto-saved.'
+    // User types — contentDraft now differs from savedContentRef
+    const pendingContent = '## New heading\n\nUnsaved edit.'
     act(() => { capturedOnUpdate?.({ editor: makeFakeEditor(pendingContent) }) })
 
-    // Let the debounced auto-save fire and resolve
-    const autoSaveVersion = { ...MEMO.latestVersion!, versionNumber: 3, contentMarkdown: pendingContent }
-    invokeMock.mockResolvedValueOnce(autoSaveVersion)
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(1))
-    // savedContentRef.current is now pendingContent
-
-    // Type more (not yet auto-saved)
-    const flushContent = '## New heading\n\nAdditional content added just before closing.'
-    invokeMock.mockResolvedValueOnce({ ...autoSaveVersion, contentMarkdown: flushContent })
-    act(() => { capturedOnUpdate?.({ editor: makeFakeEditor(flushContent) }) })
-
-    // Click Done — should flush the pending flushContent change
+    // Click Done → confirm-discard dialog opens
     await act(async () => { fireEvent.click(screen.getByText('Done')) })
 
-    // The flush save should have been called with flushContent
-    expect(invokeMock).toHaveBeenLastCalledWith(
+    const dialog = screen.getByRole('dialog', { name: 'Unsaved changes' })
+    const dialogSaveBtn = within(dialog).getByText('Save')
+
+    const savedVersion = { ...MEMO.latestVersion!, versionNumber: 3, contentMarkdown: pendingContent }
+    invokeMock.mockResolvedValueOnce(savedVersion)
+
+    await act(async () => { fireEvent.click(dialogSaveBtn) })
+
+    expect(invokeMock).toHaveBeenCalledWith(
       IPC_CHANNELS.INVESTMENT_MEMO_SAVE_VERSION,
       MEMO.id,
-      expect.objectContaining({ contentMarkdown: flushContent })
+      expect.objectContaining({ contentMarkdown: pendingContent })
     )
+    expect(onSaved).toHaveBeenCalledWith(savedVersion)
     expect(onClose).toHaveBeenCalled()
   })
 
-  it.skip('does not re-save after savedContentRef is updated by a successful auto-save', async () => {
+  it('Save button is disabled when content matches the last-saved snapshot', async () => {
     renderModal()
     await waitFor(() => expect(loadContentMock).toHaveBeenCalled())
 
-    const content = '## Heading\n\nBody text.'
-    const savedVersion = { ...MEMO.latestVersion!, versionNumber: 3, contentMarkdown: content }
-    invokeMock.mockResolvedValueOnce(savedVersion)
-
-    // First onUpdate → auto-save fires
-    act(() => { capturedOnUpdate?.({ editor: makeFakeEditor(content) }) })
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(1))
-
-    // Second onUpdate with the same content — savedContentRef.current === content,
-    // so debouncedContent === savedContentRef and no save should fire
-    act(() => { capturedOnUpdate?.({ editor: makeFakeEditor(content) }) })
-
-    // Give time for any spurious effects to fire
-    await new Promise((r) => setTimeout(r, 10))
-    expect(invokeMock).toHaveBeenCalledTimes(1)
+    // No edits → contentDraft === savedContentRef → isDirty=false → button disabled.
+    // This is the new-flow equivalent of the old "no re-save when content matches
+    // savedContentRef" invariant — handleSave early-returns when !isDirty, and the
+    // button itself surfaces that gate.
+    const saveBtn = screen.getByText('Save').closest('button') as HTMLButtonElement
+    expect(saveBtn.disabled).toBe(true)
+    expect(invokeMock).not.toHaveBeenCalled()
   })
 
   it('renders null when latestVersion is null', () => {
