@@ -18,7 +18,8 @@
  *   no api key:          getCredential null → returns no_api_key error
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
+import type Database from 'better-sqlite3'
 
 // --- Mocks ---
 
@@ -26,6 +27,15 @@ const handleMock = vi.fn()
 vi.mock('electron', () => ({
   ipcMain: { handle: handleMock },
   app: { getPath: () => '/tmp' },
+}))
+
+// resolvedSpeakerMap in the handler calls getDatabase() to look up
+// speaker-contact links. The mock returns a lazily-built in-memory DB
+// (populated by beforeAll below — vi.mock factories are hoisted, so the
+// closure has to dereference _testDb at call time, not at mock-define time).
+let _testDb: Database.Database | null = null
+vi.mock('../main/database/connection', () => ({
+  getDatabase: () => _testDb,
 }))
 
 const getMeetingMock = vi.fn()
@@ -97,6 +107,11 @@ const API_KEY = 'sk-ant-test'
 // --- Tests ---
 
 describe('WEB_SHARE_CREATE IPC handler', () => {
+  beforeAll(async () => {
+    const { buildTestDbFull } = await import('./_fixtures/test-db')
+    _testDb = buildTestDbFull()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     getMeetingMock.mockReturnValue(BASE_MEETING)
@@ -110,10 +125,7 @@ describe('WEB_SHARE_CREATE IPC handler', () => {
     expect(capturedMeetingShareHandler).not.toBeNull()
   })
 
-  // TODO: Phase 5 audit deferred — the next 3 tests fail because the
-  // WEB_SHARE_API_SECRET setting isn't mocked. Need mockGetSetting + fetch
-  // mock per test.
-  it.skip('includes summary from file in POST body when summaryPath is set', async () => {
+  it('includes summary from file in POST body when summaryPath is set', async () => {
     getMeetingMock.mockReturnValue({ ...BASE_MEETING, summaryPath: 'summary.md' })
     readSummaryMock.mockReturnValue(SUMMARY)
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
@@ -129,7 +141,7 @@ describe('WEB_SHARE_CREATE IPC handler', () => {
     fetchSpy.mockRestore()
   })
 
-  it.skip('calls recovery and includes summary when summaryPath is null and status is summarized', async () => {
+  it('calls recovery and includes summary when summaryPath is null and status is summarized', async () => {
     recoverMock.mockReturnValue(SUMMARY)
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
@@ -144,7 +156,7 @@ describe('WEB_SHARE_CREATE IPC handler', () => {
     fetchSpy.mockRestore()
   })
 
-  it.skip('sends summary:null when summaryPath is null and recovery returns null', async () => {
+  it('sends summary:null when summaryPath is null and recovery returns null', async () => {
     recoverMock.mockReturnValue(null)
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
