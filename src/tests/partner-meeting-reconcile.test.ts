@@ -384,10 +384,16 @@ describe('applyReconciliationProposals', () => {
     }
   }
 
-  // TODO: Phase 5 audit deferred — these 3 applyReconciliationProposals tests
-  // fail with FK constraint and stale assertions. Needs careful audit alongside
-  // the production code path (which may have been refactored).
-  it.skip('happy path: creates note + updates fields + creates tasks for accepted proposals', () => {
+  it('happy path: creates note + updates fields + creates tasks for accepted proposals', () => {
+    // applyReconciliationProposals INSERTs directly into notes; notes.company_id
+    // has a FK to org_companies (migration 052). Seed the row.
+    testDb
+      .prepare(
+        `INSERT INTO org_companies (id, canonical_name, normalized_name, entity_type, classification_source)
+         VALUES ('co-1', 'Acme Corp', 'acmecorp', 'prospect', 'manual')`,
+      )
+      .run()
+
     const result = applyReconciliationProposals(makeInput(), 'user-1')
 
     expect(result.applied).toBe(1)
@@ -421,7 +427,14 @@ describe('applyReconciliationProposals', () => {
     )
   })
 
-  it.skip('idempotent: second run with same source_digest_id skips note creation', () => {
+  it('idempotent: second run with same source_digest_id skips note creation', () => {
+    testDb
+      .prepare(
+        `INSERT INTO org_companies (id, canonical_name, normalized_name, entity_type, classification_source)
+         VALUES ('co-1', 'Acme Corp', 'acmecorp', 'prospect', 'manual')`,
+      )
+      .run()
+
     applyReconciliationProposals(makeInput(), 'user-1')
     applyReconciliationProposals(makeInput(), 'user-1')
 
@@ -450,7 +463,15 @@ describe('applyReconciliationProposals', () => {
     expect(mockUpdateCompany).not.toHaveBeenCalled()
   })
 
-  it.skip('partial DB failure: failed company in failed[], others still applied', () => {
+  it('partial DB failure: failed company in failed[], others still applied', () => {
+    testDb
+      .prepare(
+        `INSERT INTO org_companies (id, canonical_name, normalized_name, entity_type, classification_source)
+         VALUES ('co-1', 'Acme Corp', 'acmecorp', 'prospect', 'manual'),
+                ('co-2', 'Beta',      'beta',     'prospect', 'manual')`,
+      )
+      .run()
+
     mockUpdateCompany.mockImplementationOnce(() => { throw new Error('DB error') })
 
     const input = makeInput({
