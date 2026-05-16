@@ -14,7 +14,6 @@ import type { ContactDetail, LinkedInWorkEntry, LinkedInEducationEntry } from '.
 import type { CompanySummary } from '../../../shared/types/company'
 import type { CustomFieldWithValue, CustomFieldValue } from '../../../shared/types/custom-fields'
 import { CONTACT_SECTIONS } from '../../../shared/types/custom-fields'
-import ConfirmDialog from '../common/ConfirmDialog'
 import { daysSince, formatCurrency, formatDate } from '../../utils/format'
 import { usePreferencesStore } from '../../stores/preferences.store'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
@@ -30,6 +29,7 @@ import { AddFieldDropdown } from '../crm/AddFieldDropdown'
 import { computeChipDelta } from '../../utils/chip-delta'
 import { usePinnedMigration } from '../../hooks/usePinnedMigration'
 import { ContactHeaderCard } from './ContactHeaderCard'
+import { ContactModalsCollection } from './ContactModalsCollection'
 import { saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
 import { CONTACT_HARDCODED_FIELDS } from '../../constants/contactFields'
 import { CollapsibleSection } from '../crm/CollapsibleSection'
@@ -39,7 +39,6 @@ import {
   CONTACT_TYPES,
   CONTACT_COLUMN_DEFS,
 } from './contactColumns'
-import { EnrichMethodModal } from '../common/EnrichMethodModal'
 import { Spinner } from '../common/Spinner'
 import styles from './ContactPropertiesPanel.module.css'
 import { api } from '../../api'
@@ -1180,85 +1179,30 @@ export function ContactPropertiesPanel({
   return (
     <div ref={panelRef} className={styles.panel}>
       <div className={styles.headerCard}>
-      <EnrichMethodModal
-        open={enrichMethodModalOpen}
-        onClose={() => setEnrichMethodModalOpen(false)}
-        title="Enrich contact"
-        subtitle="Choose a source to enrich this contact's profile."
-        methods={[
-          ...(showEnrichBanner && onEnrichFromMeetings ? [{
-            icon: '✨',
-            label: 'From meetings',
-            description: `${enrichMeetingCount ?? 0} new meeting${(enrichMeetingCount ?? 0) !== 1 ? 's' : ''} available`,
-            onClick: () => onEnrichFromMeetings(),
-          }] : []),
-          ...(contact.linkedinUrl ? [{
-            icon: '🔗',
-            label: contact.linkedinEnrichedAt ? 'Re-enrich from LinkedIn' : 'Enrich from LinkedIn',
-            description: contact.linkedinEnrichedAt ? `Last enriched ${formatRelativeTime(contact.linkedinEnrichedAt)}` : 'Pull profile data from LinkedIn',
-            onClick: () => void handleLinkedInEnrich(),
-          }] : exaApiKey ? [{
-            icon: '🔍',
-            label: 'Find on LinkedIn',
-            description: 'Search for this contact on LinkedIn',
-            onClick: () => void handleFindOnLinkedIn(),
-          }] : []),
-        ]}
+      <ContactModalsCollection
+        contact={contact}
+        enrichMethodModalOpen={enrichMethodModalOpen}
+        setEnrichMethodModalOpen={setEnrichMethodModalOpen}
+        showEnrichBanner={showEnrichBanner ?? false}
+        onEnrichFromMeetings={onEnrichFromMeetings}
+        enrichMeetingCount={enrichMeetingCount}
+        exaApiKey={exaApiKey}
+        onLinkedInEnrich={handleLinkedInEnrich}
+        onFindOnLinkedIn={handleFindOnLinkedIn}
+        confirmDelete={confirmDelete}
+        setConfirmDelete={setConfirmDelete}
+        deleting={deleting}
+        onDeleteContact={handleDeleteContact}
+        mergeTarget={mergeTarget}
+        setMergeTarget={setMergeTarget}
+        merging={merging}
+        onMergeInto={handleMergeInto}
+        mergePickerOpen={mergePickerOpen}
+        setMergePickerOpen={setMergePickerOpen}
+        mergeQuery={mergeQuery}
+        setMergeQuery={setMergeQuery}
+        mergeResults={mergeResults}
       />
-
-      <ConfirmDialog
-        open={confirmDelete}
-        title="Delete contact?"
-        message={`This will permanently delete ${contact.fullName}.`}
-        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
-        variant="danger"
-        onConfirm={handleDeleteContact}
-        onCancel={() => setConfirmDelete(false)}
-      />
-
-      <ConfirmDialog
-        open={!!mergeTarget}
-        title="Merge contacts?"
-        message={`Merge "${contact.fullName}" into "${mergeTarget?.name ?? ''}"? All meetings, emails, and notes will be relinked and this contact will be deleted.`}
-        confirmLabel={merging ? 'Merging…' : 'Merge'}
-        variant="danger"
-        onConfirm={handleMergeInto}
-        onCancel={() => setMergeTarget(null)}
-      />
-
-      {mergePickerOpen && (
-        <div className={styles.mergePickerOverlay} onClick={() => setMergePickerOpen(false)}>
-          <div className={styles.mergePicker} onClick={e => e.stopPropagation()}>
-            <p className={styles.mergePickerTitle}>
-              Merge &ldquo;{contact.fullName}&rdquo; into:
-            </p>
-            <input
-              autoFocus
-              className={styles.mergePickerInput}
-              placeholder="Search contacts…"
-              value={mergeQuery}
-              onChange={e => setMergeQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Escape' && setMergePickerOpen(false)}
-            />
-            <div className={styles.mergePickerList}>
-              {mergeResults.map(r => (
-                <button
-                  key={r.id}
-                  className={styles.mergePickerOption}
-                  onClick={() => { setMergeTarget(r); setMergePickerOpen(false) }}
-                >
-                  {r.name}
-                </button>
-              ))}
-              {mergeResults.length === 0 && (
-                <span className={styles.mergePickerEmpty}>
-                  {mergeQuery ? 'No contacts found' : 'Start typing to search…'}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Header — extracted to ContactHeaderCard */}
       <ContactHeaderCard
