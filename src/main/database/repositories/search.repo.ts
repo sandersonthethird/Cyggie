@@ -1003,9 +1003,9 @@ export function getContentMatchPreviews(query: string, limit = 5): ContentMatchP
   try {
     const rows = db
       .prepare(`
-        SELECT id,
-          COALESCE(NULLIF(TRIM(subject), ''), '(no subject)') AS subject,
-          COALESCE(snippet, '') AS snippet,
+        SELECT em.id AS id,
+          COALESCE(NULLIF(TRIM(em.subject), ''), '(no subject)') AS subject,
+          COALESCE(em.snippet, '') AS snippet,
           c.id AS company_id,
           c.canonical_name AS company_name
         FROM email_messages em
