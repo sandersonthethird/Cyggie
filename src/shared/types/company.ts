@@ -42,7 +42,7 @@ export const STATUS_OPTIONS: { value: CompanyStatus; label: string }[] = [
   { value: 'shut_down', label: 'Shut Down' },
 ]
 
-export type CompanyPriority = 'high' | 'further_work' | 'monitor'
+export type CompanyPriority = 'high' | 'medium' | 'monitor' | 'low'
 export type CompanyRound = 'pre_seed' | 'seed' | 'seed_extension' | 'series_a' | 'series_b' | 'series_c' | 'series_d'
 
 export type InvestmentSecurityType = 'preferred_stock' | 'safe' | 'convertible_note' | 'common_stock'

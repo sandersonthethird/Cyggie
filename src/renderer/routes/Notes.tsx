@@ -8,7 +8,8 @@ import { EntityPicker } from '../components/common/EntityPicker'
 import { FolderSidebar, INBOX_SENTINEL } from '../components/notes/FolderSidebar'
 import NotePaneEditor from '../components/notes/NotePaneEditor'
 import { api } from '../api'
-import { stripMarkdownPreview } from '../utils/format'
+import { ipcCache } from '../api/ipcCache'
+import { parseToDate, stripMarkdownPreview } from '../utils/format'
 import styles from './Notes.module.css'
 import type { Note, NoteFilterView, TagSuggestion } from '../../shared/types/note'
 import type { CompanySummary } from '../../shared/types/company'
@@ -20,7 +21,7 @@ import type { ContactSummary } from '../../shared/types/contact'
  * day — not "24 hours ago".
  */
 export function getDateGroup(dateStr: string): string {
-  const note = new Date(dateStr)
+  const note = parseToDate(dateStr)
   const today = new Date()
   const noteDay  = new Date(note.getFullYear(),  note.getMonth(),  note.getDate())
   const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate())
@@ -34,7 +35,7 @@ export function getDateGroup(dateStr: string): string {
 }
 
 function formatTime(dateStr: string): string {
-  const d = new Date(dateStr)
+  const d = parseToDate(dateStr)
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   const yy = String(d.getFullYear()).slice(-2)
@@ -124,6 +125,13 @@ export default function Notes() {
   const companyPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
   const contactPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST)
 
+  // Panel resize for the folder sidebar (left pane)
+  const { leftWidth: folderPaneWidth, dividerProps: folderDividerProps } = usePanelResize({
+    defaultWidth: 200,
+    minWidth: 140,
+    maxWidth: 400,
+  })
+
   // Panel resize for the note list (middle pane)
   const { leftWidth: listPaneWidth, dividerProps: resizeDividerProps } = usePanelResize({
     defaultWidth: 280,
@@ -142,8 +150,10 @@ export default function Notes() {
     const isStale = getGuard()
     try {
       const [folderList, sourceList] = await Promise.all([
-        api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_FOLDERS),
-        api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_IMPORT_SOURCES),
+        ipcCache.get<string[]>(IPC_CHANNELS.NOTES_LIST_FOLDERS, null,
+          () => api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_FOLDERS)),
+        ipcCache.get<string[]>(IPC_CHANNELS.NOTES_LIST_IMPORT_SOURCES, null,
+          () => api.invoke<string[]>(IPC_CHANNELS.NOTES_LIST_IMPORT_SOURCES)),
       ])
       if (isStale()) return
       setFolders(folderList)
@@ -154,9 +164,11 @@ export default function Notes() {
   const fetchFolderCounts = useCallback(async () => {
     const isStale = getGuard()
     try {
-      const rows = await api.invoke<{ folderPath: string | null; count: number }[]>(
+      const countArgs = { hideClaimedMeetingNotes: !showMeetingNotes }
+      const rows = await ipcCache.get<{ folderPath: string | null; count: number }[]>(
         IPC_CHANNELS.NOTES_FOLDER_COUNTS,
-        { hideClaimedMeetingNotes: !showMeetingNotes }
+        countArgs,
+        () => api.invoke<{ folderPath: string | null; count: number }[]>(IPC_CHANNELS.NOTES_FOLDER_COUNTS, countArgs),
       )
       if (isStale()) return
       const map: Record<string, number> = { __all__: 0 }
@@ -199,7 +211,11 @@ export default function Notes() {
         folderPath: selectedFolder,
         hideClaimedMeetingNotes: !showMeetingNotes,
       }
-      const results = await api.invoke<Note[]>(IPC_CHANNELS.NOTES_LIST, opts)
+      const results = await ipcCache.get<Note[]>(
+        IPC_CHANNELS.NOTES_LIST,
+        opts,
+        () => api.invoke<Note[]>(IPC_CHANNELS.NOTES_LIST, opts),
+      )
       if (isStale()) return
       const filtered = selectedImportSource
         ? results.filter(n => n.importSource === selectedImportSource)
@@ -587,7 +603,11 @@ export default function Notes() {
           onRenameFolder={handleRenameFolder}
           onDeleteFolder={handleDeleteFolder}
           counts={folderCounts}
+          width={folderPaneWidth}
         />
+
+        {/* Resize handle (folder ↔ list) */}
+        <div className={styles.resizeHandle} {...folderDividerProps} />
 
         {/* Middle: note list pane */}
         <div

@@ -4,6 +4,7 @@ import { useHeaderChipOrder } from '../../hooks/useHeaderChipOrder'
 import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
 import { useFieldVisibility } from '../../hooks/useFieldVisibility'
 import { useSectionOrder } from '../../hooks/useSectionOrder'
+import { useTimedError } from '../../hooks/useTimedError'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
@@ -52,19 +53,6 @@ import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
 import type { CustomFieldValue } from '../../../shared/types/custom-fields'
 import type { ContactSummary } from '../../../shared/types/contact'
 
-const ENTITY_TYPE_STYLE: Record<string, string> = {
-  prospect: styles.chipProspect,
-  portfolio: styles.chipPortfolio,
-  pass: styles.chipPass,
-  vc_fund: styles.chipVcFund,
-  lp: styles.chipLp,
-  customer: styles.chipCustomer,
-  partner: styles.chipPartner,
-  vendor: styles.chipVendor,
-  unknown: styles.chipUnknown,
-  other: styles.chipOther,
-}
-
 const ENTITY_LABELS: Record<string, string> = {
   prospect: 'Prospects',
   portfolio: 'Portfolio',
@@ -92,29 +80,6 @@ const LAYOUT_PREF_BASE_KEYS = [
   'cyggie:company-field-placements',
   'cyggie:company-sections-order',
 ] as const
-
-const STAGE_STYLE: Record<string, string> = {
-  screening: styles.chipScreening,
-  diligence: styles.chipDiligence,
-  decision: styles.chipDecision,
-  documentation: styles.chipDocumentation,
-  portfolio: styles.chipPortfolio,
-  pass: styles.chipPass,
-}
-
-const PRIORITY_STYLE: Record<string, string> = {
-  high: styles.priorityHigh,
-  further_work: styles.priorityFurtherWork,
-  monitor: styles.priorityMonitor,
-}
-
-const ROUND_STYLE: Record<string, string> = {
-  pre_seed: styles.chipPreSeed,
-  seed: styles.chipSeed,
-  seed_extension: styles.chipSeedExtension,
-  series_a: styles.chipSeriesA,
-  series_b: styles.chipSeriesB,
-}
 
 interface CompanyPropertiesPanelProps {
   company: CompanyDetail
@@ -180,13 +145,14 @@ export function CompanyPropertiesPanel({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [taskModalOpen, setTaskModalOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const deleteError = useTimedError()
+  const optionError = useTimedError(4000)
   const [mergePickerOpen, setMergePickerOpen] = useState(false)
   const [mergeQuery, setMergeQuery] = useState('')
   const [mergeResults, setMergeResults] = useState<{ id: string; name: string }[]>([])
   const [mergeTarget, setMergeTarget] = useState<{ id: string; name: string } | null>(null)
   // merging state lives inside MergeReviewModal now; we just hold the target.
-  const [nameError, setNameError] = useState<string | null>(null)
+  const nameError = useTimedError()
   const [createFieldOpen, setCreateFieldOpen] = useState(false)
   const [createFieldSection, setCreateFieldSection] = useState<string | undefined>(undefined)
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
@@ -486,7 +452,7 @@ export function CompanyPropertiesPanel({
   useEffect(() => {
     if (isEditing) {
       setNameDraft(company.canonicalName)
-      setNameError(null)
+      nameError.clear()
       setTimeout(() => nameInputRef.current?.focus(), 0)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -620,14 +586,14 @@ export function CompanyPropertiesPanel({
 
   async function handleDone() {
     const trimmed = nameDraft.trim()
-    setNameError(null)
+    nameError.clear()
     if (trimmed && trimmed !== company.canonicalName) {
       try {
         await save('canonicalName', trimmed)
       } catch (err: unknown) {
         console.error('[CompanyPropertiesPanel] Failed to save name:', err)
         const msg = err instanceof Error ? err.message : String(err)
-        setNameError(
+        nameError.show(
           msg.toLowerCase().includes('unique') || msg.toLowerCase().includes('constraint')
             ? 'A company with a similar name already exists.'
             : 'Failed to save name. Please try again.'
@@ -684,14 +650,14 @@ export function CompanyPropertiesPanel({
   async function handleDeleteCompany() {
     if (deleting) return
     setDeleting(true)
-    setDeleteError(null)
+    deleteError.clear()
     try {
       await api.invoke(IPC_CHANNELS.COMPANY_DELETE, company.id)
       setConfirmDelete(false)
       navigate('/companies')
     } catch (err) {
       console.error('[CompanyPropertiesPanel] delete failed:', err)
-      setDeleteError(err instanceof Error ? err.message : String(err))
+      deleteError.show(err instanceof Error ? err.message : String(err))
     } finally {
       setDeleting(false)
     }
@@ -777,9 +743,11 @@ export function CompanyPropertiesPanel({
             options={entityTypeOptions}
             isEditing={isEditing}
             onSave={(v) => saveWithDecisionPrompt('entityType', v ?? 'unknown')}
-            className={`${styles.badge} ${ENTITY_TYPE_STYLE[company.entityType] ?? ''}`}
+            className={styles.badge}
+            data-entity-type={company.entityType}
             allowEmpty={false}
             onAddOption={entityTypeDef ? async (opt) => addCustomFieldOption(entityTypeDef.id, entityTypeDef.optionsJson, opt) : undefined}
+            onError={optionError.show}
           />
         )
       case 'pipelineStage':
@@ -789,8 +757,10 @@ export function CompanyPropertiesPanel({
             options={[{ value: '', label: '—' }, ...stageOptions]}
             isEditing={isEditing}
             onSave={(v) => saveWithDecisionPrompt('pipelineStage', v || null)}
-            className={`${styles.badge} ${company.pipelineStage ? (STAGE_STYLE[company.pipelineStage] ?? '') : ''}`}
+            className={styles.badge}
+            data-stage={company.pipelineStage ?? undefined}
             onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
+            onError={optionError.show}
           />
         )
       case 'priority':
@@ -800,8 +770,10 @@ export function CompanyPropertiesPanel({
             options={[{ value: '', label: '—' }, ...priorityOptions]}
             isEditing={isEditing}
             onSave={(v) => save('priority', v || null)}
-            className={`${styles.badge} ${company.priority ? (PRIORITY_STYLE[company.priority] ?? '') : ''}`}
+            className={styles.badge}
+            data-priority={company.priority ?? undefined}
             onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
+            onError={optionError.show}
           />
         )
       case 'round':
@@ -811,8 +783,10 @@ export function CompanyPropertiesPanel({
             options={[{ value: '', label: '—' }, ...roundOptions]}
             isEditing={isEditing}
             onSave={(v) => save('round', v || null)}
-            className={`${styles.badge} ${company.round ? (ROUND_STYLE[company.round] ?? '') : ''}`}
+            className={styles.badge}
+            data-round={company.round ?? undefined}
             onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
+            onError={optionError.show}
           />
         )
       default:
@@ -864,7 +838,7 @@ export function CompanyPropertiesPanel({
           company={company}
           isEditing={isEditing}
           nameDraft={nameDraft}
-          nameError={nameError}
+          nameError={nameError.error}
           nameInputRef={nameInputRef}
           onNameChange={setNameDraft}
           onNameKeyDown={handleNameKeyDown}
@@ -906,6 +880,11 @@ export function CompanyPropertiesPanel({
           fieldSources={fieldSources}
           onSaveWebsite={(v) => save('websiteUrl', v)}
         />
+        {optionError.error && (
+          <div style={{ color: '#c0392b', fontSize: '12px', padding: '4px 12px' }}>
+            {optionError.error}
+          </div>
+        )}
       </div>
 
       {taskModalOpen && (
@@ -1193,9 +1172,9 @@ export function CompanyPropertiesPanel({
         message={`Delete "${company.canonicalName}" and all associated data? This cannot be undone.`}
         confirmLabel={deleting ? 'Deleting...' : 'Delete'}
         variant="danger"
-        errorMessage={deleteError}
+        errorMessage={deleteError.error}
         onConfirm={handleDeleteCompany}
-        onCancel={() => { setConfirmDelete(false); setDeleteError(null) }}
+        onCancel={() => { setConfirmDelete(false); deleteError.clear() }}
       />
       {mergeTarget && (
         <MergeReviewModal

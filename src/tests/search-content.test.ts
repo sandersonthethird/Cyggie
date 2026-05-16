@@ -71,12 +71,14 @@ function buildDb(): Database.Database {
       duration_seconds INTEGER,
       status TEXT DEFAULT 'summarized'
     );
-    CREATE TABLE meetings_fts (
-      meeting_id TEXT UNINDEXED,
-      title TEXT,
-      transcript_text TEXT,
-      summary_text TEXT
-    , content="", tokenize="porter unicode61");
+    CREATE VIRTUAL TABLE meetings_fts USING fts5(
+      meeting_id UNINDEXED,
+      title,
+      transcript_text,
+      summary_text,
+      content='',
+      tokenize='porter unicode61'
+    );
     CREATE TABLE email_messages (
       id TEXT PRIMARY KEY,
       subject TEXT,

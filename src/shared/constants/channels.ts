@@ -24,6 +24,8 @@ export const IPC_CHANNELS = {
   // fails. Mirrors VIDEO_FINALIZED / VIDEO_FINALIZE_ERROR.
   RECORDING_FINALIZED: 'recording:finalized',
   RECORDING_FINALIZE_ERROR: 'recording:finalize-error',
+  RECORDING_AUDIO_FLOW_STATUS: 'recording:audio-flow-status',
+  RECORDING_MIC_STATUS: 'recording:mic-status',
 
   // Calendar
   CALENDAR_CONNECT: 'calendar:connect',

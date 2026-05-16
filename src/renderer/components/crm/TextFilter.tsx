@@ -4,6 +4,7 @@
  * URL param: ?field_q=search
  */
 import { useEffect, useRef } from 'react'
+import { useOutsideClick } from '../../hooks/useOutsideClick'
 import styles from './TextFilter.module.css'
 
 export interface TextFilterProps {
@@ -23,14 +24,7 @@ export function TextFilter({ value, onChange, isOpen, onOpen, onClose, label }: 
     if (isOpen) inputRef.current?.focus()
   }, [isOpen])
 
-  useEffect(() => {
-    if (!isOpen) return
-    function handleMouseDown(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) onClose()
-    }
-    document.addEventListener('mousedown', handleMouseDown)
-    return () => document.removeEventListener('mousedown', handleMouseDown)
-  }, [isOpen, onClose])
+  useOutsideClick(wrapRef, onClose, isOpen)
 
   const isActive = value.trim().length > 0
   const badge = value.length > 6 ? value.slice(0, 6) + '…' : value

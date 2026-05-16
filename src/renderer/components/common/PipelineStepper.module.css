@@ -16,26 +16,27 @@
   padding: 12px 0;
 }
 
-.topRow {
+.row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
 }
 
-/* The track + dots container */
-.track {
-  display: flex;
-  align-items: center;
+/* 2-row grid: row 1 holds dots (odd cols) + segments (even cols);
+ * row 2 holds stage labels centered under their dot columns. */
+.grid {
+  display: grid;
   flex: 1;
-  position: relative;
+  row-gap: 6px;
+  align-items: center;
 }
 
 /* Connecting line between dots */
 .segment {
-  flex: 1;
   height: 3px;
   background: var(--cy-border, var(--color-border));
   transition: background 0.15s;
+  align-self: center;
 }
 
 .segmentCompleted {
@@ -49,11 +50,11 @@
   border-radius: 50%;
   border: 2px solid var(--cy-border, var(--color-border));
   background: var(--cy-surface, #fff);
-  flex-shrink: 0;
   cursor: pointer;
   transition: all 0.15s;
   position: relative;
   z-index: 1;
+  justify-self: center;
 }
 
 .dot:hover {
@@ -83,15 +84,7 @@
   font-size: 11px;
   color: var(--cy-text-3, var(--color-text-tertiary));
   white-space: nowrap;
-  margin-left: 12px;
   flex-shrink: 0;
-}
-
-/* Stage labels below the track */
-.labels {
-  display: flex;
-  justify-content: space-between;
-  padding: 0 2px;
 }
 
 .stageLabel {
@@ -101,6 +94,8 @@
   text-align: center;
   cursor: pointer;
   transition: color 0.1s;
+  white-space: nowrap;
+  justify-self: center;
 }
 
 .stageLabel:hover {
@@ -123,7 +118,6 @@
   font-style: italic;
   color: var(--cy-text-3, var(--color-text-tertiary));
   white-space: nowrap;
-  margin-left: 12px;
   flex-shrink: 0;
 }
 

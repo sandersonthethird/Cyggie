@@ -5,6 +5,7 @@ import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
 import { useFieldVisibility } from '../../hooks/useFieldVisibility'
 import { useSectionOrder } from '../../hooks/useSectionOrder'
 import { useListboxNavigation } from '../../hooks/useListboxNavigation'
+import { useTimedError } from '../../hooks/useTimedError'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { ContactDetail, LinkedInWorkEntry, LinkedInEducationEntry } from '../../../shared/types/contact'
@@ -53,13 +54,6 @@ const LAYOUT_PREF_BASE_KEYS = [
   'cyggie:contact-sections-order',
 ] as const
 
-const CONTACT_TYPE_STYLE: Record<string, string> = {
-  investor: styles.chipInvestor,
-  founder: styles.chipFounder,
-  operator: styles.chipOperator,
-  lp: styles.chipLp,
-}
-
 const TALENT_PIPELINE_STAGES: { value: string; label: string }[] = [
   { value: 'identified',          label: 'Identified / Passive' },
   { value: 'exploring',           label: 'Exploring'             },
@@ -68,15 +62,6 @@ const TALENT_PIPELINE_STAGES: { value: string; label: string }[] = [
   { value: 'portfolio_candidate', label: 'Portfolio Candidate'   },
   { value: 'internal_candidate',  label: 'Internal Candidate'    },
 ]
-
-const TALENT_PIPELINE_STYLE: Record<string, string> = {
-  identified:          styles.pipelineIdentified,
-  exploring:           styles.pipelineExploring,
-  ideating:            styles.pipelineIdeating,
-  fundraising:         styles.pipelineFundraising,
-  portfolio_candidate: styles.pipelinePortfolioCandidate,
-  internal_candidate:  styles.pipelineInternalCandidate,
-}
 
 interface ContactPropertiesPanelProps {
   contact: ContactDetail
@@ -220,7 +205,8 @@ export function ContactPropertiesPanel({
   const [deleting, setDeleting] = useState(false)
   const [linkedinEnriching, setLinkedinEnriching] = useState(false)
   const [linkedinError, setLinkedinError] = useState<{ code: string; message: string } | null>(null)
-  const [metaSaveError, setMetaSaveError] = useState<string | null>(null)
+  const metaSaveError = useTimedError()
+  const optionError = useTimedError(4000)
   const [isSearchingLinkedIn, setIsSearchingLinkedIn] = useState(false)
   const [linkedInFoundUrl, setLinkedInFoundUrl] = useState<string | null>(null)
   const [showLinkedInConfirm, setShowLinkedInConfirm] = useState(false)
@@ -380,9 +366,7 @@ export function ContactPropertiesPanel({
 
   // Deduplicate: custom fields in 'summary' section + pinned builtin keys
   const customSummaryIds = customFields.filter(f => f.section === 'summary').map(f => `custom:${f.id}`)
-  // Only include talentPipeline chip when a stage is set — keeps header clean for untracked contacts
-  const talentPipelineChipIds = contact.talentPipeline ? ['talentPipeline'] : []
-  const allChipIds = [...new Set(['contactType', ...talentPipelineChipIds, ...pinnedKeys, ...customSummaryIds])]
+  const allChipIds = [...new Set(['contactType', ...pinnedKeys, ...customSummaryIds])]
   const { effectiveOrder, chipDragProps, chipDropZoneProps, chipDragOverIndex } =
     useHeaderChipOrder('contact', allChipIds, contact.id, null, markChanged)
 
@@ -759,7 +743,7 @@ export function ContactPropertiesPanel({
   }
 
   async function handleDone() {
-    setMetaSaveError(null)
+    metaSaveError.clear()
 
     const firstName = firstNameDraft.trim()
     const lastName = lastNameDraft.trim()
@@ -806,7 +790,7 @@ export function ContactPropertiesPanel({
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save'
-      setMetaSaveError(msg)
+      metaSaveError.show(msg)
       return // Stay in edit mode so user can fix the issue
     }
 
@@ -1221,9 +1205,11 @@ export function ContactPropertiesPanel({
           options={[{ value: '', label: '—' }, ...contactTypeOptions]}
           isEditing={isEditing}
           onSave={(v) => save('contactType', v || null)}
-          className={`${styles.badge} ${contact.contactType ? (CONTACT_TYPE_STYLE[contact.contactType] ?? '') : ''}`}
+          className={styles.badge}
+          data-contact-type={contact.contactType ?? undefined}
           allowEmpty={true}
           onAddOption={contactTypeDef ? async (opt) => addCustomFieldOption(contactTypeDef.id, contactTypeDef.optionsJson, opt) : undefined}
+          onError={optionError.show}
         />
       )
     }
@@ -1234,9 +1220,11 @@ export function ContactPropertiesPanel({
           options={[{ value: '', label: '—' }, ...talentPipelineOptions]}
           isEditing={isEditing}
           onSave={(v) => save('talentPipeline', v || null)}
-          className={`${styles.badge} ${contact.talentPipeline ? (TALENT_PIPELINE_STYLE[contact.talentPipeline] ?? '') : ''}`}
+          className={styles.badge}
+          data-talent-pipeline={contact.talentPipeline ?? undefined}
           allowEmpty={true}
           onAddOption={talentPipelineDef ? async (opt) => addCustomFieldOption(talentPipelineDef.id, talentPipelineDef.optionsJson, opt) : undefined}
+          onError={optionError.show}
         />
       )
     }
@@ -1470,9 +1458,9 @@ export function ContactPropertiesPanel({
                     <button className={styles.cancelBtn} onClick={handleCancel}>Cancel</button>
                     <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Reset layout to default">Reset Layout</button>
                   </div>
-                  {metaSaveError && (
+                  {metaSaveError.error && (
                     <div style={{ color: '#c0392b', fontSize: '12px', marginTop: '4px', padding: '0 8px' }}>
-                      {metaSaveError}
+                      {metaSaveError.error}
                     </div>
                   )}
                 </>
@@ -1777,6 +1765,12 @@ export function ContactPropertiesPanel({
           )
         })}
       </div>
+
+      {optionError.error && (
+        <div style={{ color: '#c0392b', fontSize: '12px', padding: '4px 12px' }}>
+          {optionError.error}
+        </div>
+      )}
 
       {/* Variant C: legacy sticky '+ Add field' bar removed.
           PropertiesCard footer "+ Add property" handles this affordance. */}

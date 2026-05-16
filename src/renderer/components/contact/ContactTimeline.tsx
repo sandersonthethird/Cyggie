@@ -6,6 +6,7 @@ import type { ContactNote, ContactTimelineItem } from '../../../shared/types/con
 import { useEmailSync } from '../../hooks/useEmailSync'
 import { EmailDetailModal } from '../crm/EmailDetailModal'
 import { ContactNoteDetailModal } from '../crm/ContactNoteDetailModal'
+import { parseToDate } from '../../utils/format'
 import styles from './ContactTimeline.module.css'
 
 interface ContactTimelineProps {
@@ -158,7 +159,7 @@ export function ContactTimeline({ contactId, hasEmail = true, className }: Conta
             <div className={styles.itemHeader}>
               <span className={styles.typeLabel}>{TYPE_LABEL[item.type] ?? item.type}</span>
               <span className={styles.date}>
-                {new Date(item.occurredAt).toLocaleDateString(undefined, {
+                {parseToDate(item.occurredAt).toLocaleDateString(undefined, {
                   month: 'short', day: 'numeric', year: 'numeric'
                 })}
               </span>

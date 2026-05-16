@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { CompanyPipelineStage } from '../../../shared/types/company'
 import styles from './PipelineStepper.module.css'
 
@@ -55,17 +55,21 @@ export function PipelineStepper({
 
   return (
     <div className={`${styles.wrapper} ${isPassed ? styles.passedTrack : ''}`}>
-      <div className={styles.topRow}>
-        <div className={styles.track}>
+      <div className={styles.row}>
+        <div
+          className={styles.grid}
+          style={{ gridTemplateColumns: `${'auto 1fr '.repeat(renderedStages.length - 1)}auto` }}
+        >
           {renderedStages.map((stage, i) => {
             const isCompleted = !isPassed && i < currentIndex
             const isCurrent = !isPassed && i === currentIndex
 
             return (
-              <span key={stage.value ?? '__null'} style={{ display: 'contents' }}>
+              <Fragment key={stage.value ?? '__null'}>
                 {i > 0 && (
                   <div
                     className={`${styles.segment} ${!isPassed && i <= currentIndex ? styles.segmentCompleted : ''}`}
+                    style={{ gridRow: 1, gridColumn: 2 * i }}
                   />
                 )}
                 <div
@@ -74,10 +78,18 @@ export function PipelineStepper({
                       : isCompleted ? styles.dotCompleted
                       : styles.dotFuture
                   }`}
+                  style={{ gridRow: 1, gridColumn: 2 * i + 1 }}
                   onClick={() => handleClick(stage)}
                   title={stage.label}
                 />
-              </span>
+                <span
+                  className={`${styles.stageLabel} ${i === currentIndex ? styles.stageLabelCurrent : ''}`}
+                  style={{ gridRow: 2, gridColumn: 2 * i + 1 }}
+                  onClick={() => handleClick(stage)}
+                >
+                  {stage.label}
+                </span>
+              </Fragment>
             )
           })}
         </div>
@@ -86,18 +98,6 @@ export function PipelineStepper({
             ? (daysInStage === 0 ? 'Passed today' : `Passed · ${daysInStage}d ago`)
             : `${daysInStage} day${daysInStage !== 1 ? 's' : ''} in stage`}
         </span>
-      </div>
-
-      <div className={styles.labels}>
-        {renderedStages.map((stage, i) => (
-          <span
-            key={stage.value ?? '__null'}
-            className={`${styles.stageLabel} ${i === currentIndex ? styles.stageLabelCurrent : ''}`}
-            onClick={() => handleClick(stage)}
-          >
-            {stage.label}
-          </span>
-        ))}
       </div>
 
       {pendingReopen && (

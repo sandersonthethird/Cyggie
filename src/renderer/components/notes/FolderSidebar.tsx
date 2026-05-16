@@ -35,6 +35,8 @@ interface Props {
   onDeleteFolder: (path: string) => Promise<void>
   /** Count badge per folder. Keys: folder path, INBOX_SENTINEL, '__all__' */
   counts?: Record<string, number>
+  /** Overrides the default CSS width when provided (px). */
+  width?: number
 }
 
 /** Build a nested tree from a flat sorted array of folder paths. */
@@ -225,7 +227,7 @@ export function FolderSidebar({
   tagSuggestions, onDismissSuggestion, onAcceptSuggestion,
   importSources, selectedImportSource, onSelectImportSource,
   onCreateFolder, onRenameFolder, onDeleteFolder,
-  counts,
+  counts, width,
 }: Props) {
   const tree = useMemo(() => buildFolderTree(folders), [folders])
   const [creatingFolder, setCreatingFolder] = useState(false)
@@ -241,7 +243,7 @@ export function FolderSidebar({
   }
 
   return (
-    <div className={styles.sidebar}>
+    <div className={styles.sidebar} style={width != null ? { width } : undefined}>
       <div
         className={`${styles.folderItem} ${isAllActive ? styles.folderItemActive : ''}`}
         style={{ paddingLeft: '12px' }}

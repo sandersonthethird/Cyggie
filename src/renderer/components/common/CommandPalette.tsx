@@ -6,6 +6,7 @@ import type {
   UnifiedSearchResponse,
   UnifiedSearchResult
 } from '../../../shared/types/unified-search'
+import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import styles from './CommandPalette.module.css'
 import { api } from '../../api'
 
@@ -47,6 +48,10 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
     { key: 'note', label: 'Notes', items: results.grouped.note },
     { key: 'memo', label: 'Memos', items: results.grouped.memo }
   ]), [results])
+
+  // Flatten groups into a single navigable list so arrow keys traverse all
+  // results in display order; group headers stay as decorative siblings.
+  const selectableItems = useMemo(() => groups.flatMap(g => g.items), [groups])
 
   useEffect(() => {
     if (!open) return
@@ -107,21 +112,15 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
     return unsub
   }, [asking])
 
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose])
-
   const openResult = (result: UnifiedSearchResult) => {
     navigate(result.route)
     onClose()
   }
+
+  const { activeIndex, onKeyDown: navKeyDown } = useListboxNavigation<UnifiedSearchResult>(
+    selectableItems,
+    { onSelect: openResult, onEscape: onClose, enabled: open }
+  )
 
   const askAi = async () => {
     if (!query.trim() || asking) return
@@ -155,6 +154,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
             className={styles.input}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={navKeyDown}
             placeholder="Ask anything across meetings, emails, notes, and memos..."
           />
           <button
@@ -173,26 +173,38 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
         )}
 
         <div className={styles.results}>
-          {groups.map((group) => (
-            group.items.length > 0 ? (
-              <section key={group.key} className={styles.group}>
-                <h3 className={styles.groupTitle}>{group.label}</h3>
-                {group.items.map((item) => (
-                  <button
-                    key={item.id}
-                    className={styles.resultRow}
-                    onClick={() => openResult(item)}
-                  >
-                    <span className={styles.resultTitle}>{item.title}</span>
-                    <span className={styles.resultMeta}>
-                      {[item.companyName, item.citationLabel].filter(Boolean).join(' · ')}
-                    </span>
-                    {item.snippet && <span className={styles.resultSnippet}>{item.snippet}</span>}
-                  </button>
-                ))}
-              </section>
-            ) : null
-          ))}
+          {(() => {
+            // Walk groups, tracking the cumulative flat-list index so arrow-key
+            // navigation matches the visual order.
+            let flatIndex = 0
+            return groups.map((group) => {
+              if (group.items.length === 0) return null
+              return (
+                <section key={group.key} className={styles.group}>
+                  <h3 className={styles.groupTitle}>{group.label}</h3>
+                  {group.items.map((item) => {
+                    const isActive = flatIndex === activeIndex
+                    const myIndex = flatIndex
+                    flatIndex += 1
+                    return (
+                      <button
+                        key={item.id}
+                        className={`${styles.resultRow} ${isActive ? styles.resultRowActive : ''}`}
+                        onClick={() => openResult(item)}
+                        data-index={myIndex}
+                      >
+                        <span className={styles.resultTitle}>{item.title}</span>
+                        <span className={styles.resultMeta}>
+                          {[item.companyName, item.citationLabel].filter(Boolean).join(' · ')}
+                        </span>
+                        {item.snippet && <span className={styles.resultSnippet}>{item.snippet}</span>}
+                      </button>
+                    )
+                  })}
+                </section>
+              )
+            })
+          })()}
           {!loading && query.trim() && results.totalCount === 0 && (
             <div className={styles.meta}>No sources matched your query.</div>
           )}

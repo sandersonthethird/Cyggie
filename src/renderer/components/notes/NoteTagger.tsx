@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { usePicker } from '../../hooks/usePicker'
+import { useTimedError } from '../../hooks/useTimedError'
 import { EntityPicker } from '../common/EntityPicker'
 import { api } from '../../api'
 import styles from './NoteTagger.module.css'
@@ -27,6 +28,7 @@ export function NoteTagger({
   onTagContact
 }: NoteTaggerProps) {
   const [activePicker, setActivePicker] = useState<PickerType>(null)
+  const createError = useTimedError(4000)
 
   // Double-click guard: ref for synchronous re-entrancy check, state drives UI.
   const creatingCompanyRef = useRef(false)
@@ -63,6 +65,7 @@ export function NoteTagger({
         }
       } catch (err) {
         console.error('[NoteTagger] Failed to create company:', err)
+        createError.show(err instanceof Error ? err.message : 'Failed to create company')
       } finally {
         creatingCompanyRef.current = false
         setCreatingCompany(false)
@@ -96,6 +99,7 @@ export function NoteTagger({
         }
       } catch (err) {
         console.error('[NoteTagger] Failed to create contact:', err)
+        createError.show(err instanceof Error ? err.message : 'Failed to create contact')
       } finally {
         creatingContactRef.current = false
         setCreatingContact(false)
@@ -171,6 +175,11 @@ export function NoteTagger({
         >
           + Contact
         </button>
+      )}
+      {createError.error && (
+        <span style={{ color: '#c0392b', fontSize: '12px', marginLeft: '8px' }}>
+          {createError.error}
+        </span>
       )}
     </div>
   )

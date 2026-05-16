@@ -196,18 +196,18 @@
 }
 
 /* ── Chip colors ── */
-.chipInvestor { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipFounder  { background: var(--chip-process-bg);  color: var(--chip-process-text); }
-.chipOperator { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipLp       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.badge[data-contact-type="investor"] { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.badge[data-contact-type="founder"]  { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.badge[data-contact-type="operator"] { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.badge[data-contact-type="lp"]       { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
-/* ── Talent Pipeline stage chip colors ── */
-.pipelineIdentified          { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.pipelineExploring           { background: var(--chip-process-bg);  color: var(--chip-process-text); }
-.pipelineIdeating            { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
-.pipelineFundraising         { background: var(--chip-success-bg);  color: var(--chip-success-text); }
-.pipelinePortfolioCandidate  { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
-.pipelineInternalCandidate   { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+/* ── Talent Pipeline stage chip colors (driven by data-talent-pipeline) ── */
+.badge[data-talent-pipeline="identified"]          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.badge[data-talent-pipeline="exploring"]           { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.badge[data-talent-pipeline="ideating"]            { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.badge[data-talent-pipeline="fundraising"]         { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.badge[data-talent-pipeline="portfolio_candidate"] { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.badge[data-talent-pipeline="internal_candidate"]  { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 /* ── Configure summary button + popover wrapper ── */
 .configureWrap {

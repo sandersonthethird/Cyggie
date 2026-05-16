@@ -172,32 +172,31 @@
   color: var(--color-text-tertiary);
 }
 
-/* ── Chip colors ── */
-.chipProspect      { background: var(--chip-process-bg);  color: var(--chip-process-text); }
-.chipPortfolio     { background: var(--chip-success-bg);  color: var(--chip-success-text); }
-.chipPass          { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipVcFund        { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipLp            { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipCustomer      { background: var(--chip-success-bg);  color: var(--chip-success-text); }
-.chipPartner       { background: var(--chip-process-bg);  color: var(--chip-process-text); }
-.chipVendor        { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
-.chipUnknown       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipOther         { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+/* ── Chip colors ── (driven by data-* attributes on .badge) */
+.badge[data-entity-type="prospect"]   { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.badge[data-entity-type="portfolio"]  { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.badge[data-entity-type="pass"]       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.badge[data-entity-type="vc_fund"]    { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.badge[data-entity-type="lp"]         { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.badge[data-entity-type="customer"]   { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.badge[data-entity-type="partner"]    { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.badge[data-entity-type="vendor"]     { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
+.badge[data-entity-type="unknown"]    { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.badge[data-entity-type="other"]      { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
 
-.chipScreening     { background: var(--chip-process-bg);  color: var(--chip-process-text); }
-.chipDiligence     { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
-.chipDecision      { background: var(--chip-error-bg);    color: var(--chip-error-text); }
-.chipDocumentation { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.badge[data-stage="screening"]        { background: var(--chip-process-bg);  color: var(--chip-process-text); }
+.badge[data-stage="diligence"]        { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
+.badge[data-stage="decision"]         { background: var(--chip-error-bg);    color: var(--chip-error-text); }
+.badge[data-stage="documentation"]    { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.badge[data-stage="portfolio"]        { background: var(--chip-success-bg);  color: var(--chip-success-text); }
+.badge[data-stage="pass"]             { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
 
-.priorityHigh        { background: var(--chip-error-bg);   color: var(--chip-error-text); }
-.priorityFurtherWork { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
-.priorityMonitor     { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.badge[data-priority="high"]          { background: var(--chip-error-bg);    color: var(--chip-error-text); }
+.badge[data-priority="medium"]        { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
+.badge[data-priority="monitor"]       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.badge[data-priority="low"]           { background: var(--chip-low-bg);      color: var(--chip-low-text); }
 
-.chipPreSeed       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipSeed          { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipSeedExtension { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipSeriesA       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
-.chipSeriesB       { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.badge[data-round]                    { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
 
 /* ── Configure summary button + popover wrapper ── */
 .configureWrap {

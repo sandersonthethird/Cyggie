@@ -36,6 +36,7 @@
   --chip-error-bg:    #FEE2E2;  --chip-error-text:    #991B1B;
   --chip-process-bg:  #F3E8FF;  --chip-process-text:  #6B21A8;
   --chip-neutral-bg:  #F3F4F6;  --chip-neutral-text:  #374151;
+  --chip-low-bg:      #DBEAFE;  --chip-low-text:      #1E40AF;
 
   /* Crimson Velocity Design System */
   --cv-bg: #F9FAFB;
@@ -120,6 +121,7 @@
     --chip-error-bg:    #450A0A;  --chip-error-text:    #FCA5A5;
     --chip-process-bg:  #3B0764;  --chip-process-text:  #D8B4FE;
     --chip-neutral-bg:  #1F2937;  --chip-neutral-text:  #9CA3AF;
+    --chip-low-bg:      #1E3A8A;  --chip-low-text:      #BFDBFE;
   }
 }
 

@@ -3,6 +3,7 @@ import { api } from '../../api'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatPanelStore } from '../../stores/chat-panel.store'
 import type { ChatSessionRow } from '../../hooks/useChatActions'
+import { parseTimestamp, parseToDate } from '../../utils/format'
 import styles from './PanelSwitcher.module.css'
 
 interface PanelSwitcherProps {
@@ -61,7 +62,7 @@ export function PanelSwitcher({ sessions, loading, onSelectSession, onNewChat, o
     return [...sessions].sort((a, b) => {
       // Pinned first; then by lastMessageAt desc.
       if (a.isPinned !== b.isPinned) return Number(b.isPinned) - Number(a.isPinned)
-      return new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+      return parseToDate(b.lastMessageAt).getTime() - parseToDate(a.lastMessageAt).getTime()
     })
   }, [sessions])
 
@@ -179,7 +180,7 @@ export function PanelSwitcher({ sessions, loading, onSelectSession, onNewChat, o
 }
 
 function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime()
+  const then = parseTimestamp(iso)
   if (isNaN(then)) return ''
   const seconds = Math.floor((Date.now() - then) / 1000)
   if (seconds < 60) return 'now'
@@ -189,5 +190,5 @@ function relativeTime(iso: string): string {
   if (hours < 24) return `${hours}h`
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d`
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return parseToDate(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }

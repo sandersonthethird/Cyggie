@@ -9,10 +9,10 @@
   white-space: nowrap;
 }
 
-/* Stage colors — sourced from --chip-* vars in globals.css */
-.screening     { background: var(--chip-process-bg); color: var(--chip-process-text); }
-.diligence     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
-.decision      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
-.documentation { background: var(--chip-success-bg); color: var(--chip-success-text); }
-.portfolio     { background: var(--chip-success-bg); color: var(--chip-success-text); }
-.pass          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+/* Stage colors — driven by data-stage attribute (sourced from --chip-* vars in globals.css) */
+.pill[data-stage="screening"]     { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.pill[data-stage="diligence"]     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.pill[data-stage="decision"]      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.pill[data-stage="documentation"] { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.pill[data-stage="portfolio"]     { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.pill[data-stage="pass"]          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }

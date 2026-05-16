@@ -158,13 +158,19 @@
   white-space: nowrap;
 }
 
-/* Stage chip color classes — sourced from --chip-* vars in globals.css */
-.chipScreening     { background: var(--chip-process-bg); color: var(--chip-process-text); }
-.chipDiligence     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
-.chipDecision      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
-.chipDocumentation { background: var(--chip-success-bg); color: var(--chip-success-text); }
-.chipPortfolio     { background: var(--chip-success-bg); color: var(--chip-success-text); }
-.chipPass          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+/* Stage chip colors (driven by data-stage attribute on .stageChip / .stageOption) */
+.stageChip[data-stage="screening"],
+.stageOption[data-stage="screening"]     { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.stageChip[data-stage="diligence"],
+.stageOption[data-stage="diligence"]     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.stageChip[data-stage="decision"],
+.stageOption[data-stage="decision"]      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.stageChip[data-stage="documentation"],
+.stageOption[data-stage="documentation"] { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.stageChip[data-stage="portfolio"],
+.stageOption[data-stage="portfolio"]     { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.stageChip[data-stage="pass"],
+.stageOption[data-stage="pass"]          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 .stageChip:hover {
   filter: brightness(0.95);

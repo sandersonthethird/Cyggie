@@ -10,13 +10,15 @@ import type {
   CompanyPriority,
   CompanyRound
 } from '../../shared/types/company'
+import { PRIORITIES } from '../components/company/companyColumns'
 import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
 import MultiSelectFilter from '../components/common/MultiSelectFilter'
 import { DecisionLogModal } from '../components/crm/DecisionLogModal'
-import { AddOptionInlineInput } from '../components/crm/AddOptionInlineInput'
+import { ChipSelect } from '../components/crm/ChipSelect'
 import { shouldPromptDecisionLog, defaultDecisionType } from '../utils/decisionLogTrigger'
 import { useCustomFieldStore } from '../stores/custom-fields.store'
 import { usePreferencesStore } from '../stores/preferences.store'
+import { useTimedError } from '../hooks/useTimedError'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../utils/customFieldUtils'
 import { COMPANY_STAGE_OPTIONS, COMPANY_KANBAN_STAGES } from '../components/common/PipelineStepper'
 import { COMPANY_ACTIVE_PIPELINE_STAGES } from '../../shared/types/company'
@@ -24,12 +26,6 @@ import styles from './Pipeline.module.css'
 import { api } from '../api'
 
 const STAGES = COMPANY_STAGE_OPTIONS
-
-const PRIORITIES: { value: CompanyPriority; label: string }[] = [
-  { value: 'high', label: 'High' },
-  { value: 'further_work', label: 'Further Work' },
-  { value: 'monitor', label: 'Monitor' }
-]
 
 const ROUNDS: { value: CompanyRound; label: string }[] = [
   { value: 'pre_seed', label: 'Pre-Seed' },
@@ -44,11 +40,9 @@ const STAGE_ORDER = Object.fromEntries(STAGES.map((s, i) => [s.value, i]))
 const PRIORITY_ORDER = Object.fromEntries(PRIORITIES.map((p, i) => [p.value, i]))
 const ROUND_ORDER = Object.fromEntries(ROUNDS.map((r, i) => [r.value, i]))
 
-const PRIORITY_LABELS: Record<string, string> = {
-  high:         'High',
-  further_work: 'Further Work',
-  monitor:      'Monitor',
-}
+const PRIORITY_LABELS: Record<string, string> = Object.fromEntries(
+  PRIORITIES.map((p) => [p.value, p.label]),
+)
 
 /** Pure sort function — exported for unit testing */
 export function sortCompanies(
@@ -105,86 +99,6 @@ function formatRound(value: CompanyRound | null): string {
 function formatMoney(value: number | null): string {
   if (value == null) return '-'
   return `$${value}M`
-}
-
-const PRIORITY_STYLE: Record<string, string> = {
-  high:         styles.priorityHigh,
-  further_work: styles.priorityFurtherWork,
-  monitor:      styles.priorityMonitor,
-}
-
-// Left-border color class per priority (applied to card wrapper)
-const CARD_PRIORITY_STYLE: Record<string, string> = {
-  high:         styles.cardBorderHigh,
-  further_work: styles.cardBorderFurtherWork,
-  monitor:      styles.cardBorderMonitor,
-}
-
-const STAGE_STYLE: Record<string, string> = {
-  screening:     styles.chipScreening,
-  diligence:     styles.chipDiligence,
-  decision:      styles.chipDecision,
-  documentation: styles.chipDocumentation,
-  portfolio:     styles.chipPortfolio,
-  pass:          styles.chipPass,
-}
-
-const ROUND_STYLE: Record<string, string> = {
-  pre_seed:       styles.chipPreSeed,
-  seed:           styles.chipSeed,
-  seed_extension: styles.chipSeedExtension,
-  series_a:       styles.chipSeriesA,
-  series_b:       styles.chipSeriesB,
-}
-
-interface ChipDropdownCellProps {
-  value: string | null
-  options: { value: string; label: string }[]
-  colorMap: Record<string, string>
-  onChange: (v: string | null) => void
-  onAddOption?: (opt: string) => Promise<void>
-}
-
-function ChipDropdownCell({ value, options, colorMap, onChange, onAddOption }: ChipDropdownCellProps) {
-  const [addingOption, setAddingOption] = useState(false)
-  const label = value ? (options.find(o => o.value === value)?.label ?? value) : '—'
-  const chipClass = value ? (colorMap[value] ?? '') : ''
-
-  if (addingOption && onAddOption) {
-    return (
-      <AddOptionInlineInput
-        className={styles.chipCellInput}
-        onConfirm={async (opt) => {
-          setAddingOption(false)
-          await onAddOption(opt)
-          onChange(opt)
-        }}
-        onCancel={() => setAddingOption(false)}
-      />
-    )
-  }
-
-  return (
-    <div className={`${styles.chipCell} ${chipClass}`}>
-      <span>{label}</span>
-      <span className={styles.chipCellCaret}>▾</span>
-      <select
-        className={styles.chipCellSelect}
-        value={value ?? ''}
-        onChange={(e) => {
-          if (e.target.value === '__add_option__') {
-            setAddingOption(true)
-            return
-          }
-          onChange(e.target.value || null)
-        }}
-      >
-        <option value="">—</option>
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        {onAddOption && <option value="__add_option__">+ Add option…</option>}
-      </select>
-    </div>
-  )
 }
 
 function formatLastTouch(value: string | null): string {
@@ -307,9 +221,7 @@ function AddDealModal({ onClose, onCreated }: AddDealModalProps) {
               onChange={(e) => setPriority(e.target.value as CompanyPriority)}
               disabled={submitting}
             >
-              <option value="high">High</option>
-              <option value="further_work">Further Work</option>
-              <option value="monitor">Monitor</option>
+              {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
           </div>
           {error && <div className={styles.modalError}>{error}</div>}
@@ -346,6 +258,7 @@ export default function Pipeline() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const optionError = useTimedError(4000)
   const [companies, setCompanies] = useState<CompanySummary[]>([])
   const [passExpiryDays, setPassExpiryDays] = useState(DEFAULT_PASS_EXPIRY_DAYS)
   const [dragCompanyId, setDragCompanyId] = useState<string | null>(null)
@@ -613,6 +526,7 @@ export default function Pipeline() {
       )}
 
       {error && <div className={styles.error}>{error}</div>}
+      {optionError.error && <div className={styles.error}>{optionError.error}</div>}
 
       {/* Kanban board — shows all companies, unaffected by filters */}
       {view === 'board' && (
@@ -657,7 +571,8 @@ export default function Pipeline() {
                   {stageCompanies.map((company) => (
                     <div
                       key={company.id}
-                      className={`${styles.companyCard} ${company.priority ? (CARD_PRIORITY_STYLE[company.priority] ?? '') : ''}`}
+                      className={styles.companyCard}
+                      data-priority={company.priority ?? undefined}
                       draggable
                       onDragStart={() => setDragCompanyId(company.id)}
                       onClick={() => navigate(`/company/${company.id}`, { state: { backLabel: 'Pipeline' } })}
@@ -773,30 +688,48 @@ export default function Pipeline() {
                     </button>
                   </td>
                   <td>
-                    <ChipDropdownCell
+                    <ChipSelect
+                      variant="cell"
+                      isEditing={true}
                       value={company.pipelineStage}
                       options={stageOptions}
-                      colorMap={STAGE_STYLE}
-                      onChange={(v) => void updateCompanyField(company.id, 'pipelineStage', v)}
+                      onSave={(v) => void updateCompanyField(company.id, 'pipelineStage', v as CompanyPipelineStage | null)}
                       onAddOption={stageDef ? async (opt) => addCustomFieldOption(stageDef.id, stageDef.optionsJson, opt) : undefined}
+                      onError={optionError.show}
+                      className={styles.chipCell}
+                      cellSelectClassName={styles.chipCellSelect}
+                      cellCaretClassName={styles.chipCellCaret}
+                      data-stage={company.pipelineStage ?? undefined}
                     />
                   </td>
                   <td>
-                    <ChipDropdownCell
+                    <ChipSelect
+                      variant="cell"
+                      isEditing={true}
                       value={company.priority}
                       options={priorityOptions}
-                      colorMap={PRIORITY_STYLE}
-                      onChange={(v) => void updateCompanyField(company.id, 'priority', v)}
+                      onSave={(v) => void updateCompanyField(company.id, 'priority', v as CompanyPriority | null)}
                       onAddOption={priorityDef ? async (opt) => addCustomFieldOption(priorityDef.id, priorityDef.optionsJson, opt) : undefined}
+                      onError={optionError.show}
+                      className={styles.chipCell}
+                      cellSelectClassName={styles.chipCellSelect}
+                      cellCaretClassName={styles.chipCellCaret}
+                      data-priority={company.priority ?? undefined}
                     />
                   </td>
                   <td>
-                    <ChipDropdownCell
+                    <ChipSelect
+                      variant="cell"
+                      isEditing={true}
                       value={company.round}
                       options={roundOptions}
-                      colorMap={ROUND_STYLE}
-                      onChange={(v) => void updateCompanyField(company.id, 'round', v)}
+                      onSave={(v) => void updateCompanyField(company.id, 'round', v as CompanyRound | null)}
                       onAddOption={roundDef ? async (opt) => addCustomFieldOption(roundDef.id, roundDef.optionsJson, opt) : undefined}
+                      onError={optionError.show}
+                      className={styles.chipCell}
+                      cellSelectClassName={styles.chipCellSelect}
+                      cellCaretClassName={styles.chipCellCaret}
+                      data-round={company.round ?? undefined}
                     />
                   </td>
                   <td>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRecordingStore } from '../stores/recording.store'
 import { useSharedAudioCapture } from '../contexts/AudioCaptureContext'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
@@ -36,6 +36,36 @@ export default function LiveRecording() {
   const { hasSystemAudio } = audioCapture
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const stuckToBottomRef = useRef(true)
+  const [audioFlow, setAudioFlow] = useState<{ state: 'flowing' | 'stalled'; stalledForMs: number } | null>(null)
+  const [micState, setMicState] = useState<'ok' | 'muted' | 'ended'>('ok')
+
+  useEffect(() => {
+    if (!isRecording) {
+      setAudioFlow(null)
+      setMicState('ok')
+      return
+    }
+    const unsubFlow = api.on(
+      IPC_CHANNELS.RECORDING_AUDIO_FLOW_STATUS,
+      (payload: unknown) => {
+        const p = payload as { state: 'flowing' | 'stalled'; stalledForMs: number }
+        setAudioFlow(p)
+      }
+    )
+    const unsubMic = api.on(
+      IPC_CHANNELS.RECORDING_MIC_STATUS,
+      (payload: unknown) => {
+        const p = payload as { state: 'ended' | 'muted' | 'reacquired' }
+        if (p.state === 'reacquired') setMicState('ok')
+        else if (p.state === 'muted') setMicState('muted')
+        else setMicState('ended')
+      }
+    )
+    return () => {
+      unsubFlow()
+      unsubMic()
+    }
+  }, [isRecording])
 
   const handleTranscriptScroll = useCallback(() => {
     const el = transcriptScrollRef.current
@@ -134,6 +164,27 @@ export default function LiveRecording() {
         <div className={styles.warning}>
           Mic only — system audio capture is not available. Grant Screen Recording
           permission in System Settings &gt; Privacy &amp; Security to capture meeting audio.
+        </div>
+      )}
+
+      {isRecording && audioFlow?.state === 'stalled' && (
+        <div className={styles.warning}>
+          No audio received for {Math.floor(audioFlow.stalledForMs / 1000)}s. Another app may have
+          taken your microphone or screen-audio capture. Check that Cyggie's window is in the
+          foreground, then stop &amp; restart the recording if it doesn't recover.
+        </div>
+      )}
+
+      {isRecording && micState === 'ended' && (
+        <div className={styles.warning}>
+          Microphone disconnected — attempting to reconnect. If it doesn't recover, stop the
+          recording to save what was captured so far.
+        </div>
+      )}
+
+      {isRecording && micState === 'muted' && (
+        <div className={styles.warning}>
+          Microphone is muted at the OS level. Unmute to continue capturing audio.
         </div>
       )}
 

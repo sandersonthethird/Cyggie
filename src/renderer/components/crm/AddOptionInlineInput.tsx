@@ -20,11 +20,15 @@ export function AddOptionInlineInput({ className, onConfirm, onCancel }: AddOpti
         if (e.key === 'Escape') { onCancel(); return }
         if (e.key === 'Enter' && draft.trim()) {
           e.preventDefault()
-          await onConfirm(draft)
+          await onConfirm(draft.trim())
           setDraft('')
         }
       }}
-      onBlur={onCancel}
+      onBlur={() => {
+        const trimmed = draft.trim()
+        if (trimmed) void onConfirm(trimmed)
+        else onCancel()
+      }}
     />
   )
 }

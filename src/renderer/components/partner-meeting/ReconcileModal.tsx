@@ -314,7 +314,7 @@ export function ReconcileModal({
                           <ul className={styles.taskList}>
                             {p.tasks.map((t, i) => (
                               <li key={i} className={styles.taskItem}>
-                                <span className={`${styles.categoryBadge} ${styles[`cat_${t.category}`]}`}>
+                                <span className={styles.categoryBadge} data-category={t.category}>
                                   {CATEGORY_LABELS[t.category] ?? t.category}
                                 </span>
                                 {t.title}

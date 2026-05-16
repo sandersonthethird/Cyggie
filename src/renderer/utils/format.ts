@@ -10,6 +10,10 @@ export function parseTimestamp(value: string | null | undefined): number {
   return Date.parse(normalized)
 }
 
+export function parseToDate(value: string | null | undefined): Date {
+  return new Date(parseTimestamp(value))
+}
+
 export function formatLastTouch(value: string | null | undefined): string {
   if (!value) return ''
   const timestamp = parseTimestamp(value)

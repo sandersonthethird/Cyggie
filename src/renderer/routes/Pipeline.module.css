@@ -287,9 +287,10 @@
 }
 
 /* Priority left-border colors */
-.cardBorderHigh        { border-left-color: #B91C1C; }
-.cardBorderFurtherWork { border-left-color: #D97706; }
-.cardBorderMonitor     { border-left-color: #9CA3AF; }
+.companyCard[data-priority="high"]    { border-left-color: #B91C1C; }
+.companyCard[data-priority="medium"]  { border-left-color: #D97706; }
+.companyCard[data-priority="monitor"] { border-left-color: #9CA3AF; }
+.companyCard[data-priority="low"]     { border-left-color: #3B82F6; }
 
 .cardName {
   font-size: 14px;
@@ -472,24 +473,7 @@ tr:hover .addToSyncBtn {
   white-space: nowrap;
 }
 
-.priorityHigh         { background: var(--chip-error-bg);   color: var(--chip-error-text); }
-.priorityFurtherWork  { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
-.priorityMonitor      { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-
-/* Stage chip colors */
-.chipScreening     { background: var(--chip-process-bg); color: var(--chip-process-text); }
-.chipDiligence     { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
-.chipDecision      { background: var(--chip-error-bg);   color: var(--chip-error-text); }
-.chipDocumentation { background: var(--chip-success-bg); color: var(--chip-success-text); }
-.chipPortfolio     { background: var(--chip-success-bg); color: var(--chip-success-text); }
-.chipPass          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-
-/* Round chip colors — all neutral (metadata) */
-.chipPreSeed       { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipSeed          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipSeedExtension { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipSeriesA       { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipSeriesB       { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+/* (Bare priority/stage/round classes removed — chips now use data-* attributes; see .chipCell[data-...] rules below.) */
 
 /* Chip-style dropdown cell */
 .chipCell {
@@ -538,20 +522,17 @@ tr:hover .addToSyncBtn {
 }
 
 /* ChipDropdownCell color overrides — must come after .chipCell */
-.chipCell.priorityHigh         { background: var(--chip-error-bg);   color: var(--chip-error-text); }
-.chipCell.priorityFurtherWork  { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
-.chipCell.priorityMonitor      { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipCell.chipScreening        { background: var(--chip-process-bg); color: var(--chip-process-text); }
-.chipCell.chipDiligence        { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
-.chipCell.chipDecision         { background: var(--chip-error-bg);   color: var(--chip-error-text); }
-.chipCell.chipDocumentation    { background: var(--chip-success-bg); color: var(--chip-success-text); }
-.chipCell.chipPortfolio        { background: var(--chip-success-bg); color: var(--chip-success-text); }
-.chipCell.chipPass             { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipCell.chipPreSeed          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipCell.chipSeed             { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipCell.chipSeedExtension    { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipCell.chipSeriesA          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
-.chipCell.chipSeriesB          { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipCell[data-priority="high"]               { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.chipCell[data-priority="medium"]             { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.chipCell[data-priority="monitor"]            { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipCell[data-priority="low"]                { background: var(--chip-low-bg);     color: var(--chip-low-text); }
+.chipCell[data-stage="screening"]             { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.chipCell[data-stage="diligence"]             { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.chipCell[data-stage="decision"]              { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.chipCell[data-stage="documentation"]         { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.chipCell[data-stage="portfolio"]             { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.chipCell[data-stage="pass"]                  { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.chipCell[data-round]                         { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
 
 /* ── AddDealModal ────────────────────────────────────────────────────────── */
 

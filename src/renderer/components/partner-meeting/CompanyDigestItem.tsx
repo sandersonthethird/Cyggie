@@ -32,15 +32,6 @@ const STAGE_LABELS: Record<string, string> = Object.fromEntries(
 
 const STAGE_OPTIONS: CompanyPipelineStage[] = COMPANY_STAGE_OPTIONS.map((s) => s.value)
 
-const STAGE_CLASS: Record<string, string> = {
-  screening:     styles.chipScreening,
-  diligence:     styles.chipDiligence,
-  decision:      styles.chipDecision,
-  documentation: styles.chipDocumentation,
-  portfolio:     styles.chipPortfolio,
-  pass:          styles.chipPass,
-}
-
 interface CompanyDigestItemProps {
   item: PartnerMeetingItem
   disabled?: boolean
@@ -171,7 +162,8 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
         {item.companyId && !disabled && (
           <div ref={stageRef} className={styles.stageChipWrap}>
             <button
-              className={`${styles.stageChip} ${stage ? (STAGE_CLASS[stage] ?? '') : ''}`}
+              className={styles.stageChip}
+              data-stage={stage ?? undefined}
               onClick={() => setStageOpen(v => !v)}
             >
               {STAGE_LABELS[stage ?? ''] ?? '—'}
@@ -181,7 +173,8 @@ export function CompanyDigestItem({ item, disabled = false, onUpdate, onRemove }
                 {STAGE_OPTIONS.map(s => (
                   <button
                     key={s}
-                    className={`${styles.stageOption} ${STAGE_CLASS[s] ?? ''}`}
+                    className={styles.stageOption}
+                    data-stage={s}
                     onClick={() => handleStageChange(s)}
                   >
                     {STAGE_LABELS[s]}

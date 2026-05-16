@@ -47,9 +47,10 @@ export const ENTITY_TYPES = ENTITY_TYPE_OPTIONS
 export const STAGES = COMPANY_STAGE_OPTIONS
 
 export const PRIORITIES: { value: CompanyPriority; label: string }[] = [
-  { value: 'high', label: 'High' },
-  { value: 'further_work', label: 'Further Work' },
-  { value: 'monitor', label: 'Monitor' }
+  { value: 'high',    label: 'High'    },
+  { value: 'medium',  label: 'Medium'  },
+  { value: 'monitor', label: 'Monitor' },
+  { value: 'low',     label: 'Low'     },
 ]
 
 export const ROUNDS: { value: CompanyRound; label: string }[] = [
@@ -352,9 +353,15 @@ export const COLUMN_DEFS: ColumnDef[] = [
     defaultVisible: false,
     width: 160,
     minWidth: 80,
-    sortable: false,
+    sortable: true,
     editable: false,
-    type: 'computed'
+    type: 'computed',
+    sortAccessor: (row) => {
+      const city = (row.city as string | null | undefined) ?? ''
+      const state = (row.state as string | null | undefined) ?? ''
+      const combined = [city, state].filter(Boolean).join(', ').trim()
+      return combined === '' ? null : combined.toLowerCase()
+    }
   },
   {
     key: 'totalInvested',

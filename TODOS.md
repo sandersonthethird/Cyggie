@@ -58,18 +58,6 @@
 
 ## P2 — AI Chat
 
-### Surface chats in the search-bar dropdown
-**What:** Extend the compact search-bar dropdown (the quick-nav popover) to optionally include chat results. The full /search page already does (chat-history PR); the dropdown does not.
-**Why:** Quick-nav discovery for power users — type a keyword in the search bar and see relevant past chats inline.
-**Pros:** Symmetric with the /search page; the FTS5 search infrastructure already exists.
-**Cons:** Risks crowding the dropdown; needs UX care for ranking entities vs. chats.
-**Context:** The /search page calls `CHAT_SESSION_SEARCH` in parallel with `UNIFIED_SEARCH_QUERY`. The dropdown caller currently only invokes `UNIFIED_SEARCH_QUERY`. Add an opt-in flag or a parallel call from the dropdown component.
-**Effort:** S
-**Priority:** P2
-**Depends on:** Chat-history feature shipped (✅).
-
----
-
 ### "You also asked about this last week" peek banner
 **What:** Subtle one-line banner above the chat input when the current context has prior recent sessions: "You have 2 prior chats about Acme Corp →" linking to the History modal filtered to that context.
 **Why:** Surfaces history at the moment of intent. Reduces "I asked this before" duplication.
@@ -187,16 +175,6 @@
 
 ## P3 — Notes
 
-### Tests for frontmatter utilities
-**What:** Unit tests for `parseFrontmatter()` and `parseAppleNotesDate()` in `src/main/utils/frontmatter.ts`.
-**Why:** Both functions fail silently (return null on bad input). The date format — "Friday, October 30, 2020 at 7:25:21 PM" — is non-standard and locale-sensitive. If a user's Apple Notes export uses a different locale or format variant, dates silently stay at import time with no indication anything went wrong.
-**Pros:** Pure functions — ideal for fast unit tests; ~8 cases cover the full input space.
-**Cons:** Minimal effort given existing test infra in src/tests/.
-**Context:** Added in the frontmatter repair PR (migration-065). Start in `src/tests/frontmatter.test.ts`. Cover: valid full parse, missing `modified` field, malformed closing `---`, unparseable date string, already-stripped content (no frontmatter).
-**Effort:** S
-**Priority:** P3
-**Depends on:** frontmatter repair PR merged.
-
 ## P3 — Meeting Detail
 
 ### Copy AI Summary to clipboard button
@@ -208,18 +186,6 @@
 **Effort:** S
 **Priority:** P3
 **Depends on:** Meeting Detail redesign PR (summaryCard wrapper must exist — completed).
-
-### BubbleMenu shared component
-**What:** Extract the Tiptap BubbleMenu JSX (Bold/Italic/H1/H2/H3/List buttons) into a shared `<TiptapBubbleMenu editor={editor} />` component used by `NotePaneEditor`, `MeetingDetail`, and any future Tiptap surfaces.
-**Why:** After the Meeting Detail redesign, 2 files have near-identical BubbleMenu JSX. A 3rd consumer would make extraction clearly worthwhile.
-**Pros:** Single place to add/remove toolbar buttons (e.g., adding code block, link toggle).
-**Cons:** Small extra indirection; buttons may need slight variation per surface (e.g., Meeting notes may not need H3).
-**Context:** `NotePaneEditor.tsx` has a 7-button BubbleMenu. `MeetingDetail.tsx` has a 5-button variant (no H3, no code). Extract to `src/renderer/components/common/TiptapBubbleMenu.tsx` with an optional `buttons` prop for customization.
-**Effort:** S
-**Priority:** P3
-**Depends on:** Meeting Detail redesign PR (creates the 2nd consumer — completed).
-
----
 
 ### Speaker editing for finalized transcripts
 **What:** Allow renaming and contact-linking of transcript speakers in already-recorded (finalized) meetings.
@@ -249,14 +215,14 @@
 ## P3 — Partner Meeting
 
 ### NewCompanyModal component tests (RTL)
-**What:** Establish React Testing Library tests for `NewCompanyModal`, covering the `addToPartnerSync` checkbox logic as the first set of cases.
-**Why:** The checkbox boolean gate (4 codepaths: deck/manual × checked/unchecked) has zero automated coverage. The most dangerous regression is the checkbox being unchecked but IPC calls still firing.
-**Pros:** RTL + vitest is straightforward with mocked `api.invoke`; once set up, all future component work in the project is testable.
-**Cons:** RTL infrastructure doesn't exist yet — ~1-2h overhead to add `@testing-library/react` + `@testing-library/user-event` alongside the existing vitest setup.
-**Context:** No React Testing Library in the project yet. The test should mock `api.invoke` at the module level and assert: (1) unchecked → neither `PARTNER_MEETING_ADD_PITCH_DECK_COMPANY` nor `PARTNER_MEETING_GET_ACTIVE` called; (2) checked + `extractedResult` → `PARTNER_MEETING_ADD_PITCH_DECK_COMPANY` called; (3) checked + no `extractedResult` → `PARTNER_MEETING_GET_ACTIVE` then `PARTNER_MEETING_ITEM_ADD` called; (4) modal reopen → checkbox resets to checked. See `src/tests/useNoteEditor.test.ts` for the existing vitest config pattern.
+**What:** RTL tests for `NewCompanyModal` covering the `addToPartnerSync` checkbox routing — the 4 codepaths (deck/manual × checked/unchecked).
+**Why:** The checkbox boolean gate has zero automated coverage. Most dangerous regression: checkbox unchecked but IPC still firing.
+**Pros:** RTL + vitest is in the project already (`@testing-library/react@^16.0.0`); pattern is well-established.
+**Cons:** The checkbox renders ONLY at `step === 'review-form'` (NewCompanyModal.tsx:512+), not at the default `'source-picker'` step. Reaching review-form requires going through source picker + ingestion + dedup, which means mocking 6+ IPC channels (COMPANY_FIND_OR_CREATE, COMPANY_UPDATE, CONTACT_CREATE, PARTNER_MEETING_*, SETTINGS_GET) plus the global `Notification` API and `react-router` navigation. An earlier draft test that just rendered the modal at the default step couldn't reach the checkbox — discovered while shipping the cleanup-bundle PR. M effort, not S.
+**Context:** Two viable approaches: (a) full RTL test with all required mocks — best fidelity but ~150 lines of test scaffolding; (b) refactor: extract the partner-sync decision into a pure helper alongside the modal, test that in isolation, and keep the modal a thin renderer. Option (b) is cleaner long-term but is a real refactor. The earlier inline-test attempt was deleted because it gave false confidence (checked rendering, didn't test routing). Start in `src/tests/NewCompanyModal-partner-sync.test.tsx`. See `src/tests/contact-panel-meta-save-error.test.tsx` if it exists for a model — otherwise `src/tests/Pill.test.tsx` is the simplest existing RTL test in the project.
 **Effort:** M
 **Priority:** P3
-**Depends on:** This PR merged (checkbox must exist to test).
+**Depends on:** Decide between full-RTL (a) vs decision-helper-extraction (b) approach.
 
 ---
 
@@ -269,18 +235,6 @@
 **Effort:** S
 **Priority:** P3
 **Depends on:** Pitch deck → note → brief PR merged.
-
----
-
-### Tests for runPitchDeckAnalysis vision path
-**What:** Unit tests for the new vision re-read branch in `runPitchDeckAnalysis`.
-**Why:** Three new branches have zero coverage: (1) sourceFilePath re-read → LLM with attachment, (2) both rawText + sourceFilePath absent → null, (3) readFileSync throws → null. The fix being shipped is code-only; logging alone won't catch regressions.
-**Pros:** Simple unit tests; establishes test pattern for IPC handler utilities.
-**Cons:** `runPitchDeckAnalysis` is not currently exported — would need extraction to a utility or explicit export.
-**Context:** Function lives in `src/main/ipc/partner-meeting.ipc.ts`. Export it and add 3 test cases in `src/tests/pitch-deck-analysis.test.ts`. Mock `getProvider`, `readFileSync`, and `extractPartnerSyncBrief`. Pattern: see `src/tests/useNoteEditor.test.ts` for vitest config.
-**Effort:** S
-**Priority:** P3
-**Depends on:** This PR (vision path fix) merged.
 
 ---
 
@@ -468,18 +422,6 @@
 
 ## P3 — Layout Tools
 
-### Reset layout action
-**What:** Single "Reset to defaults" action that clears `fieldPlacements`, `addedFields`, and `sectionOrder` prefs for the current entity type.
-**Why:** After extensive layout customization, users may want a clean slate without manually undoing each change.
-**Pros:** Escape hatch for a confused layout state; very low implementation cost.
-**Cons:** No undo — user loses all customizations. Could add a confirmation dialog.
-**Context:** A `— Reset layout →` link in the `AddFieldDropdown` footer (or a button in Settings). Implementation: call `setJSON(addedFieldsKey, [])`, `setJSON(placementsKey, {})`, `setJSON(sectionOrderKey, [])` in `usePreferencesStore`. Each write triggers React re-render; panel snaps back to defaults immediately. ~15 min to implement. Start in `AddFieldDropdown.tsx` footer and `useFieldVisibility.ts` (add `resetLayout()` to returned interface).
-**Effort:** S
-**Priority:** P3
-**Depends on:** Detail panel UX overhaul PR (AddFieldDropdown, useFieldVisibility, useSectionOrder).
-
----
-
 ## P3 — Header Panel UX
 
 ### Bulk "Add all section to header" button
@@ -506,18 +448,6 @@
 
 ## P2 — Tests
 
-### Unit tests for provider-factory + OpenAIProvider
-**What:** Tests for `getProvider()` routing (6 combinations: provider × use) and `OpenAIProvider` (key missing, streaming, abort, empty response).
-**Why:** The factory is the single point of failure for all LLM features. If routing is broken, every summarization, chat, and enrichment call silently fails or uses the wrong model.
-**Pros:** Catches regressions if new providers are added; documents expected routing behavior.
-**Cons:** Requires mocking `openai` and `@anthropic-ai/sdk` SDKs.
-**Context:** Factory at `src/main/llm/provider-factory.ts`. Provider at `src/main/llm/openai-provider.ts`. Mock both SDKs at module level; assert `new OpenAIProvider(key, model)` / `new ClaudeProvider(key, model)` / `new OllamaProvider(model, host)` are returned for each (`llmProvider` × `use`) combination. Test error thrown when key missing for claude/openai.
-**Effort:** S
-**Depends on:** OpenAI provider + factory (shipped in this change)
-
-
----
-
 ## P2 — Notes Import
 
 ### Filter Notes by import source (filter pill UI)
@@ -533,16 +463,6 @@
 ---
 
 ## P2 — Notes
-
-### Migrate `company_notes` / `contact_notes` tables to unified `notes` table
-**What:** Stop using the separate `company_notes` and `contact_notes` tables. Move all reads/writes to the unified `notes` table (which already has nullable `company_id` and `contact_id` columns from migrations 052/053). CompanyNotes / ContactNotes detail tabs become filtered views over the unified store.
-**Why:** Migrations 052/053 started this consolidation but stopped short of removing the legacy tables. The mid-migration state means `notes.repo.ts` and `company-notes.repo.ts`/`contact-notes.repo.ts` coexist with overlapping concerns (note-tagging, FTS, audit), and surfaces like the standalone Notes view (`useNoteEditor`) can't be reused on Company/Contact detail because they write to a different table.
-**Pros:** Single source of truth; FTS already in place on the unified table; enables `useNoteEditor` reuse across all surfaces; fewer parallel concerns to keep in sync (audit logs, tag suggestions, summary-sync references).
-**Cons:** Backfill of existing rows in `company_notes` and `contact_notes` into `notes` (with proper `company_id`/`contact_id` set); rename of all consumer sites (IPC channels `COMPANY_NOTES_*`, `CONTACT_NOTES_*` either deprecated or rewired); data-integrity risk requires explicit pre-migration backup + post-migration verification (count parity per entity).
-**Context:** Affected files: `src/main/database/repositories/company-notes.repo.ts`, `contact-notes.repo.ts`, `notes-base.ts`, `notes.repo.ts`. IPC: `src/main/ipc/company-notes.ipc.ts`, `contact-notes.ipc.ts`, `notes-ipc-base.ts`. Renderer consumers (post-this-PR): `src/renderer/components/company/CompanyNotes.tsx`, `src/renderer/components/contact/ContactNotes.tsx` (both now use the shared `NoteCreator`/`NoteList`, so they're the cleanest place to repoint). Recommended approach: write a migration that copies rows + sets foreign keys, run it transactionally, leave legacy tables read-only for one release as a safety net, then drop in the next release.
-**Effort:** L (~1–2 days)
-**Priority:** P2
-**Depends on:** Rich-text NoteCreator/NoteList PR landing first so this migration touches stable component shapes.
 
 ### Use meeting title as note card title fallback
 **What:** When a note has no explicit `title` but has a `sourceMeetingId`, display the linked meeting's title as the note card title in the Notes list.
@@ -566,39 +486,15 @@
 
 ## P3 — Refactoring
 
-### Extract useOutsideClick hook
-**What:** Extract shared `useOutsideClick(ref, onClose)` hook from 3 inline implementations.
-**Why:** Identical 8-line mousedown + ref.contains() pattern in Layout.tsx, useNoteShareMenu.ts, and TitlebarDateChip.tsx.
-**Pros:** Single implementation; less copy-paste when adding the 4th popup/dropdown.
-**Cons:** 8 lines is near the floor for abstraction — overhead of import + hook file may not justify.
-**Context:** Pattern: `useEffect` attaching `mousedown` listener that checks `ref.current.contains(e.target)`. All 3 implementations are identical. Extract to `src/renderer/hooks/useOutsideClick.ts`.
+### Centralize parseEmailParticipants
+**What:** Audit `parseEmailParticipants` for signature drift across `contact-utils.ts`, `meeting.repo.ts`, and `org-company.repo.ts`. Consolidate the canonical version into `src/main/utils/db-utils.ts` alongside the other parsers.
+**Why:** `parseTimestamp` + `parseJsonArray` were consolidated into `db-utils.ts` (cleanup-bundle PR), but `parseEmailParticipants` was deferred because the variants may handle different fields (`contactId` presence, allowed `role` set).
+**Pros:** Unified parsing; easier to extend the participant role set.
+**Cons:** Signatures may differ across copies — needs careful reconciliation to avoid behavior changes. Pre-bundle audit confirmed `parseJsonArray` was identical across copies, but did NOT cover `parseEmailParticipants`.
+**Context:** Canonical location is now `src/main/utils/db-utils.ts`. `parseEmailParticipants` was left in `contact-utils.ts` during the cleanup-bundle PR. Diff against any copies in `meeting.repo.ts` / `org-company.repo.ts` first; if identical, mechanical move + re-export from contact-utils for backward compat.
 **Effort:** S
 **Priority:** P3
-**Depends on:** Nothing — can be done anytime.
-
----
-
-### Centralize parseTimestamp / SQLITE_DATETIME_RE
-**What:** Extract `parseTimestamp`, `pickLatestTimestamp`, `setLatestMapValue`, and `SQLITE_DATETIME_RE` into a shared utility (e.g. `src/main/utils/db-utils.ts`) and remove the duplicates from `contact-utils.ts` and `org-company.repo.ts`.
-**Why:** Two identical implementations exist — any bug fix or change would need to be applied twice.
-**Pros:** Single source of truth; ~20 lines saved.
-**Cons:** Another import to add to two already-large files.
-**Context:** `parseTimestamp` + `SQLITE_DATETIME_RE` live in `src/main/database/repositories/contact-utils.ts` (exported) and `src/main/database/repositories/org-company.repo.ts` (local copy). Both are identical. Extraction is zero-risk — pure functions with no side effects. `setLatestMapValue` and `pickLatestTimestamp` are only in contact-utils.ts currently. Create `src/main/utils/db-utils.ts`, re-export from `contact-utils.ts` for backward compat.
-**Effort:** S
-**Priority:** P3
-**Depends on:** contact-utils.ts extraction (this PR).
-
----
-
-### Centralize parseJsonArray / parseEmailParticipants
-**What:** Consolidate `parseJsonArray` and `parseEmailParticipants` into a shared utility module — they currently have slightly different implementations across `contact-utils.ts`, `meeting.repo.ts`, and `org-company.repo.ts`.
-**Why:** Signature drift between copies means bug fixes in one copy don't propagate; the email participant shape is defined three times.
-**Pros:** Unified parsing; easier to test once; easier to extend the participant role set.
-**Cons:** Signatures differ (e.g. the meeting.repo.ts version may handle extra fields) — needs careful reconciliation to avoid behavior changes.
-**Context:** `parseJsonArray` is in `contact-utils.ts` and used by multiple repos. `parseEmailParticipants` has variants in `contact-utils.ts` and likely in `meeting.repo.ts` / `org-company.repo.ts`. Audit all three before merging — reconcile the allowed `role` set and the `contactId` field presence. Put the canonical version in `src/main/utils/db-utils.ts` (alongside `parseTimestamp`).
-**Effort:** S
-**Priority:** P3
-**Depends on:** parseTimestamp centralization above.
+**Depends on:** Nothing (parseTimestamp / parseJsonArray central done).
 
 ---
 
@@ -628,19 +524,6 @@
 ---
 
 ## P2 — NoteTagger
-
-### Create error UX in NoteTagger
-**What:** Show user-visible feedback when contact or company creation fails in the note tagger.
-**Why:** Both `handleCreateContact` and `handleCreateCompany` in `NoteTagger.tsx` currently `console.error` only — if the IPC call throws (e.g. DB locked, empty name), the user sees nothing and the picker just closes.
-**Pros:** Eliminates silent failure; user knows to retry.
-**Cons:** No shared toast/notification pattern exists yet — a one-off inline error would be inconsistent with future patterns.
-**Context:** Both handlers in `src/renderer/components/notes/NoteTagger.tsx` have `catch (err) { console.error(...) }` blocks. The right fix is to add an error state (`const [createError, setCreateError] = useState<string | null>(null)`) rendered below the picker input. Should follow whatever global notification/toast pattern is adopted first; otherwise an inline approach works as a stopgap.
-**Effort:** S (inline approach) / M (shared notification pattern)
-**Priority:** P2
-**Depends on:** Global notification/toast pattern (or accept inline approach as stopgap).
-
-
----
 
 ## P2 — Partner Meeting: Drag-and-drop item reordering
 
@@ -714,18 +597,6 @@
 
 ## P3 — Notes: Index for getFolderCounts() scalability
 
-### Add idx_notes_folder index
-**What:** `CREATE INDEX idx_notes_folder ON notes(folder_path)` in a new migration.
-**Why:** `getFolderCounts()` does a full table scan (`GROUP BY folder_path`). Fast at 1k notes, degrades at 100k+.
-**Pros:** Trivial one-line migration; no behavior change; future-proofs the feature.
-**Cons:** Negligible extra storage and write overhead per insert/update.
-**Context:** `getFolderCounts()` is in `src/main/database/repositories/notes.repo.ts`. Add a new migration file (next after 063). The index is not needed at current scale but costs almost nothing to add.
-**Effort:** S
-**Priority:** P3
-**Depends on:** getFolderCounts() (this PR).
-
----
-
 ## P3 — Chat: Persist context selection across sessions in MeetingDetail
 
 ### Remember last-selected AI chat context per meeting
@@ -769,18 +640,6 @@
 ---
 
 ## P2 — Company Enhancement
-
-### Tests for COMPANY_ANALYZE_FILE handler
-**What:** Unit/integration tests for the `COMPANY_ANALYZE_FILE` IPC handler in `company.ipc.ts` — happy path (note created), LLM returns null (`analysis_failed`), and DB throws (`note_creation_failed`).
-**Why:** The handler is the critical path for file-based company enhancement. A silent regression (LLM path, DB write, or error serialization) would leave users with no note created and no visible failure. The three error cases have distinct return shapes that need explicit coverage.
-**Pros:** Pure handler logic — easy to test with mocked `runPitchDeckAnalysis` and `createCompanyNote`; ~6 test cases cover the full input space; no new infra needed beyond the existing `src/tests/` vitest setup.
-**Cons:** Requires mocking two async functions across module boundaries.
-**Context:** Handler is at the end of `registerCompanyHandlers()` in `src/main/ipc/company.ipc.ts`. Happy path: mock `runPitchDeckAnalysis` returning a string → assert `noteId` returned. LLM null path: mock returning null → assert `{ noteId: null, error: 'analysis_failed' }`. DB throw path: mock `createCompanyNote` throwing → assert `{ noteId: null, error: 'note_creation_failed' }` and that the error is logged. Start in `src/tests/company-analyze-file.test.ts`.
-**Effort:** S
-**Priority:** P2
-**Depends on:** `COMPANY_ANALYZE_FILE` handler (this PR).
-
----
 
 ### DropdownButton shared component + table CSS extraction
 **What:** Create `src/renderer/components/common/DropdownButton.tsx` as a shared portal+click-outside dropdown base. Refactor `ColumnPicker.tsx` and `GroupByPicker.tsx` to use it. Extract shared table CSS (group headers, sort badges, add-row styles) into `src/renderer/styles/table-shared.module.css`.
@@ -833,18 +692,6 @@
 ---
 
 ## P3 — Web Share
-
-### Dark mode on web share pages
-**What:** Add dark mode support to the redesigned share pages (`/s/[token]`, `/n/[token]`, `/m/[token]`) — shared header, card, footer, and floating chat widget all respond to `prefers-color-scheme: dark`.
-**Why:** The current share pages use `style=""` inline styles with hardcoded white/gray hex values, so they do not adapt to dark mode even though the rest of the web app has dark mode stubs in `globals.css`.
-**Pros:** Polished experience for users on dark OS/browser themes; consistent with the existing `summary-markdown` dark mode CSS in `globals.css`.
-**Cons:** Requires converting share-page components from inline styles to CSS modules (or Tailwind `dark:` classes), which is a moderate refactor. The floating widget is portal-mounted, so a global CSS class-based approach (e.g., `[data-theme="dark"]`) or CSS custom properties would be cleaner than media queries inside inline styles.
-**Context:** Added in the web share redesign PR. Start with `SharedHeader`, `SharedFooter`, and `FloatingChatWidget` in `web/components/`. The card layout in `SharePage`, `NoteSharePage`, and `MemoSharePage` uses inline `background: '#fff'` and `background: '#f9fafb'` — these are the main values to convert. The `summary-markdown` dark mode rules in `globals.css` are a good reference for the pattern.
-**Effort:** M
-**Priority:** P3
-**Depends on:** Web share redesign PR merged.
-
----
 
 ### File attachments in FloatingChatWidget
 **What:** Allow users to attach files (images, PDFs) to questions in the floating chat widget on share pages, forwarding them to Claude as vision/document content.
@@ -1175,30 +1022,6 @@ inline).
 
 ---
 
-## P3 — Memo generation file-read parallelization
-
-### Parallel `readLocalFile` loop in memo-gen IPC
-**What:** Replace the sequential `for (const fileId of fileIds) { await readLocalFile(...) }` in
-`src/main/ipc/investment-memo.ipc.ts` with a concurrency-limited parallel reader (e.g. `pLimit(3)`).
-**Why:** With the bumped 64k per-file / 400k total caps, a company with 6 large PDFs takes
-~6-12s of sequential read time before Exa pre-research even starts. Parallelizing with a
-concurrency limit of 3 cuts that to ~2-4s.
-**Pros:** ~3-4× faster gathering on file-heavy companies. Cancel responsiveness already covered
-by the between-iteration `signal.aborted` check (which can stay; just check before each
-parallel batch dispatch instead).
-**Cons:** Concurrent PDF parses thrash CPU and disk; need a small `pLimit`-style helper or a
-hand-rolled limiter (~15 lines). 10 concurrent parses with no limit can pin the system.
-**Context:** File-read loop is at `src/main/ipc/investment-memo.ipc.ts` lines 374-385. The cap
-of 6 large files is bounded by `MEMO_FILE_TOTAL_CAP = 400_000` chars (~6 files × 64k),
-so concurrency limit of 3 is a reasonable midpoint. Consider lifting to a shared util in
-`src/main/utils/p-limit.ts` if the pattern recurs (unlikely; only readLocalFile loops are
-this slow).
-**Effort:** S
-**Priority:** P3
-**Depends on:** Cancel-aware file-read loop (✅ landed in this PR via between-iteration check).
-
----
-
 ### Error telemetry forwarder
 **What:** Forward errors caught by `src/renderer/components/common/ErrorBoundary.tsx`
 to a real telemetry sink — Sentry, Datadog, or a main-process file logger over IPC.
@@ -1219,30 +1042,6 @@ new IPC channel; user can opt in to sharing.
 **Effort:** M
 **Priority:** P3
 **Depends on:** Decision on telemetry stack.
-
----
-
-### TextFilter: arrow-key navigation on suggestions
-**What:** Wire `src/renderer/components/crm/TextFilter.tsx` to the `useListboxNavigation` hook so arrow keys + Enter select from filter suggestions. Today only Esc/Enter are handled (lines 57-59).
-**Why:** Inconsistent with the autocomplete-keyboard work landing in the keyboard-nav refactor PR — every other autocomplete in the app supports arrows after that PR; this one was deferred to keep scope manageable.
-**Pros:** ~5-min change once the hook exists; restores keyboard parity across all dropdowns.
-**Cons:** None significant.
-**Context:** Keyboard handler at `TextFilter.tsx:57-59`. Follow the pattern used in the post-refactor `EntitySearch.tsx` (input + flat list + dropdown) — almost identical shape.
-**Effort:** S
-**Priority:** P3
-**Depends on:** `useListboxNavigation` hook landed in autocomplete-keyboard refactor.
-
----
-
-### CommandPalette: arrow-key navigation on grouped results
-**What:** Wire `src/renderer/components/common/CommandPalette.tsx` grouped results to `useListboxNavigation`. Currently only Escape is handled (lines 112-119); arrow keys do nothing on the grouped result list (lines 175-199).
-**Why:** A command palette without keyboard navigation is broken UX for keyboard-first users.
-**Pros:** Standardizes on the hook used everywhere else.
-**Cons:** Grouped results require the same flatten-in-site pattern used by SearchBar in the refactor PR — non-trivial because skipped section headers must be rendered alongside the keyboard-navigable rows. Deserves its own QA pass.
-**Context:** Use SearchBar's post-refactor pattern as the reference (flatten groups into `selectableItems[]`, render headers as decorative siblings).
-**Effort:** S
-**Priority:** P3
-**Depends on:** `useListboxNavigation` hook + SearchBar grouped-results pattern landed.
 
 ---
 
@@ -1364,3 +1163,91 @@ new IPC channel; user can opt in to sharing.
 **Context:** Phase 1 deliberately left legacy memo versions in place; users can still browse them via the version dropdown. This TODO is for if/when we want a unified view.
 **Effort:** M
 **Priority:** P3
+
+---
+
+## P3 — Memo / Stress-test (Quality)
+
+### Programmatic dimension-labeling validator for memo + stress-test bullets
+**What:** Add a post-processor to the `submit_section` handler (memo-producer) and `submit_review` handler (stress-test) that scans Investment Thesis / Risks / concerns bullets for at least one framework dimension keyword (Tenacious, Evolving, Authentic, Magnetic, Asymmetric Upside, Increasing Marginal Returns, Compounding Defensibility, etc.). Bullets without a dimension label get auto-rejected with a retry prompt back to the agent.
+**Why:** Dimension labeling is currently enforced via prompt instruction only. After ~2 weeks of real usage we'll know whether the agent consistently complies. If it drifts, a post-processor turns the rule into an enforceable invariant.
+**Pros:** Hard guarantee on output structure; analyst can trust dimension-labeling without spot-checking; enables downstream aggregations ("how often does TEAM-Authentic show up as a strength?").
+**Cons:** Requires defining keyword sets per dimension; agent-retry loops add latency and tokens; false-positives risk blocking legitimate phrasing.
+**Context:** Current enforcement is prose in `src/main/llm/agents/prompts/memo-producer.system.md` and `src/main/llm/agents/prompts/thesis-stress-test.system.md`. Tool handlers (`submit_section`, `submit_review`) do Zod shape-validation but not body-content validation. Hook in at body-content level. Source of truth for dimension keywords: `src/main/llm/agents/prompts/investment-criteria.md`.
+**Effort:** S–M
+**Priority:** P3
+**Depends on:** Investment-criteria PR merged + ~2 weeks of real usage to observe whether enforcement is needed.
+
+---
+
+### Prompt-eval golden-output harness
+**What:** Test suite that generates a memo + stress-test for ~5 canonical anonymized company fixtures and compares against pinned reference outputs. Flags substantive drift (lost section, recommendation flipped, missing dimension labeling). Runs on every prompt-file change.
+**Why:** Prompt edits today have no automated quality signal. The unit tests in `src/tests/prompt-substitution.test.ts` catch substitution leaks only — they don't catch semantic regressions from prompt prose changes.
+**Pros:** Confidence to iterate on prompts; catches regressions before merge; serves as living documentation of expected output.
+**Cons:** Real LLM calls in CI are slow + costly (mocking loses fidelity); fixture maintenance is real work; LLM "golden outputs" are inherently fuzzy → flake risk.
+**Context:** No existing prompt-eval infrastructure. Would need: anonymized company fixtures, snapshot comparison logic, "substantive drift" criteria, CI flake policy. Likely starts as a manual `bun run eval` script before CI integration. Size against actual prompt-change frequency — worth it if prompts change weekly, less so if monthly.
+**Effort:** L
+**Priority:** P3
+**Depends on:** Nothing technical.
+
+---
+
+## P3 — CRM / Properties panels
+
+### Widen `ContactType` union to `string`
+**What:** Change `ContactType = 'investor' | 'founder' | 'operator' | 'lp'` in `src/shared/types/contact.ts` to `string` (or `ContactType | (string & {})` to preserve autocomplete on the canonical four). Audit the ~5 files that reference the type for narrow-cast assumptions.
+**Why:** After removing the `VALID_CONTACT_TYPES` whitelist from `contact.repo.ts`, custom values flow through correctly at runtime — but the `as ContactType` casts at L193 (and equivalents) are now lying. Type narrows that depend on the four-value union (e.g. exhaustive switch statements) will silently misbehave on custom values.
+**Pros:** Type system matches runtime reality; safer refactors; prevents future bugs where developers write code assuming the four-value invariant.
+**Cons:** Cascades into 4–5 files (contactColumns.ts, ContactTable.tsx, Contacts.tsx, contact.repo.ts, contact.ts). Some hardcoded `=== 'founder'` / `=== 'investor'` comparisons are fine to keep narrow — those are intentional behavioral filters for built-in types.
+**Context:** The `as ContactType` cast already lies for `talentPipeline`-equivalents (same pattern: narrow type, no runtime validation). When this comes up again, pick one of: (a) widen the union to `string`, accept loss of literal-narrowing; (b) introduce a separate `BuiltInContactType` union for the four canonical values and keep `ContactType = string`; (c) use the template-literal trick `ContactType | (string & {})` to preserve autocomplete suggestions on the four canonical values.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Nothing.
+
+---
+
+### Cross-field option-name detection
+**What:** When the user adds a new option via "+ Add option" on a dropdown field, fuzzy-match the typed value against existing options on *other* select/multiselect fields for the same entity. If a match is found (e.g. user types "candidate" on the Type field but "Internal Candidate" already exists on Talent Pipeline), show a modal: "Did you mean to set Talent Pipeline to 'Internal Candidate' instead?" with Redirect / Add Anyway / Cancel buttons.
+**Why:** A user reported routing confusion — they typed "candidate" on Type but the value they wanted was the existing "Internal Candidate" option in Talent Pipeline. The cross-field nudge would catch this UX mistake.
+**Pros:** Smart UX that catches an entire class of "wrong dropdown" misclicks; reuses existing `jaroWinkler` fuzzy match in `src/main/utils/`; once built, can extend to multiselects + custom fields uniformly.
+**Cons:** Speculative — there's exactly one anecdotal user report and the actual cause turned out to be the silent-validation bug (now fixed). The user's example case ("candidate" vs "Internal Candidate") needs a substring/word match in addition to JW (JW alone scores ~0.5 on that pair and would miss it). New modal component, ~80 lines of panel wiring, and `jaroWinkler` needs to move from `src/main/utils/` to `src/shared/utils/` so the renderer can use it.
+**Context:** Cut from the CEO-reviewed plan after we found the real root cause (hardcoded `VALID_CONTACT_TYPES` whitelist) was the silent-failure source, not cross-field routing. Wait for a second recurrence of the wrong-field pattern before building. Implementation sketch (from the plan): hybrid match (word-boundary substring with min length 4 OR Jaro-Winkler ≥ 0.85) across all select/multiselect fields on the entity, modal owns the resolve promise, three outcomes (redirect / add / cancel).
+**Effort:** M
+**Priority:** P3
+**Depends on:** Move `src/main/utils/jaroWinkler.ts` → `src/shared/utils/jaroWinkler.ts` first (update 6 imports).
+
+---
+
+### Audit company-panel chip auto-pin
+**What:** Review `CompanyPropertiesPanel.tsx` line 380 — currently always pins `entityType`, `pipelineStage`, `priority`, `round` at the top of the panel regardless of user pin preferences. Confirm whether any of these duplicate values already shown in the corresponding section row (the same redundancy that prompted the Talent Pipeline auto-pin removal on the contact panel).
+**Why:** Contact panel previously auto-pinned `talentPipeline` whenever it had a value, producing a stray chip the user explicitly didn't want (since the value was already visible in the Relationship section). Company panel may have the same anti-pattern, just for four different fields.
+**Pros:** Consistency with contact panel; reduces visual noise; respects user pin preferences uniformly.
+**Cons:** Company chip-pinning was likely deliberate (these are core identifying fields). Removing without user feedback could surprise people. Touch only if the user reports duplication or asks for it.
+**Context:** Contact panel previously had `talentPipelineChipIds = contact.talentPipeline ? ['talentPipeline'] : []` at L368 — removed in the same PR that fixed the silent-validation bug. Company panel's `allChipIds` at L380 unconditionally pins 4 fields. The fix mirrors the contact change: drop the always-pinned IDs from `allChipIds`, let users pin manually via the existing affordance.
+**Effort:** S
+**Priority:** P3
+**Depends on:** User confirmation that the chips feel duplicative.
+
+---
+
+### Migrate other ad-hoc inline-error states to `useTimedError`
+**What:** Grep the renderer for `useState<string | null>(null)` paired with `setTimeout`-based clear patterns, and migrate them to the shared `useTimedError` hook (`src/renderer/hooks/useTimedError.ts`).
+**Why:** The same pattern was duplicated across `ContactPropertiesPanel.metaSaveError`, `CompanyPropertiesPanel.nameError`, `CompanyPropertiesPanel.deleteError`, `useCellClipboard.showToast`, plus the new `optionError` in 3 panels. The hook is now in place — the remaining ad-hoc copies should converge on it for consistency.
+**Pros:** DRY; consistent error-clear behavior across the app; simplifies any future "global toast" migration since all sites already speak the `useTimedError` API.
+**Cons:** Touches code that currently works fine, with no automated test coverage on most of the migrated call sites. Risk of typo regressions. Best paired with a smoke test per migrated component.
+**Context:** `useTimedError` lives at [src/renderer/hooks/useTimedError.ts](src/renderer/hooks/useTimedError.ts). API: `const err = useTimedError(autoClearMs?)` → `err.error`, `err.show(msg)`, `err.clear()`. Already used by `ContactPropertiesPanel` (metaSaveError + optionError), `CompanyPropertiesPanel` (nameError + deleteError + optionError), `Pipeline` (optionError). Grep targets: `useState<string \\| null>(null)` AND `setTimeout` in the same file.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Nothing.
+
+---
+
+### Audit other duplicated CRM input/cell components
+**What:** Search for components that duplicate behavior already covered by `crm/` shared components (e.g. `ChipSelect`, `AddOptionInlineInput`, `PropertyRow`, `TagPicker`). Likely candidates: multiselect cells in `Pipeline.tsx`, table cells in `ContactTable.tsx` / `CompanyTable.tsx`, tag/chip displays in misc components.
+**Why:** `ChipDropdownCell` in `Pipeline.tsx` (consolidated into `ChipSelect variant='cell'` in the silent-failure-fix PR) was a known duplicate that carried its own silent-failure bug for years. Other duplicates likely exist and will silently miss out on fixes/improvements to the shared components (error handling, commit-on-blur, etc.).
+**Pros:** Fixes/improvements to shared CRM components propagate uniformly; DRY; reduces visual inconsistency.
+**Cons:** Visual variants are real — `ChipSelect`'s inline vs cell modes already required a `variant` prop. More variants may bloat the shared component. Some duplicates exist for good reason (different interaction model, different style requirements).
+**Context:** Start with grep for `addCustomFieldOption(` outside `ChipSelect.tsx` to find places that have their own "add option" UI. Also grep for `AddOptionInlineInput` direct callers to find what's still wiring the input by hand. Existing shared components: [src/renderer/components/crm/ChipSelect.tsx](src/renderer/components/crm/ChipSelect.tsx), [AddOptionInlineInput.tsx](src/renderer/components/crm/AddOptionInlineInput.tsx), [PropertyRow.tsx](src/renderer/components/crm/PropertyRow.tsx), [TagPicker.tsx](src/renderer/components/crm/TagPicker.tsx).
+**Effort:** M
+**Priority:** P3
+**Depends on:** Nothing.

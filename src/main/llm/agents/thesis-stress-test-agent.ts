@@ -24,7 +24,25 @@ import type { AgentEvent } from '../../../shared/types/agent-events'
 import { getCredential } from '../../security/credentials'
 import { getAgentModelId, getCacheTtl, EXTENDED_CACHE_TTL_BETA } from './model-tier'
 // Vite ?raw inlines the markdown content as a string at build time.
-import THESIS_SYSTEM_PROMPT from './prompts/thesis-stress-test.system.md?raw'
+import THESIS_SYSTEM_PROMPT_TEMPLATE from './prompts/thesis-stress-test.system.md?raw'
+import STRESS_TEST_CHECKLIST from './prompts/stress-test-checklist.md?raw'
+
+/** Matches our placeholder convention `###CAPS_AND_UNDERSCORES###` — not markdown h3. */
+const PLACEHOLDER_PATTERN = /###[A-Z_]+###/
+
+/**
+ * Build the thesis-stress-test system prompt by substituting placeholders.
+ * Throws if any placeholder remains unsubstituted.
+ */
+export function buildThesisStressTestSystemPrompt(): string {
+  const prompt = THESIS_SYSTEM_PROMPT_TEMPLATE
+    .replace('###STRESS_TEST_CHECKLIST###', STRESS_TEST_CHECKLIST)
+  const leftover = prompt.match(PLACEHOLDER_PATTERN)
+  if (leftover) {
+    throw new Error(`Unsubstituted prompt placeholder in thesis-stress-test system prompt: ${leftover[0]}`)
+  }
+  return prompt
+}
 
 export interface RunStressTestAgentInput {
   runId: string
@@ -85,7 +103,7 @@ export async function runStressTestAgent(
   const result = await runAgentLoop({
     client,
     model,
-    systemPrompt: THESIS_SYSTEM_PROMPT,
+    systemPrompt: buildThesisStressTestSystemPrompt(),
     initialUserMessage,
     tools: THESIS_STRESS_TEST_TOOLS,
     ctx: {

@@ -477,9 +477,10 @@
   align-self: flex-start;
 }
 
-.tagHighIntent  { background: var(--chip-error-bg);   color: var(--chip-error-text); }
-.tagFurtherWork { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
-.tagSteady      { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
+.statusTag[data-priority="high"]    { background: var(--chip-error-bg);   color: var(--chip-error-text); }
+.statusTag[data-priority="medium"]  { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
+.statusTag[data-priority="monitor"] { background: var(--chip-neutral-bg); color: var(--chip-neutral-text); }
+.statusTag[data-priority="low"]     { background: var(--chip-low-bg);     color: var(--chip-low-text); }
 
 /* ── Recent Touches ───────────────────────────────────────────────────────── */
 

@@ -35,6 +35,7 @@ import type { PartnerMeetingDigest } from '../../../shared/types/partner-meeting
 import { api } from '../../api'
 import { Spinner } from '../common/Spinner'
 import { COMPANY_STAGE_OPTIONS } from '../common/PipelineStepper'
+import { PRIORITIES } from './companyColumns'
 import styles from './NewCompanyModal.module.css'
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -50,12 +51,6 @@ function stageToDigestSection(stage: string | null): 'new_deals' | 'existing_dea
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const STAGES = COMPANY_STAGE_OPTIONS
-
-const PRIORITIES: { value: CompanyPriority; label: string }[] = [
-  { value: 'high',   label: 'High'   },
-  { value: 'medium', label: 'Medium' },
-  { value: 'low',    label: 'Low'    },
-]
 
 const ROUNDS: { value: CompanyRound; label: string }[] = [
   { value: 'pre_seed',       label: 'Pre-Seed'       },
@@ -134,6 +129,7 @@ export default function NewCompanyModal({
   const [addToPartnerSync, setAddToPartnerSync] = useState(true)
 
   // URL step state
+  const [loadingSource, setLoadingSource] = useState<'pdf' | 'url'>('pdf')
   const [urlValue, setUrlValue] = useState('')
   const [emailValue, setEmailValue] = useState('')
   const [passwordValue, setPasswordValue] = useState('')
@@ -220,6 +216,7 @@ export default function NewCompanyModal({
   }
 
   async function ingestPdf(path: string) {
+    setLoadingSource('pdf')
     setStep('loading')
     try {
       const raw = await api.invoke<PitchDeckIngestResult>(IPC_CHANNELS.COMPANY_PITCH_DECK_INGEST, {
@@ -237,6 +234,7 @@ export default function NewCompanyModal({
   async function handleIngestUrl() {
     const trimmedUrl = urlValue.trim()
     if (!trimmedUrl) return
+    setLoadingSource('url')
     setStep('loading')
     // Save email if different from saved
     const resolvedEmail = emailValue.trim() || undefined
@@ -480,7 +478,11 @@ export default function NewCompanyModal({
           <div className={styles.loadingStep}>
             <Spinner size="lg" />
             <p className={styles.loadingText}>
-              {step === 'loading' ? 'AI is reading the deck…' : 'Creating company…'}
+              {step === 'creating'
+                ? 'Creating company…'
+                : loadingSource === 'url'
+                  ? 'AI is reading the website…'
+                  : 'AI is reading the deck…'}
             </p>
           </div>
         )}

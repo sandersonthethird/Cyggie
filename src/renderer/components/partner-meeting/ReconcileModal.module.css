@@ -247,9 +247,9 @@
   font-weight: 500;
 }
 
-.cat_action_item { background: var(--chip-process-bg);  color: var(--chip-process-text); }
-.cat_decision    { background: var(--chip-success-bg);  color: var(--chip-success-text); }
-.cat_follow_up   { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
+.categoryBadge[data-category="action_item"] { background: var(--chip-process-bg); color: var(--chip-process-text); }
+.categoryBadge[data-category="decision"]    { background: var(--chip-success-bg); color: var(--chip-success-text); }
+.categoryBadge[data-category="follow_up"]   { background: var(--chip-warning-bg); color: var(--chip-warning-text); }
 
 .assignee {
   color: var(--color-text-muted);

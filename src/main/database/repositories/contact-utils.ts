@@ -135,18 +135,6 @@ export function mergeCandidate(
   return existing
 }
 
-export function parseJsonArray(value: string | null): string[] {
-  if (!value) return []
-  try {
-    const parsed = JSON.parse(value)
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === 'string')
-      : []
-  } catch {
-    return []
-  }
-}
-
 export function parseEmailParticipants(value: string | null): ContactEmailParticipantRef[] {
   if (!value) return []
   try {
@@ -187,46 +175,12 @@ export function normalizeForCompare(value: string | null | undefined): string {
   return value.trim().toLowerCase()
 }
 
-export const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
-
-export function parseTimestamp(value: string | null | undefined): number {
-  if (!value) return Number.NaN
-  const trimmed = value.trim()
-  if (!trimmed) return Number.NaN
-  const normalized = SQLITE_DATETIME_RE.test(trimmed)
-    ? `${trimmed.replace(' ', 'T')}Z`
-    : trimmed
-  return Date.parse(normalized)
-}
-
-export function pickLatestTimestamp(values: Array<string | null | undefined>): string | null {
-  let latestValue: string | null = null
-  let latestTs = Number.NEGATIVE_INFINITY
-
-  for (const value of values) {
-    const ts = parseTimestamp(value)
-    if (Number.isNaN(ts)) continue
-    if (ts > latestTs) {
-      latestTs = ts
-      latestValue = value || null
-    }
-  }
-
-  return latestValue
-}
-
-export function setLatestMapValue(
-  map: Map<string, string>,
-  key: string,
-  candidate: string | null | undefined
-): void {
-  const normalizedKey = key.trim().toLowerCase()
-  if (!normalizedKey) return
-  const latest = pickLatestTimestamp([map.get(normalizedKey) || null, candidate])
-  if (latest) {
-    map.set(normalizedKey, latest)
-  }
-}
+// Re-export SQLITE_DATETIME_RE / parseTimestamp / pickLatestTimestamp /
+// setLatestMapValue / parseJsonArray from db-utils for backward compatibility.
+// These were originally defined here; the canonical source is now
+// `src/main/utils/db-utils.ts`. Keep the re-export so the ~29 existing imports
+// from contact-utils continue to work.
+export { SQLITE_DATETIME_RE, parseTimestamp, pickLatestTimestamp, setLatestMapValue, parseJsonArray } from '../../utils/db-utils'
 
 // ---------------------------------------------------------------------------
 // LinkedIn utilities

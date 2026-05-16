@@ -21,6 +21,7 @@ import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.con
 import type { MemoShareResponse, MemoRevokeResponse } from '../../shared/types/web-share'
 import { searchCompanyContext } from '../services/exa-research'
 import { getFlaggedFiles } from '../database/repositories/company-file-flags.repo'
+import { runWithConcurrency } from '../utils/p-limit'
 import type { MemoGenerateMeta, MemoPreflightResult } from '../../shared/types/company'
 import { estimateMemoGenContext } from '../llm/context-size'
 import { gatherMemoSourceCounts } from '../llm/memo-context-gatherer'
@@ -590,17 +591,21 @@ export function registerInvestmentMemoHandlers(): void {
       ? selectedFileIds
       : flaggedFiles.map(f => f.fileId)
 
-    const files: Array<{ name: string; content: string }> = []
-    for (const fileId of fileIds) {
-      // Between-iteration cancel check. PDF parses can take 1-2s each;
-      // without this, Cancel during a 6-file company would lag 10-20s.
+    // Concurrent file reads: PDF parses are 1-2s each, and a 6-file company
+    // would block 6-12s sequentially. Limit of 3 in flight keeps CPU/disk
+    // happy while still cutting wall-clock by ~3x. Promise.all semantics:
+    // first rejection aborts the bundle (matches the prior sequential throw).
+    // signal.aborted is rechecked inside each worker, so a Cancel during a
+    // multi-file company surfaces in <2s instead of waiting for the slowest
+    // in-flight parse.
+    const fileResults = await runWithConcurrency(fileIds, 3, async (fileId) => {
       if (signal.aborted) throw new DOMException('aborted', 'AbortError')
       const flagged = flaggedFiles.find(f => f.fileId === fileId)
       const content = await readLocalFile(fileId, flagged?.mimeType ?? undefined)
-      if (content && content.trim().length > 100) {
-        files.push({ name: flagged?.fileName ?? basename(fileId), content })
-      }
-    }
+      return { name: flagged?.fileName ?? basename(fileId), content }
+    })
+    const files = fileResults
+      .filter((f): f is { name: string; content: string } => Boolean(f.content && f.content.trim().length > 100))
 
     // Niche signal for Exa pre-research: most recent meeting summary's
     // first 500 chars (richest, founder's own words). summaryRows is sorted

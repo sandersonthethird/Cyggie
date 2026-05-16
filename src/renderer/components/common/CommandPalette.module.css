@@ -98,7 +98,8 @@
   gap: 2px;
 }
 
-.resultRow:hover {
+.resultRow:hover,
+.resultRowActive {
   border-color: var(--color-border);
   background: var(--color-card-hover);
 }

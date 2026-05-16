@@ -5,6 +5,7 @@ import { UnionFind } from '../../utils/unionFind'
 import { splitCamelCase } from '../../utils/string-utils'
 import { trySegment } from '../../utils/company-extractor'
 import { extractDomainFromWebsiteUrl, normalizeDomain } from '../../utils/email-parser'
+import { parseTimestamp } from '../../utils/db-utils'
 import { logAudit } from './audit.repo'
 import type {
   CompanyEntityType,
@@ -192,17 +193,6 @@ function getRegistrableDomain(domain: string): string {
   return labels.slice(-2).join('.')
 }
 
-const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
-
-function parseTimestamp(value: string | null | undefined): number {
-  if (!value) return Number.NaN
-  const trimmed = value.trim()
-  if (!trimmed) return Number.NaN
-  const normalized = SQLITE_DATETIME_RE.test(trimmed)
-    ? `${trimmed.replace(' ', 'T')}Z`
-    : trimmed
-  return Date.parse(normalized)
-}
 
 const MAX_FUZZY_CANDIDATES = 5000
 const FUZZY_THRESHOLD = 0.88

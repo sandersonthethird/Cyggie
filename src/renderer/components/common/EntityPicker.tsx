@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PickerState } from '../../hooks/usePicker'
 import { useListboxNavigation } from '../../hooks/useListboxNavigation'
+import { useOutsideClick } from '../../hooks/useOutsideClick'
 import styles from './EntityPicker.module.css'
 
 interface EntityPickerProps<T extends { id: string }> {
@@ -37,16 +38,7 @@ export function EntityPicker<T extends { id: string }>({
     picker.search(query)
   }, [query]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Close on outside click
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        onClose()
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [onClose])
+  useOutsideClick(rootRef, onClose)
 
   const { results, searching } = picker
   const hasCreate = !!onCreate && !!query.trim()

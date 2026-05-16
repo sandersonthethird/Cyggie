@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Meeting } from '../../../shared/types/meeting'
 import { getSingleCompanyDomain } from '../../../shared/utils/company-domain'
 import { formatMeetingDuration, formatMeetingTime } from '../../utils/format'
+import { useOutsideClick } from '../../hooks/useOutsideClick'
 import styles from './MeetingCard.module.css'
 
 interface MeetingCardProps {
@@ -16,16 +17,7 @@ export default function MeetingCard({ meeting, snippet, onClick, onDelete, onCop
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!menuOpen) return
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [menuOpen])
+  useOutsideClick(menuRef, () => setMenuOpen(false), menuOpen)
 
   const attendees = meeting.attendees && meeting.attendees.length > 0
     ? meeting.attendees

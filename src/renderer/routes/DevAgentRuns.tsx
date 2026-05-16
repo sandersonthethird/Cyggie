@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { AgentEvent } from '../../shared/types/agent-events'
+import { parseTimestamp, parseToDate } from '../utils/format'
 import styles from './DevAgentRuns.module.css'
 
 /**
@@ -167,7 +168,7 @@ function Row({
   eventsLoading: boolean
 }) {
   const duration = run.endedAt
-    ? Math.round((new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()) / 1000)
+    ? Math.round((parseTimestamp(run.endedAt) - parseTimestamp(run.startedAt)) / 1000)
     : null
   return (
     <>
@@ -221,7 +222,7 @@ function buildSummary(runs: StoredAgentRun[]): {
   const totalCost = completed.reduce((s, r) => s + r.costEstimateUsd, 0)
   const avgCost = completed.length ? totalCost / completed.length : 0
   const durations = completed
-    .map(r => (new Date(r.endedAt!).getTime() - new Date(r.startedAt).getTime()) / 1000)
+    .map(r => (parseTimestamp(r.endedAt!) - parseTimestamp(r.startedAt)) / 1000)
     .sort((a, b) => a - b)
   const p99Latency = durations.length
     ? Math.round(durations[Math.floor(durations.length * 0.99)] ?? 0)
@@ -240,7 +241,7 @@ function buildSummary(runs: StoredAgentRun[]): {
 }
 
 function formatTime(iso: string): string {
-  const d = new Date(iso)
+  const d = parseToDate(iso)
   return `${d.toLocaleDateString()} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
 }
 

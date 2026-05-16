@@ -1,20 +1,72 @@
 import { app, shell, BrowserWindow, Notification } from 'electron'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { join } from 'path'
 import { getUpcomingEvents } from './google-calendar'
 import { isCalendarConnected } from './google-auth'
 import { MEETING_APPS } from '../../shared/constants/meeting-apps'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
 import { getCurrentUserProfile } from '../security/current-user'
+import { getStoragePath } from '../storage/paths'
 
-const POLL_INTERVAL_MS = 30 * 1000 // Check every 30 seconds
-const NOTIFY_BEFORE_MS = 1 * 60 * 1000 // Notify 1 minute before
+const POLL_INTERVAL_MS = 20 * 1000 // Check every 20 seconds
+const NOTIFY_LEAD_MS = 2 * 60 * 1000 // Notify up to 2 minutes before start
+const NOTIFY_GRACE_MS = 90 * 1000 // Still notify up to 90s after start (catch app-just-launched)
+const IMMEDIATE_CHECK_DEBOUNCE_MS = 3000
+const STATE_LOOKBACK_MS = 6 * 3600 * 1000 // Retain notified records for 6h past event end
 
-// Track which events we've already notified about
+type NotifiedRecord = { id: string; endTime: string }
+
+// Track which events we've already notified about (persisted across restarts)
+let notifiedRecords: NotifiedRecord[] = []
 const notifiedEventIds = new Set<string>()
+
 let pollInterval: ReturnType<typeof setInterval> | null = null
+let lastImmediateCheck = 0
+let runningCheck: Promise<void> | null = null
 
 // Keep references to active notifications to prevent GC from detaching click handlers
 const activeNotifications = new Set<Notification>()
+
+function stateFile(): string {
+  return join(getStoragePath(), 'meeting-notifier-state.json')
+}
+
+function loadNotifiedIds(): void {
+  try {
+    if (!existsSync(stateFile())) return
+    const raw = JSON.parse(readFileSync(stateFile(), 'utf-8')) as NotifiedRecord[]
+    if (!Array.isArray(raw)) return
+    const cutoff = Date.now() - STATE_LOOKBACK_MS
+    notifiedRecords = raw.filter((r) => {
+      if (!r || typeof r.id !== 'string' || typeof r.endTime !== 'string') return false
+      const end = new Date(r.endTime).getTime()
+      return Number.isFinite(end) && end > cutoff
+    })
+    notifiedEventIds.clear()
+    notifiedRecords.forEach((r) => notifiedEventIds.add(r.id))
+    console.log(`[MeetingNotifier] Loaded ${notifiedRecords.length} notified record(s) from state`)
+  } catch (err) {
+    console.warn('[MeetingNotifier] state load failed:', err)
+    notifiedRecords = []
+    notifiedEventIds.clear()
+  }
+}
+
+function persistNotifiedIds(): void {
+  try {
+    writeFileSync(stateFile(), JSON.stringify(notifiedRecords), 'utf-8')
+  } catch (err) {
+    console.warn('[MeetingNotifier] state persist failed:', err)
+  }
+}
+
+function markNotified(event: CalendarEvent): void {
+  if (notifiedEventIds.has(event.id)) return
+  notifiedRecords.push({ id: event.id, endTime: event.endTime })
+  notifiedEventIds.add(event.id)
+  persistNotifiedIds()
+}
 
 function getMainWindow(): BrowserWindow | null {
   const windows = BrowserWindow.getAllWindows()
@@ -53,7 +105,7 @@ function formatNotificationBody(event: CalendarEvent): string {
     const count = event.attendees.length
     parts.push(`${count} attendee${count !== 1 ? 's' : ''}`)
   }
-  return parts.join(' \u2022 ')
+  return parts.join(' • ')
 }
 
 async function showMeetingNotification(event: CalendarEvent): Promise<void> {
@@ -129,47 +181,66 @@ async function checkUpcomingMeetings(): Promise<void> {
       if (notifiedEventIds.has(event.id)) continue
 
       const start = new Date(event.startTime).getTime()
+      const end = new Date(event.endTime).getTime()
       const timeUntilStart = start - now
-      const minutesUntil = Math.round(timeUntilStart / 1000 / 60 * 10) / 10
+      const minutesUntil = Math.round((timeUntilStart / 1000 / 60) * 10) / 10
+
+      const inLeadWindow = timeUntilStart > 0 && timeUntilStart <= NOTIFY_LEAD_MS
+      const justStarted = timeUntilStart <= 0 && -timeUntilStart <= NOTIFY_GRACE_MS
+      const stillRunning = Number.isFinite(end) ? end > now : true
 
       console.log(
-        `[MeetingNotifier] "${event.title}" starts in ${minutesUntil} min`
+        `[MeetingNotifier] "${event.title}" starts in ${minutesUntil} min ` +
+          `(inLead=${inLeadWindow}, justStarted=${justStarted}, stillRunning=${stillRunning})`
       )
 
-      // Notify if meeting starts within the next 1 minute (and hasn't already started)
-      if (timeUntilStart > 0 && timeUntilStart <= NOTIFY_BEFORE_MS) {
+      if ((inLeadWindow || justStarted) && stillRunning) {
         console.log(`[MeetingNotifier] Triggering notification for "${event.title}"`)
-        notifiedEventIds.add(event.id)
+        markNotified(event)
         showMeetingNotification(event)
-      } else {
-        console.log(
-          `[MeetingNotifier] Not in notification window — timeUntilStart: ${timeUntilStart}ms, ` +
-          `threshold: ${NOTIFY_BEFORE_MS}ms, alreadyNotified: ${notifiedEventIds.has(event.id)}`
-        )
       }
     }
 
-    // Clean up old event IDs (events that have already ended)
-    for (const id of notifiedEventIds) {
-      const event = events.find((e) => e.id === id)
-      if (event) {
-        const end = new Date(event.endTime).getTime()
-        if (end < now) {
-          notifiedEventIds.delete(id)
-        }
-      }
+    // Clean up records whose events have ended (past the lookback retention).
+    const cutoff = now - STATE_LOOKBACK_MS
+    const beforeCount = notifiedRecords.length
+    notifiedRecords = notifiedRecords.filter((r) => {
+      const recordEnd = new Date(r.endTime).getTime()
+      return Number.isFinite(recordEnd) && recordEnd > cutoff
+    })
+    if (notifiedRecords.length !== beforeCount) {
+      notifiedEventIds.clear()
+      notifiedRecords.forEach((r) => notifiedEventIds.add(r.id))
+      persistNotifiedIds()
     }
   } catch (err) {
     console.error('[MeetingNotifier] Error checking upcoming meetings:', err)
   }
 }
 
+async function runCheckOnce(): Promise<void> {
+  if (runningCheck) {
+    await runningCheck
+    return
+  }
+  runningCheck = checkUpcomingMeetings().finally(() => {
+    runningCheck = null
+  })
+  await runningCheck
+}
+
 export function startMeetingNotifier(): void {
   stopMeetingNotifier()
-  console.log('[MeetingNotifier] Started — polling every 30s, notify 2 min before')
+  loadNotifiedIds()
+  console.log(
+    `[MeetingNotifier] Started — polling every ${POLL_INTERVAL_MS / 1000}s, ` +
+      `lead ${NOTIFY_LEAD_MS / 1000}s, grace ${NOTIFY_GRACE_MS / 1000}s`
+  )
   // Run an initial check immediately
-  checkUpcomingMeetings()
-  pollInterval = setInterval(checkUpcomingMeetings, POLL_INTERVAL_MS)
+  runCheckOnce()
+  pollInterval = setInterval(() => {
+    runCheckOnce()
+  }, POLL_INTERVAL_MS)
 }
 
 export function stopMeetingNotifier(): void {
@@ -177,5 +248,44 @@ export function stopMeetingNotifier(): void {
     clearInterval(pollInterval)
     pollInterval = null
     console.log('[MeetingNotifier] Stopped')
+  }
+}
+
+/**
+ * Run a fresh check now, debounced so rapid bursts collapse to one. Call this
+ * after a calendar refresh so newly-added meetings inside the lead window get
+ * evaluated immediately instead of waiting for the next poll.
+ */
+export function triggerImmediateCheck(): void {
+  const now = Date.now()
+  if (now - lastImmediateCheck < IMMEDIATE_CHECK_DEBOUNCE_MS) return
+  lastImmediateCheck = now
+  runCheckOnce()
+}
+
+// Exported for tests only — do not use from production code.
+export const __test = {
+  loadNotifiedIds,
+  persistNotifiedIds,
+  resetState(): void {
+    notifiedRecords = []
+    notifiedEventIds.clear()
+    lastImmediateCheck = 0
+    if (pollInterval) {
+      clearInterval(pollInterval)
+      pollInterval = null
+    }
+  },
+  getNotifiedRecords(): NotifiedRecord[] {
+    return [...notifiedRecords]
+  },
+  checkUpcomingMeetings,
+  stateFile,
+  constants: {
+    POLL_INTERVAL_MS,
+    NOTIFY_LEAD_MS,
+    NOTIFY_GRACE_MS,
+    IMMEDIATE_CHECK_DEBOUNCE_MS,
+    STATE_LOOKBACK_MS
   }
 }

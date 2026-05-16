@@ -54,6 +54,7 @@ import { persistMemoArtifacts } from '../memo/persist'
 import { searchCompanyContext, type ExternalResearchBundle } from '../../services/exa-research'
 // Vite ?raw inlines the markdown content as a string at build time.
 import MEMO_PRODUCER_SYSTEM_PROMPT_TEMPLATE from './prompts/memo-producer.system.md?raw'
+import INVESTMENT_CRITERIA from './prompts/investment-criteria.md?raw'
 
 import * as companyRepo from '../../database/repositories/org-company.repo'
 import * as memoRepo from '../../database/repositories/investment-memo.repo'
@@ -67,6 +68,29 @@ const _companyNotesRepo = makeEntityNotesRepo('company_id')
 
 /** Below this section count, we don't persist anything. */
 export const MIN_SECTIONS_TO_PERSIST = 3
+
+/** Matches our placeholder convention `###CAPS_AND_UNDERSCORES###` — not markdown h3. */
+const PLACEHOLDER_PATTERN = /###[A-Z_]+###/
+
+/**
+ * Build the memo-producer system prompt by substituting placeholders.
+ * Throws if any placeholder remains unsubstituted — this guards against
+ * silent failures where a placeholder is renamed in the markdown but
+ * not in this file (or vice versa).
+ */
+export function buildMemoProducerSystemPrompt(sectionRoster: readonly MemoSection[]): string {
+  const rosterBlock = sectionRoster
+    .map((s) => `${s.ordinal}. **${s.heading}** (${s.kind}${s.required ? ', required' : ', optional'})`)
+    .join('\n')
+  const prompt = MEMO_PRODUCER_SYSTEM_PROMPT_TEMPLATE
+    .replace('###SECTION_ROSTER###', rosterBlock)
+    .replace('###INVESTMENT_CRITERIA###', INVESTMENT_CRITERIA)
+  const leftover = prompt.match(PLACEHOLDER_PATTERN)
+  if (leftover) {
+    throw new Error(`Unsubstituted prompt placeholder in memo-producer system prompt: ${leftover[0]}`)
+  }
+  return prompt
+}
 
 export interface RunMemoProducerInput {
   runId: string
@@ -278,11 +302,7 @@ export async function runMemoProducerAgent(
     emit: input.emit,
   }
 
-  // Inject section roster into system prompt.
-  const rosterBlock = sectionRoster
-    .map((s) => `${s.ordinal}. **${s.heading}** (${s.kind}${s.required ? ', required' : ', optional'})`)
-    .join('\n')
-  const systemPrompt = MEMO_PRODUCER_SYSTEM_PROMPT_TEMPLATE.replace('###SECTION_ROSTER###', rosterBlock)
+  const systemPrompt = buildMemoProducerSystemPrompt(sectionRoster)
 
   // Build initial user message: scaffold + raw transcripts + summarized older ones.
   const initialUserMessage = buildInitialUserMessage({

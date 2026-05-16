@@ -14,7 +14,11 @@ import {
   getEventsInRange,
   getCurrentMeetingEvent
 } from '../calendar/google-calendar'
-import { startMeetingNotifier, stopMeetingNotifier } from '../calendar/meeting-notifier'
+import {
+  startMeetingNotifier,
+  stopMeetingNotifier,
+  triggerImmediateCheck
+} from '../calendar/meeting-notifier'
 import { enrichDomainsFromCalendarEvents } from '../services/company-enrichment'
 import { persistentCache } from '../cache/persistent-cache'
 
@@ -36,6 +40,7 @@ async function fetchAndEnrichCalendarEvents(): Promise<Awaited<ReturnType<typeof
   enrichDomainsFromCalendarEvents(events).catch((err) =>
     console.error('[Company Enrichment] Calendar events enrichment failed:', err)
   )
+  triggerImmediateCheck()
   return events
 }
 

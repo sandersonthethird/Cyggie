@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate } from 'react-router-dom'
 import { useMeetings } from '../hooks/useMeetings'
+import { useOutsideClick } from '../hooks/useOutsideClick'
 import { useSearch } from '../hooks/useSearch'
 import { useAppStore } from '../stores/app.store'
 import { useRecordingStore } from '../stores/recording.store'
@@ -113,16 +114,7 @@ export default function MeetingList() {
       .catch((err) => console.error('Failed to refresh calendar events:', err))
   }, [calendarConnected, setCalendarEvents])
 
-  useEffect(() => {
-    if (!bulkMenuOpen) return
-    const handleClickOutside = (e: MouseEvent) => {
-      if (bulkMenuRef.current && !bulkMenuRef.current.contains(e.target as Node)) {
-        setBulkMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [bulkMenuOpen])
+  useOutsideClick(bulkMenuRef, () => setBulkMenuOpen(false), bulkMenuOpen)
 
   const handleBulkDelete = useCallback(() => {
     if (selectedIds.size === 0 || bulkDeleting) return

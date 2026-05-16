@@ -13,6 +13,7 @@ import type {
 } from '../../shared/types/task'
 import styles from './Tasks.module.css'
 import { api } from '../api'
+import { parseTimestamp, parseToDate } from '../utils/format'
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   open: 'Open',
@@ -47,7 +48,7 @@ function isOverdue(dateStr: string): boolean {
 }
 
 function daysSinceCreated(dateStr: string): number {
-  const created = new Date(dateStr).getTime()
+  const created = parseTimestamp(dateStr)
   if (Number.isNaN(created)) return 0
   return Math.max(0, Math.floor((Date.now() - created) / (1000 * 60 * 60 * 24)))
 }
@@ -796,8 +797,8 @@ function DetailPanel(props: DetailPanelEditProps | DetailPanelCreateProps) {
       )}
 
       <div className={styles.detailMeta}>
-        <p>Created: {new Date(task!.createdAt).toLocaleString()}</p>
-        <p>Updated: {new Date(task!.updatedAt).toLocaleString()}</p>
+        <p>Created: {parseToDate(task!.createdAt).toLocaleString()}</p>
+        <p>Updated: {parseToDate(task!.updatedAt).toLocaleString()}</p>
       </div>
 
       <button className={styles.detailDeleteBtn} onClick={onDelete}>

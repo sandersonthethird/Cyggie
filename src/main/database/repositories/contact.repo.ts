@@ -160,7 +160,6 @@ interface ContactMergeRow {
   crm_provider: string | null
 }
 
-const VALID_CONTACT_TYPES = new Set<string>(['investor', 'founder', 'operator', 'lp'])
 const GENERIC_DUPLICATE_NAMES = new Set<string>([
   'unknown',
   'unknown contact',
@@ -190,9 +189,7 @@ function rowToContactSummary(row: ContactRow): ContactSummary {
     primaryCompanyId: row.primary_company_id,
     primaryCompanyName: row.primary_company_name ?? null,
     title: row.title,
-    contactType: (row.contact_type && VALID_CONTACT_TYPES.has(row.contact_type)
-      ? row.contact_type
-      : null) as ContactType | null,
+    contactType: (row.contact_type ?? null) as ContactType | null,
     talentPipeline: (row.talent_pipeline as TalentPipelineStage | null) ?? null,
     linkedinUrl: row.linkedin_url,
     crmContactId: row.crm_contact_id,
@@ -1301,12 +1298,8 @@ export function updateContact(
   }
 
   if (data.contactType !== undefined) {
-    const ct = data.contactType?.trim() || null
-    if (ct && !VALID_CONTACT_TYPES.has(ct)) {
-      throw new Error(`Invalid contact type: ${ct}`)
-    }
     sets.push('contact_type = ?')
-    params.push(ct)
+    params.push(data.contactType?.trim() || null)
   }
 
   if (data.linkedinUrl !== undefined) {
@@ -2963,12 +2956,8 @@ function mergeContactsIntoOne(
       if ((!merged.title || !merged.title.trim()) && source.title?.trim()) {
         merged.title = source.title.trim()
       }
-      if (
-        (!merged.contact_type || !VALID_CONTACT_TYPES.has(merged.contact_type))
-        && source.contact_type
-        && VALID_CONTACT_TYPES.has(source.contact_type)
-      ) {
-        merged.contact_type = source.contact_type
+      if ((!merged.contact_type || !merged.contact_type.trim()) && source.contact_type?.trim()) {
+        merged.contact_type = source.contact_type.trim()
       }
       if ((!merged.linkedin_url || !merged.linkedin_url.trim()) && source.linkedin_url?.trim()) {
         merged.linkedin_url = source.linkedin_url.trim()
@@ -3030,9 +3019,7 @@ function mergeContactsIntoOne(
     merged.linkedin_url = merged.linkedin_url?.trim() || null
     merged.crm_contact_id = merged.crm_contact_id?.trim() || null
     merged.crm_provider = merged.crm_provider?.trim() || null
-    if (merged.contact_type && !VALID_CONTACT_TYPES.has(merged.contact_type)) {
-      merged.contact_type = null
-    }
+    merged.contact_type = merged.contact_type?.trim() || null
 
     if (userId) {
       updateMergedContact.run(

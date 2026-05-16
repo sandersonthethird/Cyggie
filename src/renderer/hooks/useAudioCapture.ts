@@ -137,10 +137,15 @@ export function useAudioCapture() {
   const processorSinkRef = useRef<GainNode | null>(null)
   const pausedRef = useRef(false)
   const mixedStreamRef = useRef<MediaStream | null>(null)
+  const currentMicConstraintsRef = useRef<MediaTrackConstraints>(PROCESSED_MIC_CONSTRAINTS)
+  const visibilityHandlerRef = useRef<(() => void) | null>(null)
+  const micReacquireInFlightRef = useRef(false)
   const [hasSystemAudio, setHasSystemAudio] = useState<boolean | null>(null)
 
   const start = useCallback(async () => {
     setHasSystemAudio(null)
+    currentMicConstraintsRef.current = PROCESSED_MIC_CONSTRAINTS
+    micReacquireInFlightRef.current = false
 
     const captureMic = async (constraints: MediaTrackConstraints): Promise<MediaStream> => {
       return navigator.mediaDevices.getUserMedia({ audio: constraints })
@@ -175,30 +180,87 @@ export function useAudioCapture() {
     micSource.connect(micGain)
     micGain.connect(merger, 0, 0)
 
+    const swapMicStream = (newStream: MediaStream): void => {
+      const previousMic = micStreamRef.current
+      micSource.disconnect()
+      micGain.disconnect()
+      micSource = context.createMediaStreamSource(newStream)
+      micGain = context.createGain()
+      micGain.gain.value = 1.0
+      micSource.connect(micGain)
+      micGain.connect(merger, 0, 0)
+      micStreamRef.current = newStream
+      previousMic?.getTracks().forEach((t) => t.stop())
+      attachMicLifecycle(newStream)
+    }
+
     let rawMicModeEnabled = false
     const switchToRawMicMode = async (reason: string): Promise<void> => {
       if (rawMicModeEnabled) return
       rawMicModeEnabled = true
       try {
         const rawMicStream = await captureMic(RAW_MIC_CONSTRAINTS)
-        const previousMic = micStreamRef.current
-
-        micSource.disconnect()
-        micGain.disconnect()
-
-        micSource = context.createMediaStreamSource(rawMicStream)
-        micGain = context.createGain()
-        micGain.gain.value = 1.0
-        micSource.connect(micGain)
-        micGain.connect(merger, 0, 0)
-
-        micStreamRef.current = rawMicStream
-        previousMic?.getTracks().forEach((t) => t.stop())
+        currentMicConstraintsRef.current = RAW_MIC_CONSTRAINTS
+        swapMicStream(rawMicStream)
         console.log(`[AudioCapture] Switched to raw mic mode (${reason})`)
       } catch (err) {
         console.warn('[AudioCapture] Failed to switch to raw mic mode:', err)
       }
     }
+
+    const reacquireMic = async (reason: string): Promise<void> => {
+      if (micReacquireInFlightRef.current) return
+      micReacquireInFlightRef.current = true
+      try {
+        const newStream = await captureMic(currentMicConstraintsRef.current)
+        swapMicStream(newStream)
+        api.send('recording:mic-status', { state: 'reacquired', reason })
+        console.log(`[AudioCapture] Mic re-acquired (${reason})`)
+      } catch (err) {
+        api.send('recording:mic-status', {
+          state: 'ended',
+          reason: `${reason} + reacquire-failed`
+        })
+        console.error('[AudioCapture] Mic re-acquire failed:', err)
+      } finally {
+        micReacquireInFlightRef.current = false
+      }
+    }
+
+    function attachMicLifecycle(stream: MediaStream): void {
+      const track = stream.getAudioTracks()[0]
+      if (!track) return
+      track.onended = () => {
+        console.warn('[AudioCapture] Mic track ended')
+        api.send('recording:mic-status', { state: 'ended', reason: 'track-onended' })
+        void reacquireMic('track-onended')
+      }
+      track.onmute = () => {
+        console.warn('[AudioCapture] Mic track muted')
+        api.send('recording:mic-status', { state: 'muted', reason: 'track-onmute' })
+      }
+      track.onunmute = () => {
+        console.log('[AudioCapture] Mic track unmuted')
+        api.send('recording:mic-status', { state: 'reacquired', reason: 'track-onunmute' })
+      }
+    }
+
+    attachMicLifecycle(micStream)
+
+    // Keep AudioContext alive across window focus changes. Chromium can suspend
+    // an AudioContext when the page is hidden; the existing onstatechange
+    // handler covers the suspended event, but a visibilitychange listener
+    // gives us a second chance the moment the user comes back to the window.
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'visible' && context.state === 'suspended') {
+        console.log('[AudioCapture] Resuming AudioContext on visibility change')
+        context.resume().catch((err) => {
+          console.warn('[AudioCapture] AudioContext.resume() failed:', err)
+        })
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    visibilityHandlerRef.current = onVisibility
 
     const markSystemAudioUnavailable = async (reason: string): Promise<void> => {
       console.warn(`[AudioCapture] System audio unavailable (${reason}); using mic-only fallback`)
@@ -353,6 +415,11 @@ export function useAudioCapture() {
     pausedRef.current = false
     setHasSystemAudio(null)
     mixedStreamRef.current = null
+    if (visibilityHandlerRef.current) {
+      document.removeEventListener('visibilitychange', visibilityHandlerRef.current)
+      visibilityHandlerRef.current = null
+    }
+    micReacquireInFlightRef.current = false
     if (processorRef.current) {
       if ('onaudioprocess' in processorRef.current) {
         ;(processorRef.current as ScriptProcessorNode).onaudioprocess = null
@@ -371,11 +438,21 @@ export function useAudioCapture() {
       contextRef.current = null
     }
     if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((t) => t.stop())
+      micStreamRef.current.getTracks().forEach((t) => {
+        t.onended = null
+        t.onmute = null
+        t.onunmute = null
+        t.stop()
+      })
       micStreamRef.current = null
     }
     if (systemStreamRef.current) {
-      systemStreamRef.current.getTracks().forEach((t) => t.stop())
+      systemStreamRef.current.getTracks().forEach((t) => {
+        t.onended = null
+        t.onmute = null
+        t.onunmute = null
+        t.stop()
+      })
       systemStreamRef.current = null
     }
   }, [])

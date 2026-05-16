@@ -20,6 +20,7 @@ import { NoteTagger } from './NoteTagger'
 import { TagSuggestionBanner } from './TagSuggestionBanner'
 import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
 import { api } from '../../api'
+import { parseToDate } from '../../utils/format'
 import styles from './NotePaneEditor.module.css'
 import type { Note, TagSuggestion } from '../../../shared/types/note'
 import type { Meeting } from '../../../shared/types/meeting'
@@ -222,7 +223,7 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
             <div className={styles.timestamps}>
               {localNote.createdAt && (
                 <span className={styles.timestamp}>
-                  Created {new Date(localNote.createdAt).toLocaleString(undefined, {
+                  Created {parseToDate(localNote.createdAt).toLocaleString(undefined, {
                     month: 'numeric', day: 'numeric', year: 'numeric',
                     hour: 'numeric', minute: '2-digit'
                   })}
@@ -230,7 +231,7 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
               )}
               {localNote.updatedAt && (
                 <span className={styles.timestamp}>
-                  Edited {new Date(localNote.updatedAt).toLocaleString(undefined, {
+                  Edited {parseToDate(localNote.updatedAt).toLocaleString(undefined, {
                     month: 'numeric', day: 'numeric', year: 'numeric',
                     hour: 'numeric', minute: '2-digit'
                   })}

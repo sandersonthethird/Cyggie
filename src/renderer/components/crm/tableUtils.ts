@@ -31,6 +31,11 @@ export interface ColumnDef {
   decimals?: number
   /** Significant digits for number display (e.g. 2 → 0.85, 13, 5.0). Takes precedence over decimals. */
   sigDigits?: number
+  /**
+   * Custom value accessor for sorting. Used for computed columns whose `field` is null
+   * (e.g. "location" = city + state). When provided, takes precedence over `field`.
+   */
+  sortAccessor?: (row: Record<string, unknown>) => string | number | null
 }
 
 // ─── Range & text filter types ────────────────────────────────────────────────
@@ -347,22 +352,31 @@ export function sortRows<T extends Record<string, unknown>>(
 ): T[] {
   if (sort.length === 0) return rows
 
-  // Pre-resolve column defs for each sort key — skip keys with no matching def or field
+  // Pre-resolve column defs for each sort key — skip keys with no matching def or accessor
   const resolved = sort.flatMap((sk) => {
     const col = defs.find((c) => c.key === sk.key)
-    if (!col || !col.field) return []
-    return [{ field: col.field as keyof T, dir: sk.dir === 'asc' ? 1 : -1 }]
+    if (!col) return []
+    const dir = sk.dir === 'asc' ? 1 : -1
+    if (col.sortAccessor) {
+      const accessor = col.sortAccessor
+      return [{ get: (row: T) => accessor(row as Record<string, unknown>), dir }]
+    }
+    if (!col.field) return []
+    const field = col.field as keyof T
+    return [{ get: (row: T) => row[field] as string | number | null | undefined, dir }]
   })
   if (resolved.length === 0) return rows
 
   return [...rows].sort((a, b) => {
-    for (const { field, dir } of resolved) {
-      const av = a[field]
-      const bv = b[field]
+    for (const { get, dir } of resolved) {
+      const av = get(a)
+      const bv = get(b)
 
-      if (av == null && bv == null) continue
-      if (av == null) return 1
-      if (bv == null) return -1
+      const aEmpty = av == null || av === ''
+      const bEmpty = bv == null || bv === ''
+      if (aEmpty && bEmpty) continue
+      if (aEmpty) return 1
+      if (bEmpty) return -1
 
       let cmp: number
       if (typeof av === 'number' && typeof bv === 'number') {

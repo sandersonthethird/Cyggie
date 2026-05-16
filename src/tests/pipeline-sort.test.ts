@@ -76,14 +76,15 @@ describe('sortCompanies', () => {
     expect(result[1].pipelineStage).toBe('custom_stage')
   })
 
-  it('sorts by priority in enum order (high < further_work < monitor)', () => {
+  it('sorts by priority in enum order (high < medium < monitor < low)', () => {
     const input = [
-      company({ id: '1', priority: 'monitor' }),
-      company({ id: '2', priority: 'high' }),
-      company({ id: '3', priority: 'further_work' }),
+      company({ id: '1', priority: 'low' }),
+      company({ id: '2', priority: 'monitor' }),
+      company({ id: '3', priority: 'high' }),
+      company({ id: '4', priority: 'medium' }),
     ]
     const result = sortCompanies(input, 'priority', 'asc')
-    expect(result.map(c => c.priority)).toEqual(['high', 'further_work', 'monitor'])
+    expect(result.map(c => c.priority)).toEqual(['high', 'medium', 'monitor', 'low'])
   })
 
   it('sorts by postMoney ascending, nulls last', () => {

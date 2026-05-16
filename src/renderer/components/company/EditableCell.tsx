@@ -48,26 +48,20 @@ interface EditableCellProps {
   onEndEdit: (advanceDir?: 'down' | 'right' | null) => void
 }
 
+const BADGE_ATTR_BY_COLUMN: Record<string, string> = {
+  pipelineStage: 'data-stage',
+  entityType:    'data-entity-type',
+  priority:      'data-priority',
+  contactType:   'data-contact-type',
+}
+
 function renderBadge(col: ColumnDef, value: unknown): React.ReactNode {
   if (!value) return <span className={styles.cellEmpty}>—</span>
   const str = String(value)
-  if (col.key === 'pipelineStage') {
-    const cls = `stage-${str}` as keyof typeof styles
-    return <span className={`${styles.badge} ${styles[cls] ?? ''}`}>{col.options?.find(o => o.value === str)?.label ?? str}</span>
-  }
-  if (col.key === 'entityType') {
-    const cls = `type-${str}` as keyof typeof styles
-    return <span className={`${styles.badge} ${styles[cls] ?? ''}`}>{col.options?.find(o => o.value === str)?.label ?? str}</span>
-  }
-  if (col.key === 'priority') {
-    const cls = `priority-${str}` as keyof typeof styles
-    return <span className={`${styles.badge} ${styles[cls] ?? ''}`}>{col.options?.find(o => o.value === str)?.label ?? str}</span>
-  }
-  if (col.key === 'contactType') {
-    const cls = `contactType-${str}` as keyof typeof styles
-    return <span className={`${styles.badge} ${styles[cls] ?? ''}`}>{col.options?.find(o => o.value === str)?.label ?? str}</span>
-  }
-  return null
+  const attr = BADGE_ATTR_BY_COLUMN[col.key]
+  if (!attr) return null
+  const label = col.options?.find(o => o.value === str)?.label ?? str
+  return <span className={styles.badge} {...{ [attr]: str }}>{label}</span>
 }
 
 function renderDisplay(col: ColumnDef, value: unknown): React.ReactNode {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { api } from '../../api'
 import { useListboxNavigation } from '../../hooks/useListboxNavigation'
+import { useOutsideClick } from '../../hooks/useOutsideClick'
 import styles from './PolymorphicEntitySearch.module.css'
 import type { CompanySummary } from '../../../shared/types/company'
 import type { ContactSummary } from '../../../shared/types/contact'
@@ -94,16 +95,7 @@ export function PolymorphicEntitySearch({
     })
   }
 
-  // Close on outside click
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        onClose()
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [onClose])
+  useOutsideClick(rootRef, onClose)
 
   return (
     <div className={styles.picker} ref={rootRef}>
