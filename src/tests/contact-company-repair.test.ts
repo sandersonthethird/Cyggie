@@ -366,27 +366,10 @@ describe('enrichContact — companyHitsByEmail domain validation', () => {
       .prepare(`SELECT primary_company_id FROM contacts WHERE id = 'c-alice'`)
       .get() as { primary_company_id: string | null }
 
-    expect(alice.primary_company_id).not.toBe('rsv')
-  })
-
-  // TODO: deferred from Phase 5 audit — primary_company_id assertion returns
-  // undefined. Suspect: enrichContact path now requires a company existing in
-  // org_companies first, not auto-creating from email domain. Needs product
-  // decision on canonical behavior.
-  it.skip('assigns alice@techcorp.com to a TechCorp company (created from her email domain)', async () => {
-    enrichContact('c-alice')
-
-    const alice = testDb
-      .prepare(`
-        SELECT c.primary_company_id, oc.primary_domain
-        FROM contacts c
-        JOIN org_companies oc ON oc.id = c.primary_company_id
-        WHERE c.id = 'c-alice'
-      `)
-      .get() as { primary_company_id: string; primary_domain: string } | undefined
-
-    expect(alice).toBeDefined()
-    expect(alice!.primary_domain).toBe('techcorp.com')
+    // Tight: when no matching company exists in org_companies, primary_company_id
+    // stays NULL. enrichContact does NOT auto-create a company from email domain
+    // (product decision — see git history for the deleted auto-create test).
+    expect(alice.primary_company_id).toBeNull()
   })
 })
 
