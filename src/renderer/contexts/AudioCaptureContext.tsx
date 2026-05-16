@@ -107,6 +107,23 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       useRecordingStore.getState().setError(`Video recording failed to save: ${p.error}`)
     })
 
+    // Recording finalize events — main process runs Deepgram finalize +
+    // transcript assembly + DB write in the background after RECORDING_STOP
+    // returns optimistically. The renderer waits for this signal before
+    // reloading the meeting (transcript-dependent UI) and running
+    // auto-enhance (summary generation needs the transcript in the DB).
+    const unsubRecordingFinalized = api.on(IPC_CHANNELS.RECORDING_FINALIZED, (payload: unknown) => {
+      const p = payload as { meetingId: string; durationSeconds: number }
+      console.log(`[RecordingFinalize] Finalized ${p.meetingId} (${p.durationSeconds}s)`)
+      useRecordingStore.getState().markRecordingFinalized(p.meetingId)
+    })
+
+    const unsubRecordingFinalizeError = api.on(IPC_CHANNELS.RECORDING_FINALIZE_ERROR, (payload: unknown) => {
+      const p = payload as { meetingId: string; error: string }
+      console.error(`[RecordingFinalize] Failed for ${p.meetingId}:`, p.error)
+      useRecordingStore.getState().setError(`Transcript finalization failed: ${p.error}`)
+    })
+
     return () => {
       unsubTranscript()
       unsubStatus()
@@ -114,6 +131,8 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       unsubAutoStop()
       unsubVideoFinalized()
       unsubVideoFinalizeError()
+      unsubRecordingFinalized()
+      unsubRecordingFinalizeError()
     }
   }, [])
 

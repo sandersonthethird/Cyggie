@@ -96,6 +96,8 @@ describe('AudioCaptureProvider — register-once listener pattern', () => {
     expect(countRegistrations(IPC_CHANNELS.RECORDING_AUTO_STOP)).toBe(1)
     expect(countRegistrations(IPC_CHANNELS.VIDEO_FINALIZED)).toBe(1)
     expect(countRegistrations(IPC_CHANNELS.VIDEO_FINALIZE_ERROR)).toBe(1)
+    expect(countRegistrations(IPC_CHANNELS.RECORDING_FINALIZED)).toBe(1)
+    expect(countRegistrations(IPC_CHANNELS.RECORDING_FINALIZE_ERROR)).toBe(1)
   })
 
   it('does NOT re-register listeners when isRecording / isPaused toggle', () => {
@@ -174,6 +176,22 @@ describe('AudioCaptureProvider — register-once listener pattern', () => {
     expect(useRecordingStore.getState().error).toContain('ffmpeg crashed')
   })
 
+  it('RECORDING_FINALIZED handler bumps lastRecordingFinalizedAt with the meetingId', () => {
+    render(<AudioCaptureProvider>{null}</AudioCaptureProvider>)
+    const handler = getHandler(IPC_CHANNELS.RECORDING_FINALIZED)
+    expect(useRecordingStore.getState().lastRecordingFinalizedAt).toBeNull()
+    act(() => { handler({ meetingId: 'mtg-r', durationSeconds: 42 }) })
+    expect(useRecordingStore.getState().lastRecordingFinalizedMeetingId).toBe('mtg-r')
+    expect(typeof useRecordingStore.getState().lastRecordingFinalizedAt).toBe('number')
+  })
+
+  it('RECORDING_FINALIZE_ERROR handler surfaces the error via store.error', () => {
+    render(<AudioCaptureProvider>{null}</AudioCaptureProvider>)
+    const handler = getHandler(IPC_CHANNELS.RECORDING_FINALIZE_ERROR)
+    act(() => { handler({ meetingId: 'mtg-r', error: 'deepgram failed' }) })
+    expect(useRecordingStore.getState().error).toContain('deepgram failed')
+  })
+
   it('AUTO_STOP handler reads CURRENT videoCapture ref, not a stale closure', async () => {
     render(<AudioCaptureProvider>{null}</AudioCaptureProvider>)
     const handler = getHandler(IPC_CHANNELS.RECORDING_AUTO_STOP)
@@ -206,11 +224,11 @@ describe('AudioCaptureProvider — register-once listener pattern', () => {
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
-  it('fires all 6 unsubs on unmount', () => {
-    // 4 RECORDING_* listeners + 2 VIDEO_FINALIZE* listeners.
+  it('fires all 8 unsubs on unmount', () => {
+    // 4 RECORDING_* core listeners + 2 VIDEO_FINALIZE* + 2 RECORDING_FINALIZE*.
     const { unmount } = render(<AudioCaptureProvider>{null}</AudioCaptureProvider>)
     const unsubs = onCalls.map((c) => c.unsub)
-    expect(unsubs).toHaveLength(6)
+    expect(unsubs).toHaveLength(8)
     unmount()
     for (const u of unsubs) expect(u).toHaveBeenCalledTimes(1)
   })

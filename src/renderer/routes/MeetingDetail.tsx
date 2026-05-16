@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { EditorContent } from '@tiptap/react'
 import { useTiptapMarkdown } from '../hooks/useTiptapMarkdown'
+import { parseTimestamp, parseToDate } from '../utils/format'
 import { TiptapBubbleMenu } from '../components/common/TiptapBubbleMenu'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
@@ -107,7 +108,8 @@ function getInitials(name: string): string {
 }
 
 function relativeTime(date: Date | string): string {
-  const diff = Math.round((Date.now() - new Date(date).getTime()) / 1000)
+  const ms = typeof date === 'string' ? parseTimestamp(date) : date.getTime()
+  const diff = Math.round((Date.now() - ms) / 1000)
   if (diff < 60) return 'just now'
   if (diff < 3600) return `${Math.floor(diff / 60)} min ago`
   if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`
@@ -900,29 +902,47 @@ export default function MeetingDetail() {
 
   const generateSummaryRef = useRef<() => void>(() => {})
 
+  // When the main process broadcasts RECORDING_FINALIZED for this meeting
+  // (after RECORDING_STOP's background Deepgram finalize + transcript write
+  // completes), reload the meeting so the saved transcript appears in the
+  // UI, and run auto-enhance if the user has it enabled. This is the
+  // moved-out-of-handleStop block; gating it on the finalize signal ensures
+  // generateSummary can't fire before the transcript is in the DB.
+  const lastRecordingFinalizedAt = useRecordingStore((s) => s.lastRecordingFinalizedAt)
+  const lastRecordingFinalizedMeetingId = useRecordingStore((s) => s.lastRecordingFinalizedMeetingId)
+  useEffect(() => {
+    if (!id || !lastRecordingFinalizedAt || lastRecordingFinalizedMeetingId !== id) return
+    void loadMeeting()
+    if (selectedTemplateId) {
+      api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'autoEnhanceAfterMeeting')
+        .then((auto) => {
+          if (auto === 'true') generateSummaryRef.current()
+        })
+        .catch((err) => {
+          console.warn('[MeetingDetail] auto-enhance setting read failed; defaulting OFF:', err)
+        })
+    }
+  }, [id, lastRecordingFinalizedAt, lastRecordingFinalizedMeetingId, loadMeeting, selectedTemplateId])
+
   const handleStop = useCallback(async () => {
+    // Optimistic stop: flip the UI immediately, fire-and-forget the IPC.
+    // Auto-enhance (transcript-dependent) is moved to the
+    // lastRecordingFinalizedAt effect below so it can't fire before the
+    // transcript is written to DB.
     try {
       if (videoCapture.isVideoRecording) {
         await videoCapture.stop()
       }
       audioCapture.stop()
-      await api.invoke(IPC_CHANNELS.RECORDING_STOP)
+      void api.invoke(IPC_CHANNELS.RECORDING_STOP).catch((err) => {
+        console.error('[MeetingDetail] RECORDING_STOP rejected:', err)
+        setRecordingError(String(err))
+      })
       stopRecording()
-      if (selectedTemplateId) {
-        let auto: string | null = null
-        try {
-          auto = await api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'autoEnhanceAfterMeeting')
-        } catch (err) {
-          console.warn('[MeetingDetail] auto-enhance setting read failed; defaulting OFF:', err)
-        }
-        if (auto === 'true') {
-          generateSummaryRef.current()
-        }
-      }
     } catch (err) {
       setRecordingError(String(err))
     }
-  }, [stopRecording, setRecordingError, audioCapture, videoCapture, selectedTemplateId])
+  }, [stopRecording, setRecordingError, audioCapture, videoCapture])
 
   const handlePause = useCallback(async () => {
     try {
@@ -1798,7 +1818,7 @@ export default function MeetingDetail() {
             </div>
           </div>
           <div className={styles.meta}>
-            <span>{new Date(meeting.date).toLocaleString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+            <span>{parseToDate(meeting.date).toLocaleString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
             {meeting.durationSeconds && (
               <span>{Math.round(meeting.durationSeconds / 60)} min</span>
             )}

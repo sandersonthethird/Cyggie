@@ -23,6 +23,12 @@ interface RecordingState {
   // VIDEO_GET_PATH so the player picks up the just-finalized file.
   lastVideoFinalizedAt: number | null
   lastVideoFinalizedMeetingId: string | null
+  // Mirrors the above for the audio-recording-stop fix: bumped when the main
+  // process broadcasts RECORDING_FINALIZED after the background transcript
+  // write completes. MeetingDetail uses this to reload the meeting (and to
+  // gate auto-enhance, which can't run until the transcript is in the DB).
+  lastRecordingFinalizedAt: number | null
+  lastRecordingFinalizedMeetingId: string | null
 
   startRecording: (meetingId: string, meetingPlatform?: string | null) => void
   stopRecording: () => void
@@ -37,6 +43,7 @@ interface RecordingState {
   clearTranscript: () => void
   markAutoStopped: (meetingId: string) => void
   markVideoFinalized: (meetingId: string) => void
+  markRecordingFinalized: (meetingId: string) => void
 }
 
 export const useRecordingStore = create<RecordingState>((set) => ({
@@ -54,6 +61,8 @@ export const useRecordingStore = create<RecordingState>((set) => ({
   autoStoppedMeetingIds: new Set<string>(),
   lastVideoFinalizedAt: null,
   lastVideoFinalizedMeetingId: null,
+  lastRecordingFinalizedAt: null,
+  lastRecordingFinalizedMeetingId: null,
 
   startRecording: (meetingId, meetingPlatform) =>
     set({
@@ -112,5 +121,8 @@ export const useRecordingStore = create<RecordingState>((set) => ({
     })),
 
   markVideoFinalized: (meetingId) =>
-    set({ lastVideoFinalizedAt: Date.now(), lastVideoFinalizedMeetingId: meetingId })
+    set({ lastVideoFinalizedAt: Date.now(), lastVideoFinalizedMeetingId: meetingId }),
+
+  markRecordingFinalized: (meetingId) =>
+    set({ lastRecordingFinalizedAt: Date.now(), lastRecordingFinalizedMeetingId: meetingId })
 }))
