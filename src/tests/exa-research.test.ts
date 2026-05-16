@@ -76,10 +76,7 @@ describe('searchCompanyContext — niche-targeted pre-research for memo-generato
     expect(seenQueries[0]).toBe('invoice processing for SMBs (themes: fintech, infrastructure)')
   })
 
-  // TODO: deferred from Phase 5 audit — query generator returns one more
-  // query than expected. Likely intentional product change; test assertion
-  // needs to be updated to match new query-generation behavior.
-  it.skip('skips niche query when both nicheSignal and description are stub-y (<20 chars)', async () => {
+  it('skips niche query when both nicheSignal and description are stub-y (<20 chars)', async () => {
     mockGetCredential.mockReturnValue('test-key')
     const seenQueries: string[] = []
     setExaMockResponses({
@@ -94,8 +91,11 @@ describe('searchCompanyContext — niche-targeted pre-research for memo-generato
       companyDescription: '',
       industry: 'fintech',
     })
-    // Only the industry query fires.
-    expect(seenQueries).toEqual(['fintech market size 2025'])
+    // Niche is skipped (both signals stub-y); industry + competitors fire.
+    expect(seenQueries).toEqual([
+      'fintech market size 2025',
+      'fintech competitors alternatives',
+    ])
   })
 
   it('quotes founder names in LinkedIn queries (caps at 2)', async () => {
@@ -173,9 +173,7 @@ describe('searchCompanyContext — niche-targeted pre-research for memo-generato
     expect(exaCalled).toBe(false)   // no queries built → no Exa call fired
   })
 
-  // TODO: deferred — see TODO on the earlier skipped test above. Query
-  // ordering changed in production; test needs updated assertion.
-  it.skip('orders queries: niche first, industry second, founder LinkedIn last', async () => {
+  it('orders queries: niche → industry → competitors → founder LinkedIn', async () => {
     mockGetCredential.mockReturnValue('test-key')
     const seenQueries: string[] = []
     setExaMockResponses({
@@ -193,12 +191,12 @@ describe('searchCompanyContext — niche-targeted pre-research for memo-generato
     expect(seenQueries).toEqual([
       'invoice processing for SMBs',
       'fintech market size 2025',
+      'fintech competitors alternatives',
       '"Jane Doe" linkedin',
     ])
   })
 
-  // TODO: deferred — failed-query count expectation mismatch (2 vs 1).
-  it.skip('degrades silently when individual queries fail', async () => {
+  it('degrades silently when individual queries fail', async () => {
     mockGetCredential.mockReturnValue('test-key')
     let callCount = 0
     setExaMockResponses({
@@ -213,8 +211,9 @@ describe('searchCompanyContext — niche-targeted pre-research for memo-generato
       nicheSignal: 'invoice processing for SMBs',
       industry: 'fintech',
     })
-    // 1 failed + 1 succeeded (1 result) → 1 result total
-    expect(result.results.length).toBe(1)
+    // 3 queries fire (niche/industry/competitors); call #1 fails, calls #2 and
+    // #3 each return 1 result → 2 results total.
+    expect(result.results.length).toBe(2)
   })
 
   it('truncates per-result text to ~1500 chars', async () => {
