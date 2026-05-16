@@ -10,7 +10,7 @@ import { initializeStorage, setStoragePath, getRecordingsDir, getStoragePath } f
 import * as settingsRepo from './database/repositories/settings.repo'
 import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from './database/repositories/meeting.repo'
 import { cleanupOrphanedTempFiles, getActiveRecordingMeetingId } from './video/video-writer'
-import { getPendingFinalizations } from './ipc/video.ipc'
+import { getPendingForQuit } from './ipc/_finalizations'
 import { getCurrentUserId } from './security/current-user'
 
 // Register privileged schemes before app.whenReady:
@@ -334,10 +334,11 @@ app.whenReady().then(() => {
  *    The recording isn't stopped yet so there are no pending finalizations
  *    to await; the user must decide whether to stop+save or cancel.
  *
- * 2. Pending video finalizations (user already clicked Stop but the
- *    background ffmpeg flush hasn't completed): block quit until they
- *    finish so the file lands on disk. VIDEO_STOP returns optimistically
- *    in ~10ms but finalization can take 2–5s.
+ * 2. Pending background finalizations (user already clicked Stop but the
+ *    background ffmpeg flush / Deepgram finalize / transcript write hasn't
+ *    completed): block quit until they finish so the file lands on disk.
+ *    VIDEO_STOP and RECORDING_STOP both return optimistically and register
+ *    their finalize promise in the shared pending registry.
  */
 let isAwaitingPendingFinalize = false
 
@@ -365,13 +366,14 @@ app.on('before-quit', (event) => {
     // Falls through to concern (2) — there may be pending finalizations too.
   }
 
-  // Concern (2): pending background finalizations from a recent VIDEO_STOP.
-  const pending = getPendingFinalizations()
-  if (pending.size > 0 && !isAwaitingPendingFinalize) {
+  // Concern (2): pending background finalizations from a recent VIDEO_STOP
+  // or RECORDING_STOP. The shared registry contains both.
+  const pending = getPendingForQuit()
+  if (pending.length > 0 && !isAwaitingPendingFinalize) {
     event.preventDefault()
     isAwaitingPendingFinalize = true
-    console.log(`[before-quit] awaiting ${pending.size} pending video finalization(s)`)
-    Promise.allSettled([...pending.values()]).finally(() => {
+    console.log(`[before-quit] awaiting ${pending.length} pending finalization(s)`)
+    Promise.allSettled(pending).finally(() => {
       console.log('[before-quit] finalizations complete, quitting')
       app.quit()
     })

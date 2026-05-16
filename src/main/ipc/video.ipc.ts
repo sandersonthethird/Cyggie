@@ -1,4 +1,4 @@
-import { BrowserWindow, desktopCapturer, ipcMain, session } from 'electron'
+import { desktopCapturer, ipcMain, session } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import {
   startVideoFile,
@@ -10,34 +10,23 @@ import {
 import * as meetingRepo from '../database/repositories/meeting.repo'
 import { buildRecordingFilename } from '../storage/file-manager'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
+import { addPending, removePending } from './_finalizations'
+import { broadcast } from './_broadcast'
 
 /**
- * Pending video finalizations keyed by meetingId.
- *
+ * Pending video finalizations live in the shared registry at
+ * `src/main/ipc/_finalizations.ts` under the `'video:<meetingId>'` key.
  * VIDEO_STOP returns optimistically after ~10ms and runs finalizeVideoFile
- * (FFmpeg flush + optional concat, typically 2–5s) in the background. We
- * keep the resulting Promise here so the app's before-quit handler can
- * await all in-flight finalizations and avoid losing recordings on quit.
+ * (FFmpeg flush + optional concat, typically 2–5s) in the background.
  *
  * Lifecycle:
- *   VIDEO_STOP   →   set(meetingId, promise)
+ *   VIDEO_STOP   →   addPending('video', meetingId, promise)
  *                ↓
  *   finalize ok  →   updateMeeting({recordingPath}) + broadcast FINALIZED
  *   finalize err →   broadcast FINALIZE_ERROR (DB untouched)
  *                ↓
- *   .finally()   →   delete(meetingId)
+ *   .finally()   →   removePending('video', meetingId)
  */
-const pendingFinalizations = new Map<string, Promise<void>>()
-
-export function getPendingFinalizations(): Map<string, Promise<void>> {
-  return pendingFinalizations
-}
-
-function broadcast(channel: string, payload: unknown): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send(channel, payload)
-  }
-}
 
 const BROWSER_NAMES = ['google chrome', 'chrome', 'safari', 'microsoft edge', 'arc', 'firefox', 'brave browser', 'chromium']
 
@@ -114,10 +103,10 @@ export function registerVideoHandlers(): void {
           error: err instanceof Error ? err.message : String(err),
         })
       } finally {
-        pendingFinalizations.delete(meetingId)
+        removePending('video', meetingId)
       }
     })()
-    pendingFinalizations.set(meetingId, finalizePromise)
+    addPending('video', meetingId, finalizePromise)
 
     return { success: true, filename }
   })

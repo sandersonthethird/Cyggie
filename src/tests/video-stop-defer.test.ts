@@ -62,7 +62,8 @@ vi.mock('../main/storage/file-manager', () => ({
   buildRecordingFilename: () => 'recording-test.mp4',
 }))
 
-const { registerVideoHandlers, getPendingFinalizations } = await import('../main/ipc/video.ipc')
+const { registerVideoHandlers } = await import('../main/ipc/video.ipc')
+const { hasPending, getPending, _resetForTests } = await import('../main/ipc/_finalizations')
 
 beforeEach(() => {
   handlers.clear()
@@ -70,7 +71,7 @@ beforeEach(() => {
   mockFinalizeVideoFile.mockReset()
   mockGetMeeting.mockReset()
   mockUpdateMeeting.mockReset()
-  getPendingFinalizations().clear()
+  _resetForTests()
   mockGetMeeting.mockReturnValue({
     id: 'mtg-1',
     title: 'Test',
@@ -108,11 +109,11 @@ describe('VIDEO_STOP — return then finalize', () => {
     // Finalize is still in flight at this point.
     expect(mockUpdateMeeting).not.toHaveBeenCalled()
     expect(broadcasts).toHaveLength(0)
-    expect(getPendingFinalizations().has('mtg-1')).toBe(true)
+    expect(hasPending('video', 'mtg-1')).toBe(true)
 
     // Now let it resolve and let the microtask queue flush.
     resolveFinalize()
-    await getPendingFinalizations().get('mtg-1')
+    await getPending('video', 'mtg-1')
 
     expect(mockUpdateMeeting).toHaveBeenCalledWith('mtg-1', { recordingPath: 'recording-test.mp4' })
     expect(broadcasts).toHaveLength(1)
@@ -120,13 +121,13 @@ describe('VIDEO_STOP — return then finalize', () => {
       channel: IPC_CHANNELS.VIDEO_FINALIZED,
       payload: { meetingId: 'mtg-1', filename: 'recording-test.mp4' },
     })
-    expect(getPendingFinalizations().has('mtg-1')).toBe(false)
+    expect(hasPending('video', 'mtg-1')).toBe(false)
   })
 
   it('on finalize success: updateMeeting called, VIDEO_FINALIZED broadcast', async () => {
     mockFinalizeVideoFile.mockResolvedValue(undefined)
     await (getStopHandler() as (...args: unknown[]) => Promise<unknown>)(null, 'mtg-1')
-    await getPendingFinalizations().get('mtg-1')
+    await getPending('video', 'mtg-1')
 
     expect(mockUpdateMeeting).toHaveBeenCalledTimes(1)
     expect(mockUpdateMeeting).toHaveBeenCalledWith('mtg-1', { recordingPath: 'recording-test.mp4' })
@@ -139,7 +140,7 @@ describe('VIDEO_STOP — return then finalize', () => {
   it('on finalize failure: NO updateMeeting, VIDEO_FINALIZE_ERROR broadcast', async () => {
     mockFinalizeVideoFile.mockRejectedValue(new Error('ffmpeg exploded'))
     await (getStopHandler() as (...args: unknown[]) => Promise<unknown>)(null, 'mtg-1')
-    await getPendingFinalizations().get('mtg-1')
+    await getPending('video', 'mtg-1')
 
     expect(mockUpdateMeeting).not.toHaveBeenCalled()
     const errorEvents = broadcasts.filter((b) => b.channel === IPC_CHANNELS.VIDEO_FINALIZE_ERROR)
@@ -157,10 +158,10 @@ describe('VIDEO_STOP — return then finalize', () => {
       () => new Promise<void>((_, rej) => { rejectFinalize = rej })
     )
     await (getStopHandler() as (...args: unknown[]) => Promise<unknown>)(null, 'mtg-1')
-    expect(getPendingFinalizations().has('mtg-1')).toBe(true)
+    expect(hasPending('video', 'mtg-1')).toBe(true)
     rejectFinalize(new Error('x'))
-    await getPendingFinalizations().get('mtg-1')
-    expect(getPendingFinalizations().has('mtg-1')).toBe(false)
+    await getPending('video', 'mtg-1')
+    expect(hasPending('video', 'mtg-1')).toBe(false)
   })
 
   it('throws synchronously if meeting is not found', async () => {
@@ -178,7 +179,7 @@ describe('VIDEO_STOP — return then finalize', () => {
     })
     mockFinalizeVideoFile.mockResolvedValue(undefined)
     await (getStopHandler() as (...args: unknown[]) => Promise<unknown>)(null, 'mtg-1')
-    await getPendingFinalizations().get('mtg-1')
+    await getPending('video', 'mtg-1')
     expect(mockFinalizeVideoFile).toHaveBeenCalledWith('mtg-1', 'recording-test.mp4', 'previous-segment.mp4')
   })
 })
