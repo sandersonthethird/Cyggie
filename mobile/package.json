@@ -1,0 +1,8 @@
+{
+  "name": "@cyggie/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'mobile dev not yet implemented (M1a)' && exit 0"
+  }
+}

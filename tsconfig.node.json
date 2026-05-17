@@ -15,7 +15,13 @@
     "rootDir": ".",
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["./src/shared/*"]
+      "@shared/*": ["./src/shared/*"],
+      "@cyggie/shared": ["./packages/shared/src"],
+      "@cyggie/shared/*": ["./packages/shared/src/*"],
+      "@cyggie/services": ["./packages/services/src"],
+      "@cyggie/services/*": ["./packages/services/src/*"],
+      "@cyggie/db": ["./packages/db/src"],
+      "@cyggie/db/*": ["./packages/db/src/*"]
     }
   },
   "include": [

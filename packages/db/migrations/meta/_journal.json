@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1779047820354,
+      "tag": "0000_shiny_aqueduct",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779050244949,
+      "tag": "0001_kind_stingray",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779050449221,
+      "tag": "0002_silent_rockslide",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1779051109208,
+      "tag": "0003_shocking_skreet",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779051185337,
+      "tag": "0004_ancient_steve_rogers",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779052196355,
+      "tag": "0005_sturdy_photon",
+      "breakpoints": true
+    }
+  ]
+}

@@ -5,6 +5,11 @@
   "main": "./out/main/index.js",
   "author": "Cyggie",
   "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "mobile",
+    "api-gateway"
+  ],
   "scripts": {
     "predev": "npx @electron/rebuild -f -w better-sqlite3 --buildFromSource",
     "dev": "electron-vite dev",

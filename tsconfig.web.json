@@ -17,7 +17,13 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["./src/shared/*"],
-      "@renderer/*": ["./src/renderer/*"]
+      "@renderer/*": ["./src/renderer/*"],
+      "@cyggie/shared": ["./packages/shared/src"],
+      "@cyggie/shared/*": ["./packages/shared/src/*"],
+      "@cyggie/services": ["./packages/services/src"],
+      "@cyggie/services/*": ["./packages/services/src/*"],
+      "@cyggie/db": ["./packages/db/src"],
+      "@cyggie/db/*": ["./packages/db/src/*"]
     }
   },
   "include": [

@@ -1,0 +1,10 @@
+{
+  "name": "@cyggie/api-gateway",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/server.ts",
+  "scripts": {
+    "dev": "echo 'gateway dev not yet implemented (Phase 0.6)' && exit 0"
+  }
+}

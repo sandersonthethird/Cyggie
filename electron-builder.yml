@@ -15,6 +15,13 @@ files:
   - '!src/*'
   - '!tests/*'
   - '!electron.vite.config.*'
+  # Phase 0.1.5: ensure shared workspaces are bundled with the desktop binary.
+  # packages/* contain code consumed by src/main (LLM, recording, db, shared types).
+  - 'packages/*/src/**/*'
+  - 'packages/*/package.json'
+  # Mobile + gateway are independent workspaces — never bundle them in the desktop.
+  - '!mobile/**/*'
+  - '!api-gateway/**/*'
 
 mac:
   category: public.app-category.productivity
