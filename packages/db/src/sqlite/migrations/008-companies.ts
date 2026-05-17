@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { extractCompaniesFromAttendees } from '../../utils/company-extractor'
+import { extractCompaniesFromAttendees } from '@main/utils/company-extractor'
 
 export function runCompaniesMigration(db: Database.Database): void {
   const cols = db.prepare("PRAGMA table_info('meetings')").all() as { name: string }[]

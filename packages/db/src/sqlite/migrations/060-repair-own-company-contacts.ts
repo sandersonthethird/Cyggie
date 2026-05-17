@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { extractDomainFromEmail } from '../../utils/company-extractor'
+import { extractDomainFromEmail } from '@main/utils/company-extractor'
 
 /**
  * One-time data repair: remove contacts incorrectly associated with Red Swan

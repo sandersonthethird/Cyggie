@@ -16,7 +16,7 @@
 
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
-import type { Note } from '../../../shared/types/note'
+import type { Note } from '@shared/types/note'
 
 export type EntityFkCol = 'contact_id' | 'company_id'
 

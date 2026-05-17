@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { getDatabase } from '../connection'
-import type { EvidenceRow } from '../../../shared/types/thesis'
+import type { EvidenceRow } from '@shared/types/thesis'
 import type {
   Concern,
   Recommendation,
   StressTestReport,
   StressTestReportSummary,
-} from '../../../shared/types/stress-test-report'
+} from '@shared/types/stress-test-report'
 
 /**
  * Repository for `stress_test_reports`.

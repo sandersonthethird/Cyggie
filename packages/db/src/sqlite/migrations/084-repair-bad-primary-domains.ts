@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { extractDomainFromWebsiteUrl } from '../../utils/email-parser'
+import { extractDomainFromWebsiteUrl } from '@main/utils/email-parser'
 
 /**
  * One-time data repair: fix `primary_domain` rows that contain malformed values

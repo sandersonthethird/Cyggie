@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { getDatabase } from '../connection'
-import type { EvidenceRow } from '../../../shared/types/thesis'
-import type { StoredMemoEvidence } from '../../../shared/types/memo-evidence'
+import type { EvidenceRow } from '@shared/types/thesis'
+import type { StoredMemoEvidence } from '@shared/types/memo-evidence'
 
 // Re-export so existing callers `import { StoredMemoEvidence } from '...memo-evidence.repo'` continue to work.
 export type { StoredMemoEvidence }

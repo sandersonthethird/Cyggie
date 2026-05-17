@@ -1,10 +1,10 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../connection'
-import { normalizeDomain } from '../../utils/email-parser'
+import { normalizeDomain } from '@main/utils/email-parser'
 import type { MeetingRow } from '../schema'
-import type { ChatMessage, Meeting, MeetingCompany, MeetingListFilter, MeetingStatus } from '../../../shared/types/meeting'
-import type { MeetingPlatform } from '../../../shared/constants/meeting-apps'
-import type { TranscriptSegment } from '../../../shared/types/recording'
+import type { ChatMessage, Meeting, MeetingCompany, MeetingListFilter, MeetingStatus } from '@shared/types/meeting'
+import type { MeetingPlatform } from '@shared/constants/meeting-apps'
+import type { TranscriptSegment } from '@shared/types/recording'
 
 const COMMON_SECOND_LEVEL_TLDS = new Set(['co', 'com', 'org', 'net', 'gov', 'edu'])
 

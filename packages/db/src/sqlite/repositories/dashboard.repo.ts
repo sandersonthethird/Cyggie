@@ -8,11 +8,11 @@ import type {
   DashboardData,
   DashboardEntityTypeFilter,
   DashboardStaleCompany
-} from '../../../shared/types/dashboard'
-import { DEFAULT_ACTIVITY_FILTER } from '../../../shared/types/dashboard'
-import type { PipelineSummaryItem, StalledPipelineCompany } from '../../../shared/types/pipeline'
-import type { CompanyPipelineStage } from '../../../shared/types/company'
-import { COMPANY_PIPELINE_STAGE_VALUES, COMPANY_ACTIVE_PIPELINE_STAGES } from '../../../shared/types/company'
+} from '@shared/types/dashboard'
+import { DEFAULT_ACTIVITY_FILTER } from '@shared/types/dashboard'
+import type { PipelineSummaryItem, StalledPipelineCompany } from '@shared/types/pipeline'
+import type { CompanyPipelineStage } from '@shared/types/company'
+import { COMPANY_PIPELINE_STAGE_VALUES, COMPANY_ACTIVE_PIPELINE_STAGES } from '@shared/types/company'
 
 interface CalendarEventLookup {
   id: string

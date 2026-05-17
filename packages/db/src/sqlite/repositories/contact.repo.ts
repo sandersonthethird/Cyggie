@@ -1,13 +1,13 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
-import { jaroWinkler } from '../../utils/jaroWinkler'
-import { UnionFind } from '../../utils/unionFind'
+import { jaroWinkler } from '@main/utils/jaroWinkler'
+import { UnionFind } from '@main/utils/unionFind'
 import {
   createCompany as createOrgCompany,
   findCompanyIdByDomain,
   linkMeetingsForContactCompany
 } from './org-company.repo'
-import { humanizeDomainName } from '../../utils/company-extractor'
+import { humanizeDomainName } from '@main/utils/company-extractor'
 import {
   type CandidateContact,
   normalizeEmail,
@@ -54,7 +54,7 @@ import type {
   ContactDedupApplyResult,
   ContactDedupAction,
   CompanyContactEntry
-} from '../../../shared/types/contact'
+} from '@shared/types/contact'
 
 interface ContactRow {
   id: string

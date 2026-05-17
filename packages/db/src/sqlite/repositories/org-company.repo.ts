@@ -1,11 +1,11 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
-import { jaroWinkler } from '../../utils/jaroWinkler'
-import { UnionFind } from '../../utils/unionFind'
-import { splitCamelCase } from '../../utils/string-utils'
-import { trySegment } from '../../utils/company-extractor'
-import { extractDomainFromWebsiteUrl, normalizeDomain } from '../../utils/email-parser'
-import { parseTimestamp } from '../../utils/db-utils'
+import { jaroWinkler } from '@main/utils/jaroWinkler'
+import { UnionFind } from '@main/utils/unionFind'
+import { splitCamelCase } from '@main/utils/string-utils'
+import { trySegment } from '@main/utils/company-extractor'
+import { extractDomainFromWebsiteUrl, normalizeDomain } from '@main/utils/email-parser'
+import { parseTimestamp } from '@main/utils/db-utils'
 import { logAudit } from './audit.repo'
 import type {
   CompanyEntityType,
@@ -30,7 +30,7 @@ import type {
   CompanyMergePreview,
   MergeFieldDiff,
   MergeFieldOverrides
-} from '../../../shared/types/company'
+} from '@shared/types/company'
 
 interface CompanyRow {
   id: string

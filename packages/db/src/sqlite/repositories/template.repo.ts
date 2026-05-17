@@ -1,8 +1,8 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../connection'
 import type { TemplateRow } from '../schema'
-import type { MeetingTemplate, TemplateCategory, OutputFormat } from '../../../shared/types/template'
-import { DEFAULT_TEMPLATES } from '../../../shared/constants/templates'
+import type { MeetingTemplate, TemplateCategory, OutputFormat } from '@shared/types/template'
+import { DEFAULT_TEMPLATES } from '@shared/constants/templates'
 
 function rowToTemplate(row: TemplateRow): MeetingTemplate {
   return {

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { extractDomainFromEmail } from '../../utils/company-extractor'
+import { extractDomainFromEmail } from '@main/utils/company-extractor'
 
 export function runCompaniesCacheMigration(db: Database.Database): void {
   db.exec(`

@@ -6,7 +6,7 @@ import type {
   InvestmentMemoVersion,
   InvestmentMemoVersionSummary,
   InvestmentMemoWithLatest
-} from '../../../shared/types/company'
+} from '@shared/types/company'
 
 const MEMO_DEFAULT_TEMPLATE_SETTING_KEY = 'memo_default_template_markdown'
 const COMPANY_NAME_TOKEN_PATTERNS = [

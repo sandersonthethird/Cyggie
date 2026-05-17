@@ -13,7 +13,7 @@ import type {
   PipelineStage,
   PipelineSummaryItem,
   StuckDealItem
-} from '../../../shared/types/pipeline'
+} from '@shared/types/pipeline'
 
 interface DealCardRow {
   id: string

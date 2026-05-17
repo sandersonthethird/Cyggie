@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 import { logAudit } from './audit.repo'
-import type { ChatContextKind } from '../../../shared/utils/chat-context'
+import type { ChatContextKind } from '@shared/utils/chat-context'
 
 const PREVIEW_MAX = 120
 const TITLE_MAX = 80

@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 import { safeParseArray } from './company-decision-log.repo'
-import type { ContactDecisionLog } from '../../../shared/types/contact'
-import type { DecisionNextStep } from '../../../shared/types/company'
+import type { ContactDecisionLog } from '@shared/types/contact'
+import type { DecisionNextStep } from '@shared/types/company'
 
 interface ContactDecisionLogRow {
   id: string

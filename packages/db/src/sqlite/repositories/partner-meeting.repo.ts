@@ -19,7 +19,7 @@
 
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
-import { currentDigestTuesday, nextDigestTuesday, previousTuesday } from '../../utils/digest-week'
+import { currentDigestTuesday, nextDigestTuesday, previousTuesday } from '@main/utils/digest-week'
 import type {
   PartnerMeetingDigest,
   PartnerMeetingDigestSummary,
@@ -28,7 +28,7 @@ import type {
   UpdateItemInput,
   DigestSection,
   DigestSuggestion,
-} from '../../../shared/types/partner-meeting'
+} from '@shared/types/partner-meeting'
 
 // ─── Row types ────────────────────────────────────────────────────────────────
 

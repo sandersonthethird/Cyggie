@@ -9,7 +9,7 @@ import type {
   TaskUpdateData,
   TaskStatus,
   TaskSummaryStats
-} from '../../../shared/types/task'
+} from '@shared/types/task'
 
 interface TaskListRow extends TaskRow {
   meeting_title: string | null

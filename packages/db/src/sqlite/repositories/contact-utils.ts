@@ -3,8 +3,8 @@
  * Extracted from contact.repo.ts so the repo file can focus on database operations.
  */
 
-import { extractDomainFromEmail as extractCompanyDomainFromEmail } from '../../utils/company-extractor'
-import type { ContactDuplicateSummary, ContactEmailParticipantRef } from '../../../shared/types/contact'
+import { extractDomainFromEmail as extractCompanyDomainFromEmail } from '@main/utils/company-extractor'
+import type { ContactDuplicateSummary, ContactEmailParticipantRef } from '@shared/types/contact'
 
 // ---------------------------------------------------------------------------
 // Types shared between contact-utils and contact.repo
@@ -177,14 +177,14 @@ export function normalizeForCompare(value: string | null | undefined): string {
 
 // Local import for use within this file. The re-export below makes these
 // available to other modules that import from contact-utils.
-import { parseTimestamp } from '../../utils/db-utils'
+import { parseTimestamp } from '@main/utils/db-utils'
 
 // Re-export SQLITE_DATETIME_RE / parseTimestamp / pickLatestTimestamp /
 // setLatestMapValue / parseJsonArray from db-utils for backward compatibility.
 // These were originally defined here; the canonical source is now
 // `src/main/utils/db-utils.ts`. Keep the re-export so the ~29 existing imports
 // from contact-utils continue to work.
-export { SQLITE_DATETIME_RE, parseTimestamp, pickLatestTimestamp, setLatestMapValue, parseJsonArray } from '../../utils/db-utils'
+export { SQLITE_DATETIME_RE, parseTimestamp, pickLatestTimestamp, setLatestMapValue, parseJsonArray } from '@main/utils/db-utils'
 
 // ---------------------------------------------------------------------------
 // LinkedIn utilities

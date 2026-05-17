@@ -1,14 +1,14 @@
 import { getDatabase } from '../connection'
-import { extractCompanyFromEmail, extractDomainFromEmail } from '../../utils/company-extractor'
+import { extractCompanyFromEmail, extractDomainFromEmail } from '@main/utils/company-extractor'
 import * as companyRepo from './company.repo'
 import * as orgCompanyRepo from './org-company.repo'
-import { FTS_MARK_START, FTS_MARK_END } from '../../../shared/constants/search-markers'
-import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult, CategorizedSuggestions, CompanySuggestion, ContentMatchPreview } from '../../../shared/types/meeting'
+import { FTS_MARK_START, FTS_MARK_END } from '@shared/constants/search-markers'
+import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult, CategorizedSuggestions, CompanySuggestion, ContentMatchPreview } from '@shared/types/meeting'
 import type {
   UnifiedSearchResponse,
   UnifiedSearchResult,
   UnifiedSearchResultsGrouped
-} from '../../../shared/types/unified-search'
+} from '@shared/types/unified-search'
 
 /** Sanitize a user query for FTS5 MATCH — quote each word to avoid syntax errors from ?, *, etc. */
 function sanitizeFts5Query(query: string): string {

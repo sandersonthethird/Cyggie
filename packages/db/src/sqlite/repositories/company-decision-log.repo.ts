@@ -4,7 +4,7 @@ import type {
   CompanyDecisionLog,
   DecisionNextStep,
   DecisionLinkedArtifact
-} from '../../../shared/types/company'
+} from '@shared/types/company'
 
 interface DecisionLogRow {
   id: string

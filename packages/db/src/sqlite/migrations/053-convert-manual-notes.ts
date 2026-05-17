@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import type Database from 'better-sqlite3'
-import { getSummariesDir, getTranscriptsDir } from '../../storage/paths'
+import { getSummariesDir, getTranscriptsDir } from '@main/storage/paths'
 
 interface ManualMeetingRow {
   id: string

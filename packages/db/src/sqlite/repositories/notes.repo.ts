@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
-import type { Note, NoteFilterView, NoteCreateData, NoteUpdateData } from '../../../shared/types/note'
+import type { Note, NoteFilterView, NoteCreateData, NoteUpdateData } from '@shared/types/note'
 
 interface NoteRow {
   id: string

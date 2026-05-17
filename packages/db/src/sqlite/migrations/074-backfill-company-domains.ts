@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
-import { extractDomainFromWebsiteUrl } from '../../utils/email-parser'
+import { extractDomainFromWebsiteUrl } from '@main/utils/email-parser'
 
 /**
  * One-time data repair: populate primary_domain for companies that have

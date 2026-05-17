@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { getDatabasePath } from '../storage/paths'
+import { getDatabasePath } from '@main/storage/paths'
 import { runMigrations } from './migrations/001-initial-schema'
 import { runFtsMigration } from './migrations/002-fts5-tables'
 import { runNotesMigration } from './migrations/003-notes-column'

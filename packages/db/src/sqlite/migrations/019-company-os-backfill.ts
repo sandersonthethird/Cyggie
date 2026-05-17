@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import type Database from 'better-sqlite3'
-import { extractCompanyFromEmail, extractDomainFromEmail } from '../../utils/company-extractor'
+import { extractCompanyFromEmail, extractDomainFromEmail } from '@main/utils/company-extractor'
 
 const BACKFILL_KEY = 'migration_019_company_os_backfill_v1'
 

@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { getDatabase } from '../connection'
 import { randomUUID } from 'crypto'
-import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import { IPC_CHANNELS } from '@shared/constants/channels'
 
 /**
  * Broadcast COMPANY_FLAGS_CHANGED to all renderer windows.

@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.node.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "outDir": "./dist",
+    "composite": false,
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": true,
+    "lib": ["ESNext"]
+  },
+  "include": ["src/**/*.ts", "../packages/db/src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}

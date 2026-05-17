@@ -7,7 +7,7 @@ import type {
   CreateCustomFieldDefinitionInput,
   UpdateCustomFieldDefinitionInput,
   SetCustomFieldValueInput
-} from '../../../shared/types/custom-fields'
+} from '@shared/types/custom-fields'
 
 const FIELD_KEY_REGEX = /^[a-z0-9_]+$/
 

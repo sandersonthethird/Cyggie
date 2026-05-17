@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { parseFrontmatter, parseAppleNotesDate } from '../../utils/frontmatter'
+import { parseFrontmatter, parseAppleNotesDate } from '@main/utils/frontmatter'
 
 /**
  * One-time data repair: strip YAML frontmatter from imported note bodies and
