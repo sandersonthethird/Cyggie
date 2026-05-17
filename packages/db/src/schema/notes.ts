@@ -83,8 +83,15 @@ export const notes = pgTable(
       .on(t.companyId, t.sourceDigestId)
       .where(sql`${t.sourceDigestId} IS NOT NULL`),
     // Full-text search via GIN on a computed tsvector expression.
-    // Postgres: CREATE INDEX … USING GIN (to_tsvector('english', …)).
-    index('notes_fts_idx').using('gin', sql`to_tsvector('english', coalesce(${t.title}, '') || ' ' || ${t.content})`),
+    // Postgres's tsvector has a 1MB-per-document BYTE limit (TSVECTOR_MAX_DOCUMENT_LEN).
+    // SQL `substring(... for N)` counts characters; UTF-8 multibyte content can push
+    // 1M chars to ~2MB bytes. We truncate at 500K chars (avg ~750KB UTF-8) for safety.
+    // Notes longer than this lose FTS coverage beyond the cutoff; the underlying
+    // `content` column itself stays unlimited.
+    index('notes_fts_idx').using(
+      'gin',
+      sql`to_tsvector('english', coalesce(${t.title}, '') || ' ' || substring(${t.content} from 1 for 500000))`,
+    ),
   ],
 )
 

@@ -33,7 +33,8 @@ import { orgCompanies } from './companies'
 
 // talent_pipeline enum (migration 068). Defined as a CHECK constraint rather than a PG
 // ENUM type — easier to extend (no migration for ALTER TYPE … ADD VALUE).
-const TALENT_PIPELINE_STAGES = ['identified', 'exploring', 'ideating', 'parked'] as const
+// 'internal_candidate' added 2026-05-17 for backfill compatibility with desktop data.
+const TALENT_PIPELINE_STAGES = ['identified', 'exploring', 'ideating', 'parked', 'internal_candidate'] as const
 
 export const contacts = pgTable(
   'contacts',
@@ -124,10 +125,10 @@ export const contacts = pgTable(
     // Indexes for the new touchpoint columns — these are the hot path for mobile.
     index('contacts_last_meeting_idx').on(t.lastMeetingAt),
     index('contacts_last_email_idx').on(t.lastEmailAt),
-    // Talent pipeline enum constraint (migration 068)
+    // Talent pipeline enum constraint (migration 068). Mirrors TALENT_PIPELINE_STAGES.
     check(
       'contacts_talent_pipeline_check',
-      sql`${t.talentPipeline} IS NULL OR ${t.talentPipeline} IN ('identified', 'exploring', 'ideating', 'parked')`,
+      sql`${t.talentPipeline} IS NULL OR ${t.talentPipeline} IN ('identified', 'exploring', 'ideating', 'parked', 'internal_candidate')`,
     ),
   ],
 )
