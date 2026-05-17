@@ -1,9 +1,36 @@
-import { useRef, useState } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import type { Meeting } from '../../../shared/types/meeting'
 import { getSingleCompanyDomain } from '../../../shared/utils/company-domain'
 import { formatMeetingDuration, formatMeetingTime } from '../../utils/format'
 import { useOutsideClick } from '../../hooks/useOutsideClick'
+import { FTS_MARK_START, FTS_MARK_END } from '../../../shared/constants/search-markers'
 import styles from './MeetingCard.module.css'
+
+/**
+ * Render an FTS snippet by splitting on the U+2063 sentinel emitted by
+ * search.repo.ts. Sentinel-wrapped substrings become real <mark> nodes;
+ * everything else renders as escaped text. Replaces the legacy
+ * `dangerouslySetInnerHTML` path which trusted raw transcript content as HTML.
+ */
+function renderSnippet(snippet: string) {
+  const re = new RegExp(`${FTS_MARK_START}([\\s\\S]*?)${FTS_MARK_END}`, 'g')
+  const parts: Array<{ type: 'text' | 'mark'; value: string }> = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = re.exec(snippet)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', value: snippet.slice(lastIndex, match.index) })
+    }
+    parts.push({ type: 'mark', value: match[1] })
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < snippet.length) {
+    parts.push({ type: 'text', value: snippet.slice(lastIndex) })
+  }
+  return parts.map((p, i) =>
+    p.type === 'mark' ? <mark key={i}>{p.value}</mark> : <Fragment key={i}>{p.value}</Fragment>
+  )
+}
 
 interface MeetingCardProps {
   meeting: Meeting
@@ -59,7 +86,7 @@ export default function MeetingCard({ meeting, snippet, onClick, onDelete, onCop
       </div>
       {snippet && (
         <div className={styles.row}>
-          <p className={styles.snippet} dangerouslySetInnerHTML={{ __html: snippet }} />
+          <p className={styles.snippet}>{renderSnippet(snippet)}</p>
           <span />
         </div>
       )}

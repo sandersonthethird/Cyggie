@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import ReactMarkdown from 'react-markdown'
+import { SafeMarkdown } from '../SafeMarkdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanyNote, CompanyTimelineItem } from '../../../shared/types/company'
 import { useEmailSync } from '../../hooks/useEmailSync'
@@ -248,7 +248,7 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
                 </span>
               </div>
               <div className={styles.title}>{item.title}</div>
-              {item.subtitle && <div className={styles.subtitle}><ReactMarkdown>{item.subtitle}</ReactMarkdown></div>}
+              {item.subtitle && <div className={styles.subtitle}><SafeMarkdown>{item.subtitle}</SafeMarkdown></div>}
             </div>
           </div>
         )

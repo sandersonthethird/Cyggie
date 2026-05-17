@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { CompanyEmailIngestResult } from '../../shared/types/company'
 import type { ContactEmailIngestResult } from '../../shared/types/contact'
-import type { AppSettings } from '../../shared/types/settings'
 import { getLastSyncedLabel } from '../utils/sync'
 import { api } from '../api'
 
@@ -142,9 +141,11 @@ export function useEmailSync(
     if (elapsed <= 24 * 60 * 60 * 1000) return
 
     window.api
-      .invoke<AppSettings>(IPC_CHANNELS.SETTINGS_GET_ALL)
+      .invoke<Record<string, unknown>>(IPC_CHANNELS.SETTINGS_GET_ALL)
       .then((settings) => {
-        if ((settings as unknown as Record<string, string>)?.autoSyncEmails !== 'false' && isMountedRef.current) {
+        // SETTINGS_GET_ALL returns MaskedKey objects for encrypted keys and
+        // strings for everything else. We only need the autoSyncEmails string.
+        if (settings?.autoSyncEmails !== 'false' && isMountedRef.current) {
           handleSync()
         }
       })

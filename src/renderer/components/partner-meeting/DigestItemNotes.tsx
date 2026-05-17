@@ -32,7 +32,7 @@ import { EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
-import ReactMarkdown from 'react-markdown'
+import { SafeMarkdown } from '../SafeMarkdown'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import { useDigestItemAutoSave } from '../../hooks/useDigestItemAutoSave'
 import styles from './DigestItemNotes.module.css'
@@ -118,7 +118,7 @@ export function DigestItemNotes({ content, placeholder = 'Click to add notes…'
     return (
       <div className={styles.collapsed}>
         {draft ? (
-          <ReactMarkdown className={styles.preview}>{draft}</ReactMarkdown>
+          <SafeMarkdown className={styles.preview}>{draft}</SafeMarkdown>
         ) : (
           <span className={styles.placeholder}>{placeholder}</span>
         )}
@@ -136,7 +136,7 @@ export function DigestItemNotes({ content, placeholder = 'Click to add notes…'
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setExpanded(true) }}
       >
         {draft ? (
-          <ReactMarkdown className={styles.preview}>{draft}</ReactMarkdown>
+          <SafeMarkdown className={styles.preview}>{draft}</SafeMarkdown>
         ) : (
           <span className={styles.placeholder}>{placeholder}</span>
         )}

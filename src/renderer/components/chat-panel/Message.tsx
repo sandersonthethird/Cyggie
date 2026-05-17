@@ -1,12 +1,7 @@
 import { memo, type ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import rehypeRaw from 'rehype-raw'
-import { injectFindMarks, type FindMatch } from '../../hooks/useFindInPage'
+import { SafeMarkdown } from '../SafeMarkdown'
+import { type FindMatch } from '../../hooks/useFindInPage'
 import styles from './Message.module.css'
-
-const MARKDOWN_PLUGINS = [remarkGfm]
-const REHYPE_PLUGINS = [rehypeRaw]
 
 export type MessageRole = 'user' | 'assistant'
 
@@ -71,12 +66,6 @@ function plainWithMarks(content: string, hl: FindHighlight): ReactNode {
  */
 function MessageInner({ role, authorInitials, time, content, plain = false, large = false, trailing, findHighlight }: MessageProps) {
   const isUser = role === 'user'
-  // Markdown branch: inject <mark> tags into the source string and switch on
-  // rehype-raw so they survive the markdown render. Without find, render as
-  // before (no rehype-raw, plain markdown — keeps the pipeline minimal).
-  const markdownChildren = findHighlight
-    ? injectFindMarks(content, findHighlight.matches, findHighlight.activeIndex)
-    : content
   return (
     <div className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAi} ${large ? styles.rowLarge : ''}`}>
       <div className={`${styles.avatar} ${isUser ? styles.avatarUser : styles.avatarAi}`}>
@@ -89,12 +78,8 @@ function MessageInner({ role, authorInitials, time, content, plain = false, larg
             <span style={{ whiteSpace: 'pre-wrap' }}>
               {findHighlight ? plainWithMarks(content, findHighlight) : content}
             </span>
-          ) : findHighlight ? (
-            <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
-              {markdownChildren}
-            </ReactMarkdown>
           ) : (
-            <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>{content}</ReactMarkdown>
+            <SafeMarkdown findHighlight={findHighlight}>{content}</SafeMarkdown>
           )}
           {trailing}
         </div>

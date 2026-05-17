@@ -1193,3 +1193,31 @@ new IPC channel; user can opt in to sharing.
 **Effort:** M
 **Priority:** P3
 **Depends on:** Nothing.
+
+---
+
+## P1 — Security
+
+### PR1.5: Flip CSP from Report-Only to enforcing
+**What:** Change `Content-Security-Policy-Report-Only` to `Content-Security-Policy` in [src/renderer/index.html](src/renderer/index.html) and [web/middleware.ts](web/middleware.ts). Verify zero unexpected violations during the prior dev cycle.
+**Why:** Report-Only mode only logs violations; it does not block exfiltration. Long-lived Report-Only mode is an anti-pattern — it gives the illusion of protection without delivering it.
+**Pros:** Closes the actual exfiltration channel that the CSP is designed to block. Required to claim the XSS-protection benefit of the PR1 work.
+**Cons:** If any legitimate path was missed during the dev cycle, this will block it. Mitigation: observe Report-Only logs in dev console + Vercel logs for ≥1 week before flipping. The desktop CSP also currently includes `ws:`/`wss:` and `style-src 'unsafe-inline'` for Vite dev — those should be gated to dev-only before enforcing in prod builds (Vite already gates dev vs prod for bundling, but the meta tag is static; consider injecting CSP at build time instead of via meta).
+**Context:** PR1 shipped CSP in Report-Only mode (decision 1A in the security plan review) to avoid breaking the app on first deploy. The dev cycle exposes any violations; this TODO flips the switch once the violations are addressed. Plan file: `/Users/sandersoncass/.claude/plans/here-are-some-security-tidy-cake.md`.
+**Effort:** S
+**Priority:** P1
+**Depends on:** PR1 merged + ≥1 week of clean Report-Only logs.
+
+---
+
+## P2 — Security (recurring)
+
+### Re-run markdown HTML survey after Claude/OpenAI model upgrades
+**What:** Run [scripts/survey-markdown-html.ts](scripts/survey-markdown-html.ts) against recent summaries after any Anthropic or OpenAI model version bump in the codebase. If new HTML tags appear in the survey output, add them to the schema in [src/renderer/lib/markdown-sanitize.ts](src/renderer/lib/markdown-sanitize.ts).
+**Why:** AI model versions sometimes change the HTML they emit (e.g., Claude 5.x adding `<thinking>` or new collapse syntax). If the sanitize schema falls out of sync, summaries silently lose formatting.
+**Pros:** Catches schema drift before users notice missing formatting. ~5-minute task per model bump.
+**Cons:** Recurring TODO; requires discipline to actually run after model bumps. Running the script also requires `npm rebuild better-sqlite3` against system Node before invocation, and rebuilding back for Electron afterward (the project's npm `test` script already does this dance).
+**Context:** PR1 calibrated the schema by sampling real summaries (decision 2A in the security plan review — sampled 195 strings, found `br`, `u`, `img`, `sup`). The survey script is committed alongside the schema; this TODO is the operational follow-up. Schema lives at [src/renderer/lib/markdown-sanitize.ts](src/renderer/lib/markdown-sanitize.ts). When you re-run, look for any tag in the output that is NOT in `defaultSchema.tagNames` from `hast-util-sanitize` — that's what needs to be added.
+**Effort:** XS (per run)
+**Priority:** P2 (recurring on model bump)
+**Depends on:** Nothing.

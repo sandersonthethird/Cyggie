@@ -7,8 +7,6 @@ import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
-import remarkGfm from 'remark-gfm'
-import rehypeRaw from 'rehype-raw'
 import { TABLE_EXTENSIONS } from '../lib/tiptap-extensions'
 import { FindHighlight } from '../lib/find-highlight-extension'
 import { Clock } from 'lucide-react'
@@ -16,7 +14,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useRecordingStore } from '../stores/recording.store'
 import { useSharedAudioCapture, useSharedVideoCapture } from '../contexts/AudioCaptureContext'
-import { useFindInPage, injectFindMarks } from '../hooks/useFindInPage'
+import { useFindInPage } from '../hooks/useFindInPage'
 import FindBar from '../components/common/FindBar'
 import ConfirmDialog from '../components/common/ConfirmDialog'
 import { useNotice } from '../components/common/NoticeModal'
@@ -44,7 +42,7 @@ import type { EnrichmentEntityProposal } from '../components/enrichment/Enrichme
 import type { SetCustomFieldValueInput } from '../../shared/types/custom-fields'
 import type { Task, ProposedTask, TaskCreateData } from '../../shared/types/task'
 import { createPortal } from 'react-dom'
-import ReactMarkdown from 'react-markdown'
+import { SafeMarkdown } from '../components/SafeMarkdown'
 import styles from './MeetingDetail.module.css'
 import { api } from '../api'
 import { ipcCache } from '../api/ipcCache'
@@ -2176,9 +2174,9 @@ export default function MeetingDetail() {
                       </div>
                     )}
                     <div className={styles.markdown}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                        {injectFindMarks(preprocessSummaryMarkdown(streamedSummary), findMatches, activeMatchIndex)}
-                      </ReactMarkdown>
+                      <SafeMarkdown findHighlight={{ matches: findMatches, activeIndex: activeMatchIndex }}>
+                        {preprocessSummaryMarkdown(streamedSummary)}
+                      </SafeMarkdown>
                     </div>
                   </>
                 ) : (
@@ -2264,9 +2262,9 @@ export default function MeetingDetail() {
           <div className={styles.transcriptTab}>
             {transcript && (
               <div className={styles.markdown}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                  {injectFindMarks(transcript ?? '', findMatches, activeMatchIndex)}
-                </ReactMarkdown>
+                <SafeMarkdown findHighlight={{ matches: findMatches, activeIndex: activeMatchIndex }}>
+                  {transcript ?? ''}
+                </SafeMarkdown>
               </div>
             )}
             {isThisMeetingRecording && (

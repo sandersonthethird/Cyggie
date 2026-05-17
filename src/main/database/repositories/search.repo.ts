@@ -2,6 +2,7 @@ import { getDatabase } from '../connection'
 import { extractCompanyFromEmail, extractDomainFromEmail } from '../../utils/company-extractor'
 import * as companyRepo from './company.repo'
 import * as orgCompanyRepo from './org-company.repo'
+import { FTS_MARK_START, FTS_MARK_END } from '../../../shared/constants/search-markers'
 import type { SearchResult, AdvancedSearchParams, AdvancedSearchResult, CategorizedSuggestions, CompanySuggestion, ContentMatchPreview } from '../../../shared/types/meeting'
 import type {
   UnifiedSearchResponse,
@@ -138,7 +139,7 @@ export function searchMeetings(query: string, limit = 20, rawFts = false): Searc
     .prepare(
       `SELECT
         meeting_id,
-        snippet(meetings_fts, 2, '<mark>', '</mark>', '...', 32) as snippet,
+        snippet(meetings_fts, 2, '${FTS_MARK_START}', '${FTS_MARK_END}', '...', 32) as snippet,
         bm25(meetings_fts) as rank
       FROM meetings_fts
       WHERE meetings_fts MATCH ?
@@ -388,7 +389,7 @@ export function advancedSearch(params: AdvancedSearchParams): AdvancedSearchResu
         .prepare(
           `SELECT
             meeting_id,
-            snippet(meetings_fts, 2, '<mark>', '</mark>', '...', 32) as snippet,
+            snippet(meetings_fts, 2, '${FTS_MARK_START}', '${FTS_MARK_END}', '...', 32) as snippet,
             bm25(meetings_fts) as rank
           FROM meetings_fts
           WHERE meetings_fts MATCH ?
@@ -904,7 +905,7 @@ export function getContentMatchPreviews(query: string, limit = 5): ContentMatchP
         SELECT
           m.id,
           m.title,
-          snippet(meetings_fts, 2, '<mark>', '</mark>', '...', 24) AS snippet,
+          snippet(meetings_fts, 2, '${FTS_MARK_START}', '${FTS_MARK_END}', '...', 24) AS snippet,
           bm25(meetings_fts) AS bm_rank,
           c.canonical_name AS company_name
         FROM meetings_fts
@@ -1139,7 +1140,7 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
           m.id,
           m.title,
           m.date,
-          snippet(meetings_fts, 2, '<mark>', '</mark>', '...', 24) AS snippet,
+          snippet(meetings_fts, 2, '${FTS_MARK_START}', '${FTS_MARK_END}', '...', 24) AS snippet,
           bm25(meetings_fts) AS bm_rank,
           c.id AS company_id,
           c.canonical_name AS company_name,

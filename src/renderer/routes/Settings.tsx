@@ -4,7 +4,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 
 import { useCalendar } from '../hooks/useCalendar'
-import type { LlmProvider } from '../../shared/types/settings'
+import type { LlmProvider, MaskedKey } from '../../shared/types/settings'
+import { UNCONFIGURED_KEY } from '../../shared/types/settings'
 import type {
   ContactEmailOnboardingOptions,
   ContactEmailOnboardingResult,
@@ -92,19 +93,19 @@ import { AgentLimitsSection } from '../components/settings/AgentLimitsSection'
 import { AgentModelTierSection } from '../components/settings/AgentModelTierSection'
 
 interface SettingsState {
-  deepgramApiKey: string
+  deepgramApiKey: MaskedKey
   llmProvider: LlmProvider
-  claudeApiKey: string
+  claudeApiKey: MaskedKey
   claudeSummaryModel: string
   claudeEnrichmentModel: string
   claudeChatModel: string
   ollamaHost: string
   ollamaModel: string
-  openAiApiKey: string
+  openAiApiKey: MaskedKey
   openAiSummaryModel: string
   openAiEnrichmentModel: string
   openAiChatModel: string
-  webShareApiKey: string
+  webShareApiKey: MaskedKey
   webShareModel: string
   showLiveTranscript: boolean
   defaultMaxSpeakers: string
@@ -113,7 +114,16 @@ interface SettingsState {
   autoSyncEmails: boolean
   autoGenerateKeyTakeaways: boolean
   autoEnhanceAfterMeeting: boolean
-  exaApiKey: string
+  exaApiKey: MaskedKey
+}
+
+/** Coerce an unknown IPC value into MaskedKey. Defensive: handles legacy raw
+ *  strings that may still be in flight during an upgrade. */
+function asMaskedKey(value: unknown): MaskedKey {
+  if (value && typeof value === 'object' && 'configured' in value && 'masked' in value) {
+    return value as MaskedKey
+  }
+  return UNCONFIGURED_KEY
 }
 
 export default function Settings() {
@@ -127,19 +137,19 @@ export default function Settings() {
   })
   const [initialLoad, setInitialLoad] = useState(true)
   const [settings, setSettings] = useState<SettingsState>({
-    deepgramApiKey: '',
+    deepgramApiKey: UNCONFIGURED_KEY,
     llmProvider: 'claude',
-    claudeApiKey: '',
+    claudeApiKey: UNCONFIGURED_KEY,
     claudeSummaryModel: 'claude-sonnet-4-5-20250929',
     claudeEnrichmentModel: 'claude-haiku-4-5-20251001',
     claudeChatModel: 'claude-sonnet-4-5-20250929',
     ollamaHost: 'http://127.0.0.1:11434',
     ollamaModel: 'llama3.1',
-    openAiApiKey: '',
+    openAiApiKey: UNCONFIGURED_KEY,
     openAiSummaryModel: 'gpt-4o',
     openAiEnrichmentModel: 'gpt-4o-mini',
     openAiChatModel: 'gpt-4o',
-    webShareApiKey: '',
+    webShareApiKey: UNCONFIGURED_KEY,
     webShareModel: 'claude-sonnet-4-5-20250929',
     showLiveTranscript: true,
     defaultMaxSpeakers: '',
@@ -148,7 +158,7 @@ export default function Settings() {
     autoSyncEmails: true,
     autoGenerateKeyTakeaways: false,
     autoEnhanceAfterMeeting: false,
-    exaApiKey: ''
+    exaApiKey: UNCONFIGURED_KEY
   })
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false)
   const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai' | 'exa' | 'webShare' | 'deepgram'>('claude')
@@ -248,43 +258,47 @@ export default function Settings() {
     async function load() {
       try {
         const [allResult, currentPathResult, userResult] = await Promise.allSettled([
-          api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL),
+          api.invoke<Record<string, unknown>>(IPC_CHANNELS.SETTINGS_GET_ALL),
           api.invoke<string>(IPC_CHANNELS.APP_GET_STORAGE_PATH),
           api.invoke<UserProfile>(IPC_CHANNELS.USER_GET_CURRENT)
         ])
 
         if (allResult.status === 'fulfilled') {
           const all = allResult.value
+          const str = (k: string, fallback = ''): string => {
+            const v = all[k]
+            return typeof v === 'string' ? v : fallback
+          }
           setSettings({
-            deepgramApiKey: all.deepgramApiKey || '',
-            llmProvider: (all.llmProvider as LlmProvider) || 'claude',
-            claudeApiKey: all.claudeApiKey || '',
-            claudeSummaryModel: all.claudeSummaryModel || 'claude-sonnet-4-5-20250929',
-            claudeEnrichmentModel: all.claudeEnrichmentModel || 'claude-haiku-4-5-20251001',
-            claudeChatModel: all.claudeChatModel || 'claude-sonnet-4-5-20250929',
-            ollamaHost: all.ollamaHost || 'http://127.0.0.1:11434',
-            ollamaModel: all.ollamaModel || 'llama3.1',
-            openAiApiKey: all.openAiApiKey || '',
-            openAiSummaryModel: all.openAiSummaryModel || 'gpt-4o',
-            openAiEnrichmentModel: all.openAiEnrichmentModel || 'gpt-4o-mini',
-            openAiChatModel: all.openAiChatModel || 'gpt-4o',
-            showLiveTranscript: all.showLiveTranscript !== 'false',
-            defaultMaxSpeakers: all.defaultMaxSpeakers || '',
-            companyDriveRootFolder: all.companyDriveRootFolder || '',
-            companyLocalFilesRoot: all.companyLocalFilesRoot || '',
-            autoSyncEmails: all.autoSyncEmails !== 'false',
-            autoGenerateKeyTakeaways: all.autoGenerateKeyTakeaways === 'true',
-            autoEnhanceAfterMeeting: all.autoEnhanceAfterMeeting === 'true',
-            exaApiKey: all.exaApiKey || '',
-            webShareApiKey: all.webShareApiKey || '',
-            webShareModel: all.webShareModel || 'claude-sonnet-4-5-20250929'
+            deepgramApiKey: asMaskedKey(all.deepgramApiKey),
+            llmProvider: (str('llmProvider') as LlmProvider) || 'claude',
+            claudeApiKey: asMaskedKey(all.claudeApiKey),
+            claudeSummaryModel: str('claudeSummaryModel', 'claude-sonnet-4-5-20250929'),
+            claudeEnrichmentModel: str('claudeEnrichmentModel', 'claude-haiku-4-5-20251001'),
+            claudeChatModel: str('claudeChatModel', 'claude-sonnet-4-5-20250929'),
+            ollamaHost: str('ollamaHost', 'http://127.0.0.1:11434'),
+            ollamaModel: str('ollamaModel', 'llama3.1'),
+            openAiApiKey: asMaskedKey(all.openAiApiKey),
+            openAiSummaryModel: str('openAiSummaryModel', 'gpt-4o'),
+            openAiEnrichmentModel: str('openAiEnrichmentModel', 'gpt-4o-mini'),
+            openAiChatModel: str('openAiChatModel', 'gpt-4o'),
+            showLiveTranscript: str('showLiveTranscript') !== 'false',
+            defaultMaxSpeakers: str('defaultMaxSpeakers'),
+            companyDriveRootFolder: str('companyDriveRootFolder'),
+            companyLocalFilesRoot: str('companyLocalFilesRoot'),
+            autoSyncEmails: str('autoSyncEmails') !== 'false',
+            autoGenerateKeyTakeaways: str('autoGenerateKeyTakeaways') === 'true',
+            autoEnhanceAfterMeeting: str('autoEnhanceAfterMeeting') === 'true',
+            exaApiKey: asMaskedKey(all.exaApiKey),
+            webShareApiKey: asMaskedKey(all.webShareApiKey),
+            webShareModel: str('webShareModel', 'claude-sonnet-4-5-20250929')
           })
-          setStaleRelationshipDays(all.dashboardStaleRelationshipDays || '21')
-          setStalledPipelineDays(all.dashboardStalledPipelineDays || '21')
-          setPassExpiryDays(all.pipelinePassExpiryDays || '30')
-          setBrandingLogoDataUrl(all.brandingLogoDataUrl || '')
-          setBrandingFirmName(all.brandingFirmName || '')
-          setBrandingPrimaryColor(all.brandingPrimaryColor || '#374151')
+          setStaleRelationshipDays(str('dashboardStaleRelationshipDays', '21'))
+          setStalledPipelineDays(str('dashboardStalledPipelineDays', '21'))
+          setPassExpiryDays(str('pipelinePassExpiryDays', '30'))
+          setBrandingLogoDataUrl(str('brandingLogoDataUrl'))
+          setBrandingFirmName(str('brandingFirmName'))
+          setBrandingPrimaryColor(str('brandingPrimaryColor', '#374151'))
         }
 
         if (currentPathResult.status === 'fulfilled') {
@@ -321,9 +335,9 @@ export default function Settings() {
   // Auto-navigate new users to the AI tab when setup is needed, and open relevant edit sections
   useEffect(() => {
     if (initialLoad) return
-    const deepgramMissing = !settings.deepgramApiKey
-    const claudeMissing = settings.llmProvider === 'claude' && !settings.claudeApiKey
-    const openAiMissing = settings.llmProvider === 'openai' && !settings.openAiApiKey
+    const deepgramMissing = !settings.deepgramApiKey.configured
+    const claudeMissing = settings.llmProvider === 'claude' && !settings.claudeApiKey.configured
+    const openAiMissing = settings.llmProvider === 'openai' && !settings.openAiApiKey.configured
     if ((deepgramMissing || claudeMissing || openAiMissing) && !searchParams.get('tab')) {
       setActiveTab('ai')
     }
@@ -460,10 +474,19 @@ export default function Settings() {
     const savedProfile = await saveUserProfile()
     if (!savedProfile) return
 
-    const entries = Object.entries(settings) as [string, string | boolean][]
+    // Encrypted keys (MaskedKey shape) are saved via the Change Key modal, not
+    // the bulk save — the renderer never holds plaintext key material to write back.
+    const ENCRYPTED_KEYS_SET = new Set([
+      'deepgramApiKey',
+      'claudeApiKey',
+      'openAiApiKey',
+      'exaApiKey',
+      'webShareApiKey',
+    ])
+    const entries = Object.entries(settings) as [string, unknown][]
     for (const [key, value] of entries) {
-      const stored = key === 'claudeApiKey' ? String(value).trim() : String(value)
-      await api.invoke(IPC_CHANNELS.SETTINGS_SET, key, stored)
+      if (ENCRYPTED_KEYS_SET.has(key)) continue
+      await api.invoke(IPC_CHANNELS.SETTINGS_SET, key, String(value))
     }
     await api.invoke(
       IPC_CHANNELS.SETTINGS_SET,
@@ -484,13 +507,16 @@ export default function Settings() {
     setTimeout(() => setSaved(false), 2000)
   }, [settings, saveUserProfile, staleRelationshipDays, stalledPipelineDays, passExpiryDays])
 
-  const handleTestKey = useCallback(async (provider: 'claude' | 'openai', apiKey: string): Promise<{ ok: boolean; message: string }> => {
+  const handleTestKey = useCallback(async (provider: 'claude' | 'openai', apiKey?: string): Promise<{ ok: boolean; message: string }> => {
     setIsTesting(true)
     setTestKeyStatus(null)
     try {
+      // When apiKey is empty/undefined, main decrypts the stored key and tests
+      // that — the plaintext never crosses the IPC boundary.
+      const trimmed = apiKey?.trim()
       const result = await api.invoke<{ ok: boolean; message: string }>(
         IPC_CHANNELS.SETTINGS_TEST_LLM_KEY,
-        { provider, apiKey }
+        trimmed ? { provider, apiKey: trimmed } : { provider }
       )
       setTestKeyStatus(result)
       return result
@@ -611,9 +637,9 @@ export default function Settings() {
     }
   }, [contactOnboardingUseWebLookup])
 
-  const needsDeepgram = !settings.deepgramApiKey
-  const needsClaude = settings.llmProvider === 'claude' && !settings.claudeApiKey
-  const needsOpenAi = settings.llmProvider === 'openai' && !settings.openAiApiKey
+  const needsDeepgram = !settings.deepgramApiKey.configured
+  const needsClaude = settings.llmProvider === 'claude' && !settings.claudeApiKey.configured
+  const needsOpenAi = settings.llmProvider === 'openai' && !settings.openAiApiKey.configured
   const needsSetup = needsDeepgram || needsClaude || needsOpenAi
   const profileName = userDisplayName.trim()
     || [userFirstName.trim(), userLastName.trim()].filter(Boolean).join(' ')
@@ -922,8 +948,8 @@ export default function Settings() {
             <span className={styles.functionLabel}>Deepgram API Key</span>
           </div>
           <div className={styles.functionRight}>
-            {settings.deepgramApiKey
-              ? <span className={styles.statusConfigured}>Configured</span>
+            {settings.deepgramApiKey.configured
+              ? <span className={styles.statusConfigured}>Configured ({settings.deepgramApiKey.masked})</span>
               : <span className={styles.statusMissing}>Not configured</span>}
             <button
               className={styles.changeKeyBtn}
@@ -931,12 +957,12 @@ export default function Settings() {
             >
               Change Key
             </button>
-            {settings.deepgramApiKey && (
+            {settings.deepgramApiKey.configured && (
               <button
                 className={styles.changeKeyBtn}
                 onClick={async () => {
                   await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'deepgramApiKey', '')
-                  setSettings((prev) => ({ ...prev, deepgramApiKey: '' }))
+                  setSettings((prev) => ({ ...prev, deepgramApiKey: UNCONFIGURED_KEY }))
                 }}
               >
                 Remove
@@ -1079,12 +1105,12 @@ export default function Settings() {
             >
               Change Key
             </button>
-            {settings.webShareApiKey && (
+            {settings.webShareApiKey.configured && (
               <button
                 className={styles.changeKeyBtn}
                 onClick={async () => {
                   await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'webShareApiKey', '')
-                  setSettings((prev) => ({ ...prev, webShareApiKey: '' }))
+                  setSettings((prev) => ({ ...prev, webShareApiKey: UNCONFIGURED_KEY }))
                 }}
               >
                 Clear
@@ -1099,8 +1125,8 @@ export default function Settings() {
             <div className={styles.functionHint}>Exa API — discovers LinkedIn URLs for contacts. Optional.</div>
           </div>
           <div className={styles.functionRight}>
-            {settings.exaApiKey
-              ? <span className={styles.statusConfigured}>Configured</span>
+            {settings.exaApiKey.configured
+              ? <span className={styles.statusConfigured}>Configured ({settings.exaApiKey.masked})</span>
               : <span className={styles.statusMissing}>Not configured</span>}
             <button
               className={styles.changeKeyBtn}
@@ -1108,12 +1134,12 @@ export default function Settings() {
             >
               Change Key
             </button>
-            {settings.exaApiKey && (
+            {settings.exaApiKey.configured && (
               <button
                 className={styles.changeKeyBtn}
                 onClick={async () => {
                   await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'exaApiKey', '')
-                  setSettings((prev) => ({ ...prev, exaApiKey: '' }))
+                  setSettings((prev) => ({ ...prev, exaApiKey: UNCONFIGURED_KEY }))
                 }}
               >
                 Remove
@@ -1707,24 +1733,28 @@ export default function Settings() {
                 onClick={async () => {
                   setIsSavingKey(true)
                   const trimmed = apiKeyDraft.trim()
+                  const newMasked: MaskedKey = {
+                    configured: true,
+                    masked: `••••${trimmed.length >= 4 ? trimmed.slice(-4) : trimmed}`,
+                  }
                   if (apiKeyModalProvider === 'deepgram') {
                     await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'deepgramApiKey', trimmed)
-                    setSettings((prev) => ({ ...prev, deepgramApiKey: trimmed }))
+                    setSettings((prev) => ({ ...prev, deepgramApiKey: newMasked }))
                     setApiKeyModalOpen(false)
                   } else if (apiKeyModalProvider === 'exa') {
                     await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'exaApiKey', trimmed)
-                    setSettings((prev) => ({ ...prev, exaApiKey: trimmed }))
+                    setSettings((prev) => ({ ...prev, exaApiKey: newMasked }))
                     setApiKeyModalOpen(false)
                   } else if (apiKeyModalProvider === 'webShare') {
                     await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'webShareApiKey', trimmed)
-                    setSettings((prev) => ({ ...prev, webShareApiKey: trimmed }))
+                    setSettings((prev) => ({ ...prev, webShareApiKey: newMasked }))
                     setApiKeyModalOpen(false)
                   } else {
                     const result = await handleTestKey(apiKeyModalProvider, apiKeyDraft)
                     if (result.ok) {
                       const settingKey = apiKeyModalProvider === 'openai' ? 'openAiApiKey' : 'claudeApiKey'
                       await api.invoke(IPC_CHANNELS.SETTINGS_SET, settingKey, trimmed)
-                      setSettings((prev) => ({ ...prev, [settingKey]: trimmed }))
+                      setSettings((prev) => ({ ...prev, [settingKey]: newMasked }))
                       setApiKeyModalOpen(false)
                       setTestKeyStatus(null)
                     }

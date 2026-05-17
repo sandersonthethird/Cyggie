@@ -922,8 +922,14 @@ export default function Contacts() {
   }, [actionsOpen])
 
   useEffect(() => {
-    api.invoke<string>(IPC_CHANNELS.SETTINGS_GET, 'exaApiKey')
-      .then((v) => setExaApiKey(v ?? ''))
+    // SETTINGS_GET returns MaskedKey for encrypted keys; only the presence
+    // flag matters here — downstream uses `exaApiKey` as a truthy gate.
+    api
+      .invoke<{ configured: boolean; masked: string } | string | null>(IPC_CHANNELS.SETTINGS_GET, 'exaApiKey')
+      .then((v) => {
+        const configured = typeof v === 'object' && v !== null ? v.configured : Boolean(v)
+        setExaApiKey(configured ? '•••configured•••' : '')
+      })
       .catch(() => {})
   }, [])
 

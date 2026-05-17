@@ -8,7 +8,7 @@
  */
 
 import type { ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { SafeMarkdown } from '../SafeMarkdown'
 import { stripMarkdownPreview } from '../../utils/format'
 import styles from './NoteList.module.css'
 
@@ -72,7 +72,7 @@ export function NoteList<T extends NoteListItem>({
             </div>
             {body && (
               <div className={styles.noteBody}>
-                <ReactMarkdown>{body.slice(0, 400)}</ReactMarkdown>
+                <SafeMarkdown>{body.slice(0, 400)}</SafeMarkdown>
               </div>
             )}
             <div className={styles.noteMeta}>

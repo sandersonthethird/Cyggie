@@ -62,9 +62,14 @@ export default function ContactDetail() {
   }, [id])
 
   useEffect(() => {
+    // SETTINGS_GET returns MaskedKey for encrypted keys; we only need the
+    // presence flag (downstream consumers treat the prop as truthy/falsy).
     window.api
-      .invoke<string>(IPC_CHANNELS.SETTINGS_GET, 'exaApiKey')
-      .then((v) => setExaApiKey(v ?? ''))
+      .invoke<{ configured: boolean; masked: string } | string | null>(IPC_CHANNELS.SETTINGS_GET, 'exaApiKey')
+      .then((v) => {
+        const configured = typeof v === 'object' && v !== null ? v.configured : Boolean(v)
+        setExaApiKey(configured ? '•••configured•••' : '')
+      })
       .catch(() => { /* ignore — button will simply stay hidden */ })
   }, [])
 
