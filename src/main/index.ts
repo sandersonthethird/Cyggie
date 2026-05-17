@@ -134,7 +134,12 @@ function createWindow(): BrowserWindow {
     trafficLightPosition: { x: 15, y: 10 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      // PR3b: enabled after PR1 left the preload Node-free (no fs/path/Buffer
+      // usage; only electron's contextBridge/ipcRenderer/webUtils). Chromium's
+      // sandbox process now wraps the renderer for an extra defense layer.
+      // LinkedIn login + enrichment windows stay unsandboxed for now —
+      // tracked as P3 in TODOS.md ("LinkedIn windows sandbox audit").
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }

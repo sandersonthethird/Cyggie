@@ -44,7 +44,8 @@ export function registerWindowHandlers(): void {
         trafficLightPosition: { x: 15, y: 10 },
         webPreferences: {
           preload: join(__dirname, '../preload/index.js'),
-          sandbox: false,
+          // PR3b: same preload as the main window, which is sandbox-safe.
+          sandbox: true,
           contextIsolation: true,
           nodeIntegration: false,
         },
