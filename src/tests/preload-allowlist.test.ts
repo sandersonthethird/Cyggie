@@ -71,6 +71,28 @@ describe('preload channel allowlist', () => {
     expect(ipcInvoke).not.toHaveBeenCalled()
   })
 
+  // PR2: the renderer-controlled-path channels were removed entirely. Any code
+  // still trying to call them by string fails closed in the preload gate.
+  it('invoke rejects PR2-removed channel "file:read-content"', async () => {
+    await expect(getApi().invoke('file:read-content', '/etc/passwd')).rejects.toThrow(
+      /Channel not allowed/,
+    )
+    expect(ipcInvoke).not.toHaveBeenCalled()
+  })
+
+  it('invoke rejects PR2-removed channel "app:open-path"', async () => {
+    await expect(getApi().invoke('app:open-path', '/etc')).rejects.toThrow(/Channel not allowed/)
+    expect(ipcInvoke).not.toHaveBeenCalled()
+  })
+
+  it('invoke allows the PR2 capability-scoped replacement channels', async () => {
+    ipcInvoke.mockResolvedValue({ content: null, error: null })
+    await getApi().invoke(IPC_CHANNELS.FILE_READ_BY_FLAGGED_ID, { id: 'x' })
+    await getApi().invoke(IPC_CHANNELS.APP_OPEN_FLAGGED_FILE, { id: 'x' })
+    await getApi().invoke(IPC_CHANNELS.APP_OPEN_USER_FOLDER, 'companyLocalFilesRoot')
+    expect(ipcInvoke).toHaveBeenCalledTimes(3)
+  })
+
   it('send forwards allowed channels and no-ops bad channels (with warn)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     getApi().send(REAL_CHANNEL, 'payload')

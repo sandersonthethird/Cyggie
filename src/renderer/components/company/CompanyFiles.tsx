@@ -228,7 +228,17 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
     if (file.webViewLink) {
       api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, file.webViewLink).catch(console.error)
     } else if (file.id) {
-      api.invoke(IPC_CHANNELS.APP_OPEN_PATH, file.id).catch(console.error)
+      // PR2: capability-scoped open via flagged-file id. Auto-flag on first
+      // open (parallel to drag-into-chat) so any file the user actively
+      // chose from the listing becomes discoverable in the flagged-files UI.
+      api
+        .invoke(IPC_CHANNELS.APP_OPEN_FLAGGED_FILE, {
+          id: file.id,
+          companyId,
+          fileName: file.name,
+          mimeType: file.mimeType,
+        })
+        .catch(console.error)
     }
   }
 
@@ -313,8 +323,11 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
             className={`${styles.file} ${isFolder ? styles.folderRow : ''}`}
             draggable={!isFolder}
             onDragStart={(e) => {
+              // PR2: include companyId + mimeType so the drop target (PanelComposer)
+              // can pass them to FILE_READ_BY_FLAGGED_ID for auto-flag-on-drag.
               e.dataTransfer.setData('application/x-cyggie-file', JSON.stringify({
-                path: file.id,
+                id: file.id,
+                companyId,
                 name: file.name,
                 mimeType: file.mimeType
               }))

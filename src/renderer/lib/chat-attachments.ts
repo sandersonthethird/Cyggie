@@ -114,19 +114,30 @@ export async function processFiles(files: File[]): Promise<{
 }
 
 /**
- * Read a Cyggie-internal file (drag from CompanyFiles tab) by path.
- * Returns the same PendingAttachment shape as the OS-file path.
+ * Read a Cyggie-internal file (drag from CompanyFiles tab) by its flagged
+ * file ID. Returns the same PendingAttachment shape as the OS-file path.
+ *
+ * PR2 capability flow: the renderer passes `id` (Drive id or local path —
+ * same shape as `company_flagged_files.file_id`) along with `companyId`,
+ * `fileName`, and `mimeType` so main can auto-flag the file if it isn't
+ * already flagged. This preserves the "drag any listed company file"
+ * UX while ensuring main never reads renderer-arbitrary paths.
  */
-export async function loadCyggieFile(filePath: string, fileName: string): Promise<AttachmentResult> {
+export async function loadCyggieFile(
+  id: string,
+  companyId: string,
+  fileName: string,
+  mimeType?: string | null,
+): Promise<AttachmentResult> {
   try {
     const result = await api.invoke<{ content: string | null; error: string | null }>(
-      IPC_CHANNELS.FILE_READ_CONTENT,
-      filePath
+      IPC_CHANNELS.FILE_READ_BY_FLAGGED_ID,
+      { id, companyId, fileName, mimeType: mimeType ?? null },
     )
     if (result.content) {
       return {
         ok: true,
-        attachment: { name: fileName, mimeType: 'text/plain', type: 'text', data: result.content },
+        attachment: { name: fileName, mimeType: mimeType || 'text/plain', type: 'text', data: result.content },
       }
     }
     return { ok: false, name: fileName, error: result.error || `Couldn't read ${fileName}` }

@@ -80,7 +80,11 @@ export const IPC_CHANNELS = {
   COMPANY_EMAIL_UNLINK: 'company:email-unlink',
   COMPANY_FILES: 'company:files',
   COMPANY_FILES_READABLE: 'company:files-readable',
-  FILE_READ_CONTENT: 'file:read-content',
+  // Capability-scoped file read: takes a flagged-file id, not a raw path.
+  // Main looks up `company_flagged_files`; auto-flags if a companyId is
+  // provided and the id isn't already flagged. See src/main/ipc/file.ipc.ts.
+  // Replaces the old FILE_READ_CONTENT(arbitrary-path) channel (removed in PR2).
+  FILE_READ_BY_FLAGGED_ID: 'file:read-by-flagged-id',
   COMPANY_TIMELINE: 'company:timeline',
   COMPANY_MEETING_SUMMARIES: 'company:meeting-summaries',
   COMPANY_SET_PRIMARY_CONTACT: 'company:set-primary-contact',
@@ -409,7 +413,15 @@ export const IPC_CHANNELS = {
   APP_OPEN_EXTERNAL_URL: 'app:open-external-url',
   APP_GET_STORAGE_PATH: 'app:get-storage-path',
   APP_CHANGE_STORAGE_DIR: 'app:change-storage-dir',
-  APP_OPEN_PATH: 'app:open-path',
+  // Capability-scoped open: takes a flagged-file id (auto-flags when
+  // companyId provided, same as FILE_READ_BY_FLAGGED_ID). Replaces the
+  // old APP_OPEN_PATH(arbitrary-path) channel (removed in PR2).
+  APP_OPEN_FLAGGED_FILE: 'app:open-flagged-file',
+  // Open a directory path that's stored in a setting (the renderer passes
+  // the SETTING NAME, not the path). Main reads the setting, verifies the
+  // value is an existing directory, then opens it. Today only
+  // 'companyLocalFilesRoot' is supported.
+  APP_OPEN_USER_FOLDER: 'app:open-user-folder',
   APP_PICK_FOLDER: 'app:pick-folder',
   APP_PICK_LOGO_FILE: 'app:pick-logo-file',
   APP_OPEN_NOTE_WINDOW: 'app:open-note-window',

@@ -46,6 +46,30 @@ export function getFlaggedFileIds(companyId: string): string[] {
   return getFlaggedFiles(companyId).map((f) => f.fileId)
 }
 
+/**
+ * Is this file_id flagged for ANY company? Used by the capability-flow
+ * IPC handlers (PR2) to validate file reads/opens without requiring the
+ * caller to know the company. The composite UNIQUE key is
+ * (company_id, file_id), so a `file_id` shared across companies has
+ * multiple rows — we just need at least one.
+ */
+export function isFlaggedAnywhere(fileId: string): boolean {
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT 1 FROM company_flagged_files WHERE file_id = ? LIMIT 1')
+    .get(fileId)
+  return Boolean(row)
+}
+
+/** Is this exact (companyId, fileId) pair flagged? */
+export function isFlaggedForCompany(companyId: string, fileId: string): boolean {
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT 1 FROM company_flagged_files WHERE company_id = ? AND file_id = ? LIMIT 1')
+    .get(companyId, fileId)
+  return Boolean(row)
+}
+
 /** Toggles a file's flagged state. Returns true if now flagged, false if unflagged.
  *  `mimeType` is stored so the chat-context reader knows whether to take the
  *  local-file path or the Drive-export path. */

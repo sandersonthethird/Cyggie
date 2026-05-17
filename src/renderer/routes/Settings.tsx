@@ -1265,7 +1265,9 @@ export default function Settings() {
             {settings.companyLocalFilesRoot && (
               <button
                 className={styles.linkBtn}
-                onClick={() => api.invoke(IPC_CHANNELS.APP_OPEN_PATH, settings.companyLocalFilesRoot)}
+                onClick={() =>
+                  api.invoke(IPC_CHANNELS.APP_OPEN_USER_FOLDER, 'companyLocalFilesRoot').catch(console.error)
+                }
               >
                 Open in Finder
               </button>

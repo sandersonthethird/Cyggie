@@ -1,5 +1,5 @@
 import { ipcMain, shell, dialog } from 'electron'
-import { readFileSync } from 'fs'
+import { readFileSync, statSync } from 'fs'
 import { extname } from 'path'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
@@ -14,6 +14,11 @@ import { renameFile as renameDriveFile } from '../drive/google-drive'
 import { extractCompaniesFromEmails, extractCompaniesFromAttendees, extractDomainFromEmail } from '../utils/company-extractor'
 import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
 import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
+import {
+  isFlaggedAnywhere,
+  isFlaggedForCompany,
+  toggleFileFlag,
+} from '../database/repositories/company-file-flags.repo'
 import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName, listMeetingCompanies } from '../database/repositories/org-company.repo'
 import { upsert as upsertCompanyCache, getByDomain as getCompanyCacheByDomain } from '../database/repositories/company.repo'
 import { getDatabase } from '../database/connection'
@@ -484,11 +489,61 @@ export function registerMeetingHandlers(): void {
     return shell.openExternal(parsed.toString())
   })
 
-  ipcMain.handle(IPC_CHANNELS.APP_OPEN_PATH, (_event, filePath: string) => {
-    if (typeof filePath !== 'string' || !filePath.trim()) {
-      throw new Error('Path is required')
+  // APP_OPEN_FLAGGED_FILE — capability-scoped replacement for APP_OPEN_PATH.
+  // The renderer passes a flagged-file id (Drive id or local path); main only
+  // opens it if it has a row in `company_flagged_files`. When companyId is
+  // provided AND the id isn't already flagged, auto-flag first (parallel to
+  // FILE_READ_BY_FLAGGED_ID — same UX preservation for "open the file the
+  // user clicked in the listing").
+  ipcMain.handle(
+    IPC_CHANNELS.APP_OPEN_FLAGGED_FILE,
+    async (
+      _event,
+      args: { id: string; companyId?: string; fileName?: string; mimeType?: string | null },
+    ) => {
+      if (!args || typeof args !== 'object' || typeof args.id !== 'string' || !args.id.trim()) {
+        throw new Error('Flagged-file id is required')
+      }
+      const { id, companyId, fileName, mimeType } = args
+      if (companyId) {
+        if (!isFlaggedForCompany(companyId, id)) {
+          toggleFileFlag(companyId, id, fileName ?? id, mimeType ?? null)
+        }
+      } else if (!isFlaggedAnywhere(id)) {
+        throw new Error('File is not flagged and no companyId provided to auto-flag')
+      }
+      return shell.openPath(id)
+    },
+  )
+
+  // APP_OPEN_USER_FOLDER — open a directory path stored in a setting. The
+  // renderer passes the setting NAME (not the path); main reads the setting
+  // and validates the resolved value is an existing directory before opening.
+  // Today only `companyLocalFilesRoot` is supported.
+  //
+  // Residual risk: an XSS can still call SETTINGS_SET to tamper the value
+  // before triggering open. The isDirectory check catches the obvious cases
+  // (`/etc/passwd` is a file, not a dir); the stronger fix
+  // (`SETTINGS_PICK_AND_SET_FOLDER` — a trusted-picker channel) is tracked
+  // in TODOS.md (P2 — Security).
+  ipcMain.handle(IPC_CHANNELS.APP_OPEN_USER_FOLDER, async (_event, which: string) => {
+    if (which !== 'companyLocalFilesRoot') {
+      throw new Error(`Unsupported user-folder key: ${which}`)
     }
-    return shell.openPath(filePath.trim())
+    const path = settingsRepo.getSetting(which)
+    if (!path || !path.trim()) {
+      throw new Error(`Setting '${which}' is not configured`)
+    }
+    let stat
+    try {
+      stat = statSync(path)
+    } catch {
+      throw new Error(`Path does not exist: ${path}`)
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(`Path is not a directory: ${path}`)
+    }
+    return shell.openPath(path)
   })
 
   ipcMain.handle(IPC_CHANNELS.APP_GET_STORAGE_PATH, () => {

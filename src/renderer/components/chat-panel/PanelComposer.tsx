@@ -137,8 +137,20 @@ export function PanelComposer({
       const cyggieData = e.dataTransfer.getData('application/x-cyggie-file')
       if (cyggieData) {
         try {
-          const { path, name } = JSON.parse(cyggieData) as { path: string; name: string }
-          void loadCyggieFile(path, name).then((r) => {
+          // PR2: payload carries `companyId` and `mimeType` so main can
+          // auto-flag the file on first read. `id` is the flagged-file id
+          // (Drive id or local path).
+          const { id, companyId, name, mimeType } = JSON.parse(cyggieData) as {
+            id: string
+            companyId: string
+            name: string
+            mimeType?: string | null
+          }
+          if (!id || !companyId || !name) {
+            console.warn('[panel-composer] cyggie-file drop missing required fields')
+            return
+          }
+          void loadCyggieFile(id, companyId, name, mimeType).then((r) => {
             if (r.ok) setAttachments((prev) => [...prev, r.attachment])
           })
         } catch {
