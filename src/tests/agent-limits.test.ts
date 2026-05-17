@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-vi.mock('../main/database/repositories/settings.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: vi.fn(),
   setSetting: vi.fn(),
 }))
 
-import * as settingsRepo from '../main/database/repositories/settings.repo'
+import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { getAgentLimits, AGENT_LIMITS_DEFAULTS, AGENT_LIMITS_BOUNDS } from '../main/llm/agents/limits'
 
 const mockGet = vi.mocked(settingsRepo.getSetting)

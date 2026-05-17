@@ -40,9 +40,9 @@
  * so the caller degrades gracefully rather than crashing.
  */
 
-import { getDatabase } from '../database/connection'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { writeSummary } from '../storage/file-manager'
-import * as meetingRepo from '../database/repositories/meeting.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
 import { getCurrentUserId } from '../security/current-user'
 import type { Meeting } from '../../shared/types/meeting'
 

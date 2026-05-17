@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const getCompanyMock = vi.fn()
 const updateCompanyMock = vi.fn()
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getCompany: (...args: unknown[]) => getCompanyMock(...args),
   updateCompany: (...args: unknown[]) => updateCompanyMock(...args),
 }))

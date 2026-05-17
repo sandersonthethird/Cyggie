@@ -33,17 +33,17 @@ const mockReadSummary = vi.fn()
 const mockReadTranscript = vi.fn()
 const mockReadLocalFile = vi.fn()
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getCompany: (...args: unknown[]) => mockGetCompany(args[0]),
   listCompanyMeetings: (...args: unknown[]) => mockListCompanyMeetings(args[0]),
   listCompanyEmails: (...args: unknown[]) => mockListCompanyEmails(args[0]),
 }))
 
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(args[0]),
 }))
 
-vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
   getFlaggedFileIds: (...args: unknown[]) => mockGetFlaggedFileIds(args[0]),
   getFlaggedFiles: (...args: unknown[]) =>
     (mockGetFlaggedFileIds(args[0]) as string[]).map((id) => ({
@@ -54,7 +54,7 @@ vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
 }))
 
 const mockCompanyNotesList = vi.fn()
-vi.mock('../main/database/repositories/notes-base', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
   makeEntityNotesRepo: () => ({
     list: (id: string) => mockCompanyNotesList(id),
   }),

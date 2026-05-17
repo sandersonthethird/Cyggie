@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import Database from 'better-sqlite3'
-import { runUnifiedNotesMigration } from '../main/database/migrations/052-unified-notes'
+import { runUnifiedNotesMigration } from '@cyggie/db/sqlite/migrations/052-unified-notes'
 
 function makeDb(): Database.Database {
   const db = new Database(':memory:')

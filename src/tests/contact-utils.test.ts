@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeLinkedinUrl, extractLinkedinUrlsFromText } from '../main/database/repositories/contact-utils'
+import { normalizeLinkedinUrl, extractLinkedinUrlsFromText } from '@cyggie/db/sqlite/repositories/contact-utils'
 
 describe('normalizeLinkedinUrl', () => {
   // Protocol-less inputs — the main regression this test guards

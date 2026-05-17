@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runDropCompanyConversationsMigration } from '../main/database/migrations/079-drop-company-conversations'
+import { runDropCompanyConversationsMigration } from '@cyggie/db/sqlite/migrations/079-drop-company-conversations'
 
 let testDb: Database.Database
 

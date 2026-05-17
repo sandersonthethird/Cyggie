@@ -20,7 +20,7 @@ import { buildTestDbFull } from './_fixtures/test-db'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb,
 }))
 
@@ -29,7 +29,7 @@ vi.mock('../main/database/connection', () => ({
 const mockGetCompany = vi.fn()
 const mockUpdateCompany = vi.fn()
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getCompany: (...args: unknown[]) => mockGetCompany(...args),
   updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
 }))
@@ -38,7 +38,7 @@ vi.mock('../main/database/repositories/org-company.repo', () => ({
 
 const mockListCompanyNotes = vi.fn()
 
-vi.mock('../main/database/repositories/company-notes.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-notes.repo', () => ({
   listCompanyNotes: (...args: unknown[]) => mockListCompanyNotes(...args),
 }))
 
@@ -46,7 +46,7 @@ vi.mock('../main/database/repositories/company-notes.repo', () => ({
 
 const mockGetMeeting = vi.fn()
 
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(...args),
 }))
 
@@ -62,7 +62,7 @@ vi.mock('../main/storage/file-manager', () => ({
 
 const mockBulkCreateTasks = vi.fn()
 
-vi.mock('../main/database/repositories/task.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/task.repo', () => ({
   bulkCreate: (...args: unknown[]) => mockBulkCreateTasks(...args),
 }))
 

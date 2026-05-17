@@ -1,4 +1,4 @@
-import * as settingsRepo from '../../database/repositories/settings.repo'
+import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 
 /**
  * Per-run cost / iteration caps for agent loops.

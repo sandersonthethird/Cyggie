@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { searchMeetings, advancedSearch, getAllSpeakers, getSuggestions, getCategorizedSuggestions } from '../database/repositories/search.repo'
+import { searchMeetings, advancedSearch, getAllSpeakers, getSuggestions, getCategorizedSuggestions } from '@cyggie/db/sqlite/repositories/search.repo'
 import type { AdvancedSearchParams } from '../../shared/types/meeting'
 
 export function registerSearchHandlers(): void {

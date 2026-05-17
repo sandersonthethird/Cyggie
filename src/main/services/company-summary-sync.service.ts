@@ -1,11 +1,11 @@
-import * as companyRepo from '../database/repositories/org-company.repo'
-import * as meetingRepo from '../database/repositories/meeting.repo'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
-import { resolveContactsByEmails } from '../database/repositories/contact.repo'
-import { getContact } from '../database/repositories/contact.repo'
-import { listFieldDefinitions, getFieldValuesForEntity } from '../database/repositories/custom-fields.repo'
+import { resolveContactsByEmails } from '@cyggie/db/sqlite/repositories/contact.repo'
+import { getContact } from '@cyggie/db/sqlite/repositories/contact.repo'
+import { listFieldDefinitions, getFieldValuesForEntity } from '@cyggie/db/sqlite/repositories/custom-fields.repo'
 import { normalizeWhitespace as _normalizeWhitespace, isDifferentText as _isDifferentText, stripMarkdown as _stripMarkdown } from '../utils/summary-text-utils'
 import type { CompanyDetail, CompanyPipelineStage, CompanyRound, CompanySummary } from '../../shared/types/company'
 import { COMPANY_PIPELINE_STAGE_VALUES } from '../../shared/types/company'

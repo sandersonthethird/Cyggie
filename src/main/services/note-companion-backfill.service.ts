@@ -24,9 +24,9 @@
  *     guarantee is honored uniformly.
  */
 
-import { getDatabase } from '../database/connection'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
-import { listCompanyMeetingSummaryPaths } from '../database/repositories/org-company.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
+import { listCompanyMeetingSummaryPaths } from '@cyggie/db/sqlite/repositories/org-company.repo'
 import { readSummary } from '../storage/file-manager'
 import type { Note } from '../../shared/types/note'
 

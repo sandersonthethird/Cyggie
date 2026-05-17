@@ -29,11 +29,11 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runPartnerMeetingMigration } from '../main/database/migrations/059-partner-meeting'
+import { runPartnerMeetingMigration } from '@cyggie/db/sqlite/migrations/059-partner-meeting'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
@@ -49,7 +49,7 @@ const {
   dismissSuggestion,
   determineSection,
   autoAddDecisionToDigest,
-} = await import('../main/database/repositories/partner-meeting.repo')
+} = await import('@cyggie/db/sqlite/repositories/partner-meeting.repo')
 
 const { currentDigestTuesday } = await import('../main/utils/digest-week')
 

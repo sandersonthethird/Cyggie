@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-vi.mock('../main/database/repositories/settings.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: vi.fn(),
 }))
 
-import * as settingsRepo from '../main/database/repositories/settings.repo'
+import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import {
   getAgentModelId,
   getCacheTtl,

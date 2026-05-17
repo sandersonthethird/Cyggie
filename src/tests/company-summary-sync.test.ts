@@ -13,19 +13,19 @@ import { describe, it, expect, vi } from 'vitest'
 
 // ─── Mock: database connection ────────────────────────────────────────────────
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn()
 }))
 
 // ─── Mock: repos ──────────────────────────────────────────────────────────────
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({}))
-vi.mock('../main/database/repositories/meeting.repo', () => ({}))
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({}))
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({}))
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: vi.fn(),
   resolveContactsByEmails: vi.fn()
 }))
-vi.mock('../main/database/repositories/custom-fields.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () => ({
   listFieldDefinitions: vi.fn(),
   getFieldValuesForEntity: vi.fn()
 }))

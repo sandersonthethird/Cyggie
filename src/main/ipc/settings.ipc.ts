@@ -2,7 +2,7 @@ import { ipcMain, safeStorage } from 'electron'
 import Anthropic from '@anthropic-ai/sdk'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { ENCRYPTED_KEYS, UNCONFIGURED_KEY, type MaskedKey } from '../../shared/types/settings'
-import * as settingsRepo from '../database/repositories/settings.repo'
+import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { backfillMeetingSummaryNotes } from '../services/meeting-notes-backfill.service'
 import { getCurrentUserId } from '../security/current-user'
 

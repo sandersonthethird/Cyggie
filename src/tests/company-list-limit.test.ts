@@ -20,11 +20,11 @@ import { buildTestDbFull } from './_fixtures/test-db'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
-const { listCompanies } = await import('../main/database/repositories/org-company.repo')
+const { listCompanies } = await import('@cyggie/db/sqlite/repositories/org-company.repo')
 
 // Minimal schema — only columns referenced by baseCompanySelectLight
 // Schema comes from the shared test-db fixture (runs production migrations).

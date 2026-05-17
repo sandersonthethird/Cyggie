@@ -1,5 +1,5 @@
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 import { ensureContactMeetingSummaryNotes } from '../services/note-companion-backfill.service'
 import { registerEntityNotesIpc } from './notes-ipc-base'
 

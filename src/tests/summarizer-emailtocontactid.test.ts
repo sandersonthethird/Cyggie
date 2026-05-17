@@ -33,7 +33,7 @@ vi.mock('electron', () => ({
 const mockGetMeeting = vi.fn()
 const mockUpdateMeeting = vi.fn()
 
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(...args),
   updateMeeting: (...args: unknown[]) => mockUpdateMeeting(...args),
 }))
@@ -42,7 +42,7 @@ vi.mock('../main/database/repositories/meeting.repo', () => ({
 
 const mockGetTemplate = vi.fn()
 
-vi.mock('../main/database/repositories/template.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/template.repo', () => ({
   getTemplate: (...args: unknown[]) => mockGetTemplate(...args),
 }))
 
@@ -72,7 +72,7 @@ vi.mock('../main/llm/critique', () => ({
 
 // ─── Mock: search.repo ────────────────────────────────────────────────────────
 
-vi.mock('../main/database/repositories/search.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/search.repo', () => ({
   updateSummaryIndex: vi.fn(),
 }))
 
@@ -84,7 +84,7 @@ vi.mock('../main/services/company-summary-sync.service', () => ({
 
 // ─── Mock: org-company.repo ───────────────────────────────────────────────────
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   listMeetingCompanies: () => [],
 }))
 
@@ -103,7 +103,7 @@ vi.mock('../main/services/note-companion-backfill.service', () => ({
 // ─── Mock: contact.repo ───────────────────────────────────────────────────────
 // Returns the NEW shape: { id, fullName } — this is what triggered the regression.
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   resolveContactsByEmails: () => ({
     'alice@example.com': { id: 'c1', fullName: 'Alice Smith' },
   }),
@@ -129,7 +129,7 @@ vi.mock('../main/calendar/google-auth', () => ({
 
 // ─── Mock: user.repo ──────────────────────────────────────────────────────────
 
-vi.mock('../main/database/repositories/user.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/user.repo', () => ({
   getUser: () => null,
 }))
 

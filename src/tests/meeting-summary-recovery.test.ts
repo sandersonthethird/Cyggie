@@ -21,7 +21,7 @@ import type { Meeting } from '../shared/types/meeting'
 
 const getMock = vi.fn()
 const prepareMock = vi.fn(() => ({ get: getMock }))
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => ({ prepare: prepareMock }),
 }))
 
@@ -31,7 +31,7 @@ vi.mock('../main/storage/file-manager', () => ({
 }))
 
 const updateMeetingMock = vi.fn()
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   updateMeeting: updateMeetingMock,
 }))
 

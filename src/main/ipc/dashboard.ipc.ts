@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as dashboardRepo from '../database/repositories/dashboard.repo'
+import * as dashboardRepo from '@cyggie/db/sqlite/repositories/dashboard.repo'
 import { getCurrentUserId } from '../security/current-user'
-import { logAppEvent } from '../database/repositories/audit.repo'
+import { logAppEvent } from '@cyggie/db/sqlite/repositories/audit.repo'
 
 export function registerDashboardHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DASHBOARD_GET, () => {

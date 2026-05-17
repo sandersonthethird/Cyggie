@@ -5,11 +5,11 @@ import type {
   ContactEnrichmentResult,
   ContactEnrichmentOptions
 } from '../../shared/types/contact'
-import * as contactRepo from '../database/repositories/contact.repo'
-import * as companyRepo from '../database/repositories/org-company.repo'
+import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
 import { enrichCompany } from './company-enrichment'
 import { extractDomainFromEmail, humanizeDomainName } from '../utils/company-extractor'
-import { normalizeLinkedinUrl } from '../database/repositories/contact-utils'
+import { normalizeLinkedinUrl } from '@cyggie/db/sqlite/repositories/contact-utils'
 
 const LINKEDIN_URL_RE = /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/[^\s<>"')]+/gi
 const TITLE_HINT_RE = /\b(ceo|cto|cfo|coo|chief|founder|co-founder|partner|principal|associate|director|manager|vice president|vp|head|lead|president)\b/i

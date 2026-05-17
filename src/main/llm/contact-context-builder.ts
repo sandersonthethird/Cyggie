@@ -1,8 +1,8 @@
-import * as contactRepo from '../database/repositories/contact.repo'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _contactNotesRepo = makeEntityNotesRepo('contact_id')
-import * as meetingRepo from '../database/repositories/meeting.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
 import { readSummary, readTranscript } from '../storage/file-manager'
 
 const MAX_SUMMARY_CHARS = 6000

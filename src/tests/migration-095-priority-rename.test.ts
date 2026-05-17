@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { describe, it, expect } from 'vitest'
-import { runPriorityRenameFurtherWorkMigration } from '../main/database/migrations/095-priority-rename-further-work'
+import { runPriorityRenameFurtherWorkMigration } from '@cyggie/db/sqlite/migrations/095-priority-rename-further-work'
 
 function setup() {
   const db = new Database(':memory:')

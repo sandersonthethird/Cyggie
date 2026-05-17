@@ -5,7 +5,7 @@ import { chatDispatch } from '../llm/chat-dispatch'
 import { withChatPersistence } from '../llm/chat-persistence'
 import { deriveChatContext } from '../../shared/utils/chat-context'
 import { getCurrentUserId } from '../security/current-user'
-import { getDatabase } from '../database/connection'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 import type { ChatAttachment } from '../../shared/types/chat'
 
 function getContactName(contactId: string): string | null {

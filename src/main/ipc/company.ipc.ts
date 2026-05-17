@@ -4,12 +4,12 @@ import { readdir, stat } from 'fs/promises'
 import { join, extname, basename, resolve as resolvePath } from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { normalizeToken } from '../utils/string-utils'
-import * as companyRepo from '../database/repositories/org-company.repo'
-import { upsert as upsertCompanyCache } from '../database/repositories/company.repo'
-import * as contactRepo from '../database/repositories/contact.repo'
-import { getDatabase } from '../database/connection'
-import * as meetingRepo from '../database/repositories/meeting.repo'
-import * as settingsRepo from '../database/repositories/settings.repo'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { upsert as upsertCompanyCache } from '@cyggie/db/sqlite/repositories/company.repo'
+import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import type {
   CompanyEntityType,
   CompanyListFilter,
@@ -29,14 +29,14 @@ import { extractFromPdf, extractFromUrl, PitchDeckError } from '../services/pitc
 import { generateCompanyKeyTakeaways } from '../llm/company-key-takeaways'
 import { runPitchDeckAnalysis } from '../services/pitch-deck-analysis.service'
 import { queueStubEnrichment } from '../services/stub-enrichment.service'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import type { PitchDeckIngestPayload, PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 import { getCurrentUserId } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import { readSummary } from '../storage/file-manager'
 import { getProvider } from '../llm/provider-factory'
 

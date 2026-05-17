@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runCustomFieldDefinitionsMigration } from '../main/database/migrations/039-custom-field-definitions'
-import { runCustomFieldValuesMigration } from '../main/database/migrations/040-custom-field-values'
-import { runCustomFieldSectionMigration } from '../main/database/migrations/049-custom-field-section'
+import { runCustomFieldDefinitionsMigration } from '@cyggie/db/sqlite/migrations/039-custom-field-definitions'
+import { runCustomFieldValuesMigration } from '@cyggie/db/sqlite/migrations/040-custom-field-values'
+import { runCustomFieldSectionMigration } from '@cyggie/db/sqlite/migrations/049-custom-field-section'
 
 // Create a shared in-memory db for this test module.
 // We mock the connection module so all repo imports use it.
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
@@ -23,7 +23,7 @@ const {
   deleteFieldValue,
   countFieldValues,
   getFieldValuesForEntity
-} = await import('../main/database/repositories/custom-fields.repo')
+} = await import('@cyggie/db/sqlite/repositories/custom-fields.repo')
 
 function makeTestDb(): Database.Database {
   const db = new Database(':memory:')

@@ -25,7 +25,7 @@ vi.mock('electron', () => ({
 
 const getFlaggedFileIdsMock = vi.fn()
 const toggleFileFlagMock = vi.fn()
-vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
   getFlaggedFileIds: getFlaggedFileIdsMock,
   toggleFileFlag: toggleFileFlagMock,
 }))
@@ -50,7 +50,7 @@ vi.mock('../main/security/current-user', () => ({
 vi.mock('../shared/utils/chat-context', () => ({
   deriveChatContext: () => ({ contextId: 'co-1', kind: 'company' }),
 }))
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => ({
     prepare: () => ({ get: () => ({ canonical_name: 'Acme' }) }),
   }),

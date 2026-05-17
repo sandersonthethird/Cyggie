@@ -14,8 +14,8 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runChatSessionsMigration } from '../main/database/migrations/078-chat-sessions'
-import { runBackfillMeetingChatsMigration } from '../main/database/migrations/080-backfill-meeting-chats'
+import { runChatSessionsMigration } from '@cyggie/db/sqlite/migrations/078-chat-sessions'
+import { runBackfillMeetingChatsMigration } from '@cyggie/db/sqlite/migrations/080-backfill-meeting-chats'
 
 let testDb: Database.Database
 

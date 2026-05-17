@@ -5,19 +5,19 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runCustomFieldDefinitionsMigration } from '../main/database/migrations/039-custom-field-definitions'
-import { runBuiltinFieldDefsMigration } from '../main/database/migrations/046-builtin-field-defs'
+import { runCustomFieldDefinitionsMigration } from '@cyggie/db/sqlite/migrations/039-custom-field-definitions'
+import { runBuiltinFieldDefsMigration } from '@cyggie/db/sqlite/migrations/046-builtin-field-defs'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
 const {
   renameBuiltinOption,
   countBuiltinOptionUsage,
-} = await import('../main/database/repositories/custom-fields.repo')
+} = await import('@cyggie/db/sqlite/repositories/custom-fields.repo')
 
 function makeTestDb(): Database.Database {
   const db = new Database(':memory:')

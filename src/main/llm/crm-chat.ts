@@ -30,8 +30,8 @@
 //                ONE LLM call (QUERY_ALL_SYSTEM_PROMPT)
 //                Streaming via CHAT_PROGRESS events
 
-import { getDatabase } from '../database/connection'
-import { extractKeywords } from '../database/repositories/search.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import { extractKeywords } from '@cyggie/db/sqlite/repositories/search.repo'
 import { buildMeetingContext } from './chat'
 import { runChatTurn, abortChatTurn } from './chat-runner'
 import { QUERY_ALL_SYSTEM_PROMPT, CRM_SYSTEM_PROMPT } from './context-builders'

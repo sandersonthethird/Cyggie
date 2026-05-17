@@ -1,4 +1,4 @@
-import { getDatabase } from '../database/connection'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { readSummary, readTranscript } from '../storage/file-manager'
 import type { Note } from '../../shared/types/note'
 

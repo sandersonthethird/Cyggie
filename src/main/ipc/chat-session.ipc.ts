@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as chatSessionRepo from '../database/repositories/chat-session.repo'
+import * as chatSessionRepo from '@cyggie/db/sqlite/repositories/chat-session.repo'
 import { getCurrentUserId } from '../security/current-user'
 import type { ChatContextKind } from '../../shared/utils/chat-context'
 

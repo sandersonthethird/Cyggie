@@ -10,7 +10,7 @@
  * AbortController invariant.
  */
 
-import * as companyRepo from '../database/repositories/org-company.repo'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
 import { buildCompanyContext, COMPANY_SYSTEM_PROMPT } from './context-builders'
 import { runChatTurn, abortChatTurn } from './chat-runner'
 import type { ChatAttachment } from '../../shared/types/chat'

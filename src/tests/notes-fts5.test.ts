@@ -10,18 +10,18 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runUnifiedNotesMigration } from '../main/database/migrations/052-unified-notes'
-import { runNotesFts5Migration } from '../main/database/migrations/054-notes-fts5'
-import { runNotesFolderPathMigration } from '../main/database/migrations/057-notes-folder-path'
+import { runUnifiedNotesMigration } from '@cyggie/db/sqlite/migrations/052-unified-notes'
+import { runNotesFts5Migration } from '@cyggie/db/sqlite/migrations/054-notes-fts5'
+import { runNotesFolderPathMigration } from '@cyggie/db/sqlite/migrations/057-notes-folder-path'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
-const { getCategorizedSuggestions } = await import('../main/database/repositories/search.repo')
-const { createNote, searchNotes } = await import('../main/database/repositories/notes.repo')
+const { getCategorizedSuggestions } = await import('@cyggie/db/sqlite/repositories/search.repo')
+const { createNote, searchNotes } = await import('@cyggie/db/sqlite/repositories/notes.repo')
 
 function buildDb(): Database.Database {
   const db = new Database(':memory:')

@@ -7,13 +7,13 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runUnifiedNotesMigration } from '../main/database/migrations/052-unified-notes'
-import { runNotesFolderPathMigration } from '../main/database/migrations/057-notes-folder-path'
-import { runNoteFoldersMigration } from '../main/database/migrations/058-note-folders'
+import { runUnifiedNotesMigration } from '@cyggie/db/sqlite/migrations/052-unified-notes'
+import { runNotesFolderPathMigration } from '@cyggie/db/sqlite/migrations/057-notes-folder-path'
+import { runNoteFoldersMigration } from '@cyggie/db/sqlite/migrations/058-note-folders'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
@@ -29,7 +29,7 @@ const {
   renameFolder,
   deleteFolder,
   getFolderCounts,
-} = await import('../main/database/repositories/notes.repo')
+} = await import('@cyggie/db/sqlite/repositories/notes.repo')
 
 function buildDb(): Database.Database {
   const db = new Database(':memory:')

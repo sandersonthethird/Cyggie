@@ -36,18 +36,18 @@ const mockGetMeeting = vi.fn()
 const mockReadSummary = vi.fn<[string], string | null>()
 const mockReadTranscript = vi.fn<[string], string | null>()
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: (...args: unknown[]) => mockGetContact(args[0] as string),
   listContactEmails: (...args: unknown[]) => mockListContactEmails(args[0] as string),
 }))
 
-vi.mock('../main/database/repositories/notes-base', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
   makeEntityNotesRepo: () => ({
     list: (...args: unknown[]) => mockListContactNotes(args[0] as string),
   }),
 }))
 
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(args[0] as string),
 }))
 

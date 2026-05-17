@@ -28,7 +28,7 @@ const fakeDb = {
   },
 }
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => fakeDb,
 }))
 

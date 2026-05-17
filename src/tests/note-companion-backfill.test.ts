@@ -40,13 +40,13 @@ import { buildTestDbFull } from './_fixtures/test-db'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb,
 }))
 
 // listCompanyMeetingSummaryPaths is imported by the same module but not used
 // by createMeetingCompanionNote itself — stub it cheaply.
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   listCompanyMeetingSummaryPaths: vi.fn(() => []),
 }))
 

@@ -1,5 +1,5 @@
-import * as meetingRepo from '../database/repositories/meeting.repo'
-import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker, searchByAllSpeakers } from '../database/repositories/search.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import { searchMeetings, extractKeywords, buildOrQuery, searchByTitle, searchBySpeaker, searchByAllSpeakers } from '@cyggie/db/sqlite/repositories/search.repo'
 import { readTranscript, readSummary } from '../storage/file-manager'
 import { runChatTurn, abortChatTurn } from './chat-runner'
 import {

@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // The repo file imports better-sqlite3 etc., but parseInvestorsJson is
 // pure and exported. Direct import works without DB initialization.
-import { parseInvestorsJson } from '../main/database/repositories/org-company.repo'
+import { parseInvestorsJson } from '@cyggie/db/sqlite/repositories/org-company.repo'
 
 describe('parseInvestorsJson', () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>

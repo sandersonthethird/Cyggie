@@ -34,16 +34,16 @@ vi.mock('electron', () => ({
 // (populated by beforeAll below — vi.mock factories are hoisted, so the
 // closure has to dereference _testDb at call time, not at mock-define time).
 let _testDb: Database.Database | null = null
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => _testDb,
 }))
 
 const getMeetingMock = vi.fn()
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: getMeetingMock,
 }))
 
-vi.mock('../main/database/repositories/notes.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () => ({
   getNote: vi.fn(),
 }))
 

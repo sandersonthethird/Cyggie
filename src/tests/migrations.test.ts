@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { runCustomFieldDefinitionsMigration } from '../main/database/migrations/039-custom-field-definitions'
-import { runCustomFieldValuesMigration } from '../main/database/migrations/040-custom-field-values'
-import { runContactKeyTakeawaysMigration } from '../main/database/migrations/069-contact-key-takeaways'
-import { runCompanyKeyTakeawaysMigration } from '../main/database/migrations/070-company-key-takeaways'
+import { runCustomFieldDefinitionsMigration } from '@cyggie/db/sqlite/migrations/039-custom-field-definitions'
+import { runCustomFieldValuesMigration } from '@cyggie/db/sqlite/migrations/040-custom-field-values'
+import { runContactKeyTakeawaysMigration } from '@cyggie/db/sqlite/migrations/069-contact-key-takeaways'
+import { runCompanyKeyTakeawaysMigration } from '@cyggie/db/sqlite/migrations/070-company-key-takeaways'
 
 function makeDb(): Database.Database {
   const db = new Database(':memory:')

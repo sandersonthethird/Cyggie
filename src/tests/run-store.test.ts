@@ -2,16 +2,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { buildTestDbFull } from './_fixtures/test-db'
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn(),
 }))
 
-import { getDatabase } from '../main/database/connection'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 import {
   startRun, completeRun, getRun, listRuns, listRunEvents,
   makeEventWriter, averageCostForKind, gcOrphanedRuns,
 } from '../main/llm/agents/run-store'
-import { bulkInsert, listByVersion, listCritiquesByVersion } from '../main/database/repositories/memo-evidence.repo'
+import { bulkInsert, listByVersion, listCritiquesByVersion } from '@cyggie/db/sqlite/repositories/memo-evidence.repo'
 
 const mockGetDb = vi.mocked(getDatabase)
 

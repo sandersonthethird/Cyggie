@@ -1,4 +1,4 @@
-import * as chatSessionRepo from '../database/repositories/chat-session.repo'
+import * as chatSessionRepo from '@cyggie/db/sqlite/repositories/chat-session.repo'
 import { generateChatTitle } from './chat-title'
 import type { ChatContextKind } from '../../shared/utils/chat-context'
 import type { ChatAttachment } from '../../shared/types/chat'

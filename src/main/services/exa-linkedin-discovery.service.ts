@@ -35,10 +35,10 @@
  */
 
 import { Exa } from 'exa-js'
-import { normalizeLinkedinUrl } from '../database/repositories/contact-utils'
+import { normalizeLinkedinUrl } from '@cyggie/db/sqlite/repositories/contact-utils'
 import { findLinkedInUrlFromWeb } from './contact-web-enrichment'
-import { getContact } from '../database/repositories/contact.repo'
-import { logAudit } from '../database/repositories/audit.repo'
+import { getContact } from '@cyggie/db/sqlite/repositories/contact.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import type { ContactDetail } from '../../shared/types/contact'
 
 // ---------------------------------------------------------------------------

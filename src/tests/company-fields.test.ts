@@ -23,13 +23,13 @@ import { randomUUID } from 'crypto'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
 // ─── Mock: contact repo (for enrichment service) ─────────────────────────────
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: vi.fn(),
   resolveContactsByEmails: vi.fn(() => ({}))
 }))
@@ -39,7 +39,7 @@ vi.mock('../main/database/repositories/contact.repo', () => ({
 const mockListFieldDefinitions = vi.fn()
 const mockGetFieldValuesForEntity = vi.fn()
 
-vi.mock('../main/database/repositories/custom-fields.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () => ({
   listFieldDefinitions: (...args: unknown[]) => mockListFieldDefinitions(...args),
   getFieldValuesForEntity: (...args: unknown[]) => mockGetFieldValuesForEntity(...args)
 }))
@@ -48,7 +48,7 @@ vi.mock('../main/database/repositories/custom-fields.repo', () => ({
 
 const mockGetMeeting = vi.fn()
 
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(...args)
 }))
 
@@ -62,7 +62,7 @@ vi.mock('../main/storage/file-manager', () => ({
 
 // ─── Audit repo mock ──────────────────────────────────────────────────────────
 
-vi.mock('../main/database/repositories/audit.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({
   logAudit: () => undefined
 }))
 
@@ -73,7 +73,7 @@ const {
   getCompany,
   listCompanies,
   updateCompany,
-} = await import('../main/database/repositories/org-company.repo')
+} = await import('@cyggie/db/sqlite/repositories/org-company.repo')
 
 const { getCompanyEnrichmentProposalsFromMeetings } = await import(
   '../main/services/company-summary-sync.service'
@@ -461,7 +461,7 @@ describe('getCompany — new fields', () => {
 describe('migration idempotency', () => {
   it('running migration 056 twice does not throw', async () => {
     const { runCompanyNewFieldsMigration } = await import(
-      '../main/database/migrations/056-company-new-fields'
+      '@cyggie/db/sqlite/migrations/056-company-new-fields'
     )
     const db = new Database(':memory:')
     db.exec(`
@@ -588,7 +588,7 @@ describe('enrichment — industry canonical constraint', () => {
   beforeEach(() => {
     testDb = buildDb()
     insertCompany(testDb, 'co1', 'Acme Corp')
-    vi.doMock('../main/database/repositories/org-company.repo', () => ({
+    vi.doMock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
       getCompany: (...args: unknown[]) => mockGetCompany(...args),
       setCompanyInvestors: vi.fn(),
     }))

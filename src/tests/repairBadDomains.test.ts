@@ -17,11 +17,11 @@ import Database from 'better-sqlite3'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
-const { runRepairBadPrimaryDomainsMigration } = await import('../main/database/migrations/084-repair-bad-primary-domains')
+const { runRepairBadPrimaryDomainsMigration } = await import('@cyggie/db/sqlite/migrations/084-repair-bad-primary-domains')
 
 function makeDb(): Database.Database {
   const db = new Database(':memory:')
@@ -135,7 +135,7 @@ describe('updateCompany — re-derive primary_domain when existing value is malf
   // SELECT, so the assertion is meaningful.
 
   it('re-derives primary_domain when current value is "www" (no dot)', async () => {
-    const { updateCompany } = await import('../main/database/repositories/org-company.repo')
+    const { updateCompany } = await import('@cyggie/db/sqlite/repositories/org-company.repo')
     insertCompany(testDb, { id: 'co1', primaryDomain: 'www', websiteUrl: null })
 
     try { updateCompany('co1', { websiteUrl: 'https://www.lererhippeau.com' }) } catch { /* getCompany may fail on minimal schema */ }
@@ -144,7 +144,7 @@ describe('updateCompany — re-derive primary_domain when existing value is malf
   })
 
   it('does NOT re-derive when current primary_domain is a valid (dot-containing) domain', async () => {
-    const { updateCompany } = await import('../main/database/repositories/org-company.repo')
+    const { updateCompany } = await import('@cyggie/db/sqlite/repositories/org-company.repo')
     insertCompany(testDb, { id: 'co1', primaryDomain: 'manuallyset.com', websiteUrl: null })
 
     try { updateCompany('co1', { websiteUrl: 'https://otherdomain.com' }) } catch { /* getCompany may fail on minimal schema */ }
@@ -153,7 +153,7 @@ describe('updateCompany — re-derive primary_domain when existing value is malf
   })
 
   it('derives primary_domain when it was previously empty (regression for migration 074\'s scope)', async () => {
-    const { updateCompany } = await import('../main/database/repositories/org-company.repo')
+    const { updateCompany } = await import('@cyggie/db/sqlite/repositories/org-company.repo')
     insertCompany(testDb, { id: 'co1', primaryDomain: null, websiteUrl: null })
 
     try { updateCompany('co1', { websiteUrl: 'https://lererhippeau.com' }) } catch { /* getCompany may fail on minimal schema */ }

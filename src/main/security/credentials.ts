@@ -1,5 +1,5 @@
 import { safeStorage } from 'electron'
-import * as settingsRepo from '../database/repositories/settings.repo'
+import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 
 export function storeCredential(key: string, value: string): void {
   if (safeStorage.isEncryptionAvailable()) {

@@ -17,13 +17,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // ─── Mock: database connection ────────────────────────────────────────────────
 // All repo functions are mocked, so getDatabase is never called.
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn()
 }))
 
 // ─── Mock: contact repo ───────────────────────────────────────────────────────
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: vi.fn(),
   resolveContactsByEmails: vi.fn()
 }))
@@ -33,7 +33,7 @@ vi.mock('../main/database/repositories/contact.repo', () => ({
 const mockListFieldDefinitions = vi.fn()
 const mockGetFieldValuesForEntity = vi.fn()
 
-vi.mock('../main/database/repositories/custom-fields.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () => ({
   listFieldDefinitions: (...args: unknown[]) => mockListFieldDefinitions(...args),
   getFieldValuesForEntity: (...args: unknown[]) => mockGetFieldValuesForEntity(...args)
 }))
@@ -42,7 +42,7 @@ vi.mock('../main/database/repositories/custom-fields.repo', () => ({
 
 const mockGetMeeting = vi.fn()
 
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(...args)
 }))
 
@@ -58,7 +58,7 @@ vi.mock('../main/storage/file-manager', () => ({
 
 const mockGetCompany = vi.fn()
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getCompany: (...args: unknown[]) => mockGetCompany(...args),
   // Other exports used by the service (stubs)
   getAllCompanies: vi.fn(() => []),

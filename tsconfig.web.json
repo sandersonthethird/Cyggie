@@ -18,6 +18,7 @@
     "paths": {
       "@shared/*": ["./src/shared/*"],
       "@renderer/*": ["./src/renderer/*"],
+      "@main/*": ["./src/main/*"],
       "@cyggie/shared": ["./packages/shared/src"],
       "@cyggie/shared/*": ["./packages/shared/src/*"],
       "@cyggie/services": ["./packages/services/src"],

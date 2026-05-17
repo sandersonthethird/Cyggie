@@ -9,33 +9,33 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('../main/security/credentials', () => ({
   getCredential: vi.fn(() => null),
 }))
-vi.mock('../main/database/repositories/settings.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: vi.fn(() => null),
 }))
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getCompany: vi.fn(),
   listCompanyMeetings: vi.fn(() => []),
   listCompanyMeetingSummaryPaths: vi.fn(() => []),
   listCompanyContacts: vi.fn(() => []),
   listCompanyEmails: vi.fn(() => []),
 }))
-vi.mock('../main/database/repositories/investment-memo.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/investment-memo.repo', () => ({
   getMemoLatestVersion: vi.fn(() => null),
 }))
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: vi.fn(),
 }))
-vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
   getFlaggedFiles: vi.fn(() => []),
 }))
-vi.mock('../main/database/repositories/notes-base', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
   makeEntityNotesRepo: () => ({ list: vi.fn(() => []) }),
 }))
 vi.mock('../main/storage/file-manager', () => ({
   readSummary: vi.fn(),
   readTranscript: vi.fn(),
 }))
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => ({
     prepare: () => ({ all: () => [], get: () => undefined, run: () => ({ changes: 0 }) }),
   }),

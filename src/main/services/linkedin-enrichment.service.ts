@@ -37,9 +37,9 @@
  */
 
 import { BrowserWindow } from 'electron'
-import { getContact, updateContact } from '../database/repositories/contact.repo'
-import { findCompanyIdByNameOrDomain } from '../database/repositories/org-company.repo'
-import { normalizeLinkedinUrl } from '../database/repositories/contact-utils'
+import { getContact, updateContact } from '@cyggie/db/sqlite/repositories/contact.repo'
+import { findCompanyIdByNameOrDomain } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { normalizeLinkedinUrl } from '@cyggie/db/sqlite/repositories/contact-utils'
 import { getProvider } from '../llm/provider-factory'
 import { safeParseJson, extractString, extractNumber } from '../utils/json-utils'
 import type { LLMProvider } from '../llm/provider'

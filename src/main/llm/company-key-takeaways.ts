@@ -1,5 +1,5 @@
-import * as companyRepo from '../database/repositories/org-company.repo'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import { readSummary } from '../storage/file-manager'

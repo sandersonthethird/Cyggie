@@ -19,10 +19,10 @@ vi.mock('electron', () => ({
 }))
 
 // Mock internal imports that require electron/DB
-vi.mock('../main/database/connection', () => ({ getDatabase: vi.fn() }))
-vi.mock('../main/database/repositories/notes.repo', () => ({}))
+vi.mock('@cyggie/db/sqlite/connection', () => ({ getDatabase: vi.fn() }))
+vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () => ({}))
 vi.mock('../main/security/current-user', () => ({ getCurrentUserId: vi.fn() }))
-vi.mock('../main/database/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
+vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
 vi.mock('../main/storage/paths', () => ({ getStoragePath: vi.fn(() => '/storage') }))
 vi.mock('../main/services/note-tagging.service', () => ({
   suggestNoteTag: vi.fn(),

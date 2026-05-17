@@ -19,7 +19,7 @@ import Database from 'better-sqlite3'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
@@ -28,7 +28,7 @@ vi.mock('../main/database/connection', () => ({
 const mockGetContact = vi.fn()
 const mockResolveContactsByEmails = vi.fn()
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: (...args: unknown[]) => mockGetContact(...args),
   resolveContactsByEmails: (...args: unknown[]) => mockResolveContactsByEmails(...args)
 }))
@@ -38,7 +38,7 @@ vi.mock('../main/database/repositories/contact.repo', () => ({
 const mockListFieldDefinitions = vi.fn()
 const mockGetFieldValuesForEntity = vi.fn()
 
-vi.mock('../main/database/repositories/custom-fields.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () => ({
   listFieldDefinitions: (...args: unknown[]) => mockListFieldDefinitions(...args),
   getFieldValuesForEntity: (...args: unknown[]) => mockGetFieldValuesForEntity(...args)
 }))
@@ -47,7 +47,7 @@ vi.mock('../main/database/repositories/custom-fields.repo', () => ({
 
 const mockGetMeeting = vi.fn()
 
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(...args)
 }))
 

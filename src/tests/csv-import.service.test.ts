@@ -34,7 +34,7 @@ import Database from 'better-sqlite3'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
@@ -47,7 +47,7 @@ const mockResolveContactsByNormalizedNames = vi.fn().mockReturnValue({})
 const mockGetContactsByIds = vi.fn().mockReturnValue({})
 const mockSetContactPrimaryCompany = vi.fn()
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   createContact: (...args: unknown[]) => mockCreateContact(...args),
   updateContact: (...args: unknown[]) => mockUpdateContact(...args),
   resolveContactsByEmails: (...args: unknown[]) => mockResolveContactsByEmails(...args),
@@ -60,7 +60,7 @@ const mockGetOrCreateCompanyByName = vi.fn()
 const mockUpdateCompany = vi.fn()
 const mockGetCompaniesByNormalizedNames = vi.fn().mockReturnValue({})
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getOrCreateCompanyByName: (...args: unknown[]) => mockGetOrCreateCompanyByName(...args),
   updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
   getCompaniesByNormalizedNames: (...args: unknown[]) => mockGetCompaniesByNormalizedNames(...args)
@@ -69,7 +69,7 @@ vi.mock('../main/database/repositories/org-company.repo', () => ({
 const mockCreateFieldDefinition = vi.fn()
 const mockSetFieldValue = vi.fn()
 
-vi.mock('../main/database/repositories/custom-fields.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () => ({
   createFieldDefinition: (...args: unknown[]) => mockCreateFieldDefinition(...args),
   setFieldValue: (...args: unknown[]) => mockSetFieldValue(...args)
 }))
@@ -78,7 +78,7 @@ vi.mock('../main/security/current-user', () => ({
   getCurrentUserId: () => 'test-user'
 }))
 
-vi.mock('../main/database/repositories/audit.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({
   logAudit: () => undefined
 }))
 

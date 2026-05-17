@@ -22,20 +22,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { CompanySummary } from '../shared/types/company'
 
 // Mock all DB / electron-dependent imports before loading the service
-vi.mock('../main/database/connection', () => ({ getDatabase: vi.fn() }))
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({ getDatabase: vi.fn() }))
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   listCompanies: vi.fn(),
 }))
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   listContactsLight: vi.fn(),
 }))
-vi.mock('../main/database/repositories/settings.repo', () => ({ getSetting: vi.fn() }))
+vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({ getSetting: vi.fn() }))
 vi.mock('../main/security/credentials', () => ({ getCredential: vi.fn(() => null) }))
 vi.mock('../main/llm/claude-provider', () => ({ ClaudeProvider: vi.fn() }))
 vi.mock('../main/llm/ollama-provider', () => ({ OllamaProvider: vi.fn() }))
 
-const { listCompanies } = await import('../main/database/repositories/org-company.repo')
-const { listContactsLight } = await import('../main/database/repositories/contact.repo')
+const { listCompanies } = await import('@cyggie/db/sqlite/repositories/org-company.repo')
+const { listContactsLight } = await import('@cyggie/db/sqlite/repositories/contact.repo')
 const { suggestTitleEntityTag, suggestFolderEntityTag } = await import(
   '../main/services/note-tagging.service'
 )

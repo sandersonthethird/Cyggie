@@ -16,6 +16,7 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["./src/shared/*"],
+      "@main/*": ["./src/main/*"],
       "@cyggie/shared": ["./packages/shared/src"],
       "@cyggie/shared/*": ["./packages/shared/src/*"],
       "@cyggie/services": ["./packages/services/src"],

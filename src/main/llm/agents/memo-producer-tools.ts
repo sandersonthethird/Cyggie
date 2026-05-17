@@ -31,9 +31,9 @@
 
 import { defineTool, z, type Tool, type ToolContext } from './define-tool'
 import { agentWebSearch, agentWebFetch } from '../../services/exa-research'
-import { getDatabase } from '../../database/connection'
-import * as companyRepo from '../../database/repositories/org-company.repo'
-import { getFlaggedFiles } from '../../database/repositories/company-file-flags.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { getFlaggedFiles } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
 import { readLocalFile } from '../../storage/file-manager'
 import {
   type MemoSection,

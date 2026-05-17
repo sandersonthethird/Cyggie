@@ -26,15 +26,15 @@
  *       └──────────────────────► TagSuggestion
  */
 
-import { getSetting } from '../database/repositories/settings.repo'
+import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
 import { getCredential } from '../security/credentials'
 import { ClaudeProvider } from '../llm/claude-provider'
 import { OllamaProvider } from '../llm/ollama-provider'
 import type { LLMProvider } from '../llm/provider'
 import type { LlmProvider } from '../../shared/types/settings'
 import type { TagSuggestion } from '../../shared/types/note'
-import { listCompanies } from '../database/repositories/org-company.repo'
-import { listContactsLight } from '../database/repositories/contact.repo'
+import { listCompanies } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { listContactsLight } from '@cyggie/db/sqlite/repositories/contact.repo'
 import { jaroWinkler } from '../utils/jaroWinkler'
 import { normalizeToken } from '../utils/string-utils'
 

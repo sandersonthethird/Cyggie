@@ -21,7 +21,7 @@ vi.mock('electron', () => ({
 
 // Mock the settings repo
 const settingsStore: Record<string, string> = {}
-vi.mock('../main/database/repositories/settings.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: (key: string): string | null => settingsStore[key] ?? null,
   setSetting: (key: string, value: string) => {
     settingsStore[key] = value

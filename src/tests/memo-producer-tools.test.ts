@@ -7,17 +7,17 @@ vi.mock('../main/services/exa-research', () => ({
 }))
 
 // Mock company repo + flagged files so internal tools don't hit the DB.
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   listCompanyMeetings: vi.fn(() => []),
 }))
-vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
   getFlaggedFiles: vi.fn(() => []),
 }))
 vi.mock('../main/storage/file-manager', () => ({
   readLocalFile: vi.fn(() => Promise.resolve('')),
 }))
 // Connection is touched transitively; provide a noop fake.
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => ({
     prepare: () => ({ all: () => [], get: () => undefined, run: () => ({ changes: 0 }) }),
   }),

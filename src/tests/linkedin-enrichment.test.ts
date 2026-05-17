@@ -34,7 +34,7 @@ vi.mock('electron', () => ({
 
 // ─── Mock DB connection ────────────────────────────────────────────────────────
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn(),
 }))
 
@@ -43,8 +43,8 @@ vi.mock('../main/database/connection', () => ({
 const mockGetContact = vi.fn()
 const mockUpdateContact = vi.fn()
 
-vi.mock('../main/database/repositories/contact.repo', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../main/database/repositories/contact.repo')>()
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@cyggie/db/sqlite/repositories/contact.repo')>()
   return {
     ...actual,
     getContact: (...args: unknown[]) => mockGetContact(...args),
@@ -56,7 +56,7 @@ vi.mock('../main/database/repositories/contact.repo', async (importOriginal) => 
 
 const mockFindCompanyIdByNameOrDomain = vi.fn().mockReturnValue(null)
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   findCompanyIdByNameOrDomain: (...args: unknown[]) => mockFindCompanyIdByNameOrDomain(...args),
 }))
 
@@ -500,7 +500,7 @@ describe('listPastEmployeeContacts', () => {
         );
       `)
 
-      const connectionMod = await import('../main/database/connection')
+      const connectionMod = await import('@cyggie/db/sqlite/connection')
       getDatabase = vi.mocked(connectionMod.getDatabase)
       getDatabase.mockReturnValue(testDb)
     } catch {
@@ -532,7 +532,7 @@ describe('listPastEmployeeContacts', () => {
 
   it('returns contact whose work_history.companyId matches', async () => {
     if (!testDb) return
-    const { listPastEmployeeContacts } = await import('../main/database/repositories/contact.repo')
+    const { listPastEmployeeContacts } = await import('@cyggie/db/sqlite/repositories/contact.repo')
     insertContact({
       id: 'c1',
       fullName: 'Alice',
@@ -548,7 +548,7 @@ describe('listPastEmployeeContacts', () => {
   it('includes contacts with NULL primary_company_id (not excluded by SQL NULL semantics)', async () => {
     // Validates the IS NULL OR != fix — plain != would silently drop contacts with NULL primary_company_id
     if (!testDb) return
-    const { listPastEmployeeContacts } = await import('../main/database/repositories/contact.repo')
+    const { listPastEmployeeContacts } = await import('@cyggie/db/sqlite/repositories/contact.repo')
     insertContact({
       id: 'c-null',
       fullName: 'Bob',
@@ -561,7 +561,7 @@ describe('listPastEmployeeContacts', () => {
 
   it('excludes contacts whose primary_company_id matches (current employee)', async () => {
     if (!testDb) return
-    const { listPastEmployeeContacts } = await import('../main/database/repositories/contact.repo')
+    const { listPastEmployeeContacts } = await import('@cyggie/db/sqlite/repositories/contact.repo')
     insertContact({
       id: 'current',
       fullName: 'Carol',
@@ -574,7 +574,7 @@ describe('listPastEmployeeContacts', () => {
 
   it('returns empty array when no past employees', async () => {
     if (!testDb) return
-    const { listPastEmployeeContacts } = await import('../main/database/repositories/contact.repo')
+    const { listPastEmployeeContacts } = await import('@cyggie/db/sqlite/repositories/contact.repo')
     insertContact({
       id: 'c1',
       fullName: 'Dave',
@@ -587,7 +587,7 @@ describe('listPastEmployeeContacts', () => {
 
   it('deduplicates if contact appears multiple times in work_history for same company', async () => {
     if (!testDb) return
-    const { listPastEmployeeContacts } = await import('../main/database/repositories/contact.repo')
+    const { listPastEmployeeContacts } = await import('@cyggie/db/sqlite/repositories/contact.repo')
     insertContact({
       id: 'c1',
       fullName: 'Eve',

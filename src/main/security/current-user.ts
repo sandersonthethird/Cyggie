@@ -1,6 +1,6 @@
 import os from 'os'
-import * as settingsRepo from '../database/repositories/settings.repo'
-import * as userRepo from '../database/repositories/user.repo'
+import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
+import * as userRepo from '@cyggie/db/sqlite/repositories/user.repo'
 
 let cachedUserId: string | null = null
 

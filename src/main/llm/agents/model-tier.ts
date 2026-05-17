@@ -1,4 +1,4 @@
-import { getSetting } from '../../database/repositories/settings.repo'
+import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
 
 /**
  * Agent model tier + cache TTL resolvers.

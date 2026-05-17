@@ -15,14 +15,14 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-vi.mock('../main/database/connection', () => ({ getDatabase: vi.fn() }))
+vi.mock('@cyggie/db/sqlite/connection', () => ({ getDatabase: vi.fn() }))
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: vi.fn(),
   resolveContactsByEmails: vi.fn(),
 }))
 
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: vi.fn(),
 }))
 
@@ -30,14 +30,14 @@ vi.mock('../main/storage/file-manager', () => ({
   readSummary: vi.fn(),
 }))
 
-vi.mock('../main/database/repositories/company-notes.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-notes.repo', () => ({
   listCompanyNotes: vi.fn(() => []),
 }))
 
 const mockListFieldDefinitions = vi.fn()
 const mockGetFieldValuesForEntity = vi.fn()
 
-vi.mock('../main/database/repositories/custom-fields.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () => ({
   listFieldDefinitions: (...args: unknown[]) => mockListFieldDefinitions(...args),
   getFieldValuesForEntity: (...args: unknown[]) => mockGetFieldValuesForEntity(...args),
 }))
@@ -45,7 +45,7 @@ vi.mock('../main/database/repositories/custom-fields.repo', () => ({
 const mockGetCompany = vi.fn()
 const mockListCompanyEmails = vi.fn()
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getCompany: (...args: unknown[]) => mockGetCompany(...args),
   getAllCompanies: vi.fn(() => []),
   searchCompanies: vi.fn(() => []),

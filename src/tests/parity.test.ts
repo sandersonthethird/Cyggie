@@ -67,23 +67,23 @@ const mockReadSummary = vi.fn()
 const mockReadTranscript = vi.fn()
 const mockReadLocalFile = vi.fn()
 
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(args[0]),
 }))
 
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getCompany: (...args: unknown[]) => mockGetCompany(args[0]),
   listCompanyMeetingSummaryPaths: (...args: unknown[]) => mockListCompanyMeetingSummaryPaths(args[0]),
   listCompanyMeetings: (...args: unknown[]) => mockListCompanyMeetings(args[0]),
   listCompanyEmails: (...args: unknown[]) => mockListCompanyEmails(args[0]),
 }))
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: (...args: unknown[]) => mockGetContact(args[0]),
   listContactEmails: (...args: unknown[]) => mockListContactEmails(args[0]),
 }))
 
-vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
   getFlaggedFileIds: (...args: unknown[]) => mockGetFlaggedFileIds(args[0]),
   getFlaggedFiles: (...args: unknown[]) =>
     (mockGetFlaggedFileIds(args[0]) as string[]).map((id) => ({
@@ -93,7 +93,7 @@ vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
     })),
 }))
 
-vi.mock('../main/database/repositories/notes-base', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
   makeEntityNotesRepo: () => ({ list: (id: string) => mockNotesList(id) }),
 }))
 
@@ -121,11 +121,11 @@ const stubDb = {
   prepare: () => stubStmt,
   exec: () => undefined,
   pragma: () => [],
-} as unknown as Parameters<typeof import('../main/database/connection').getDatabase>[0] extends never
+} as unknown as Parameters<typeof import('@cyggie/db/sqlite/connection').getDatabase>[0] extends never
   ? unknown
   : unknown
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => stubDb,
 }))
 

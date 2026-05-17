@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runAgentRunsMigration } from '../main/database/migrations/086-agent-runs'
-import { runStressTestReportsMigration } from '../main/database/migrations/092-stress-test-reports'
-import { runStressTestReportsNoFkMigration } from '../main/database/migrations/093-stress-test-reports-no-fk'
+import { runAgentRunsMigration } from '@cyggie/db/sqlite/migrations/086-agent-runs'
+import { runStressTestReportsMigration } from '@cyggie/db/sqlite/migrations/092-stress-test-reports'
+import { runStressTestReportsNoFkMigration } from '@cyggie/db/sqlite/migrations/093-stress-test-reports-no-fk'
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn(),
 }))
 
-import { getDatabase } from '../main/database/connection'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 import {
   persistStressTestReport,
   listReportsForMemo,
   getStressTestReport,
-} from '../main/database/repositories/stress-test-report.repo'
+} from '@cyggie/db/sqlite/repositories/stress-test-report.repo'
 
 const mockGetDb = vi.mocked(getDatabase)
 

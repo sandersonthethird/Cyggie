@@ -110,7 +110,7 @@ vi.mock('../main/recording/auto-stop', () => ({
 const mockGetMeeting = vi.fn()
 const mockUpdateMeeting = vi.fn()
 const mockCreateMeeting = vi.fn()
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(...args),
   updateMeeting: (...args: unknown[]) => mockUpdateMeeting(...args),
   createMeeting: (...args: unknown[]) => mockCreateMeeting(...args),
@@ -121,20 +121,20 @@ vi.mock('../main/storage/file-manager', () => ({
 vi.mock('../main/storage/paths', () => ({
   getTranscriptsDir: () => '/tmp',
 }))
-vi.mock('../main/database/repositories/search.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/search.repo', () => ({
   indexMeeting: vi.fn(),
 }))
-vi.mock('../main/database/repositories/audit.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({
   logAudit: vi.fn(),
 }))
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   listContactsLight: () => [],
   syncContactsFromAttendees: vi.fn(),
 }))
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   listCompanies: () => [],
 }))
-vi.mock('../main/database/repositories/settings.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: () => null,
 }))
 vi.mock('../main/utils/proper-noun-corrector', () => ({

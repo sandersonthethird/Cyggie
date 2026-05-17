@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type Anthropic from '@anthropic-ai/sdk'
-import { getDatabase } from '../../database/connection'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 
 /**
  * Context budget manager for the memo producer agent.

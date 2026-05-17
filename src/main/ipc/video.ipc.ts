@@ -7,7 +7,7 @@ import {
   getPlayableRecordingFilename,
   resolveMeetingRecordingFilename
 } from '../video/video-writer'
-import * as meetingRepo from '../database/repositories/meeting.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
 import { buildRecordingFilename } from '../storage/file-manager'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
 import { addPending, removePending } from './_finalizations'

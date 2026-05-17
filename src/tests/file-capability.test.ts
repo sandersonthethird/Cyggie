@@ -20,7 +20,7 @@ vi.mock('electron', () => ({
 
 // Mock the flagged-files repo
 let flagged: Array<{ companyId: string; fileId: string; fileName: string; mimeType: string | null }> = []
-vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
   isFlaggedAnywhere: (fileId: string) => flagged.some((f) => f.fileId === fileId),
   isFlaggedForCompany: (companyId: string, fileId: string) =>
     flagged.some((f) => f.companyId === companyId && f.fileId === fileId),
@@ -60,7 +60,7 @@ vi.mock('../main/storage/file-manager', () => ({
 
 // Mock settings repo for APP_OPEN_USER_FOLDER tests
 const settingsStore: Record<string, string> = {}
-vi.mock('../main/database/repositories/settings.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: (key: string) => settingsStore[key] ?? null,
   setSetting: (key: string, value: string) => {
     settingsStore[key] = value
@@ -86,14 +86,14 @@ vi.mock('fs', async () => {
 // Avoid pulling in the full meeting.ipc surface — we only want the new handlers.
 // Stub the heavy deps it imports so module load doesn't explode.
 vi.mock('../main/services/meeting-summary-recovery', () => ({ recoverSummaryFromCompanionNote: vi.fn() }))
-vi.mock('../main/database/repositories/search.repo', () => ({ removeFromIndex: vi.fn() }))
+vi.mock('@cyggie/db/sqlite/repositories/search.repo', () => ({ removeFromIndex: vi.fn() }))
 vi.mock('../main/drive/google-drive', () => ({ renameFile: vi.fn() }))
 vi.mock('../main/services/company-enrichment', () => ({
   enrichCompaniesForMeeting: vi.fn(),
   getCompanySuggestionsForMeeting: vi.fn(),
 }))
-vi.mock('../main/database/repositories/meeting.repo', () => ({}))
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({}))
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   linkMeetingCompany: vi.fn(),
   getCompany: vi.fn(),
   findCompanyIdByNameOrDomain: vi.fn(),
@@ -101,14 +101,14 @@ vi.mock('../main/database/repositories/org-company.repo', () => ({
   getOrCreateCompanyByName: vi.fn(),
   listMeetingCompanies: vi.fn(),
 }))
-vi.mock('../main/database/repositories/company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company.repo', () => ({
   upsert: vi.fn(),
   getByDomain: vi.fn(),
 }))
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   syncContactsFromAttendees: vi.fn(),
 }))
-vi.mock('../main/database/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
+vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
 vi.mock('../main/security/current-user', () => ({
   getCurrentUserId: vi.fn().mockReturnValue('test-user'),
   getCurrentUserProfile: vi.fn(),
@@ -122,7 +122,7 @@ vi.mock('../main/utils/company-extractor', () => ({
   extractCompaniesFromAttendees: vi.fn(),
   extractDomainFromEmail: vi.fn(),
 }))
-vi.mock('../main/database/connection', () => ({ getDatabase: vi.fn() }))
+vi.mock('@cyggie/db/sqlite/connection', () => ({ getDatabase: vi.fn() }))
 
 const { registerFileHandlers } = await import('../main/ipc/file.ipc')
 const { registerMeetingHandlers } = await import('../main/ipc/meeting.ipc')

@@ -1,9 +1,9 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as decisionRepo from '../database/repositories/company-decision-log.repo'
+import * as decisionRepo from '@cyggie/db/sqlite/repositories/company-decision-log.repo'
 import { getCurrentUserId } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
-import { autoAddDecisionToDigest } from '../database/repositories/partner-meeting.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
+import { autoAddDecisionToDigest } from '@cyggie/db/sqlite/repositories/partner-meeting.repo'
 import type { CompanyDecisionLog } from '../../shared/types/company'
 
 export function registerCompanyDecisionHandlers(): void {

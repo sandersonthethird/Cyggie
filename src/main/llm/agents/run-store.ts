@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { getDatabase } from '../../database/connection'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 import type { AgentEvent, AgentRunMode } from '../../../shared/types/agent-events'
 
 /**

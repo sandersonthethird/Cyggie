@@ -1,9 +1,9 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as contactRepo from '../database/repositories/contact.repo'
+import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
 import { generateKeyTakeaways } from '../llm/contact-key-takeaways'
-import * as companyRepo from '../database/repositories/org-company.repo'
-import * as contactDecisionLogRepo from '../database/repositories/contact-decision-log.repo'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import * as contactDecisionLogRepo from '@cyggie/db/sqlite/repositories/contact-decision-log.repo'
 import { ingestContactEmails, cancelContactEmailIngest } from '../services/company-email-ingest.service'
 import {
   enrichContactsViaWebLookup,
@@ -22,7 +22,7 @@ import {
 import { getCredential } from '../security/credentials'
 import { getProvider } from '../llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import { LinkedInEnrichError } from '../../shared/types/contact'
 import type {
   ContactEnrichmentOptions,

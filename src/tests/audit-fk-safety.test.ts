@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn(),
 }))
 
-import { getDatabase } from '../main/database/connection'
-import { logAudit, logAppEvent } from '../main/database/repositories/audit.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import { logAudit, logAppEvent } from '@cyggie/db/sqlite/repositories/audit.repo'
 
 const mockGetDb = vi.mocked(getDatabase)
 

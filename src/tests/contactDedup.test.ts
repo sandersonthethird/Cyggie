@@ -4,16 +4,16 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runMigrations } from '../main/database/migrations/001-initial-schema'
-import { runContactNamePartsMigration } from '../main/database/migrations/023-contact-name-parts'
+import { runMigrations } from '@cyggie/db/sqlite/migrations/001-initial-schema'
+import { runContactNamePartsMigration } from '@cyggie/db/sqlite/migrations/023-contact-name-parts'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
-const { listSuspectedDuplicateContacts } = await import('../main/database/repositories/contact.repo')
+const { listSuspectedDuplicateContacts } = await import('@cyggie/db/sqlite/repositories/contact.repo')
 
 function makeTestDb(): Database.Database {
   const db = new Database(':memory:')

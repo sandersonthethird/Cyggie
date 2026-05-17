@@ -24,12 +24,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn(),
 }))
 
-import { getDatabase } from '../main/database/connection'
-import { makeEntityNotesRepo } from '../main/database/repositories/notes-base'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const mockGetDb = vi.mocked(getDatabase)
 

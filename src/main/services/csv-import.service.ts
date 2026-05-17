@@ -58,12 +58,12 @@ import type {
   CSVFileInfo
 } from '../../shared/types/csv-import'
 import { getProvider } from '../llm/provider-factory'
-import { getDatabase } from '../database/connection'
-import * as contactRepo from '../database/repositories/contact.repo'
-import * as companyRepo from '../database/repositories/org-company.repo'
-import * as customFieldRepo from '../database/repositories/custom-fields.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import * as customFieldRepo from '@cyggie/db/sqlite/repositories/custom-fields.repo'
 import { getCurrentUserId } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

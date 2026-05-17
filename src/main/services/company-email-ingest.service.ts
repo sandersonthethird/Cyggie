@@ -2,14 +2,14 @@ import { randomUUID } from 'crypto'
 import { BrowserWindow } from 'electron'
 import { google, type gmail_v1 } from 'googleapis'
 import type Database from 'better-sqlite3'
-import { getDatabase } from '../database/connection'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 import {
   getGmailGrantedScopes,
   getGmailOAuth2Client,
   hasGmailScope,
   isGmailConnected
 } from '../calendar/google-auth'
-import { findCompanyIdByDomain } from '../database/repositories/org-company.repo'
+import { findCompanyIdByDomain } from '@cyggie/db/sqlite/repositories/org-company.repo'
 import type { CompanyEmailIngestResult } from '../../shared/types/company'
 import type { ContactEmailIngestResult } from '../../shared/types/contact'
 import { IPC_CHANNELS } from '../../shared/constants/channels'

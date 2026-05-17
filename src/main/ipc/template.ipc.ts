@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as templateRepo from '../database/repositories/template.repo'
+import * as templateRepo from '@cyggie/db/sqlite/repositories/template.repo'
 import type { TemplateCategory, OutputFormat } from '../../shared/types/template'
 
 export function registerTemplateHandlers(): void {

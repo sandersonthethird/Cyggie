@@ -31,7 +31,11 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
-        '@shared': resolve('src/shared')
+        '@shared': resolve('src/shared'),
+        '@main': resolve('src/main'),
+        '@cyggie/db': resolve('packages/db/src'),
+        '@cyggie/services': resolve('packages/services/src'),
+        '@cyggie/shared': resolve('packages/shared/src')
       }
     }
   },
@@ -39,7 +43,11 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
-        '@shared': resolve('src/shared')
+        '@shared': resolve('src/shared'),
+        '@main': resolve('src/main'),
+        '@cyggie/db': resolve('packages/db/src'),
+        '@cyggie/services': resolve('packages/services/src'),
+        '@cyggie/shared': resolve('packages/shared/src')
       }
     }
   },
@@ -47,7 +55,11 @@ export default defineConfig({
     resolve: {
       alias: {
         '@shared': resolve('src/shared'),
-        '@renderer': resolve('src/renderer')
+        '@renderer': resolve('src/renderer'),
+        '@main': resolve('src/main'),
+        '@cyggie/db': resolve('packages/db/src'),
+        '@cyggie/services': resolve('packages/services/src'),
+        '@cyggie/shared': resolve('packages/shared/src')
       }
     },
     plugins: [react(), devCspRelax()]

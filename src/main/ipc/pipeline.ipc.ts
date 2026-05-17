@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as companyRepo from '../database/repositories/org-company.repo'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
 import type { CompanyPipelineStage, CompanyPriority, CompanyRound } from '../../shared/types/company'
 
 export function registerPipelineHandlers(): void {

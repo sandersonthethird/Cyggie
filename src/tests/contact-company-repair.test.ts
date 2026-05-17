@@ -24,18 +24,18 @@ import Database from 'better-sqlite3'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb,
 }))
 
 const { repairContactCompanyMismatches, enrichContact } = await import(
-  '../main/database/repositories/contact.repo'
+  '@cyggie/db/sqlite/repositories/contact.repo'
 )
 const { runRepairOwnerLinkedinUrlMigration } = await import(
-  '../main/database/migrations/062-repair-owner-linkedin-url'
+  '@cyggie/db/sqlite/migrations/062-repair-owner-linkedin-url'
 )
 const { runRemoveNotificationContactsMigration } = await import(
-  '../main/database/migrations/063-remove-notification-contacts'
+  '@cyggie/db/sqlite/migrations/063-remove-notification-contacts'
 )
 
 // ---------------------------------------------------------------------------

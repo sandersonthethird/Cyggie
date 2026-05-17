@@ -29,13 +29,13 @@
  */
 
 import { randomUUID } from 'crypto'
-import { getDatabase } from '../database/connection'
-import { getCompany, updateCompany } from '../database/repositories/org-company.repo'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import { getCompany, updateCompany } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
-import { getMeeting } from '../database/repositories/meeting.repo'
-import { bulkCreate as bulkCreateTasks } from '../database/repositories/task.repo'
+import { getMeeting } from '@cyggie/db/sqlite/repositories/meeting.repo'
+import { bulkCreate as bulkCreateTasks } from '@cyggie/db/sqlite/repositories/task.repo'
 import { readTranscript } from '../storage/file-manager'
 import { safeParseJson } from '../utils/json-utils'
 import type { LLMProvider } from '../llm/provider'

@@ -32,9 +32,9 @@
  *                                            ▼
  *                               ContactSummaryUpdateProposal[]
  */
-import { getDatabase } from '../database/connection'
-import { getContact } from '../database/repositories/contact.repo'
-import { listFieldDefinitions, getFieldValuesForEntity } from '../database/repositories/custom-fields.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import { getContact } from '@cyggie/db/sqlite/repositories/contact.repo'
+import { listFieldDefinitions, getFieldValuesForEntity } from '@cyggie/db/sqlite/repositories/custom-fields.repo'
 import { jaroWinkler } from '../utils/jaroWinkler'
 import { isDifferentText, normalizeWhitespace } from '../utils/summary-text-utils'
 import type { LLMProvider } from '../llm/provider'
@@ -47,8 +47,8 @@ import type {
   CustomFieldProposedUpdate
 } from '../../shared/types/summary'
 import { readSummary } from '../storage/file-manager'
-import * as meetingRepo from '../database/repositories/meeting.repo'
-import { resolveContactsByEmails } from '../database/repositories/contact.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import { resolveContactsByEmails } from '@cyggie/db/sqlite/repositories/contact.repo'
 import { getCurrentUserProfile } from '../security/current-user'
 import { safeParseJson, extractString, extractNumber } from '../utils/json-utils'
 

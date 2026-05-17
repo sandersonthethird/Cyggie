@@ -19,12 +19,12 @@ import { buildTestDbFull } from './_fixtures/test-db'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
 const { fixConcatenatedCompanyNames } = await import(
-  '../main/database/repositories/org-company.repo'
+  '@cyggie/db/sqlite/repositories/org-company.repo'
 )
 
 // Schema comes from the shared test-db fixture (runs the same migrations

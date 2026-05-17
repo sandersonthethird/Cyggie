@@ -1,6 +1,6 @@
-import * as companyRepo from '../database/repositories/org-company.repo'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
-import { getFlaggedFiles, type FlaggedFile } from '../database/repositories/company-file-flags.repo'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
+import { getFlaggedFiles, type FlaggedFile } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
 import type { CompanyContactRef, CompanyEmailRef, CompanyMeetingRef } from '../../shared/types/company'
 import type { Note } from '../../shared/types/note'
 

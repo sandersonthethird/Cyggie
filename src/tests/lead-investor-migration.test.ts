@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
-import { runLeadInvestorCompanyIdMigration } from '../main/database/migrations/076-lead-investor-company-id'
+import { runLeadInvestorCompanyIdMigration } from '@cyggie/db/sqlite/migrations/076-lead-investor-company-id'
 
 let testDb: Database.Database
 

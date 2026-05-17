@@ -22,11 +22,11 @@
 
 import { formatMeetingsSection, formatEmailsSection, formatNotesSection, formatFlaggedFilesSection, type SectionCaps } from './context-formatters'
 import { readSummary, readTranscript } from '../storage/file-manager'
-import * as companyRepo from '../database/repositories/org-company.repo'
-import * as contactRepo from '../database/repositories/contact.repo'
-import * as meetingRepo from '../database/repositories/meeting.repo'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
-import { getFlaggedFiles } from '../database/repositories/company-file-flags.repo'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
+import { getFlaggedFiles } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
 
 const _contactNotesRepo = makeEntityNotesRepo('contact_id')
 const _companyNotesRepo = makeEntityNotesRepo('company_id')

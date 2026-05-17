@@ -20,7 +20,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { runUnifiedNotesMigration } from '../main/database/migrations/052-unified-notes'
+import { runUnifiedNotesMigration } from '@cyggie/db/sqlite/migrations/052-unified-notes'
 import type { Note } from '../shared/types/note'
 
 // ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ import type { Note } from '../shared/types/note'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb,
 }))
 

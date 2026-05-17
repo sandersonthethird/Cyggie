@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { runIndustryConsolidationMigration } from '../main/database/migrations/077-industry-consolidation'
+import { runIndustryConsolidationMigration } from '@cyggie/db/sqlite/migrations/077-industry-consolidation'
 
 let db: Database.Database
 

@@ -12,12 +12,12 @@ import Database from 'better-sqlite3'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb,
 }))
 
 const { getCompanyInvestorsByType } = await import(
-  '../main/database/repositories/org-company.repo'
+  '@cyggie/db/sqlite/repositories/org-company.repo'
 )
 
 function buildDb(): Database.Database {

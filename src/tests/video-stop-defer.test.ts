@@ -53,7 +53,7 @@ vi.mock('../main/video/video-writer', () => ({
 
 const mockGetMeeting = vi.fn()
 const mockUpdateMeeting = vi.fn()
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(...args),
   updateMeeting: (...args: unknown[]) => mockUpdateMeeting(...args),
 }))

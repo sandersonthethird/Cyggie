@@ -19,7 +19,7 @@ import {
   getBulkFieldValues,
   countBuiltinOptionUsage,
   renameBuiltinOption
-} from '../database/repositories/custom-fields.repo'
+} from '@cyggie/db/sqlite/repositories/custom-fields.repo'
 
 function err(message: string, detail?: unknown) {
   console.error(`[custom-fields.ipc] ${message}`, detail ?? '')

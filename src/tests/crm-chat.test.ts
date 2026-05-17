@@ -21,7 +21,7 @@ import Database from 'better-sqlite3'
 let testDb: Database.Database
 
 // Mock DB connection — must be set up before dynamic imports
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 

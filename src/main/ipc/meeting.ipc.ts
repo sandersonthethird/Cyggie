@@ -4,27 +4,27 @@ import { extname } from 'path'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as meetingRepo from '../database/repositories/meeting.repo'
-import * as settingsRepo from '../database/repositories/settings.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { readTranscript, readSummary, updateTranscriptContent, updateSummaryContent, deleteTranscript, deleteSummary, deleteRecording, renameTranscript, renameSummary, renameRecording } from '../storage/file-manager'
 import { recoverSummaryFromCompanionNote } from '../services/meeting-summary-recovery'
-import { removeFromIndex } from '../database/repositories/search.repo'
+import { removeFromIndex } from '@cyggie/db/sqlite/repositories/search.repo'
 import { getStoragePath, setStoragePath } from '../storage/paths'
 import { renameFile as renameDriveFile } from '../drive/google-drive'
 import { extractCompaniesFromEmails, extractCompaniesFromAttendees, extractDomainFromEmail } from '../utils/company-extractor'
 import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
-import { syncContactsFromAttendees } from '../database/repositories/contact.repo'
+import { syncContactsFromAttendees } from '@cyggie/db/sqlite/repositories/contact.repo'
 import {
   isFlaggedAnywhere,
   isFlaggedForCompany,
   toggleFileFlag,
-} from '../database/repositories/company-file-flags.repo'
-import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName, listMeetingCompanies } from '../database/repositories/org-company.repo'
-import { upsert as upsertCompanyCache, getByDomain as getCompanyCacheByDomain } from '../database/repositories/company.repo'
-import { getDatabase } from '../database/connection'
+} from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
+import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName, listMeetingCompanies } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { upsert as upsertCompanyCache, getByDomain as getCompanyCacheByDomain } from '@cyggie/db/sqlite/repositories/company.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 import type { MeetingListFilter } from '../../shared/types/meeting'
 import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 
 const execFileP = promisify(execFile)
 

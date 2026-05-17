@@ -5,7 +5,7 @@ import {
   isFlaggedAnywhere,
   isFlaggedForCompany,
   toggleFileFlag,
-} from '../database/repositories/company-file-flags.repo'
+} from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
 
 // file.ipc.ts — capability-scoped file reads.
 //

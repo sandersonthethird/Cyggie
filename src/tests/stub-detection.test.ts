@@ -17,11 +17,11 @@ import { randomUUID } from 'crypto'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
-import { countStubCompanies, listCompanies } from '../main/database/repositories/org-company.repo'
+import { countStubCompanies, listCompanies } from '@cyggie/db/sqlite/repositories/org-company.repo'
 
 function buildSchema(db: Database.Database): void {
   db.exec(`

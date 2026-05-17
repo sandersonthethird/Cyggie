@@ -3,7 +3,7 @@ import { ClaudeProvider } from './claude-provider'
 import { OllamaProvider } from './ollama-provider'
 import { OpenAIProvider } from './openai-provider'
 import { getCredential } from '../security/credentials'
-import { getSetting } from '../database/repositories/settings.repo'
+import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
 import type { LlmProvider } from '../../shared/types/settings'
 
 export function getProvider(use: 'summary' | 'enrichment' | 'chat' = 'summary'): LLMProvider {

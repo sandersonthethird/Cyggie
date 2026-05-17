@@ -15,17 +15,17 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runContactTalentPipelineMigration } from '../main/database/migrations/068-contact-talent-pipeline'
+import { runContactTalentPipelineMigration } from '@cyggie/db/sqlite/migrations/068-contact-talent-pipeline'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
 // Dynamic imports so the mock is applied before module initialization
 const { updateContact, getContact, listContactsLight } = await import(
-  '../main/database/repositories/contact.repo'
+  '@cyggie/db/sqlite/repositories/contact.repo'
 )
 
 function buildDb(): Database.Database {

@@ -4,12 +4,12 @@ import Database from 'better-sqlite3'
 // Declare before vi.mock so the factory closes over the binding
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
 // Import after mock registration (vi.mock is hoisted above imports automatically)
-const { getCompanyEmailById } = await import('../main/database/repositories/org-company.repo')
+const { getCompanyEmailById } = await import('@cyggie/db/sqlite/repositories/org-company.repo')
 
 function makeDb(): Database.Database {
   const db = new Database(':memory:')

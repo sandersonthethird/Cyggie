@@ -1,12 +1,12 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { searchUnified } from '../database/repositories/search.repo'
+import { searchUnified } from '@cyggie/db/sqlite/repositories/search.repo'
 import type {
   UnifiedSearchAnswerResponse,
   UnifiedSearchResponse
 } from '../../shared/types/unified-search'
 import { getCurrentUserId } from '../security/current-user'
-import { logAppEvent } from '../database/repositories/audit.repo'
+import { logAppEvent } from '@cyggie/db/sqlite/repositories/audit.repo'
 import { getProvider } from '../llm/provider-factory'
 
 let unifiedSearchAbortController: AbortController | null = null

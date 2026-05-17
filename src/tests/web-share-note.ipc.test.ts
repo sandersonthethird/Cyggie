@@ -29,17 +29,17 @@ vi.mock('electron', () => ({
 // resolvedSpeakerMap inside the handler calls getDatabase(). Stub it with an
 // in-memory production schema, populated by beforeAll below.
 let _testDb: Database.Database | null = null
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => _testDb,
 }))
 
 const getNoteMock = vi.fn()
-vi.mock('../main/database/repositories/notes.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () => ({
   getNote: getNoteMock,
 }))
 
 // meeting.repo is imported by the same file — stub it to avoid DB access
-vi.mock('../main/database/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
   getMeeting: vi.fn(),
 }))
 

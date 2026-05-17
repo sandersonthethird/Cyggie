@@ -13,16 +13,16 @@ import Database from 'better-sqlite3'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
 // company.repo is used by getCategorizedSuggestions — stub it
-vi.mock('../main/database/repositories/company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company.repo', () => ({
   getByDomain: () => null
 }))
 
-const { getContentMatchPreviews, searchUnified } = await import('../main/database/repositories/search.repo')
+const { getContentMatchPreviews, searchUnified } = await import('@cyggie/db/sqlite/repositories/search.repo')
 const { sanitizeSnippet } = await import('../renderer/routes/SearchResults')
 
 function buildDb(): Database.Database {

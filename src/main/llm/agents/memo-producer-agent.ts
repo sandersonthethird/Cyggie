@@ -33,7 +33,7 @@ import { runAgentLoop, type AgentRunResult } from './agent-loop'
 import { buildMemoProducerTools, type MemoProducerRunState } from './memo-producer-tools'
 import { getAgentLimits, type AgentLimits } from './limits'
 import { getCredential } from '../../security/credentials'
-import { getSetting } from '../../database/repositories/settings.repo'
+import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
 import {
   getAgentModelId,
   getCacheTtl,
@@ -56,11 +56,11 @@ import { searchCompanyContext, type ExternalResearchBundle } from '../../service
 import MEMO_PRODUCER_SYSTEM_PROMPT_TEMPLATE from './prompts/memo-producer.system.md?raw'
 import INVESTMENT_CRITERIA from './prompts/investment-criteria.md?raw'
 
-import * as companyRepo from '../../database/repositories/org-company.repo'
-import * as memoRepo from '../../database/repositories/investment-memo.repo'
-import * as meetingRepo from '../../database/repositories/meeting.repo'
-import { getFlaggedFiles } from '../../database/repositories/company-file-flags.repo'
-import { makeEntityNotesRepo } from '../../database/repositories/notes-base'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import * as memoRepo from '@cyggie/db/sqlite/repositories/investment-memo.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import { getFlaggedFiles } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 import { readSummary, readTranscript } from '../../storage/file-manager'
 
 const SETTING_EXTENDED_THINKING = 'agent.memoProducerExtendedThinking'

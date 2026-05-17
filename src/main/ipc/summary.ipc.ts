@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { generateSummary, abortSummary } from '../llm/summarizer'
 import { getCurrentUserId } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import type { SummaryGenerateResult } from '../../shared/types/summary'
 
 export function registerSummaryHandlers(): void {

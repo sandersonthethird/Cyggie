@@ -9,11 +9,11 @@ import Database from 'better-sqlite3'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
-const { deleteMeeting } = await import('../main/database/repositories/meeting.repo')
+const { deleteMeeting } = await import('@cyggie/db/sqlite/repositories/meeting.repo')
 
 function buildDb(): Database.Database {
   const db = new Database(':memory:')

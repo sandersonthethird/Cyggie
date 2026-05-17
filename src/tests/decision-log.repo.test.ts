@@ -14,7 +14,7 @@ import Database from 'better-sqlite3'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
@@ -22,14 +22,14 @@ vi.mock('../main/security/current-user', () => ({
   getCurrentUserId: () => 'test-user'
 }))
 
-vi.mock('../main/database/repositories/audit.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({
   logAudit: () => undefined
 }))
 
 // ─── Import AFTER mocks ───────────────────────────────────────────────────────
 
 // safeParseArray is a pure function — import it directly (no DB needed)
-import { safeParseArray } from '../main/database/repositories/company-decision-log.repo'
+import { safeParseArray } from '@cyggie/db/sqlite/repositories/company-decision-log.repo'
 
 const {
   listCompanyDecisionLogs,
@@ -38,7 +38,7 @@ const {
   createCompanyDecisionLog,
   updateCompanyDecisionLog,
   deleteCompanyDecisionLog
-} = await import('../main/database/repositories/company-decision-log.repo')
+} = await import('@cyggie/db/sqlite/repositories/company-decision-log.repo')
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

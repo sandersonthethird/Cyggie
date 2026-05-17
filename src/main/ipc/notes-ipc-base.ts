@@ -19,9 +19,9 @@
 
 import { ipcMain } from 'electron'
 import { getCurrentUserId } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import { hydrateCompanionNote } from './note-hydration'
-import type { EntityNotesRepo } from '../database/repositories/notes-base'
+import type { EntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 export interface EntityNotesIpcConfig {
   channels: {

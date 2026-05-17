@@ -1,6 +1,6 @@
-import { getDatabase } from '../../database/connection'
-import * as memoRepo from '../../database/repositories/investment-memo.repo'
-import { bulkInsert as bulkInsertEvidence } from '../../database/repositories/memo-evidence.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import * as memoRepo from '@cyggie/db/sqlite/repositories/investment-memo.repo'
+import { bulkInsert as bulkInsertEvidence } from '@cyggie/db/sqlite/repositories/memo-evidence.repo'
 import type { EvidenceRow } from '../../../shared/types/thesis'
 
 /**

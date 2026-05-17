@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as taskRepo from '../database/repositories/task.repo'
+import * as taskRepo from '@cyggie/db/sqlite/repositories/task.repo'
 import { getCurrentUserId } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import type { TaskListFilter, TaskCreateData, TaskUpdateData, TaskStatus } from '../../shared/types/task'
 
 export function registerTaskHandlers(): void {

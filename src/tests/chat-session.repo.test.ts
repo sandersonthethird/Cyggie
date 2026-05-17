@@ -8,15 +8,15 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runChatSessionsMigration } from '../main/database/migrations/078-chat-sessions'
+import { runChatSessionsMigration } from '@cyggie/db/sqlite/migrations/078-chat-sessions'
 
 let testDb: Database.Database
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb,
 }))
 
-vi.mock('../main/database/repositories/audit.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({
   logAudit: vi.fn(),
 }))
 
@@ -36,7 +36,7 @@ const {
   getSession,
   getActiveForContext,
   setTitleIfMissing,
-} = await import('../main/database/repositories/chat-session.repo')
+} = await import('@cyggie/db/sqlite/repositories/chat-session.repo')
 
 function buildDb(): Database.Database {
   const db = new Database(':memory:')

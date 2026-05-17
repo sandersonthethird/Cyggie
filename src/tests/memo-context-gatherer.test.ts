@@ -2,25 +2,25 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 
-vi.mock('../main/database/connection', () => ({
+vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn(),
 }))
 
 // Minimal stubs for repos that gatherMemoSourceCounts pulls. Each returns
 // based on the in-memory DB state we set up in beforeEach.
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   listCompanyMeetingSummaryPaths: vi.fn(),
   listCompanyMeetings: vi.fn(),
   listCompanyContacts: vi.fn(),
   listCompanyEmails: vi.fn(),
 }))
-vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
   getFlaggedFiles: vi.fn(),
 }))
 
-import * as companyRepo from '../main/database/repositories/org-company.repo'
-import { getFlaggedFiles } from '../main/database/repositories/company-file-flags.repo'
-import { getDatabase } from '../main/database/connection'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { getFlaggedFiles } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { gatherMemoSourceCounts } from '../main/llm/memo-context-gatherer'
 
 const mockGetDb = vi.mocked(getDatabase)

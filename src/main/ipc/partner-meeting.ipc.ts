@@ -3,14 +3,14 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as repo from '../database/repositories/partner-meeting.repo'
-import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts } from '../database/repositories/org-company.repo'
-import { makeEntityNotesRepo } from '../database/repositories/notes-base'
+import * as repo from '@cyggie/db/sqlite/repositories/partner-meeting.repo'
+import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import { getProvider } from '../llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
-import { logAudit } from '../database/repositories/audit.repo'
+import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import {
   generateReconciliationProposals,
   applyReconciliationProposals,

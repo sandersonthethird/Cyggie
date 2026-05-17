@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const settings = new Map<string, string>()
 const credentials = new Map<string, string>()
 
-vi.mock('../main/database/repositories/settings.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: (key: string) => settings.get(key) ?? null,
 }))
 

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { runMemoEvidenceMigration } from '../main/database/migrations/085-memo-evidence'
-import { runAgentRunsMigration } from '../main/database/migrations/086-agent-runs'
-import { runAgentRunEventsMigration } from '../main/database/migrations/087-agent-run-events'
+import { runMemoEvidenceMigration } from '@cyggie/db/sqlite/migrations/085-memo-evidence'
+import { runAgentRunsMigration } from '@cyggie/db/sqlite/migrations/086-agent-runs'
+import { runAgentRunEventsMigration } from '@cyggie/db/sqlite/migrations/087-agent-run-events'
 
 /**
  * Migrations 085–087 add the agent-feature schema:

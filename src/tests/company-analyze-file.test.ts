@@ -34,7 +34,7 @@ vi.mock('../main/services/pitch-deck-analysis.service', () => ({
 }))
 
 const createNote = vi.fn()
-vi.mock('../main/database/repositories/notes-base', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
   makeEntityNotesRepo: () => ({
     create: createNote,
     list: vi.fn(),
@@ -50,13 +50,13 @@ vi.mock('../main/security/current-user', () => ({
 }))
 
 // Stub everything else company.ipc.ts touches so importing it doesn't blow up.
-vi.mock('../main/database/repositories/org-company.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   listCompanies: vi.fn(),
   getCompany: vi.fn(),
   updateCompany: vi.fn(),
 }))
-vi.mock('../main/database/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
-vi.mock('../main/database/repositories/company-file-flags.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
   getFlaggedFiles: vi.fn(() => []),
 }))
 

@@ -22,7 +22,7 @@ vi.mock('exa-js', () => ({
 
 // ─── Mock contact-utils (normalizeLinkedinUrl) ────────────────────────────────
 
-vi.mock('../main/database/repositories/contact-utils', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact-utils', () => ({
   normalizeLinkedinUrl: (url: string) => {
     if (!url.includes('/in/')) return null
     const clean = url.replace(/^https?:\/\/(www\.)?linkedin\.com/, 'https://www.linkedin.com')
@@ -42,7 +42,7 @@ vi.mock('../main/services/contact-web-enrichment', () => ({
 
 const mockGetContact = vi.fn()
 
-vi.mock('../main/database/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: (...args: unknown[]) => mockGetContact(...args),
 }))
 
@@ -50,7 +50,7 @@ vi.mock('../main/database/repositories/contact.repo', () => ({
 
 const mockLogAudit = vi.fn()
 
-vi.mock('../main/database/repositories/audit.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({
   logAudit: (...args: unknown[]) => mockLogAudit(...args),
 }))
 

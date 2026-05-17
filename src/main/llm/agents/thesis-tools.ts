@@ -27,12 +27,12 @@ import { SubmitReviewInputSchema } from '../../../shared/types/stress-test-repor
 import { agentWebSearch, agentWebFetch } from '../../services/exa-research'
 import { normalizeLegacyHeadings } from '../memo/sections'
 
-import * as companyRepo from '../../database/repositories/org-company.repo'
-import * as memoRepo from '../../database/repositories/investment-memo.repo'
-import * as meetingRepo from '../../database/repositories/meeting.repo'
-import * as contactRepo from '../../database/repositories/contact.repo'
-import { getFlaggedFiles } from '../../database/repositories/company-file-flags.repo'
-import { makeEntityNotesRepo } from '../../database/repositories/notes-base'
+import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import * as memoRepo from '@cyggie/db/sqlite/repositories/investment-memo.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
+import { getFlaggedFiles } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
+import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 import { readSummary, readTranscript, readLocalFile } from '../../storage/file-manager'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
