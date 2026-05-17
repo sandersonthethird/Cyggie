@@ -292,16 +292,44 @@ const MIN_PDF_TEXT_LENGTH = 100
  *
  * pdfjs-dist handles more font encodings, ligatures, and character maps than pdf-parse,
  * so it is used as a second-pass fallback before triggering the vision (image) path.
+ *
+ * v5 migration (PR3a): the `legacy/build/pdf` CJS entry was removed. We now
+ * dynamic-import `legacy/build/pdf.mjs` and explicitly set `workerSrc` to the
+ * bundled worker — v5 requires this even in Node main-process contexts.
  */
-async function extractTextWithPdfjs(buf: Buffer): Promise<string | null> {
+type PdfjsModule = {
+  GlobalWorkerOptions: { workerSrc: string }
+  getDocument: (opts: { data: Uint8Array; disableFontFace: boolean }) => {
+    promise: Promise<{
+      numPages: number
+      getPage: (n: number) => Promise<{
+        getTextContent: () => Promise<{ items: Array<{ str: string }> }>
+      }>
+    }>
+  }
+}
+
+let pdfjsModulePromise: Promise<PdfjsModule> | null = null
+async function loadPdfjs(): Promise<PdfjsModule> {
+  if (!pdfjsModulePromise) {
+    pdfjsModulePromise = (async () => {
+      // v5 ships the Node-compatible build at legacy/build/pdf.mjs.
+      const mod = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as unknown as PdfjsModule
+      // require.resolve is fine in main process; resolves to the worker file
+      // on disk so pdfjs can fork it as a worker thread.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      mod.GlobalWorkerOptions.workerSrc = require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs')
+      return mod
+    })()
+  }
+  return pdfjsModulePromise
+}
+
+// Exported for src/tests/pdfjs-extract-text.test.ts — happy-path smoke test
+// over the v5 import + worker config + getTextContent integration.
+export async function extractTextWithPdfjs(buf: Buffer): Promise<string | null> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf') as {
-      getDocument: (opts: { data: Uint8Array; disableFontFace: boolean }) => { promise: Promise<{
-        numPages: number
-        getPage: (n: number) => Promise<{ getTextContent: () => Promise<{ items: { str: string }[] }> }>
-      }> }
-    }
+    const pdfjsLib = await loadPdfjs()
     const data = new Uint8Array(buf)
     const doc = await pdfjsLib.getDocument({ data, disableFontFace: true }).promise
     const parts: string[] = []

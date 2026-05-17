@@ -58,7 +58,11 @@ vi.mock('../main/utils/company-extractor', () => ({
 const pdfParseMock = vi.fn()
 vi.mock('pdf-parse', () => ({ default: (buf: Buffer) => pdfParseMock(buf) }))
 
-vi.mock('pdfjs-dist/legacy/build/pdf', () => ({
+// v5 ships the Node-compatible build at legacy/build/pdf.mjs (the CJS
+// `legacy/build/pdf` entry was removed). Mock that path; include
+// GlobalWorkerOptions because file-manager sets workerSrc at load time.
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
+  GlobalWorkerOptions: { workerSrc: '' },
   getDocument: () => ({
     promise: Promise.resolve({ numPages: 0, getPage: vi.fn() }),
   }),
