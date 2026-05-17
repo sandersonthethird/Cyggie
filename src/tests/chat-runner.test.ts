@@ -83,9 +83,20 @@ describe('injectTextAttachments', () => {
   it('truncates each text attachment to 50K chars', () => {
     const big = 'A'.repeat(60_000)
     const out = injectTextAttachments('q', [{ name: 'big.txt', mimeType: 'text/plain', type: 'text', data: big }])
-    // Output should contain exactly 50_000 'A's, no more.
-    expect(out).toMatch(/A{50000}/)
-    expect(out).not.toMatch(/A{50001}/)
+    // The truncated payload should appear as a single uninterrupted run of
+    // 50_000 'A's. Use a longest-run scan instead of /A{50000}/ — the regex
+    // backtracks catastrophically and was flaky under parallel test load.
+    let longest = 0
+    let current = 0
+    for (let i = 0; i < out.length; i++) {
+      if (out[i] === 'A') {
+        current += 1
+        if (current > longest) longest = current
+      } else {
+        current = 0
+      }
+    }
+    expect(longest).toBe(50_000)
   })
 
   it('separates multiple attachments with blank lines', () => {

@@ -36,7 +36,7 @@ export function middleware(request: NextRequest): NextResponse {
     request: { headers: requestHeaders },
   })
 
-  response.headers.set('Content-Security-Policy-Report-Only', csp)
+  response.headers.set('Content-Security-Policy', csp)
   return response
 }
 

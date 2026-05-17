@@ -1221,3 +1221,31 @@ new IPC channel; user can opt in to sharing.
 **Effort:** XS (per run)
 **Priority:** P2 (recurring on model bump)
 **Depends on:** Nothing.
+
+---
+
+## P2 — Security
+
+### SETTINGS_PICK_AND_SET_FOLDER channel for trusted folder-typed setting writes
+**What:** Add a new IPC channel that wraps `dialog.showOpenDialog({properties: ['openDirectory']})` + `SETTINGS_SET` for any setting that holds a directory path. Renderer triggers a picker (no path arg from renderer); main owns the path-source guarantee.
+**Why:** PR2's `APP_OPEN_USER_FOLDER` validates via `isDirectory()` + existence, but an XSS payload can still write `/etc` (a valid directory) via `SETTINGS_SET('companyLocalFilesRoot', '/etc')` and then trigger the open. The proper fix is to disallow renderer-arbitrary-string writes to folder settings entirely.
+**Pros:** Closes the residual capability hole. Pairs naturally with PR2's capability-flow philosophy. Tiny: one channel + handler.
+**Cons:** Need to identify every folder-typed setting (audit) and replace renderer-side `SETTINGS_SET('folderKey', value)` calls with the new channel. Probably 2-3 call sites; main checks: any setting key matching `*Root`, `*Path`, `*Dir` should be folder-typed.
+**Context:** PR2 §15 plan explicitly defers this; current validation (`isDirectory + exists`) is a cheap defense that catches the obvious cases. The trusted-picker fix is the architectural correct answer. After this lands, the `isDirectory` check in `APP_OPEN_USER_FOLDER` can stay as belt-and-suspenders or be removed.
+**Effort:** S
+**Priority:** P2
+**Depends on:** PR2 merged.
+
+---
+
+## P3 — Security
+
+### LinkedIn windows: audit + flip sandbox: true
+**What:** Audit the LinkedIn login window ([src/main/ipc/contacts.ipc.ts:332](src/main/ipc/contacts.ipc.ts#L332)) and LinkedIn enrichment scraper ([src/main/services/linkedin-enrichment.service.ts:117](src/main/services/linkedin-enrichment.service.ts#L117)) for sandbox compatibility. Flip `sandbox: true` once smoke tests confirm enrichment scraping still works.
+**Why:** Both windows load untrusted external linkedin.com content. Sandbox is the right shape for that case. PR3b deferred them because enrichment does DOM scraping that could surprise under sandbox.
+**Pros:** Completes the BrowserWindow hardening. No preload to break (these windows have no preload binding).
+**Cons:** Enrichment scraping may rely on a capability sandbox restricts (e.g., reading arbitrary cookies, accessing certain DOM APIs). Needs end-to-end smoke of contact-enrichment-from-LinkedIn flows.
+**Context:** PR3b §17 plan covered the two main+popout windows but explicitly deferred LinkedIn per security plan review decision 2C. The audit during planning showed both windows have `sandbox: false` (defaulted; explicitly unset). Static analysis says safe to flip; the manual smoke is the gate.
+**Effort:** S
+**Priority:** P3
+**Depends on:** PR3b merged.

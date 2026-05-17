@@ -29,29 +29,29 @@ describe('generateNonce', () => {
 })
 
 describe('middleware CSP header', () => {
-  it('sets Content-Security-Policy-Report-Only with a nonce', () => {
+  it('sets enforcing Content-Security-Policy with a nonce', () => {
     const req = makeReq()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response = middleware(req as any)
-    const csp = response.headers.get('content-security-policy-report-only')
+    const csp = response.headers.get('content-security-policy')
     expect(csp).not.toBeNull()
     expect(csp!).toMatch(/script-src 'self' 'nonce-[^']+' 'strict-dynamic'/)
     expect(csp!).toMatch(/object-src 'none'/)
     expect(csp!).toMatch(/frame-ancestors 'none'/)
   })
 
-  it('does not set the enforcing (non-Report-Only) CSP header', () => {
+  it('does not set the Report-Only CSP header', () => {
     const req = makeReq()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response = middleware(req as any)
-    expect(response.headers.get('content-security-policy')).toBeNull()
+    expect(response.headers.get('content-security-policy-report-only')).toBeNull()
   })
 
   it('puts a distinct nonce on each request', () => {
     const r1 = middleware(makeReq() as never)
     const r2 = middleware(makeReq() as never)
-    const csp1 = r1.headers.get('content-security-policy-report-only')!
-    const csp2 = r2.headers.get('content-security-policy-report-only')!
+    const csp1 = r1.headers.get('content-security-policy')!
+    const csp2 = r2.headers.get('content-security-policy')!
     const n1 = csp1.match(/nonce-([^']+)'/)?.[1]
     const n2 = csp2.match(/nonce-([^']+)'/)?.[1]
     expect(n1).toBeDefined()
