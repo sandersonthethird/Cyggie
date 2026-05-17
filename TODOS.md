@@ -1196,20 +1196,6 @@ new IPC channel; user can opt in to sharing.
 
 ---
 
-## P1 — Security
-
-### PR1.5: Flip CSP from Report-Only to enforcing
-**What:** Change `Content-Security-Policy-Report-Only` to `Content-Security-Policy` in [src/renderer/index.html](src/renderer/index.html) and [web/middleware.ts](web/middleware.ts). Verify zero unexpected violations during the prior dev cycle.
-**Why:** Report-Only mode only logs violations; it does not block exfiltration. Long-lived Report-Only mode is an anti-pattern — it gives the illusion of protection without delivering it.
-**Pros:** Closes the actual exfiltration channel that the CSP is designed to block. Required to claim the XSS-protection benefit of the PR1 work.
-**Cons:** If any legitimate path was missed during the dev cycle, this will block it. Mitigation: observe Report-Only logs in dev console + Vercel logs for ≥1 week before flipping. The desktop CSP also currently includes `ws:`/`wss:` and `style-src 'unsafe-inline'` for Vite dev — those should be gated to dev-only before enforcing in prod builds (Vite already gates dev vs prod for bundling, but the meta tag is static; consider injecting CSP at build time instead of via meta).
-**Context:** PR1 shipped CSP in Report-Only mode (decision 1A in the security plan review) to avoid breaking the app on first deploy. The dev cycle exposes any violations; this TODO flips the switch once the violations are addressed. Plan file: `/Users/sandersoncass/.claude/plans/here-are-some-security-tidy-cake.md`.
-**Effort:** S
-**Priority:** P1
-**Depends on:** PR1 merged + ≥1 week of clean Report-Only logs.
-
----
-
 ## P2 — Security (recurring)
 
 ### Re-run markdown HTML survey after Claude/OpenAI model upgrades
