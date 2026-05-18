@@ -26,6 +26,20 @@ export const IPC_CHANNELS = {
   RECORDING_FINALIZE_ERROR: 'recording:finalize-error',
   RECORDING_AUDIO_FLOW_STATUS: 'recording:audio-flow-status',
   RECORDING_MIC_STATUS: 'recording:mic-status',
+  // PCM frames sent from renderer → main on every audio chunk; consumed by
+  // the Deepgram pipeline in recording.ipc.ts. Silent no-op via the preload
+  // allowlist breaks transcription entirely.
+  RECORDING_AUDIO_DATA: 'recording:audio-data',
+
+  // Audio loopback — handlers registered by electron-audio-loopback's
+  // initAudioLoopback() in main/index.ts; channel names are fixed by the
+  // library and must match the strings the package registers.
+  AUDIO_LOOPBACK_ENABLE: 'enable-loopback-audio',
+  AUDIO_LOOPBACK_DISABLE: 'disable-loopback-audio',
+
+  // Broadcast from main → renderer when a calendar notification's
+  // "Start Recording" action fires (see main/calendar/meeting-notifier.ts).
+  NOTIFICATION_START_RECORDING: 'notification:start-recording',
 
   // Calendar
   CALENDAR_CONNECT: 'calendar:connect',

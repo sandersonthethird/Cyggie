@@ -5,7 +5,7 @@
  * Mock boundaries:
  *   - api.invoke → controls IPC responses
  *   - api.on → no-op subscription
- *   - window.api.invoke → controls shell:open-external + direct IPC
+ *   - window.api.invoke → controls app:open-external-url + direct IPC
  *   - navigator.clipboard → controls copy
  *   - CSS modules → identity proxy
  *
@@ -17,7 +17,7 @@
  *   share-error:    SHARE_LINK returns error → shareError shown
  *   share-disabled: Share disabled while generating
  *   copy:           Copy link → clipboard.writeText → "Copied!" shown
- *   open:           Open btn → shell:open-external called
+ *   open:           Open btn → app:open-external-url called
  *   revoke:         Revoke btn → invoke REVOKE_SHARE → URL row cleared
  *   shared-badge:   Badge shown when shareUrl is set
  */
@@ -38,7 +38,7 @@ vi.mock('../renderer/api', () => ({
   },
 }))
 
-// window.api for direct IPC calls (shell:open-external, INVESTMENT_MEMO_GET_OR_CREATE)
+// window.api for direct IPC calls (app:open-external-url, INVESTMENT_MEMO_GET_OR_CREATE)
 const windowInvokeMock = vi.fn()
 Object.defineProperty(window, 'api', {
   value: { invoke: (...args: unknown[]) => windowInvokeMock(...args) },
@@ -230,14 +230,14 @@ describe('CompanyMemo — Open in browser', () => {
   })
   afterEach(cleanup)
 
-  it('calls shell:open-external with shareUrl when Open is clicked', async () => {
+  it('calls app:open-external-url with shareUrl when Open is clicked', async () => {
     await loadMemo()
     windowInvokeMock.mockResolvedValue(undefined)
     invokeMock.mockResolvedValueOnce({ success: true, url: 'https://cyggie.vercel.app/m/tok2', token: 'tok2' })
     await act(async () => { fireEvent.click(screen.getByText('Share')) })
     await waitFor(() => expect(screen.getByText('Open')).toBeTruthy())
     fireEvent.click(screen.getByText('Open'))
-    expect(windowInvokeMock).toHaveBeenCalledWith('shell:open-external', 'https://cyggie.vercel.app/m/tok2')
+    expect(windowInvokeMock).toHaveBeenCalledWith('app:open-external-url', 'https://cyggie.vercel.app/m/tok2')
   })
 })
 

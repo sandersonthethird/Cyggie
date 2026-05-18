@@ -636,7 +636,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
 
   function openInBrowser() {
     if (!shareUrl) return
-    window.api.invoke('shell:open-external', shareUrl)
+    window.api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, shareUrl)
   }
 
   async function revokeShare() {
