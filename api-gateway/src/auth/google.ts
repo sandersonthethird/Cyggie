@@ -62,7 +62,17 @@ export function buildAuthUrl(opts: {
     // @ts-expect-error — google-auth-library's CodeChallengeMethod is an enum but
     // the string 'S256' is the correct value per RFC 7636. Matches desktop's usage.
     code_challenge_method: 'S256',
-    include_granted_scopes: true,
+    // V1 narrows to Calendar-only consent (decision 2026-05-18 per
+    // ~/.claude/plans/claude-code-prompt-jolly-eagle.md "Cloud-direct vs desktop-
+    // mediated"). The desktop OAuth client retains its own broader Gmail + Drive
+    // grant via a separate client_id; the gateway only asks for what V1 actually
+    // uses, so first-time customers see a minimal consent screen.
+    //
+    // When the "Cloud-side Gmail + Drive services" backlog item ships (post-V1,
+    // tracked in TODOS.md P1 section), this flips back to `true` OR the gateway
+    // adds an incremental-authorization prompt at the moment Gmail/Drive features
+    // first activate.
+    include_granted_scopes: false,
   })
 }
 
