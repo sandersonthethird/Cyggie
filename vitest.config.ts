@@ -19,6 +19,10 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/tests/**/*.test.{ts,tsx}', 'web/middleware.test.ts']
+    include: [
+      'src/tests/**/*.test.{ts,tsx}',
+      'web/middleware.test.ts',
+      'api-gateway/test/**/*.test.ts'
+    ]
   }
 })
