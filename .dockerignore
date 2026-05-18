@@ -1,0 +1,55 @@
+# Build context lives at the repo root (Fly invokes docker with cwd at the
+# directory holding fly.toml, but fly.toml lives in api-gateway/ — we pass
+# `--build-context root=..` via flyctl or run from root). Either way, keep
+# the context as small as possible.
+
+# Heavy / irrelevant directories
+node_modules
+**/node_modules
+dist
+out
+build
+.git
+.github
+.vscode
+.expo
+
+# Local secrets / env (Fly secrets manager owns these in prod)
+.env
+.env.local
+.env*.local
+
+# Desktop-only — gateway never imports these
+src
+electron-builder.yml
+electron.vite.config.*
+dev-app-update.yml
+build
+
+# Web app — separate deploy
+web
+
+# Mobile app — separate deploy via EAS
+mobile/ios
+mobile/android
+mobile/.expo
+mobile/node_modules
+
+# Tests, docs, scratch
+docs
+runbooks
+scripts
+vitest.config.*
+test
+tests
+__tests__
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+
+# Memory / agent state
+.claude
+
+# Logs and OS junk
+*.log
+.DS_Store
