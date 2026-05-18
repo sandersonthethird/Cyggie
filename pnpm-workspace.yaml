@@ -23,3 +23,18 @@ nodeLinker: hoisted
 
 publicHoistPattern:
   - '@cyggie/*'
+  # Force a single physical React + react-dom across the monorepo. Without
+  # this, each Expo SDK 54 package re-installs its own react@19.1.0 copy
+  # nested under its own node_modules/. Metro picks different copies for
+  # different imports → "Cannot read property useId of null" (the classic
+  # multiple-React-instance hook error).
+  - 'react'
+  - 'react-dom'
+
+# Force every transitive react/react-dom in the dep graph to the exact
+# version Expo SDK 54 pins. Without overrides, the root package.json's
+# "react": "^19.0.0" resolves to 19.2.3 and conflicts with Expo's 19.1.0
+# requirement, causing pnpm to keep two copies side by side.
+overrides:
+  react: 19.1.0
+  react-dom: 19.1.0

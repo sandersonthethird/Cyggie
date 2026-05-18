@@ -5,12 +5,6 @@
   "main": "./out/main/index.js",
   "author": "Cyggie",
   "license": "MIT",
-  "pnpm": {
-    "nodeLinker": "hoisted",
-    "publicHoistPattern": ["@cyggie/*"],
-    "blockExoticSubdeps": false,
-    "autoInstallPeers": true
-  },
   "scripts": {
     "predev": "npx @electron/rebuild -f -w better-sqlite3 --buildFromSource",
     "dev": "electron-vite dev",
