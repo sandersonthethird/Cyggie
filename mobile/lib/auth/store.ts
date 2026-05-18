@@ -36,6 +36,10 @@ interface AuthState {
   }) => Promise<void>
   // Called when /auth/refresh succeeds. Rotates access + refresh.
   updateTokens: (opts: { accessToken: string; refreshToken: string }) => Promise<void>
+  // Called after /auth/firms/claim or /auth/firms/join — gateway mints a
+  // fresh access token (firm_id baked in) but does NOT rotate the refresh
+  // token. Touching the refresh would trigger an unnecessary FaceID prompt.
+  updateAccessToken: (opts: { accessToken: string }) => Promise<void>
   // Wipe. Used by sign-out and unrecoverable 401.
   signOut: () => Promise<void>
 }
@@ -72,6 +76,11 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   updateTokens: async ({ accessToken, refreshToken }) => {
     await Promise.all([setAccessToken(accessToken), setRefreshToken(refreshToken)])
+    set({ accessToken })
+  },
+
+  updateAccessToken: async ({ accessToken }) => {
+    await setAccessToken(accessToken)
     set({ accessToken })
   },
 

@@ -4,13 +4,14 @@ import { router } from 'expo-router'
 import { useAuthStore } from '../lib/auth/store'
 
 // Index route — pure dispatcher. Routes the user to:
-//   • /(auth)/sign-in    when signed_out
-//   • /(tabs)/calendar   when signed_in AND action=returning
-//   • /(auth)/create-workspace when signed_in AND action=create_workspace (Step 7)
-//   • /(auth)/join-firm when signed_in AND action=join_firm (Step 7)
+//   • /(auth)/sign-in           when signed_out
+//   • /(auth)/create-workspace  when signed_in AND lastAction=create_workspace
+//   • /(auth)/join-firm         when signed_in AND lastAction=join_firm
+//   • /(tabs)/calendar          when signed_in AND lastAction=returning
 //
-// Step 7 wires create-workspace and join-firm; for now the create_workspace
-// and join_firm branches fall back to /(auth)/sign-in with an explanatory hint.
+// The lastAction value comes from the gateway's cyggie:// callback redirect,
+// stashed by the auth store during signIn(). It is mutated after onboarding
+// completes (Step 7 routes set it to 'returning' before router.replace('/')).
 
 export default function IndexScreen() {
   const status = useAuthStore((s) => s.status)
@@ -24,19 +25,19 @@ export default function IndexScreen() {
       return
     }
 
-    // status === 'signed_in'. Branch by lastAction.
-    if (lastAction === 'create_workspace') {
-      // TODO Step 7: router.replace('/(auth)/create-workspace')
-      router.replace('/(auth)/sign-in')
-      return
+    // signed_in. Branch by the onboarding action hint.
+    switch (lastAction) {
+      case 'create_workspace':
+        router.replace('/(auth)/create-workspace')
+        return
+      case 'join_firm':
+        router.replace('/(auth)/join-firm')
+        return
+      case 'returning':
+      default:
+        router.replace('/(tabs)/calendar')
+        return
     }
-    if (lastAction === 'join_firm') {
-      // TODO Step 7: router.replace('/(auth)/join-firm')
-      router.replace('/(auth)/sign-in')
-      return
-    }
-    // returning or unknown — go to home. M1b wires the real Calendar route.
-    router.replace('/(auth)/sign-in')
   }, [status, lastAction])
 
   return (
