@@ -1,5 +1,7 @@
 module.exports = function (api) {
-  api.cache(true)
+  // Invalidate cache when EXPO_ROUTER_APP_ROOT changes — otherwise babel may
+  // re-use a stale config in Metro's worker pool.
+  api.cache.using(() => process.env.EXPO_ROUTER_APP_ROOT)
   return {
     presets: ['babel-preset-expo'],
     plugins: [

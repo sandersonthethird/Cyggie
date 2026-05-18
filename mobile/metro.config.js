@@ -16,7 +16,5 @@ config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
 ]
-// Avoid duplicate React instances when workspaces hoist a different version.
-config.resolver.disableHierarchicalLookup = true
 
 module.exports = config
