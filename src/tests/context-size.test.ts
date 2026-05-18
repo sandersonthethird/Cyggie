@@ -3,7 +3,7 @@ import {
   estimateMemoGenContext,
   estimateChatContext,
   LARGE_CONTEXT_WARNING_CHARS,
-} from '../main/llm/context-size'
+} from '@cyggie/services/llm/context-size'
 
 const MEMO_CAPS = { perItemCap: 64_000, totalCap: 400_000 }
 const CHAT_CAPS = { perItemCap: 48_000, totalCap: 300_000 }

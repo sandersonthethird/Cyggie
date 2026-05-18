@@ -24,7 +24,7 @@ const mockQueryContact = vi.fn()
 const mockQueryAll = vi.fn()
 const mockAbortChatTurn = vi.fn()
 
-vi.mock('../main/llm/chat', () => ({
+vi.mock('@cyggie/services/llm/chat', () => ({
   queryMeeting: (...args: unknown[]) => mockQueryMeeting(...args),
   querySearchResults: (...args: unknown[]) => mockQuerySearchResults(...args),
   // Other exports unused by chat-dispatch.ts.
@@ -33,28 +33,28 @@ vi.mock('../main/llm/chat', () => ({
   injectTextAttachments: (q: string) => q,
 }))
 
-vi.mock('../main/llm/company-chat', () => ({
+vi.mock('@cyggie/services/llm/company-chat', () => ({
   queryCompany: (...args: unknown[]) => mockQueryCompany(...args),
   abortCompanyChat: () => {},
 }))
 
-vi.mock('../main/llm/contact-chat', () => ({
+vi.mock('@cyggie/services/llm/contact-chat', () => ({
   queryContact: (...args: unknown[]) => mockQueryContact(...args),
   abortContactChat: () => {},
 }))
 
-vi.mock('../main/llm/crm-chat', () => ({
+vi.mock('@cyggie/services/llm/crm-chat', () => ({
   queryAll: (...args: unknown[]) => mockQueryAll(...args),
   queryCrm: () => Promise.resolve(''),
   abortAllChat: () => {},
   buildCrmContext: () => Promise.resolve(''),
 }))
 
-vi.mock('../main/llm/chat-runner', () => ({
+vi.mock('@cyggie/services/llm/chat-runner', () => ({
   abortChatTurn: () => mockAbortChatTurn(),
 }))
 
-const { chatDispatch, abortChatDispatch } = await import('../main/llm/chat-dispatch')
+const { chatDispatch, abortChatDispatch } = await import('@cyggie/services/llm/chat-dispatch')
 
 beforeEach(() => {
   vi.clearAllMocks()

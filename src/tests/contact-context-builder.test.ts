@@ -57,7 +57,7 @@ vi.mock('../main/storage/file-manager', () => ({
   readLocalFile: async () => null,
 }))
 
-const { assembleContactContext } = await import('../main/llm/context-builders')
+const { assembleContactContext } = await import('@cyggie/services/llm/context-builders')
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

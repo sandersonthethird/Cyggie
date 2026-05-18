@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const generateSummary = vi.fn()
 
-vi.mock('../main/llm/provider-factory', () => ({
+vi.mock('@cyggie/services/llm/provider-factory', () => ({
   getProvider: () => ({
     name: 'mock',
     generateSummary,

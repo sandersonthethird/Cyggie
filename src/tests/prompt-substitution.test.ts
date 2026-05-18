@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { buildMemoProducerSystemPrompt } from '../main/llm/agents/memo-producer-agent'
-import { buildThesisStressTestSystemPrompt } from '../main/llm/agents/thesis-stress-test-agent'
-import { MEMO_SECTIONS } from '../main/llm/memo/sections'
+import { buildMemoProducerSystemPrompt } from '@cyggie/services/llm/agents/memo-producer-agent'
+import { buildThesisStressTestSystemPrompt } from '@cyggie/services/llm/agents/thesis-stress-test-agent'
+import { MEMO_SECTIONS } from '@cyggie/services/llm/memo/sections'
 
 describe('memo-producer system prompt substitution', () => {
   it('substitutes INVESTMENT_CRITERIA and SECTION_ROSTER and contains framework content', () => {

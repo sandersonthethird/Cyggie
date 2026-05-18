@@ -41,7 +41,7 @@ vi.mock('../main/security/current-user', () => ({
 
 // --- Import after mocks ---
 
-const { recoverSummaryFromCompanionNote } = await import('../main/services/meeting-summary-recovery')
+const { recoverSummaryFromCompanionNote } = await import('@cyggie/services/meeting-summary-recovery')
 
 // --- Helpers ---
 

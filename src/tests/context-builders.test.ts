@@ -67,7 +67,7 @@ vi.mock('../main/storage/file-manager', () => ({
 }))
 
 const { assembleCompanyContext, buildCompanyContext } = await import(
-  '../main/llm/context-builders'
+  '@cyggie/services/llm/context-builders'
 )
 
 beforeEach(() => {

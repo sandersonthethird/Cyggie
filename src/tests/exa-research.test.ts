@@ -8,7 +8,7 @@ vi.mock('../main/security/credentials', () => ({
 }))
 
 import { getCredential } from '../main/security/credentials'
-import { searchCompanyContext, agentWebSearch, agentWebFetch } from '../main/services/exa-research'
+import { searchCompanyContext, agentWebSearch, agentWebFetch } from '@cyggie/services/exa-research'
 
 const mockGetCredential = vi.mocked(getCredential)
 

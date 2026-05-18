@@ -38,9 +38,9 @@ vi.mock('../main/storage/file-manager', () => ({
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-import { extractDescription, buildProposalForCompany } from '../main/services/company-summary-sync.service'
+import { extractDescription, buildProposalForCompany } from '@cyggie/services/company-summary-sync.service'
 import type { CompanySummary } from '../shared/types/company'
-import type { ParsedVcSummaryFields } from '../main/services/company-summary-sync.service'
+import type { ParsedVcSummaryFields } from '@cyggie/services/company-summary-sync.service'
 
 // Minimal company stub — only fields checked inside buildProposalForCompany
 function makeCompany(overrides: Partial<CompanySummary> = {}): CompanySummary {

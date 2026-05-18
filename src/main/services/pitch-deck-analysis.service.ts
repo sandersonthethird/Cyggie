@@ -14,7 +14,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { getProvider } from '../llm/provider-factory'
+import { getProvider } from '@cyggie/services/llm/provider-factory'
 import type { PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import type { ChatAttachment } from '../../shared/types/chat'
 

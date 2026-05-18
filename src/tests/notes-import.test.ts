@@ -24,7 +24,7 @@ vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () => ({}))
 vi.mock('../main/security/current-user', () => ({ getCurrentUserId: vi.fn() }))
 vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
 vi.mock('../main/storage/paths', () => ({ getStoragePath: vi.fn(() => '/storage') }))
-vi.mock('../main/services/note-tagging.service', () => ({
+vi.mock('@cyggie/services/note-tagging.service', () => ({
   suggestNoteTag: vi.fn(),
   suggestFolderEntityTag: vi.fn(),
 }))

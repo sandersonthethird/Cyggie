@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
-import { generateKeyTakeaways } from '../llm/contact-key-takeaways'
+import { generateKeyTakeaways } from '@cyggie/services/llm/contact-key-takeaways'
 import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
 import * as contactDecisionLogRepo from '@cyggie/db/sqlite/repositories/contact-decision-log.repo'
 import { ingestContactEmails, cancelContactEmailIngest } from '../services/company-email-ingest.service'
@@ -13,14 +13,14 @@ import {
   enrichContactFromLinkedIn,
   enrichContactsFromLinkedInBatch,
 } from '../services/linkedin-enrichment.service'
-import { getContactSummaryUpdateProposalsFromMeetingId } from '../services/contact-summary-sync.service'
+import { getContactSummaryUpdateProposalsFromMeetingId } from '@cyggie/services/contact-summary-sync.service'
 import {
   findLinkedInUrlWithCascade,
   findLinkedInUrlsForContactsBatch,
   ExaDiscoveryError,
-} from '../services/exa-linkedin-discovery.service'
+} from '@cyggie/services/exa-linkedin-discovery.service'
 import { getCredential } from '../security/credentials'
-import { getProvider } from '../llm/provider-factory'
+import { getProvider } from '@cyggie/services/llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import { LinkedInEnrichError } from '../../shared/types/contact'

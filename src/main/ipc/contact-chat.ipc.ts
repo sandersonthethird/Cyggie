@@ -1,8 +1,10 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { abortContactChat } from '../llm/contact-chat'
-import { chatDispatch } from '../llm/chat-dispatch'
-import { withChatPersistence } from '../llm/chat-persistence'
+import { abortContactChat } from '@cyggie/services/llm/contact-chat'
+import { chatDispatch } from '@cyggie/services/llm/chat-dispatch'
+import { withChatPersistence } from '@cyggie/services/llm/chat-persistence'
+import { withProgressSink } from '@cyggie/services/llm/send-progress'
+import { createChatProgressSink } from '../lib/ipc-progress-sink'
 import { deriveChatContext } from '../../shared/utils/chat-context'
 import { getCurrentUserId } from '../security/current-user'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
@@ -34,11 +36,14 @@ export function registerContactChatHandlers(): void {
         contextLabel: getContactName(data.contactId),
         userMessage: { content: data.question.trim(), attachments: data.attachments },
         userId: getCurrentUserId(),
-        runLLM: () => chatDispatch({
-          kind: { kind: 'contact', contactId: data.contactId },
-          question: data.question.trim(),
-          attachments: data.attachments,
-        }),
+        runLLM: () =>
+          withProgressSink(createChatProgressSink(), () =>
+            chatDispatch({
+              kind: { kind: 'contact', contactId: data.contactId },
+              question: data.question.trim(),
+              attachments: data.attachments,
+            }),
+          ),
         extractText: (response: string) => response,
       })
     }

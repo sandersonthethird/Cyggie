@@ -35,7 +35,7 @@ vi.mock('electron', () => ({
 const llmGenerateSpy = vi.fn(() => {
   throw new Error('LLM should not be called when org_companies wins')
 })
-vi.mock('../main/llm/provider-factory', () => ({
+vi.mock('@cyggie/services/llm/provider-factory', () => ({
   getProvider: () => ({ generate: (...args: unknown[]) => llmGenerateSpy(...args) })
 }))
 

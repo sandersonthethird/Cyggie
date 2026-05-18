@@ -85,7 +85,7 @@ vi.mock('fs', async () => {
 
 // Avoid pulling in the full meeting.ipc surface — we only want the new handlers.
 // Stub the heavy deps it imports so module load doesn't explode.
-vi.mock('../main/services/meeting-summary-recovery', () => ({ recoverSummaryFromCompanionNote: vi.fn() }))
+vi.mock('@cyggie/services/meeting-summary-recovery', () => ({ recoverSummaryFromCompanionNote: vi.fn() }))
 vi.mock('@cyggie/db/sqlite/repositories/search.repo', () => ({ removeFromIndex: vi.fn() }))
 vi.mock('../main/drive/google-drive', () => ({ renameFile: vi.fn() }))
 vi.mock('../main/services/company-enrichment', () => ({

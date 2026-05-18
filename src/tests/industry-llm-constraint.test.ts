@@ -8,7 +8,7 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { CANONICAL_INDUSTRIES, INDUSTRY_PROMPT_LIST, isCanonicalIndustry, normalizeIndustryOrNull } from '../shared/constants/industries'
 
-const SUMMARY_SYNC_PATH = resolve(__dirname, '../main/services/company-summary-sync.service.ts')
+const SUMMARY_SYNC_PATH = resolve(__dirname, '../../packages/services/src/company-summary-sync.service.ts')
 const PITCH_DECK_PATH = resolve(__dirname, '../main/services/pitch-deck-ingestion.service.ts')
 
 describe('industry constants', () => {

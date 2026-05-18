@@ -15,7 +15,7 @@ import {
   buildHeaderHtml,
   roundLabel,
 } from '../main/services/memo-export.service'
-import { buildMemoSystemPrompt } from '../main/llm/memo-generator'
+import { buildMemoSystemPrompt } from '@cyggie/services/llm/memo-generator'
 
 // ---------------------------------------------------------------------------
 // roundLabel

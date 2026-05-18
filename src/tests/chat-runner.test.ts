@@ -30,7 +30,7 @@ let capturedCalls: CapturedCall[] = []
 let resolveProvider: ((s: string) => void) | null = null
 let rejectProvider: ((e: Error) => void) | null = null
 
-vi.mock('../main/llm/provider-factory', () => ({
+vi.mock('@cyggie/services/llm/provider-factory', () => ({
   getProvider: () => ({
     generateSummary: (
       system: string,
@@ -49,12 +49,12 @@ vi.mock('../main/llm/provider-factory', () => ({
   }),
 }))
 
-vi.mock('../main/llm/send-progress', () => ({
+vi.mock('@cyggie/services/llm/send-progress', () => ({
   sendProgress: () => {},
 }))
 
 const { runChatTurn, abortChatTurn, injectTextAttachments } = await import(
-  '../main/llm/chat-runner'
+  '@cyggie/services/llm/chat-runner'
 )
 
 beforeEach(() => {

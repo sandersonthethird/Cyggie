@@ -31,13 +31,13 @@ vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
 }))
 vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({ getSetting: vi.fn() }))
 vi.mock('../main/security/credentials', () => ({ getCredential: vi.fn(() => null) }))
-vi.mock('../main/llm/claude-provider', () => ({ ClaudeProvider: vi.fn() }))
-vi.mock('../main/llm/ollama-provider', () => ({ OllamaProvider: vi.fn() }))
+vi.mock('@cyggie/services/llm/claude-provider', () => ({ ClaudeProvider: vi.fn() }))
+vi.mock('@cyggie/services/llm/ollama-provider', () => ({ OllamaProvider: vi.fn() }))
 
 const { listCompanies } = await import('@cyggie/db/sqlite/repositories/org-company.repo')
 const { listContactsLight } = await import('@cyggie/db/sqlite/repositories/contact.repo')
 const { suggestTitleEntityTag, suggestFolderEntityTag } = await import(
-  '../main/services/note-tagging.service'
+  '@cyggie/services/note-tagging.service'
 )
 
 // Minimal CompanySummary stub — only the fields accessed by the two functions under test

@@ -45,8 +45,8 @@ vi.mock('@anthropic-ai/sdk', () => ({
   },
 }))
 
-const { getProvider } = await import('../main/llm/provider-factory')
-const { OpenAIProvider } = await import('../main/llm/openai-provider')
+const { getProvider } = await import('@cyggie/services/llm/provider-factory')
+const { OpenAIProvider } = await import('@cyggie/services/llm/openai-provider')
 
 describe('getProvider routing', () => {
   beforeEach(() => {

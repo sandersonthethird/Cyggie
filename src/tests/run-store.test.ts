@@ -10,7 +10,7 @@ import { getDatabase } from '@cyggie/db/sqlite/connection'
 import {
   startRun, completeRun, getRun, listRuns, listRunEvents,
   makeEventWriter, averageCostForKind, gcOrphanedRuns,
-} from '../main/llm/agents/run-store'
+} from '@cyggie/services/llm/agents/run-store'
 import { bulkInsert, listByVersion, listCritiquesByVersion } from '@cyggie/db/sqlite/repositories/memo-evidence.repo'
 
 const mockGetDb = vi.mocked(getDatabase)

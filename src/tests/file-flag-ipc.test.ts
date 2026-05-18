@@ -35,13 +35,13 @@ vi.mock('../main/storage/file-manager', () => ({
   validateFileForChatContext: validateMock,
 }))
 
-vi.mock('../main/llm/company-chat', () => ({
+vi.mock('@cyggie/services/llm/company-chat', () => ({
   abortCompanyChat: vi.fn(),
 }))
-vi.mock('../main/llm/chat-dispatch', () => ({
+vi.mock('@cyggie/services/llm/chat-dispatch', () => ({
   chatDispatch: vi.fn(),
 }))
-vi.mock('../main/llm/chat-persistence', () => ({
+vi.mock('@cyggie/services/llm/chat-persistence', () => ({
   withChatPersistence: vi.fn(),
 }))
 vi.mock('../main/security/current-user', () => ({

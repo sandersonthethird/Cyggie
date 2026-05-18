@@ -37,7 +37,7 @@ import {
   ContextOverflowError,
   DEFAULT_BUDGET,
   type MeetingTranscriptInput,
-} from '../main/llm/memo/context-budget'
+} from '@cyggie/services/llm/memo/context-budget'
 
 // ─── Anthropic SDK shim ───────────────────────────────────────────────────
 

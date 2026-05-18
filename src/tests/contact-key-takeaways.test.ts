@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mockAssembleContactContext = vi.fn()
 
-vi.mock('../main/llm/context-builders', () => ({
+vi.mock('@cyggie/services/llm/context-builders', () => ({
   assembleContactContext: (...args: unknown[]) => mockAssembleContactContext(args[0]),
 }))
 
@@ -27,7 +27,7 @@ vi.mock('../main/llm/context-builders', () => ({
 let capturedSignal: AbortSignal | undefined
 const mockGenerateSummary = vi.fn()
 
-vi.mock('../main/llm/provider-factory', () => ({
+vi.mock('@cyggie/services/llm/provider-factory', () => ({
   getProvider: () => ({
     generateSummary: async (
       system: string,
@@ -41,7 +41,7 @@ vi.mock('../main/llm/provider-factory', () => ({
   })
 }))
 
-const { generateKeyTakeaways, abortKeyTakeaways } = await import('../main/llm/contact-key-takeaways')
+const { generateKeyTakeaways, abortKeyTakeaways } = await import('@cyggie/services/llm/contact-key-takeaways')
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 

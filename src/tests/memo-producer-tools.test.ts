@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // Mock the exa-research module so web_search/web_fetch don't hit the network.
-vi.mock('../main/services/exa-research', () => ({
+vi.mock('@cyggie/services/exa-research', () => ({
   agentWebSearch: vi.fn(),
   agentWebFetch: vi.fn(),
 }))
@@ -27,10 +27,10 @@ import {
   buildMemoProducerTools,
   EVIDENCE_BUFFER_CAP,
   type MemoProducerRunState,
-} from '../main/llm/agents/memo-producer-tools'
-import { MEMO_SECTIONS, type MemoSectionHeading } from '../main/llm/memo/sections'
-import type { ToolContext } from '../main/llm/agents/define-tool'
-import * as exa from '../main/services/exa-research'
+} from '@cyggie/services/llm/agents/memo-producer-tools'
+import { MEMO_SECTIONS, type MemoSectionHeading } from '@cyggie/services/llm/memo/sections'
+import type { ToolContext } from '@cyggie/services/llm/agents/define-tool'
+import * as exa from '@cyggie/services/exa-research'
 
 const mockWebSearch = vi.mocked(exa.agentWebSearch)
 const mockWebFetch = vi.mocked(exa.agentWebFetch)

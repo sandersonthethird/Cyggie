@@ -40,11 +40,11 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
     prepare: () => ({ all: () => [], get: () => undefined, run: () => ({ changes: 0 }) }),
   }),
 }))
-vi.mock('../main/services/exa-research', () => ({
+vi.mock('@cyggie/services/exa-research', () => ({
   searchCompanyContext: vi.fn(() => Promise.resolve({ queries: [], results: [] })),
 }))
 
-import { runMemoProducerAgent } from '../main/llm/agents/memo-producer-agent'
+import { runMemoProducerAgent } from '@cyggie/services/llm/agents/memo-producer-agent'
 
 describe('runMemoProducerAgent', () => {
   it('fails fast with AuthenticationError when no Claude API key is configured', async () => {

@@ -55,7 +55,7 @@ vi.mock('../main/storage/file-manager', () => ({
 
 // ─── Mock: provider-factory ───────────────────────────────────────────────────
 
-vi.mock('../main/llm/provider-factory', () => ({
+vi.mock('@cyggie/services/llm/provider-factory', () => ({
   getProvider: () => ({
     generateSummary: async (_sys: string, _usr: string, onChunk: (c: string) => void) => {
       onChunk('Test summary output')
@@ -66,7 +66,7 @@ vi.mock('../main/llm/provider-factory', () => ({
 
 // ─── Mock: critique ───────────────────────────────────────────────────────────
 
-vi.mock('../main/llm/critique', () => ({
+vi.mock('@cyggie/services/llm/critique', () => ({
   critiqueText: async (_provider: unknown, draft: string) => draft,
 }))
 
@@ -78,7 +78,7 @@ vi.mock('@cyggie/db/sqlite/repositories/search.repo', () => ({
 
 // ─── Mock: company-summary-sync ───────────────────────────────────────────────
 
-vi.mock('../main/services/company-summary-sync.service', () => ({
+vi.mock('@cyggie/services/company-summary-sync.service', () => ({
   getVcSummaryCompanyUpdateProposals: () => [],
 }))
 
@@ -111,13 +111,13 @@ vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
 
 // ─── Mock: task-extraction ────────────────────────────────────────────────────
 
-vi.mock('../main/services/task-extraction.service', () => ({
+vi.mock('@cyggie/services/task-extraction.service', () => ({
   extractTasksFromSummary: () => ({ proposed: [] }),
 }))
 
 // ─── Mock: contact-summary-sync ───────────────────────────────────────────────
 
-vi.mock('../main/services/contact-summary-sync.service', () => ({
+vi.mock('@cyggie/services/contact-summary-sync.service', () => ({
   getContactSummaryUpdateProposals: async () => [],
 }))
 
@@ -141,7 +141,7 @@ vi.mock('../main/storage/paths', () => ({
 
 // ─── Subject under test ───────────────────────────────────────────────────────
 
-const { generateSummary } = await import('../main/llm/summarizer')
+const { generateSummary } = await import('@cyggie/services/llm/summarizer')
 
 const FAKE_MEETING = {
   id: 'm1',

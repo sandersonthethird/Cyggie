@@ -1,5 +1,5 @@
 import { net } from 'electron'
-import { getProvider } from '../llm/provider-factory'
+import { getProvider } from '@cyggie/services/llm/provider-factory'
 import * as companyCacheRepo from '@cyggie/db/sqlite/repositories/company.repo'
 import * as orgCompanyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
 import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'

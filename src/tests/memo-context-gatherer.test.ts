@@ -21,7 +21,7 @@ vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
 import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
 import { getFlaggedFiles } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
-import { gatherMemoSourceCounts } from '../main/llm/memo-context-gatherer'
+import { gatherMemoSourceCounts } from '@cyggie/services/llm/memo-context-gatherer'
 
 const mockGetDb = vi.mocked(getDatabase)
 const mockListSummaryPaths = vi.mocked(companyRepo.listCompanyMeetingSummaryPaths)

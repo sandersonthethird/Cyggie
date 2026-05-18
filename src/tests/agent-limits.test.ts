@@ -6,7 +6,7 @@ vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
 }))
 
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
-import { getAgentLimits, AGENT_LIMITS_DEFAULTS, AGENT_LIMITS_BOUNDS } from '../main/llm/agents/limits'
+import { getAgentLimits, AGENT_LIMITS_DEFAULTS, AGENT_LIMITS_BOUNDS } from '@cyggie/services/llm/agents/limits'
 
 const mockGet = vi.mocked(settingsRepo.getSetting)
 

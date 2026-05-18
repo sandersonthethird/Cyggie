@@ -60,7 +60,7 @@ import {
   findLinkedInUrlWithCascade,
   findLinkedInUrlsForContactsBatch,
   ExaDiscoveryError,
-} from '../main/services/exa-linkedin-discovery.service'
+} from '@cyggie/services/exa-linkedin-discovery.service'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

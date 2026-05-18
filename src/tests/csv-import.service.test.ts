@@ -24,7 +24,7 @@ import { tmpdir } from 'os'
 // ─── Mock: LLM provider ──────────────────────────────────────────────────────
 
 const mockGenerateSummary = vi.fn()
-vi.mock('../main/llm/provider-factory', () => ({
+vi.mock('@cyggie/services/llm/provider-factory', () => ({
   getProvider: () => ({ generateSummary: mockGenerateSummary })
 }))
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { defineTool, buildToolRegistry, findTerminalTool, zodToJsonSchema, z } from '../main/llm/agents/define-tool'
+import { defineTool, buildToolRegistry, findTerminalTool, zodToJsonSchema, z } from '@cyggie/services/llm/agents/define-tool'
 
 const ctx = {
   companyId: 'co-1',

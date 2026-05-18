@@ -7,7 +7,7 @@ import type {
 } from '../../shared/types/unified-search'
 import { getCurrentUserId } from '../security/current-user'
 import { logAppEvent } from '@cyggie/db/sqlite/repositories/audit.repo'
-import { getProvider } from '../llm/provider-factory'
+import { getProvider } from '@cyggie/services/llm/provider-factory'
 
 let unifiedSearchAbortController: AbortController | null = null
 

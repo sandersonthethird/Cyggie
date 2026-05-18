@@ -64,7 +64,7 @@ vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
 
 const mockLLMComplete = vi.fn()
 
-vi.mock('../main/llm/provider-factory', () => ({
+vi.mock('@cyggie/services/llm/provider-factory', () => ({
   getProvider: vi.fn().mockReturnValue({
     complete: (...args: unknown[]) => mockLLMComplete(...args),
     generateSummary: (...args: unknown[]) => mockLLMComplete(...args),

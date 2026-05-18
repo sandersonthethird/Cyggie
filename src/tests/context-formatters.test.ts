@@ -22,7 +22,7 @@ import type {
   MeetingFull,
   EmailRef,
   NoteRef,
-} from '../main/llm/context-formatters'
+} from '@cyggie/services/llm/context-formatters'
 
 const mockReadSummary = vi.fn<[string], string | null>()
 const mockReadTranscript = vi.fn<[string], string | null>()
@@ -39,7 +39,7 @@ const {
   formatEmailsSection,
   formatNotesSection,
   formatFlaggedFilesSection,
-} = await import('../main/llm/context-formatters')
+} = await import('@cyggie/services/llm/context-formatters')
 
 beforeEach(() => {
   vi.clearAllMocks()

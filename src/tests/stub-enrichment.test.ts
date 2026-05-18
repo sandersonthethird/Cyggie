@@ -24,8 +24,8 @@ import {
   queueStubEnrichment,
   _resetStubEnrichmentForTests,
   _isInFlight,
-} from '../main/services/stub-enrichment.service'
-import type { LLMProvider } from '../main/llm/provider'
+} from '@cyggie/services/stub-enrichment.service'
+import type { LLMProvider } from '@cyggie/services/llm/provider'
 
 function makeStub(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

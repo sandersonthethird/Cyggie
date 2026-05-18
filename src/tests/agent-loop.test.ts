@@ -8,8 +8,8 @@ import {
   buildScriptedClient,
   resetMockIds,
 } from './helpers/anthropic-mocks'
-import { defineTool, z, type Tool } from '../main/llm/agents/define-tool'
-import { runAgentLoop } from '../main/llm/agents/agent-loop'
+import { defineTool, z, type Tool } from '@cyggie/services/llm/agents/define-tool'
+import { runAgentLoop } from '@cyggie/services/llm/agents/agent-loop'
 import type { AgentEvent } from '../../shared/types/agent-events'
 
 const SUBMIT_MEMO = {

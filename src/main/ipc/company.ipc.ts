@@ -24,11 +24,11 @@ import {
   getCompanyEnrichmentProposalsFromMeetings,
   getCompanyEnrichmentProposalsFromNotes,
   getCompanyEnrichmentProposalsFromEmails,
-} from '../services/company-summary-sync.service'
+} from '@cyggie/services/company-summary-sync.service'
 import { extractFromPdf, extractFromUrl, PitchDeckError } from '../services/pitch-deck-ingestion.service'
-import { generateCompanyKeyTakeaways } from '../llm/company-key-takeaways'
+import { generateCompanyKeyTakeaways } from '@cyggie/services/llm/company-key-takeaways'
 import { runPitchDeckAnalysis } from '../services/pitch-deck-analysis.service'
-import { queueStubEnrichment } from '../services/stub-enrichment.service'
+import { queueStubEnrichment } from '@cyggie/services/stub-enrichment.service'
 import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
@@ -38,7 +38,7 @@ import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import { readSummary } from '../storage/file-manager'
-import { getProvider } from '../llm/provider-factory'
+import { getProvider } from '@cyggie/services/llm/provider-factory'
 
 const companyDriveRootCache = new Map<string, string>()
 

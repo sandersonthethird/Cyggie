@@ -1,10 +1,12 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { getFlaggedFileIds, toggleFileFlag } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
-import { abortCompanyChat } from '../llm/company-chat'
-import { chatDispatch } from '../llm/chat-dispatch'
+import { abortCompanyChat } from '@cyggie/services/llm/company-chat'
+import { chatDispatch } from '@cyggie/services/llm/chat-dispatch'
 import { getCurrentUserId } from '../security/current-user'
-import { withChatPersistence } from '../llm/chat-persistence'
+import { withChatPersistence } from '@cyggie/services/llm/chat-persistence'
+import { withProgressSink } from '@cyggie/services/llm/send-progress'
+import { createChatProgressSink } from '../lib/ipc-progress-sink'
 import { deriveChatContext } from '../../shared/utils/chat-context'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { validateFileForChatContext } from '../storage/file-manager'
@@ -70,11 +72,14 @@ export function registerCompanyChatHandlers(): void {
         contextLabel: getCompanyName(data.companyId),
         userMessage: { content: data.question.trim(), attachments: data.attachments },
         userId: getCurrentUserId(),
-        runLLM: () => chatDispatch({
-          kind: { kind: 'company', companyId: data.companyId },
-          question: data.question.trim(),
-          attachments: data.attachments,
-        }),
+        runLLM: () =>
+          withProgressSink(createChatProgressSink(), () =>
+            chatDispatch({
+              kind: { kind: 'company', companyId: data.companyId },
+              question: data.question.trim(),
+              attachments: data.attachments,
+            }),
+          ),
         extractText: (response: string) => response,
       })
     }

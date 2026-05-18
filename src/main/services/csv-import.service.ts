@@ -57,7 +57,7 @@ import type {
   FieldChange,
   CSVFileInfo
 } from '../../shared/types/csv-import'
-import { getProvider } from '../llm/provider-factory'
+import { getProvider } from '@cyggie/services/llm/provider-factory'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
 import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'

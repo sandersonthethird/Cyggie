@@ -7,7 +7,7 @@ import {
   canonicalizeUrl,
   isMemoSectionHeading,
   getSection,
-} from '../main/llm/memo/sections'
+} from '@cyggie/services/llm/memo/sections'
 
 describe('MEMO_SECTIONS roster', () => {
   it('has 11 sections', () => {

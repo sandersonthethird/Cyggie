@@ -1,5 +1,5 @@
 import { net } from 'electron'
-import { getProvider } from '../llm/provider-factory'
+import { getProvider } from '@cyggie/services/llm/provider-factory'
 import type {
   ContactDetail,
   ContactEnrichmentResult,

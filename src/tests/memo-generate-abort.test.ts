@@ -4,7 +4,7 @@ import { setExaMockResponses, clearExaMocks, MockExa } from './helpers/exa-mocks
 vi.mock('exa-js', () => ({ Exa: MockExa }))
 vi.mock('../main/security/credentials', () => ({ getCredential: vi.fn(() => 'test-key') }))
 
-import { searchCompanyContext } from '../main/services/exa-research'
+import { searchCompanyContext } from '@cyggie/services/exa-research'
 
 /**
  * Tests for cancel-mid-generation in the memo-gen path.

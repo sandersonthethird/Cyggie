@@ -59,7 +59,7 @@ vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
 }))
 
 const { getCompanyEnrichmentProposalsFromMeetings } = await import(
-  '../main/services/company-summary-sync.service'
+  '@cyggie/services/company-summary-sync.service'
 )
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

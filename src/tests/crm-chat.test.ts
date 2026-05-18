@@ -29,7 +29,7 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
 let capturedSystemPrompt = ''
 let capturedUserPrompt = ''
 
-vi.mock('../main/llm/provider-factory', () => ({
+vi.mock('@cyggie/services/llm/provider-factory', () => ({
   getProvider: () => ({
     generateSummary: async (system: string, user: string) => {
       capturedSystemPrompt = system
@@ -40,18 +40,18 @@ vi.mock('../main/llm/provider-factory', () => ({
 }))
 
 // No-op progress sender
-vi.mock('../main/llm/send-progress', () => ({
+vi.mock('@cyggie/services/llm/send-progress', () => ({
   sendProgress: () => {}
 }))
 
 // Controllable meeting context — default to '' (no meetings match)
 let mockMeetingContext = ''
-vi.mock('../main/llm/chat', () => ({
+vi.mock('@cyggie/services/llm/chat', () => ({
   buildMeetingContext: () => mockMeetingContext,
   injectTextAttachments: (q: string) => q
 }))
 
-const { queryCrm, queryAll } = await import('../main/llm/crm-chat')
+const { queryCrm, queryAll } = await import('@cyggie/services/llm/crm-chat')
 
 // ─── Schema helpers ────────────────────────────────────────────────────────────
 

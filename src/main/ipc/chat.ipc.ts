@@ -1,9 +1,11 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { abortChat } from '../llm/chat'
-import { chatDispatch } from '../llm/chat-dispatch'
-import { generateChatTitle } from '../llm/chat-title'
-import { withChatPersistence } from '../llm/chat-persistence'
+import { abortChat } from '@cyggie/services/llm/chat'
+import { chatDispatch } from '@cyggie/services/llm/chat-dispatch'
+import { generateChatTitle } from '@cyggie/services/llm/chat-title'
+import { withChatPersistence } from '@cyggie/services/llm/chat-persistence'
+import { withProgressSink } from '@cyggie/services/llm/send-progress'
+import { createChatProgressSink } from '../lib/ipc-progress-sink'
 import { deriveChatContext } from '../../shared/utils/chat-context'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import * as notesRepo from '@cyggie/db/sqlite/repositories/notes.repo'
@@ -13,7 +15,7 @@ import type { ChatAttachment } from '../../shared/types/chat'
 import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
 import { getFlaggedFiles } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
 import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
-import { estimateChatContext } from '../llm/context-size'
+import { estimateChatContext } from '@cyggie/services/llm/context-size'
 import type { ChatContextSizeEstimate } from '../../shared/types/company'
 
 const _chatCompanyNotesRepo = makeEntityNotesRepo('company_id')
@@ -45,11 +47,14 @@ export function registerChatHandlers(): void {
         contextLabel: getMeetingTitle(meetingId),
         userMessage: { content: question.trim(), attachments },
         userId: getCurrentUserId(),
-        runLLM: () => chatDispatch({
-          kind: { kind: 'meeting', meetingId },
-          question: question.trim(),
-          attachments,
-        }),
+        runLLM: () =>
+          withProgressSink(createChatProgressSink(), () =>
+            chatDispatch({
+              kind: { kind: 'meeting', meetingId },
+              question: question.trim(),
+              attachments,
+            }),
+          ),
         extractText: (response: string) => response,
       })
     }
@@ -62,11 +67,13 @@ export function registerChatHandlers(): void {
         throw new Error('Meeting IDs and question are required')
       }
       // search-results chats are intentionally NOT persisted (out of scope v1)
-      return chatDispatch({
-        kind: { kind: 'meetings', meetingIds },
-        question: question.trim(),
-        attachments,
-      })
+      return withProgressSink(createChatProgressSink(), () =>
+        chatDispatch({
+          kind: { kind: 'meetings', meetingIds },
+          question: question.trim(),
+          attachments,
+        }),
+      )
     }
   )
 

@@ -8,13 +8,13 @@ import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts } from 
 import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
-import { getProvider } from '../llm/provider-factory'
+import { getProvider } from '@cyggie/services/llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import {
   generateReconciliationProposals,
   applyReconciliationProposals,
-} from '../services/partner-meeting-reconcile.service'
+} from '@cyggie/services/partner-meeting-reconcile.service'
 import type { AddToSyncInput, DigestSection, UpdateItemInput, ApplyReconciliationInput } from '../../shared/types/partner-meeting'
 import type { PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import { extractPartnerSyncBrief } from '../utils/pitch-deck-brief'

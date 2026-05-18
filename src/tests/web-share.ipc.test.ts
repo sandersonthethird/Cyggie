@@ -60,7 +60,7 @@ vi.mock('../main/storage/file-manager', () => ({
 }))
 
 const recoverMock = vi.fn()
-vi.mock('../main/services/meeting-summary-recovery', () => ({
+vi.mock('@cyggie/services/meeting-summary-recovery', () => ({
   recoverSummaryFromCompanionNote: recoverMock,
 }))
 

@@ -66,7 +66,7 @@ const {
   getContactSummaryUpdateProposalsFromMeetingId,
   findCompanyByName,
   matchSelectOption
-} = await import('../main/services/contact-summary-sync.service')
+} = await import('@cyggie/services/contact-summary-sync.service')
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

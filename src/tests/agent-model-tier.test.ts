@@ -11,7 +11,7 @@ import {
   SONNET_MODEL_ID,
   HAIKU_MODEL_ID,
   EXTENDED_CACHE_TTL_BETA,
-} from '../main/llm/agents/model-tier'
+} from '@cyggie/services/llm/agents/model-tier'
 
 const mockGet = vi.mocked(settingsRepo.getSetting)
 

@@ -72,7 +72,7 @@ import {
   extractCompanyExcerpts,
   generateReconciliationProposals,
   applyReconciliationProposals,
-} from '../main/services/partner-meeting-reconcile.service'
+} from '@cyggie/services/partner-meeting-reconcile.service'
 import type {
   PartnerMeetingDigest,
   PartnerMeetingItem,

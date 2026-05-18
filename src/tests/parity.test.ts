@@ -38,7 +38,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 let capturedSystem = ''
 let capturedUser = ''
 
-vi.mock('../main/llm/provider-factory', () => ({
+vi.mock('@cyggie/services/llm/provider-factory', () => ({
   getProvider: () => ({
     generateSummary: async (system: string, user: string) => {
       capturedSystem = system
@@ -48,7 +48,7 @@ vi.mock('../main/llm/provider-factory', () => ({
   }),
 }))
 
-vi.mock('../main/llm/send-progress', () => ({
+vi.mock('@cyggie/services/llm/send-progress', () => ({
   sendProgress: () => {},
 }))
 
@@ -144,8 +144,8 @@ Held the Q2 partner call. Discussed pricing reset and runway.
 
 `
 
-vi.mock('../main/llm/chat', async () => {
-  const actual = await vi.importActual<typeof import('../main/llm/chat')>('../main/llm/chat')
+vi.mock('@cyggie/services/llm/chat', async () => {
+  const actual = await vi.importActual<typeof import('@cyggie/services/llm/chat')>('@cyggie/services/llm/chat')
   return {
     ...actual,
     buildMeetingContext: () => FIXTURE_MEETING_CONTEXT,
@@ -154,11 +154,11 @@ vi.mock('../main/llm/chat', async () => {
 
 // ── Imports under test (after all vi.mock calls) ────────────────────────
 
-const { queryMeeting, querySearchResults } = await import('../main/llm/chat')
-const { queryCompany } = await import('../main/llm/company-chat')
-const { queryContact } = await import('../main/llm/contact-chat')
-const { queryAll } = await import('../main/llm/crm-chat')
-const { chatDispatch } = await import('../main/llm/chat-dispatch')
+const { queryMeeting, querySearchResults } = await import('@cyggie/services/llm/chat')
+const { queryCompany } = await import('@cyggie/services/llm/company-chat')
+const { queryContact } = await import('@cyggie/services/llm/contact-chat')
+const { queryAll } = await import('@cyggie/services/llm/crm-chat')
+const { chatDispatch } = await import('@cyggie/services/llm/chat-dispatch')
 
 // ── Fixture data ────────────────────────────────────────────────────────
 
