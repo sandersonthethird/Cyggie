@@ -16,6 +16,12 @@ declare module 'fastify' {
   interface FastifyRequest {
     user: AccessTokenClaims | null
     requireUser(): AccessTokenClaims
+    // Tenant guard. Throws UNAUTHENTICATED if no JWT, NO_FIRM if firm_id is null.
+    // Returns claims with a narrowed firm_id type (non-null) so call sites can
+    // use the value without an extra check.
+    requireFirm(): AccessTokenClaims & { firm_id: string }
+    // Admin guard. Throws on non-admin role. Implies requireFirm.
+    requireAdmin(): AccessTokenClaims & { firm_id: string; role: 'admin' }
   }
 }
 
@@ -34,6 +40,28 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOpts): Promise<v
       })
     }
     return this.user
+  })
+  app.decorateRequest('requireFirm', function requireFirm(this: FastifyRequest) {
+    const u = this.requireUser()
+    if (!u.firm_id) {
+      throw new GatewayError({
+        statusCode: 403,
+        code: 'NO_FIRM',
+        message: 'User has not completed onboarding (no firm_id). Complete create-workspace or accept-invite first.',
+      })
+    }
+    return u as AccessTokenClaims & { firm_id: string }
+  })
+  app.decorateRequest('requireAdmin', function requireAdmin(this: FastifyRequest) {
+    const u = this.requireFirm()
+    if (u.role !== 'admin') {
+      throw new GatewayError({
+        statusCode: 403,
+        code: 'ADMIN_REQUIRED',
+        message: 'This action requires firm admin role',
+      })
+    }
+    return u as AccessTokenClaims & { firm_id: string; role: 'admin' }
   })
 
   app.addHook('onRequest', async (req) => {

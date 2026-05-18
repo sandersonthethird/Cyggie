@@ -18,6 +18,7 @@ import { registerAuthRoutes } from './routes/auth'
 import { registerHealthRoutes } from './routes/health'
 import { registerCalendarRoutes } from './routes/calendar'
 import { registerDebugRoutes } from './routes/_debug'
+import { registerFirmRoutes } from './routes/firms'
 
 async function main() {
   const env = loadEnv()
@@ -61,6 +62,7 @@ async function main() {
   // Routes
   await registerHealthRoutes(app, env)
   await registerAuthRoutes(app, { env })
+  await registerFirmRoutes(app, { env })
   await registerCalendarRoutes(app, env)
   await registerDebugRoutes(app, env)
 
