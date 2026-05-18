@@ -14,3 +14,12 @@ allowBuilds:
   esbuild: true
   sharp: true
   unrs-resolver: true
+
+autoInstallPeers: true
+
+blockExoticSubdeps: false
+
+nodeLinker: hoisted
+
+publicHoistPattern:
+  - '@cyggie/*'
