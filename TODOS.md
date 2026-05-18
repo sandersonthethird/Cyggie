@@ -1,5 +1,116 @@
 # TODOS
 
+## P1 — Mobile V1 (Phase 0–M7)
+
+Tracker for the Cyggie Mobile V1 + cloud rearchitecture initiative.
+Plan: `/Users/sandersoncass/.claude/plans/claude-code-prompt-jolly-eagle.md`.
+Project memory: `~/.claude/projects/-Users-sandersoncass-Apps-Cyggie/memory/project_mobile_v1.md`.
+
+### Phase 0 status (cloud foundation)
+
+| # | Phase | Status | Notes |
+|---|---|---|---|
+| 0.1 | npm workspaces conversion + 5 new package roots | ✅ shipped | commit 8e61f63 |
+| 0.1.5 | electron-builder bundling | ✅ shipped | commit 8e61f63 |
+| 0.2 | Postgres schema port (42 tables in Neon) | ✅ shipped | commit 8e61f63; see [packages/db/MIGRATION_AUDIT.md](packages/db/MIGRATION_AUDIT.md) |
+| 0.3 | SQLite → Postgres data migration tool (14,033 rows) | ✅ shipped | commit 10ba0c3 |
+| 0.4a | sqlite data layer → `@cyggie/db/sqlite/` | ✅ shipped | commit eec8104 |
+| 0.5 batch 1 | LLM tree → `@cyggie/services/llm/` + ALS ProgressSink | ✅ shipped | commit 903eb3f |
+| 0.5 batch 2 | 10 pure-Node services → `@cyggie/services/` | ✅ shipped | commit 903eb3f |
+| 0.5 batch 3 | `RecordingSession` class + recording.ipc.ts refactor + contract tests | ⏳ TODO | see "Phase 0.5 Batch 3" below |
+| 0.6 | Fastify gateway + OAuth + JWT + calendar route | ✅ shipped (local dev only) | commit 675e402; **Fly deploy + Sentry/Datadog wiring deferred** |
+| 0.7 | this P1 TODOS section | ✅ shipped | this commit |
+
+### Phase 0.5 Batch 3 — RecordingSession class
+
+**What:** Extract recording state from [src/main/ipc/recording.ipc.ts](src/main/ipc/recording.ipc.ts) (744 lines, 16 module-level vars) into a `RecordingSession` class consumed by both desktop and gateway. Add contract test `summarizer-sync-vs-async.test.ts` per plan §0.5.
+
+**Why:** Module-level singletons in the desktop's recording handler can't go on the gateway (would break multi-user). The mobile recording flow (M3) needs the gateway to instantiate per-user sessions. Centralizing as a class lets both sides reuse the same lifecycle.
+
+**Risk:** MEDIUM. RECORDING_START is 264 lines, RECORDING_STOP is 162 lines — both touch all 16 state vars. Acceptance includes a manual desktop UI smoke test (start recording → see partials within 500ms → stop → see summary within 10s).
+
+**Steps:**
+1. Write `packages/services/src/recording/RecordingSession.ts` (state vars become instance properties; methods for `start`, `stop`, `pause`, `resume`, `onAudioData`, `onSystemAudioStatus`).
+2. Refactor `recording.ipc.ts` to hold one `RecordingSession | null` and delegate.
+3. Replace `resetRecordingState()` with `session?.dispose()` + reassignment to `null`.
+4. Write `progress-sink-propagation.test.ts` ✅ already shipped in 903eb3f.
+5. Write `summarizer-sync-vs-async.test.ts` — verify desktop sync wrapper + gateway async path produce byte-equal output for a deterministic mocked LLM.
+6. Run existing LLM eval suite as regression baseline; add 5 mobile-flow cases.
+7. Manual smoke: start a real recording from the desktop UI, verify partials + summary.
+
+**Depends on:** Phase 0.5 Batches 1+2 (✅ shipped).
+
+**Effort:** L (4-6 hours focused work + smoke test).
+
+**Priority:** P1 — blocks the mobile gateway's recording route (M3).
+
+### Operational deliverables before Phase 0 close
+
+Required before the first non-local gateway deploy:
+
+| Item | Status | Notes |
+|---|---|---|
+| Real Google "Web application" OAuth client | ⏳ | Placeholder in `.env.local` — create at [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials) |
+| Fly.io deploy (api-gateway) | ⏳ | Needs `fly` CLI + Fly account; `fly launch` from `api-gateway/` |
+| Sentry account + DSN | ⏳ | `SENTRY_DSN` env var slot already wired in [api-gateway/src/env.ts](api-gateway/src/env.ts) |
+| Datadog (or Honeycomb) account + API key | ⏳ | Same — `DATADOG_API_KEY` slot in env.ts |
+| Cloudflare R2 bucket (private + signed URLs) | ⏳ | For canonical WAV storage in M4 |
+| APNs key + bundle ID | ⏳ | For push notifications in M2 |
+| EAS Build subscription (Expo) | ⏳ | Required for M1a dev client builds |
+| Apple Developer Program | ⏳ | Required for TestFlight + App Store in M6/M7 |
+
+### Runbooks (skeletons committed; flesh out as features ship)
+
+- [runbooks/oauth-mass-expiry.md](runbooks/oauth-mass-expiry.md) — what to do if all users hit reauth
+- [runbooks/recording-stuck-finalize.md](runbooks/recording-stuck-finalize.md) — M3+ stall recovery
+- [runbooks/sync-conflict-replay.md](runbooks/sync-conflict-replay.md) — Phase 1.5 conflict replay
+
+### Day-1 observability dashboards (Datadog, when account exists)
+
+- API health: RPS, p99 latency, error rate by route
+- Recording health: `recording_sessions_active`, finalize success rate, `recording_session_memory_bytes`
+- Sync health: outbox depth, `sync_pull_connections_active`, conflict rate
+- LLM cost: Anthropic spend/day, Deepgram minutes/day
+- Auth: OAuth refresh success rate, `oauth.reauth_required` event rate
+
+### Mobile milestones (post-Phase 0)
+
+| # | Milestone | Status | Estimate |
+|---|---|---|---|
+| M1a | Expo shell + OAuth round-trip + Maestro/vitest infra + EAS dev profile | ⏳ | 1.5 weeks |
+| M1b | Calendar screen wired to `GET /calendar/events`; MMKV cache | ⏳ | 1.5 weeks |
+| M2 | Read-only CRM surface (meeting, company, contact, notes, search) + APNs | ⏳ | 2.5 weeks |
+| M3 | Recording happy path (Opus encoder, WS protocol, Record FAB, live transcript, stage-1 finalize, fake-Deepgram tests) | ⏳ | 3 weeks; depends on Phase 0.5 Batch 3 |
+| M4 | Recording resilience (gap reconstruction, Live Activity, stage-2 finalize, 8hr cap) | ⏳ | 2.5 weeks |
+| M5 | AI Chat (SSE + citations), Tiptap notes editor + Enhance, writes | ⏳ | 2 weeks |
+| M6 | Polish, empty states, settings, TestFlight cohort 1, 10 Maestro E2E flows green | ⏳ | 2 weeks |
+| M7 | App Store prep, cutover sequence, feature flags, user docs | ⏳ | 1.5 weeks |
+| Phase 1.5 | Bidirectional sync agent (writeWithSync, outbox triggers, /sync/push & /sync/pull, soak test) | ⏳ | 4-6 weeks; parallel with M5–M7 |
+
+### MIGRATION_AUDIT checklist (Phase 0.2 leftover)
+
+The full per-migration audit is in [packages/db/MIGRATION_AUDIT.md](packages/db/MIGRATION_AUDIT.md). 69 of 95 source SQLite migrations are covered by the consolidated drizzle schema. Remaining 26 are either inline-during-port, skip-superseded, or repair-scripts deferred to a `data-quality-passes.ts` script not yet written.
+
+### Required tests still owed (from eng review)
+
+| Test | Milestone | Path | Status |
+|---|---|---|---|
+| `progress-sink-propagation.test.ts` (ALS context survives SDK + nested calls) | Phase 0.5 | [src/tests/progress-sink-propagation.test.ts](src/tests/progress-sink-propagation.test.ts) | ✅ 8/8 pass |
+| `summarizer-sync-vs-async.test.ts` | Phase 0.5 Batch 3 | TBD | ⏳ |
+| Fake-Deepgram subprocess | Phase 0.6 follow-up | `api-gateway/test/fake-deepgram/` | ⏳ |
+| Opus encoder round-trip | M3 | `mobile/lib/recording/opus.test.ts` | ⏳ |
+| WS frame envelope (seq monotonic, dedup, gap detection) | M3 | `api-gateway/recording/wire.test.ts` | ⏳ |
+| Two-stage finalize merge | M3 + M4 | `api-gateway/recording/finalize.test.ts` | ⏳ |
+| Gap chunks → prerecorded → assembler merge | M4 | `api-gateway/recording/assembler.test.ts` | ⏳ |
+| Quota soft-warn / hard-cut thresholds | M3 | `api-gateway/quota.test.ts` | ⏳ |
+| OAuth re-consent flow (simulate `invalid_grant`) | M1a | `api-gateway/auth/reauth.test.ts` | ⏳ |
+| LLM eval suite regression + 5 new mobile-flow cases | Phase 0.5 Batch 3 | existing eval scripts | ⏳ |
+| Lamport row-clock + sync-time field diff | Phase 1.5 | `packages/services/sync/diff.test.ts` | ⏳ |
+| Sync agent state machine | Phase 1.5 | `packages/services/sync/agent.test.ts` | ⏳ |
+| Soak test: bidirectional sync 7-day accelerated | Phase 1.5 | `packages/services/sync/soak.test.ts` | ⏳ |
+
+---
+
 ## P2 — Contacts (Performance)
 
 ### Pre-compute contact activity touchpoints
