@@ -1,5 +1,6 @@
 import type { FastifyError, FastifyInstance } from 'fastify'
 import { hasZodFastifySchemaValidationErrors } from 'fastify-type-provider-zod'
+import { Sentry } from '../sentry'
 
 // Per the plan, gateway responses use a uniform error envelope so every client
 // (mobile, web, desktop) can intercept failures in one place:
@@ -68,6 +69,15 @@ export function registerErrorHandler(app: FastifyInstance): void {
         { code: err.code, statusCode: err.statusCode, details: err.details },
         err.message,
       )
+      // Add breadcrumb so the next captured error has the trail of expected
+      // GatewayErrors that led up to it. We deliberately do NOT capture these
+      // — they're expected business errors, not bugs.
+      Sentry.addBreadcrumb({
+        category: 'gateway-error',
+        level: err.statusCode >= 500 ? 'error' : 'warning',
+        message: err.message,
+        data: { code: err.code, statusCode: err.statusCode },
+      })
       const body: GatewayErrorBody = {
         error: {
           code: err.code,
@@ -94,9 +104,15 @@ export function registerErrorHandler(app: FastifyInstance): void {
     }
 
     // Anything else is an unhandled server error. Log with stack; do NOT leak it
-    // to the client. (Sentry would catch this in production — wired in Phase 0.6
-    // deployment work.)
+    // to the client. Capture to Sentry with route + user context.
     req.log.error({ err }, 'unhandled error in route')
+    Sentry.captureException(err, {
+      tags: { code: 'INTERNAL_ERROR', route: req.routeOptions?.url ?? req.url },
+      contexts: { request: { method: req.method, url: req.url } },
+      user: req.user
+        ? { id: req.user.sub, session_id: req.user.sid, device_id: req.user.device }
+        : undefined,
+    })
     const body: GatewayErrorBody = {
       error: {
         code: 'INTERNAL_ERROR',

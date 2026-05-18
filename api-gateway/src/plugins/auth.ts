@@ -3,6 +3,7 @@ import fp from 'fastify-plugin'
 import { verifyAccessToken, type AccessTokenClaims } from '../auth/jwt'
 import { GatewayError } from './error'
 import type { GatewayEnv } from '../env'
+import { Sentry } from '../sentry'
 
 // Decorates the request with `req.user` (verified JWT claims) when an Authorization
 // header is present. Routes that require auth call `req.requireUser()` which throws
@@ -39,19 +40,28 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOpts): Promise<v
     const header = req.headers.authorization
     if (!header || !header.startsWith('Bearer ')) {
       req.user = null
+      Sentry.setUser(null)
       return
     }
     const token = header.slice('Bearer '.length).trim()
     if (!token) {
       req.user = null
+      Sentry.setUser(null)
       return
     }
     try {
       req.user = await verifyAccessToken(opts.env.JWT_SIGNING_SECRET, token)
+      // firm_id lands in M1a — add it here once AccessTokenClaims gains the claim.
+      Sentry.setUser({
+        id: req.user.sub,
+        session_id: req.user.sid,
+        device_id: req.user.device,
+      })
     } catch {
       // Bad token = unauthenticated. Don't throw here — let the route decide
       // (some routes are public). Health endpoints don't require auth.
       req.user = null
+      Sentry.setUser(null)
     }
   })
 }

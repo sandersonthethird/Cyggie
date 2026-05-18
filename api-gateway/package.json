@@ -16,6 +16,7 @@
     "@fastify/sensible": "^6.0.4",
     "@fastify/websocket": "^11.2.0",
     "@paralleldrive/cuid2": "^3.3.0",
+    "@sentry/node": "^10.53.1",
     "fastify": "^5.8.5",
     "fastify-type-provider-zod": "^6.1.0",
     "googleapis": "^171.4.0",

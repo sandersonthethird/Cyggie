@@ -1,3 +1,6 @@
+// Sentry init MUST be the first import — its side-effect Sentry.init() must
+// run before Fastify wires any handlers.
+import { Sentry } from './sentry'
 import Fastify from 'fastify'
 import fastifyCors from '@fastify/cors'
 import fastifyHelmet from '@fastify/helmet'
@@ -14,6 +17,7 @@ import authPlugin from './plugins/auth'
 import { registerAuthRoutes } from './routes/auth'
 import { registerHealthRoutes } from './routes/health'
 import { registerCalendarRoutes } from './routes/calendar'
+import { registerDebugRoutes } from './routes/_debug'
 
 async function main() {
   const env = loadEnv()
@@ -58,6 +62,7 @@ async function main() {
   await registerHealthRoutes(app, env)
   await registerAuthRoutes(app, { env })
   await registerCalendarRoutes(app, env)
+  await registerDebugRoutes(app, env)
 
   // Boot
   try {
@@ -99,5 +104,8 @@ async function main() {
 
 main().catch((err) => {
   console.error('fatal:', err)
-  process.exit(1)
+  // Boot failures bypass the Fastify error handler — capture them directly so
+  // they still hit the Sentry inbox.
+  Sentry.captureException(err, { tags: { source: 'boot' } })
+  Sentry.flush(2000).finally(() => process.exit(1))
 })
