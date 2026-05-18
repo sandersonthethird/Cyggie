@@ -4,10 +4,17 @@ import { Sentry } from './sentry'
 import { loadEnv } from './env'
 import { closeDb } from './db'
 import { buildApp } from './app'
+import { startPendingSweeper, stopPendingSweeper } from './auth/pending'
 
 async function main() {
   const env = loadEnv()
   const app = await buildApp(env)
+
+  // Background sweeper for expired oauth_pending rows. Skipped in tests so
+  // they don't leave a setInterval handle hanging.
+  if (env.NODE_ENV !== 'test') {
+    startPendingSweeper(env.GATEWAY_DATABASE_URL)
+  }
 
   try {
     await app.listen({ host: env.HOST, port: env.PORT })
@@ -29,6 +36,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, 'shutdown requested')
     try {
+      stopPendingSweeper()
       await app.close()
       await closeDb()
       process.exit(0)

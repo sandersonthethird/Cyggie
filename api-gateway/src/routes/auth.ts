@@ -54,7 +54,8 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
       const { device_id, device_label } = req.body
       const state = generateState()
       const { codeVerifier, codeChallenge } = generatePkcePair()
-      rememberPending({
+      await rememberPending({
+        databaseUrl: env.GATEWAY_DATABASE_URL,
         state,
         codeVerifier,
         deviceId: device_id,
@@ -92,7 +93,10 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         })
       }
 
-      const pending = consumePending(state)
+      const pending = await consumePending({
+        databaseUrl: env.GATEWAY_DATABASE_URL,
+        state,
+      })
       if (!pending) {
         throw new GatewayError({
           statusCode: 400,
