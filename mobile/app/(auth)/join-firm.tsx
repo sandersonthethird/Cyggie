@@ -14,7 +14,6 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
 import { api, ApiError } from '../../lib/api/client'
 import { useAuthStore } from '../../lib/auth/store'
-import { setLastAction } from '../../lib/auth/storage'
 
 // Flow B — invitee accepts an admin-issued invite token.
 //
@@ -33,6 +32,7 @@ export default function JoinFirmScreen() {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const updateAccessToken = useAuthStore((s) => s.updateAccessToken)
+  const setLastAction = useAuthStore((s) => s.setLastAction)
 
   // Pre-fill from the route param if the user got here via a magic link.
   useEffect(() => {

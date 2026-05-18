@@ -5,7 +5,7 @@ import {
   getLastAction,
   getUserId,
   setAccessToken,
-  setLastAction,
+  setLastAction as persistLastAction,
   setRefreshToken,
   setUserId,
   type LastAction,
@@ -40,6 +40,12 @@ interface AuthState {
   // fresh access token (firm_id baked in) but does NOT rotate the refresh
   // token. Touching the refresh would trigger an unnecessary FaceID prompt.
   updateAccessToken: (opts: { accessToken: string }) => Promise<void>
+  // Mutates lastAction in BOTH SecureStore and the in-memory store so the
+  // route dispatcher re-renders against the new value. The bare
+  // storage/setLastAction would only touch SecureStore — that's the bug
+  // we hit during M1a Step 8 (Flow A landed back at create-workspace
+  // because Zustand still had the stale 'create_workspace' value).
+  setLastAction: (action: LastAction) => Promise<void>
   // Wipe. Used by sign-out and unrecoverable 401.
   signOut: () => Promise<void>
 }
@@ -69,7 +75,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       setAccessToken(accessToken),
       setRefreshToken(refreshToken),
       setUserId(userId),
-      setLastAction(action),
+      persistLastAction(action),
     ])
     set({ status: 'signed_in', accessToken, userId, lastAction: action })
   },
@@ -82,6 +88,11 @@ export const useAuthStore = create<AuthState>((set) => ({
   updateAccessToken: async ({ accessToken }) => {
     await setAccessToken(accessToken)
     set({ accessToken })
+  },
+
+  setLastAction: async (action) => {
+    await persistLastAction(action)
+    set({ lastAction: action })
   },
 
   signOut: async () => {

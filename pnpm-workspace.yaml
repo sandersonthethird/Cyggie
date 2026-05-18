@@ -1,0 +1,16 @@
+packages:
+  - 'packages/*'
+  - 'mobile'
+  - 'api-gateway'
+  - 'web'
+
+# Block-list for lifecycle scripts (pnpm 11 prompts on first install). These
+# are all legitimate native rebuilds — better-sqlite3 for desktop SQLite,
+# Electron for the desktop runtime, esbuild for bundling, sharp for image
+# optimization, unrs-resolver for fast TS resolution.
+allowBuilds:
+  better-sqlite3: true
+  electron: true
+  esbuild: true
+  sharp: true
+  unrs-resolver: true

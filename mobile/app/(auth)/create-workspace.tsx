@@ -14,7 +14,6 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { api, ApiError } from '../../lib/api/client'
 import { useAuthStore } from '../../lib/auth/store'
-import { setLastAction } from '../../lib/auth/storage'
 
 // Flow A — first user from a firm creates the workspace.
 //
@@ -43,6 +42,7 @@ export default function CreateWorkspaceScreen() {
   const [error, setError] = useState<string | null>(null)
 
   const updateAccessToken = useAuthStore((s) => s.updateAccessToken)
+  const setLastAction = useAuthStore((s) => s.setLastAction)
 
   // Auto-suggest a slug while the user types the name. Cleared as soon as
   // they edit the slug field manually so we don't fight them.
