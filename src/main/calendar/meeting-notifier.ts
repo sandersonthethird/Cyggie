@@ -150,6 +150,15 @@ async function showMeetingNotification(event: CalendarEvent): Promise<void> {
       shell.openExternal(url).catch((err) => {
         console.error('[MeetingNotifier] Failed to open meeting URL:', err)
       })
+    } else {
+      // No URL was extracted from the calendar event. Log enough to debug
+      // (but not the description itself — it can hold PII/meeting passwords).
+      console.warn('[MeetingNotifier] No meetingUrl on click; cannot auto-launch', {
+        eventId: event.id,
+        title: event.title,
+        platform: event.platform,
+        descriptionLength: event.description?.length ?? 0,
+      })
     }
 
     // Focus Cyggie window and start recording

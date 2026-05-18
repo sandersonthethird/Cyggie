@@ -49,16 +49,33 @@ function matchUrlToPlatform(url: string): MeetingPlatform | null {
   return null
 }
 
+// Outlook/Defender rewrites links in calendar invites as
+// https://*.safelinks.protection.outlook.com/?url=<encoded-original>&data=...
+// Unwrap once before pattern matching so Teams URLs aren't lost behind the
+// proxy.
+function unwrapSafelinks(url: string): string {
+  try {
+    const parsed = new URL(url)
+    if (parsed.hostname.endsWith('safelinks.protection.outlook.com')) {
+      const wrapped = parsed.searchParams.get('url')
+      if (wrapped) return decodeURIComponent(wrapped)
+    }
+  } catch {
+    // Malformed URL — fall through and return as-is
+  }
+  return url
+}
+
 function extractMeetingUrlFromText(text: string): DetectedMeeting | null {
-  // Extract URLs from text
   const urlRegex = /https?:\/\/[^\s<>"']+/gi
   const urls = text.match(urlRegex)
   if (!urls) return null
 
   for (const url of urls) {
-    const platform = matchUrlToPlatform(url)
+    const candidate = unwrapSafelinks(url)
+    const platform = matchUrlToPlatform(candidate)
     if (platform) {
-      return { url, platform }
+      return { url: candidate, platform }
     }
   }
 

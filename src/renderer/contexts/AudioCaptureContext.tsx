@@ -93,6 +93,22 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       }
     })
 
+    const unsubTrayStop = api.on('recording:stop-from-tray', async () => {
+      const store = useRecordingStore.getState()
+      if (!store.isRecording) return
+      try {
+        if (videoCaptureRef.current.isVideoRecording) {
+          await videoCaptureRef.current.stop()
+        }
+        audioCaptureRef.current.stop()
+        await api.invoke(IPC_CHANNELS.RECORDING_STOP)
+        useRecordingStore.getState().stopRecording()
+      } catch (err) {
+        console.error('[Tray] Failed to stop recording:', err)
+      }
+    })
+
+
     // Video finalize events — main process runs ffmpeg finalization in the
     // background after VIDEO_STOP returns, then broadcasts one of these.
     const unsubVideoFinalized = api.on(IPC_CHANNELS.VIDEO_FINALIZED, (payload: unknown) => {
@@ -129,6 +145,7 @@ export function AudioCaptureProvider({ children }: { children: React.ReactNode }
       unsubStatus()
       unsubError()
       unsubAutoStop()
+      unsubTrayStop()
       unsubVideoFinalized()
       unsubVideoFinalizeError()
       unsubRecordingFinalized()

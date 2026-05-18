@@ -215,6 +215,34 @@ describe('AudioCaptureProvider — register-once listener pattern', () => {
     expect(useRecordingStore.getState().isRecording).toBe(false)
   })
 
+  it('TRAY STOP handler stops recording the same way as AUTO_STOP but does not mark auto-stopped', async () => {
+    render(<AudioCaptureProvider>{null}</AudioCaptureProvider>)
+    const handler = getHandler('recording:stop-from-tray')
+    act(() => { useRecordingStore.getState().startRecording('m-tray') })
+    videoIsRecording = true
+    // Force a re-render so the ref picks up videoIsRecording=true
+    act(() => { useRecordingStore.getState().pauseRecording() })
+    act(() => { useRecordingStore.getState().resumeRecording() })
+
+    await act(async () => { await handler() })
+
+    expect(videoStop).toHaveBeenCalledTimes(1)
+    expect(audioStop).toHaveBeenCalledTimes(1)
+    expect(invokeMock).toHaveBeenCalledWith(IPC_CHANNELS.RECORDING_STOP)
+    expect(useRecordingStore.getState().isRecording).toBe(false)
+    // Tray stop is a user action, NOT an auto-stop
+    expect(useRecordingStore.getState().autoStoppedMeetingIds.has('m-tray')).toBe(false)
+  })
+
+  it('TRAY STOP is a no-op when isRecording is false', async () => {
+    render(<AudioCaptureProvider>{null}</AudioCaptureProvider>)
+    const handler = getHandler('recording:stop-from-tray')
+    await act(async () => { await handler() })
+    expect(audioStop).not.toHaveBeenCalled()
+    expect(videoStop).not.toHaveBeenCalled()
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
   it('AUTO_STOP is a no-op when isRecording is false', async () => {
     render(<AudioCaptureProvider>{null}</AudioCaptureProvider>)
     const handler = getHandler(IPC_CHANNELS.RECORDING_AUTO_STOP)
@@ -224,11 +252,11 @@ describe('AudioCaptureProvider — register-once listener pattern', () => {
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
-  it('fires all 8 unsubs on unmount', () => {
-    // 4 RECORDING_* core listeners + 2 VIDEO_FINALIZE* + 2 RECORDING_FINALIZE*.
+  it('fires all 9 unsubs on unmount', () => {
+    // 4 RECORDING_* core listeners + 1 recording:stop-from-tray + 2 VIDEO_FINALIZE* + 2 RECORDING_FINALIZE*.
     const { unmount } = render(<AudioCaptureProvider>{null}</AudioCaptureProvider>)
     const unsubs = onCalls.map((c) => c.unsub)
-    expect(unsubs).toHaveLength(8)
+    expect(unsubs).toHaveLength(9)
     unmount()
     for (const u of unsubs) expect(u).toHaveBeenCalledTimes(1)
   })

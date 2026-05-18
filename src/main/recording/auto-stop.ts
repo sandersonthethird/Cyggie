@@ -1,5 +1,24 @@
 import { detectRunningMeetingApps, type RunningMeetingApp } from '../audio/process-detector'
 
+// Three concurrent triggers stop a recording. All three are now gated by
+// `minRecordingMs` (default 5 min) so a recording can never auto-stop in
+// its first few minutes — this protects the "click record, wait for late
+// participant" flow.
+//
+//   Trigger 1: calendar end-time             Trigger 2: process poller          Trigger 3: silence
+//   ──────────────────────────────           ──────────────────────────         ──────────────────
+//   At endTime: checkCalendarStop()          Every 10s: detect…()               Every 30s:
+//     if recDur < minRec → reschedule          if status='error' → skip           if recDur < minRec
+//     if sinceSpeech < 60s → reschedule        if recDur < minRec → return          → return
+//     else → triggerStop()                     if allExited → triggerStop()       if silenceDur ≥
+//                                                                                   silenceThr →
+//                                                                                   triggerStop()
+//                                    ▼  ▼  ▼
+//                          triggerStop() ── idempotent via this.triggered
+//                                    │
+//                                    ▼
+//                          onAutoStop() callback → sendToRenderer(RECORDING_AUTO_STOP)
+
 const DEFAULT_SILENCE_THRESHOLD_MS = 10 * 60 * 1000 // 10 minutes of silence
 const DEFAULT_MIN_RECORDING_MS = 5 * 60 * 1000 // 5 minutes minimum recording
 const CALENDAR_GRACE_MS = 0 // Check immediately at scheduled end time
@@ -46,7 +65,7 @@ export class RecordingAutoStop {
       const endTime = new Date(this.calendarEndTime)
       console.log(`[AutoStop] Calendar end time: ${endTime.toLocaleTimeString()}, grace period: ${CALENDAR_GRACE_MS / 60000} min`)
     }
-    console.log(`[AutoStop] Silence threshold: ${this.silenceThresholdMs / 60000} min`)
+    console.log(`[AutoStop] Silence threshold: ${this.silenceThresholdMs / 60000} min, min recording: ${this.minRecordingMs / 60000} min`)
 
     this.startCalendarTimer()
     this.startProcessPoller()
@@ -101,8 +120,16 @@ export class RecordingAutoStop {
 
   private checkCalendarStop(): void {
     const sinceSpeech = Date.now() - this.lastSpeechTime
+    const recordingDuration = Date.now() - this.recordingStartTime
+
+    if (recordingDuration < this.minRecordingMs) {
+      console.log('[AutoStop] Calendar end time reached but recording under min duration, extending')
+      this.calendarTimer = setTimeout(() => {
+        this.checkCalendarStop()
+      }, 60 * 1000)
+      return
+    }
     if (sinceSpeech < ACTIVE_SPEECH_THRESHOLD_MS) {
-      // Still talking — check again in 1 minute
       console.log('[AutoStop] Calendar end time reached but speech still active, extending')
       this.calendarTimer = setTimeout(() => {
         this.checkCalendarStop()
@@ -114,7 +141,8 @@ export class RecordingAutoStop {
   }
 
   private startProcessPoller(): void {
-    this.initialMeetingApps = detectRunningMeetingApps()
+    const { apps: initialApps } = detectRunningMeetingApps()
+    this.initialMeetingApps = initialApps
     if (this.initialMeetingApps.length === 0) return
 
     console.log(
@@ -123,10 +151,12 @@ export class RecordingAutoStop {
     )
 
     this.processPoller = setInterval(() => {
-      const currentApps = detectRunningMeetingApps()
-      const currentPlatforms = new Set(currentApps.map((a) => a.platform))
+      const { apps: currentApps, status } = detectRunningMeetingApps()
+      if (status === 'error') return // skip flaky ticks
 
-      // Check if ALL initially-detected meeting app platforms have exited
+      if (Date.now() - this.recordingStartTime < this.minRecordingMs) return
+
+      const currentPlatforms = new Set(currentApps.map((a) => a.platform))
       const allExited = this.initialMeetingApps.every(
         (app) => !currentPlatforms.has(app.platform)
       )
