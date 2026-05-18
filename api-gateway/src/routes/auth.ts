@@ -3,7 +3,7 @@ import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import {
   buildAuthUrl,
   createOAuthClient,
@@ -227,13 +227,41 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         role: userRole,
       })
 
-      // Redirect to the mobile deep link with both tokens. Mobile catches this
-      // via `expo-auth-session.openAuthSessionAsync`.
+      // Build the onboarding action hint so mobile knows which screen to show.
+      //
+      //   firm_id set                            → 'returning'  (route to Calendar)
+      //   firm_id null + pending invite for email → 'join_firm' (route to confirm-
+      //     join screen; mobile may have the raw invite token stashed from a
+      //     cyggie://invite/<token> magic link tap that kicked off OAuth)
+      //   firm_id null + no pending invite       → 'create_workspace' (Flow A)
+      //
+      // Flow C (domain auto-join) is deferred to M6 — when it lands here, this
+      // block will set firm_id on the user row server-side before computing the
+      // action so the returning-user path kicks in.
+      let action: 'returning' | 'create_workspace' | 'join_firm' = userFirmId
+        ? 'returning'
+        : 'create_workspace'
+      if (!userFirmId) {
+        const pendingInvite = await db.query.invites.findFirst({
+          where: and(
+            eq(schema.invites.email, identity.email.toLowerCase()),
+            isNull(schema.invites.acceptedAt),
+            isNull(schema.invites.revokedAt),
+          ),
+        })
+        if (pendingInvite && pendingInvite.expiresAt.getTime() > Date.now()) {
+          action = 'join_firm'
+        }
+      }
+
+      // Redirect to the mobile deep link with the JWT, refresh token, and the
+      // onboarding hint. Mobile catches this via expo-auth-session.
       const dest = new URL(env.MOBILE_DEEP_LINK_BASE)
       dest.searchParams.set('session', accessToken)
       dest.searchParams.set('refresh', refreshToken)
       dest.searchParams.set('user_id', userId)
-      req.log.info({ userId, deviceId: pending.deviceId }, 'oauth callback complete')
+      dest.searchParams.set('action', action)
+      req.log.info({ userId, deviceId: pending.deviceId, action }, 'oauth callback complete')
       return reply.redirect(dest.toString())
     },
   })
