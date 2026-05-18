@@ -18,7 +18,7 @@ Project memory: `~/.claude/projects/-Users-sandersoncass-Apps-Cyggie/memory/proj
 | 0.5 batch 1 | LLM tree → `@cyggie/services/llm/` + ALS ProgressSink | ✅ shipped | commit 903eb3f |
 | 0.5 batch 2 | 10 pure-Node services → `@cyggie/services/` | ✅ shipped | commit 903eb3f |
 | 0.5 batch 3 | `RecordingSession` class + recording.ipc.ts refactor + contract tests | ⏳ TODO | see "Phase 0.5 Batch 3" below |
-| 0.6 | Fastify gateway + OAuth + JWT + calendar route | ✅ shipped (local dev only) | commit 675e402; **Fly deploy + Sentry/Datadog wiring deferred** |
+| 0.6 | Fastify gateway + OAuth + JWT + calendar route | ✅ shipped (local dev only) | commit 675e402; **Fly deploy + Sentry wiring deferred** (broader observability platform moved to Phase 2 — see "Operational deliverables" below) |
 | 0.7 | this P1 TODOS section | ✅ shipped | this commit |
 
 ### Phase 0.5 Batch 3 — RecordingSession class
@@ -53,7 +53,7 @@ Required before the first non-local gateway deploy:
 | Real Google "Web application" OAuth client | ⏳ | Placeholder in `.env.local` — create at [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials) |
 | Fly.io deploy (api-gateway) | ⏳ | Needs `fly` CLI + Fly account; `fly launch` from `api-gateway/` |
 | Sentry account + DSN | ⏳ | `SENTRY_DSN` env var slot already wired in [api-gateway/src/env.ts](api-gateway/src/env.ts) |
-| Datadog (or Honeycomb) account + API key | ⏳ | Same — `DATADOG_API_KEY` slot in env.ts |
+| Broader observability platform (Axiom / Honeycomb / Datadog / etc.) | 🔜 **Phase 2** | Sentry covers ~80% of V1 ops needs at single-firm scale. Layer a logs+traces platform when multi-firm growth or an oncall rotation justifies the cost. `DATADOG_API_KEY` slot in [env.ts](api-gateway/src/env.ts) left in place as an optional env var; populate when the platform is picked. |
 | Cloudflare R2 bucket (private + signed URLs) | ⏳ | For canonical WAV storage in M4 |
 | APNs key + bundle ID | ⏳ | For push notifications in M2 |
 | EAS Build subscription (Expo) | ⏳ | Required for M1a dev client builds |
@@ -65,13 +65,40 @@ Required before the first non-local gateway deploy:
 - [runbooks/recording-stuck-finalize.md](runbooks/recording-stuck-finalize.md) — M3+ stall recovery
 - [runbooks/sync-conflict-replay.md](runbooks/sync-conflict-replay.md) — Phase 1.5 conflict replay
 
-### Day-1 observability dashboards (Datadog, when account exists)
+### Day-1 observability (Sentry-only for V1)
 
-- API health: RPS, p99 latency, error rate by route
-- Recording health: `recording_sessions_active`, finalize success rate, `recording_session_memory_bytes`
-- Sync health: outbox depth, `sync_pull_connections_active`, conflict rate
-- LLM cost: Anthropic spend/day, Deepgram minutes/day
-- Auth: OAuth refresh success rate, `oauth.reauth_required` event rate
+V1 ships with **Sentry only**. Broader observability platform deferred to Phase 2.
+
+- **Sentry Performance** auto-captures route p99 latency, error rate, slow-transaction details.
+- **Sentry Issues** captures every `GatewayError` (as breadcrumbs) and every `INTERNAL_ERROR` (as captured exceptions with route + user_id + firm_id context).
+- **Release tracking** — every Fly deploy tags releases so you can answer "did this release introduce new errors?"
+- **`fly logs`** covers ad-hoc log search (last ~3 hours of structured pino output).
+
+Metrics that would have been on Datadog are emitted as **structured pino log fields** (`metric=...`) so a Phase 2 platform can ingest them retroactively:
+
+- `metric=routes.requests` (per route, per status)
+- `metric=recording.sessions_active`
+- `metric=recording.session_memory_bytes`
+- `metric=sync.outbox_depth`
+- `metric=sync.pull_connections_active`
+- `metric=llm.cost_usd` (Anthropic spend per call, Deepgram minutes per call)
+- `metric=oauth.refresh_result{result=success|failure}`
+
+### Phase 2 observability decision (~M3+ or first scale signal)
+
+When to revisit: multi-firm growth, multi-instance Fly deploy, formal oncall rotation, or repeated debugging sessions where Sentry's data isn't enough.
+
+Contenders (decide alongside the M3 scale point):
+
+| Platform | Strength | Rough $ |
+|---|---|---|
+| Axiom | Logs + traces, generous free tier (500 GB/mo) | $0 → $25/mo |
+| Better Stack | Logs + uptime + heartbeats; small-team focused | $0 → $25/mo |
+| Honeycomb | High-cardinality distributed tracing | $0 → $100/mo |
+| Grafana Cloud | OSS-friendly, broad but steeper learning curve | $0 → $50/mo |
+| Datadog | Best-in-class breadth + maturity | $50-100/mo+ |
+
+Default Phase 2 recommendation: **Sentry + Axiom** (~$0-30/mo total).
 
 ### Mobile milestones (post-Phase 0)
 
@@ -86,6 +113,39 @@ Required before the first non-local gateway deploy:
 | M6 | Polish, empty states, settings, TestFlight cohort 1, 10 Maestro E2E flows green | ⏳ | 2 weeks |
 | M7 | App Store prep, cutover sequence, feature flags, user docs | ⏳ | 1.5 weeks |
 | Phase 1.5 | Bidirectional sync agent (writeWithSync, outbox triggers, /sync/push & /sync/pull, soak test) | ⏳ | 4-6 weeks; parallel with M5–M7 |
+
+### Cloud-side Gmail + Drive services (post-V1 — Model A backlog)
+
+**What:** Migrate Gmail ingestion + Drive read/write capability to `packages/services/google/` so the gateway can read user emails and write user Drive files server-side. Adds gateway routes for triggering ingest + on-demand fetch. Implements behind a `GoogleApiClient` interface so Model B (desktop-mediated proxy) stays swappable.
+
+**Why:** V1 desktop already does this locally; mobile reads the synced result from Neon via the Phase 1.5 sync agent. Cloud-side becomes necessary when:
+- A customer firm onboards without desktop installed (mobile-only / web-only partners), OR
+- Mobile chat queries demand richer email-thread retrieval than the synced cache provides, OR
+- The Phase 2 web client launches and needs to render Gmail/Drive content live.
+
+**What's in scope when this work lands:**
+- Port `company-email-ingest.service.ts` patterns to packages/services with an ALS `ProgressSink` shim (same approach as Phase 0.5 Batch 1).
+- Port Drive read/write helpers from desktop to packages/services.
+- Gateway routes: `POST /ingest/email/start`, `GET /ingest/email/status`, `POST /drive/files`, `GET /drive/files/:id`.
+- Per-firm quotas + audit log entries on every Google API call.
+- `GoogleApiClient` interface in packages/services/google/ with one implementation today (direct API call from gateway); Model B implementation (queue-to-desktop) stays unimplemented.
+- Mobile UX: surface "Ingesting your inbox…" progress when first sign-in triggers backfill.
+
+**Why deferred from Phase 0:**
+Per user direction 2026-05-18 — ship basic mobile (calendar + recording + chat over already-synced data) first. Once V1 is in real customers' hands, the actual drivers for cloud Gmail/Drive (no-desktop partners, query depth, web client) will surface concretely and inform the design. Avoids speculative architecture before product-market signal.
+
+**OAuth scope implications (open question):** Until this work lands, the gateway's V1 actual use of Gmail/Drive is zero. Two options for the V1 consent screen:
+- **Keep current broad consent** (Gmail + Drive + Calendar via `include_granted_scopes: true`): no future re-consent needed when this work ships; first-time customers see scopes that don't match V1 use.
+- **Narrow V1 to Calendar only** (`include_granted_scopes: false`): clean V1 consent UX; need an incremental-authorization prompt UX when this work eventually ships.
+Recommendation: narrow to Calendar for V1 cleanliness; build the incremental-auth prompt as part of this backlog item.
+
+**Effort:** ~2 weeks once prioritized.
+
+**Priority:** P1 — gates the "true cloud-only customer" segment.
+
+**Depends on:** V1 mobile shipped + Phase 1.5 sync agent operational + first-customer signal on whether cloud Gmail/Drive is actually needed.
+
+---
 
 ### MIGRATION_AUDIT checklist (Phase 0.2 leftover)
 

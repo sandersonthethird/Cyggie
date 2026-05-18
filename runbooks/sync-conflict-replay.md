@@ -2,7 +2,7 @@
 
 **When this fires:** Phase 1.5 bidirectional sync surfaces a conflict that the lamport-clock LWW resolver couldn't decide — typically because a row was deleted on one side and edited on the other.
 
-Datadog alert: `sync_conflicts_total{resolution=manual_review}` > 0.
+Alert spec (V1: emitted as a `metric=sync.conflicts_total{resolution=manual_review}` pino log field; Sentry-side rule when feasible; full time-series alert when the Phase 2 observability platform lands): the counter > 0 in any 15-min window.
 
 ## Diagnose
 

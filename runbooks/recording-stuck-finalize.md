@@ -1,6 +1,6 @@
 # Runbook: Recording stuck in finalize
 
-**When this fires:** a recording's `status` stays in `transcribed` or `partial_final` for >2 hours without progressing to `summarized` or `finalized`. Datadog alert: `recording_session_duration_seconds` p99 exceeds 30 min finalize tail.
+**When this fires:** a recording's `status` stays in `transcribed` or `partial_final` for >2 hours without progressing to `summarized` or `finalized`. Alert spec (V1: emitted as `metric=recording.session_duration_seconds` pino log field + manual SQL check below; full time-series alert lands with the Phase 2 observability platform): p99 finalize tail exceeds 30 min.
 
 ## Diagnose
 

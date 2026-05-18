@@ -9,7 +9,7 @@
 
 ## Detect
 
-Datadog alert (Phase 0.6 day-1 alerts): `oauth.reauth_required` event spike — > 50% of active users in 1 hour.
+Alert spec (V1: tag-watched in Sentry via the `oauth.reauth_required` breadcrumb spike; full time-series alert wired when the Phase 2 observability platform lands): `oauth.reauth_required` event spike — > 50% of active users in 1 hour.
 
 Manual check via Neon:
 
