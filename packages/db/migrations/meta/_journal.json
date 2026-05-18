@@ -57,6 +57,13 @@
       "when": 1779054581713,
       "tag": "0007_natural_blockbuster",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779121802583,
+      "tag": "0008_bored_nehzno",
+      "breakpoints": true
     }
   ]
 }

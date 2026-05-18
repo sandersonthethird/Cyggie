@@ -22,6 +22,7 @@
 //
 // See MIGRATION_AUDIT.md in this package for the per-migration porting status.
 export * from './auth'
+export * from './firms'
 export * from './sync'
 export * from './audit'
 export * from './templates'

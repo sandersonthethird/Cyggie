@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  type AnyPgColumn,
   boolean,
   index,
   jsonb,
@@ -9,6 +10,7 @@ import {
   uniqueIndex,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { firms } from './firms'
 
 // Multi-tenant identity. V1 has one human user but the schema is built multi-tenant
 // from day one (per plan-eng-review Section 1). `user_id` foreign keys appear on every
@@ -33,6 +35,21 @@ export const users = pgTable(
     displayName: varchar('display_name', { length: 200 }),
     avatarUrl: text('avatar_url'),
     isActive: boolean('is_active').notNull().default(true),
+    // Multi-tenant tenancy root. NULL until the user completes one of the
+    // onboarding flows (A: create workspace, B: accept invite, C: domain
+    // auto-join). The OAuth callback inspects this — NULL → redirect to mobile
+    // with action=create_workspace; set → mint JWT and route to Calendar.
+    // Lazy callback — auth.ts ↔ firms.ts is a circular module import at the type
+    // level, but drizzle's `references()` only invokes the callback at table-build
+    // time, after both modules have been evaluated. Safe.
+    firmId: text('firm_id').references(() => firms.id, { onDelete: 'set null' }),
+    // 'admin' | 'member'. First user from a firm (Flow A) becomes admin;
+    // invitees default to member; admin can promote/demote via PATCH
+    // /firms/me/members/:userId.
+    role: varchar('role', { length: 32 }).notNull().default('member'),
+    invitedByUserId: text('invited_by_user_id').references((): AnyPgColumn => users.id, {
+      onDelete: 'set null',
+    }),
     // Quota tracking (per plan-ceo-review Section 3 — concurrent session limit + monthly minute quota)
     monthlyDeepgramMinutes: jsonb('monthly_deepgram_minutes').notNull().default({}),
     // Lamport clock — bumped by writeWithSync helper on every owned-row update.
@@ -43,6 +60,8 @@ export const users = pgTable(
   (t) => [
     uniqueIndex('users_google_sub_idx').on(t.googleSub),
     uniqueIndex('users_email_idx').on(t.email),
+    // Hot path: list members of a firm.
+    index('users_firm_idx').on(t.firmId),
   ],
 )
 
