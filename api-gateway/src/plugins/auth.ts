@@ -51,11 +51,12 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOpts): Promise<v
     }
     try {
       req.user = await verifyAccessToken(opts.env.JWT_SIGNING_SECRET, token)
-      // firm_id lands in M1a — add it here once AccessTokenClaims gains the claim.
       Sentry.setUser({
         id: req.user.sub,
         session_id: req.user.sid,
         device_id: req.user.device,
+        firm_id: req.user.firm_id ?? '(none)',
+        role: req.user.role,
       })
     } catch {
       // Bad token = unauthenticated. Don't throw here — let the route decide

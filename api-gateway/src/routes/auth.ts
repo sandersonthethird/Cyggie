@@ -123,8 +123,15 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
       })
 
       let userId: string
+      // firm_id and role come from the user row: NULL/'member' on first sign-in,
+      // populated once the user completes Flow A/B/C. The cyggie:// redirect
+      // below uses firm_id to decide which onboarding action to surface on mobile.
+      let userFirmId: string | null
+      let userRole: 'admin' | 'member'
       if (existingUser) {
         userId = existingUser.id
+        userFirmId = existingUser.firmId
+        userRole = existingUser.role === 'admin' ? 'admin' : 'member'
         await db
           .update(schema.users)
           .set({
@@ -136,6 +143,8 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
           .where(eq(schema.users.id, userId))
       } else {
         userId = createId()
+        userFirmId = null
+        userRole = 'member'
         await db.insert(schema.users).values({
           id: userId,
           googleSub: identity.googleSub,
@@ -214,6 +223,8 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         sid: sessionId,
         device: pending.deviceId,
         scope: ['user'],
+        firm_id: userFirmId,
+        role: userRole,
       })
 
       // Redirect to the mobile deep link with both tokens. Mobile catches this
@@ -237,6 +248,8 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
           email: z.string(),
           displayName: z.string().nullable(),
           avatarUrl: z.string().nullable(),
+          firmId: z.string().nullable(),
+          role: z.enum(['admin', 'member']),
         }),
       },
     },
@@ -256,6 +269,8 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         email: row.email,
         displayName: row.displayName,
         avatarUrl: row.avatarUrl,
+        firmId: row.firmId,
+        role: row.role === 'admin' ? ('admin' as const) : ('member' as const),
       }
     },
   })
@@ -325,11 +340,27 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         })
         .where(eq(schema.sessions.id, session.id))
 
+      // Re-read the user row so the new JWT picks up the latest firm_id + role
+      // (e.g. user just completed Flow A and now has a firm_id).
+      const userRow = await db.query.users.findFirst({
+        where: eq(schema.users.id, session.userId),
+      })
+      if (!userRow) {
+        throw new GatewayError({
+          statusCode: 401,
+          code: 'USER_NOT_FOUND',
+          message: 'User in session no longer exists',
+          reauthRequired: true,
+        })
+      }
+
       const accessToken = await signAccessToken(env.JWT_SIGNING_SECRET, {
         sub: session.userId,
         sid: session.id,
         device: session.deviceId,
         scope: ['user'],
+        firm_id: userRow.firmId,
+        role: userRow.role === 'admin' ? 'admin' : 'member',
       })
 
       return {

@@ -10,13 +10,27 @@ import { GatewayError } from '../plugins/error'
 //   sid      — sessions.id (rotated on refresh, anchors to the device row)
 //   device   — device_id (stable per-device identifier)
 //   scope    — array of capability strings; V1 just 'user'
+//   firm_id  — users.firm_id; null until the user completes onboarding
+//             (Flow A create-workspace, Flow B accept-invite, Flow C auto-join).
+//             Downstream routes that require a tenant context call
+//             req.requireFirm() which 403s on null.
+//   role     — 'admin' | 'member'. First-from-firm becomes admin; invitees
+//             default to member. Admin-only routes check this.
 //   iat, exp — standard
+//
+// firm_id is refreshed on the next /auth/refresh after a tenant transition
+// (the refresh path reads the current user row, not the old JWT) so the
+// short access-token TTL keeps the claim from going stale.
+
+export type UserRole = 'admin' | 'member'
 
 export interface AccessTokenClaims {
   sub: string
   sid: string
   device: string
   scope: string[]
+  firm_id: string | null
+  role: UserRole
 }
 
 const ISSUER = 'cyggie-gateway'
@@ -35,7 +49,13 @@ export async function signAccessToken(
   secret: string,
   claims: AccessTokenClaims,
 ): Promise<string> {
-  return new SignJWT({ device: claims.device, scope: claims.scope, sid: claims.sid })
+  return new SignJWT({
+    device: claims.device,
+    scope: claims.scope,
+    sid: claims.sid,
+    firm_id: claims.firm_id,
+    role: claims.role,
+  })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setSubject(claims.sub)
     .setIssuer(ISSUER)
@@ -66,11 +86,23 @@ export async function verifyAccessToken(
         message: 'Token payload malformed',
       })
     }
+    // firm_id is allowed to be null (pre-onboarding); role must be a string.
+    const rawFirmId = payload['firm_id']
+    const firm_id =
+      rawFirmId === null || rawFirmId === undefined
+        ? null
+        : typeof rawFirmId === 'string'
+          ? rawFirmId
+          : null
+    const rawRole = payload['role']
+    const role: UserRole = rawRole === 'admin' ? 'admin' : 'member'
     return {
       sub: payload.sub,
       sid: payload['sid'] as string,
       device: payload['device'] as string,
       scope: payload['scope'] as string[],
+      firm_id,
+      role,
     }
   } catch (err) {
     if (err instanceof GatewayError) throw err
