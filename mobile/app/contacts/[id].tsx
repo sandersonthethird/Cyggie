@@ -15,37 +15,32 @@ import { useQuery } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
-  fetchCompany,
-  type CompanyDetail,
-  type CompanyMeetingRef,
-  type CompanyPersonRef,
-} from '../../lib/api/companies'
+  fetchContact,
+  type ContactDetail,
+  type ContactMeetingRef,
+} from '../../lib/api/contacts'
 import { useAuthStore } from '../../lib/auth/store'
 import { colors, radii, spacing, type } from '../../theme'
 
-// Company detail — WIREFRAME 6.
+// Contact detail — mirrors the structure of company/[id].tsx (hero + stats
+// + segmented Overview/Meetings) so the navigation feel is uniform.
 //
-// Composition:
-//   • Header bar with back button + company name
-//   • Hero: avatar + name + industry/location meta
-//   • Stats card (last touch · meeting count · pipeline stage)
-//   • Segmented control: Overview | Meetings | People
-//   • Each segment is its own scroll section inside the same ScrollView
-//
-// Read-only. Editing lands in M4 once mobile sync gets the writeWithSync
-// hook from the desktop side.
+// Notable shape differences vs Company detail:
+//   • Hero shows the primary company name as a tappable link → /companies/:id
+//   • "People" segment is absent (no second-degree contacts model yet); the
+//     two segments are Overview + Meetings.
 
-type Segment = 'overview' | 'meetings' | 'people'
+type Segment = 'overview' | 'meetings'
 
-export default function CompanyDetailScreen() {
+export default function ContactDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>()
   const id = typeof params.id === 'string' ? params.id : ''
   const signOut = useAuthStore((s) => s.signOut)
   const [segment, setSegment] = useState<Segment>('overview')
 
   const query = useQuery({
-    queryKey: ['companies', 'detail', id],
-    queryFn: ({ signal }) => fetchCompany(id, { signal }),
+    queryKey: ['contacts', 'detail', id],
+    queryFn: ({ signal }) => fetchContact(id, { signal }),
     enabled: id.length > 0,
     staleTime: 30_000,
   })
@@ -56,14 +51,16 @@ export default function CompanyDetailScreen() {
     }
   }, [query.error, signOut])
 
-  const company = query.data
+  const contact = query.data
 
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.topbar}>
           <Pressable
-            onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/companies'))}
+            onPress={() =>
+              router.canGoBack() ? router.back() : router.replace('/(tabs)/contacts')
+            }
             hitSlop={8}
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
             accessibilityLabel="Back"
@@ -72,7 +69,7 @@ export default function CompanyDetailScreen() {
             <Ionicons name="chevron-back" size={22} color={colors.text} />
           </Pressable>
           <Text style={styles.topbarTitle} numberOfLines={1}>
-            {company?.name ?? ''}
+            {contact?.fullName ?? ''}
           </Text>
           <View style={styles.backBtn} />
         </View>
@@ -88,22 +85,21 @@ export default function CompanyDetailScreen() {
           />
         }
       >
-        {query.isLoading && !company ? (
+        {query.isLoading && !contact ? (
           <View style={styles.center}>
             <ActivityIndicator color={colors.crimson} />
           </View>
-        ) : query.error && !company ? (
+        ) : query.error && !contact ? (
           <ErrorState error={query.error} onRetry={() => query.refetch()} />
-        ) : company ? (
+        ) : contact ? (
           <>
-            <Hero company={company} />
-            <StatsCard company={company} />
+            <Hero contact={contact} />
+            <StatsCard contact={contact} />
             <SegmentControl value={segment} onChange={setSegment} />
-            {segment === 'overview' && <OverviewSection company={company} />}
+            {segment === 'overview' && <OverviewSection contact={contact} />}
             {segment === 'meetings' && (
-              <MeetingsSection meetings={company.recentMeetings} />
+              <MeetingsSection meetings={contact.recentMeetings} />
             )}
-            {segment === 'people' && <PeopleSection people={company.people} />}
             <View style={{ height: spacing.xxl }} />
           </>
         ) : null}
@@ -112,44 +108,62 @@ export default function CompanyDetailScreen() {
   )
 }
 
-function Hero({ company }: { company: CompanyDetail }) {
-  const subtitleBits = [
-    company.industry,
-    company.city && company.state
-      ? `${company.city}, ${company.state}`
-      : company.city ?? company.state,
-  ]
-    .filter(Boolean)
-    .join(' · ')
+function Hero({ contact }: { contact: ContactDetail }) {
   return (
     <View style={styles.hero}>
       <View style={styles.heroAvatar}>
-        <Text style={styles.heroAvatarText}>{initials(company.name)}</Text>
+        <Text style={styles.heroAvatarText}>{initials(contact.fullName)}</Text>
       </View>
       <Text style={styles.heroName} numberOfLines={2}>
-        {company.name}
+        {contact.fullName}
       </Text>
-      {subtitleBits.length > 0 && (
-        <Text style={styles.heroSubtitle}>{subtitleBits}</Text>
+      {(contact.title || contact.primaryCompanyName) && (
+        <Pressable
+          onPress={() =>
+            contact.primaryCompanyId
+              ? router.push(`/companies/${contact.primaryCompanyId}`)
+              : undefined
+          }
+          disabled={!contact.primaryCompanyId}
+          style={({ pressed }) => [pressed && styles.pressed]}
+        >
+          <Text style={styles.heroSubtitle}>
+            {contact.title ? `${contact.title}` : ''}
+            {contact.title && contact.primaryCompanyName ? ' · ' : ''}
+            {contact.primaryCompanyName ? (
+              <Text style={styles.heroLink}>{contact.primaryCompanyName}</Text>
+            ) : null}
+          </Text>
+        </Pressable>
       )}
-      {(company.websiteUrl || company.linkedinCompanyUrl) && (
-        <View style={styles.heroLinks}>
-          {company.websiteUrl && (
-            <LinkChip
-              icon="globe-outline"
-              label="Website"
-              onPress={() => void Linking.openURL(company.websiteUrl!)}
-            />
-          )}
-          {company.linkedinCompanyUrl && (
-            <LinkChip
-              icon="logo-linkedin"
-              label="LinkedIn"
-              onPress={() => void Linking.openURL(company.linkedinCompanyUrl!)}
-            />
-          )}
-        </View>
+      {contact.linkedinHeadline && (
+        <Text style={styles.heroHeadline} numberOfLines={2}>
+          {contact.linkedinHeadline}
+        </Text>
       )}
+      <View style={styles.heroLinks}>
+        {contact.email && (
+          <LinkChip
+            icon="mail-outline"
+            label="Email"
+            onPress={() => void Linking.openURL(`mailto:${contact.email}`)}
+          />
+        )}
+        {contact.phone && (
+          <LinkChip
+            icon="call-outline"
+            label="Call"
+            onPress={() => void Linking.openURL(`tel:${contact.phone}`)}
+          />
+        )}
+        {contact.linkedinUrl && (
+          <LinkChip
+            icon="logo-linkedin"
+            label="LinkedIn"
+            onPress={() => void Linking.openURL(contact.linkedinUrl!)}
+          />
+        )}
+      </View>
     </View>
   )
 }
@@ -174,20 +188,18 @@ function LinkChip({
   )
 }
 
-function StatsCard({ company }: { company: CompanyDetail }) {
-  const lastTouch = formatRelativeDay(company.lastTouchAt)
+function StatsCard({ contact }: { contact: ContactDetail }) {
+  const lastMeeting = formatRelativeDay(contact.lastMeetingAt)
+  const lastEmail = formatRelativeDay(contact.lastEmailAt)
   return (
     <View style={styles.statsCard}>
-      <StatCell label="Last touch" value={lastTouch} />
+      <StatCell label="Last meeting" value={lastMeeting} />
+      <View style={styles.statDivider} />
+      <StatCell label="Last email" value={lastEmail} />
       <View style={styles.statDivider} />
       <StatCell
-        label="Meetings"
-        value={String(company.meetingCount)}
-      />
-      <View style={styles.statDivider} />
-      <StatCell
-        label="Stage"
-        value={company.pipelineStage ? humanizeStage(company.pipelineStage) : '—'}
+        label="Type"
+        value={contact.contactType ? humanize(contact.contactType) : '—'}
       />
     </View>
   )
@@ -196,7 +208,9 @@ function StatsCard({ company }: { company: CompanyDetail }) {
 function StatCell({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.statCell}>
-      <Text style={styles.statValue} numberOfLines={1}>{value}</Text>
+      <Text style={styles.statValue} numberOfLines={1}>
+        {value}
+      </Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   )
@@ -212,7 +226,6 @@ function SegmentControl({
   const items: Array<{ key: Segment; label: string }> = [
     { key: 'overview', label: 'Overview' },
     { key: 'meetings', label: 'Meetings' },
-    { key: 'people', label: 'People' },
   ]
   return (
     <View style={styles.segmentWrap}>
@@ -236,51 +249,67 @@ function SegmentControl({
   )
 }
 
-function OverviewSection({ company }: { company: CompanyDetail }) {
-  const rows = useMemo(
-    () =>
-      [
-        { label: 'Industry', value: company.industry },
-        { label: 'Stage', value: company.stage },
-        {
-          label: 'Pipeline',
-          value: company.pipelineStage ? humanizeStage(company.pipelineStage) : null,
-        },
-        { label: 'Round', value: company.round },
-        {
-          label: 'Raise size',
-          value: company.raiseSize ? formatCurrency(company.raiseSize) : null,
-        },
-        {
-          label: 'Total funding',
-          value: company.totalFundingRaised
-            ? formatCurrency(company.totalFundingRaised)
-            : null,
-        },
-        { label: 'ARR', value: company.arr ? formatCurrency(company.arr) : null },
-        {
-          label: 'Runway',
-          value: company.runwayMonths ? `${company.runwayMonths} months` : null,
-        },
-        { label: 'Employees', value: company.employeeCountRange },
-        {
-          label: 'Founded',
-          value: company.foundingYear ? String(company.foundingYear) : null,
-        },
-        { label: 'Domain', value: company.primaryDomain },
-      ].filter((r): r is { label: string; value: string } => Boolean(r.value)),
-    [company],
-  )
+function OverviewSection({ contact }: { contact: ContactDetail }) {
+  const rows = useMemo(() => {
+    const base = [
+      { label: 'Title', value: contact.title },
+      { label: 'Company', value: contact.primaryCompanyName },
+      {
+        label: 'Location',
+        value:
+          contact.city && contact.state
+            ? `${contact.city}, ${contact.state}`
+            : contact.city ?? contact.state,
+      },
+      { label: 'Email', value: contact.email },
+      { label: 'Phone', value: contact.phone },
+      {
+        label: 'Type',
+        value: contact.contactType ? humanize(contact.contactType) : null,
+      },
+      {
+        label: 'Relationship',
+        value: contact.relationshipStrength
+          ? humanize(contact.relationshipStrength)
+          : null,
+      },
+      // Investor-specific (only meaningful for contactType === 'investor', but
+      // showing whatever's set rather than hiding behind a type check).
+      {
+        label: 'Investor stage',
+        value: contact.investorStage ? humanize(contact.investorStage) : null,
+      },
+      {
+        label: 'Fund size',
+        value: contact.fundSize ? formatCurrency(contact.fundSize) : null,
+      },
+      {
+        label: 'Check size',
+        value: formatCheckRange(
+          contact.typicalCheckSizeMin,
+          contact.typicalCheckSizeMax,
+        ),
+      },
+    ]
+    return base.filter((r): r is { label: string; value: string } => Boolean(r.value))
+  }, [contact])
 
   return (
     <View style={styles.section}>
-      {company.description && (
+      {contact.keyTakeaways && (
         <View style={styles.descBlock}>
-          <Text style={styles.descText}>{company.description}</Text>
+          <Text style={styles.descHeading}>Key takeaways</Text>
+          <Text style={styles.descText}>{contact.keyTakeaways}</Text>
         </View>
       )}
-      {rows.length === 0 && !company.description ? (
-        <Text style={styles.emptyInline}>No company details yet.</Text>
+      {contact.notes && (
+        <View style={styles.descBlock}>
+          <Text style={styles.descHeading}>Notes</Text>
+          <Text style={styles.descText}>{contact.notes}</Text>
+        </View>
+      )}
+      {rows.length === 0 && !contact.keyTakeaways && !contact.notes ? (
+        <Text style={styles.emptyInline}>No contact details yet.</Text>
       ) : (
         <View style={styles.kvCard}>
           {rows.map((row, idx) => (
@@ -300,11 +329,14 @@ function OverviewSection({ company }: { company: CompanyDetail }) {
   )
 }
 
-function MeetingsSection({ meetings }: { meetings: CompanyMeetingRef[] }) {
+function MeetingsSection({ meetings }: { meetings: ContactMeetingRef[] }) {
   if (meetings.length === 0) {
     return (
       <View style={styles.section}>
-        <Text style={styles.emptyInline}>No meetings linked to this company yet.</Text>
+        <Text style={styles.emptyInline}>
+          No meetings yet. They appear here once you record one and tag this
+          person as a speaker.
+        </Text>
       </View>
     )
   }
@@ -323,53 +355,13 @@ function MeetingsSection({ meetings }: { meetings: CompanyMeetingRef[] }) {
                 </Text>
                 <Text style={styles.meetingMeta}>
                   {formatMeetingDate(m.date)}
-                  {m.durationSeconds ? ` · ${formatDuration(m.durationSeconds)}` : ''}
+                  {m.durationSeconds
+                    ? ` · ${formatDuration(m.durationSeconds)}`
+                    : ''}
                 </Text>
               </View>
             </View>
             {idx < meetings.length - 1 && <View style={styles.kvDivider} />}
-          </View>
-        ))}
-      </View>
-    </View>
-  )
-}
-
-function PeopleSection({ people }: { people: CompanyPersonRef[] }) {
-  if (people.length === 0) {
-    return (
-      <View style={styles.section}>
-        <Text style={styles.emptyInline}>No people linked to this company yet.</Text>
-      </View>
-    )
-  }
-  return (
-    <View style={styles.section}>
-      <View style={styles.kvCard}>
-        {people.map((p, idx) => (
-          <View key={p.id}>
-            <Pressable
-              onPress={() => router.push(`/contacts/${p.id}`)}
-              style={({ pressed }) => [styles.personRow, pressed && styles.rowPressed]}
-              accessibilityRole="button"
-              accessibilityLabel={p.fullName}
-            >
-              <View style={styles.personAvatar}>
-                <Text style={styles.personAvatarText}>{initials(p.fullName)}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.personName} numberOfLines={1}>
-                  {p.fullName}
-                </Text>
-                {(p.title || p.email) && (
-                  <Text style={styles.personMeta} numberOfLines={1}>
-                    {[p.title, p.email].filter(Boolean).join(' · ')}
-                  </Text>
-                )}
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={colors.text4} />
-            </Pressable>
-            {idx < people.length - 1 && <View style={styles.kvDivider} />}
           </View>
         ))}
       </View>
@@ -383,10 +375,10 @@ function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void })
       ? `${error.code}: ${error.message}`
       : error instanceof Error
         ? error.message
-        : 'Could not load company'
+        : 'Could not load contact'
   return (
     <View style={styles.center}>
-      <Text style={styles.errorTitle}>Company failed to load</Text>
+      <Text style={styles.errorTitle}>Contact failed to load</Text>
       <Text style={styles.errorMessage}>{message}</Text>
       <Pressable
         onPress={onRetry}
@@ -405,7 +397,7 @@ function initials(name: string): string {
   return (words[0]![0]! + words[1]![0]!).toUpperCase()
 }
 
-function humanizeStage(raw: string): string {
+function humanize(raw: string): string {
   return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
@@ -443,6 +435,12 @@ function formatCurrency(n: number): string {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
   if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`
   return `$${n.toLocaleString()}`
+}
+
+function formatCheckRange(min: number | null, max: number | null): string | null {
+  if (min == null && max == null) return null
+  if (min != null && max != null) return `${formatCurrency(min)}—${formatCurrency(max)}`
+  return formatCurrency((min ?? max) as number)
 }
 
 const styles = StyleSheet.create({
@@ -511,10 +509,21 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'center',
   },
+  heroLink: { color: colors.crimson, fontWeight: '600' },
+  heroHeadline: {
+    color: colors.text2,
+    fontSize: type.bodyTight,
+    marginTop: 8,
+    textAlign: 'center',
+    fontStyle: 'italic',
+    paddingHorizontal: spacing.md,
+  },
   heroLinks: {
     flexDirection: 'row',
     gap: 8,
     marginTop: spacing.md,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
   },
   linkChip: {
     flexDirection: 'row',
@@ -596,10 +605,7 @@ const styles = StyleSheet.create({
   },
   segmentTextActive: { color: colors.text },
 
-  section: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-  },
+  section: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
   descBlock: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
@@ -607,6 +613,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.md,
     marginBottom: spacing.md,
+  },
+  descHeading: {
+    color: colors.text4,
+    fontSize: type.label,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
   },
   descText: {
     color: colors.text2,
@@ -671,38 +685,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  personRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-  },
-  rowPressed: { backgroundColor: colors.surface3 },
-  personAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: radii.pill,
-    backgroundColor: colors.surface3,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  personAvatarText: {
-    color: colors.text2,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  personName: {
-    color: colors.text,
-    fontSize: type.body + 1,
-    fontWeight: '600',
-  },
-  personMeta: {
-    color: colors.text3,
-    fontSize: type.bodyTight,
-    marginTop: 2,
-  },
-
   emptyInline: {
     color: colors.text3,
     fontSize: type.bodyTight,
@@ -710,11 +692,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl,
   },
 
-  center: {
-    paddingVertical: 60,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  center: { paddingVertical: 60, alignItems: 'center', justifyContent: 'center' },
   errorTitle: {
     color: colors.crimson,
     fontSize: type.body + 2,
