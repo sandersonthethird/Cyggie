@@ -29,12 +29,20 @@ export default function SignInScreen() {
         setError(`${result.code}: ${result.message}`)
         return
       }
-      await signIn({
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        userId: result.userId,
-        action: result.action,
-      })
+      try {
+        await signIn({
+          accessToken: result.accessToken,
+          refreshToken: result.refreshToken,
+          userId: result.userId,
+          action: result.action,
+        })
+      } catch (err) {
+        // Without this catch the user lands back at sign-in with no
+        // feedback — the most painful failure mode we hit during M1b.
+        const msg = err instanceof Error ? err.message : String(err)
+        setError(`Sign-in failed after OAuth: ${msg}`)
+        return
+      }
       router.replace('/')
     } finally {
       setPending(false)

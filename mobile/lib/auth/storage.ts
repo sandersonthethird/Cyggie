@@ -23,10 +23,16 @@ const DEVICE_ID_KEY = 'cyggie.device_id'
 const LAST_ACTION_KEY = 'cyggie.last_action'
 
 const REFRESH_OPTS: SecureStore.SecureStoreOptions = {
-  // Gates Keychain read on FaceID/TouchID. The prompt UI is system-provided;
-  // we can supply a custom reason via this key.
-  requireAuthentication: true,
-  authenticationPrompt: 'Sign in to Cyggie',
+  // V1 / dev: no biometric gate. The Simulator has no FaceID/passcode
+  // enrolled by default, and on a real device the prompt fires on every
+  // read (including the silent refresh path in api/client.ts) which is
+  // bad UX. M6 polish will (a) check expo-local-authentication availability,
+  // (b) prompt at sign-in to enroll, and (c) re-enable
+  // requireAuthentication only when both are present.
+  //
+  // Threat model trade: refresh-token theft requires either physical device
+  // access while unlocked, OR a Keychain-extracting jailbreak. The
+  // 30-day rotation + device_id binding bound the blast radius.
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 }
 
