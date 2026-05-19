@@ -183,7 +183,7 @@ export default function CreateWorkspaceScreen() {
             ]}
           >
             {pending ? (
-              <ActivityIndicator color="#0a0a0a" />
+              <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.buttonText}>Create workspace</Text>
             )}
@@ -211,64 +211,72 @@ function slugify(value: string): string {
     .slice(0, 64)
 }
 
+import { colors as themeColors, radii as themeRadii } from '../../theme'
+
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0a0a0a' },
+  root: { flex: 1, backgroundColor: themeColors.surface },
   scroll: {
     padding: 24,
     paddingBottom: 60,
   },
   title: {
-    color: '#fafafa',
+    color: themeColors.text,
     fontSize: 32,
     fontWeight: '700',
     marginTop: 32,
+    letterSpacing: -0.6,
   },
   subtitle: {
-    color: '#888',
+    color: themeColors.text3,
     fontSize: 15,
     marginTop: 8,
     marginBottom: 28,
   },
   field: { marginBottom: 20 },
   label: {
-    color: '#bbb',
+    color: themeColors.text2,
     fontSize: 13,
     fontWeight: '500',
     marginBottom: 8,
   },
   input: {
-    backgroundColor: '#1a1a1a',
-    color: '#fafafa',
-    borderRadius: 10,
+    backgroundColor: themeColors.surface,
+    color: themeColors.text,
+    borderRadius: themeRadii.md + 2,
     paddingHorizontal: 14,
     paddingVertical: 14,
     fontSize: 16,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: themeColors.border,
   },
   hint: {
-    color: '#666',
+    color: themeColors.text3,
     fontSize: 12,
     marginTop: 6,
   },
   spacer: { height: 12 },
   button: {
-    backgroundColor: '#fafafa',
-    borderRadius: 12,
+    backgroundColor: themeColors.crimson,
+    borderRadius: themeRadii.lg,
     paddingVertical: 16,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 56,
+    shadowColor: themeColors.crimson,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 6,
   },
-  buttonPressed: { opacity: 0.8 },
+  buttonPressed: { opacity: 0.85 },
   buttonDisabled: { opacity: 0.5 },
   buttonText: {
-    color: '#0a0a0a',
+    color: themeColors.surface,
     fontSize: 16,
     fontWeight: '600',
   },
   error: {
-    color: '#f87171',
+    color: themeColors.crimson,
     fontSize: 14,
     marginTop: 16,
     textAlign: 'center',

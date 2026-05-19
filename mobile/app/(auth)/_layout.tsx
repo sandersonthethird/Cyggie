@@ -1,13 +1,14 @@
 import { Stack } from 'expo-router'
+import { colors } from '../../theme'
 
-// Auth route group. Currently just the sign-in flow; onboarding screens
-// (create-workspace, join-firm) land in M1a Step 7.
+// Auth route group: sign-in, create-workspace, join-firm. Light theme
+// matches the rest of the app per docs/DESIGN.md.
 export default function AuthLayout() {
   return (
     <Stack
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: '#0a0a0a' },
+        contentStyle: { backgroundColor: colors.surface },
       }}
     />
   )

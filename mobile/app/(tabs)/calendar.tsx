@@ -1,6 +1,7 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -8,42 +9,41 @@ import {
   Text,
   View,
 } from 'react-native'
+import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
-  type CalendarEvent,
   bucketEvents,
   eventsForDate,
   fetchCalendarEvents,
 } from '../../lib/api/calendar'
 import { useAuthStore } from '../../lib/auth/store'
+import { Avatar } from '../../components/Avatar'
+import { MeetingRow } from '../../components/MeetingRow'
+import { NowRail } from '../../components/NowRail'
+import { RecordFab } from '../../components/RecordFab'
+import { colors, radii, spacing, type } from '../../theme'
 
-// Calendar home (WIREFRAME 1).
+// Calendar home — WIREFRAME 1.
 //
-//   ┌──────────────────────────────────────┐
-//   │ Today                                │
-//   │ Wed, May 13 · 5 meetings             │
-//   ├──────────────────────────────────────┤
-//   │ EARLIER TODAY                        │
-//   │   9:00  Standup            [dimmed]  │
-//   │   ─────────────────────              │
-//   │ NOW                                  │
-//   │   11:00 1:1 with Alice    [crimson]  │
-//   │ NEXT                                 │
-//   │   2:00 PM  FooCorp pitch  [crimson]  │
-//   │ LATER                                │
-//   │   4:00 PM  Investor sync             │
-//   └──────────────────────────────────────┘
+// Composition:
+//   • SafeArea + app bar (Today / date / count + search icon + avatar)
+//   • Sectioned scroll (Earlier today / Now / Up next / Later today)
+//   • NowRail divider between Earlier and Now+Next
+//   • RecordFab pinned bottom-right above the tab bar
 //
-// Real recording / FAB / details land in M3 / M2. M1b just renders the list.
+// The bucketing logic (eventsForDate + bucketEvents) and data fetching
+// (TanStack Query + MMKV persister) are unchanged from M1b — this pass
+// is pure presentation.
 
 export default function CalendarTab() {
+  const userId = useAuthStore((s) => s.userId)
   const signOut = useAuthStore((s) => s.signOut)
-  // Pin "now" once per render cycle so all bucketing decisions agree, and
-  // tick every minute so the next-meeting highlight migrates naturally as
-  // time passes (without re-fetching from the network).
+
+  // Pin "now" per render cycle, tick every minute so the next-meeting
+  // highlight migrates naturally as time passes (without a network refetch).
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
     const handle = setInterval(() => setNow(new Date()), 60_000)
@@ -53,14 +53,9 @@ export default function CalendarTab() {
   const query = useQuery({
     queryKey: ['calendar', 'events', 'today'],
     queryFn: ({ signal }) => fetchCalendarEvents({ signal }),
-    // 30s fresh — quick refetches while the user lingers, but skip the network
-    // when they're swiping back and forth.
     staleTime: 30_000,
   })
 
-  // Mobile filters the gateway's two-week window down to today's events.
-  // Keeping the broader window cached means tomorrow's events are ready
-  // instantly if the user pages forward (lands in M2).
   const todays = useMemo(() => {
     if (!query.data) return []
     return eventsForDate(query.data, now)
@@ -68,24 +63,52 @@ export default function CalendarTab() {
 
   const buckets = useMemo(() => bucketEvents(todays, now), [todays, now])
   const dateLabel = useMemo(() => formatDateHeader(now), [now])
+  const nowLabel = useMemo(() => formatNowLabel(now), [now])
 
-  // 401 reauth_required → kick to sign-in. The API client already cleared
-  // SecureStore, so we just need to navigate.
+  // 401 reauth_required → kick to sign-in.
   useEffect(() => {
     if (query.error instanceof ApiError && query.error.reauthRequired) {
       void signOut().then(() => router.replace('/(auth)/sign-in'))
     }
   }, [query.error, signOut])
 
+  const meetingCount = todays.length
+
   return (
-    <SafeAreaView style={styles.root} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Today</Text>
-        <Text style={styles.headerSubtitle}>
-          {dateLabel}
-          {todays.length > 0 ? ` · ${todays.length} meeting${todays.length === 1 ? '' : 's'}` : ''}
-        </Text>
-      </View>
+    <View style={styles.root}>
+      <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
+        <View style={styles.appbar}>
+          <View style={styles.appbarTitleWrap}>
+            <Text style={styles.appbarTitle}>Today</Text>
+            <Text style={styles.appbarSubtitle}>
+              {dateLabel}
+              {meetingCount > 0
+                ? ` · ${meetingCount} meeting${meetingCount === 1 ? '' : 's'}`
+                : ''}
+            </Text>
+          </View>
+          <View style={styles.appbarActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Search"
+              onPress={() =>
+                Alert.alert('Universal search', 'Lands in M2 alongside the CRM detail screens.')
+              }
+              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+            >
+              <Ionicons name="search" size={16} color={colors.text2} />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Account"
+              onPress={() => openAccountSheet(userId, signOut)}
+              hitSlop={8}
+            >
+              <Avatar initials={initialsFromUserId(userId)} size={32} />
+            </Pressable>
+          </View>
+        </View>
+      </SafeAreaView>
 
       <ScrollView
         contentContainerStyle={styles.scroll}
@@ -93,142 +116,86 @@ export default function CalendarTab() {
           <RefreshControl
             refreshing={query.isRefetching}
             onRefresh={() => query.refetch()}
-            tintColor="#fafafa"
+            tintColor={colors.crimson}
           />
         }
       >
         {query.isLoading && !query.data && (
           <View style={styles.center}>
-            <ActivityIndicator color="#fafafa" />
+            <ActivityIndicator color={colors.crimson} />
           </View>
         )}
 
-        {query.error && !query.data && <ErrorState error={query.error} onRetry={() => query.refetch()} />}
-
-        {query.data && todays.length === 0 && <EmptyState />}
-
-        {buckets.earlier.length > 0 && (
-          <Section title="Earlier today" dimmed>
-            {buckets.earlier.map((ev) => (
-              <EventRow key={ev.id} event={ev} variant="dimmed" />
-            ))}
-          </Section>
+        {query.error && !query.data && (
+          <ErrorState error={query.error} onRetry={() => query.refetch()} />
         )}
 
-        {buckets.now.length > 0 && (
-          <Section title="Now" highlight>
-            {buckets.now.map((ev) => (
-              <EventRow key={ev.id} event={ev} variant="active" />
+        {query.data && meetingCount === 0 && <EmptyState />}
+
+        {buckets.earlier.length > 0 && (
+          <View style={styles.section}>
+            <SectionHeader label="Earlier today" />
+            {buckets.earlier.map((ev) => (
+              <MeetingRow key={ev.id} event={ev} variant="past" />
             ))}
-          </Section>
+          </View>
+        )}
+
+        {(buckets.earlier.length > 0 ||
+          buckets.now.length > 0 ||
+          buckets.next ||
+          buckets.later.length > 0) && <NowRail label={nowLabel} />}
+
+        {buckets.now.length > 0 && (
+          <View style={styles.section}>
+            <SectionHeader label="Now" highlight />
+            {buckets.now.map((ev) => (
+              <MeetingRow key={ev.id} event={ev} variant="active" />
+            ))}
+          </View>
         )}
 
         {buckets.next && (
-          <Section title="Up next" highlight>
-            <EventRow event={buckets.next} variant="next" />
-          </Section>
+          <View style={styles.section}>
+            <SectionHeader label="Up next" highlight />
+            <MeetingRow event={buckets.next} variant="next" />
+          </View>
         )}
 
         {buckets.later.length > 0 && (
-          <Section title="Later today">
+          <View style={styles.section}>
+            <SectionHeader label="Later today" />
             {buckets.later.map((ev) => (
-              <EventRow key={ev.id} event={ev} variant="default" />
+              <MeetingRow key={ev.id} event={ev} variant="later" />
             ))}
-          </Section>
+          </View>
         )}
 
-        <View style={styles.footer}>
-          <Pressable onPress={signOut} style={styles.signOut}>
-            <Text style={styles.signOutText}>Sign out</Text>
-          </Pressable>
-        </View>
+        <View style={styles.footer} />
       </ScrollView>
-    </SafeAreaView>
-  )
-}
 
-function Section({
-  title,
-  children,
-  dimmed,
-  highlight,
-}: {
-  title: string
-  children: React.ReactNode
-  dimmed?: boolean
-  highlight?: boolean
-}) {
-  return (
-    <View style={styles.section}>
-      <Text
-        style={[
-          styles.sectionTitle,
-          dimmed && styles.sectionTitleDimmed,
-          highlight && styles.sectionTitleHighlight,
-        ]}
-      >
-        {title}
-      </Text>
-      {children}
+      <RecordFab />
     </View>
   )
 }
 
-type EventRowVariant = 'default' | 'dimmed' | 'active' | 'next'
-
-function EventRow({ event, variant }: { event: CalendarEvent; variant: EventRowVariant }) {
-  const time = event.isAllDay ? 'All day' : `${formatTime(event.start)} – ${formatTime(event.end)}`
-  const attendeeCount = event.attendees.length
+function SectionHeader({ label, highlight }: { label: string; highlight?: boolean }) {
   return (
-    <Pressable
-      // Tap behavior: meeting detail screen lands in M2; for now this is
-      // visually pressable but inert.
-      onPress={() => undefined}
-      style={({ pressed }) => [
-        styles.row,
-        variant === 'dimmed' && styles.rowDimmed,
-        variant === 'active' && styles.rowActive,
-        variant === 'next' && styles.rowNext,
-        pressed && styles.rowPressed,
-      ]}
-    >
-      <View style={styles.rowTime}>
-        <Text
-          style={[
-            styles.rowTimeText,
-            variant === 'dimmed' && styles.textDimmed,
-          ]}
-        >
-          {time.split(' – ')[0]}
-        </Text>
-      </View>
-      <View style={styles.rowBody}>
-        <Text
-          numberOfLines={2}
-          style={[
-            styles.rowTitle,
-            variant === 'dimmed' && styles.textDimmed,
-          ]}
-        >
-          {event.title}
-        </Text>
-        <Text style={styles.rowMeta} numberOfLines={1}>
-          {[
-            time.includes(' – ') ? time.split(' – ')[1] : null,
-            attendeeCount > 0 ? `${attendeeCount} attendee${attendeeCount === 1 ? '' : 's'}` : null,
-            event.location ?? null,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </Text>
-      </View>
-    </Pressable>
+    <View style={styles.sectionHeader}>
+      {highlight && <View style={styles.sectionHeaderDot} />}
+      <Text style={[styles.sectionHeaderText, highlight && styles.sectionHeaderHighlight]}>
+        {label}
+      </Text>
+    </View>
   )
 }
 
 function EmptyState() {
   return (
     <View style={styles.center}>
+      <View style={styles.emptyIconWrap}>
+        <Ionicons name="calendar-clear-outline" size={36} color={colors.text4} />
+      </View>
       <Text style={styles.emptyTitle}>No meetings today</Text>
       <Text style={styles.emptySubtitle}>Pull down to refresh.</Text>
     </View>
@@ -246,7 +213,10 @@ function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void })
     <View style={styles.center}>
       <Text style={styles.errorTitle}>Calendar failed to load</Text>
       <Text style={styles.errorMessage}>{message}</Text>
-      <Pressable onPress={onRetry} style={styles.retry}>
+      <Pressable
+        onPress={onRetry}
+        style={({ pressed }) => [styles.retry, pressed && styles.pressed]}
+      >
         <Text style={styles.retryText}>Try again</Text>
       </Pressable>
     </View>
@@ -261,92 +231,144 @@ function formatDateHeader(d: Date): string {
   })
 }
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  })
+function formatNowLabel(d: Date): string {
+  return d
+    .toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    .replace(/\s?(AM|PM)$/i, '')
+}
+
+function initialsFromUserId(userId: string | null): string {
+  if (!userId) return '?'
+  // userId is a cuid2 — first two alphas as a stable placeholder until
+  // /auth/me's displayName lands. M2 swaps this for real initials.
+  return userId.slice(0, 2).toUpperCase()
+}
+
+function openAccountSheet(_userId: string | null, signOut: () => Promise<void>): void {
+  Alert.alert('Account', undefined, [
+    { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
+    { text: 'Cancel', style: 'cancel' },
+  ])
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0a0a0a' },
-  header: {
-    paddingHorizontal: 24,
-    paddingTop: 12,
-    paddingBottom: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#1a1a1a',
-  },
-  headerTitle: {
-    color: '#fafafa',
-    fontSize: 32,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-  },
-  headerSubtitle: {
-    color: '#888',
-    fontSize: 14,
-    marginTop: 4,
-  },
-  scroll: { paddingTop: 8, paddingBottom: 60 },
+  root: { flex: 1, backgroundColor: colors.bg },
+  safeArea: { backgroundColor: colors.surface },
 
-  section: { paddingHorizontal: 16, paddingTop: 20 },
-  sectionTitle: {
-    color: '#666',
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    marginBottom: 8,
-    paddingHorizontal: 8,
-  },
-  sectionTitleDimmed: { color: '#555' },
-  sectionTitleHighlight: { color: '#dc2626' },
-
-  row: {
+  appbar: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
     flexDirection: 'row',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#1a1a1a',
-  },
-  rowDimmed: { opacity: 0.55 },
-  rowActive: { borderColor: '#dc2626' },
-  rowNext: { borderColor: '#dc2626', backgroundColor: '#1f1010' },
-  rowPressed: { opacity: 0.7 },
-  rowTime: { width: 64 },
-  rowTimeText: { color: '#bbb', fontSize: 14, fontWeight: '600' },
-  rowBody: { flex: 1, marginLeft: 8 },
-  rowTitle: { color: '#fafafa', fontSize: 16, fontWeight: '600', lineHeight: 20 },
-  rowMeta: { color: '#888', fontSize: 12, marginTop: 4 },
-  textDimmed: { color: '#777' },
-
-  center: { padding: 32, alignItems: 'center', justifyContent: 'center', minHeight: 200 },
-  emptyTitle: { color: '#bbb', fontSize: 16, fontWeight: '600', marginBottom: 4 },
-  emptySubtitle: { color: '#777', fontSize: 13 },
-  errorTitle: { color: '#f87171', fontSize: 16, fontWeight: '600', marginBottom: 8 },
-  errorMessage: { color: '#888', fontSize: 13, textAlign: 'center', marginBottom: 16 },
-  retry: {
-    backgroundColor: '#1a1a1a',
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-  },
-  retryText: { color: '#fafafa', fontSize: 14, fontWeight: '500' },
-
-  footer: { paddingHorizontal: 24, paddingTop: 32 },
-  signOut: {
-    backgroundColor: '#1a1a1a',
-    borderColor: '#2a2a2a',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 12,
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
-  signOutText: { color: '#888', fontSize: 13, fontWeight: '500' },
+  appbarTitleWrap: { flex: 1, minWidth: 0 },
+  appbarTitle: {
+    color: colors.text,
+    fontSize: 26,
+    fontWeight: '700',
+    letterSpacing: -0.6,
+    lineHeight: 28,
+  },
+  appbarSubtitle: {
+    color: colors.text3,
+    fontSize: type.meta + 1,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  appbarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  iconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pressed: { opacity: 0.6 },
+
+  scroll: { paddingBottom: 140, backgroundColor: colors.bg },
+
+  section: { backgroundColor: colors.surface },
+  sectionHeader: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: 14,
+    paddingBottom: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.surface,
+  },
+  sectionHeaderText: {
+    color: colors.text4,
+    fontSize: type.label,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  sectionHeaderHighlight: { color: colors.crimson },
+  sectionHeaderDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 99,
+    backgroundColor: colors.rec,
+  },
+
+  center: {
+    paddingVertical: 48,
+    paddingHorizontal: spacing.xxl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 240,
+    backgroundColor: colors.surface,
+  },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  emptyTitle: {
+    color: colors.text,
+    fontSize: type.body + 2,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  emptySubtitle: { color: colors.text3, fontSize: type.bodyTight },
+
+  errorTitle: {
+    color: colors.crimson,
+    fontSize: type.body + 2,
+    fontWeight: '600',
+    marginBottom: spacing.sm,
+  },
+  errorMessage: {
+    color: colors.text3,
+    fontSize: type.bodyTight,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+  },
+  retry: {
+    backgroundColor: colors.surface3,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radii.md,
+  },
+  retryText: { color: colors.text, fontSize: type.bodyTight, fontWeight: '500' },
+
+  footer: { height: spacing.xl },
 })

@@ -10,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { startSignIn } from '../../lib/auth/oauth'
 import { useAuthStore } from '../../lib/auth/store'
+import { colors, radii, spacing, type } from '../../theme'
 
 export default function SignInScreen() {
   const [pending, setPending] = useState(false)
@@ -22,7 +23,6 @@ export default function SignInScreen() {
     try {
       const result = await startSignIn()
       if (result.kind === 'cancel') {
-        // User backed out — silent.
         return
       }
       if (result.kind === 'error') {
@@ -35,9 +35,6 @@ export default function SignInScreen() {
         userId: result.userId,
         action: result.action,
       })
-      // Route by action hint. The actual create-workspace / join-firm
-      // screens land in Step 7; for now we just redirect to / which the
-      // dispatcher will route correctly.
       router.replace('/')
     } finally {
       setPending(false)
@@ -64,7 +61,7 @@ export default function SignInScreen() {
           accessibilityLabel="Continue with Google"
         >
           {pending ? (
-            <ActivityIndicator color="#0a0a0a" />
+            <ActivityIndicator color={colors.surface} />
           ) : (
             <Text style={styles.buttonText}>Continue with Google</Text>
           )}
@@ -81,7 +78,7 @@ export default function SignInScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0a0a0a' },
+  root: { flex: 1, backgroundColor: colors.surface },
   content: {
     flex: 1,
     alignItems: 'center',
@@ -89,39 +86,44 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
   title: {
-    color: '#fafafa',
+    color: colors.text,
     fontSize: 48,
     fontWeight: '700',
-    letterSpacing: -1,
+    letterSpacing: -1.2,
   },
   subtitle: {
-    color: '#888',
-    fontSize: 16,
-    marginTop: 8,
+    color: colors.text3,
+    fontSize: type.body + 2,
+    marginTop: spacing.sm,
     textAlign: 'center',
   },
   spacer: { height: 60 },
   button: {
-    backgroundColor: '#fafafa',
-    borderRadius: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
+    backgroundColor: colors.crimson,
+    borderRadius: radii.lg,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.xxl,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 56,
+    shadowColor: colors.crimson,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 6,
   },
-  buttonPressed: { opacity: 0.8 },
+  buttonPressed: { opacity: 0.85 },
   buttonDisabled: { opacity: 0.5 },
   buttonText: {
-    color: '#0a0a0a',
-    fontSize: 16,
+    color: colors.surface,
+    fontSize: type.body + 2,
     fontWeight: '600',
   },
   error: {
-    color: '#f87171',
-    fontSize: 14,
-    marginTop: 16,
+    color: colors.crimson,
+    fontSize: type.bodyTight,
+    marginTop: spacing.lg,
     textAlign: 'center',
   },
 })
