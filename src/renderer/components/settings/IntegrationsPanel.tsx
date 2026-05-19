@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Calendar, Mail, HardDrive, CloudUpload, FolderOpen } from 'lucide-react'
+import { Calendar, Mail, HardDrive, CloudUpload, FolderOpen, Cloud } from 'lucide-react'
 import styles from './IntegrationsPanel.module.css'
 
 /*
@@ -53,6 +53,20 @@ interface IntegrationsPanelProps {
   // Account email badges
   calendarAccountEmail: string | null
   gmailAccountEmail: string | null
+  // Cyggie Cloud Sync (Phase 1.5a + Desktop OAuth slice)
+  cyggieSignedIn: boolean
+  cyggieEmail: string | null
+  cyggieSigningIn: boolean
+  cyggieSyncSnapshot: {
+    state: string
+    pendingCount: number
+    failedCount: number
+    deadCount: number
+    lastFlushAt: number | null
+  } | null
+  onCyggieSignIn: () => void
+  onCyggieSignOut: () => void
+  onCyggieRetryDeadLetters: () => void
 }
 
 interface ToggleProps {
@@ -108,6 +122,13 @@ export function IntegrationsPanel({
   onGrantDriveFiles,
   calendarAccountEmail,
   gmailAccountEmail,
+  cyggieSignedIn,
+  cyggieEmail,
+  cyggieSigningIn,
+  cyggieSyncSnapshot,
+  onCyggieSignIn,
+  onCyggieSignOut,
+  onCyggieRetryDeadLetters,
 }: IntegrationsPanelProps) {
   const [calendarExpanded, setCalendarExpanded] = useState(false)
 
@@ -282,7 +303,103 @@ export function IntegrationsPanel({
 
         {driveError && <p className={styles.rowError}>{driveError}</p>}
 
+        <div className={styles.divider} />
+
+        {/* ── Cyggie Cloud Sync ── */}
+        {/* Self-contained: signs in via the gateway's OAuth flow (separate
+            Google client_id from Calendar/Gmail/Drive — second consent
+            required, by design). No dependency on the Calendar row. */}
+        <div className={styles.integrationRow}>
+          <Cloud size={20} className={styles.integrationIcon} />
+          <div className={styles.integrationInfo}>
+            <span className={styles.integrationName}>Cyggie Cloud Sync</span>
+            {cyggieSignedIn && cyggieEmail ? (
+              <span className={styles.accountBadge}>{cyggieEmail}</span>
+            ) : cyggieSigningIn ? (
+              <span className={styles.integrationSubtitle}>
+                Complete sign-in in your browser…
+              </span>
+            ) : (
+              <span className={styles.integrationSubtitle}>
+                Sync desktop edits to mobile via the Cyggie gateway
+              </span>
+            )}
+          </div>
+          <Toggle
+            on={cyggieSignedIn}
+            loading={cyggieSigningIn}
+            onClick={cyggieSignedIn ? onCyggieSignOut : onCyggieSignIn}
+            aria-label="Toggle Cyggie Cloud Sync"
+          />
+        </div>
+
+        {/* Sub-row: live sync state when signed in. Mirrors the Gmail
+            auto-sync sub-row pattern but read-only — the actual sync flush
+            happens automatically via the SyncAgent. */}
+        {cyggieSignedIn && cyggieSyncSnapshot && (
+          <div className={styles.subRow}>
+            <div className={styles.subRowInfo}>
+              <span className={styles.subRowLabel}>
+                {formatSyncStateLabel(cyggieSyncSnapshot.state)}
+                {cyggieSyncSnapshot.pendingCount > 0
+                  ? ` · ${cyggieSyncSnapshot.pendingCount} pending`
+                  : cyggieSyncSnapshot.lastFlushAt
+                    ? ` · last sync ${formatRelative(cyggieSyncSnapshot.lastFlushAt)}`
+                    : ''}
+              </span>
+              {cyggieSyncSnapshot.failedCount > 0 && (
+                <span className={styles.integrationSubtitle}>
+                  {cyggieSyncSnapshot.failedCount} retrying
+                </span>
+              )}
+            </div>
+            {cyggieSyncSnapshot.deadCount > 0 && (
+              <button
+                type="button"
+                onClick={onCyggieRetryDeadLetters}
+                className={styles.toggle}
+                style={{
+                  width: 'auto',
+                  height: 24,
+                  padding: '0 10px',
+                  borderRadius: 4,
+                  fontSize: 11,
+                }}
+                aria-label="Retry dead-letter sync rows"
+              >
+                Retry {cyggieSyncSnapshot.deadCount}
+              </button>
+            )}
+          </div>
+        )}
+
       </div>
     </section>
   )
+}
+
+function formatSyncStateLabel(state: string): string {
+  switch (state) {
+    case 'idle':
+      return 'Up to date'
+    case 'flushing':
+    case 'ack_pending':
+      return 'Syncing…'
+    case 'backing_off':
+      return 'Reconnecting'
+    case 'paused_no_auth':
+      return 'Signed out'
+    case 'paused_cap_reached':
+      return 'Sync paused — investigate'
+    default:
+      return state.replace(/_/g, ' ')
+  }
+}
+
+function formatRelative(ts: number): string {
+  const diff = Date.now() - ts
+  if (diff < 60_000) return 'just now'
+  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`
+  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`
+  return `${Math.floor(diff / 86400_000)}d ago`
 }

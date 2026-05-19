@@ -159,6 +159,7 @@ export const resolveContactsByNormalizedNames = rawContact.resolveContactsByNorm
 export const mergeContacts = rawContact.mergeContacts
 export const listSuspectedDuplicateContacts = rawContact.listSuspectedDuplicateContacts
 export const applyContactDedupDecisions = rawContact.applyContactDedupDecisions
+export const listContactTimeline = rawContact.listContactTimeline
 
 // ── org_companies ───────────────────────────────────────────────────────────
 
@@ -250,6 +251,31 @@ export const listSuspectedDuplicateCompanies =
 export const applyCompanyDedupDecisions = rawOrgCompany.applyCompanyDedupDecisions
 export const linkMeetingsForContactCompany = rawOrgCompany.linkMeetingsForContactCompany
 export const listCompanyMeetings = rawOrgCompany.listCompanyMeetings
+export const listMeetingCompanies = rawOrgCompany.listMeetingCompanies
+export const listCompanyMeetingSummaryPaths = rawOrgCompany.listCompanyMeetingSummaryPaths
+// Additional read / linkage helpers used by the desktop IPC layer. These
+// were missed when the barrel was first carved out; pass-through-exported
+// here so the IPC files can import them through the barrel like everything
+// else. None of them mutate owned tables in a way the wrapper needs to
+// observe (link/unlink-contact go through company_contacts join writes
+// which aren't owned in 1.5a scope).
+//
+// (listMeetingCompanies + listCompanyMeetingSummaryPaths are already
+// re-exported above; do not duplicate here.)
+export const listCompanyContacts = rawOrgCompany.listCompanyContacts
+export const listCompanyEmails = rawOrgCompany.listCompanyEmails
+export const listCompanyFiles = rawOrgCompany.listCompanyFiles
+export const listCompanyTimeline = rawOrgCompany.listCompanyTimeline
+export const setCompanyPrimaryContact = rawOrgCompany.setCompanyPrimaryContact
+export const clearCompanyPrimaryContact = rawOrgCompany.clearCompanyPrimaryContact
+export const linkContactToCompany = rawOrgCompany.linkContactToCompany
+export const unlinkContactFromCompany = rawOrgCompany.unlinkContactFromCompany
+export const deleteCompanyEmailLinks = rawOrgCompany.deleteCompanyEmailLinks
+export const getCompanyEmailById = rawOrgCompany.getCompanyEmailById
+export const fixConcatenatedCompanyNames =
+  rawOrgCompany.fixConcatenatedCompanyNames
+export const repairContactCompanyMismatches =
+  rawOrgCompany.repairContactCompanyMismatches
 
 // ── notes ───────────────────────────────────────────────────────────────────
 

@@ -91,7 +91,6 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 
 import { AgentLimitsSection } from '../components/settings/AgentLimitsSection'
 import { AgentModelTierSection } from '../components/settings/AgentModelTierSection'
-import { CloudSyncSection } from '../components/settings/CloudSyncSection'
 
 interface SettingsState {
   deepgramApiKey: MaskedKey
@@ -225,6 +224,19 @@ export default function Settings() {
   const [driveFilesExpanded, setDriveFilesExpanded] = useState(false)
   const [calendarAccountEmail, setCalendarAccountEmail] = useState<string | null>(null)
   const [gmailAccountEmail, setGmailAccountEmail] = useState<string | null>(null)
+  // Cyggie Cloud Sync state — same surface area as the other integrations
+  // (signed-in flag + email + pending click) so IntegrationsPanel can render
+  // the row with the same Toggle pattern.
+  const [cyggieSignedIn, setCyggieSignedIn] = useState(false)
+  const [cyggieEmail, setCyggieEmail] = useState<string | null>(null)
+  const [cyggieSigningIn, setCyggieSigningIn] = useState(false)
+  const [cyggieSyncSnapshot, setCyggieSyncSnapshot] = useState<{
+    state: string
+    pendingCount: number
+    failedCount: number
+    deadCount: number
+    lastFlushAt: number | null
+  } | null>(null)
   const [editingThresholds, setEditingThresholds] = useState(false)
   // editingTranscription removed — Deepgram key now uses modal, controls always visible
 
@@ -332,6 +344,87 @@ export default function Settings() {
     }
     load()
   }, [refreshGoogleScopes, refreshAccountEmails])
+
+  // Cyggie Cloud Sync — initial state + push subscriptions. Matches the rest
+  // of the integrations: fetch once on mount, then live-update via main→
+  // renderer broadcasts so the row reflects sign-in/out and outbox drains
+  // without polling.
+  useEffect(() => {
+    type AuthStatus = { signedIn: boolean; email: string | null; userId: string | null }
+    type SyncSnapshot = {
+      state: string
+      pendingCount: number
+      failedCount: number
+      deadCount: number
+      lastFlushAt: number | null
+    }
+    let cancelled = false
+    void api
+      .invoke<AuthStatus>(IPC_CHANNELS.CYGGIE_AUTH_STATUS)
+      .then((s) => {
+        if (cancelled) return
+        setCyggieSignedIn(s.signedIn)
+        setCyggieEmail(s.email)
+      })
+      .catch(() => undefined)
+    void api
+      .invoke<SyncSnapshot>(IPC_CHANNELS.SYNC_STATUS)
+      .then((s) => {
+        if (!cancelled) setCyggieSyncSnapshot(s)
+      })
+      .catch(() => undefined)
+    const offAuth = api.on(IPC_CHANNELS.CYGGIE_AUTH_STATUS_CHANGED, ((next) => {
+      const s = next as AuthStatus
+      setCyggieSignedIn(s.signedIn)
+      setCyggieEmail(s.email)
+      // Sign-in completed via the browser callback → drop the pending flag
+      // immediately rather than waiting on the 30s timeout fallback.
+      if (s.signedIn) setCyggieSigningIn(false)
+    }) as (...args: unknown[]) => void)
+    const offSync = api.on(IPC_CHANNELS.SYNC_STATUS_CHANGED, ((next) => {
+      setCyggieSyncSnapshot(next as SyncSnapshot)
+    }) as (...args: unknown[]) => void)
+    return () => {
+      cancelled = true
+      offAuth()
+      offSync()
+    }
+  }, [])
+
+  const handleCyggieSignIn = useCallback(async () => {
+    setCyggieSigningIn(true)
+    try {
+      const result = await api.invoke<{ ok: boolean; error?: string }>(
+        IPC_CHANNELS.CYGGIE_AUTH_SIGN_IN,
+      )
+      if (!result.ok) {
+        // Fall back to clearing the pending flag right away on a synchronous
+        // start-side failure; otherwise the push-callback path clears it.
+        setCyggieSigningIn(false)
+      } else {
+        // Auto-clear after 30s in case the user never completes the browser flow.
+        setTimeout(() => setCyggieSigningIn(false), 30_000)
+      }
+    } catch {
+      setCyggieSigningIn(false)
+    }
+  }, [])
+
+  const handleCyggieSignOut = useCallback(async () => {
+    try {
+      await api.invoke(IPC_CHANNELS.CYGGIE_AUTH_SIGN_OUT)
+    } catch {
+      // Best-effort — local wipe still happens via the IPC handler.
+    }
+  }, [])
+
+  const handleCyggieRetryDeadLetters = useCallback(async () => {
+    try {
+      await api.invoke(IPC_CHANNELS.SYNC_RETRY_DEAD_LETTERS)
+    } catch {
+      // Non-fatal — surface via console for now.
+    }
+  }, [])
 
   // Auto-navigate new users to the AI tab when setup is needed, and open relevant edit sections
   useEffect(() => {
@@ -1230,9 +1323,14 @@ export default function Settings() {
             onGrantDriveFiles={handleGrantDriveFilesAccess}
             calendarAccountEmail={calendarAccountEmail}
             gmailAccountEmail={gmailAccountEmail}
+            cyggieSignedIn={cyggieSignedIn}
+            cyggieEmail={cyggieEmail}
+            cyggieSigningIn={cyggieSigningIn}
+            cyggieSyncSnapshot={cyggieSyncSnapshot}
+            onCyggieSignIn={handleCyggieSignIn}
+            onCyggieSignOut={handleCyggieSignOut}
+            onCyggieRetryDeadLetters={handleCyggieRetryDeadLetters}
           />
-
-          <CloudSyncSection />
 
       {/* Transcripts & Summaries */}
       <section className={styles.section}>
