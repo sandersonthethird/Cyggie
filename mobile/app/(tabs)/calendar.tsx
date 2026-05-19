@@ -91,9 +91,7 @@ export default function CalendarTab() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Search"
-              onPress={() =>
-                Alert.alert('Universal search', 'Lands in M2 alongside the CRM detail screens.')
-              }
+              onPress={() => router.push('/search')}
               style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
             >
               <Ionicons name="search" size={16} color={colors.text2} />
