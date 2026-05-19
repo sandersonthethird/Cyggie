@@ -112,7 +112,9 @@ Default Phase 2 recommendation: **Sentry + Axiom** (~$0-30/mo total).
 | M5 | AI Chat (SSE + citations), Tiptap notes editor + Enhance, writes | ⏳ | 2 weeks |
 | M6 | Polish, empty states, settings, TestFlight cohort 1, 10 Maestro E2E flows green | ⏳ | 2 weeks |
 | M7 | App Store prep, cutover sequence, feature flags, user docs | ⏳ | 1.5 weeks |
-| Phase 1.5 | Bidirectional sync agent (writeWithSync, outbox triggers, /sync/push & /sync/pull, soak test) | ⏳ | 4-6 weeks; parallel with M5–M7 |
+| Phase 1.5a | Desktop → Neon one-way sync (writeWithSync barrel, SyncAgent, /sync/push, drizzle-zod validators, dead-letter) | ✅ shipped | commits 7066796 / 99e1c38 / 36ff7f3 / 1778f7e — 59/59 + 17/17 tests, deployed to Fly. Paused on `paused_no_auth` until desktop OAuth lands. |
+| Phase 1.5b | Mobile → Neon writes (PATCH routes, mobile-side outbox, GET /sync/pull) | ⏳ | Ships when M4–M5 add mobile-side editing flows |
+| Phase 1.5c | Real-time push (SSE + APNs, sub-second propagation) | ⏳ | Ships when polling-refetch latency hurts |
 
 ### Cloud-side Gmail + Drive services (post-V1 — Model A backlog)
 
@@ -168,6 +170,83 @@ The full per-migration audit is in [packages/db/MIGRATION_AUDIT.md](packages/db/
 | Lamport row-clock + sync-time field diff | Phase 1.5 | `packages/services/sync/diff.test.ts` | ⏳ |
 | Sync agent state machine | Phase 1.5 | `packages/services/sync/agent.test.ts` | ⏳ |
 | Soak test: bidirectional sync 7-day accelerated | Phase 1.5 | `packages/services/sync/soak.test.ts` | ⏳ |
+
+---
+
+## P2 — Sync (Phase 1.5a follow-ups)
+
+Captured during the 1.5a ship. None block the existing shipped slice but
+should land before Phase 1.5b expands the surface.
+
+### Desktop OAuth flow + getAccessTokenForSync wiring
+**What:** Build a sign-in window on the desktop (mirror of mobile OAuth) so
+the SyncAgent gets a real Bearer JWT. Wire it into
+`src/main/services/sync-bootstrap.ts`'s `getAccessTokenForSync()` accessor
+which currently returns `null`.
+**Why:** Without it, the SyncAgent stays in `paused_no_auth` forever — the
+outbox accumulates writes but nothing reaches Neon. Mobile sees frozen data
+until either this lands OR we manually re-stamp again.
+**Context:** Today's mobile OAuth at `mobile/lib/auth/oauth.ts` and the
+gateway's `/auth/google/start` route already exist; the desktop just needs a
+similar `expo-web-browser`-style auth window or an in-app webview. Token
+storage can reuse `settings.repo`.
+**Depends on / blocked by:** Nothing — can ship anytime.
+
+### `scripts/sync-replay.ts` — dead-letter recovery tool
+**What:** Operational tool to (a) re-enqueue `status='dead'` outbox rows
+after manual investigation, (b) dump outbox state for debugging, (c) wipe
+outbox safely.
+**Why:** Captured by the plan review. Without it, recovering from
+`status='dead'` rows requires raw SQL against SQLite.
+**Pros:** Restores the ability to flush stuck rows without devhuman ops.
+**Cons:** ~1 day of work; only matters if rows actually go dead.
+**Depends on:** Desktop OAuth (so the agent can actually push the replayed
+rows).
+
+### Sync metrics dashboard
+**What:** Grafana board (or Sentry widget) covering `sync.outbox_depth`,
+`sync.push_failures`, `sync.dead_letters`, `sync.conflicts_total`,
+`sync.drift_detected`, `sync.bypass_detected`.
+**Why:** Captured by the plan review. The metrics already emit; this just
+visualizes them.
+**Depends on:** Phase 1.5b or first multi-device user (until then a single
+user, single device — grep is fine).
+
+### Cascade-aware outbox emission for multi-table writes
+**What:** The barrel's `withSync` wrapper currently only emits the PRIMARY
+entity row. Multi-table side effects in the wrapped repos (e.g.
+`createMeeting` writing `meeting_company_links` via
+`syncMeetingCompanyLinks`; `mergeContacts` rewiring emails+links;
+`renameFolder` updating many notes' folder_path) stay unemitted.
+**Why:** Documented gap in the barrel header. Mobile views refetch on
+focus so the gap closes when the parent row is next touched, but for
+edit-heavy moments the link tables go stale briefly.
+**How:** Either (a) modify the inner repo functions to call
+`appendOutboxRow(db, …)` for each child row, or (b) add a snapshot-diff
+mechanism that reads pre/post row counts on owned tables inside the
+transaction.
+**Depends on:** Nothing.
+
+### Wrap the other 4 owned-table repos
+**What:** Extend the barrel to wrap task / template / pipeline-config /
+chat-session repos. Tables: tasks, templates, themes (no repo), speakers
+(no repo), pipeline_configs, pipeline_stages, chat_sessions,
+chat_session_messages.
+**Why:** Mobile doesn't read these in M2/M3, so they're deferred from
+1.5a. As M4–M5 add tasks/chat surfaces, the underlying tables need to
+sync too.
+**Depends on:** Mobile M4 (tasks UI) and M5 (AI chat UI) decisions on
+which entities mobile actually reads.
+
+### Replace direct Neon ALTER TABLE with a proper drizzle migration
+**What:** The 1.5a fix added `lamport` columns to 6 join tables via ad-hoc
+`ALTER TABLE` against Neon. Generate the corresponding drizzle migration
+file via `drizzle-kit generate` so the schema state survives a fresh
+Neon project.
+**Why:** Right now a fresh `drizzle-kit push` against an empty Neon would
+recreate these columns from the schema (since the drizzle TS already has
+them), but other Postgres deploys (preview branches, staging) would miss
+them without the migration file.
 
 ---
 
