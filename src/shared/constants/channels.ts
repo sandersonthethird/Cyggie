@@ -441,7 +441,12 @@ export const IPC_CHANNELS = {
   APP_OPEN_NOTE_WINDOW: 'app:open-note-window',
 
   // Cross-window broadcasts (main → renderer)
-  NOTE_UPDATED: 'note:updated'
+  NOTE_UPDATED: 'note:updated',
+
+  // Sync — desktop → Neon outbox drain (Phase 1.5a)
+  SYNC_STATUS: 'sync:status',
+  SYNC_FORCE_FLUSH: 'sync:force-flush',
+  SYNC_RETRY_DEAD_LETTERS: 'sync:retry-dead-letters',
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
