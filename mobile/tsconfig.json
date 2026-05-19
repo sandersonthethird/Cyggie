@@ -12,7 +12,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@cyggie/shared/*": ["../packages/shared/src/*"]
     }
   },
   "include": [

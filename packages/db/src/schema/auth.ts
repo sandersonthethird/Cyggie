@@ -105,6 +105,10 @@ export const oauthPending = pgTable(
     codeVerifier: text('code_verifier').notNull(), // PKCE verifier paired to the challenge sent to Google
     deviceId: varchar('device_id', { length: 64 }).notNull(),
     deviceLabel: varchar('device_label', { length: 200 }),
+    // 'mobile' | 'desktop' — controls which DEEP_LINK_BASE the callback handler
+    // redirects to after minting the JWT. Default 'mobile' for back-compat with
+    // existing pending rows.
+    redirectTarget: varchar('redirect_target', { length: 16 }).notNull().default('mobile'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

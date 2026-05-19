@@ -45,13 +45,18 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
       body: z.object({
         device_id: z.string().min(8).max(64),
         device_label: z.string().max(200).optional(),
+        // 'mobile' (default) → callback 302s to MOBILE_DEEP_LINK_BASE.
+        // 'desktop'           → callback 302s to DESKTOP_DEEP_LINK_BASE.
+        // Stored on the oauth_pending row so the callback handler can branch
+        // without state in the gateway process (we run 2 Fly machines).
+        redirect_target: z.enum(['mobile', 'desktop']).optional(),
       }),
       response: {
         200: z.object({ authUrl: z.string(), state: z.string() }),
       },
     },
     handler: async (req) => {
-      const { device_id, device_label } = req.body
+      const { device_id, device_label, redirect_target } = req.body
       const state = generateState()
       const { codeVerifier, codeChallenge } = generatePkcePair()
       await rememberPending({
@@ -60,9 +65,13 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         codeVerifier,
         deviceId: device_id,
         deviceLabel: device_label ?? null,
+        redirectTarget: redirect_target ?? 'mobile',
       })
       const authUrl = buildAuthUrl({ client: oauth, state, codeChallenge })
-      req.log.info({ device_id, state: state.slice(0, 8) + '…' }, 'oauth start')
+      req.log.info(
+        { device_id, redirect_target: redirect_target ?? 'mobile', state: state.slice(0, 8) + '…' },
+        'oauth start',
+      )
       return { authUrl, state }
     },
   })
@@ -258,14 +267,28 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         }
       }
 
-      // Redirect to the mobile deep link with the JWT, refresh token, and the
-      // onboarding hint. Mobile catches this via expo-auth-session.
-      const dest = new URL(env.MOBILE_DEEP_LINK_BASE)
+      // Redirect to the deep link with the JWT, refresh token, and the
+      // onboarding hint. Target chosen per the pending row's redirect_target:
+      //   • 'mobile'  → MOBILE_DEEP_LINK_BASE  (default; cyggie://auth-callback)
+      //   • 'desktop' → DESKTOP_DEEP_LINK_BASE (cyggie-desktop://auth-callback)
+      const deepLinkBase =
+        pending.redirectTarget === 'desktop'
+          ? env.DESKTOP_DEEP_LINK_BASE
+          : env.MOBILE_DEEP_LINK_BASE
+      const dest = new URL(deepLinkBase)
       dest.searchParams.set('session', accessToken)
       dest.searchParams.set('refresh', refreshToken)
       dest.searchParams.set('user_id', userId)
       dest.searchParams.set('action', action)
-      req.log.info({ userId, deviceId: pending.deviceId, action }, 'oauth callback complete')
+      req.log.info(
+        {
+          userId,
+          deviceId: pending.deviceId,
+          action,
+          redirectTarget: pending.redirectTarget,
+        },
+        'oauth callback complete',
+      )
       return reply.redirect(dest.toString())
     },
   })

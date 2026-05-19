@@ -23,6 +23,13 @@ const EnvSchema = z.object({
   // scheme the mobile app catches. cyggie://auth-callback?session=<jwt>
   MOBILE_DEEP_LINK_BASE: z.string().default('cyggie://auth-callback'),
 
+  // Same as MOBILE_DEEP_LINK_BASE but for the desktop SyncAgent's sign-in flow.
+  // Selected via the redirect_target query param on POST /auth/google/start
+  // ('mobile' | 'desktop'). Desktop registers cyggie-desktop:// via
+  // app.setAsDefaultProtocolClient; macOS LaunchServices hands the URL to
+  // Electron's open-url event after the gateway 302s here.
+  DESKTOP_DEEP_LINK_BASE: z.string().default('cyggie-desktop://auth-callback'),
+
   // Optional: deferred until production deploy.
   SENTRY_DSN: z.string().optional(),
   DATADOG_API_KEY: z.string().optional(),

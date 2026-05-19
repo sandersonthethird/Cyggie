@@ -23,6 +23,14 @@ files:
   - '!mobile/**/*'
   - '!api-gateway/**/*'
 
+# Custom URL scheme registration for the gateway OAuth callback. Both
+# macOS LaunchServices and Windows shell wire cyggie-desktop:// URLs to
+# this app. Handled in src/main/index.ts via open-url + second-instance.
+protocols:
+  - name: Cyggie Desktop
+    schemes:
+      - cyggie-desktop
+
 mac:
   category: public.app-category.productivity
   icon: build/icon.icns

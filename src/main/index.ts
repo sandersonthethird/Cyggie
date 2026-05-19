@@ -12,7 +12,13 @@ import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from '@cyggie
 import { cleanupOrphanedTempFiles, getActiveRecordingMeetingId } from './video/video-writer'
 import { getPendingForQuit } from './ipc/_finalizations'
 import { getCurrentUserId } from './security/current-user'
-import { bootstrapSync, shutdownSync } from './services/sync-bootstrap'
+import {
+  bootstrapSync,
+  shutdownSync,
+  setSyncStatusBroadcastTarget,
+} from './services/sync-bootstrap'
+import { handleAuthCallback } from './auth/cyggie-auth'
+import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
 
 // Register privileged schemes before app.whenReady:
 //   media:// — local video files (cross-origin blocked on file://)
@@ -38,6 +44,44 @@ protocol.registerSchemesAsPrivileged([
     }
   }
 ])
+
+// Register cyggie-desktop:// as the OS-level URL scheme for this app.
+// The gateway 302s to cyggie-desktop://auth-callback?session=&refresh=…
+// at the end of the desktop sign-in flow; macOS LaunchServices/Windows-shell
+// hand the URL back to the running Electron instance via open-url (macOS)
+// or second-instance argv (Windows / Linux). Skipped in dev when the path
+// argument form is needed on Windows; dev on macOS works without it.
+app.setAsDefaultProtocolClient('cyggie-desktop')
+
+// Single-instance lock: when the OS hands us a cyggie-desktop:// URL from a
+// second app launch (Windows / Linux protocol-launch path), the original
+// instance receives it via 'second-instance'. Bail if we lost the lock.
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+}
+
+app.on('open-url', (event, url) => {
+  // macOS: protocol clicks fire this event, regardless of whether the app
+  // was running or got launched by the OS.
+  if (url.startsWith('cyggie-desktop://')) {
+    event.preventDefault()
+    void handleAuthCallback(url, mainWindow?.webContents ?? null)
+  }
+})
+
+app.on('second-instance', (_event, argv) => {
+  // Windows / Linux: the second-launch instance ends with the URL in argv.
+  // Focus the existing window if it's hidden.
+  const url = argv.find((a) => a.startsWith('cyggie-desktop://'))
+  if (url) {
+    void handleAuthCallback(url, mainWindow?.webContents ?? null)
+  }
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  }
+})
 
 // Enable system audio loopback capture (must be called before app.whenReady)
 // CoreAudioTap is required on macOS 15+ — ScreenCaptureKit produces ended
@@ -328,6 +372,14 @@ app.whenReady().then(() => {
   // Create window and tray
   mainWindow = createWindow()
   createTray(mainWindow)
+
+  // Bind window-specific IPC + push-broadcast targets that need a webContents
+  // handle. Both the Cyggie auth flow and the SyncAgent push status updates
+  // to the renderer Cloud Sync panel; without a bound window they no-op
+  // silently. These are safe to call multiple times — they replace the
+  // previously-bound target so an activate-after-close cycle stays wired.
+  registerCyggieAuthIpc(mainWindow)
+  setSyncStatusBroadcastTarget(mainWindow.webContents)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

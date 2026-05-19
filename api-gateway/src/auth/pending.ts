@@ -28,10 +28,13 @@ export function generateState(): string {
   return randomBytes(24).toString('base64url')
 }
 
+export type RedirectTarget = 'mobile' | 'desktop'
+
 export interface PendingOAuth {
   codeVerifier: string
   deviceId: string
   deviceLabel: string | null
+  redirectTarget: RedirectTarget
 }
 
 export async function rememberPending(opts: {
@@ -40,6 +43,7 @@ export async function rememberPending(opts: {
   codeVerifier: string
   deviceId: string
   deviceLabel: string | null
+  redirectTarget?: RedirectTarget
 }): Promise<void> {
   const db = getDb(opts.databaseUrl)
   await db.insert(schema.oauthPending).values({
@@ -47,6 +51,7 @@ export async function rememberPending(opts: {
     codeVerifier: opts.codeVerifier,
     deviceId: opts.deviceId,
     deviceLabel: opts.deviceLabel,
+    redirectTarget: opts.redirectTarget ?? 'mobile',
     expiresAt: new Date(Date.now() + TTL_MS),
   })
 }
@@ -65,10 +70,12 @@ export async function consumePending(opts: {
     .returning()
   if (!row) return null
   if (row.expiresAt.getTime() < now.getTime()) return null
+  const target = row.redirectTarget === 'desktop' ? 'desktop' : 'mobile'
   return {
     codeVerifier: row.codeVerifier,
     deviceId: row.deviceId,
     deviceLabel: row.deviceLabel,
+    redirectTarget: target,
   }
 }
 

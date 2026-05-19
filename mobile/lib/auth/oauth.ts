@@ -1,5 +1,13 @@
 import Constants from 'expo-constants'
 import * as WebBrowser from 'expo-web-browser'
+import {
+  parseCallbackUrl as sharedParseCallbackUrl,
+  type SignInAction as SharedSignInAction,
+  type SignInResult as SharedSignInResult,
+  type SignInSuccess as SharedSignInSuccess,
+  type SignInCancel as SharedSignInCancel,
+  type SignInError as SharedSignInError,
+} from '@cyggie/shared/auth-callback'
 import { getOrCreateDeviceId } from './device'
 
 // OAuth round-trip orchestration. The flow:
@@ -25,27 +33,14 @@ import { getOrCreateDeviceId } from './device'
 const GATEWAY_URL = (Constants.expoConfig?.extra?.['gatewayUrl'] as string | undefined) ??
   'https://cyggie-gateway.fly.dev'
 
-export type SignInAction = 'returning' | 'create_workspace' | 'join_firm'
-
-export interface SignInSuccess {
-  kind: 'success'
-  accessToken: string
-  refreshToken: string
-  userId: string
-  action: SignInAction
-}
-
-export interface SignInCancel {
-  kind: 'cancel'
-}
-
-export interface SignInError {
-  kind: 'error'
-  code: string
-  message: string
-}
-
-export type SignInResult = SignInSuccess | SignInCancel | SignInError
+// Re-exports of the shared types so existing call sites that imported them
+// from './oauth' keep working. Canonical definitions live in
+// @cyggie/shared/auth-callback (also consumed by the desktop main process).
+export type SignInAction = SharedSignInAction
+export type SignInSuccess = SharedSignInSuccess
+export type SignInCancel = SharedSignInCancel
+export type SignInError = SharedSignInError
+export type SignInResult = SharedSignInResult
 
 const CALLBACK_SCHEME = 'cyggie://auth-callback'
 
@@ -119,43 +114,8 @@ export async function startSignIn(): Promise<SignInResult> {
   return parseCallbackUrl(redirectUrl)
 }
 
-export function parseCallbackUrl(url: string): SignInResult {
-  // RN URL parser handles custom schemes fine.
-  const u = new URL(url)
-  const error = u.searchParams.get('error')
-  if (error) {
-    return {
-      kind: 'error',
-      code: 'OAUTH_' + error.toUpperCase(),
-      message: `OAuth provider error: ${error}`,
-    }
-  }
-  const accessToken = u.searchParams.get('session')
-  const refreshToken = u.searchParams.get('refresh')
-  const userId = u.searchParams.get('user_id')
-  const action = u.searchParams.get('action')
-  if (!accessToken || !refreshToken || !userId || !action) {
-    return {
-      kind: 'error',
-      code: 'CALLBACK_INCOMPLETE',
-      message: 'OAuth callback missing required params',
-    }
-  }
-  if (action !== 'returning' && action !== 'create_workspace' && action !== 'join_firm') {
-    return {
-      kind: 'error',
-      code: 'CALLBACK_UNKNOWN_ACTION',
-      message: `Unknown action hint: ${action}`,
-    }
-  }
-  return {
-    kind: 'success',
-    accessToken,
-    refreshToken,
-    userId,
-    action,
-  }
-}
+// Re-export the canonical parser so existing call sites keep working.
+export const parseCallbackUrl = sharedParseCallbackUrl
 
 /** Rotates the refresh token; returns a new access + refresh pair. */
 export async function refreshTokens(opts: {

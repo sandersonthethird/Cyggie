@@ -91,6 +91,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 
 import { AgentLimitsSection } from '../components/settings/AgentLimitsSection'
 import { AgentModelTierSection } from '../components/settings/AgentModelTierSection'
+import { CloudSyncSection } from '../components/settings/CloudSyncSection'
 
 interface SettingsState {
   deepgramApiKey: MaskedKey
@@ -1230,6 +1231,8 @@ export default function Settings() {
             calendarAccountEmail={calendarAccountEmail}
             gmailAccountEmail={gmailAccountEmail}
           />
+
+          <CloudSyncSection />
 
       {/* Transcripts & Summaries */}
       <section className={styles.section}>
