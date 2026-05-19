@@ -97,6 +97,7 @@ export default function MeetingDetailScreen() {
           <>
             <Hero meeting={meeting} />
             <StatsCard meeting={meeting} />
+            {meeting.isGroupEvent && <GroupEventBanner />}
             <SegmentControl value={segment} onChange={setSegment} />
             {segment === 'overview' && <OverviewSection meeting={meeting} />}
             {segment === 'transcript' && (
@@ -188,6 +189,20 @@ function StatCell({ label, value }: { label: string; value: string }) {
         {value}
       </Text>
       <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  )
+}
+
+function GroupEventBanner() {
+  return (
+    <View style={styles.groupEventBanner}>
+      <Ionicons name="information-circle-outline" size={18} color={colors.text2} />
+      <View style={styles.groupEventBannerText}>
+        <Text style={styles.groupEventBannerTitle}>
+          Group event — attendees not added to CRM
+        </Text>
+        <Text style={styles.groupEventBannerSubtitle}>Toggle from desktop</Text>
+      </View>
     </View>
   )
 }
@@ -513,6 +528,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     paddingVertical: spacing.md,
+  },
+
+  groupEventBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.surface3,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    borderRadius: radii.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  groupEventBannerText: { flex: 1 },
+  groupEventBannerTitle: {
+    color: colors.text,
+    fontSize: type.bodyTight,
+    fontWeight: '500',
+  },
+  groupEventBannerSubtitle: {
+    color: colors.text3,
+    fontSize: type.caption,
+    marginTop: 2,
   },
   statCell: { flex: 1, alignItems: 'center', paddingHorizontal: 4 },
   statDivider: {

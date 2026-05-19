@@ -14,6 +14,8 @@ import { renameFile as renameDriveFile } from '../drive/google-drive'
 import { extractCompaniesFromEmails, extractCompaniesFromAttendees, extractDomainFromEmail } from '../utils/company-extractor'
 import { enrichCompaniesForMeeting, getCompanySuggestionsForMeeting } from '../services/company-enrichment'
 import { syncContactsFromAttendees } from '@cyggie/db/sqlite/repositories'
+import { computeAutoGroupEventFlag, shouldSyncAttendees } from '@cyggie/db/sqlite/repositories'
+import { GROUP_EVENT_ATTENDEE_THRESHOLD } from '@cyggie/shared'
 import {
   isFlaggedAnywhere,
   isFlaggedForCompany,
@@ -149,8 +151,31 @@ export function registerMeetingHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.MEETING_UPDATE, (_event, id: string, data: Parameters<typeof meetingRepo.updateMeeting>[1]) => {
     const userId = getCurrentUserId()
+
+    // Group-event auto-flag recompute (migration 098). When attendees change
+    // AND the user hasn't explicitly toggled the flag, recompute it from the
+    // new count. user_set=true → locked, never recomputed here.
+    const attendeesChanged = data.attendees !== undefined || data.attendeeEmails !== undefined
+    if (attendeesChanged && data.isGroupEvent === undefined) {
+      const before = meetingRepo.getMeeting(id)
+      if (before) {
+        const newEmails = data.attendeeEmails !== undefined
+          ? (data.attendeeEmails ?? [])
+          : (before.attendeeEmails ?? [])
+        const recomputed = computeAutoGroupEventFlag(
+          newEmails.length,
+          before.isGroupEventUserSet,
+          before.isGroupEvent,
+          GROUP_EVENT_ATTENDEE_THRESHOLD,
+        )
+        if (recomputed !== null) {
+          data = { ...data, isGroupEvent: recomputed }
+        }
+      }
+    }
+
     const updated = meetingRepo.updateMeeting(id, data, userId)
-    if (updated && (data.attendees !== undefined || data.attendeeEmails !== undefined)) {
+    if (updated && attendeesChanged && shouldSyncAttendees(id)) {
       try {
         syncContactsFromAttendees(updated.attendees, updated.attendeeEmails, userId)
       } catch (err) {
@@ -346,15 +371,14 @@ export function registerMeetingHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.MEETING_PREPARE,
     (_event, calendarEventId: string, title: string, date: string, platform?: string, meetingUrl?: string, attendees?: string[], attendeeEmails?: string[]) => {
-      // Check if a meeting already exists for this calendar event
+      // Check if a meeting already exists for this calendar event.
+      // NOTE: the redundant `syncContactsFromAttendees` call that used to live
+      // here was removed (migration 098 / plan Part 2). It re-ran against
+      // unchanged stored attendees on every calendar poll and was the primary
+      // resurrection vector for user-deleted contacts. Re-syncing only happens
+      // on attendee CHANGE via MEETING_UPDATE.
       const existing = meetingRepo.findMeetingByCalendarEventId(calendarEventId)
       if (existing) {
-        const userId = getCurrentUserId()
-        try {
-          syncContactsFromAttendees(existing.attendees, existing.attendeeEmails, userId)
-        } catch (err) {
-          console.error('[Contacts] Failed to sync from existing prepared meeting:', err)
-        }
         return existing
       }
 
@@ -363,8 +387,14 @@ export function registerMeetingHandlers(): void {
         ? extractCompaniesFromEmails(attendeeEmails)
         : extractCompaniesFromAttendees(attendees || [])
 
-      // Create a new meeting with 'scheduled' status
+      // Group-event auto-flag at create (migration 098). >THRESHOLD attendees →
+      // skip the seeding entirely; meeting row keeps the raw attendee list but
+      // no contacts/companies are auto-created.
       const userId = getCurrentUserId()
+      const isGroupEvent = (attendeeEmails?.length ?? 0) > GROUP_EVENT_ATTENDEE_THRESHOLD
+      console.info(
+        `[meeting:autoflag] meetingId=new attendeeCount=${attendeeEmails?.length ?? 0} value=${isGroupEvent} metric=meeting.group_event.autoflag count=1`,
+      )
       const meeting = meetingRepo.createMeeting({
         title,
         date,
@@ -373,29 +403,83 @@ export function registerMeetingHandlers(): void {
         meetingUrl: meetingUrl || null,
         attendees: attendees || null,
         attendeeEmails: attendeeEmails || null,
-        companies: companies.length > 0 ? companies : null,
-        status: 'scheduled'
+        companies: isGroupEvent ? null : (companies.length > 0 ? companies : null),
+        status: 'scheduled',
+        isGroupEvent
       }, userId)
       logAudit(userId, 'meeting', meeting.id, 'create', {
         source: 'calendar-prepare',
-        calendarEventId
+        calendarEventId,
+        isGroupEvent
       })
 
-      try {
-        syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails, userId)
-      } catch (err) {
-        console.error('[Contacts] Failed to sync from prepared meeting:', err)
-      }
+      if (!isGroupEvent) {
+        try {
+          syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails, userId)
+        } catch (err) {
+          console.error('[Contacts] Failed to sync from prepared meeting:', err)
+        }
 
-      // Fire off async enrichment to resolve true company names
-      const emails = attendeeEmails || (attendees || []).filter((a) => a.includes('@'))
-      if (emails.length > 0) {
-        enrichCompaniesForMeeting(meeting.id, emails).catch((err) =>
-          console.error('[Company Enrichment] Failed:', err)
-        )
+        // Fire off async enrichment to resolve true company names
+        const emails = attendeeEmails || (attendees || []).filter((a) => a.includes('@'))
+        if (emails.length > 0) {
+          enrichCompaniesForMeeting(meeting.id, emails).catch((err) =>
+            console.error('[Company Enrichment] Failed:', err)
+          )
+        }
       }
 
       return meeting
+    }
+  )
+
+  // Group-event manual toggle (migration 098). Sets is_group_event +
+  // is_group_event_user_set atomically via updateMeeting. When un-flagging a
+  // previously-flagged meeting, also recomputes companies from attendee emails
+  // (which triggers syncMeetingCompanyLinks inside updateMeeting) and runs a
+  // one-shot syncContactsFromAttendees (subject to per-email tombstones).
+  ipcMain.handle(
+    IPC_CHANNELS.MEETING_SET_GROUP_EVENT,
+    (_event, meetingId: string, isGroupEvent: boolean) => {
+      const userId = getCurrentUserId()
+      if (!userId) throw new Error('not signed in')
+      const before = meetingRepo.getMeeting(meetingId)
+      if (!before) throw new Error('meeting not found')
+
+      // When un-flagging a previously-flagged meeting, derive companies from
+      // the stored attendee emails so meeting_company_links repopulates.
+      const isUnflagging = before.isGroupEvent && !isGroupEvent
+      const recomputedCompanies = isUnflagging && before.attendeeEmails && before.attendeeEmails.length > 0
+        ? extractCompaniesFromEmails(before.attendeeEmails)
+        : undefined
+
+      const updated = meetingRepo.updateMeeting(
+        meetingId,
+        {
+          isGroupEvent,
+          isGroupEventUserSet: true,
+          ...(recomputedCompanies !== undefined ? { companies: recomputedCompanies } : {}),
+        },
+        userId,
+      )
+      logAudit(userId, 'meeting', meetingId, 'set_group_event', {
+        from: before.isGroupEvent,
+        to: isGroupEvent,
+      })
+      console.info(
+        `[meeting:setGroupEvent] meetingId=${meetingId} value=${isGroupEvent} userId=${userId} metric=meeting.group_event.toggle count=1`,
+      )
+
+      // Off-after-on: deferred sync once. Tombstoned emails won't recreate.
+      if (isUnflagging && updated && (updated.attendeeEmails?.length ?? 0) > 0) {
+        try {
+          syncContactsFromAttendees(updated.attendees, updated.attendeeEmails, userId)
+        } catch (err) {
+          console.error('[Contacts] Failed deferred sync after un-flag:', err)
+        }
+      }
+
+      return updated
     }
   )
 

@@ -71,6 +71,13 @@
       "when": 1779136081374,
       "tag": "0009_illegal_dust",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1779216912676,
+      "tag": "0010_sturdy_red_shift",
+      "breakpoints": true
     }
   ]
 }

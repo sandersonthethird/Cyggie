@@ -82,6 +82,12 @@ export const listMeetings = rawMeeting.listMeetings
 export const cleanupStaleRecordings = rawMeeting.cleanupStaleRecordings
 export const cleanupExpiredScheduledMeetings = rawMeeting.cleanupExpiredScheduledMeetings
 
+// Group-event ingestion gate (migration 098). Read-only / pure helpers pass through.
+// Writes to is_group_event{,_user_set} go through the existing wrapped updateMeeting
+// so the sync agent picks them up automatically.
+export const shouldSyncAttendees = rawMeeting.shouldSyncAttendees
+export const computeAutoGroupEventFlag = rawMeeting.computeAutoGroupEventFlag
+
 // ── contacts ────────────────────────────────────────────────────────────────
 
 export const createContact = withSync(rawContact.createContact, {
@@ -122,6 +128,16 @@ export const setContactPrimaryCompany = withSync(
       rawContact.getContact(args[0]) as unknown as Record<string, unknown> | null,
   },
 )
+
+// User-initiated hard delete (migration 098). The IPC layer wraps this in its
+// own transaction with the tombstone INSERT so both land atomically. Internal
+// callers (merge) go directly through deleteContactById and don't tombstone.
+export const deleteContact = withSync(rawContact.deleteContact, {
+  table: 'contacts',
+  op: 'delete',
+  captureBeforeDelete: (_db, [id]) =>
+    rawContact.getContact(id) as unknown as Record<string, unknown> | null,
+})
 
 // Pass-throughs (reads + bulk un-wrapped operations — see file header gap)
 export const listContacts = rawContact.listContacts

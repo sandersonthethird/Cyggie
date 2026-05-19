@@ -200,6 +200,52 @@ type UnifiedEnrichProposal =
   | { kind: 'company'; proposal: CompanySummaryUpdateProposal }
   | { kind: 'contact'; proposal: ContactSummaryUpdateProposal }
 
+// Group-event toggle (migration 098). Calls MEETING_SET_GROUP_EVENT IPC.
+// When un-flagging a previously-flagged meeting, the main process runs a
+// one-shot deferred sync — tombstoned emails won't recreate.
+function GroupEventToggle({
+  meetingId,
+  isGroupEvent,
+  onToggled,
+}: {
+  meetingId: string
+  isGroupEvent: boolean
+  onToggled: (updated: Meeting) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const handleClick = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const updated = await api.invoke<Meeting | null>(
+        IPC_CHANNELS.MEETING_SET_GROUP_EVENT,
+        meetingId,
+        !isGroupEvent,
+      )
+      if (updated) onToggled(updated)
+    } catch (err) {
+      console.error('[GroupEventToggle] failed:', err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button
+      type="button"
+      className={`${styles.groupEventToggle} ${isGroupEvent ? styles.groupEventToggleOn : ''}`}
+      onClick={handleClick}
+      disabled={busy}
+      title={
+        isGroupEvent
+          ? 'Group event — attendees not added to CRM. Click to un-flag.'
+          : 'Mark as group event — skip adding attendees to CRM.'
+      }
+    >
+      {isGroupEvent ? '◉ Group event' : '○ Group event'}
+    </button>
+  )
+}
+
 export default function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -1828,6 +1874,11 @@ export default function MeetingDetail() {
                 </span>
               )
             })()}
+            <GroupEventToggle
+              meetingId={meeting.id}
+              isGroupEvent={meeting.isGroupEvent}
+              onToggled={(updated) => setData(prev => prev ? { ...prev, meeting: updated } : prev)}
+            />
             <div className={styles.speakers}>
               <div className={styles.attendeeAvatars}>
                 {(meeting.attendees ?? []).slice(0, 4).map((attendee, i) => {

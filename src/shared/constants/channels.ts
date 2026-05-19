@@ -5,6 +5,7 @@ export const IPC_CHANNELS = {
   MEETING_DELETE: 'meeting:delete',
   MEETING_UPDATE: 'meeting:update',
   MEETING_TAG_SPEAKER_CONTACT: 'meeting:tag-speaker-contact',
+  MEETING_SET_GROUP_EVENT: 'meeting:set-group-event',
   MEETING_LINK_EXISTING_COMPANY: 'meeting:link-existing-company',
   MEETING_UNLINK_COMPANY: 'meeting:unlink-company',
   MEETING_SWAP_COMPANY: 'meeting:swap-company',
@@ -447,6 +448,16 @@ export const IPC_CHANNELS = {
   SYNC_STATUS: 'sync:status',
   SYNC_FORCE_FLUSH: 'sync:force-flush',
   SYNC_RETRY_DEAD_LETTERS: 'sync:retry-dead-letters',
+  // Main → renderer push: fires on every SyncAgent state transition so the
+  // Cloud Sync settings panel updates without polling.
+  SYNC_STATUS_CHANGED: 'sync:status-changed',
+
+  // Cyggie cloud auth (Desktop OAuth slice)
+  CYGGIE_AUTH_SIGN_IN: 'cyggie-auth:sign-in',
+  CYGGIE_AUTH_SIGN_OUT: 'cyggie-auth:sign-out',
+  CYGGIE_AUTH_STATUS: 'cyggie-auth:status',
+  // Main → renderer push: signed-in/signed-out transitions.
+  CYGGIE_AUTH_STATUS_CHANGED: 'cyggie-auth:status-changed',
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

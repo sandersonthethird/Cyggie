@@ -29,6 +29,10 @@ export interface MeetingDetail {
   durationSeconds: number | null
   status: string
   wasImpromptu: boolean
+  // Group-event ingestion gate. When true, no contacts/companies were seeded
+  // from this meeting's attendee list. Mobile shows a read-only banner;
+  // toggling lives on desktop until Phase 1.5 bidirectional sync ships.
+  isGroupEvent: boolean
   meetingPlatform: string | null
   meetingUrl: string | null
   notes: string | null

@@ -24,6 +24,11 @@ export interface MeetingRow {
   chat_messages: string | null
   recording_path: string | null
   status: string
+  // Group-event ingestion gate (migration 098). 0/1 booleans.
+  // is_group_event: true → syncContactsFromAttendees + company link auto-creation skipped.
+  // is_group_event_user_set: true → calendar re-sync must NOT recompute the flag.
+  is_group_event: number
+  is_group_event_user_set: number
   created_at: string
   updated_at: string
   // Populated by LEFT JOIN in listMeetings — null when no company linked

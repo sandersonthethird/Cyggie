@@ -45,6 +45,11 @@ const MeetingDetailSchema = z.object({
   durationSeconds: z.number().nullable(),
   status: z.string(),
   wasImpromptu: z.boolean(),
+  // Group-event ingestion gate (migration 098). When true, the desktop did not
+  // seed contacts/companies from this meeting's attendee list. Mobile shows a
+  // read-only banner; toggling lives on desktop until Phase 1.5 bidirectional
+  // sync ships.
+  isGroupEvent: z.boolean(),
   meetingPlatform: z.string().nullable(),
   meetingUrl: z.string().nullable(),
   notes: z.string().nullable(),
@@ -176,6 +181,7 @@ export async function registerMeetingRoutes(
         durationSeconds: meeting.durationSeconds,
         status: meeting.status,
         wasImpromptu: meeting.wasImpromptu,
+        isGroupEvent: meeting.isGroupEvent,
         meetingPlatform: meeting.meetingPlatform,
         meetingUrl: meeting.meetingUrl,
         notes: meeting.notes,

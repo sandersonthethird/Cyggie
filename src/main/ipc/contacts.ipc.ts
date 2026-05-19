@@ -23,6 +23,8 @@ import { getCredential } from '../security/credentials'
 import { getProvider } from '@cyggie/services/llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
+import { getDatabase } from '@cyggie/db/sqlite/connection'
+import { randomUUID } from 'crypto'
 import { LinkedInEnrichError } from '../../shared/types/contact'
 import type {
   ContactEnrichmentOptions,
@@ -586,7 +588,43 @@ export function registerContactHandlers(): void {
     (_event, contactId: string) => {
       if (!contactId?.trim()) throw new Error('contactId is required')
       const userId = getCurrentUserId()
-      contactRepo.deleteContact(contactId)
+      const db = getDatabase()
+
+      // Tombstone-wrapped delete (migration 098).
+      //
+      //   ┌──────────────────────────────────────────────────────────────┐
+      //   │  1. SELECT emails from contact_emails + contacts.email       │
+      //   │     (must happen BEFORE the CASCADE wipes contact_emails)    │
+      //   │  2. DELETE contact (cascades contact_emails, speaker_links)  │
+      //   │  3. INSERT OR IGNORE one tombstone row per email             │
+      //   │  All three in one db.transaction(); rolled back atomically.  │
+      //   └──────────────────────────────────────────────────────────────┘
+      //
+      // mergeContacts uses the unwrapped deleteContactById prepared statement;
+      // merges do NOT tombstone — only user-initiated deletes via this IPC.
+      const tx = db.transaction(() => {
+        const emailRows = db
+          .prepare(`
+            SELECT lower(trim(email)) AS email FROM contact_emails WHERE contact_id = ?
+            UNION
+            SELECT lower(trim(email)) AS email FROM contacts WHERE id = ? AND email IS NOT NULL
+          `)
+          .all(contactId, contactId) as { email: string }[]
+
+        contactRepo.deleteContact(contactId)
+
+        const ins = db.prepare(
+          `INSERT OR IGNORE INTO contact_tombstones (id, email, user_id) VALUES (?, ?, ?)`,
+        )
+        for (const { email } of emailRows) {
+          if (!email) continue
+          ins.run(randomUUID(), email, userId)
+          console.info(
+            `[contact:tombstone-write] email=${email} contactId=${contactId} userId=${userId} metric=contact.tombstone.write count=1`,
+          )
+        }
+      })
+      tx()
       logAudit(userId, 'contact', contactId, 'delete', {})
     }
   )

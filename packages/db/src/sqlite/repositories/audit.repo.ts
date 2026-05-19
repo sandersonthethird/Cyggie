@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 
-export type AuditAction = 'create' | 'update' | 'delete' | 'stage_change'
+export type AuditAction = 'create' | 'update' | 'delete' | 'stage_change' | 'set_group_event'
 
 /**
  * Append a row to `audit_log`.

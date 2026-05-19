@@ -34,6 +34,8 @@ function rowToMeeting(row: MeetingRow): Meeting {
     chatMessages: row.chat_messages ? JSON.parse(row.chat_messages) : null,
     recordingPath: row.recording_path ?? null,
     status: row.status as MeetingStatus,
+    isGroupEvent: row.is_group_event === 1,
+    isGroupEventUserSet: row.is_group_event_user_set === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     company: row.company_id
@@ -262,6 +264,7 @@ export function createMeeting(data: {
   attendeeEmails?: string[] | null
   companies?: string[] | null
   status?: MeetingStatus
+  isGroupEvent?: boolean
 }, userId: string | null = null): Meeting {
   const db = getDatabase()
   const id = uuidv4()
@@ -269,9 +272,10 @@ export function createMeeting(data: {
   db.prepare(
     `INSERT INTO meetings (
       id, title, date, meeting_platform, meeting_url, calendar_event_id,
-      attendees, attendee_emails, companies, status, created_by_user_id, updated_by_user_id
+      attendees, attendee_emails, companies, status, is_group_event,
+      created_by_user_id, updated_by_user_id
     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     data.title,
@@ -283,6 +287,7 @@ export function createMeeting(data: {
     data.attendeeEmails ? JSON.stringify(data.attendeeEmails) : null,
     data.companies ? JSON.stringify(data.companies) : null,
     data.status ?? 'recording',
+    data.isGroupEvent ? 1 : 0,
     userId,
     userId
   )
@@ -409,6 +414,8 @@ export function updateMeeting(
     chatMessages: ChatMessage[] | null
     recordingPath: string | null
     status: MeetingStatus
+    isGroupEvent: boolean
+    isGroupEventUserSet: boolean
   }>
 ,
   userId: string | null = null
@@ -488,6 +495,14 @@ export function updateMeeting(
   if (data.status !== undefined) {
     sets.push('status = ?')
     params.push(data.status)
+  }
+  if (data.isGroupEvent !== undefined) {
+    sets.push('is_group_event = ?')
+    params.push(data.isGroupEvent ? 1 : 0)
+  }
+  if (data.isGroupEventUserSet !== undefined) {
+    sets.push('is_group_event_user_set = ?')
+    params.push(data.isGroupEventUserSet ? 1 : 0)
   }
 
   if (sets.length === 0) return getMeeting(id)
@@ -574,4 +589,57 @@ export function deleteMeeting(id: string): boolean {
   })
   tx()
   return changes > 0
+}
+
+// =============================================================================
+// Group-event ingestion gate (migration 098)
+//
+// Three pieces split for clarity:
+//   • shouldSyncAttendees(meetingId)        — read-only gate (called from sync sites)
+//   • computeAutoGroupEventFlag(...)        — pure, decides whether to write
+//   • Writes go through updateMeeting({isGroupEvent, isGroupEventUserSet})
+//     so the sync agent picks them up via the existing withSync wrap.
+// =============================================================================
+
+/**
+ * Returns false when the meeting is flagged as a group event — caller should
+ * skip syncContactsFromAttendees + meeting_company_links auto-population.
+ * Returns false defensively when the meeting row can't be found (logged but
+ * non-fatal; the caller's sync would no-op against missing data anyway).
+ */
+export function shouldSyncAttendees(meetingId: string): boolean {
+  const db = getDatabase()
+  const row = db
+    .prepare(`SELECT is_group_event FROM meetings WHERE id = ?`)
+    .get(meetingId) as { is_group_event: number } | undefined
+  if (!row) {
+    console.warn(`[meeting:sync-gated] meetingId=${meetingId} reason=missing-row`)
+    return false
+  }
+  if (row.is_group_event === 1) {
+    console.debug(`[meeting:sync-gated] meetingId=${meetingId} reason=is_group_event`)
+    return false
+  }
+  return true
+}
+
+/**
+ * Pure auto-flag computation. Returns the value to write, or null if the row
+ * should not be touched.
+ *
+ *   ┌────────────────────────────────────────────────────────────┐
+ *   │  user_set=true  →  null (no-write, locked by user toggle)  │
+ *   │  user_set=false →  newFlag = (count > THRESHOLD)           │
+ *   │                    null if unchanged, else newFlag         │
+ *   └────────────────────────────────────────────────────────────┘
+ */
+export function computeAutoGroupEventFlag(
+  attendeeCount: number,
+  userSet: boolean,
+  currentFlag: boolean,
+  threshold: number,
+): boolean | null {
+  if (userSet) return null
+  const newFlag = attendeeCount > threshold
+  return newFlag === currentFlag ? null : newFlag
 }

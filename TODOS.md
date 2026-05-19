@@ -1485,3 +1485,41 @@ new IPC channel; user can opt in to sharing.
 **Effort:** S
 **Priority:** P3
 **Depends on:** PR3b merged.
+
+---
+
+## P2 — CRM ingestion (follow-ups from migration 098 / 0010_sturdy_red_shift)
+
+### Mobile group-event toggle (writes deferred until Phase 1.5 sync agent)
+**What:** Add `PATCH /meetings/:id/group-event` endpoint on the gateway; wire a toggle on the mobile meeting detail screen. Use `writeWithSync` once it's available end-to-end so the desktop SQLite mirror picks up the change via the outbox/lamport pipeline.
+**Why:** Mobile is read-only for the group-event flag in V1 — the banner says "Toggle from desktop". Bidirectional sync infrastructure exists at the table level (migrations 096 `lamport-on-owned-tables`, 097 `sync-outbox-state`) but the agent isn't shipped end-to-end yet. Once it is, mobile can write.
+**Pros:** Closes a UX paper cut; matches the desktop affordance.
+**Cons:** Cannot ship until the sync agent round-trips writes back to SQLite. Until then any mobile-side PATCH would diverge from the desktop view.
+**Context:** Plan file `/Users/sandersoncass/.claude/plans/occasionally-there-will-be-resilient-anchor.md`. Gateway `GET /meetings/:id` already returns `isGroupEvent`. After sync agent ships: replace the banner subtext "Toggle from desktop" with a switch that calls the new PATCH endpoint; sync agent replays the write to SQLite. IPC channel `MEETING_SET_GROUP_EVENT` already does the desktop-side write and emits an audit row.
+**Effort:** S
+**Priority:** P2
+**Depends on:** Phase 1.5 bidirectional sync agent.
+
+### Stale calendar payload in MEETING_PREPARE existing-meeting branch
+**What:** Reconcile the fresh calendar `attendees` / `attendeeEmails` parameters against the stored values in the `MEETING_PREPARE` existing-meeting branch ([src/main/ipc/meeting.ipc.ts:371](src/main/ipc/meeting.ipc.ts#L371)). When they differ, call `meetingRepo.updateMeeting(...)` which triggers the `MEETING_UPDATE`-style auto-flag recompute + gated `syncContactsFromAttendees`.
+**Why:** Migration 098 / plan Part 2 removed the redundant `syncContactsFromAttendees` call from that branch. That call was masking a separate latent bug: the existing-meeting branch ignores the fresh calendar payload entirely, so mid-week calendar invitee changes go silently un-applied until something else triggers `MEETING_UPDATE`. The redundant sync used to paper over this by re-running upserts every poll.
+**Pros:** Closes the symmetric gap left by Part 2. Mid-week invitee changes get propagated.
+**Cons:** Touches a code path the 098 PR deliberately simplified; needs a targeted test for the diff-detect branch.
+**Context:** Discovered during plan-eng-review Section 1 (Issue 2). Captured here per user decision to ship 098 first.
+**Effort:** S
+**Priority:** P2
+**Depends on:** Migration 098 / `0010_sturdy_red_shift` merged.
+
+---
+
+## P3 — CRM ingestion
+
+### Tombstone restore UI (optional, surface if first complaint arrives)
+**What:** Add a "Show deleted contacts" affordance on the contacts list page with a Restore button that re-creates the contact (which clears the tombstone via the existing `createContact` path).
+**Why:** Today, restore is implicit — the user re-creates the contact manually and the tombstone clears automatically. Works fine for a one-off but has no UI surface for "what have I deleted recently?" or "restore many at once".
+**Pros:** Closes the reversibility loop on user-initiated deletions; surfaces what the tombstone table actually holds.
+**Cons:** Pure new UI work; no backend changes needed. Backlog until someone complains.
+**Context:** `contact_tombstones` table from migration 098 is per-email global, indexed on `email`. The list query is one row per tombstoned email + a `Restore` button that calls `CONTACT_CREATE` with that email; the existing `createContact` end-of-function already issues the `DELETE FROM contact_tombstones`.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Nothing.

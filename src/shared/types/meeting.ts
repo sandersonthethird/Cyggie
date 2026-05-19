@@ -44,6 +44,12 @@ export interface Meeting {
   dismissedCompanies: string[] | null
   chatMessages: ChatMessage[] | null
   status: MeetingStatus
+  // Group-event ingestion gate (migration 098). When isGroupEvent is true,
+  // syncContactsFromAttendees + company link auto-creation are skipped for this
+  // meeting; attendees remain visible but no CRM rows are seeded. isGroupEventUserSet
+  // locks the value against calendar re-sync recomputes.
+  isGroupEvent: boolean
+  isGroupEventUserSet: boolean
   createdAt: string
   updatedAt: string
   company: MeetingCompany | null

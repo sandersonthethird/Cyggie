@@ -407,6 +407,25 @@ function buildCandidateMap(
 
 function applyCandidates(candidates: CandidateContact[], userId: string | null = null): ContactSyncStats {
   const db = getDatabase()
+
+  // Tombstone filter (migration 098): bulk-load every tombstoned email referenced
+  // by this batch. Chunked at 500 to stay under SQLite's 999-variable limit
+  // (mirrors getContactsByIds at line 2674). The gate only fires at the
+  // create-new branch below — if a live contact already exists for the email,
+  // a stale tombstone is ignored. Source-of-truth invariant: a live row beats
+  // a tombstone.
+  const tombstoned = new Set<string>()
+  const candidateEmails = candidates.map((c) => c.email).filter(Boolean)
+  for (let i = 0; i < candidateEmails.length; i += 500) {
+    const chunk = candidateEmails.slice(i, i + 500)
+    if (chunk.length === 0) continue
+    const placeholders = chunk.map(() => '?').join(',')
+    const rows = db
+      .prepare(`SELECT email FROM contact_tombstones WHERE email IN (${placeholders})`)
+      .all(...chunk) as { email: string }[]
+    for (const r of rows) tombstoned.add(r.email)
+  }
+
   const getByEmail = db.prepare(`
     SELECT c.id, c.full_name, c.first_name, c.last_name, c.normalized_name, c.email, c.primary_company_id
     FROM contacts c
@@ -463,6 +482,11 @@ function applyCandidates(candidates: CandidateContact[], userId: string | null =
       } | undefined
 
       if (!existing) {
+        if (tombstoned.has(candidate.email)) {
+          console.debug(`[contact:tombstone-skip] email=${candidate.email} metric=contact.tombstone.skip count=1`)
+          stats.skipped += 1
+          continue
+        }
         const contactId = randomUUID()
         const split = splitFullNameParts(candidate.fullName)
         const inferredCompanyId = findCompanyIdByEmail(candidate.email)
@@ -797,7 +821,13 @@ export function listContacts(filter?: {
   const db = getDatabase()
   const query = filter?.query?.trim()
   const params: unknown[] = []
-  const conditions: string[] = ['c.email IS NOT NULL']
+  // Keep no-email contacts that the user has intentionally curated:
+  // a contact_type ('founder'/'investor'/'operator') or non-empty tags array
+  // means the user went through the trouble of CRM-tagging them, so they
+  // belong in the main contacts table even without an email.
+  const conditions: string[] = [
+    `(c.email IS NOT NULL OR c.contact_type IS NOT NULL OR (c.tags IS NOT NULL AND c.tags <> '[]' AND c.tags <> ''))`
+  ]
 
   if (query) {
     conditions.push('(c.full_name LIKE ? OR c.email LIKE ?)')
@@ -1204,6 +1234,13 @@ export function createContact(data: {
     }
   }
 
+  // Clear any tombstone for this email — explicit user creation overrides a
+  // previous deletion (migration 098 tombstones table).
+  if (email) {
+    db.prepare(`DELETE FROM contact_tombstones WHERE email = ?`).run(email)
+    console.info(`[contact:tombstone-clear] email=${email} reason=createContact metric=contact.tombstone.clear count=1`)
+  }
+
   const row = selectById.get(contactId) as ContactRow | undefined
 
   if (!row) {
@@ -1422,8 +1459,12 @@ export function addContactEmail(
         ensurePrimaryCompanyLink(db, contactId, inferredCompanyId, userId)
       }
     }
+    // Clear tombstone — explicit add-email overrides a previous deletion of
+    // some other contact that owned this email (migration 098).
+    db.prepare(`DELETE FROM contact_tombstones WHERE email = ?`).run(email)
   })
   tx()
+  console.info(`[contact:tombstone-clear] email=${email} reason=addContactEmail metric=contact.tombstone.clear count=1`)
 
   const updated = getContact(contactId)
   if (!updated) {
@@ -2069,7 +2110,8 @@ export function syncContactsFromMeetings(userId: string | null = null): ContactS
     .prepare(`
       SELECT attendees, attendee_emails
       FROM meetings
-      WHERE attendees IS NOT NULL OR attendee_emails IS NOT NULL
+      WHERE (attendees IS NOT NULL OR attendee_emails IS NOT NULL)
+        AND (is_group_event IS NULL OR is_group_event = 0)
     `)
     .all() as MeetingAttendeeRow[]
 

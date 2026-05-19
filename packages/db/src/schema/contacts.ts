@@ -185,3 +185,19 @@ export const contactDecisionLogs = pgTable(
   },
   (t) => [index('contact_decision_logs_contact_idx').on(t.contactId)],
 )
+
+// Contact tombstones (migration 098). When a user-initiated CONTACT_DELETE runs, the
+// IPC handler records each deleted email here so subsequent calendar/recording syncs
+// don't resurrect the contact from the meeting attendee list. Cleared when the user
+// explicitly recreates the contact (createContact / addContactEmail). Per-email, global
+// scope — a deletion blocks recreation everywhere until manually undone.
+export const contactTombstones = pgTable(
+  'contact_tombstones',
+  {
+    id: text('id').primaryKey(),
+    email: text('email').notNull(), // normalized: lower(trim())
+    deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (t) => [uniqueIndex('contact_tombstones_email_idx').on(t.email)],
+)

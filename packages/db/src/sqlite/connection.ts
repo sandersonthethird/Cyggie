@@ -96,6 +96,7 @@ import { runAgentRunsDropVersionFkMigration } from './migrations/094-agent-runs-
 import { runPriorityRenameFurtherWorkMigration } from './migrations/095-priority-rename-further-work'
 import { runLamportOnOwnedTablesMigration } from './migrations/096-lamport-on-owned-tables'
 import { runSyncOutboxStateMigration } from './migrations/097-sync-outbox-state'
+import { runGroupEventAndTombstonesMigration } from './migrations/098-group-event-and-tombstones'
 
 let db: Database.Database | null = null
 
@@ -230,6 +231,7 @@ export function getDatabase(): Database.Database {
     runPriorityRenameFurtherWorkMigration(db)
     runLamportOnOwnedTablesMigration(db)
     runSyncOutboxStateMigration(db)
+    runGroupEventAndTombstonesMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or

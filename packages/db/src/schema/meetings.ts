@@ -97,6 +97,12 @@ export const meetings = pgTable(
     // Mobile: true when this meeting was created via the global Record FAB outside any
     // calendar slot. Summary screen prompts for a real title + linked company.
     wasImpromptu: boolean('was_impromptu').notNull().default(false),
+    // Group-event ingestion gate (migration 098). When true, syncContactsFromAttendees
+    // and meeting_company_links auto-population are skipped for this meeting — the
+    // attendee list is preserved on the row but no CRM contacts/companies are seeded.
+    // isGroupEventUserSet locks the auto-flag against calendar re-sync recomputes.
+    isGroupEvent: boolean('is_group_event').notNull().default(false),
+    isGroupEventUserSet: boolean('is_group_event_user_set').notNull().default(false),
     // Audit fields (migration 025 auth-foundation).
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),

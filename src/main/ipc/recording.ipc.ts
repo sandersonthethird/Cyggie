@@ -17,7 +17,8 @@ import { getTranscriptsDir } from '../storage/paths'
 import { join } from 'path'
 import { RecordingAutoStop } from '../recording/auto-stop'
 import { extractCompaniesFromEmails } from '../utils/company-extractor'
-import { syncContactsFromAttendees, listContactsLight } from '@cyggie/db/sqlite/repositories'
+import { syncContactsFromAttendees, listContactsLight, shouldSyncAttendees } from '@cyggie/db/sqlite/repositories'
+import { GROUP_EVENT_ATTENDEE_THRESHOLD } from '@cyggie/shared'
 import { listCompanies } from '@cyggie/db/sqlite/repositories'
 import { correctProperNouns } from '../utils/proper-noun-corrector'
 import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
@@ -306,11 +307,11 @@ export function registerRecordingHandlers(): void {
       }
 
       meetingRepo.updateMeeting(appendToMeetingId, { status: 'recording' }, userId)
-      try {
-        syncContactsFromAttendees(existing.attendees, existing.attendeeEmails, userId)
-      } catch (err) {
-        console.error('[Contacts] Failed to sync from appended meeting:', err)
-      }
+      // The redundant `syncContactsFromAttendees` call that used to live here
+      // was removed (migration 098 / plan Part 2). It re-ran against unchanged
+      // stored attendees on every recording-resume and was a resurrection
+      // vector for user-deleted contacts. Re-syncing only happens on attendee
+      // CHANGE via MEETING_UPDATE.
       currentMeetingId = appendToMeetingId
       recordingStartTime = Date.now()
     } else {
@@ -414,6 +415,11 @@ export function registerRecordingHandlers(): void {
           console.log('[Recording] Clearing calendarEventId for new recording — recent prior meeting already claimed it:', calendarEventId, '(status:', meeting.status, ')')
         }
         const newCalendarEventId = resolveRecordingCalendarEventId(meeting, !!meetingIsRecent, calendarEventId)
+        // Group-event auto-flag at create (migration 098). Recording-flow
+        // meetings often start with 0 attendees; the flag computes from
+        // whatever calendar emails were available and stays put thereafter
+        // (no auto-recompute on append).
+        const isGroupEvent = calendarAttendeeEmails.length > GROUP_EVENT_ATTENDEE_THRESHOLD
         meeting = meetingRepo.createMeeting({
           title: meetingTitle,
           date: new Date().toISOString(),
@@ -422,7 +428,8 @@ export function registerRecordingHandlers(): void {
           meetingUrl,
           attendees: calendarAttendees.length > 0 ? calendarAttendees : null,
           attendeeEmails: calendarAttendeeEmails.length > 0 ? calendarAttendeeEmails : null,
-          companies: calendarAttendeeEmails.length > 0 ? extractCompaniesFromEmails(calendarAttendeeEmails) : null
+          companies: isGroupEvent ? null : (calendarAttendeeEmails.length > 0 ? extractCompaniesFromEmails(calendarAttendeeEmails) : null),
+          isGroupEvent
         }, userId)
         createdNewMeeting = true
       }
@@ -434,10 +441,12 @@ export function registerRecordingHandlers(): void {
         })
       }
 
-      try {
-        syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails, userId)
-      } catch (err) {
-        console.error('[Contacts] Failed to sync from recording start:', err)
+      if (shouldSyncAttendees(meeting.id)) {
+        try {
+          syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails, userId)
+        } catch (err) {
+          console.error('[Contacts] Failed to sync from recording start:', err)
+        }
       }
 
       currentMeetingId = meeting.id
