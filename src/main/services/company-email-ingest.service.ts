@@ -9,7 +9,7 @@ import {
   hasGmailScope,
   isGmailConnected
 } from '../calendar/google-auth'
-import { findCompanyIdByDomain } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { findCompanyIdByDomain } from '@cyggie/db/sqlite/repositories'
 import type { CompanyEmailIngestResult } from '../../shared/types/company'
 import type { ContactEmailIngestResult } from '../../shared/types/contact'
 import { IPC_CHANNELS } from '../../shared/constants/channels'

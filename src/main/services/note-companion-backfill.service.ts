@@ -26,7 +26,7 @@
 
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
-import { listCompanyMeetingSummaryPaths } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { listCompanyMeetingSummaryPaths } from '@cyggie/db/sqlite/repositories'
 import { readSummary } from '../storage/file-manager'
 import type { Note } from '../../shared/types/note'
 

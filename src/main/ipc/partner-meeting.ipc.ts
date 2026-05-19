@@ -4,7 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as repo from '@cyggie/db/sqlite/repositories/partner-meeting.repo'
-import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts } from '@cyggie/db/sqlite/repositories'
 import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')

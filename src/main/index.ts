@@ -8,10 +8,11 @@ import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { registerAllHandlers } from './ipc'
 import { initializeStorage, setStoragePath, getRecordingsDir, getStoragePath } from './storage/paths'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
-import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from '@cyggie/db/sqlite/repositories/meeting.repo'
+import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from '@cyggie/db/sqlite/repositories'
 import { cleanupOrphanedTempFiles, getActiveRecordingMeetingId } from './video/video-writer'
 import { getPendingForQuit } from './ipc/_finalizations'
 import { getCurrentUserId } from './security/current-user'
+import { bootstrapSync, shutdownSync } from './services/sync-bootstrap'
 
 // Register privileged schemes before app.whenReady:
 //   media:// — local video files (cross-origin blocked on file://)
@@ -205,6 +206,12 @@ app.whenReady().then(() => {
   // Ensure a local current-user identity exists so new writes are attributable.
   const startupUserId = getCurrentUserId()
 
+  // Wire the desktop → Neon SyncAgent. Must run AFTER getDatabase() (so
+  // migrations 096 + 097 have applied) and AFTER getCurrentUserId() (so
+  // configureSyncGlobals can resolve user_id on each call).
+  void startupUserId
+  bootstrapSync()
+
   // System audio loopback is handled by electron-audio-loopback's IPC
   // handlers (enable-loopback-audio / disable-loopback-audio) registered
   // by initAudioLoopback() above. The renderer enables the handler
@@ -348,6 +355,9 @@ let isAwaitingPendingFinalize = false
 
 app.on('before-quit', (event) => {
   isQuitting = true
+
+  // Stop the SyncAgent's periodic timer so Node can exit cleanly.
+  shutdownSync()
 
   // Concern (1): active in-progress recording.
   const activeMeetingId = getActiveRecordingMeetingId()

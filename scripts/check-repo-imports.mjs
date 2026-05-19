@@ -37,7 +37,16 @@ const SKIP_PATH_PARTS = [
   'packages/db/src/sqlite/repositories',
 ]
 
-const IMPORT_PATTERN = /from\s+['"](?:[^'"]*\/)?([\w-]+\.repo)(?:\.ts)?['"]/g
+// Only flag direct imports of repos that ARE wrapped by the barrel. Repos
+// outside this list (audit, settings, search, deal, custom-fields, etc.) are
+// not yet sync-wrapped and continue to import directly. They'll be added
+// here as their tables are wrapped in follow-up commits.
+const WRAPPED_REPOS = ['meeting', 'contact', 'org-company', 'notes']
+const wrappedPattern = WRAPPED_REPOS.map((r) => r.replace(/-/g, '\\-')).join('|')
+const IMPORT_PATTERN = new RegExp(
+  `from\\s+['"](?:[^'"]*\\/)?(${wrappedPattern})\\.repo(?:\\.ts)?['"]`,
+  'g',
+)
 
 const violations = []
 

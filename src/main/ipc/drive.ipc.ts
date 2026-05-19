@@ -14,7 +14,7 @@ import {
   isCalendarConnected
 } from '../calendar/google-auth'
 import { getSummariesDir, getTranscriptsDir } from '../storage/paths'
-import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 
 export function registerDriveHandlers(): void {
   ipcMain.handle(

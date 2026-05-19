@@ -1,15 +1,15 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { getCredential } from '../security/credentials'
-import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
-import * as notesRepo from '@cyggie/db/sqlite/repositories/notes.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories'
+import * as notesRepo from '@cyggie/db/sqlite/repositories'
 import { hydrateCompanionNote } from './note-hydration'
 import { readTranscript, readSummary } from '../storage/file-manager'
 import { recoverSummaryFromCompanionNote } from '@cyggie/services/meeting-summary-recovery'
 import type { WebShareResponse } from '../../shared/types/web-share'
 import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
 import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
-import { listMeetingCompanies } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { listMeetingCompanies } from '@cyggie/db/sqlite/repositories'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 
 /**

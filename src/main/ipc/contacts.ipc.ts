@@ -1,8 +1,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
+import * as contactRepo from '@cyggie/db/sqlite/repositories'
 import { generateKeyTakeaways } from '@cyggie/services/llm/contact-key-takeaways'
-import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import * as companyRepo from '@cyggie/db/sqlite/repositories'
 import * as contactDecisionLogRepo from '@cyggie/db/sqlite/repositories/contact-decision-log.repo'
 import { ingestContactEmails, cancelContactEmailIngest } from '../services/company-email-ingest.service'
 import {

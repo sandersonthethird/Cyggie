@@ -5,8 +5,8 @@
  */
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { readSummary } from '../storage/file-manager'
-import { resolveContactsByEmails } from '@cyggie/db/sqlite/repositories/contact.repo'
-import { listMeetingCompanies } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { resolveContactsByEmails } from '@cyggie/db/sqlite/repositories'
+import { listMeetingCompanies } from '@cyggie/db/sqlite/repositories'
 import { createMeetingCompanionNote } from './note-companion-backfill.service'
 
 interface MeetingRow {

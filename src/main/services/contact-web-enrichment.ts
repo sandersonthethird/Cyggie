@@ -5,8 +5,8 @@ import type {
   ContactEnrichmentResult,
   ContactEnrichmentOptions
 } from '../../shared/types/contact'
-import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
-import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
+import * as contactRepo from '@cyggie/db/sqlite/repositories'
+import * as companyRepo from '@cyggie/db/sqlite/repositories'
 import { enrichCompany } from './company-enrichment'
 import { extractDomainFromEmail, humanizeDomainName } from '../utils/company-extractor'
 import { normalizeLinkedinUrl } from '@cyggie/db/sqlite/repositories/contact-utils'
