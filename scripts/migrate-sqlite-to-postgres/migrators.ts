@@ -14,7 +14,7 @@ import {
   parseSqliteBoolean,
   parseSqliteTimestamp,
   preserveText,
-} from './transforms.ts'
+} from '../../packages/db/src/sync/transforms.ts'
 
 export function allMigrators(userId: string): Migrator[] {
   return [

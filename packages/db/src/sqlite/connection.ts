@@ -94,6 +94,8 @@ import { runStressTestReportsMigration } from './migrations/092-stress-test-repo
 import { runStressTestReportsNoFkMigration } from './migrations/093-stress-test-reports-no-fk'
 import { runAgentRunsDropVersionFkMigration } from './migrations/094-agent-runs-drop-version-fk'
 import { runPriorityRenameFurtherWorkMigration } from './migrations/095-priority-rename-further-work'
+import { runLamportOnOwnedTablesMigration } from './migrations/096-lamport-on-owned-tables'
+import { runSyncOutboxStateMigration } from './migrations/097-sync-outbox-state'
 
 let db: Database.Database | null = null
 
@@ -226,6 +228,8 @@ export function getDatabase(): Database.Database {
     runStressTestReportsNoFkMigration(db)
     runAgentRunsDropVersionFkMigration(db)
     runPriorityRenameFurtherWorkMigration(db)
+    runLamportOnOwnedTablesMigration(db)
+    runSyncOutboxStateMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or
