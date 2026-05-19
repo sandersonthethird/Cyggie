@@ -6,8 +6,16 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { StatusBar } from 'expo-status-bar'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
+import * as WebBrowser from 'expo-web-browser'
 import { useAuthStore } from '../lib/auth/store'
 import { mmkvAsyncStorage } from '../lib/cache/mmkv'
+
+// Required at module top-level so any pending ASWebAuthenticationSession
+// redirect (e.g. from a previous sign-in that closed mid-flow) is flushed
+// before the next openAuthSessionAsync call. Without this, the second
+// sign-in attempt within a single app run can close silently after Google's
+// "Allow" because the system still has state from the prior session.
+WebBrowser.maybeCompleteAuthSession()
 
 const ONE_DAY_MS = 1000 * 60 * 60 * 24
 

@@ -78,6 +78,18 @@ export async function startSignIn(): Promise<SignInResult> {
   }
 
   // 2. Open in a system auth session, wait for the cyggie:// redirect.
+  // Defensively dismiss any stale session before opening a new one. On iOS
+  // Simulator, after the first ASWebAuthenticationSession in an app run, the
+  // native module's `currentAuthSession` can retain state that makes the
+  // SECOND attempt close silently with type='cancel' after Google's "Allow"
+  // — even though the gateway successfully sent the cyggie:// redirect.
+  // The dismiss is a no-op if no session is active, so it's safe to always call.
+  try {
+    await WebBrowser.dismissAuthSession()
+  } catch {
+    // ignore — best-effort cleanup
+  }
+
   let redirectUrl: string | null = null
   try {
     const result = await WebBrowser.openAuthSessionAsync(authUrl, CALLBACK_SCHEME, {
