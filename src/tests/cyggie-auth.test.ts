@@ -61,9 +61,9 @@ vi.mock('electron', () => ({
 // ── parseCallbackUrl (lives in @cyggie/shared) ─────────────────────────────
 
 describe('parseCallbackUrl', () => {
-  test('happy path: returns kind=success with all four params', () => {
+  test('happy path: returns kind=success with all params + email', () => {
     const url =
-      'cyggie-desktop://auth-callback?session=AAA&refresh=BBB&user_id=u-1&action=returning'
+      'cyggie-desktop://auth-callback?session=AAA&refresh=BBB&user_id=u-1&action=returning&email=sandy%40redswanventures.com'
     const r = parseCallbackUrl(url)
     expect(r.kind).toBe('success')
     if (r.kind !== 'success') throw new Error('unreachable')
@@ -71,6 +71,16 @@ describe('parseCallbackUrl', () => {
     expect(r.refreshToken).toBe('BBB')
     expect(r.userId).toBe('u-1')
     expect(r.action).toBe('returning')
+    expect(r.email).toBe('sandy@redswanventures.com')
+  })
+
+  test('email is optional (pre-2026-05 gateway back-compat): null when omitted', () => {
+    const url =
+      'cyggie-desktop://auth-callback?session=A&refresh=B&user_id=u&action=returning'
+    const r = parseCallbackUrl(url)
+    expect(r.kind).toBe('success')
+    if (r.kind !== 'success') throw new Error('unreachable')
+    expect(r.email).toBeNull()
   })
 
   test('mobile scheme works identically', () => {

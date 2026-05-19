@@ -130,10 +130,10 @@ export async function handleAuthCallback(
     accessToken: result.accessToken,
     refreshToken: result.refreshToken,
     userId: result.userId,
-    email: '', // gateway doesn't include email in the deep-link query today;
-              //  TODO when the gateway emits ?email=… we capture it here.
-              //  For now we surface the userId as the display string until
-              //  the renderer can call /auth/me to fetch the email.
+    // Gateway includes the verified Google email in the deep-link query as
+    // of 2026-05. Older gateway builds didn't — email is null in that case
+    // and the renderer pill falls back to "Connected" until next sign-in.
+    email: result.email ?? '',
   })
   broadcastStatus()
 

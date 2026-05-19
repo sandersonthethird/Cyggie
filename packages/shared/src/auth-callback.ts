@@ -23,6 +23,13 @@ export interface SignInSuccess {
   refreshToken: string
   userId: string
   action: SignInAction
+  /**
+   * Verified Google email of the signed-in user. Optional for back-compat —
+   * older gateway builds (pre-2026-05) didn't include this param. New
+   * desktop / mobile builds use it for the signed-in pill so they don't
+   * have to follow up with /auth/me.
+   */
+  email: string | null
 }
 
 export interface SignInCancel {
@@ -87,11 +94,13 @@ export function parseCallbackUrl(url: string): SignInResult {
       message: `Unknown action hint: ${action}`,
     }
   }
+  const email = u.searchParams.get('email') // optional; pre-2026-05 gateways don't send it
   return {
     kind: 'success',
     accessToken,
     refreshToken,
     userId,
     action,
+    email: email && email.length > 0 ? email : null,
   }
 }

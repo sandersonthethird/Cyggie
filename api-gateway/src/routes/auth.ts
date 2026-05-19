@@ -280,6 +280,12 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
       dest.searchParams.set('refresh', refreshToken)
       dest.searchParams.set('user_id', userId)
       dest.searchParams.set('action', action)
+      // Surface the verified Google email to the client so the renderer's
+      // "Connected as sandy@…" pill can render without a follow-up /auth/me
+      // round-trip. The email is already validated against Google's id_token
+      // signature above (fetchGoogleIdentity), so this isn't a new trust
+      // boundary — just shortening the path.
+      dest.searchParams.set('email', identity.email)
       req.log.info(
         {
           userId,
