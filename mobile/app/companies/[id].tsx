@@ -313,7 +313,12 @@ function MeetingsSection({ meetings }: { meetings: CompanyMeetingRef[] }) {
       <View style={styles.kvCard}>
         {meetings.map((m, idx) => (
           <View key={m.id}>
-            <View style={styles.meetingRow}>
+            <Pressable
+              onPress={() => router.push(`/meetings/${m.id}`)}
+              style={({ pressed }) => [styles.meetingRow, pressed && styles.rowPressed]}
+              accessibilityRole="button"
+              accessibilityLabel={m.title}
+            >
               <View style={styles.meetingIconWrap}>
                 <Ionicons name="calendar-outline" size={16} color={colors.text2} />
               </View>
@@ -326,7 +331,8 @@ function MeetingsSection({ meetings }: { meetings: CompanyMeetingRef[] }) {
                   {m.durationSeconds ? ` · ${formatDuration(m.durationSeconds)}` : ''}
                 </Text>
               </View>
-            </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.text4} />
+            </Pressable>
             {idx < meetings.length - 1 && <View style={styles.kvDivider} />}
           </View>
         ))}

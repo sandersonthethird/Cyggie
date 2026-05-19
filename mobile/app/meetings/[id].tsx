@@ -15,32 +15,36 @@ import { useQuery } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
-  fetchContact,
-  type ContactDetail,
-  type ContactMeetingRef,
-} from '../../lib/api/contacts'
+  fetchMeeting,
+  type MeetingDetail,
+  type MeetingLinkedCompany,
+  type MeetingLinkedContact,
+  type TranscriptSegment,
+} from '../../lib/api/meetings'
 import { useAuthStore } from '../../lib/auth/store'
 import { colors, radii, spacing, type } from '../../theme'
 
-// Contact detail — mirrors the structure of company/[id].tsx (hero + stats
-// + segmented Overview/Meetings) so the navigation feel is uniform.
+// Meeting detail — third entity in the read-only CRM triangle.
 //
-// Notable shape differences vs Company detail:
-//   • Hero shows the primary company name as a tappable link → /companies/:id
-//   • "People" segment is absent (no second-degree contacts model yet); the
-//     two segments are Overview + Meetings.
+// Shape mirrors Company / Contact detail (hero + stats + segmented).
+// Segments are Overview / Transcript / People.
+//
+// Overview shows: notes + linked companies (as chips → /companies/:id) +
+//                 attendees list (display-name + email) + meeting platform/URL.
+// Transcript shows: a flat list of segments with speaker labels.
+// People shows: linked contacts (via speaker_contact_links) → /contacts/:id.
 
-type Segment = 'overview' | 'meetings'
+type Segment = 'overview' | 'transcript' | 'people'
 
-export default function ContactDetailScreen() {
+export default function MeetingDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>()
   const id = typeof params.id === 'string' ? params.id : ''
   const signOut = useAuthStore((s) => s.signOut)
   const [segment, setSegment] = useState<Segment>('overview')
 
   const query = useQuery({
-    queryKey: ['contacts', 'detail', id],
-    queryFn: ({ signal }) => fetchContact(id, { signal }),
+    queryKey: ['meetings', 'detail', id],
+    queryFn: ({ signal }) => fetchMeeting(id, { signal }),
     enabled: id.length > 0,
     staleTime: 30_000,
   })
@@ -51,16 +55,14 @@ export default function ContactDetailScreen() {
     }
   }, [query.error, signOut])
 
-  const contact = query.data
+  const meeting = query.data
 
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.topbar}>
           <Pressable
-            onPress={() =>
-              router.canGoBack() ? router.back() : router.replace('/(tabs)/contacts')
-            }
+            onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
             hitSlop={8}
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
             accessibilityLabel="Back"
@@ -69,7 +71,7 @@ export default function ContactDetailScreen() {
             <Ionicons name="chevron-back" size={22} color={colors.text} />
           </Pressable>
           <Text style={styles.topbarTitle} numberOfLines={1}>
-            {contact?.fullName ?? ''}
+            {meeting?.title ?? ''}
           </Text>
           <View style={styles.backBtn} />
         </View>
@@ -85,20 +87,26 @@ export default function ContactDetailScreen() {
           />
         }
       >
-        {query.isLoading && !contact ? (
+        {query.isLoading && !meeting ? (
           <View style={styles.center}>
             <ActivityIndicator color={colors.crimson} />
           </View>
-        ) : query.error && !contact ? (
+        ) : query.error && !meeting ? (
           <ErrorState error={query.error} onRetry={() => query.refetch()} />
-        ) : contact ? (
+        ) : meeting ? (
           <>
-            <Hero contact={contact} />
-            <StatsCard contact={contact} />
+            <Hero meeting={meeting} />
+            <StatsCard meeting={meeting} />
             <SegmentControl value={segment} onChange={setSegment} />
-            {segment === 'overview' && <OverviewSection contact={contact} />}
-            {segment === 'meetings' && (
-              <MeetingsSection meetings={contact.recentMeetings} />
+            {segment === 'overview' && <OverviewSection meeting={meeting} />}
+            {segment === 'transcript' && (
+              <TranscriptSection
+                segments={meeting.transcriptSegments}
+                hasTranscript={meeting.hasTranscript}
+              />
+            )}
+            {segment === 'people' && (
+              <PeopleSection contacts={meeting.linkedContacts} />
             )}
             <View style={{ height: spacing.xxl }} />
           </>
@@ -108,62 +116,29 @@ export default function ContactDetailScreen() {
   )
 }
 
-function Hero({ contact }: { contact: ContactDetail }) {
+function Hero({ meeting }: { meeting: MeetingDetail }) {
   return (
     <View style={styles.hero}>
       <View style={styles.heroAvatar}>
-        <Text style={styles.heroAvatarText}>{initials(contact.fullName)}</Text>
+        <Ionicons
+          name={meeting.wasImpromptu ? 'flash' : 'calendar'}
+          size={28}
+          color={colors.crimson}
+        />
       </View>
-      <Text style={styles.heroName} numberOfLines={2}>
-        {contact.fullName}
+      <Text style={styles.heroName} numberOfLines={3}>
+        {meeting.title}
       </Text>
-      {(contact.title || contact.primaryCompanyName) && (
-        <Pressable
-          onPress={() =>
-            contact.primaryCompanyId
-              ? router.push(`/companies/${contact.primaryCompanyId}`)
-              : undefined
-          }
-          disabled={!contact.primaryCompanyId}
-          style={({ pressed }) => [pressed && styles.pressed]}
-        >
-          <Text style={styles.heroSubtitle}>
-            {contact.title ? `${contact.title}` : ''}
-            {contact.title && contact.primaryCompanyName ? ' · ' : ''}
-            {contact.primaryCompanyName ? (
-              <Text style={styles.heroLink}>{contact.primaryCompanyName}</Text>
-            ) : null}
-          </Text>
-        </Pressable>
+      <Text style={styles.heroSubtitle}>{formatDateLong(meeting.date)}</Text>
+      {meeting.meetingUrl && (
+        <View style={styles.heroLinks}>
+          <LinkChip
+            icon="videocam-outline"
+            label={meeting.meetingPlatform ?? 'Join'}
+            onPress={() => void Linking.openURL(meeting.meetingUrl!)}
+          />
+        </View>
       )}
-      {contact.linkedinHeadline && (
-        <Text style={styles.heroHeadline} numberOfLines={2}>
-          {contact.linkedinHeadline}
-        </Text>
-      )}
-      <View style={styles.heroLinks}>
-        {contact.email && (
-          <LinkChip
-            icon="mail-outline"
-            label="Email"
-            onPress={() => void Linking.openURL(`mailto:${contact.email}`)}
-          />
-        )}
-        {contact.phone && (
-          <LinkChip
-            icon="call-outline"
-            label="Call"
-            onPress={() => void Linking.openURL(`tel:${contact.phone}`)}
-          />
-        )}
-        {contact.linkedinUrl && (
-          <LinkChip
-            icon="logo-linkedin"
-            label="LinkedIn"
-            onPress={() => void Linking.openURL(contact.linkedinUrl!)}
-          />
-        )}
-      </View>
     </View>
   )
 }
@@ -188,18 +163,19 @@ function LinkChip({
   )
 }
 
-function StatsCard({ contact }: { contact: ContactDetail }) {
-  const lastMeeting = formatRelativeDay(contact.lastMeetingAt)
-  const lastEmail = formatRelativeDay(contact.lastEmailAt)
+function StatsCard({ meeting }: { meeting: MeetingDetail }) {
   return (
     <View style={styles.statsCard}>
-      <StatCell label="Last meeting" value={lastMeeting} />
+      <StatCell
+        label="Duration"
+        value={meeting.durationSeconds ? formatDuration(meeting.durationSeconds) : '—'}
+      />
       <View style={styles.statDivider} />
-      <StatCell label="Last email" value={lastEmail} />
+      <StatCell label="Status" value={humanize(meeting.status)} />
       <View style={styles.statDivider} />
       <StatCell
-        label="Type"
-        value={contact.contactType ? humanize(contact.contactType) : '—'}
+        label="Speakers"
+        value={meeting.speakerCount > 0 ? String(meeting.speakerCount) : '—'}
       />
     </View>
   )
@@ -225,7 +201,8 @@ function SegmentControl({
 }) {
   const items: Array<{ key: Segment; label: string }> = [
     { key: 'overview', label: 'Overview' },
-    { key: 'meetings', label: 'Meetings' },
+    { key: 'transcript', label: 'Transcript' },
+    { key: 'people', label: 'People' },
   ]
   return (
     <View style={styles.segmentWrap}>
@@ -249,125 +226,144 @@ function SegmentControl({
   )
 }
 
-function OverviewSection({ contact }: { contact: ContactDetail }) {
-  const rows = useMemo(() => {
-    const base = [
-      { label: 'Title', value: contact.title },
-      { label: 'Company', value: contact.primaryCompanyName },
-      {
-        label: 'Location',
-        value:
-          contact.city && contact.state
-            ? `${contact.city}, ${contact.state}`
-            : contact.city ?? contact.state,
-      },
-      { label: 'Email', value: contact.email },
-      { label: 'Phone', value: contact.phone },
-      {
-        label: 'Type',
-        value: contact.contactType ? humanize(contact.contactType) : null,
-      },
-      {
-        label: 'Relationship',
-        value: contact.relationshipStrength
-          ? humanize(contact.relationshipStrength)
-          : null,
-      },
-      // Investor-specific (only meaningful for contactType === 'investor', but
-      // showing whatever's set rather than hiding behind a type check).
-      {
-        label: 'Investor stage',
-        value: contact.investorStage ? humanize(contact.investorStage) : null,
-      },
-      {
-        label: 'Fund size',
-        value: contact.fundSize ? formatCurrency(contact.fundSize) : null,
-      },
-      {
-        label: 'Check size',
-        value: formatCheckRange(
-          contact.typicalCheckSizeMin,
-          contact.typicalCheckSizeMax,
-        ),
-      },
-    ]
-    return base.filter((r): r is { label: string; value: string } => Boolean(r.value))
-  }, [contact])
-
+function OverviewSection({ meeting }: { meeting: MeetingDetail }) {
   return (
     <View style={styles.section}>
-      {contact.keyTakeaways && (
-        <View style={styles.descBlock}>
-          <Text style={styles.descHeading}>Key takeaways</Text>
-          <Text style={styles.descText}>{contact.keyTakeaways}</Text>
-        </View>
-      )}
-      {contact.notes && (
+      {meeting.notes ? (
         <View style={styles.descBlock}>
           <Text style={styles.descHeading}>Notes</Text>
-          <Text style={styles.descText}>{contact.notes}</Text>
+          <Text style={styles.descText}>{meeting.notes}</Text>
+        </View>
+      ) : null}
+
+      {meeting.linkedCompanies.length > 0 && (
+        <View style={styles.descBlock}>
+          <Text style={styles.descHeading}>Companies</Text>
+          <View style={styles.chipRow}>
+            {meeting.linkedCompanies.map((c) => (
+              <CompanyPill key={c.id} company={c} />
+            ))}
+          </View>
         </View>
       )}
-      {rows.length === 0 && !contact.keyTakeaways && !contact.notes ? (
-        <Text style={styles.emptyInline}>No contact details yet.</Text>
-      ) : (
-        <View style={styles.kvCard}>
-          {rows.map((row, idx) => (
-            <View key={row.label}>
-              <View style={styles.kvRow}>
-                <Text style={styles.kvLabel}>{row.label}</Text>
-                <Text style={styles.kvValue} numberOfLines={2}>
-                  {row.value}
-                </Text>
-              </View>
-              {idx < rows.length - 1 && <View style={styles.kvDivider} />}
-            </View>
+
+      {meeting.attendees && meeting.attendees.length > 0 && (
+        <View style={styles.descBlock}>
+          <Text style={styles.descHeading}>
+            Attendees ({meeting.attendees.length})
+          </Text>
+          {meeting.attendees.map((name, idx) => (
+            <Text key={idx} style={styles.attendeeText}>
+              {name}
+              {meeting.attendeeEmails?.[idx]
+                ? `  ·  ${meeting.attendeeEmails[idx]}`
+                : ''}
+            </Text>
           ))}
         </View>
       )}
+
+      {!meeting.notes &&
+        meeting.linkedCompanies.length === 0 &&
+        (!meeting.attendees || meeting.attendees.length === 0) && (
+          <Text style={styles.emptyInline}>No notes, companies, or attendees yet.</Text>
+        )}
     </View>
   )
 }
 
-function MeetingsSection({ meetings }: { meetings: ContactMeetingRef[] }) {
-  if (meetings.length === 0) {
+function CompanyPill({ company }: { company: MeetingLinkedCompany }) {
+  return (
+    <Pressable
+      onPress={() => router.push(`/companies/${company.id}`)}
+      style={({ pressed }) => [styles.companyPill, pressed && styles.pressed]}
+    >
+      <Ionicons name="business-outline" size={12} color={colors.crimson} />
+      <Text style={styles.companyPillText} numberOfLines={1}>
+        {company.name}
+      </Text>
+    </Pressable>
+  )
+}
+
+function TranscriptSection({
+  segments,
+  hasTranscript,
+}: {
+  segments: TranscriptSegment[]
+  hasTranscript: boolean
+}) {
+  if (!hasTranscript || segments.length === 0) {
     return (
       <View style={styles.section}>
-        <Text style={styles.emptyInline}>
-          No meetings yet. They appear here once you record one and tag this
-          person as a speaker.
-        </Text>
+        <Text style={styles.emptyInline}>No transcript for this meeting.</Text>
       </View>
     )
   }
   return (
     <View style={styles.section}>
       <View style={styles.kvCard}>
-        {meetings.map((m, idx) => (
-          <View key={m.id}>
+        {segments.map((seg, idx) => (
+          <View key={idx}>
+            <View style={styles.segmentBlock}>
+              <View style={styles.segmentHeaderRow}>
+                <Text style={styles.segmentSpeaker}>
+                  {seg.speakerLabel ?? `Speaker ${seg.speaker + 1}`}
+                </Text>
+                <Text style={styles.segmentTime}>
+                  {formatTime(seg.startTime)}
+                </Text>
+              </View>
+              <Text style={styles.segmentText}>{seg.text}</Text>
+            </View>
+            {idx < segments.length - 1 && <View style={styles.kvDivider} />}
+          </View>
+        ))}
+      </View>
+    </View>
+  )
+}
+
+function PeopleSection({ contacts }: { contacts: MeetingLinkedContact[] }) {
+  if (contacts.length === 0) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.emptyInline}>
+          No speakers tagged as contacts yet.
+        </Text>
+      </View>
+    )
+  }
+  // Stable sort by speakerIndex so the order matches the transcript flow.
+  const sorted = useMemo(
+    () => [...contacts].sort((a, b) => a.speakerIndex - b.speakerIndex),
+    [contacts],
+  )
+  return (
+    <View style={styles.section}>
+      <View style={styles.kvCard}>
+        {sorted.map((c, idx) => (
+          <View key={c.id}>
             <Pressable
-              onPress={() => router.push(`/meetings/${m.id}`)}
-              style={({ pressed }) => [styles.meetingRow, pressed && styles.rowPressed]}
+              onPress={() => router.push(`/contacts/${c.id}`)}
+              style={({ pressed }) => [styles.personRow, pressed && styles.rowPressed]}
               accessibilityRole="button"
-              accessibilityLabel={m.title}
+              accessibilityLabel={c.fullName}
             >
-              <View style={styles.meetingIconWrap}>
-                <Ionicons name="calendar-outline" size={16} color={colors.text2} />
+              <View style={styles.personAvatar}>
+                <Text style={styles.personAvatarText}>{initials(c.fullName)}</Text>
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.meetingTitle} numberOfLines={1}>
-                  {m.title}
+                <Text style={styles.personName} numberOfLines={1}>
+                  {c.fullName}
                 </Text>
-                <Text style={styles.meetingMeta}>
-                  {formatMeetingDate(m.date)}
-                  {m.durationSeconds
-                    ? ` · ${formatDuration(m.durationSeconds)}`
-                    : ''}
+                <Text style={styles.personMeta} numberOfLines={1}>
+                  {c.title ? `${c.title}  ·  ` : ''}Speaker {c.speakerIndex + 1}
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={16} color={colors.text4} />
             </Pressable>
-            {idx < meetings.length - 1 && <View style={styles.kvDivider} />}
+            {idx < sorted.length - 1 && <View style={styles.kvDivider} />}
           </View>
         ))}
       </View>
@@ -381,10 +377,10 @@ function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void })
       ? `${error.code}: ${error.message}`
       : error instanceof Error
         ? error.message
-        : 'Could not load contact'
+        : 'Could not load meeting'
   return (
     <View style={styles.center}>
-      <Text style={styles.errorTitle}>Contact failed to load</Text>
+      <Text style={styles.errorTitle}>Meeting failed to load</Text>
       <Text style={styles.errorMessage}>{message}</Text>
       <Pressable
         onPress={onRetry}
@@ -407,25 +403,14 @@ function humanize(raw: string): string {
   return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-function formatRelativeDay(iso: string | null): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  const ms = Date.now() - d.getTime()
-  const days = Math.floor(ms / (1000 * 60 * 60 * 24))
-  if (days < 0) return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-  if (days === 0) return 'Today'
-  if (days === 1) return 'Yesterday'
-  if (days < 7) return `${days}d ago`
-  if (days < 30) return `${Math.floor(days / 7)}w ago`
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
-function formatMeetingDate(iso: string): string {
+function formatDateLong(iso: string): string {
   const d = new Date(iso)
   return d.toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
+    weekday: 'long',
+    month: 'long',
     day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
   })
 }
 
@@ -437,16 +422,15 @@ function formatDuration(seconds: number): string {
   return rem === 0 ? `${h}h` : `${h}h ${rem}m`
 }
 
-function formatCurrency(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`
-  return `$${n.toLocaleString()}`
-}
-
-function formatCheckRange(min: number | null, max: number | null): string | null {
-  if (min == null && max == null) return null
-  if (min != null && max != null) return `${formatCurrency(min)}—${formatCurrency(max)}`
-  return formatCurrency((min ?? max) as number)
+function formatTime(seconds: number): string {
+  // mm:ss or h:mm:ss depending on length.
+  const total = Math.floor(seconds)
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const pad = (n: number) => String(n).padStart(2, '0')
+  if (h > 0) return `${h}:${pad(m)}:${pad(s)}`
+  return `${m}:${pad(s)}`
 }
 
 const styles = StyleSheet.create({
@@ -463,12 +447,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     backgroundColor: colors.surface,
   },
-  backBtn: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   topbarTitle: {
     flex: 1,
     color: colors.text,
@@ -488,19 +467,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   heroAvatar: {
-    width: 72,
-    height: 72,
+    width: 60,
+    height: 60,
     borderRadius: radii.pill,
     backgroundColor: colors.crimsonMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.md,
-  },
-  heroAvatarText: {
-    color: colors.crimson,
-    fontSize: 24,
-    fontWeight: '700',
-    letterSpacing: 0.5,
   },
   heroName: {
     color: colors.text,
@@ -515,21 +488,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'center',
   },
-  heroLink: { color: colors.crimson, fontWeight: '600' },
-  heroHeadline: {
-    color: colors.text2,
-    fontSize: type.bodyTight,
-    marginTop: 8,
-    textAlign: 'center',
-    fontStyle: 'italic',
-    paddingHorizontal: spacing.md,
-  },
   heroLinks: {
     flexDirection: 'row',
     gap: 8,
     marginTop: spacing.md,
-    flexWrap: 'wrap',
-    justifyContent: 'center',
   },
   linkChip: {
     flexDirection: 'row',
@@ -540,11 +502,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface3,
     borderRadius: radii.pill,
   },
-  linkChipText: {
-    color: colors.text2,
-    fontSize: type.bodyTight,
-    fontWeight: '500',
-  },
+  linkChipText: { color: colors.text2, fontSize: type.bodyTight, fontWeight: '500' },
 
   statsCard: {
     flexDirection: 'row',
@@ -556,11 +514,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     paddingVertical: spacing.md,
   },
-  statCell: {
-    flex: 1,
-    alignItems: 'center',
-    paddingHorizontal: 4,
-  },
+  statCell: { flex: 1, alignItems: 'center', paddingHorizontal: 4 },
   statDivider: {
     width: StyleSheet.hairlineWidth,
     backgroundColor: colors.border,
@@ -612,6 +566,7 @@ const styles = StyleSheet.create({
   segmentTextActive: { color: colors.text },
 
   section: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+
   descBlock: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
@@ -633,6 +588,31 @@ const styles = StyleSheet.create({
     fontSize: type.body + 1,
     lineHeight: 21,
   },
+  attendeeText: {
+    color: colors.text2,
+    fontSize: type.body,
+    paddingVertical: 3,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  companyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: colors.crimsonMuted,
+    borderRadius: radii.pill,
+  },
+  companyPillText: {
+    color: colors.crimson,
+    fontSize: type.bodyTight,
+    fontWeight: '600',
+    maxWidth: 200,
+  },
 
   kvCard: {
     backgroundColor: colors.surface,
@@ -640,32 +620,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  kvRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    gap: 16,
-  },
-  kvLabel: {
-    color: colors.text3,
-    fontSize: type.bodyTight,
-    fontWeight: '500',
-    width: 110,
-  },
-  kvValue: {
-    flex: 1,
-    color: colors.text,
-    fontSize: type.body + 1,
-    fontWeight: '500',
-  },
   kvDivider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.border,
     marginLeft: spacing.md,
   },
 
-  meetingRow: {
+  segmentBlock: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  segmentHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 4,
+  },
+  segmentSpeaker: {
+    color: colors.crimson,
+    fontSize: type.bodyTight,
+    fontWeight: '700',
+  },
+  segmentTime: {
+    color: colors.text4,
+    fontSize: type.meta,
+    fontWeight: '500',
+  },
+
+  personRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -673,20 +655,25 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   rowPressed: { backgroundColor: colors.surface3 },
-  meetingIconWrap: {
-    width: 32,
-    height: 32,
+  personAvatar: {
+    width: 36,
+    height: 36,
     borderRadius: radii.pill,
     backgroundColor: colors.surface3,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  meetingTitle: {
+  personAvatarText: {
+    color: colors.text2,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  personName: {
     color: colors.text,
     fontSize: type.body + 1,
     fontWeight: '600',
   },
-  meetingMeta: {
+  personMeta: {
     color: colors.text3,
     fontSize: type.bodyTight,
     marginTop: 2,
@@ -723,4 +710,10 @@ const styles = StyleSheet.create({
   },
   retryText: { color: colors.text, fontSize: type.bodyTight, fontWeight: '500' },
   pressed: { opacity: 0.6 },
+
+  // Note: the `type` keyword on this property collides with the imported `type`
+  // alias from theme. Renamed `segmentText` accordingly when used.
 })
+
+// Avoid shadowing `type` from theme.
+// (Style key `segmentText` above refers to RN style; theme.type is the import.)
