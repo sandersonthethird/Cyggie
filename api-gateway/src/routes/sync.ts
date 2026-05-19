@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { sql } from 'drizzle-orm'
 import { OWNED_TABLES_BY_NAME } from '@cyggie/db/sync/owned-tables'
 import { decodeRowId } from '@cyggie/db/sync/encode-row-id'
 import {
@@ -37,6 +36,26 @@ import type { GatewayEnv } from '../env'
 // All entries process inside one Postgres transaction so a partial batch
 // either commits in full or rolls back.
 // =============================================================================
+
+// Convert SQL column names ('canonical_name') ↔ JS property names
+// ('canonicalName') so drizzle-zod (which expects camelCase) can validate
+// the snake_case payload the desktop emits from SQLite row state.
+function snakeToCamel(s: string): string {
+  return s.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase())
+}
+function camelToSnake(s: string): string {
+  return s.replace(/[A-Z]/g, (m) => '_' + m.toLowerCase())
+}
+function mapKeys(
+  obj: Record<string, unknown>,
+  fn: (k: string) => string,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    out[fn(k)] = v
+  }
+  return out
+}
 
 const PushEntrySchema = z.object({
   outboxId: z.number().int(),
@@ -96,6 +115,12 @@ export async function registerSyncRoutes(
           }
 
           // 2. Validate payload (skip for delete; gateway only needs the PK)
+          //
+          // Convention bridge: desktop emits SQL column names (snake_case)
+          // in outbox.payload because it pulls rows straight from SQLite.
+          // drizzle-zod validates against JS property names (camelCase). We
+          // snake→camel before validation, validate, then camel→snake again
+          // so the SQL we build uses real column names.
           let validatedPayload: Record<string, unknown> | null = null
           if (entry.op !== 'delete') {
             if (entry.payload == null) {
@@ -105,16 +130,17 @@ export async function registerSyncRoutes(
               })
               continue
             }
+            const camelPayload = mapKeys(entry.payload, snakeToCamel)
             const v = validateWritePayload(
               entry.table,
               entry.op as WriteOp,
-              entry.payload,
+              camelPayload,
             )
             if (!v.ok) {
               rejected.push({ outboxId: entry.outboxId, reason: v.reason })
               continue
             }
-            validatedPayload = v.data
+            validatedPayload = mapKeys(v.data, camelToSnake)
             // Force user_id alignment: every owned row's user_id MUST equal
             // the JWT's sub. Defense-in-depth against cross-user writes.
             if (spec.hasUserId) {

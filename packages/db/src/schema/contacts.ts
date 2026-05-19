@@ -149,6 +149,7 @@ export const contactEmails = pgTable(
       .references(() => contacts.id, { onDelete: 'cascade' }),
     email: text('email').notNull(),
     isPrimary: integer('is_primary').notNull().default(0), // 0 | 1 — SQLite-style for trigger compat
+    lamport: text('lamport').notNull().default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

@@ -72,6 +72,7 @@ export const chatSessionMessages = pgTable(
     citations: jsonb('citations'),
     // Attachments (Drive files, transcripts, etc.) — metadata only, not content.
     attachmentsJson: jsonb('attachments_json'),
+    lamport: text('lamport').notNull().default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

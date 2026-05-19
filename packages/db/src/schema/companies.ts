@@ -151,6 +151,7 @@ export const orgCompanyAliases = pgTable(
       .references(() => orgCompanies.id, { onDelete: 'cascade' }),
     aliasValue: text('alias_value').notNull(),
     aliasType: varchar('alias_type', { length: 32 }).notNull(),
+    lamport: text('lamport').notNull().default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

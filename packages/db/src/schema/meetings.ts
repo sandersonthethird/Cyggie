@@ -144,6 +144,7 @@ export const meetingSpeakers = pgTable(
     speakerIndex: integer('speaker_index').notNull(),
     speakerId: text('speaker_id').references(() => speakers.id, { onDelete: 'set null' }),
     label: text('label').notNull().default('Speaker'),
+    lamport: text('lamport').notNull().default('0'),
   },
   (t) => [primaryKey({ columns: [t.meetingId, t.speakerIndex] })],
 )
@@ -161,6 +162,7 @@ export const meetingSpeakerContactLinks = pgTable(
     contactId: text('contact_id')
       .notNull()
       .references(() => contacts.id, { onDelete: 'cascade' }),
+    lamport: text('lamport').notNull().default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -185,6 +187,7 @@ export const meetingCompanyLinks = pgTable(
     linkedBy: varchar('linked_by', { length: 32 }).notNull().default('auto'),
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    lamport: text('lamport').notNull().default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
