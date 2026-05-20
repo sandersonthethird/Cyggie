@@ -8,6 +8,7 @@
   "scripts": {
     "predev": "npx @electron/rebuild -f -w better-sqlite3 --buildFromSource",
     "dev": "electron-vite dev",
+    "dev:mobile-stack": "concurrently --names gateway,mobile --prefix-colors blue,green --kill-others-on-fail 'pnpm --filter @cyggie/api-gateway dev' 'pnpm --filter @cyggie/mobile dev'",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
@@ -64,6 +65,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.27",
+    "concurrently": "^9.2.1",
     "date-fns": "^4.1.0",
     "electron": "^40.8.5",
     "electron-builder": "^25.1.0",

@@ -33,6 +33,14 @@ import { getOrCreateDeviceId } from './device'
 const GATEWAY_URL = (Constants.expoConfig?.extra?.['gatewayUrl'] as string | undefined) ??
   'https://cyggie-gateway.fly.dev'
 
+// Surfaces a typo'd or unset EXPO_PUBLIC_GATEWAY_URL — otherwise the silent
+// prod fallback reproduces the exact 503 symptom the env var was meant to
+// avoid, with no signal in the simulator UI. Compiled out of release bundles.
+if (__DEV__) {
+  // eslint-disable-next-line no-console
+  console.log('[auth] gateway URL:', GATEWAY_URL)
+}
+
 // Re-exports of the shared types so existing call sites that imported them
 // from './oauth' keep working. Canonical definitions live in
 // @cyggie/shared/auth-callback (also consumed by the desktop main process).
