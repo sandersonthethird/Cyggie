@@ -25,6 +25,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { cancelRecording, startRecording, stopRecording } from '../lib/recording/session'
 import { useRecordingStore } from '../lib/recording/store'
+import { useTranscribingPoll } from '../lib/recording/use-transcribing-poll'
 import { colors, radii, spacing, type } from '../theme'
 
 export default function RecordScreen() {
@@ -33,6 +34,14 @@ export default function RecordScreen() {
   const uploadProgress = useRecordingStore((s) => s.uploadProgress)
   const error = useRecordingStore((s) => s.error)
   const reset = useRecordingStore((s) => s.reset)
+
+  // Poll /meetings/:id every 10s while we're in 'transcribing'. Fires
+  // markDone + navigates to meeting detail when the gateway flips status to
+  // 'transcribed'. This is the working fallback for "transcript ready" while
+  // we wait on the Apple Developer Program approval needed for APNs push.
+  // When APNs lands, the notification handler in _layout.tsx also navigates;
+  // first one to win owns the transition (router.replace is idempotent).
+  useTranscribingPoll()
 
   // Auto-start when arriving fresh from the Record FAB.
   useEffect(() => {
