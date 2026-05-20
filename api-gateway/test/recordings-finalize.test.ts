@@ -198,6 +198,28 @@ describe('POST /recordings/deepgram-webhook', () => {
     expect(apnsCalls).toHaveLength(0)
   })
 
+  test('path 4: Deepgram error-payload (no `results`) → meeting=error, no push, 200', async () => {
+    const { meetingId } = await setupUserSessionMeeting({ apnsDeviceToken: 'dev-token-ddd' })
+    const res = await app.inject({
+      method: 'POST',
+      url: `/recordings/deepgram-webhook?meetingId=${meetingId}&secret=${env.DEEPGRAM_WEBHOOK_SECRET}`,
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        type: 'JobFailedNotification',
+        request_id: 'dg-req-fail-1',
+        err_code: 'GENERAL_BAD_REQUEST',
+        err_msg: 'corrupt or unsupported data',
+      },
+    })
+    expect(res.statusCode).toBe(200)
+
+    const meeting = await db.query.meetings.findFirst({
+      where: eq(schema.meetings.id, meetingId),
+    })
+    expect(meeting?.status).toBe('error')
+    expect(apnsCalls).toHaveLength(0)
+  })
+
   test('path 3: APNs 410 Unregistered → session token cleaned up', async () => {
     const { sessionId, meetingId } = await setupUserSessionMeeting({
       apnsDeviceToken: 'dev-token-ccc',

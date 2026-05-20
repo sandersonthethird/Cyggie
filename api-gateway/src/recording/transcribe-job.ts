@@ -268,6 +268,30 @@ async function persistTranscriptAndPush(
 ): Promise<void> {
   const db = getDb(env.GATEWAY_DATABASE_URL)
 
+  // Deepgram's webhook fires for BOTH success and failure paths. The error
+  // payload has no `results` field (it's something like
+  // { type: 'JobFailedNotification', request_id, err_code, err_msg }).
+  // Guard accordingly so the handler doesn't crash on legit failure callbacks
+  // — observed when a sub-second / silent audio file is rejected by
+  // Deepgram's transcription pipeline.
+  if (!payload || typeof payload !== 'object' || !payload.results) {
+    const errPayload = payload as unknown as {
+      err_code?: string
+      err_msg?: string
+      error?: string
+      type?: string
+    }
+    console.warn('[transcribe] webhook payload has no `results` — Deepgram error path', {
+      meetingId,
+      err_code: errPayload?.err_code,
+      err_msg: errPayload?.err_msg,
+      error: errPayload?.error,
+      type: errPayload?.type,
+    })
+    await markMeetingError(db, meetingId, errPayload?.err_msg ?? 'deepgram_callback_error')
+    return
+  }
+
   const segments = extractSegments(payload)
   const speakerMap = buildSpeakerMap(payload)
   const durationSeconds = Math.floor(payload.metadata?.duration ?? 0)
