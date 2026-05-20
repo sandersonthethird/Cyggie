@@ -110,11 +110,32 @@ vi.mock('../main/recording/auto-stop', () => ({
 const mockGetMeeting = vi.fn()
 const mockUpdateMeeting = vi.fn()
 const mockCreateMeeting = vi.fn()
-vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
-  getMeeting: (...args: unknown[]) => mockGetMeeting(...args),
-  updateMeeting: (...args: unknown[]) => mockUpdateMeeting(...args),
-  createMeeting: (...args: unknown[]) => mockCreateMeeting(...args),
+// The barrel index.ts wraps owned-table writes in withSync(), which throws
+// unless configureSyncGlobals() has been called at bootstrap. For unit tests
+// we make withSync a pass-through so the underlying mocked repo functions
+// (mockGetMeeting / mockUpdateMeeting / mockCreateMeeting) are observed
+// directly. Same pattern as contact-tombstones.test.ts.
+vi.mock('@cyggie/db/sqlite/repositories/_sync', () => ({
+  withSync: (fn: unknown) => fn,
+  configureSyncGlobals: () => {},
 }))
+
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', async (importOriginal) => {
+  // Forward all real exports so the barrel index.ts can wrap deleteMeeting,
+  // getMeetingSpeakerContactMap, listMeetings, etc. at evaluation time —
+  // then override the three the test needs to observe.
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return {
+    ...actual,
+    getMeeting: (...args: unknown[]) => mockGetMeeting(...args),
+    updateMeeting: (...args: unknown[]) => mockUpdateMeeting(...args),
+    createMeeting: (...args: unknown[]) => mockCreateMeeting(...args),
+    findMeetingByCalendarEventId: () => null,
+    // Bypass the contact-sync branch in RecordingSession.start — the real
+    // function hits SQLite; tests just need the if-check to short-circuit.
+    shouldSyncAttendees: () => false,
+  }
+})
 vi.mock('../main/storage/file-manager', () => ({
   writeTranscript: () => 'fake-transcript.md',
 }))
@@ -127,13 +148,25 @@ vi.mock('@cyggie/db/sqlite/repositories/search.repo', () => ({
 vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({
   logAudit: vi.fn(),
 }))
-vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
-  listContactsLight: () => [],
-  syncContactsFromAttendees: vi.fn(),
-}))
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  listCompanies: () => [],
-}))
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return {
+    ...actual,
+    listContactsLight: () => [],
+    syncContactsFromAttendees: vi.fn(),
+  }
+})
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return {
+    ...actual,
+    listCompanies: () => [],
+    // Barrel index.ts references rawOrgCompany.repairContactCompanyMismatches
+    // but the real repo doesn't export it (pre-existing barrel-side typo).
+    // Stub here so the mock spread covers what the barrel reads at eval time.
+    repairContactCompanyMismatches: vi.fn(),
+  }
+})
 vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: () => null,
 }))
