@@ -29,6 +29,7 @@ export const ENCRYPTED_KEYS = [
   'openAiApiKey',
   'exaApiKey',
   'webShareApiKey',
+  'memoApiKey',
 ] as const
 export type EncryptedKey = (typeof ENCRYPTED_KEYS)[number]
 
@@ -57,6 +58,13 @@ export interface AppSettings {
   webShareModel: string
   webShareApiKey: MaskedKey
   exaApiKey: MaskedKey
+  /**
+   * Optional dedicated Claude key for the memo producer + thesis stress-test
+   * agents. These flows are token-intensive; users may want to bill them to a
+   * separate Anthropic account. When unset, the agents fall back to
+   * `claudeApiKey`.
+   */
+  memoApiKey: MaskedKey
 }
 
 export const UNCONFIGURED_KEY: MaskedKey = { configured: false, masked: '' }
@@ -86,4 +94,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   brandingLogoDataUrl: '',
   autoSyncEmails: true,
   exaApiKey: UNCONFIGURED_KEY,
+  memoApiKey: UNCONFIGURED_KEY,
 }

@@ -136,9 +136,14 @@ export interface RunMemoProducerResult extends AgentRunResult {
 export async function runMemoProducerAgent(
   input: RunMemoProducerInput,
 ): Promise<RunMemoProducerResult> {
-  const apiKey = getCredential('claudeApiKey')
+  // Prefer the memo-specific key so users can isolate high-token agent flows
+  // onto a dedicated Anthropic account; fall back to the main Claude key.
+  const apiKey = getCredential('memoApiKey') || getCredential('claudeApiKey')
   if (!apiKey) {
-    return emptyResult('AuthenticationError', 'Claude API key not configured')
+    return emptyResult(
+      'AuthenticationError',
+      'No Claude API key configured. Set one under Settings → AI & Transcription (main Anthropic key or the memo-specific override).',
+    )
   }
   const model = getAgentModelId()
   const cacheTtl = getCacheTtl()

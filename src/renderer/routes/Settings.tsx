@@ -115,6 +115,9 @@ interface SettingsState {
   autoGenerateKeyTakeaways: boolean
   autoEnhanceAfterMeeting: boolean
   exaApiKey: MaskedKey
+  // Optional dedicated Claude key for memo + stress-test agents. Falls back
+  // to claudeApiKey at runtime when unset (see memo-producer-agent.ts).
+  memoApiKey: MaskedKey
 }
 
 /** Coerce an unknown IPC value into MaskedKey. Defensive: handles legacy raw
@@ -124,6 +127,58 @@ function asMaskedKey(value: unknown): MaskedKey {
     return value as MaskedKey
   }
   return UNCONFIGURED_KEY
+}
+
+interface ApiKeyRowProps {
+  label: string
+  hint?: string
+  configured: boolean
+  masked: string
+  onAddOrChange: () => void
+  onRemove?: () => void
+  /** Defaults to 'Remove'. Use 'Clear' for the Web Chat row to preserve copy. */
+  removeLabel?: string
+}
+
+/**
+ * Unified API-key row used by every encrypted-key surface in Settings
+ * (Deepgram, primary Anthropic/OpenAI key, memo override, Web Chat, Exa).
+ * Replaces the prior copy-pasted JSX where some rows lied about configured
+ * state ("Change Key" shown when no key was set). The button label is
+ * derived from `configured` so the UI cannot drift from reality.
+ */
+function ApiKeyRow({
+  label,
+  hint,
+  configured,
+  masked,
+  onAddOrChange,
+  onRemove,
+  removeLabel = 'Remove',
+}: ApiKeyRowProps) {
+  return (
+    <div className={styles.functionRow}>
+      <div className={styles.functionLeft}>
+        <span className={styles.functionLabel}>{label}</span>
+        {hint && <div className={styles.functionHint}>{hint}</div>}
+      </div>
+      <div className={styles.functionRight}>
+        {configured ? (
+          <span className={styles.statusConfigured}>Configured ({masked})</span>
+        ) : (
+          <span className={styles.statusMissing}>Not configured</span>
+        )}
+        <button className={styles.changeKeyBtn} onClick={onAddOrChange}>
+          {configured ? 'Change Key' : 'Add Key'}
+        </button>
+        {configured && onRemove && (
+          <button className={styles.changeKeyBtn} onClick={onRemove}>
+            {removeLabel}
+          </button>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function Settings() {
@@ -158,10 +213,11 @@ export default function Settings() {
     autoSyncEmails: true,
     autoGenerateKeyTakeaways: false,
     autoEnhanceAfterMeeting: false,
-    exaApiKey: UNCONFIGURED_KEY
+    exaApiKey: UNCONFIGURED_KEY,
+    memoApiKey: UNCONFIGURED_KEY
   })
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false)
-  const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai' | 'exa' | 'webShare' | 'deepgram'>('claude')
+  const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai' | 'exa' | 'webShare' | 'deepgram' | 'memo'>('claude')
   const [apiKeyDraft, setApiKeyDraft] = useState('')
   const [showApiKeyDraft, setShowApiKeyDraft] = useState(false)
   const [isSavingKey, setIsSavingKey] = useState(false)
@@ -182,7 +238,7 @@ export default function Settings() {
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState('#374151')
   const [staleRelationshipDays, setStaleRelationshipDays] = useState('21')
   const [stalledPipelineDays, setStalledPipelineDays] = useState('21')
-  const [passExpiryDays, setPassExpiryDays] = useState('30')
+  const [passExpiryDays, setPassExpiryDays] = useState('14')
   const [contactOnboardingRunning, setContactOnboardingRunning] = useState(false)
   const [contactOnboardingUseWebLookup, setContactOnboardingUseWebLookup] = useState(false)
   const [contactOnboardingError, setContactOnboardingError] = useState('')
@@ -304,11 +360,12 @@ export default function Settings() {
             autoEnhanceAfterMeeting: str('autoEnhanceAfterMeeting') === 'true',
             exaApiKey: asMaskedKey(all.exaApiKey),
             webShareApiKey: asMaskedKey(all.webShareApiKey),
-            webShareModel: str('webShareModel', 'claude-sonnet-4-5-20250929')
+            webShareModel: str('webShareModel', 'claude-sonnet-4-5-20250929'),
+            memoApiKey: asMaskedKey(all.memoApiKey)
           })
           setStaleRelationshipDays(str('dashboardStaleRelationshipDays', '21'))
           setStalledPipelineDays(str('dashboardStalledPipelineDays', '21'))
-          setPassExpiryDays(str('pipelinePassExpiryDays', '30'))
+          setPassExpiryDays(str('pipelinePassExpiryDays', '14'))
           setBrandingLogoDataUrl(str('brandingLogoDataUrl'))
           setBrandingFirmName(str('brandingFirmName'))
           setBrandingPrimaryColor(str('brandingPrimaryColor', '#374151'))
@@ -595,7 +652,7 @@ export default function Settings() {
     await api.invoke(
       IPC_CHANNELS.SETTINGS_SET,
       'pipelinePassExpiryDays',
-      passExpiryDays.trim() || '30'
+      passExpiryDays.trim() || '14'
     )
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
@@ -641,13 +698,35 @@ export default function Settings() {
     }
     setCalendarConnecting(true)
     setCalendarError('')
+    // The main-process OAuth flow waits up to 5 minutes for Google's redirect.
+    // If Google rejects the client (e.g. wrong type, bad ID) and the user closes
+    // the browser without a redirect, the IPC promise hangs and the button stays
+    // disabled. Race against a shorter renderer-side timeout so the UI recovers
+    // on its own — the user can immediately retry with a different Client ID.
+    const CONNECT_TIMEOUT_MS = 90_000
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () =>
+          reject(
+            new Error(
+              "Didn't hear back from Google. Make sure the Client ID is for a Desktop OAuth client and try again.",
+            ),
+          ),
+        CONNECT_TIMEOUT_MS,
+      )
+    })
     try {
-      await connect(googleClientId.trim(), googleClientSecret.trim())
+      await Promise.race([
+        connect(googleClientId.trim(), googleClientSecret.trim()),
+        timeoutPromise,
+      ])
       await refreshGoogleScopes()
       await refreshAccountEmails()
     } catch (err) {
       setCalendarError(String(err))
     } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId)
       setCalendarConnecting(false)
     }
   }, [googleClientId, googleClientSecret, connect, refreshGoogleScopes, refreshAccountEmails])
@@ -753,6 +832,9 @@ export default function Settings() {
           >
             {TAB_LABELS[tab]}
             {tab === 'ai' && needsSetup && (
+              <span className={styles.tabBadge}>Setup needed</span>
+            )}
+            {tab === 'integrations' && !calendarConnected && (
               <span className={styles.tabBadge}>Setup needed</span>
             )}
           </button>
@@ -891,7 +973,7 @@ export default function Settings() {
               />
             </div>
             <div className={styles.field}>
-              <label className={styles.label}>Remove Pass items from pipeline after (days)</label>
+              <label className={styles.label}>Recent stage window (days)</label>
               <input
                 type="number"
                 className={styles.input}
@@ -899,6 +981,10 @@ export default function Settings() {
                 onChange={(event) => setPassExpiryDays(event.target.value)}
                 min="1"
               />
+              <p className={styles.profileMeta}>
+                Companies moved to Pass or Portfolio show in the “Recent Pass” / “Recent Portfolio”
+                kanban columns for this many days before rolling off.
+              </p>
             </div>
             <div className={styles.profileEditActions}>
               <button className={styles.connectBtn} onClick={() => setEditingThresholds(false)}>
@@ -910,7 +996,7 @@ export default function Settings() {
           <>
             <p className={styles.profileMeta}>Stale relationship after: {staleRelationshipDays} days</p>
             <p className={styles.profileMeta}>Stalled pipeline after: {stalledPipelineDays} days</p>
-            <p className={styles.profileMeta}>Pass items expire after: {passExpiryDays} days</p>
+            <p className={styles.profileMeta}>Recent stage window: {passExpiryDays} days</p>
           </>
         )}
       </section>
@@ -1037,33 +1123,22 @@ export default function Settings() {
           Powered by Deepgram. Converts meeting audio into a real-time transcript during recording.
         </p>
 
-        <div className={styles.functionRow}>
-          <div className={styles.functionLeft}>
-            <span className={styles.functionLabel}>Deepgram API Key</span>
-          </div>
-          <div className={styles.functionRight}>
-            {settings.deepgramApiKey.configured
-              ? <span className={styles.statusConfigured}>Configured ({settings.deepgramApiKey.masked})</span>
-              : <span className={styles.statusMissing}>Not configured</span>}
-            <button
-              className={styles.changeKeyBtn}
-              onClick={() => { setApiKeyDraft(''); setTestKeyStatus(null); setShowApiKeyDraft(false); setApiKeyModalProvider('deepgram'); setApiKeyModalOpen(true) }}
-            >
-              Change Key
-            </button>
-            {settings.deepgramApiKey.configured && (
-              <button
-                className={styles.changeKeyBtn}
-                onClick={async () => {
-                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'deepgramApiKey', '')
-                  setSettings((prev) => ({ ...prev, deepgramApiKey: UNCONFIGURED_KEY }))
-                }}
-              >
-                Remove
-              </button>
-            )}
-          </div>
-        </div>
+        <ApiKeyRow
+          label="Deepgram API Key"
+          configured={settings.deepgramApiKey.configured}
+          masked={settings.deepgramApiKey.masked}
+          onAddOrChange={() => {
+            setApiKeyDraft('')
+            setTestKeyStatus(null)
+            setShowApiKeyDraft(false)
+            setApiKeyModalProvider('deepgram')
+            setApiKeyModalOpen(true)
+          }}
+          onRemove={async () => {
+            await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'deepgramApiKey', '')
+            setSettings((prev) => ({ ...prev, deepgramApiKey: UNCONFIGURED_KEY }))
+          }}
+        />
 
         <div className={styles.inlineFieldRow} style={{ marginTop: 12 }}>
           <span className={styles.inlineFieldLabel}>Live transcript</span>
@@ -1113,12 +1188,55 @@ export default function Settings() {
           </select>
         </div>
 
+        {/* Primary AI key — one row drives all of Summary/Enrichment/Chat. Hidden
+            on Ollama (local, no key). The memo row below shows regardless of
+            provider since memo + stress-test agents are always Claude-only. */}
+        {settings.llmProvider === 'claude' && (
+          <div style={{ marginTop: 12 }}>
+            <ApiKeyRow
+              label="Anthropic API Key"
+              configured={settings.claudeApiKey.configured}
+              masked={settings.claudeApiKey.masked}
+              onAddOrChange={() => {
+                setApiKeyDraft('')
+                setTestKeyStatus(null)
+                setShowApiKeyDraft(false)
+                setApiKeyModalProvider('claude')
+                setApiKeyModalOpen(true)
+              }}
+              onRemove={async () => {
+                await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'claudeApiKey', '')
+                setSettings((prev) => ({ ...prev, claudeApiKey: UNCONFIGURED_KEY }))
+              }}
+            />
+          </div>
+        )}
+        {settings.llmProvider === 'openai' && (
+          <div style={{ marginTop: 12 }}>
+            <ApiKeyRow
+              label="OpenAI API Key"
+              configured={settings.openAiApiKey.configured}
+              masked={settings.openAiApiKey.masked}
+              onAddOrChange={() => {
+                setApiKeyDraft('')
+                setTestKeyStatus(null)
+                setShowApiKeyDraft(false)
+                setApiKeyModalProvider('openai')
+                setApiKeyModalOpen(true)
+              }}
+              onRemove={async () => {
+                await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'openAiApiKey', '')
+                setSettings((prev) => ({ ...prev, openAiApiKey: UNCONFIGURED_KEY }))
+              }}
+            />
+          </div>
+        )}
+
         {(settings.llmProvider === 'claude' || settings.llmProvider === 'openai') && (
           <div style={{ marginTop: 12 }}>
             {INTELLIGENCE_FUNCTIONS.map((fn) => {
               const modelKey = settings.llmProvider === 'claude' ? fn.claudeKey : fn.openAiKey
               const modelOptions = settings.llmProvider === 'claude' ? CLAUDE_MODEL_OPTIONS : OPENAI_MODEL_OPTIONS
-              const providerKey = settings.llmProvider === 'claude' ? 'claude' as const : 'openai' as const
               return (
                 <div key={fn.label} className={styles.functionRow}>
                   <div className={styles.functionLeft}>
@@ -1139,12 +1257,6 @@ export default function Settings() {
                         <option key={o.value} value={o.value}>{o.label}</option>
                       ))}
                     </select>
-                    <button
-                      className={styles.changeKeyBtn}
-                      onClick={() => { setApiKeyDraft(''); setTestKeyStatus(null); setShowApiKeyDraft(false); setApiKeyModalProvider(providerKey); setApiKeyModalOpen(true) }}
-                    >
-                      Change Key
-                    </button>
                   </div>
                 </div>
               )
@@ -1174,10 +1286,39 @@ export default function Settings() {
           </>
         )}
 
+        {/* Memo & Stress Test — dedicated Claude key for high-token agent flows.
+            Always visible: memo/stress-test agents are Claude-only regardless of
+            llmProvider, so users on OpenAI/Ollama still need a place to set this.
+            Falls back to claudeApiKey at runtime; the hint reflects whether that
+            fallback is actually available. */}
+        <div style={{ marginTop: 16 }}>
+          <ApiKeyRow
+            label="Memo & Stress Test"
+            hint={
+              settings.llmProvider === 'claude' && settings.claudeApiKey.configured
+                ? 'Optional. Dedicated key for memo writing and thesis stress testing — falls back to your Anthropic API Key if not set.'
+                : 'Required for memo writing and thesis stress testing (these flows are Claude-only).'
+            }
+            configured={settings.memoApiKey.configured}
+            masked={settings.memoApiKey.masked}
+            onAddOrChange={() => {
+              setApiKeyDraft('')
+              setTestKeyStatus(null)
+              setShowApiKeyDraft(false)
+              setApiKeyModalProvider('memo')
+              setApiKeyModalOpen(true)
+            }}
+            onRemove={async () => {
+              await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'memoApiKey', '')
+              setSettings((prev) => ({ ...prev, memoApiKey: UNCONFIGURED_KEY }))
+            }}
+          />
+        </div>
+
         <div className={styles.functionRow} style={{ marginTop: 16 }}>
           <div className={styles.functionLeft}>
             <span className={styles.functionLabel}>Web Chat</span>
-            <div className={styles.functionHint}>AI chat on publicly shared pages. Falls back to your Claude key if not set.</div>
+            <div className={styles.functionHint}>AI chat on publicly shared pages.</div>
           </div>
           <div className={styles.functionRight}>
             <select
@@ -1193,54 +1334,44 @@ export default function Settings() {
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
-            <button
-              className={styles.changeKeyBtn}
-              onClick={() => { setApiKeyDraft(''); setShowApiKeyDraft(false); setTestKeyStatus(null); setApiKeyModalProvider('webShare'); setApiKeyModalOpen(true) }}
-            >
-              Change Key
-            </button>
-            {settings.webShareApiKey.configured && (
-              <button
-                className={styles.changeKeyBtn}
-                onClick={async () => {
-                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'webShareApiKey', '')
-                  setSettings((prev) => ({ ...prev, webShareApiKey: UNCONFIGURED_KEY }))
-                }}
-              >
-                Clear
-              </button>
-            )}
           </div>
         </div>
+        <ApiKeyRow
+          label="Web Chat API Key"
+          hint="Optional. Dedicated key for the Web Chat surface — falls back to your Anthropic API Key if not set."
+          configured={settings.webShareApiKey.configured}
+          masked={settings.webShareApiKey.masked}
+          removeLabel="Clear"
+          onAddOrChange={() => {
+            setApiKeyDraft('')
+            setShowApiKeyDraft(false)
+            setTestKeyStatus(null)
+            setApiKeyModalProvider('webShare')
+            setApiKeyModalOpen(true)
+          }}
+          onRemove={async () => {
+            await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'webShareApiKey', '')
+            setSettings((prev) => ({ ...prev, webShareApiKey: UNCONFIGURED_KEY }))
+          }}
+        />
 
-        <div className={styles.functionRow}>
-          <div className={styles.functionLeft}>
-            <span className={styles.functionLabel}>Web Search</span>
-            <div className={styles.functionHint}>Exa API — discovers LinkedIn URLs for contacts. Optional.</div>
-          </div>
-          <div className={styles.functionRight}>
-            {settings.exaApiKey.configured
-              ? <span className={styles.statusConfigured}>Configured ({settings.exaApiKey.masked})</span>
-              : <span className={styles.statusMissing}>Not configured</span>}
-            <button
-              className={styles.changeKeyBtn}
-              onClick={() => { setApiKeyDraft(''); setShowApiKeyDraft(false); setTestKeyStatus(null); setApiKeyModalProvider('exa'); setApiKeyModalOpen(true) }}
-            >
-              Change Key
-            </button>
-            {settings.exaApiKey.configured && (
-              <button
-                className={styles.changeKeyBtn}
-                onClick={async () => {
-                  await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'exaApiKey', '')
-                  setSettings((prev) => ({ ...prev, exaApiKey: UNCONFIGURED_KEY }))
-                }}
-              >
-                Remove
-              </button>
-            )}
-          </div>
-        </div>
+        <ApiKeyRow
+          label="Web Search"
+          hint="Exa API — discovers LinkedIn URLs for contacts. Optional."
+          configured={settings.exaApiKey.configured}
+          masked={settings.exaApiKey.masked}
+          onAddOrChange={() => {
+            setApiKeyDraft('')
+            setShowApiKeyDraft(false)
+            setTestKeyStatus(null)
+            setApiKeyModalProvider('exa')
+            setApiKeyModalOpen(true)
+          }}
+          onRemove={async () => {
+            await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'exaApiKey', '')
+            setSettings((prev) => ({ ...prev, exaApiKey: UNCONFIGURED_KEY }))
+          }}
+        />
 
         <div className={styles.inlineFieldRow} style={{ marginTop: 24 }}>
           <span className={styles.inlineFieldLabel}>Auto-generate key takeaways</span>
@@ -1791,7 +1922,12 @@ export default function Settings() {
         >
           <div className={styles.apiKeyDialog} onClick={(e) => e.stopPropagation()}>
             <h2 className={styles.apiKeyDialogTitle}>
-              {apiKeyModalProvider === 'deepgram' ? 'Update Deepgram API Key' : apiKeyModalProvider === 'openai' ? 'Update OpenAI API Key' : apiKeyModalProvider === 'exa' ? 'Update Exa API Key' : apiKeyModalProvider === 'webShare' ? 'Update Web Share API Key' : 'Update Claude API Key'}
+              {apiKeyModalProvider === 'deepgram' ? 'Update Deepgram API Key'
+                : apiKeyModalProvider === 'openai' ? 'Update OpenAI API Key'
+                : apiKeyModalProvider === 'exa' ? 'Update Exa API Key'
+                : apiKeyModalProvider === 'webShare' ? 'Update Web Chat API Key'
+                : apiKeyModalProvider === 'memo' ? 'Update Memo & Stress Test API Key'
+                : 'Update Anthropic API Key'}
             </h2>
             <div className={styles.apiKeyInputRow}>
               <input
@@ -1800,7 +1936,7 @@ export default function Settings() {
                 autoFocus
                 value={apiKeyDraft}
                 onChange={(e) => { setApiKeyDraft(e.target.value); setTestKeyStatus(null) }}
-                placeholder={apiKeyModalProvider === 'deepgram' ? 'Paste Deepgram API key…' : apiKeyModalProvider === 'openai' ? 'sk-...' : apiKeyModalProvider === 'exa' ? 'Paste Exa API key…' : 'sk-ant-api03-…'}
+                placeholder={apiKeyModalProvider === 'deepgram' ? 'Paste Deepgram API key…' : apiKeyModalProvider === 'openai' ? 'sk-...' : apiKeyModalProvider === 'exa' ? 'Paste Exa API key…' : 'sk-ant-api03-…' /* claude, webShare, and memo all use Anthropic keys */}
               />
               <button
                 className={styles.apiKeyToggle}
@@ -1818,7 +1954,8 @@ export default function Settings() {
               {apiKeyModalProvider !== 'exa' && apiKeyModalProvider !== 'webShare' && apiKeyModalProvider !== 'deepgram' && (
                 <button
                   className={styles.connectBtn}
-                  onClick={() => handleTestKey(apiKeyModalProvider as 'claude' | 'openai', apiKeyDraft)}
+                  // memo keys are Anthropic keys stored under a different slot — test against the Claude endpoint.
+                  onClick={() => handleTestKey(apiKeyModalProvider === 'openai' ? 'openai' : 'claude', apiKeyDraft)}
                   disabled={isTesting || !apiKeyDraft}
                 >
                   {isTesting ? 'Testing…' : 'Test key'}
@@ -1853,9 +1990,15 @@ export default function Settings() {
                     setSettings((prev) => ({ ...prev, webShareApiKey: newMasked }))
                     setApiKeyModalOpen(false)
                   } else {
-                    const result = await handleTestKey(apiKeyModalProvider, apiKeyDraft)
+                    // claude, openai, memo — test against the live API first.
+                    // memo uses the Claude endpoint since it's an Anthropic key.
+                    const testProvider = apiKeyModalProvider === 'openai' ? 'openai' : 'claude'
+                    const result = await handleTestKey(testProvider, apiKeyDraft)
                     if (result.ok) {
-                      const settingKey = apiKeyModalProvider === 'openai' ? 'openAiApiKey' : 'claudeApiKey'
+                      const settingKey =
+                        apiKeyModalProvider === 'openai' ? 'openAiApiKey'
+                        : apiKeyModalProvider === 'memo' ? 'memoApiKey'
+                        : 'claudeApiKey'
                       await api.invoke(IPC_CHANNELS.SETTINGS_SET, settingKey, trimmed)
                       setSettings((prev) => ({ ...prev, [settingKey]: newMasked }))
                       setApiKeyModalOpen(false)

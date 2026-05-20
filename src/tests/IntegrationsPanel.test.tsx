@@ -15,7 +15,11 @@
  *     ├── OFF click → credential form expands
  *     ├── Expanded click again → credential form collapses
  *     ├── Connected → no expansion rendered
- *     └── calendarConnected prop change true → expansion auto-closes
+ *     ├── calendarConnected prop change true → expansion auto-closes
+ *     ├── OFF click + empty clientId → opens Google Cloud Console in browser
+ *     ├── OFF click + non-empty clientId → does NOT open browser
+ *     ├── Expanded click (collapse) → does NOT open browser
+ *     └── Connected click (disconnect) → does NOT open browser
  *
  *   Gmail toggle behaviour
  *     ├── Enabled when calendarConnected=true
@@ -118,6 +122,18 @@ describe('IntegrationsPanel', () => {
   })
 
   describe('Calendar toggle behaviour', () => {
+    // The "expand" branch of the toggle calls window.open to send users to the
+    // Google Cloud Console. jsdom doesn't implement window.open, so spy it here
+    // to keep stderr clean across this whole block. Inner auto-open tests still
+    // assert on it directly.
+    let windowOpenSpy: ReturnType<typeof vi.spyOn>
+    beforeEach(() => {
+      windowOpenSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    })
+    afterEach(() => {
+      windowOpenSpy.mockRestore()
+    })
+
     it('clicking the Calendar toggle when disconnected opens the credential form', () => {
       render(<IntegrationsPanel {...defaultProps} />)
       const calendarToggle = screen.getByRole('switch', { name: /Toggle Google Calendar/i })
@@ -159,6 +175,40 @@ describe('IntegrationsPanel', () => {
       const connectBtn = screen.getByRole('button', { name: /Connect Google Calendar/i })
       fireEvent.click(connectBtn)
       expect(defaultProps.onConnectCalendar).toHaveBeenCalledOnce()
+    })
+
+    describe('auto-open Google Cloud Console', () => {
+      const CLOUD_CONSOLE_URL = 'https://console.cloud.google.com/apis/credentials'
+
+      it('opens Google Cloud Console when toggling on with empty Client ID', () => {
+        render(<IntegrationsPanel {...defaultProps} />)
+        const calendarToggle = screen.getByRole('switch', { name: /Toggle Google Calendar/i })
+        fireEvent.click(calendarToggle)
+        expect(windowOpenSpy).toHaveBeenCalledWith(CLOUD_CONSOLE_URL, '_blank')
+      })
+
+      it('does NOT open Google Cloud Console when Client ID is already populated', () => {
+        render(<IntegrationsPanel {...defaultProps} googleClientId="abc.apps.googleusercontent.com" />)
+        const calendarToggle = screen.getByRole('switch', { name: /Toggle Google Calendar/i })
+        fireEvent.click(calendarToggle)
+        expect(windowOpenSpy).not.toHaveBeenCalled()
+      })
+
+      it('does NOT open Google Cloud Console when collapsing the form', () => {
+        render(<IntegrationsPanel {...defaultProps} />)
+        const calendarToggle = screen.getByRole('switch', { name: /Toggle Google Calendar/i })
+        fireEvent.click(calendarToggle) // expand → opens browser
+        windowOpenSpy.mockClear()
+        fireEvent.click(calendarToggle) // collapse → must not re-open
+        expect(windowOpenSpy).not.toHaveBeenCalled()
+      })
+
+      it('does NOT open Google Cloud Console when disconnecting (connected toggle click)', () => {
+        render(<IntegrationsPanel {...defaultProps} calendarConnected={true} />)
+        const calendarToggle = screen.getByRole('switch', { name: /Toggle Google Calendar/i })
+        fireEvent.click(calendarToggle)
+        expect(windowOpenSpy).not.toHaveBeenCalled()
+      })
     })
   })
 

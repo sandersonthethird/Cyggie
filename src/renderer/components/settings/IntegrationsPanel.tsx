@@ -2,11 +2,16 @@ import { useEffect, useState } from 'react'
 import { Calendar, Mail, HardDrive, CloudUpload, FolderOpen, Cloud } from 'lucide-react'
 import styles from './IntegrationsPanel.module.css'
 
+const GOOGLE_CLOUD_CONSOLE_URL = 'https://console.cloud.google.com/apis/credentials'
+
 /*
  * State machine for each integration:
  *
  * Calendar toggle:
  *   OFF + no credentials → click toggle → expand credential form
+ *                                       + open Google Cloud Console in browser
+ *                                         (only when Client ID is empty, so users
+ *                                          mid-paste aren't yanked away)
  *   OFF + form open → click "Connect" → calendarConnecting → ON (form auto-closes)
  *   ON → click toggle → disconnect → OFF
  *   loading=true → toggle disabled
@@ -140,8 +145,12 @@ export function IntegrationsPanel({
   function handleCalendarToggle() {
     if (calendarConnected) {
       onDisconnectCalendar()
-    } else {
-      setCalendarExpanded((v) => !v)
+      return
+    }
+    const opening = !calendarExpanded
+    setCalendarExpanded(opening)
+    if (opening && !googleClientId.trim()) {
+      window.open(GOOGLE_CLOUD_CONSOLE_URL, '_blank')
     }
   }
 
@@ -174,17 +183,42 @@ export function IntegrationsPanel({
         {!calendarConnected && calendarExpanded && (
           <div className={styles.expansion}>
             <p className={styles.expansionHint}>
-              Create OAuth credentials in the{' '}
-              <a
-                href="https://console.cloud.google.com/apis/credentials"
-                target="_blank"
-                rel="noreferrer"
-              >
+              Cyggie connects to Google using your own OAuth credentials. Follow these steps in
+              the{' '}
+              <a href={GOOGLE_CLOUD_CONSOLE_URL} target="_blank" rel="noreferrer">
                 Google Cloud Console
               </a>
-              . Enable the <strong>Calendar API</strong> and <strong>Drive API</strong>, then create
-              a Desktop OAuth client.
+              :
             </p>
+            <ol className={styles.expansionSteps}>
+              <li>
+                Pick a project from the dropdown at the top of the page, or click{' '}
+                <strong>New Project</strong> to create one.
+              </li>
+              <li>
+                Go to <strong>APIs &amp; Services → Library</strong>, search for{' '}
+                <strong>Google Calendar API</strong>, open it, and click <strong>Enable</strong>.
+              </li>
+              <li>
+                Back in the Library, do the same for <strong>Google Drive API</strong>.
+              </li>
+              <li>
+                Go to <strong>APIs &amp; Services → OAuth consent screen</strong>. Choose{' '}
+                <strong>External</strong>, fill in an app name and your email, and save. Then
+                under <strong>Test users</strong>, add your own Google account — without this,
+                sign-in will fail.
+              </li>
+              <li>
+                Go to <strong>APIs &amp; Services → Credentials</strong>, click{' '}
+                <strong>Create credentials → OAuth client ID</strong>, pick{' '}
+                <strong>Desktop app</strong> as the application type, give it any name, and click{' '}
+                <strong>Create</strong>.
+              </li>
+              <li>
+                Copy the <strong>Client ID</strong> (and optionally the Client Secret) from the
+                confirmation dialog and paste them below.
+              </li>
+            </ol>
             <div className={styles.expansionField}>
               <label className={styles.expansionLabel}>Client ID</label>
               <input

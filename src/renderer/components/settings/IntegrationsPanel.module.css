@@ -109,6 +109,27 @@
   color: var(--color-primary);
 }
 
+.expansionSteps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.55;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.expansionSteps li::marker {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.expansionSteps strong {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
 .expansionField {
   display: flex;
   flex-direction: column;

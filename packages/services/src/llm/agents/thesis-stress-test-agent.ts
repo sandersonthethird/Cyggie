@@ -66,7 +66,9 @@ export interface RunStressTestAgentResult extends AgentRunResult {
 export async function runStressTestAgent(
   input: RunStressTestAgentInput,
 ): Promise<RunStressTestAgentResult> {
-  const apiKey = getCredential('claudeApiKey')
+  // Prefer the memo-specific key so users can isolate high-token agent flows
+  // onto a dedicated Anthropic account; fall back to the main Claude key.
+  const apiKey = getCredential('memoApiKey') || getCredential('claudeApiKey')
   if (!apiKey) {
     return {
       status: 'failed',
@@ -80,7 +82,8 @@ export async function runStressTestAgent(
       webSearchCount: 0,
       durationMs: 0,
       errorClass: 'AuthenticationError',
-      errorMessage: 'Claude API key not configured',
+      errorMessage:
+        'No Claude API key configured. Set one under Settings → AI & Transcription (main Anthropic key or the memo-specific override).',
     }
   }
 
