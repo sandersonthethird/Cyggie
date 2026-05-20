@@ -85,6 +85,36 @@ interface MeetingForFinalize {
   deepgramRequestId: string | null
 }
 
+// ─── Debug ring buffer for last few Deepgram errors ────────────────────────
+// Persisted in-memory so /_debug/last-deepgram-errors can read them out
+// without re-deriving from logs (Fly's log endpoint is flaky for this).
+// Capped + non-PII (no audio content beyond the 16-byte container header).
+
+export interface DeepgramErrorRecord {
+  at: string
+  meetingId: string
+  status: number
+  deepgramBody: string
+  audioBytes: number
+  audioHeadHex: string
+  audioHeadAscii: string
+  submitUrl: string
+}
+
+const deepgramErrorRing: DeepgramErrorRecord[] = []
+const DEEPGRAM_ERROR_RING_SIZE = 10
+
+export function getRecentDeepgramErrors(): DeepgramErrorRecord[] {
+  return deepgramErrorRing.slice().reverse()
+}
+
+function recordDeepgramError(r: DeepgramErrorRecord): void {
+  deepgramErrorRing.push(r)
+  if (deepgramErrorRing.length > DEEPGRAM_ERROR_RING_SIZE) {
+    deepgramErrorRing.shift()
+  }
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function submitTranscribeJob(args: {
@@ -165,6 +195,16 @@ export async function submitTranscribeJob(args: {
           audioHeadAscii,
           submitUrl: submitUrl.toString(),
         },
+      })
+      recordDeepgramError({
+        at: new Date().toISOString(),
+        meetingId,
+        status: res.status,
+        deepgramBody: errBody.slice(0, 2000),
+        audioBytes: audio.byteLength,
+        audioHeadHex,
+        audioHeadAscii,
+        submitUrl: submitUrl.toString(),
       })
       await markMeetingError(db, meetingId, `deepgram_${res.status}`)
       return { requestId: null, error: `deepgram_${res.status}` }

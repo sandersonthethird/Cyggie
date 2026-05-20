@@ -19,7 +19,12 @@ import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
-import { submitTranscribeJob, handleDeepgramWebhook } from '../recording/transcribe-job'
+import {
+  submitTranscribeJob,
+  handleDeepgramWebhook,
+  getRecentDeepgramErrors,
+} from '../recording/transcribe-job'
+import { timingSafeEqual } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -181,6 +186,34 @@ export async function registerRecordingRoutes(
         })
       }
       return reply.code(200).send({ ok: true })
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // GET /recordings/_debug/last-deepgram-errors  (secret-authed)
+  //
+  // Returns the in-memory ring buffer of the last few Deepgram submit-400
+  // events with the audio container header bytes. Gated by the same shared
+  // webhook secret. Read-only; safe to leave deployed.
+  // ───────────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'GET',
+    url: '/recordings/_debug/last-deepgram-errors',
+    schema: {
+      querystring: z.object({ secret: z.string().min(1) }),
+    },
+    handler: async (req, reply) => {
+      const { secret } = req.query
+      const expected = env.DEEPGRAM_WEBHOOK_SECRET
+      const provided = Buffer.from(secret)
+      const reference = Buffer.from(expected)
+      if (
+        provided.length !== reference.length ||
+        !timingSafeEqual(provided, reference)
+      ) {
+        return reply.code(401).send({ error: { code: 'INVALID_SECRET' } })
+      }
+      return reply.code(200).send({ errors: getRecentDeepgramErrors() })
     },
   })
 
