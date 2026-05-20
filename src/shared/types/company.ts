@@ -271,6 +271,11 @@ export interface CompanyMeetingRef {
   date: string
   status: string
   durationSeconds: number | null
+  summaryPath: string | null
+  summaryDriveId: string | null
+  hasNonEmptyNotes: boolean
+  hasReadableSummary?: boolean
+  hasSummaryDriveId?: boolean
 }
 
 export interface CompanyMeetingSummaryRef {
@@ -495,6 +500,17 @@ export type DecisionLogType =
   | 'Follow-on'
   | 'Write-Off'
   | 'Other'
+
+// System-generated decision types. Not user-selectable: written by IPC handlers
+// (e.g. auto-logging stage changes) and used as a join key by the pipeline
+// "Recent Pass" / "Recent Portfolio" SQL filter. A typo here silently breaks
+// that filter, so centralize it.
+export const SYSTEM_DECISION_TYPE_STAGE_CHANGE = 'Stage Change'
+export const SYSTEM_DECISION_TYPE_PIPELINE_EXIT = 'Pipeline Exit'
+export const SYSTEM_DECISION_TYPES: ReadonlySet<string> = new Set([
+  SYSTEM_DECISION_TYPE_STAGE_CHANGE,
+  SYSTEM_DECISION_TYPE_PIPELINE_EXIT,
+])
 
 export interface DecisionNextStep {
   what: string

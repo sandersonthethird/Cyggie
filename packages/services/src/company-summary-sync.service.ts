@@ -14,11 +14,13 @@ import type {
   CompanySummaryUpdatePayload,
   CompanySummaryUpdateProposal,
   ContactTypeUpdateProposal,
-  CustomFieldProposedUpdate
+  CustomFieldProposedUpdate,
+  EnrichmentResult
 } from '@shared/types/summary'
 import type { LLMProvider } from '@cyggie/services/llm/provider'
 import type { CustomFieldDefinition } from '@shared/types/custom-fields'
 import { readSummary } from '@main/storage/file-manager'
+import { downloadSummaryFromDrive } from '@main/drive/google-drive'
 import { safeParseJson, extractString, extractNumber } from '@main/utils/json-utils'
 import { CANONICAL_INDUSTRIES, INDUSTRY_PROMPT_LIST, isCanonicalIndustry } from '@shared/constants/industries'
 
@@ -599,7 +601,7 @@ async function buildCompanyEnrichmentProposal(
   customDefs: CustomFieldDefinition[],
   provider: LLMProvider,
   fieldSourceId: string | null
-): Promise<CompanySummaryUpdateProposal | null> {
+): Promise<EnrichmentResult> {
   const systemPrompt =
     'You are a company data extractor. Extract structured company information from ' +
     'the provided content. Return ONLY valid JSON — no prose, no markdown fences. ' +
@@ -632,13 +634,13 @@ async function buildCompanyEnrichmentProposal(
     responseText = await provider.generateSummary(systemPrompt, userPrompt)
   } catch (err) {
     console.error('[Company Enrich] LLM call failed:', err)
-    return null
+    return { ok: false, reason: 'llm_failed' }
   }
 
   const extracted = safeParseJson(responseText)
   if (!extracted) {
     console.warn('[Company Enrich] Could not parse LLM response as JSON')
-    return null
+    return { ok: false, reason: 'parse_failed' }
   }
 
   // --- Built-in field comparison ---
@@ -772,11 +774,24 @@ async function buildCompanyEnrichmentProposal(
         fromDisplay,
         toDisplay,
       })
-      changes.push({ field: def.label, from: fromDisplay, to: toDisplay })
     }
   }
 
-  if (changes.length === 0) return null
+  // Empty changes → still ok:true so the UI can show "already up to date" instead
+  // of the misleading "could not load enrichment" toast. No fieldSources to track
+  // when there are no changes.
+  if (changes.length === 0 && customFieldUpdates.length === 0) {
+    return {
+      ok: true,
+      proposal: {
+        companyId: company.id,
+        companyName: company.canonicalName,
+        updates: {},
+        changes: [],
+        customFieldUpdates: undefined,
+      },
+    }
+  }
 
   // Only track fieldSources when a source ID is provided (skip for notes/email enrichment)
   if (fieldSourceId !== null) {
@@ -800,11 +815,14 @@ async function buildCompanyEnrichmentProposal(
   }
 
   return {
-    companyId: company.id,
-    companyName: company.canonicalName,
-    updates,
-    changes,
-    customFieldUpdates: customFieldUpdates.length > 0 ? customFieldUpdates : undefined,
+    ok: true,
+    proposal: {
+      companyId: company.id,
+      companyName: company.canonicalName,
+      updates,
+      changes,
+      customFieldUpdates: customFieldUpdates.length > 0 ? customFieldUpdates : undefined,
+    },
   }
 }
 
@@ -812,30 +830,36 @@ export async function getCompanyEnrichmentProposalsFromMeetings(
   meetingIds: string[],
   companyId: string,
   provider: LLMProvider
-): Promise<CompanySummaryUpdateProposal | null> {
+): Promise<EnrichmentResult> {
   try {
-    if (meetingIds.length === 0 || !companyId) return null
+    if (meetingIds.length === 0 || !companyId) return { ok: false, reason: 'no_content' }
 
-    // Fetch meetings + read summaries in parallel
-    const summaryEntries = await Promise.all(
+    // Per-meeting content fetch: try local summary file → meeting.notes column →
+    // Drive backup. First non-empty source wins.
+    const contentEntries = await Promise.all(
       meetingIds.map(async (mid) => {
         try {
           const meeting = meetingRepo.getMeeting(mid)
-          if (!meeting?.summaryFilename) return null
-          const text = readSummary(meeting.summaryFilename)
+          if (!meeting) return null
+
+          let text: string | null = null
+          if (meeting.summaryPath) text = readSummary(meeting.summaryPath)
+          if (!text?.trim()) text = meeting.notes ?? null
+          if (!text?.trim()) text = await downloadSummaryFromDrive(meeting.summaryDriveId ?? null)
           if (!text?.trim()) return null
-          return { meetingId: mid, date: meeting.date ?? '', summary: text.trim() }
+
+          return { meetingId: mid, date: meeting.date ?? '', content: text.trim() }
         } catch {
           return null
         }
       })
     )
 
-    const validSummaries = summaryEntries.filter((e): e is NonNullable<typeof e> => e !== null)
-    if (validSummaries.length === 0) return null
+    const validContent = contentEntries.filter((e): e is NonNullable<typeof e> => e !== null)
+    if (validContent.length === 0) return { ok: false, reason: 'no_content' }
 
     const company = companyRepo.getCompany(companyId)
-    if (!company) return null
+    if (!company) return { ok: false, reason: 'company_not_found' }
 
     const customDefs = listFieldDefinitions('company').filter(
       d => !d.isBuiltin &&
@@ -843,10 +867,10 @@ export async function getCompanyEnrichmentProposalsFromMeetings(
            d.fieldType !== 'company_ref'
     )
 
-    // Sort summaries oldest→newest (most recent last in prompt = more weight)
-    const sorted = [...validSummaries].sort((a, b) => a.date.localeCompare(b.date))
+    // Sort oldest→newest (most recent last in prompt = more weight)
+    const sorted = [...validContent].sort((a, b) => a.date.localeCompare(b.date))
     const summaryBlocks = sorted.map((e, i) =>
-      `--- Meeting ${i + 1} (${e.date.slice(0, 10)}) ---\n${e.summary}`
+      `--- Meeting ${i + 1} (${e.date.slice(0, 10)}) ---\n${e.content}`
     ).join('\n\n')
 
     const mostRecentMeetingId = sorted[sorted.length - 1]!.meetingId
@@ -855,23 +879,23 @@ export async function getCompanyEnrichmentProposalsFromMeetings(
     )
   } catch (err) {
     console.error('[Company Enrich] getCompanyEnrichmentProposalsFromMeetings failed:', err)
-    return null
+    return { ok: false, reason: 'llm_failed' }
   }
 }
 
 export async function getCompanyEnrichmentProposalsFromNotes(
   companyId: string,
   provider: LLMProvider
-): Promise<CompanySummaryUpdateProposal | null> {
+): Promise<EnrichmentResult> {
   try {
-    if (!companyId) return null
+    if (!companyId) return { ok: false, reason: 'no_content' }
 
     const notes = _companyNotesRepo.list(companyId)
     const validNotes = notes.filter(n => n.content?.trim())
-    if (validNotes.length === 0) return null
+    if (validNotes.length === 0) return { ok: false, reason: 'no_content' }
 
     const company = companyRepo.getCompany(companyId)
-    if (!company) return null
+    if (!company) return { ok: false, reason: 'company_not_found' }
 
     const customDefs = listFieldDefinitions('company').filter(
       d => !d.isBuiltin &&
@@ -892,16 +916,16 @@ export async function getCompanyEnrichmentProposalsFromNotes(
     return await buildCompanyEnrichmentProposal(company, noteBlocks, 'Notes', customDefs, provider, null)
   } catch (err) {
     console.error('[Company Enrich Notes] getCompanyEnrichmentProposalsFromNotes failed:', err)
-    return null
+    return { ok: false, reason: 'llm_failed' }
   }
 }
 
 export async function getCompanyEnrichmentProposalsFromEmails(
   companyId: string,
   provider: LLMProvider
-): Promise<CompanySummaryUpdateProposal | null> {
+): Promise<EnrichmentResult> {
   try {
-    if (!companyId) return null
+    if (!companyId) return { ok: false, reason: 'no_content' }
 
     const emails = companyRepo.listCompanyEmails(companyId)
     // Use snippet only; sort newest-first, cap at 30 to keep prompt size manageable
@@ -913,10 +937,10 @@ export async function getCompanyEnrichmentProposalsFromEmails(
         return db.localeCompare(da)  // newest first
       })
       .slice(0, 30)
-    if (validEmails.length === 0) return null
+    if (validEmails.length === 0) return { ok: false, reason: 'no_content' }
 
     const company = companyRepo.getCompany(companyId)
-    if (!company) return null
+    if (!company) return { ok: false, reason: 'company_not_found' }
 
     const customDefs = listFieldDefinitions('company').filter(
       d => !d.isBuiltin &&
@@ -935,7 +959,7 @@ export async function getCompanyEnrichmentProposalsFromEmails(
     return await buildCompanyEnrichmentProposal(company, emailBlocks, 'Emails', customDefs, provider, null)
   } catch (err) {
     console.error('[Company Enrich Emails] getCompanyEnrichmentProposalsFromEmails failed:', err)
-    return null
+    return { ok: false, reason: 'llm_failed' }
   }
 }
 

@@ -402,7 +402,6 @@ export async function getContactSummaryUpdateProposals(
           fromDisplay,
           toDisplay,
         })
-        changes.push({ field: def.label, from: fromDisplay, to: toDisplay })
       }
     }
 
@@ -417,7 +416,7 @@ export async function getContactSummaryUpdateProposals(
     }
 
     // Only produce a proposal if there are actual changes
-    if (changes.length === 0) continue
+    if (changes.length === 0 && customFieldUpdates.length === 0) continue
 
     // Merge fieldSources: parse existing JSON, add new sources for changed text fields
     const existingSources: Record<string, string> = {}

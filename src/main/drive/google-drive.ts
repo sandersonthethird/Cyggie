@@ -100,6 +100,29 @@ export async function exportDriveFile(
   }
 }
 
+/**
+ * Download a non-native file (e.g. a `text/markdown` meeting summary the app
+ * uploaded via `uploadSummary`) and return its body as a UTF-8 string.
+ *
+ * Returns null on any failure path — caller treats absence as "no Drive
+ * fallback content available" and falls through to the next source.
+ */
+export async function downloadSummaryFromDrive(driveId: string | null | undefined): Promise<string | null> {
+  if (!driveId) return null
+  const drive = getDriveFilesClient()
+  if (!drive) return null
+  try {
+    const res = await drive.files.get(
+      { fileId: driveId, alt: 'media' },
+      { responseType: 'arraybuffer' }
+    )
+    return Buffer.from(res.data as ArrayBuffer).toString('utf-8')
+  } catch (err) {
+    console.warn('[Drive] downloadSummaryFromDrive failed:', err)
+    return null
+  }
+}
+
 export interface CompanyDriveLookupResult {
   files: CompanyDriveFileRef[]
   matchedFolderRef: string | null

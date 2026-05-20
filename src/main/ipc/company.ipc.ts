@@ -10,6 +10,8 @@ import * as contactRepo from '@cyggie/db/sqlite/repositories'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
+import * as decisionRepo from '@cyggie/db/sqlite/repositories/company-decision-log.repo'
+import { autoAddDecisionToDigest } from '@cyggie/db/sqlite/repositories/partner-meeting.repo'
 import type {
   CompanyEntityType,
   CompanyListFilter,
@@ -19,6 +21,8 @@ import type {
   CompanyPipelineStage,
   CompanyDedupDecision
 } from '../../shared/types/company'
+import { SYSTEM_DECISION_TYPE_STAGE_CHANGE } from '../../shared/types/company'
+import { summaryFileExists } from '../storage/file-manager'
 import { ingestCompanyEmails, cancelCompanyEmailIngest } from '../services/company-email-ingest.service'
 import {
   getCompanyEnrichmentProposalsFromMeetings,
@@ -396,6 +400,16 @@ export function registerCompanyHandlers(): void {
 
       const newStage = 'pipelineStage' in remaining ? (remaining.pipelineStage as string | null) : undefined
 
+      // Capture previous stage BEFORE any mutation so the Stage Change auto-log
+      // below captures the real transition. Only needed when the patch includes
+      // pipelineStage — otherwise prevStage is unused.
+      const prevStage = 'pipelineStage' in remaining
+        ? ((db.prepare('SELECT pipeline_stage FROM org_companies WHERE id = ?').get(companyId) as
+            | { pipeline_stage: string | null }
+            | undefined)?.pipeline_stage ?? null)
+        : null
+      const stageChanging = 'pipelineStage' in remaining && (newStage ?? null) !== prevStage
+
       // Stage-driven side effects (matched to terminal-stage semantics).
       // Pass:      clear priority (it's a closed deal, priority no longer relevant)
       // Portfolio: auto-promote entity type to 'portfolio' so the two redundant
@@ -407,7 +421,26 @@ export function registerCompanyHandlers(): void {
         remaining = { ...remaining, entityType: 'portfolio' }
       }
 
-      const updated = companyRepo.updateCompany(companyId, remaining, userId)
+      // Atomic stage update + Stage Change decision log. If the log INSERT
+      // throws, the stage update rolls back — prevents the company landing in
+      // 'pass' with no log, which would silently exclude it from Recent Pass
+      // (NULL semantics in the SQL filter). better-sqlite3 supports nesting
+      // (companyRepo.updateCompany has its own withSync txn → savepoint).
+      const updated = db.transaction(() => {
+        const u = companyRepo.updateCompany(companyId, remaining, userId)
+        if (u && stageChanging) {
+          const log = decisionRepo.createCompanyDecisionLog({
+            companyId,
+            decisionType: SYSTEM_DECISION_TYPE_STAGE_CHANGE,
+            decisionDate: new Date().toISOString(),
+            rationale: [`Moved from ${prevStage ?? 'Sourced'} to ${newStage ?? 'Sourced'}`],
+          }, userId)
+          logAudit(userId, 'company_decision_log', log.id, 'create', {
+            auto: true, from: prevStage, to: newStage,
+          })
+        }
+        return u
+      })()
 
       if (updated) {
         logAudit(userId, 'company', companyId, 'update', updates)
@@ -418,6 +451,16 @@ export function registerCompanyHandlers(): void {
           if (newName && updated.primaryDomain) {
             upsertCompanyCache(updated.primaryDomain, newName)
           }
+        }
+
+        // Digest auto-add fires AFTER the txn commits — digest write failures
+        // shouldn't roll back the stage change. autoAddDecisionToDigest has
+        // its own internal try/catch.
+        if (stageChanging) {
+          autoAddDecisionToDigest(
+            companyId,
+            `${SYSTEM_DECISION_TYPE_STAGE_CHANGE}: Moved from ${prevStage ?? 'Sourced'} to ${newStage ?? 'Sourced'}`,
+          )
         }
       }
 
@@ -593,7 +636,11 @@ export function registerCompanyHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_MEETINGS, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
-    return companyRepo.listCompanyMeetings(companyId)
+    return companyRepo.listCompanyMeetings(companyId).map((m) => ({
+      ...m,
+      hasReadableSummary: summaryFileExists(m.summaryPath),
+      hasSummaryDriveId: !!m.summaryDriveId,
+    }))
   })
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_CONTACTS, (_event, companyId: string) => {
@@ -822,34 +869,34 @@ export function registerCompanyHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_ENRICH_FROM_MEETINGS,
     async (_event, meetingIds: string[], companyId: string) => {
-      if (!meetingIds?.length || !companyId) return null
+      if (!meetingIds?.length || !companyId) return { ok: false, reason: 'no_content' as const }
       try {
         const provider = getProvider()
         return await getCompanyEnrichmentProposalsFromMeetings(meetingIds, companyId, provider)
       } catch (err) {
         console.error('[Company Enrich] IPC handler failed:', err)
-        return null
+        return { ok: false, reason: 'llm_failed' as const }
       }
     }
   )
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_ENRICH_FROM_NOTES, async (_event, companyId: string) => {
-    if (!companyId) return null
+    if (!companyId) return { ok: false, reason: 'no_content' as const }
     try {
       return await getCompanyEnrichmentProposalsFromNotes(companyId, getProvider())
     } catch (err) {
       console.error('[Company Enrich Notes] IPC handler failed:', err)
-      return null
+      return { ok: false, reason: 'llm_failed' as const }
     }
   })
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_ENRICH_FROM_EMAILS, async (_event, companyId: string) => {
-    if (!companyId) return null
+    if (!companyId) return { ok: false, reason: 'no_content' as const }
     try {
       return await getCompanyEnrichmentProposalsFromEmails(companyId, getProvider())
     } catch (err) {
       console.error('[Company Enrich Emails] IPC handler failed:', err)
-      return null
+      return { ok: false, reason: 'llm_failed' as const }
     }
   })
 

@@ -1274,8 +1274,8 @@ export default function MeetingDetail() {
       }
 
       // macOS notification
-      const totalFieldCount = companyUpdateProposals.reduce((n, p) => n + p.changes.length, 0)
-                            + contactProposals.reduce((n, p) => n + p.changes.length, 0)
+      const totalFieldCount = companyUpdateProposals.reduce((n, p) => n + p.changes.length + (p.customFieldUpdates?.length ?? 0), 0)
+                            + contactProposals.reduce((n, p) => n + p.changes.length + (p.customFieldUpdates?.length ?? 0), 0)
       if (totalFieldCount > 0 && 'Notification' in window && Notification.permission === 'granted') {
         const notif = new Notification('Meeting summarized', {
           body: `${totalFieldCount} field${totalFieldCount !== 1 ? 's' : ''} ready to review`

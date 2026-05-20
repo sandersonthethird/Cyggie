@@ -33,6 +33,10 @@ vi.mock('../main/storage/file-manager', () => ({
   readSummary: vi.fn(),
 }))
 
+vi.mock('../main/drive/google-drive', () => ({
+  downloadSummaryFromDrive: vi.fn(),
+}))
+
 const mockListCompanyNotes = vi.fn()
 
 // Production builds the company notes repo via makeEntityNotesRepo at module
@@ -121,65 +125,69 @@ describe('getCompanyEnrichmentProposalsFromNotes', () => {
     mockGetFieldValuesForEntity.mockReturnValue([])
   })
 
-  it('returns null when companyId is empty string', async () => {
+  it('returns no_content when companyId is empty string', async () => {
     const result = await getCompanyEnrichmentProposalsFromNotes('', makeProvider())
-    expect(result).toBeNull()
+    expect(result).toEqual({ ok: false, reason: 'no_content' })
   })
 
-  it('returns null when all notes have empty content', async () => {
+  it('returns no_content when all notes have empty content', async () => {
     mockListCompanyNotes.mockReturnValue([
       makeNote({ content: '' }),
       makeNote({ content: '   ' }),
     ])
     const result = await getCompanyEnrichmentProposalsFromNotes('co1', makeProvider())
-    expect(result).toBeNull()
+    expect(result).toEqual({ ok: false, reason: 'no_content' })
   })
 
-  it('returns null when company not found', async () => {
+  it('returns company_not_found when company lookup fails', async () => {
     mockListCompanyNotes.mockReturnValue([makeNote()])
     mockGetCompany.mockReturnValue(null)
     const result = await getCompanyEnrichmentProposalsFromNotes('co1', makeProvider())
-    expect(result).toBeNull()
+    expect(result).toEqual({ ok: false, reason: 'company_not_found' })
   })
 
-  it('returns null when LLM throws', async () => {
+  it('returns llm_failed when LLM throws', async () => {
     mockListCompanyNotes.mockReturnValue([makeNote()])
     mockGetCompany.mockReturnValue(makeCompany())
     const provider = { generateSummary: vi.fn().mockRejectedValue(new Error('LLM timeout')) }
     const result = await getCompanyEnrichmentProposalsFromNotes('co1', provider)
-    expect(result).toBeNull()
+    expect(result).toEqual({ ok: false, reason: 'llm_failed' })
   })
 
-  it('returns null when safeParseJson returns null', async () => {
+  it('returns parse_failed when LLM response is not parseable JSON', async () => {
     mockListCompanyNotes.mockReturnValue([makeNote()])
     mockGetCompany.mockReturnValue(makeCompany())
     const result = await getCompanyEnrichmentProposalsFromNotes('co1', makeProvider('not valid json'))
-    expect(result).toBeNull()
+    expect(result).toEqual({ ok: false, reason: 'parse_failed' })
   })
 
-  it('returns null when LLM response has no field changes vs current values', async () => {
+  it('returns ok with empty changes when LLM response has no field changes vs current values', async () => {
     mockListCompanyNotes.mockReturnValue([makeNote()])
     mockGetCompany.mockReturnValue(makeCompany({ description: 'Existing description' }))
     const result = await getCompanyEnrichmentProposalsFromNotes(
       'co1',
       makeProvider(JSON.stringify({ description: 'Existing description' }))
     )
-    expect(result).toBeNull()
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.proposal.changes).toEqual([])
+    expect(result.proposal.updates).toEqual({})
   })
 
-  it('returns proposal with changes when LLM extracts new values', async () => {
+  it('returns ok with proposal when LLM extracts new values', async () => {
     mockListCompanyNotes.mockReturnValue([makeNote()])
     mockGetCompany.mockReturnValue(makeCompany({ description: null }))
     const result = await getCompanyEnrichmentProposalsFromNotes(
       'co1',
       makeProvider(JSON.stringify({ description: 'AI-powered analytics platform' }))
     )
-    expect(result).not.toBeNull()
-    expect(result!.companyId).toBe('co1')
-    expect(result!.changes).toHaveLength(1)
-    expect(result!.changes[0].field).toBe('description')
-    expect(result!.changes[0].to).toBe('AI-powered analytics platform')
-    expect(result!.updates.description).toBe('AI-powered analytics platform')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.proposal.companyId).toBe('co1')
+    expect(result.proposal.changes).toHaveLength(1)
+    expect(result.proposal.changes[0].field).toBe('description')
+    expect(result.proposal.changes[0].to).toBe('AI-powered analytics platform')
+    expect(result.proposal.updates.description).toBe('AI-powered analytics platform')
   })
 
   it('does NOT set fieldSources in proposal updates', async () => {
@@ -189,8 +197,9 @@ describe('getCompanyEnrichmentProposalsFromNotes', () => {
       'co1',
       makeProvider(JSON.stringify({ description: 'New description' }))
     )
-    expect(result).not.toBeNull()
-    expect(result!.updates.fieldSources).toBeUndefined()
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.proposal.updates.fieldSources).toBeUndefined()
   })
 
   it('sorts notes oldest-to-newest before building prompt', async () => {

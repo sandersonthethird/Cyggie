@@ -98,3 +98,13 @@ export interface SummaryGenerateResult {
   taskExtractionResult?: TaskExtractionResult
   contactUpdateProposals: ContactSummaryUpdateProposal[]
 }
+
+export type EnrichmentFailureReason =
+  | 'no_content'
+  | 'llm_failed'
+  | 'parse_failed'
+  | 'company_not_found'
+
+export type EnrichmentResult =
+  | { ok: true; proposal: CompanySummaryUpdateProposal }
+  | { ok: false; reason: EnrichmentFailureReason }

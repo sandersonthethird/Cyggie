@@ -130,6 +130,11 @@ export function readSummary(filename: string): string | null {
   return readFileSync(filepath, 'utf-8')
 }
 
+export function summaryFileExists(filename: string | null): boolean {
+  if (!filename) return false
+  return existsSync(join(getSummariesDir(), filename))
+}
+
 export function updateSummaryContent(filename: string, content: string): void {
   const filepath = join(getSummariesDir(), filename)
   writeFileSync(filepath, content, 'utf-8')

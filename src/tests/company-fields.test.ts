@@ -60,6 +60,10 @@ vi.mock('../main/storage/file-manager', () => ({
   readSummary: (...args: unknown[]) => mockReadSummary(...args)
 }))
 
+vi.mock('../main/drive/google-drive', () => ({
+  downloadSummaryFromDrive: vi.fn().mockResolvedValue(null),
+}))
+
 // ─── Audit repo mock ──────────────────────────────────────────────────────────
 
 vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({
@@ -252,6 +256,14 @@ function buildDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (company_id) REFERENCES org_companies(id) ON DELETE CASCADE,
       FOREIGN KEY (investor_company_id) REFERENCES org_companies(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE company_decision_logs (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL,
+      decision_type TEXT NOT NULL,
+      decision_date TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `)
   return db
@@ -555,6 +567,125 @@ describe('IPC COMPANY_UPDATE special-cases', () => {
   })
 })
 
+// ─── 5b. IPC COMPANY_UPDATE — Stage Change auto-log + atomicity ─────────────
+
+describe('IPC COMPANY_UPDATE — Stage Change auto-log', () => {
+  // Mirrors the COMPANY_UPDATE handler's stage-change logic from
+  // src/main/ipc/company.ipc.ts. The real handler runs inside ipcMain and
+  // is hard to invoke directly, so we simulate it here using the same
+  // db.transaction wrapping + create-log-on-change pattern.
+
+  const STAGE_CHANGE_TYPE = 'Stage Change'
+
+  function runHandler(
+    companyId: string,
+    updates: Record<string, unknown>,
+    opts: { failLogCreate?: boolean } = {},
+  ): { committed: boolean; logCreated: boolean; finalStage: string | null } {
+    const db = testDb
+    const prevRow = ('pipelineStage' in updates)
+      ? (db.prepare('SELECT pipeline_stage FROM org_companies WHERE id = ?').get(companyId) as
+          | { pipeline_stage: string | null }
+          | undefined)
+      : undefined
+    const prevStage = prevRow?.pipeline_stage ?? null
+    const newStage = 'pipelineStage' in updates ? (updates.pipelineStage as string | null) : undefined
+    const stageChanging = 'pipelineStage' in updates && (newStage ?? null) !== prevStage
+
+    let logCreated = false
+    let committed = false
+    try {
+      db.transaction(() => {
+        if ('pipelineStage' in updates) {
+          db.prepare('UPDATE org_companies SET pipeline_stage = ? WHERE id = ?')
+            .run(newStage as string | null, companyId)
+        }
+        if (stageChanging) {
+          if (opts.failLogCreate) throw new Error('Simulated log INSERT failure')
+          db.prepare(
+            'INSERT INTO company_decision_logs (id, company_id, decision_type, decision_date) VALUES (?, ?, ?, ?)'
+          ).run(`log-${companyId}-${Date.now()}`, companyId, STAGE_CHANGE_TYPE, new Date().toISOString())
+          logCreated = true
+        }
+      })()
+      committed = true
+    } catch {
+      // Transaction rolled back — both the stage update and log INSERT are undone.
+    }
+
+    const after = db.prepare('SELECT pipeline_stage FROM org_companies WHERE id = ?').get(companyId) as
+      | { pipeline_stage: string | null }
+      | undefined
+    return { committed, logCreated, finalStage: after?.pipeline_stage ?? null }
+  }
+
+  beforeEach(() => {
+    testDb = buildDb()
+    insertCompany(testDb, 'co1', 'Acme Corp')
+    // Start in 'screening' so transitions are meaningful.
+    testDb.prepare('UPDATE org_companies SET pipeline_stage = ? WHERE id = ?').run('screening', 'co1')
+  })
+
+  it('creates a Stage Change log when pipelineStage changes', () => {
+    const r = runHandler('co1', { pipelineStage: 'pass' })
+
+    expect(r.committed).toBe(true)
+    expect(r.logCreated).toBe(true)
+    expect(r.finalStage).toBe('pass')
+
+    const logs = testDb.prepare(
+      `SELECT decision_type FROM company_decision_logs WHERE company_id = 'co1'`
+    ).all() as Array<{ decision_type: string }>
+    expect(logs).toHaveLength(1)
+    expect(logs[0].decision_type).toBe(STAGE_CHANGE_TYPE)
+  })
+
+  it('does NOT create a log when pipelineStage is unchanged (same value passed)', () => {
+    const r = runHandler('co1', { pipelineStage: 'screening' })  // already screening
+
+    expect(r.logCreated).toBe(false)
+    const logs = testDb.prepare(`SELECT id FROM company_decision_logs WHERE company_id = 'co1'`).all()
+    expect(logs).toHaveLength(0)
+  })
+
+  it('does NOT create a log when pipelineStage is not in the update payload', () => {
+    const r = runHandler('co1', { priority: 'high' })
+
+    expect(r.logCreated).toBe(false)
+    expect(r.finalStage).toBe('screening')  // unchanged
+  })
+
+  it('creates a log on null→value transition (Sourced → pipeline)', () => {
+    // Start with null (Sourced)
+    testDb.prepare(`UPDATE org_companies SET pipeline_stage = NULL WHERE id = 'co1'`).run()
+
+    const r = runHandler('co1', { pipelineStage: 'diligence' })
+
+    expect(r.logCreated).toBe(true)
+    expect(r.finalStage).toBe('diligence')
+  })
+
+  it('creates a log on value→null transition (back to Sourced)', () => {
+    const r = runHandler('co1', { pipelineStage: null })
+
+    expect(r.logCreated).toBe(true)
+    expect(r.finalStage).toBeNull()
+  })
+
+  it('rolls back the stage update if log INSERT fails (atomicity guard)', () => {
+    // This is the regression guard for the failure mode that would cause the
+    // ORIGINAL bug to reappear silently — company in 'pass' with no log →
+    // dropped from Recent Pass by the SQL filter's NULL handling.
+    const r = runHandler('co1', { pipelineStage: 'pass' }, { failLogCreate: true })
+
+    expect(r.committed).toBe(false)
+    expect(r.finalStage).toBe('screening')  // unchanged, txn rolled back
+
+    const logs = testDb.prepare(`SELECT id FROM company_decision_logs WHERE company_id = 'co1'`).all()
+    expect(logs).toHaveLength(0)
+  })
+})
+
 // ─── 6. enrichment — industry constraint (canonical only) ────────────────────
 
 describe('enrichment — industry canonical constraint', () => {
@@ -576,7 +707,7 @@ describe('enrichment — industry canonical constraint', () => {
   }
 
   function makeMeeting() {
-    return { id: 'meet1', date: '2024-01-15T10:00:00Z', summaryFilename: 'summary.md' }
+    return { id: 'meet1', date: '2024-01-15T10:00:00Z', summaryPath: 'summary.md' }
   }
 
   function makeProvider(response: string) {
@@ -605,21 +736,27 @@ describe('enrichment — industry canonical constraint', () => {
     mockGetCompany.mockReturnValue(makeCompany({ industry: null }))
     const provider = makeProvider(JSON.stringify({ industry: 'FinTech' }))
     const result = await getCompanyEnrichmentProposalsFromMeetings(['meet1'], 'co1', provider)
-    expect(result?.updates.industry).toBe('FinTech')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.proposal.updates.industry).toBe('FinTech')
   })
 
-  it('LLM returns non-canonical industry → snapped to NULL (no update)', async () => {
+  it('LLM returns non-canonical industry → snapped to NULL (empty proposal)', async () => {
     mockGetCompany.mockReturnValue(makeCompany({ industry: null }))
     const provider = makeProvider(JSON.stringify({ industry: 'Foodtech' }))
     const result = await getCompanyEnrichmentProposalsFromMeetings(['meet1'], 'co1', provider)
-    expect(result?.updates.industry).toBeUndefined()
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.proposal.updates.industry).toBeUndefined()
   })
 
-  it('LLM returns null → no industry proposal generated', async () => {
+  it('LLM returns null → empty proposal (no industry update)', async () => {
     mockGetCompany.mockReturnValue(makeCompany({ industry: null }))
     const provider = makeProvider(JSON.stringify({ industry: null, description: null }))
     const result = await getCompanyEnrichmentProposalsFromMeetings(['meet1'], 'co1', provider)
-    expect(result).toBeNull()
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.proposal.changes).toEqual([])
   })
 
   it('LLM returns same industry as current → no change', async () => {
@@ -628,7 +765,9 @@ describe('enrichment — industry canonical constraint', () => {
     mockGetCompany.mockReturnValue(makeCompany({ industry: 'FinTech' }))
     const provider = makeProvider(JSON.stringify({ industry: 'FinTech' }))
     const result = await getCompanyEnrichmentProposalsFromMeetings(['meet1'], 'co1', provider)
-    expect(result?.updates.industry).toBeUndefined()
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.proposal.updates.industry).toBeUndefined()
   })
 })
 

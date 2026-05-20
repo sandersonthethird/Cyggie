@@ -6,7 +6,7 @@ import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { CompanyDetail as CompanyDetailType, CompanyMeetingRef } from '../../shared/types/company'
 import { ENTITY_TYPE_OPTIONS } from '../../shared/types/company'
-import type { CompanySummaryUpdateProposal, CompanySummaryUpdateChange, CompanySummaryUpdatePayload } from '../../shared/types/summary'
+import type { CompanySummaryUpdateProposal, CompanySummaryUpdateChange, CompanySummaryUpdatePayload, EnrichmentResult, EnrichmentFailureReason } from '../../shared/types/summary'
 import { companyEnrichedAtKey } from '../../shared/utils/enrichment-keys'
 import { CompanyPropertiesPanel } from '../components/company/CompanyPropertiesPanel'
 import { CompanyEnrichModal } from '../components/company/CompanyEnrichModal'
@@ -26,6 +26,24 @@ import layoutStyles from './TwoColumnLayout.module.css'
 import styles from './CompanyDetail.module.css'
 
 type CompanyTab = 'timeline' | 'contacts' | 'notes' | 'thesis' | 'memo' | 'files' | 'decisions'
+
+function enrichmentErrorMessage(
+  reason: EnrichmentFailureReason,
+  source: 'meetings' | 'notes' | 'emails',
+): string {
+  switch (reason) {
+    case 'no_content':
+      return source === 'meetings'
+        ? 'No meeting content available to enrich from'
+        : `No ${source} content available to enrich from`
+    case 'llm_failed':
+      return 'AI service failed — please try again'
+    case 'parse_failed':
+      return 'Could not parse AI response — please try again'
+    case 'company_not_found':
+      return 'Company not found'
+  }
+}
 
 export default function CompanyDetail() {
   const { companyId: id } = useParams<{ companyId: string }>()
@@ -98,16 +116,22 @@ export default function CompanyDetail() {
     return () => clearTimeout(t)
   }, [highlightNoteId])
 
-  const summarizedMeetings = useMemo(
-    () => companyMeetings.filter((m) => m.status === 'summarized'),
+  // A meeting is "enrichable" only if we can actually pull content from it: a
+  // readable on-disk summary, a Drive backup ID, or non-empty user-typed notes.
+  // Without this filter the badge counts meetings whose summary_path points to
+  // a missing file and clicking the banner just shows a misleading error toast.
+  const enrichableMeetings = useMemo(
+    () => companyMeetings.filter((m) =>
+      m.status === 'summarized'
+      && (m.hasReadableSummary || m.hasSummaryDriveId || m.hasNonEmptyNotes)),
     [companyMeetings]
   )
 
   const showEnrichBanner = useMemo(() => {
-    if (summarizedMeetings.length === 0) return false
+    if (enrichableMeetings.length === 0) return false
     if (!lastEnrichedAt) return true
-    return summarizedMeetings.some((m) => m.date > lastEnrichedAt)
-  }, [summarizedMeetings, lastEnrichedAt])
+    return enrichableMeetings.some((m) => m.date > lastEnrichedAt)
+  }, [enrichableMeetings, lastEnrichedAt])
 
   // Parse fieldSources for hover tooltips
   const parsedFieldSources = useMemo((): Record<string, { meetingId: string; meetingTitle: string }> => {
@@ -133,28 +157,28 @@ export default function CompanyDetail() {
   }
 
   const handleEnrichFromMeetings = useCallback(async () => {
-    if (!id || summarizedMeetings.length === 0) return
+    if (!id || enrichableMeetings.length === 0) return
     setIsLoadingEnrich(true)
     setEnrichError(null)
     try {
-      const proposal = await window.api.invoke<CompanySummaryUpdateProposal | null>(
+      const result = await window.api.invoke<EnrichmentResult>(
         IPC_CHANNELS.COMPANY_ENRICH_FROM_MEETINGS,
-        summarizedMeetings.map((m) => m.id),
+        enrichableMeetings.map((m) => m.id),
         id
       )
-      if (proposal === null) {
-        setEnrichError('Could not load enrichment — please try again')
+      if (!result.ok) {
+        setEnrichError(enrichmentErrorMessage(result.reason, 'meetings'))
         setTimeout(() => setEnrichError(null), 4000)
-      } else if (proposal.changes.length > 0 || (proposal.customFieldUpdates?.length ?? 0) > 0) {
+      } else if (result.proposal.changes.length > 0 || (result.proposal.customFieldUpdates?.length ?? 0) > 0) {
         const selections: Record<string, boolean> = {}
-        for (const change of proposal.changes) {
+        for (const change of result.proposal.changes) {
           selections[`${id}:${change.field}`] = true
         }
-        for (const cfu of proposal.customFieldUpdates ?? []) {
+        for (const cfu of result.proposal.customFieldUpdates ?? []) {
           selections[`${id}:${cfu.label}`] = true
         }
         setFieldSelections(selections)
-        setEnrichProposal(proposal)
+        setEnrichProposal(result.proposal)
         setEnrichDialogOpen(true)
       } else {
         const enrichedAt = new Date().toISOString()
@@ -170,7 +194,7 @@ export default function CompanyDetail() {
     } finally {
       setIsLoadingEnrich(false)
     }
-  }, [summarizedMeetings, id])
+  }, [enrichableMeetings, id])
 
   const handleApplyEnrich = useCallback(async () => {
     if (!enrichProposal || !id) return
@@ -244,21 +268,21 @@ export default function CompanyDetail() {
     }
   }, [enrichProposal, fieldSelections, id, company])
 
-  const handleEnrichFromSource = useCallback(async (channel: string, errorContext: string) => {
+  const handleEnrichFromSource = useCallback(async (channel: string, errorContext: 'notes' | 'emails') => {
     if (!id) return
     setIsLoadingEnrich(true)
     setEnrichError(null)
     try {
-      const proposal = await window.api.invoke<CompanySummaryUpdateProposal | null>(channel, id)
-      if (proposal === null) {
-        setEnrichError(`Could not analyze ${errorContext} — please try again`)
+      const result = await window.api.invoke<EnrichmentResult>(channel, id)
+      if (!result.ok) {
+        setEnrichError(enrichmentErrorMessage(result.reason, errorContext))
         setTimeout(() => setEnrichError(null), 4000)
-      } else if (proposal.changes.length > 0 || (proposal.customFieldUpdates?.length ?? 0) > 0) {
+      } else if (result.proposal.changes.length > 0 || (result.proposal.customFieldUpdates?.length ?? 0) > 0) {
         const selections: Record<string, boolean> = {}
-        for (const change of proposal.changes) selections[`${id}:${change.field}`] = true
-        for (const cfu of proposal.customFieldUpdates ?? []) selections[`${id}:${cfu.label}`] = true
+        for (const change of result.proposal.changes) selections[`${id}:${change.field}`] = true
+        for (const cfu of result.proposal.customFieldUpdates ?? []) selections[`${id}:${cfu.label}`] = true
         setFieldSelections(selections)
-        setEnrichProposal(proposal)
+        setEnrichProposal(result.proposal)
         setEnrichDialogOpen(true)
       } else {
         // do NOT update lastEnrichedAt — that gates the meetings banner only
@@ -384,7 +408,7 @@ export default function CompanyDetail() {
           company={company}
           onUpdate={handleUpdate}
           showEnrichBanner={showEnrichBanner}
-          enrichMeetingCount={summarizedMeetings.length}
+          enrichMeetingCount={enrichableMeetings.length}
           fieldSources={parsedFieldSources}
           onEnrich={handleEnrich}
           isLoadingEnrich={isLoadingEnrich}

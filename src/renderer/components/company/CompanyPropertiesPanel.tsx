@@ -900,6 +900,8 @@ export function CompanyPropertiesPanel({
           ? `Generated ${formatRelativeTime(kt.generatedAt)} from ${company.meetingCount || 0} meetings + ${company.emailCount || 0} emails`
           : undefined
         }
+        collapsed={isCollapsed('key_takeaways')}
+        onToggleCollapsed={() => toggleSection('key_takeaways')}
       />
 
       {/* ═══ Card 3: Decision Widget ═══ */}
