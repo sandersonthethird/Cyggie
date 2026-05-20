@@ -3,7 +3,7 @@ import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, count, eq, isNull, lt } from 'drizzle-orm'
 import {
   buildAuthUrl,
   createOAuthClient,
@@ -68,8 +68,11 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         redirectTarget: redirect_target ?? 'mobile',
       })
       const authUrl = buildAuthUrl({ client: oauth, state, codeChallenge })
+      // Log the full state (not a prefix) so we can grep the matching callback
+      // log line during incident response. State isn't a secret — Google
+      // echoes it back through the user-agent URL bar.
       req.log.info(
-        { device_id, redirect_target: redirect_target ?? 'mobile', state: state.slice(0, 8) + '…' },
+        { device_id, redirect_target: redirect_target ?? 'mobile', state },
         'oauth start',
       )
       return { authUrl, state }
@@ -107,10 +110,26 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         state,
       })
       if (!pending) {
+        // Diagnostic SELECT so the failure mode is self-describing in logs.
+        // DELETE RETURNING above already removed the row if it matched, so
+        // these counts describe the rest of the table — useful for spotting
+        // sweeper-related drops or duplicate-callback races.
+        const db = getDb(env.GATEWAY_DATABASE_URL)
+        const [{ c: total = 0 } = { c: 0 }] = await db
+          .select({ c: count() })
+          .from(schema.oauthPending)
+        const [{ c: expired = 0 } = { c: 0 }] = await db
+          .select({ c: count() })
+          .from(schema.oauthPending)
+          .where(lt(schema.oauthPending.expiresAt, new Date()))
+        req.log.warn(
+          { state, total_rows_in_table: total, expired_rows_in_table: expired },
+          'oauth callback: state not found in oauth_pending',
+        )
         throw new GatewayError({
           statusCode: 400,
           code: 'OAUTH_STATE_INVALID',
-          message: 'OAuth state is unknown or expired (5 min TTL)',
+          message: 'OAuth state is unknown or expired (15 min TTL)',
         })
       }
 
@@ -270,32 +289,70 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
       // Redirect to the deep link with the JWT, refresh token, and the
       // onboarding hint. Target chosen per the pending row's redirect_target:
       //   • 'mobile'  → MOBILE_DEEP_LINK_BASE  (default; cyggie://auth-callback)
-      //   • 'desktop' → DESKTOP_DEEP_LINK_BASE (cyggie-desktop://auth-callback)
-      const deepLinkBase =
-        pending.redirectTarget === 'desktop'
-          ? env.DESKTOP_DEEP_LINK_BASE
-          : env.MOBILE_DEEP_LINK_BASE
-      const dest = new URL(deepLinkBase)
-      dest.searchParams.set('session', accessToken)
-      dest.searchParams.set('refresh', refreshToken)
-      dest.searchParams.set('user_id', userId)
-      dest.searchParams.set('action', action)
+      //   • 'desktop' → /auth/desktop-handoff  (interstitial HTML page that
+      //                 then triggers cyggie-desktop:// via JS — so the
+      //                 browser tab isn't left in a forever-loading state
+      //                 after the OS handoff prompt)
+      const params = new URLSearchParams()
+      params.set('session', accessToken)
+      params.set('refresh', refreshToken)
+      params.set('user_id', userId)
+      params.set('action', action)
       // Surface the verified Google email to the client so the renderer's
       // "Connected as sandy@…" pill can render without a follow-up /auth/me
       // round-trip. The email is already validated against Google's id_token
       // signature above (fetchGoogleIdentity), so this isn't a new trust
       // boundary — just shortening the path.
-      dest.searchParams.set('email', identity.email)
+      params.set('email', identity.email)
+
+      let redirectTo: string
+      if (pending.redirectTarget === 'desktop') {
+        // Use a fragment (#) so the session/refresh tokens are NOT sent to
+        // the server on the GET /auth/desktop-handoff request — keeps them
+        // out of Fly's access logs. The page's JS reads location.hash and
+        // builds the cyggie-desktop:// URL client-side.
+        redirectTo = `/auth/desktop-handoff#${params.toString()}`
+      } else {
+        const dest = new URL(env.MOBILE_DEEP_LINK_BASE)
+        for (const [k, v] of params) dest.searchParams.set(k, v)
+        redirectTo = dest.toString()
+      }
       req.log.info(
         {
           userId,
           deviceId: pending.deviceId,
           action,
           redirectTarget: pending.redirectTarget,
+          state,
         },
         'oauth callback complete',
       )
-      return reply.redirect(dest.toString())
+      return reply.redirect(redirectTo)
+    },
+  })
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Desktop OAuth handoff page. The callback above 302s here for desktop
+  // sign-ins instead of straight to cyggie-desktop://, because a 302 to a
+  // non-HTTP scheme leaves the browser tab in a perpetual "loading" state
+  // (the browser delegates to the OS but never gets a response to render).
+  //
+  // Tokens arrive in the URL fragment (#session=…) so they never leave the
+  // user-agent — they aren't sent on the GET /auth/desktop-handoff request
+  // and don't end up in Fly access logs. Client JS reads location.hash,
+  // rebuilds cyggie-desktop://auth-callback?<query>, and triggers the OS
+  // handoff via window.location.href.
+  // ────────────────────────────────────────────────────────────────────────
+  app.route({
+    method: 'GET',
+    url: '/auth/desktop-handoff',
+    handler: async (_req, reply) => {
+      const deepLinkBase = env.DESKTOP_DEEP_LINK_BASE
+      const html = renderDesktopHandoffHtml(deepLinkBase)
+      return reply
+        .header('cache-control', 'no-store')
+        .type('text/html; charset=utf-8')
+        .send(html)
     },
   })
 
@@ -465,4 +522,61 @@ function randomRefreshToken(): string {
 // only their hash. Mobile presents the raw value, gateway compares with the hash.
 function hashForStorage(value: string): string {
   return createHash('sha256').update(value).digest('hex')
+}
+
+// Self-contained HTML for /auth/desktop-handoff. No template engine, no
+// external assets — single response, fully inline. The deep-link base is
+// JSON-encoded into a string literal so any future scheme change (e.g.
+// cyggie-desktop:// → cyggie-app://) requires only an env update.
+function renderDesktopHandoffHtml(deepLinkBase: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Signing into Cyggie…</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #f7f8fa;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #1f2933; }
+  .wrap { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .card { background: #fff; border: 1px solid #e4e7eb; border-radius: 12px;
+    padding: 32px 36px; max-width: 380px; text-align: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+  h1 { font-size: 18px; margin: 0 0 12px; font-weight: 600; }
+  p  { font-size: 14px; line-height: 1.5; margin: 0; color: #52606d; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid #cbd2d9;
+    border-top-color: #1f2933; border-radius: 50%; vertical-align: -2px; margin-right: 8px;
+    animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1 id="title"><span class="spin" id="spinner"></span>Signing you into Cyggie…</h1>
+    <p id="msg">Hold on — opening the Cyggie app.</p>
+  </div>
+</div>
+<script>
+(function(){
+  var DEEP_LINK_BASE = ${JSON.stringify(deepLinkBase)};
+  var hash = location.hash && location.hash.length > 1 ? location.hash.substring(1) : '';
+  if (hash) {
+    // Trigger the OS handoff. Slight delay so the page paints first — no flicker.
+    setTimeout(function(){
+      window.location.href = DEEP_LINK_BASE + '?' + hash;
+    }, 80);
+  }
+  // Whether the handoff fires or not, swap the message after ~2s so the user
+  // sees a "you can close this tab" affordance instead of an infinite spinner.
+  setTimeout(function(){
+    var s = document.getElementById('spinner'); if (s) s.style.display = 'none';
+    var t = document.getElementById('title'); if (t) t.textContent = 'Cyggie is signed in';
+    var m = document.getElementById('msg'); if (m) m.textContent = 'You can close this tab.';
+  }, 2000);
+})();
+</script>
+</body>
+</html>`
 }

@@ -87,3 +87,28 @@ describe('POST /auth/google/start — redirect_target', () => {
     expect(res.statusCode).toBe(400)
   })
 })
+
+describe('GET /auth/desktop-handoff — interstitial landing page', () => {
+  // The callback handler 302s desktop sign-ins to this URL instead of directly
+  // to cyggie-desktop://, because a 302 to a non-HTTP scheme leaves the browser
+  // tab in a perpetual "loading" state. This page paints first, then triggers
+  // the OS handoff via JS — and shows a "you can close this tab" message
+  // afterward so the user knows the flow completed.
+
+  test('returns HTML containing the deep-link base and close-tab affordance', async () => {
+    const res = await app.inject({ method: 'GET', url: '/auth/desktop-handoff' })
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toMatch(/^text\/html/)
+    expect(res.headers['cache-control']).toBe('no-store')
+    const body = res.body
+    // Deep-link base is JSON-encoded into a JS string literal so the page can
+    // rebuild cyggie-desktop://auth-callback?<query> client-side.
+    expect(body).toContain('"cyggie-desktop://auth-callback"')
+    // User-facing copy.
+    expect(body).toContain('Signing you into Cyggie')
+    expect(body).toContain('You can close this tab')
+    // No secrets leak into the HTML — tokens only ever arrive via location.hash.
+    expect(body).not.toContain('session=')
+    expect(body).not.toContain('refresh=')
+  })
+})

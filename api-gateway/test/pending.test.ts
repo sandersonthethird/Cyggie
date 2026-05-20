@@ -51,6 +51,29 @@ describe('oauth_pending (Postgres-backed)', () => {
     expect(rows[0]?.deviceLabel).toBe('Test iPhone')
   })
 
+  test('rememberPending sets expires_at ~15 minutes in the future', async () => {
+    // TTL is load-bearing for the UX: a user who context-switches mid-OAuth
+    // shouldn't lose their session. We expanded from 5min → 15min after
+    // OAUTH_STATE_INVALID showed up during the desktop slice smoke test.
+    const state = generateState()
+    createdStates.push(state)
+    const before = Date.now()
+    await rememberPending({
+      databaseUrl: env.GATEWAY_DATABASE_URL,
+      state,
+      codeVerifier: 'ttl-test',
+      deviceId: 'test-device-ttl',
+      deviceLabel: null,
+    })
+    const row = await db.query.oauthPending.findFirst({
+      where: sql`${schema.oauthPending.state} = ${state}`,
+    })
+    expect(row).toBeDefined()
+    const ttlMs = row!.expiresAt.getTime() - before
+    expect(ttlMs).toBeGreaterThanOrEqual(14 * 60 * 1000)
+    expect(ttlMs).toBeLessThanOrEqual(16 * 60 * 1000)
+  })
+
   test('consumePending returns the row and deletes it in one shot', async () => {
     const state = generateState()
     createdStates.push(state)

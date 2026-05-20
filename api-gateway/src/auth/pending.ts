@@ -4,7 +4,7 @@ import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 
 // Server-side store for in-flight OAuth round-trips, persisted to the
-// `oauth_pending` Neon table. Entries live for 5 minutes; the callback
+// `oauth_pending` Neon table. Entries live for 15 minutes; the callback
 // consumes them once.
 //
 // Why Postgres (not an in-memory Map):
@@ -13,9 +13,14 @@ import { getDb } from '../db'
 //     the gateway ran a single instance (the bug we hit during M1a Step 8).
 //   • Survives a gateway restart mid-OAuth (Fly redeploys, scale events).
 //   • Periodic SELECT...DELETE WHERE expires_at < now() reclaims storage
-//     cheaply (5min TTL × low traffic = bounded row count).
+//     cheaply (15min TTL × low traffic = bounded row count).
+//
+// Why 15min (was 5min): the state is single-use (DELETE RETURNING is atomic)
+// and PKCE-bound, so a longer window doesn't expand the attack surface
+// meaningfully. The actual scarcity is the user's attention span — a user
+// who context-switches mid-flow shouldn't lose their session.
 
-const TTL_MS = 5 * 60 * 1000
+const TTL_MS = 15 * 60 * 1000
 
 export function generatePkcePair(): { codeVerifier: string; codeChallenge: string } {
   // RFC 7636: base64url-encoded 32 bytes
