@@ -115,6 +115,11 @@ export async function submitTranscribeJob(args: {
   let requestId: string | null = null
   try {
     const audio = await readFile(audioFilePath)
+    console.log('[transcribe] submitting to Deepgram', {
+      meetingId,
+      audioBytes: audio.byteLength,
+      submitUrl: submitUrl.toString(),
+    })
     // Content-Type is M4A (MPEG-4 audio container with AAC codec inside) —
     // that's what expo-av's IOSOutputFormat.MPEG4AAC actually produces, NOT
     // raw .aac stream. Mismatched Content-Type causes Deepgram to fail
