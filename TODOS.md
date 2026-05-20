@@ -202,16 +202,20 @@ and retries, signs out on second 401. Ships:
 - commit e9ba804 — gateway: desktop handoff page + OAUTH_STATE_INVALID observability
 - commit 9131116 — fix(credentials): wipe legacy-encrypted AI API keys in dev (v2 migration)
 
-### `scripts/sync-replay.ts` — dead-letter recovery tool
-**What:** Operational tool to (a) re-enqueue `status='dead'` outbox rows
-after manual investigation, (b) dump outbox state for debugging, (c) wipe
-outbox safely.
-**Why:** Captured by the plan review. Without it, recovering from
-`status='dead'` rows requires raw SQL against SQLite.
-**Pros:** Restores the ability to flush stuck rows without devhuman ops.
-**Cons:** ~1 day of work; only matters if rows actually go dead.
-**Depends on:** Desktop OAuth (so the agent can actually push the replayed
-rows).
+### `scripts/sync-replay.ts` — dead-letter recovery tool ✅ shipped
+At [scripts/sync-replay.ts](scripts/sync-replay.ts). Subcommands:
+- `dump` — counts by status + sync_state + 20 most-recent failed/dead rows
+- `replay-dead [--limit N]` / `replay-failed [--limit N]` — flip target rows
+  back to status='pending', reset attempts + last_error. SyncAgent's next 5s
+  drain picks them up.
+- `wipe-dead` — DELETE all status='dead' rows
+- `wipe-all --confirm` — DELETE every outbox row (destructive; needs explicit flag)
+- `delete <id>` — DELETE one row by primary key
+
+ABI: better-sqlite3 is rebuilt for Electron's ABI by postinstall; running
+the script with tsx requires `npm rebuild better-sqlite3` first, then
+`npx @electron/rebuild -f -w better-sqlite3 --buildFromSource` after.
+Docstring on the script reminds you.
 
 ### Sync metrics dashboard
 **What:** Grafana board (or Sentry widget) covering `sync.outbox_depth`,
@@ -248,15 +252,13 @@ sync too.
 **Depends on:** Mobile M4 (tasks UI) and M5 (AI chat UI) decisions on
 which entities mobile actually reads.
 
-### Replace direct Neon ALTER TABLE with a proper drizzle migration
-**What:** The 1.5a fix added `lamport` columns to 6 join tables via ad-hoc
-`ALTER TABLE` against Neon. Generate the corresponding drizzle migration
-file via `drizzle-kit generate` so the schema state survives a fresh
-Neon project.
-**Why:** Right now a fresh `drizzle-kit push` against an empty Neon would
-recreate these columns from the schema (since the drizzle TS already has
-them), but other Postgres deploys (preview branches, staging) would miss
-them without the migration file.
+### Replace direct Neon ALTER TABLE with a proper drizzle migration ✅ shipped
+Already covered by migration `0010_sturdy_red_shift.sql`, which contains
+the 6 `ADD COLUMN lamport` statements for the join tables (org_company_aliases,
+contact_emails, meeting_company_links, meeting_speaker_contact_links,
+meeting_speakers, chat_session_messages). A fresh `pnpm db:migrate` against
+an empty Postgres applies them correctly. TODO predates the migration getting
+generated; closing as no-op.
 
 ### Remove temporary console.log from notes.repo.deleteFolder
 **What:** Drop the unguarded `console.log` in
