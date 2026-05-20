@@ -113,24 +113,37 @@ export async function submitTranscribeJob(args: {
   let requestId: string | null = null
   try {
     const audio = await readFile(audioFilePath)
+    // Content-Type is M4A (MPEG-4 audio container with AAC codec inside) —
+    // that's what expo-av's IOSOutputFormat.MPEG4AAC actually produces, NOT
+    // raw .aac stream. Mismatched Content-Type causes Deepgram to fail
+    // container detection. The file extension on disk is also `.aac` for
+    // historical reasons; the bytes are M4A regardless.
     const res = await fetch(submitUrl.toString(), {
       method: 'POST',
       headers: {
         Authorization: `Token ${env.DEEPGRAM_API_KEY}`,
-        'Content-Type': 'audio/aac',
+        'Content-Type': 'audio/mp4',
       },
       body: audio,
     })
     if (!res.ok) {
       const errBody = await res.text().catch(() => '<no body>')
-      console.error('[transcribe] Deepgram submit failed:', res.status, errBody)
+      console.error('[transcribe] Deepgram submit failed:', {
+        meetingId,
+        status: res.status,
+        body: errBody.slice(0, 500),
+      })
       await markMeetingError(db, meetingId, `deepgram_${res.status}`)
       return { requestId: null, error: `deepgram_${res.status}` }
     }
     const body = (await res.json()) as { request_id?: string }
     requestId = body.request_id ?? null
   } catch (err) {
-    console.error('[transcribe] Deepgram submit threw:', err)
+    console.error('[transcribe] Deepgram submit threw:', {
+      meetingId,
+      err: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack?.slice(0, 500) : undefined,
+    })
     await markMeetingError(db, meetingId, 'submit_failed')
     return { requestId: null, error: 'submit_failed' }
   }

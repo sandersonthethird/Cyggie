@@ -98,9 +98,13 @@ export async function registerRecordingRoutes(
       // follow-up. The path is stored on the meeting row so the on-boot
       // reconciler (and future re-transcribe paths) can find the audio again.
       const meetingId = createId()
+      // Save as .m4a — that's what expo-av actually produces (MPEG-4 audio
+      // container with AAC codec inside). The extension is cosmetic for
+      // Deepgram (it inspects the bytes, not the path) but consistency
+      // matches what's on the wire.
       const audioDir = join(tmpdir(), 'cyggie-recordings', user.sub)
       await mkdir(audioDir, { recursive: true })
-      const audioPath = join(audioDir, `${meetingId}.aac`)
+      const audioPath = join(audioDir, `${meetingId}.m4a`)
       await writeFile(audioPath, audioBuffer)
 
       // Mobile recordings are always impromptu (the user tapped Record FAB

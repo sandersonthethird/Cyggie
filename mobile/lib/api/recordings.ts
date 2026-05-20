@@ -65,7 +65,10 @@ export async function uploadRecording(args: UploadRecordingArgs): Promise<Upload
       httpMethod: 'POST',
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'audio',
-      mimeType: 'audio/aac',
+      // expo-av's IOSOutputFormat.MPEG4AAC writes an M4A container (with AAC
+      // codec inside) — not a raw .aac stream. mimeType must match for
+      // Deepgram's container detection to work downstream.
+      mimeType: 'audio/mp4',
       parameters,
       headers: { Authorization: `Bearer ${accessToken}` },
     },
