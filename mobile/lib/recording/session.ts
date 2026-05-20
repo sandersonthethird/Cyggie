@@ -25,10 +25,23 @@ import { Audio } from 'expo-av'
 // Legacy API path — see api/recordings.ts for the v19 migration note.
 import * as FileSystem from 'expo-file-system/legacy'
 import { uploadRecording } from '../api/recordings'
+import {
+  clearPendingUpload,
+  loadPendingUpload,
+  savePendingUpload,
+  type PendingUpload,
+} from './pending-upload'
 import { useRecordingStore } from './store'
 
 let activeRecording: Audio.Recording | null = null
 let recordingStartedAt: Date | null = null
+let maxDurationTimer: ReturnType<typeof setTimeout> | null = null
+
+// Hard cap on a single recording. 8 hours is the spec'd limit + aligns with
+// the gateway's RECORDING_MAX_UPLOAD_BYTES default (200 MB ≈ 8hr of 32 kbps
+// AAC). Past this point we auto-stop + upload so the user doesn't lose
+// everything to an oversize-rejection.
+const MAX_RECORDING_MS = 8 * 60 * 60 * 1000
 
 /**
  * AAC 16kHz mono — small enough for sane uploads (1hr ≈ 14 MB) while preserving
@@ -89,6 +102,15 @@ export async function startRecording(): Promise<void> {
   activeRecording = recording
   recordingStartedAt = new Date()
   useRecordingStore.getState().beginRecording()
+
+  // Auto-stop at the 8hr cap. Fire-and-forget — if the user already stopped
+  // by then, the timer no-ops via the activeRecording null check inside.
+  maxDurationTimer = setTimeout(() => {
+    if (activeRecording) {
+      console.warn('[recording] 8hr cap hit — auto-stopping')
+      void stopRecording({})
+    }
+  }, MAX_RECORDING_MS)
 }
 
 export async function stopRecording(args: {
@@ -102,6 +124,10 @@ export async function stopRecording(args: {
   activeRecording = null
   const startedAt = recordingStartedAt
   recordingStartedAt = null
+  if (maxDurationTimer) {
+    clearTimeout(maxDurationTimer)
+    maxDurationTimer = null
+  }
 
   await recording.stopAndUnloadAsync()
   const localUri = recording.getURI()
@@ -110,27 +136,80 @@ export async function stopRecording(args: {
     throw new Error('Recording produced no audio file')
   }
 
+  const recordedAtIso = startedAt?.toISOString() ?? new Date().toISOString()
+
+  return performUpload({
+    localUri,
+    title: args.title,
+    calEventId: args.calEventId,
+    clientRecordedAt: recordedAtIso,
+  })
+}
+
+/**
+ * Retry a previously-failed upload. Caller passes the PendingUpload loaded
+ * from MMKV (typically the error-state UI in record.tsx).
+ */
+export async function retryPendingUpload(p: PendingUpload): Promise<{ meetingId: string }> {
+  // Verify the local file still exists. iOS can evict tmp dir contents under
+  // memory pressure (rare for AAC; documenting the guard for sanity).
+  const info = await FileSystem.getInfoAsync(p.localUri)
+  if (!info.exists) {
+    clearPendingUpload()
+    useRecordingStore.getState().markError(
+      'The recording file is no longer available — please record again.',
+    )
+    throw new Error('Local audio file missing')
+  }
   useRecordingStore.getState().beginUploading()
+  return performUpload(p)
+}
+
+/**
+ * Shared upload path used by both fresh stop() and retry(). On error,
+ * persists the pending-upload metadata to MMKV so it survives app restart.
+ */
+async function performUpload(p: PendingUpload): Promise<{ meetingId: string }> {
   try {
     const result = await uploadRecording({
-      localUri,
-      title: args.title,
-      calEventId: args.calEventId,
-      clientRecordedAt: startedAt?.toISOString(),
-      onProgress: (p) => useRecordingStore.getState().setUploadProgress(p),
+      localUri: p.localUri,
+      title: p.title,
+      calEventId: p.calEventId,
+      clientRecordedAt: p.clientRecordedAt,
+      onProgress: (frac) => useRecordingStore.getState().setUploadProgress(frac),
     })
     useRecordingStore.getState().finalizeMeeting(result.meetingId)
+    clearPendingUpload()
     // Best-effort cleanup. The gateway has the audio now; phone copy is
     // disposable. Failure here is non-fatal (cache will get GC'd by iOS).
-    void FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {})
+    void FileSystem.deleteAsync(p.localUri, { idempotent: true }).catch(() => {})
     return { meetingId: result.meetingId }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Upload failed'
+    // Stash the metadata so the user can retry after an app restart. Best-
+    // effort fileSize so the UI can show "you have a 4 MB unsent recording".
+    let fileSizeBytes: number | undefined
+    try {
+      const info = await FileSystem.getInfoAsync(p.localUri)
+      if (info.exists && 'size' in info && typeof info.size === 'number') {
+        fileSizeBytes = info.size
+      }
+    } catch {
+      // ignore — file size is cosmetic
+    }
+    savePendingUpload({ ...p, fileSizeBytes, lastError: message })
     useRecordingStore.getState().markError(message)
-    // Keep the local file around for a future retry — Slice 3 polish wires
-    // the explicit "Retry upload" UI to this same file.
     throw err
   }
+}
+
+/** Discard the persisted pending upload (delete the local file too). */
+export async function discardPendingUpload(): Promise<void> {
+  const p = loadPendingUpload()
+  if (p?.localUri) {
+    await FileSystem.deleteAsync(p.localUri, { idempotent: true }).catch(() => {})
+  }
+  clearPendingUpload()
 }
 
 /** Safe cleanup if the user backs out of the recording screen without stopping. */
@@ -138,6 +217,10 @@ export async function cancelRecording(): Promise<void> {
   const recording = activeRecording
   activeRecording = null
   recordingStartedAt = null
+  if (maxDurationTimer) {
+    clearTimeout(maxDurationTimer)
+    maxDurationTimer = null
+  }
   if (!recording) return
   try {
     await recording.stopAndUnloadAsync()

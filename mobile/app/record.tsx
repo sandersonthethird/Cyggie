@@ -23,7 +23,14 @@ import { useEffect, useState } from 'react'
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
-import { cancelRecording, startRecording, stopRecording } from '../lib/recording/session'
+import {
+  cancelRecording,
+  discardPendingUpload,
+  retryPendingUpload,
+  startRecording,
+  stopRecording,
+} from '../lib/recording/session'
+import { loadPendingUpload } from '../lib/recording/pending-upload'
 import { useRecordingStore } from '../lib/recording/store'
 import { useTranscribingPoll } from '../lib/recording/use-transcribing-poll'
 import { colors, radii, spacing, type } from '../theme'
@@ -43,17 +50,26 @@ export default function RecordScreen() {
   // first one to win owns the transition (router.replace is idempotent).
   useTranscribingPoll()
 
-  // Auto-start when arriving fresh from the Record FAB.
+  const [pendingUpload, setPendingUpload] = useState(() => loadPendingUpload())
+
+  // Auto-start when arriving fresh from the Record FAB — unless there's a
+  // pending failed upload waiting to be retried. In that case we land on the
+  // error state and let the user choose Retry / Discard.
   useEffect(() => {
-    if (status === 'idle') {
-      startRecording().catch((err) => {
-        Alert.alert(
-          'Microphone unavailable',
-          err instanceof Error ? err.message : 'Could not start recording',
-        )
-        router.back()
-      })
+    if (status !== 'idle') return
+    if (pendingUpload) {
+      useRecordingStore.getState().markError(
+        pendingUpload.lastError ?? 'Previous upload failed — tap to retry.',
+      )
+      return
     }
+    startRecording().catch((err) => {
+      Alert.alert(
+        'Microphone unavailable',
+        err instanceof Error ? err.message : 'Could not start recording',
+      )
+      router.back()
+    })
     // Don't include status in deps — only run on initial mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -89,7 +105,29 @@ export default function RecordScreen() {
     router.back()
   }
 
-  const onRetry = async () => {
+  const onRetryUpload = async () => {
+    if (!pendingUpload) return
+    try {
+      await retryPendingUpload(pendingUpload)
+      // On success, store flips to 'transcribing'; useTranscribingPoll picks
+      // it up and navigates. Clear local pendingUpload state so the next
+      // mount auto-starts a fresh recording.
+      setPendingUpload(null)
+    } catch (err) {
+      // markError already fired inside performUpload — UI shows the new
+      // message; the pending blob is still in MMKV for another retry.
+      console.warn('[record] retry upload failed:', err)
+    }
+  }
+
+  const onDiscardPending = async () => {
+    await discardPendingUpload()
+    setPendingUpload(null)
+    reset()
+    router.back()
+  }
+
+  const onStartFresh = async () => {
     reset()
     try {
       await startRecording()
@@ -162,12 +200,36 @@ export default function RecordScreen() {
         </View>
       )}
 
-      {status === 'error' && (
+      {status === 'error' && pendingUpload && (
+        <View style={styles.center}>
+          <Text style={styles.heading}>Upload didn't finish</Text>
+          <Text style={styles.caption}>
+            {error ?? pendingUpload.lastError ?? 'Your recording is saved on this phone — tap to retry the upload.'}
+          </Text>
+          {pendingUpload.fileSizeBytes != null && (
+            <Text style={styles.caption}>
+              {formatBytes(pendingUpload.fileSizeBytes)} • recorded at{' '}
+              {new Date(pendingUpload.clientRecordedAt).toLocaleTimeString()}
+            </Text>
+          )}
+          <Pressable
+            onPress={onRetryUpload}
+            style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.secondaryText}>Retry upload</Text>
+          </Pressable>
+          <Pressable onPress={onDiscardPending} style={styles.cancelLink}>
+            <Text style={styles.cancelText}>Discard recording</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {status === 'error' && !pendingUpload && (
         <View style={styles.center}>
           <Text style={styles.heading}>Something went wrong</Text>
           <Text style={styles.caption}>{error ?? 'Please try again.'}</Text>
           <Pressable
-            onPress={onRetry}
+            onPress={onStartFresh}
             style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
           >
             <Text style={styles.secondaryText}>Try again</Text>
@@ -179,6 +241,12 @@ export default function RecordScreen() {
       )}
     </SafeAreaView>
   )
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 function formatElapsed(seconds: number): string {

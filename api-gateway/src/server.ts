@@ -6,6 +6,7 @@ import { closeDb } from './db'
 import { buildApp } from './app'
 import { startPendingSweeper, stopPendingSweeper } from './auth/pending'
 import { reconcileStuckJobs } from './recording/transcribe-job'
+import { startStaleRecordingSweeper, stopStaleRecordingSweeper } from './recording/stale-sweeper'
 
 async function main() {
   const env = loadEnv()
@@ -25,6 +26,11 @@ async function main() {
     reconcileStuckJobs(env).catch((err) => {
       app.log.error({ err }, 'transcribe-job reconcile failed')
     })
+    // Last-resort cleanup for "stuck recording" meetings (phone crashed
+    // mid-upload, Deepgram webhook never landed AND reconciler poll
+    // failed). Marks rows older than 1 hour as status='error' so they
+    // don't sit in limbo forever.
+    startStaleRecordingSweeper(env)
   }
 
   try {
@@ -48,6 +54,7 @@ async function main() {
     app.log.info({ signal }, 'shutdown requested')
     try {
       stopPendingSweeper()
+      stopStaleRecordingSweeper()
       await app.close()
       await closeDb()
       process.exit(0)
