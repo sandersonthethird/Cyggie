@@ -4,6 +4,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyCors from '@fastify/cors'
 import fastifyHelmet from '@fastify/helmet'
+import fastifyMultipart from '@fastify/multipart'
 import fastifySensible from '@fastify/sensible'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import type { GatewayEnv } from './env'
@@ -20,6 +21,7 @@ import { registerSearchRoutes } from './routes/search'
 import { registerSyncRoutes } from './routes/sync'
 import { registerDebugRoutes } from './routes/_debug'
 import { registerFirmRoutes } from './routes/firms'
+import { registerRecordingRoutes } from './routes/recordings'
 
 export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   const app = Fastify({
@@ -49,6 +51,12 @@ export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   await app.register(fastifySensible)
   await app.register(fastifyHelmet, { contentSecurityPolicy: false })
   await app.register(fastifyCors, { origin: true, credentials: true })
+  // Multipart for /recordings/upload. Limit matches RECORDING_MAX_UPLOAD_BYTES
+  // so the route handler doesn't have to re-check size for the audio part —
+  // the multipart parser rejects oversize early.
+  await app.register(fastifyMultipart, {
+    limits: { fileSize: env.RECORDING_MAX_UPLOAD_BYTES, files: 1 },
+  })
   await app.register(authPlugin, { env })
 
   registerErrorHandler(app)
@@ -63,6 +71,7 @@ export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   await registerNoteRoutes(app, env)
   await registerSearchRoutes(app, env)
   await registerSyncRoutes(app, env)
+  await registerRecordingRoutes(app, env)
   await registerDebugRoutes(app, env)
 
   return app

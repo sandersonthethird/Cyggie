@@ -94,6 +94,12 @@ export const meetings = pgTable(
     // re-suggested by the AI.
     dismissedCompanies: jsonb('dismissed_companies'),
     status: varchar('status', { length: 32 }).notNull().default('recording'),
+    // M3 — set when the gateway submits an uploaded audio file to Deepgram's
+    // batch API. Used by the on-boot reconciler to poll Deepgram for jobs that
+    // were in-flight when the gateway restarted, so we don't drop the
+    // transcript on the floor. Nullable for desktop-originated meetings that
+    // bypass the gateway transcribe path entirely.
+    deepgramRequestId: text('deepgram_request_id'),
     // Mobile: true when this meeting was created via the global Record FAB outside any
     // calendar slot. Summary screen prompts for a real title + linked company.
     wasImpromptu: boolean('was_impromptu').notNull().default(false),

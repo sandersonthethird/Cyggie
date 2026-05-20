@@ -5,6 +5,7 @@ import { loadEnv } from './env'
 import { closeDb } from './db'
 import { buildApp } from './app'
 import { startPendingSweeper, stopPendingSweeper } from './auth/pending'
+import { reconcileStuckJobs } from './recording/transcribe-job'
 
 async function main() {
   const env = loadEnv()
@@ -14,6 +15,16 @@ async function main() {
   // they don't leave a setInterval handle hanging.
   if (env.NODE_ENV !== 'test') {
     startPendingSweeper(env.GATEWAY_DATABASE_URL)
+  }
+
+  // Recover any transcribe jobs that were in-flight when the previous gateway
+  // process died (Fly redeploy, crash, etc.). Polls Deepgram for completion;
+  // self-heals to either status='transcribed' (with push) or status='error'.
+  // Fire-and-forget — slow path; the gateway can serve traffic in parallel.
+  if (env.NODE_ENV !== 'test') {
+    reconcileStuckJobs(env).catch((err) => {
+      app.log.error({ err }, 'transcribe-job reconcile failed')
+    })
   }
 
   try {

@@ -23,6 +23,13 @@ export default defineConfig({
       'src/tests/**/*.test.{ts,tsx}',
       'web/middleware.test.ts',
       'api-gateway/test/**/*.test.ts'
-    ]
+    ],
+    // Default placeholder values for M3-newly-required env vars. Individual
+    // tests can override (e.g. recordings-quota.test.ts sets a lower quota).
+    // The .env.local at the repo root still wins for any var listed there.
+    env: {
+      DEEPGRAM_API_KEY: 'test-deepgram-key',
+      DEEPGRAM_WEBHOOK_SECRET: 'test-webhook-secret-at-least-16-chars'
+    }
   }
 })

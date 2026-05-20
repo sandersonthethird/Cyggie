@@ -82,12 +82,23 @@ export const sessions = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    // M3 — APNs push registration. Set when the mobile app POSTs its device
+    // token to /devices/register-push (typically right after a sign-in
+    // transition). Cleared when APNs returns 410 Unregistered on a send (token
+    // expired or the user uninstalled). One push token per session row; if a
+    // user signs out + back in on the same device, a fresh session row gets
+    // the next registered token.
+    apnsDeviceToken: text('apns_device_token'),
+    apnsEnvironment: varchar('apns_environment', { length: 16 }),
+    apnsTokenUpdatedAt: timestamp('apns_token_updated_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('sessions_user_idx').on(t.userId),
     index('sessions_device_idx').on(t.deviceId),
     index('sessions_expires_idx').on(t.expiresAt),
+    // Lookup-by-token for the 410 cleanup path on send failure.
+    index('sessions_apns_token_idx').on(t.apnsDeviceToken),
   ],
 )
 

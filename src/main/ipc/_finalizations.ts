@@ -1,69 +1,55 @@
 /**
- * Shared pending-finalizations registry.
+ * Desktop pending-finalizations registry.
  *
- * Several IPC handlers return optimistically after kicking off slow
- * background work (ffmpeg flush, Deepgram finalize + transcript write,
- * etc.). This module holds the in-flight Promises so the app's
- * `before-quit` handler can await them and avoid losing user data on
- * quit.
+ * The actual map + functions live in @cyggie/services/recording/pending-finalizations
+ * so the gateway can share the same registry pattern for its background
+ * Deepgram transcribe jobs. This file is a thin desktop-facing re-export that
+ * narrows the prefix type to the two callers the desktop has today ('video'
+ * from video.ipc.ts, 'recording' from recording.ipc.ts) — a stronger type for
+ * desktop code without locking the shared module to a desktop-only union.
  *
- *      ┌──────────────────────────────────────────────────────────┐
- *      │  pendingFinalizations: Map<string, Promise<void>>        │
- *      │  keys look like:                                          │
- *      │     "video:<meetingId>"      ← video.ipc.ts adds these   │
- *      │     "recording:<meetingId>"  ← recording.ipc.ts adds them │
- *      └─────────────────────┬────────────────────────────────────┘
- *                            ▼
- *      app.on('before-quit') → await Promise.allSettled(values)
- *
- * Two subsystems write here today. Keys are prefixed so a single
- * meetingId can have both a video AND a recording finalize pending
- * without collision.
+ * `app.on('before-quit')` in src/main/index.ts awaits `getPendingForQuit()`
+ * before allowing exit, so user data isn't lost mid-transcription.
  */
 
-const pendingFinalizations = new Map<string, Promise<void>>()
+import {
+  addPending as _addPending,
+  removePending as _removePending,
+  hasPending as _hasPending,
+  getPending as _getPending,
+  getPendingForQuit as _getPendingForQuit,
+  _resetForTests as _underlyingResetForTests,
+  _peekMap as _underlyingPeekMap,
+} from '@cyggie/services/recording/pending-finalizations'
 
-function compositeKey(prefix: 'video' | 'recording', id: string): string {
-  return `${prefix}:${id}`
+type DesktopPrefix = 'video' | 'recording'
+
+export function addPending(prefix: DesktopPrefix, id: string, promise: Promise<void>): void {
+  _addPending(prefix, id, promise)
 }
 
-/**
- * Register a background-finalization promise. The caller is responsible
- * for calling `removePending(prefix, id)` from the promise's .finally
- * block (or equivalent) once it settles.
- */
-export function addPending(prefix: 'video' | 'recording', id: string, promise: Promise<void>): void {
-  pendingFinalizations.set(compositeKey(prefix, id), promise)
+export function removePending(prefix: DesktopPrefix, id: string): void {
+  _removePending(prefix, id)
 }
 
-export function removePending(prefix: 'video' | 'recording', id: string): void {
-  pendingFinalizations.delete(compositeKey(prefix, id))
+export function hasPending(prefix: DesktopPrefix, id: string): boolean {
+  return _hasPending(prefix, id)
 }
 
-export function hasPending(prefix: 'video' | 'recording', id: string): boolean {
-  return pendingFinalizations.has(compositeKey(prefix, id))
+export function getPending(prefix: DesktopPrefix, id: string): Promise<void> | undefined {
+  return _getPending(prefix, id)
 }
 
-export function getPending(prefix: 'video' | 'recording', id: string): Promise<void> | undefined {
-  return pendingFinalizations.get(compositeKey(prefix, id))
-}
-
-/**
- * Snapshot of every pending finalize across subsystems. Used only by
- * the before-quit handler. Returns an array (not a live reference) so
- * the caller can `Promise.allSettled` it without worrying about the
- * map being mutated mid-await.
- */
 export function getPendingForQuit(): Promise<void>[] {
-  return Array.from(pendingFinalizations.values())
+  return _getPendingForQuit()
 }
 
 /** Test-only: clear the registry between cases. */
 export function _resetForTests(): void {
-  pendingFinalizations.clear()
+  _underlyingResetForTests()
 }
 
 /** Test-only: inspect the underlying map for assertions. */
 export function _peekMap(): ReadonlyMap<string, Promise<void>> {
-  return pendingFinalizations
+  return _underlyingPeekMap()
 }

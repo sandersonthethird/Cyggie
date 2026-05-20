@@ -17,11 +17,21 @@ Project memory: `~/.claude/projects/-Users-sandersoncass-Apps-Cyggie/memory/proj
 | 0.4a | sqlite data layer → `@cyggie/db/sqlite/` | ✅ shipped | commit eec8104 |
 | 0.5 batch 1 | LLM tree → `@cyggie/services/llm/` + ALS ProgressSink | ✅ shipped | commit 903eb3f |
 | 0.5 batch 2 | 10 pure-Node services → `@cyggie/services/` | ✅ shipped | commit 903eb3f |
-| 0.5 batch 3 | `RecordingSession` class + recording.ipc.ts refactor + contract tests | ⏳ TODO | see "Phase 0.5 Batch 3" below |
-| 0.6 | Fastify gateway + OAuth + JWT + calendar route | ✅ shipped (local dev only) | commit 675e402; **Fly deploy + Sentry wiring deferred** (broader observability platform moved to Phase 2 — see "Operational deliverables" below) |
+| 0.5 batch 3 | `RecordingSession` class + recording.ipc.ts refactor | ✅ shipped | commit 3201bf9 — 17/17 tests; gateway parity-test (`summarizer-sync-vs-async`) deferred to its own session (different code path, M3 timing) |
+| 0.6 | Fastify gateway + OAuth + JWT + calendar route | ✅ shipped + deployed to Fly | commit 675e402 + Fly app `cyggie-gateway.fly.dev`. Sentry DSN still pending — Phase 2 observability decision deferred |
 | 0.7 | this P1 TODOS section | ✅ shipped | this commit |
 
-### Phase 0.5 Batch 3 — RecordingSession class
+### Phase 0.5 Batch 3 — RecordingSession class ✅ shipped (commit 3201bf9)
+
+All 16 module-level state vars from `src/main/ipc/recording.ipc.ts` (752 lines) extracted to [packages/services/src/recording/RecordingSession.ts](packages/services/src/recording/RecordingSession.ts) (~726 lines). The IPC handler shrank to 159 lines of Electron-specific wiring. 17/17 tests green: 4 in `recording-start.test.ts`, 6 in `recording-stop-defer.test.ts` (fixed 4 pre-existing barrel-mock breakages from commit 155a59a as a side-effect), 7 new in `recording-session.test.ts`.
+
+**Deferred to a future session:**
+- **`summarizer-sync-vs-async.test.ts`** — the plan called for this contract test proving desktop sync wrapper + gateway async path produce byte-equal output. Exercises a different code path (the LLM summary service that fires post-finalize), separate session.
+- **Gateway-portable adapter interface** — class still imports `@main/...` for SQLite repos + deepgram + audio capture. When M3 needs gateway-side recording, introduce a `RecordingPersistenceAdapter` interface to swap the SQLite-bound implementation for a Postgres-backed one.
+
+---
+
+### Phase 0.5 Batch 3 — original planning (kept for archaeology)
 
 **What:** Extract recording state from [src/main/ipc/recording.ipc.ts](src/main/ipc/recording.ipc.ts) (744 lines, 16 module-level vars) into a `RecordingSession` class consumed by both desktop and gateway. Add contract test `summarizer-sync-vs-async.test.ts` per plan §0.5.
 
@@ -104,17 +114,18 @@ Default Phase 2 recommendation: **Sentry + Axiom** (~$0-30/mo total).
 
 | # | Milestone | Status | Estimate |
 |---|---|---|---|
-| M1a | Expo shell + OAuth round-trip + Maestro/vitest infra + EAS dev profile | ⏳ | 1.5 weeks |
-| M1b | Calendar screen wired to `GET /calendar/events`; MMKV cache | ⏳ | 1.5 weeks |
-| M2 | Read-only CRM surface (meeting, company, contact, notes, search) + APNs | ⏳ | 2.5 weeks |
-| M3 | Recording happy path (Opus encoder, WS protocol, Record FAB, live transcript, stage-1 finalize, fake-Deepgram tests) | ⏳ | 3 weeks; depends on Phase 0.5 Batch 3 |
-| M4 | Recording resilience (gap reconstruction, Live Activity, stage-2 finalize, 8hr cap) | ⏳ | 2.5 weeks |
-| M5 | AI Chat (SSE + citations), Tiptap notes editor + Enhance, writes | ⏳ | 2 weeks |
-| M6 | Polish, empty states, settings, TestFlight cohort 1, 10 Maestro E2E flows green | ⏳ | 2 weeks |
-| M7 | App Store prep, cutover sequence, feature flags, user docs | ⏳ | 1.5 weeks |
-| Phase 1.5a | Desktop → Neon one-way sync (writeWithSync barrel, SyncAgent, /sync/push, drizzle-zod validators, dead-letter) | ✅ shipped | commits 7066796 / 99e1c38 / 36ff7f3 / 1778f7e — 59/59 + 17/17 tests, deployed to Fly. Paused on `paused_no_auth` until desktop OAuth lands. |
-| Phase 1.5b | Mobile → Neon writes (PATCH routes, mobile-side outbox, GET /sync/pull) | ⏳ | Ships when M4–M5 add mobile-side editing flows |
-| Phase 1.5c | Real-time push (SSE + APNs, sub-second propagation) | ⏳ | Ships when polling-refetch latency hurts |
+| M1a | Expo shell + OAuth round-trip + multi-tenant onboarding + Maestro/vitest infra + EAS dev profile | ✅ shipped | commits b7ec2ba / 52ec9d7 / 17ab09e |
+| M1b | Calendar screen wired to `GET /calendar/events`; MMKV cache | ✅ shipped | commits b1a3273 / bc9e2c0 |
+| M2 | Read-only CRM verticals (meeting, company, contact, notes, universal search) | ✅ shipped | commits 45bd145 / f571dd3 / 53a6f24 / 8143aff / e4bc492 |
+| M2 | … + APNs push notifications | ⏳ pending | Slots in alongside M3/M4; needs APNs key + bundle ID provisioned |
+| **M3** | **Recording happy path** (Opus encoder, WS protocol, Record FAB, live transcript, stage-1 finalize, fake-Deepgram tests) | ⏳ **next** | 3 weeks — Phase 0.5 Batch 3 (`RecordingSession` class) just shipped; M3 is unblocked |
+| M4 | Recording resilience (gap reconstruction, Live Activity, stage-2 finalize, 8hr cap) | ⏳ pending | 2.5 weeks; needs Cloudflare R2 bucket for canonical WAV |
+| M5 | AI Chat (SSE + citations), Tiptap notes editor + Enhance, writes | ⏳ pending | 2 weeks |
+| M6 | Polish, empty states, settings, TestFlight cohort 1, 10 Maestro E2E flows green | ⏳ pending | 2 weeks; needs Apple Developer Program seat |
+| M7 | App Store prep, cutover sequence, feature flags, user docs | ⏳ pending | 1.5 weeks |
+| Phase 1.5a | Desktop → Neon one-way sync (writeWithSync barrel, SyncAgent, /sync/push, drizzle-zod validators, dead-letter) | ✅ shipped | commits 7066796 / 99e1c38 / 36ff7f3 / 1778f7e — 59/59 + 17/17 tests, deployed to Fly. Desktop OAuth now wired so the SyncAgent has a real JWT. |
+| Phase 1.5b | Mobile → Neon writes (PATCH routes, mobile-side outbox, GET /sync/pull) | ⏳ pending | Ships when M4–M5 add mobile-side editing flows |
+| Phase 1.5c | Real-time push (SSE + APNs, sub-second propagation) | ⏳ pending | Ships when polling-refetch latency hurts |
 
 ### Cloud-side Gmail + Drive services (post-V1 — Model A backlog)
 
@@ -178,19 +189,18 @@ The full per-migration audit is in [packages/db/MIGRATION_AUDIT.md](packages/db/
 Captured during the 1.5a ship. None block the existing shipped slice but
 should land before Phase 1.5b expands the surface.
 
-### Desktop OAuth flow + getAccessTokenForSync wiring
-**What:** Build a sign-in window on the desktop (mirror of mobile OAuth) so
-the SyncAgent gets a real Bearer JWT. Wire it into
-`src/main/services/sync-bootstrap.ts`'s `getAccessTokenForSync()` accessor
-which currently returns `null`.
-**Why:** Without it, the SyncAgent stays in `paused_no_auth` forever — the
-outbox accumulates writes but nothing reaches Neon. Mobile sees frozen data
-until either this lands OR we manually re-stamp again.
-**Context:** Today's mobile OAuth at `mobile/lib/auth/oauth.ts` and the
-gateway's `/auth/google/start` route already exist; the desktop just needs a
-similar `expo-web-browser`-style auth window or an in-app webview. Token
-storage can reuse `settings.repo`.
-**Depends on / blocked by:** Nothing — can ship anytime.
+### Desktop OAuth flow + getAccessTokenForSync wiring ✅ shipped
+Sign-in window on the desktop wired to the gateway's OAuth flow via custom
+`cyggie-desktop://` URL scheme. `cyggie-auth.ts` + `cyggie-auth-storage.ts`
+(safeStorage-backed) + IPC handlers + Settings UX integrated into the
+"Available Connections" panel as a peer of Calendar/Gmail/Drive. SyncAgent's
+`getAccessToken()` reads the live token; on 401 it refreshes (single-flight)
+and retries, signs out on second 401. Ships:
+- commit 73e14cd — desktop OAuth → Cyggie JWT for SyncAgent
+- commit edb0715 — surface verified email in OAuth deep-link callback
+- commit 40856cd — move Cloud Sync into Available Connections panel
+- commit e9ba804 — gateway: desktop handoff page + OAUTH_STATE_INVALID observability
+- commit 9131116 — fix(credentials): wipe legacy-encrypted AI API keys in dev (v2 migration)
 
 ### `scripts/sync-replay.ts` — dead-letter recovery tool
 **What:** Operational tool to (a) re-enqueue `status='dead'` outbox rows
@@ -247,6 +257,26 @@ Neon project.
 recreate these columns from the schema (since the drizzle TS already has
 them), but other Postgres deploys (preview branches, staging) would miss
 them without the migration file.
+
+### Remove temporary console.log from notes.repo.deleteFolder
+**What:** Drop the unguarded `console.log` in
+[deleteFolder](packages/db/src/sqlite/repositories/notes.repo.ts) once the
+user has reproduced the original "Skills folder still there" bug with the
+log present and confirmed the fix.
+**Why:** No other repo logs unconditionally in production; this one is
+intentionally temporary for triage and will rot in place without a
+tracked TODO.
+**Pros:** Removes debt before it accumulates.
+**Cons:** Trivial; single line removal.
+**Context:** Plan file
+`/Users/sandersoncass/.claude/plans/1-folder-delete-doesn-t-fluffy-boot.md`
+(review decision 2B). The log line was added alongside the sync-wrap of
+`deleteFolder` to capture row counts in the main-process terminal while
+the original repro was outstanding.
+**Effort:** S
+**Priority:** P3
+**Depends on:** User confirms the diagnostic surfaced the root cause and
+the delete works after the fix.
 
 ---
 

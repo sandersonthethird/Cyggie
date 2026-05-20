@@ -34,9 +34,40 @@ const EnvSchema = z.object({
   SENTRY_DSN: z.string().optional(),
   DATADOG_API_KEY: z.string().optional(),
 
-  // Optional: deferred until M3 (recording).
-  DEEPGRAM_API_KEY: z.string().optional(),
+  // Required as of M3 (recording): the gateway proxies all Deepgram traffic.
+  // Mobile never talks to Deepgram directly. Generate at console.deepgram.com.
+  DEEPGRAM_API_KEY: z.string().min(1),
+  // Required as of M3: shared secret included in the Deepgram batch-callback URL
+  // (https://gateway/recordings/deepgram-webhook?secret=...). The webhook handler
+  // constant-time compares against this before persisting transcript / firing
+  // push. Without it the public webhook URL is a forgery vector. Generate with:
+  //   openssl rand -base64 32
+  DEEPGRAM_WEBHOOK_SECRET: z.string().min(16),
+
+  // Optional: deferred until LLM features come online.
   ANTHROPIC_API_KEY: z.string().optional(),
+
+  // APNs push (M3). Optional so the gateway boots without an Apple Developer
+  // Program seat — if any of these is missing, the apns module logs and no-ops
+  // on send, mobile falls back to polling. All required together once Apple
+  // signs the auth key.
+  //
+  //   APNS_KEY_ID         — 10-char Key ID from the .p8 download
+  //   APNS_TEAM_ID        — 10-char Team ID from the Apple Developer account
+  //   APNS_KEY_P8         — the .p8 file contents (multi-line PEM); paste into
+  //                          `fly secrets set APNS_KEY_P8="$(cat AuthKey_*.p8)"`
+  //   APNS_BUNDLE_ID      — e.g. com.cyggie.app
+  //   APNS_ENV            — 'sandbox' for dev / TestFlight, 'production' for App Store
+  APNS_KEY_ID: z.string().optional(),
+  APNS_TEAM_ID: z.string().optional(),
+  APNS_KEY_P8: z.string().optional(),
+  APNS_BUNDLE_ID: z.string().optional(),
+  APNS_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
+
+  // Recording quotas (M3). Per-user, monthly.
+  RECORDING_QUOTA_MONTHLY_MINUTES: z.coerce.number().int().positive().default(600),
+  // Hard cap on a single uploaded audio file. 200 MB ≈ 8 hours of 16 kHz mono AAC.
+  RECORDING_MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(200 * 1024 * 1024),
 
   // Server bind.
   HOST: z.string().default('127.0.0.1'),

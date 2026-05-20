@@ -12,10 +12,13 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
+    "@deepgram/sdk": "^3.10.1",
     "@fastify/helmet": "^13.0.2",
+    "@fastify/multipart": "^9.0.3",
     "@fastify/sensible": "^6.0.4",
     "@fastify/websocket": "^11.2.0",
     "@paralleldrive/cuid2": "^3.3.0",
+    "@parse/node-apn": "^6.5.0",
     "@sentry/node": "^10.53.1",
     "drizzle-orm": "0.45.2",
     "fastify": "^5.8.5",
