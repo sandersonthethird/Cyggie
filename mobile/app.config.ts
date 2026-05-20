@@ -16,7 +16,16 @@ const config: ExpoConfig = {
   ios: {
     bundleIdentifier: 'com.cyggie.mobile',
     supportsTablet: false,
-    // Background audio entitlement lands in M3 alongside the recording pipeline.
+    // M3 — recording entitlements + permission strings.
+    //
+    // UIBackgroundModes:audio lets a recording survive backgrounding (user
+    // locks phone or switches apps mid-meeting). NSMicrophoneUsageDescription
+    // is the prompt iOS shows on first record attempt.
+    infoPlist: {
+      UIBackgroundModes: ['audio'],
+      NSMicrophoneUsageDescription:
+        'Cyggie records meetings so they can be transcribed and summarized.',
+    },
   },
   experiments: {
     typedRoutes: true,
@@ -25,6 +34,9 @@ const config: ExpoConfig = {
     'expo-router',
     'expo-secure-store',
     'expo-web-browser',
+    // M3 push notifications. Icon/color defaults are fine for V1;
+    // branding tightening lands in M6 polish.
+    ['expo-notifications', { sounds: [] }],
   ],
   extra: {
     // Gateway URL surfaces at runtime via expo-constants. Override per-env via

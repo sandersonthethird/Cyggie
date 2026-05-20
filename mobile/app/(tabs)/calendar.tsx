@@ -172,7 +172,7 @@ export default function CalendarTab() {
         <View style={styles.footer} />
       </ScrollView>
 
-      <RecordFab />
+      <RecordFab onPress={() => router.push('/record')} />
     </View>
   )
 }

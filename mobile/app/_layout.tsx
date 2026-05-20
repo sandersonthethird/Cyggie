@@ -1,14 +1,16 @@
 import { useEffect } from 'react'
-import { Stack } from 'expo-router'
+import { router, Stack } from 'expo-router'
 import { QueryClient } from '@tanstack/react-query'
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { StatusBar } from 'expo-status-bar'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
+import * as Notifications from 'expo-notifications'
 import * as WebBrowser from 'expo-web-browser'
 import { useAuthStore } from '../lib/auth/store'
 import { mmkvAsyncStorage } from '../lib/cache/mmkv'
+import { registerForPushNotifications } from '../lib/push/register'
 
 // Required at module top-level so any pending ASWebAuthenticationSession
 // redirect (e.g. from a previous sign-in that closed mid-flow) is flushed
@@ -45,8 +47,21 @@ const persister = createAsyncStoragePersister({
   throttleTime: 1000, // batch writes — Mobile MMKV is fast but no need to thrash
 })
 
+// Configure how the system handles foreground notifications. M3 only fires
+// "transcription ready" — keep the banner + sound so the user notices even
+// if they're idling on a different screen.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+})
+
 export default function RootLayout() {
   const hydrate = useAuthStore((s) => s.hydrate)
+  const authStatus = useAuthStore((s) => s.status)
 
   // Rehydrate auth state from SecureStore once on mount. Until this resolves,
   // status='idle' → status='loading'; the index dispatcher waits for one of
@@ -54,6 +69,27 @@ export default function RootLayout() {
   useEffect(() => {
     void hydrate()
   }, [hydrate])
+
+  // M3 — register the APNs device token with the gateway whenever auth flips
+  // to signed_in. registerForPushNotifications dedup's against its last
+  // posted token so cold-starts of an already-signed-in app are cheap.
+  useEffect(() => {
+    if (authStatus !== 'signed_in') return
+    void registerForPushNotifications()
+  }, [authStatus])
+
+  // Notification tap handler — when the user taps a "transcript ready" push,
+  // navigate straight to the meeting detail. The payload carries meetingId
+  // from the gateway's APNs send.
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as { meetingId?: string }
+      if (data?.meetingId) {
+        router.push(`/meetings/${data.meetingId}`)
+      }
+    })
+    return () => sub.remove()
+  }, [])
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
