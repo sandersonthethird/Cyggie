@@ -138,6 +138,18 @@ export const COMPANY_PIPELINE_STAGES: PipelineStage[] = COMPANY_PIPELINE_STAGES_
 export const COMPANY_STAGE_OPTIONS: { value: CompanyPipelineStage; label: string }[] =
   COMPANY_PIPELINE_STAGES_FULL.filter((s) => s.value !== null) as { value: CompanyPipelineStage; label: string }[]
 
-/** Active-only kanban columns. Excludes Pass + Portfolio (both off-pipeline terminals). */
-export const COMPANY_KANBAN_STAGES: { value: CompanyPipelineStage; label: string }[] =
-  COMPANY_STAGE_OPTIONS.filter((s) => s.value !== 'pass' && s.value !== 'portfolio')
+/**
+ * Kanban columns: 4 active stages + 2 "Recent" terminal columns. Terminal
+ * columns are muted to signal they're short-lived (companies roll off after
+ * the configured Recent stage window — see `pipelinePassExpiryDays` setting,
+ * default 14 days). The renderer applies the muted CSS class when `muted` is
+ * truthy.
+ */
+export const COMPANY_KANBAN_STAGES: { value: CompanyPipelineStage; label: string; muted?: boolean }[] = [
+  { value: 'screening',     label: 'Screening'                       },
+  { value: 'diligence',     label: 'Diligence'                       },
+  { value: 'decision',      label: 'Partner'                         },
+  { value: 'documentation', label: 'Term Sheet'                      },
+  { value: 'portfolio',     label: 'Recent Portfolio', muted: true   },
+  { value: 'pass',          label: 'Recent Pass',      muted: true   },
+]

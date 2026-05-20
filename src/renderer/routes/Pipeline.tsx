@@ -111,7 +111,7 @@ function formatLastTouch(value: string | null): string {
   return `${days}d ago`
 }
 
-const DEFAULT_PASS_EXPIRY_DAYS = 30
+const DEFAULT_PASS_EXPIRY_DAYS = 14
 
 function passExpiryCutoff(days: number): string {
   const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
@@ -316,8 +316,10 @@ export default function Pipeline() {
     setLoading(true)
     setError(null)
     try {
+      const cutoff = passExpiryCutoff(passExpiryDays)
       const pipelineData = await api.invoke<CompanySummary[]>(IPC_CHANNELS.PIPELINE_LIST, {
-        passExpiryBefore: passExpiryCutoff(passExpiryDays)
+        passExpiryBefore: cutoff,
+        portfolioExpiryBefore: cutoff,
       })
       if (isStale()) return
       setCompanies(pipelineData)
@@ -536,7 +538,7 @@ export default function Pipeline() {
             return (
               <div
                 key={stage.value}
-                className={`${styles.column} ${fileDropTargetStage === stage.value ? styles.fileDropTarget : ''}`}
+                className={`${styles.column} ${stage.muted ? styles.columnMuted : ''} ${fileDropTargetStage === stage.value ? styles.fileDropTarget : ''}`}
                 onDragOver={(e) => {
                   e.preventDefault()
                   if (e.dataTransfer.types.includes('Files')) {

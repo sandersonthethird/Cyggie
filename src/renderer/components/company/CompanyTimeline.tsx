@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { SafeMarkdown } from '../SafeMarkdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanyNote, CompanyTimelineItem } from '../../../shared/types/company'
+import { SYSTEM_DECISION_TYPE_STAGE_CHANGE, SYSTEM_DECISION_TYPE_PIPELINE_EXIT } from '../../../shared/types/company'
 import { useEmailSync } from '../../hooks/useEmailSync'
 import { EmailDetailModal } from '../crm/EmailDetailModal'
 import { NoteDetailModal } from '../crm/NoteDetailModal'
@@ -20,8 +21,8 @@ const TYPE_LABEL: Record<string, string> = {
   email: 'Email',
   note: 'Note',
   decision: 'Decision',
-  'Stage Change': 'Stage Change',
-  'Pipeline Exit': 'Pipeline Exit'
+  [SYSTEM_DECISION_TYPE_STAGE_CHANGE]: SYSTEM_DECISION_TYPE_STAGE_CHANGE,
+  [SYSTEM_DECISION_TYPE_PIPELINE_EXIT]: SYSTEM_DECISION_TYPE_PIPELINE_EXIT,
 }
 
 type TimelineFilter = 'all' | 'meeting' | 'email' | 'note' | 'decision'

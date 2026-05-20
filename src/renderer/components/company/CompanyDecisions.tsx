@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CompanyDecisionLog } from '../../../shared/types/company'
+import { SYSTEM_DECISION_TYPES } from '../../../shared/types/company'
 import { DecisionLogModal } from '../crm/DecisionLogModal'
 import type { SavedDecisionRef } from '../crm/DecisionLogModal'
 import styles from './CompanyDecisions.module.css'
@@ -8,8 +9,6 @@ import styles from './CompanyDecisions.module.css'
 interface CompanyDecisionsProps {
   companyId: string
 }
-
-const SYSTEM_DECISION_TYPES = new Set(['Stage Change', 'Pipeline Exit'])
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {

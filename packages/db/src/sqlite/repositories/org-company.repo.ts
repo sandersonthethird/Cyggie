@@ -31,6 +31,7 @@ import type {
   MergeFieldDiff,
   MergeFieldOverrides
 } from '@shared/types/company'
+import { SYSTEM_DECISION_TYPE_STAGE_CHANGE } from '@shared/types/company'
 
 interface CompanyRow {
   id: string
@@ -813,6 +814,7 @@ export function listPipelineCompanies(filter?: {
   round?: CompanyRound | null
   query?: string
   passExpiryBefore?: string | null
+  portfolioExpiryBefore?: string | null
 }): CompanySummary[] {
   const db = getDatabase()
   const conditions: string[] = ['c.pipeline_stage IS NOT NULL']
@@ -835,20 +837,33 @@ export function listPipelineCompanies(filter?: {
     const like = `%${filter.query.trim()}%`
     params.push(like, like)
   }
+  // "Recent Pass" / "Recent Portfolio" expiry: exclude terminal-stage companies
+  // whose most-recent auto Stage Change log is older than the cutoff. Companies
+  // with no stage-change log (legacy rows pre-dating the auto-log) evaluate to
+  // NULL through the chain (NULL<x → NULL → NOT NULL → NULL), and SQLite drops
+  // NULL rows from WHERE — so they're EXCLUDED. That's the intended UX (legacy
+  // pass/portfolio companies stay out of the Recent columns).
   if (filter?.passExpiryBefore) {
-    // Exclude pass-stage companies moved to pass more than N days ago.
-    // Stage changes are auto-logged as 'Stage Change'; the most recent one for a pass-stage
-    // company is when it entered pass. Companies with no stage-change log are kept (NULL < x
-    // is false in SQLite).
     conditions.push(`NOT (
       c.pipeline_stage = 'pass'
       AND (
         SELECT MAX(cdl.decision_date)
         FROM company_decision_logs cdl
-        WHERE cdl.company_id = c.id AND cdl.decision_type = 'Stage Change'
+        WHERE cdl.company_id = c.id AND cdl.decision_type = ?
       ) < ?
     )`)
-    params.push(filter.passExpiryBefore)
+    params.push(SYSTEM_DECISION_TYPE_STAGE_CHANGE, filter.passExpiryBefore)
+  }
+  if (filter?.portfolioExpiryBefore) {
+    conditions.push(`NOT (
+      c.pipeline_stage = 'portfolio'
+      AND (
+        SELECT MAX(cdl.decision_date)
+        FROM company_decision_logs cdl
+        WHERE cdl.company_id = c.id AND cdl.decision_type = ?
+      ) < ?
+    )`)
+    params.push(SYSTEM_DECISION_TYPE_STAGE_CHANGE, filter.portfolioExpiryBefore)
   }
 
   const where = `WHERE ${conditions.join(' AND ')}`
@@ -2738,7 +2753,10 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
         m.title,
         m.date,
         m.status,
-        m.duration_seconds
+        m.duration_seconds,
+        m.summary_path,
+        m.summary_drive_id,
+        (m.notes IS NOT NULL AND TRIM(m.notes) != '') AS has_non_empty_notes
       FROM meetings m
       WHERE m.id IN (
         SELECT l.meeting_id FROM meeting_company_links l WHERE l.company_id = ?
@@ -2759,6 +2777,9 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
     date: string
     status: string
     duration_seconds: number | null
+    summary_path: string | null
+    summary_drive_id: string | null
+    has_non_empty_notes: number
   }>
 
   return rows.map((row) => ({
@@ -2766,7 +2787,10 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
     title: row.title,
     date: row.date,
     status: row.status,
-    durationSeconds: row.duration_seconds
+    durationSeconds: row.duration_seconds,
+    summaryPath: row.summary_path,
+    summaryDriveId: row.summary_drive_id,
+    hasNonEmptyNotes: row.has_non_empty_notes === 1,
   }))
 }
 
@@ -3258,7 +3282,7 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
   }>
   const decisionItems: CompanyTimelineItem[] = decisionRows.map((d) => {
     let title = d.decision_type
-    if (d.decision_type === 'Stage Change' || d.decision_type === 'Pipeline Exit') {
+    if (d.decision_type === SYSTEM_DECISION_TYPE_STAGE_CHANGE || d.decision_type === 'Pipeline Exit') {
       try {
         const rationaleArr: string[] = d.rationale_json ? JSON.parse(d.rationale_json) : []
         const msg = rationaleArr[0] ?? ''

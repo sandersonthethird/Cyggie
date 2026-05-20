@@ -12,6 +12,7 @@ export function registerPipelineHandlers(): void {
       round?: CompanyRound | null
       query?: string
       passExpiryBefore?: string | null
+      portfolioExpiryBefore?: string | null
     }) => {
       return companyRepo.listPipelineCompanies(filter)
     }
