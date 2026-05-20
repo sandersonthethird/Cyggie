@@ -21,7 +21,7 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
-const { listContactsLight, resolveContactsByEmails, getContact, updateContact } = await import('@cyggie/db/sqlite/repositories/contact.repo')
+const { listContacts, listContactsLight, resolveContactsByEmails, getContact, updateContact } = await import('@cyggie/db/sqlite/repositories/contact.repo')
 
 function buildDb(): Database.Database {
   const db = new Database(':memory:')
@@ -123,6 +123,113 @@ describe('listContactsLight — companyId boost', () => {
   it('boost works alongside a search query', () => {
     const results = listContactsLight({ query: 'Pat', companyId: 'co1' })
     expect(results[0].id).toBe('c1')
+  })
+})
+
+describe('listContacts — keeps manual/tagged no-email CRM contacts', () => {
+  beforeEach(() => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(`
+      CREATE TABLE org_companies (
+        id TEXT PRIMARY KEY,
+        canonical_name TEXT NOT NULL
+      );
+      CREATE TABLE contacts (
+        id TEXT PRIMARY KEY,
+        full_name TEXT NOT NULL,
+        first_name TEXT,
+        last_name TEXT,
+        normalized_name TEXT,
+        email TEXT,
+        primary_company_id TEXT REFERENCES org_companies(id),
+        title TEXT,
+        contact_type TEXT,
+        talent_pipeline TEXT,
+        linkedin_url TEXT,
+        crm_contact_id TEXT,
+        crm_provider TEXT,
+        tags TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE contact_emails (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        is_primary INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE meetings (
+        id TEXT PRIMARY KEY,
+        date TEXT,
+        attendee_emails TEXT
+      );
+      CREATE TABLE email_messages (
+        id TEXT PRIMARY KEY,
+        from_email TEXT,
+        received_at TEXT,
+        sent_at TEXT,
+        created_at TEXT
+      );
+      CREATE TABLE email_message_participants (
+        id TEXT PRIMARY KEY,
+        message_id TEXT,
+        email TEXT
+      );
+      INSERT INTO contacts (id, full_name, normalized_name, email, contact_type, tags) VALUES
+        -- Has email: always shown
+        ('with-email', 'Alice WithEmail', 'alicewithemail', 'alice@example.com', NULL, NULL),
+        -- No email but user tagged with contact_type → intentional CRM contact
+        ('tagged-type', 'Bob Tagged', 'bobtagged', NULL, 'investor', NULL),
+        -- No email but user added tags → intentional CRM contact
+        ('tagged-tags', 'Carol Tagged', 'caroltagged', NULL, NULL, '["Lead","Warm"]'),
+        -- No email and no tags / no contact_type → should still be hidden (auto-sync artifact)
+        ('bare-no-email', 'Dan Bare', 'danbare', NULL, NULL, NULL),
+        -- Tags column with empty array string should not count as tagged
+        ('empty-tags', 'Eve Empty', 'eveempty', NULL, NULL, '[]')
+    `)
+    testDb = db
+  })
+
+  it('returns contacts with an email', () => {
+    const results = listContacts()
+    expect(results.some(c => c.id === 'with-email')).toBe(true)
+  })
+
+  it('returns no-email contacts that have a contact_type set', () => {
+    const results = listContacts()
+    expect(results.some(c => c.id === 'tagged-type')).toBe(true)
+  })
+
+  it('returns no-email contacts that have non-empty tags', () => {
+    const results = listContacts()
+    expect(results.some(c => c.id === 'tagged-tags')).toBe(true)
+  })
+
+  it('still hides no-email contacts with no contact_type and no tags', () => {
+    const results = listContacts()
+    expect(results.some(c => c.id === 'bare-no-email')).toBe(false)
+  })
+
+  it('treats an empty-array tags value as untagged', () => {
+    const results = listContacts()
+    expect(results.some(c => c.id === 'empty-tags')).toBe(false)
+  })
+})
+
+describe('listContactsLight — keeps manual/tagged no-email CRM contacts (regression)', () => {
+  beforeEach(() => {
+    testDb = buildDb()
+    testDb.exec(`
+      INSERT INTO contacts (id, full_name, first_name, last_name, normalized_name, email, contact_type)
+      VALUES
+        ('manual', 'Manual Contact', 'Manual', 'Contact', 'manualcontact', NULL, 'founder')
+    `)
+  })
+
+  it('returns no-email contacts that the user has tagged with a contact_type', () => {
+    const results = listContactsLight()
+    expect(results.some(c => c.id === 'manual')).toBe(true)
   })
 })
 

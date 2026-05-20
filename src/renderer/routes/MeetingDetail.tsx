@@ -370,11 +370,14 @@ export default function MeetingDetail() {
   useEffect(() => {
     if (!editingSummary) return
     setTimeout(() => {
-      if (!summaryEditor) return
+      // Same destroyed/mid-replacement guard as the FindHighlight effect.
+      // The setTimeout(0) means the editor could have been recreated between
+      // the editingSummary flip and this callback firing.
+      if (!summaryEditor || summaryEditor.isDestroyed || !summaryEditor.commands) return
       const coords = summaryClickCoordsRef.current
       summaryClickCoordsRef.current = null
       if (coords) {
-        const hit = summaryEditor.view.posAtCoords({ left: coords.x, top: coords.y })
+        const hit = summaryEditor.view?.posAtCoords({ left: coords.x, top: coords.y })
         if (hit) {
           summaryEditor.commands.focus(hit.pos)
           return
@@ -1748,8 +1751,14 @@ export default function MeetingDetail() {
   // Push find matches into the summary editor's FindHighlight extension so they
   // render as <mark> decorations in the editor DOM. Streaming branch keeps using
   // the legacy injectFindMarks path because no TipTap editor exists during streaming.
+  //
+  // Guard: tiptap v3's useEditor destroys + recreates on dep change ([id] here),
+  // and during that transition the returned `editor` object can be truthy but
+  // have a null `.commands` (internal view/state not yet rewired). Cheap belt-
+  // and-suspenders check avoids the crash on the "New Meeting from an existing
+  // MeetingDetail" path.
   useEffect(() => {
-    if (!summaryEditor) return
+    if (!summaryEditor || summaryEditor.isDestroyed || !summaryEditor.commands) return
     if (isGenerating) {
       summaryEditor.commands.clearFindMatches()
       return

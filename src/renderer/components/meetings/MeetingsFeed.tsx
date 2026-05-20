@@ -1,12 +1,15 @@
 import { useRef, useCallback, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import type { Meeting } from '../../../shared/types/meeting'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { api } from '../../api'
+import { useAppStore } from '../../stores/app.store'
 import { FeedTopBar } from './FeedTopBar'
 import { DayGroup } from './DayGroup'
 import { MeetingsCalendar } from './MeetingsCalendar'
 import styles from './MeetingsFeed.module.css'
+
+const UPCOMING_BUCKETS = new Set(['all', 'today', 'upcoming'])
 
 interface MeetingsFeedProps {
   groupedMeetings: [string, Meeting[]][]
@@ -20,6 +23,9 @@ export function MeetingsFeed({ groupedMeetings, filtered }: MeetingsFeedProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const searchQuery = searchParams.get('q') ?? ''
   const activeView = searchParams.get('view') === 'calendar' ? 'calendar' : 'timeline'
+  const activeBucket = searchParams.get('bucket') ?? 'all'
+  const calendarConnected = useAppStore((s) => s.calendarConnected)
+  const showConnectNotice = !calendarConnected && UPCOMING_BUCKETS.has(activeBucket)
 
   const handleSelect = useCallback(async (id: string) => {
     if (id.startsWith('cal-')) {
@@ -86,6 +92,11 @@ export function MeetingsFeed({ groupedMeetings, filtered }: MeetingsFeedProps) {
         </div>
       ) : (
         <div className={styles.scrollArea}>
+          {showConnectNotice && (
+            <p className={styles.connectNotice}>
+              Connect Google Calendar in <Link to="/settings?tab=integrations">Settings</Link> to see upcoming meetings.
+            </p>
+          )}
           {groupedMeetings.length === 0 ? (
             <div className={styles.empty}>
               <div className={styles.emptyTitle}>No meetings found</div>

@@ -31,3 +31,16 @@
 .emptyDesc {
   font-size: 13px;
 }
+
+.connectNotice {
+  font-size: 13px;
+  color: var(--cy-text-3, #6B7280);
+  padding: 10px 4px 14px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--cy-border-1, #E5E7EB);
+}
+
+.connectNotice a {
+  color: var(--cy-text-2, #374151);
+  text-decoration: underline;
+}

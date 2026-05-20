@@ -32,6 +32,11 @@
 //   `enrichExistingContacts`, etc.) bypass the wrapper entirely — they're
 //   not yet sync-aware.
 //
+//   Exception — `note_folders`: deleteFolder + renameFolder DO emit
+//   cascade rows. The raw repo functions call `appendOutboxRow` directly
+//   for every nested descendant (delete) and for the DELETE-old + INSERT-new
+//   pairs (rename, since `path` is the PK and a rename isn't an UPDATE).
+//
 // Adding a new wrapped fn:
 //   1. Make sure the table is in `OWNED_TABLES` (packages/db/src/sync/
 //      owned-tables.ts).
@@ -311,15 +316,30 @@ export const createFolder = withSync(rawNotes.createFolder, {
   extractRow: ({ args }) => ({ path: args[0] }),
 })
 
-// Pass-throughs (reads + folder operations with multi-row cascades — see gap)
+// Pass-throughs (reads)
 export const listNotes = rawNotes.listNotes
 export const searchNotes = rawNotes.searchNotes
 export const getNote = rawNotes.getNote
 export const listFolders = rawNotes.listFolders
-export const renameFolder = rawNotes.renameFolder // updates many notes' folder_path — un-emitted in V1
-export const deleteFolder = rawNotes.deleteFolder // ditto
 export const getFolderCounts = rawNotes.getFolderCounts
 export const listImportSources = rawNotes.listImportSources
+
+// renameFolder: a PK rename is DELETE old + INSERT new in the outbox protocol.
+// The wrapper emits the INSERT for the new root path; the raw repo emits a
+// DELETE for each old path it removed (plus INSERTs for cascaded children).
+export const renameFolder = withSync(rawNotes.renameFolder, {
+  table: 'note_folders',
+  op: 'insert',
+  extractRow: ({ args }) => ({ path: args[1] }), // newPath
+})
+
+// deleteFolder: wrapper emits the root delete; raw repo emits one cascade
+// delete per nested descendant path inside the same transaction.
+export const deleteFolder = withSync(rawNotes.deleteFolder, {
+  table: 'note_folders',
+  op: 'delete',
+  captureBeforeDelete: (_db, [path]) => ({ path }),
+})
 
 // Re-export the database accessor so the rare caller that needs it can
 // continue to import from the barrel rather than reaching into connection.ts.

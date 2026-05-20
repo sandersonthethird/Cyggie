@@ -3,6 +3,7 @@ export const CANONICAL_INDUSTRIES = [
   'AI',
   'Consumer (CPG)',
   'Consumer Social',
+  'Consumer Software',
   'Creator Economy',
   'Developer Tools',
   'Ecommerce',

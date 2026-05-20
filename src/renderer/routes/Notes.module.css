@@ -248,6 +248,23 @@
   color: var(--color-text-tertiary, #aaa);
 }
 
+.noteFolder {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.noteFolder::before {
+  content: "📁";
+  font-size: 10px;
+}
+
 .pinnedIcon {
   font-size: 11px;
   margin-right: 2px;

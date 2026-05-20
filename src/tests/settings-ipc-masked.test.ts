@@ -49,6 +49,11 @@ vi.mock('../main/security/current-user', () => ({
 
 const { registerSettingsHandlers } = await import('../main/ipc/settings.ipc')
 const { IPC_CHANNELS } = await import('../shared/constants/channels')
+const { _setUseSafeStorageForTesting } = await import('../main/security/credentials')
+// These tests cover the prod safeStorage path. The dev bypass (introduced
+// alongside the macOS keychain-prompt fix) would otherwise short-circuit
+// safeStorage under vitest, where import.meta.env.DEV === true.
+_setUseSafeStorageForTesting(true)
 registerSettingsHandlers()
 
 function callHandler<T = unknown>(channel: string, ...args: unknown[]): T {

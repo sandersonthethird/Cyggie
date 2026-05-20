@@ -39,6 +39,15 @@ interface Props {
   width?: number
 }
 
+/**
+ * Count every descendant of `node` (children + grandchildren + …) so the
+ * delete confirm prompt can warn the user about cascading subfolder
+ * removal. Returns 0 for a leaf.
+ */
+export function countDescendants(node: FolderNode): number {
+  return node.children.reduce((sum, c) => sum + 1 + countDescendants(c), 0)
+}
+
 /** Build a nested tree from a flat sorted array of folder paths. */
 export function buildFolderTree(paths: string[]): FolderNode[] {
   const roots: FolderNode[] = []
@@ -110,7 +119,11 @@ function FolderNodeItem({ node, depth, selected, tagSuggestions, handlers, count
 
   const handleDelete = async () => {
     setMenuOpen(false)
-    if (!window.confirm(`Delete folder "${node.fullPath}"? Notes inside will be moved to Inbox.`)) return
+    const descendantCount = countDescendants(node)
+    const message = descendantCount > 0
+      ? `Delete folder "${node.fullPath}" and ${descendantCount} nested subfolder${descendantCount === 1 ? '' : 's'}? Notes inside (including in subfolders) will be moved to Inbox.`
+      : `Delete folder "${node.fullPath}"? Notes inside will be moved to Inbox.`
+    if (!window.confirm(message)) return
     await handlers.onDeleteFolder(node.fullPath)
   }
 

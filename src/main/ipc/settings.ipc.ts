@@ -5,6 +5,7 @@ import { ENCRYPTED_KEYS, UNCONFIGURED_KEY, type MaskedKey } from '../../shared/t
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { backfillMeetingSummaryNotes } from '../services/meeting-notes-backfill.service'
 import { getCurrentUserId } from '../security/current-user'
+import { isSafeStorageActive } from '../security/credentials'
 
 // settings.ipc.ts — read/write/test paths for AppSettings.
 //
@@ -47,9 +48,14 @@ function maskKey(plaintext: string): MaskedKey {
  * encryption is unavailable, or decryption throws. Callers in test/use paths
  * MUST treat null as "no usable key" and never leak the raw ciphertext back to
  * the renderer.
+ *
+ * Dev bypass: when safeStorage is off (see credentials.ts), the stored value
+ * is already plaintext — return it verbatim. Touching safeStorage in dev
+ * triggers the macOS keychain prompt on every relaunch.
  */
 function decryptStored(rawStored: string | null): string | null {
   if (!rawStored) return null
+  if (!isSafeStorageActive()) return rawStored
   if (!safeStorage.isEncryptionAvailable()) {
     warnSafeStorageUnavailableOnce()
     return null
@@ -76,14 +82,19 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, (_event, key: string, value: string) => {
     let storedValue = value
-    if (ENCRYPTED_SET.has(key) && safeStorage.isEncryptionAvailable()) {
-      storedValue = safeStorage.encryptString(value).toString('base64')
-    } else if (ENCRYPTED_SET.has(key)) {
-      // safeStorage unavailable but caller is trying to set a sensitive key —
-      // refuse rather than write plaintext to disk.
-      warnSafeStorageUnavailableOnce()
-      throw new Error('Cannot store key — OS keychain unavailable.')
+    if (ENCRYPTED_SET.has(key) && isSafeStorageActive()) {
+      if (safeStorage.isEncryptionAvailable()) {
+        storedValue = safeStorage.encryptString(value).toString('base64')
+      } else {
+        // safeStorage unavailable but caller is trying to set a sensitive key —
+        // refuse rather than write plaintext to disk.
+        warnSafeStorageUnavailableOnce()
+        throw new Error('Cannot store key — OS keychain unavailable.')
+      }
     }
+    // Dev bypass (isSafeStorageActive() === false): write plaintext. Same
+    // threat surface as the rest of the on-disk SQLite DB, and matches
+    // storeCredential() in credentials.ts.
     settingsRepo.setSetting(key, storedValue)
   })
 

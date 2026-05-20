@@ -55,15 +55,23 @@ interface NoteCardProps {
   isActive: boolean
   isSelected: boolean
   bulkMode: boolean
+  /**
+   * Currently selected folder (or null for "All Notes"). Used to hide the
+   * folder chip when the user is already filtered to that folder — the
+   * chip would just repeat the sidebar selection.
+   */
+  currentFolder: string | null
   onCardClick: (note: Note) => void
   onCheckbox: (e: React.MouseEvent, note: Note, index: number) => void
 }
 
-const NoteCard = memo(function NoteCard({ note, index, isActive, isSelected, bulkMode, onCardClick, onCheckbox }: NoteCardProps) {
+export const NoteCard = memo(function NoteCard({ note, index, isActive, isSelected, bulkMode, currentFolder, onCardClick, onCheckbox }: NoteCardProps) {
   const title = note.title ||
     note.meetingTitle ||
     stripMarkdownPreview(note.content.split('\n').find(l => l.trim()) || '') ||
     ''
+  const showFolder = !!note.folderPath && note.folderPath !== currentFolder
+  const folderLabel = showFolder ? note.folderPath!.split('/').pop() : null
   return (
     <div
       className={`${styles.noteCard} ${isActive ? styles.noteCardActive : ''} ${isSelected ? styles.noteCardSelected : ''}`}
@@ -87,6 +95,9 @@ const NoteCard = memo(function NoteCard({ note, index, isActive, isSelected, bul
           {title || <span className={styles.noteUntitled}>Untitled</span>}
         </div>
         <div className={styles.noteDate}>{formatTime(note.updatedAt)}</div>
+        {folderLabel && (
+          <div className={styles.noteFolder} title={note.folderPath!}>{folderLabel}</div>
+        )}
       </div>
     </div>
   )
@@ -150,10 +161,19 @@ export default function Notes() {
     return () => clearTimeout(t)
   }, [searchQuery])
 
-  const getGuard = useStaleGuard()
+  // One guard per fetcher — do NOT collapse to a single shared guard.
+  // A single useStaleGuard() instance owns one counter that's shared by
+  // every closure it returns. Running two fetchers in Promise.all with
+  // the same guard makes the first call always stale-bail when the
+  // second call's getGuard() increments. Regression: folder sidebar
+  // stayed empty on initial mount until a new folder was created
+  // (May 2026). See useStaleGuard JSDoc for the full footgun writeup.
+  const folderGuard = useStaleGuard()
+  const folderCountsGuard = useStaleGuard()
+  const notesGuard = useStaleGuard()
 
   const fetchFolderData = useCallback(async () => {
-    const isStale = getGuard()
+    const isStale = folderGuard()
     try {
       const [folderList, sourceList] = await Promise.all([
         ipcCache.get<string[]>(IPC_CHANNELS.NOTES_LIST_FOLDERS, null,
@@ -165,10 +185,10 @@ export default function Notes() {
       setFolders(folderList)
       setImportSources(sourceList)
     } catch { /* non-fatal */ }
-  }, [getGuard])
+  }, [folderGuard])
 
   const fetchFolderCounts = useCallback(async () => {
-    const isStale = getGuard()
+    const isStale = folderCountsGuard()
     try {
       const countArgs = { hideClaimedMeetingNotes: !showMeetingNotes }
       const rows = await ipcCache.get<{ folderPath: string | null; count: number }[]>(
@@ -185,7 +205,7 @@ export default function Notes() {
       }
       setFolderCounts(map)
     } catch { /* non-fatal — no count badges */ }
-  }, [showMeetingNotes, getGuard])
+  }, [showMeetingNotes, folderCountsGuard])
 
   useEffect(() => {
     void Promise.all([fetchFolderData(), fetchFolderCounts()])
@@ -203,7 +223,7 @@ export default function Notes() {
   }, [])
 
   const fetchNotes = useCallback(async () => {
-    const isStale = getGuard()
+    const isStale = notesGuard()
     setLoading(true)
     try {
       const opts: {
@@ -232,7 +252,7 @@ export default function Notes() {
     } finally {
       if (!isStale()) setLoading(false)
     }
-  }, [filter, debouncedQuery, selectedFolder, selectedImportSource, showMeetingNotes, getGuard])
+  }, [filter, debouncedQuery, selectedFolder, selectedImportSource, showMeetingNotes, notesGuard])
 
   useEffect(() => {
     void fetchNotes()
@@ -500,8 +520,9 @@ export default function Notes() {
       void fetchFolderData()
     } catch (err) {
       console.error('Failed to create folder', err)
+      showToast('Failed to create folder')
     }
-  }, [fetchFolderData])
+  }, [fetchFolderData, showToast])
 
   const handleRenameFolder = useCallback(async (oldPath: string, newPath: string) => {
     try {
@@ -516,8 +537,9 @@ export default function Notes() {
       void fetchNotes()
     } catch (err) {
       console.error('Failed to rename folder', err)
+      showToast('Failed to rename folder')
     }
-  }, [fetchFolderData, fetchNotes, selectedFolder, setSearchParams])
+  }, [fetchFolderData, fetchNotes, selectedFolder, setSearchParams, showToast])
 
   const handleDeleteFolder = useCallback(async (folderPath: string) => {
     try {
@@ -532,8 +554,9 @@ export default function Notes() {
       void fetchNotes()
     } catch (err) {
       console.error('Failed to delete folder', err)
+      showToast('Failed to delete folder')
     }
-  }, [fetchFolderData, fetchNotes, selectedFolder, setSearchParams])
+  }, [fetchFolderData, fetchNotes, selectedFolder, setSearchParams, showToast])
 
   // --- Bulk selection helpers ---
 
@@ -805,6 +828,7 @@ export default function Notes() {
                       isActive={selectedNoteId === note.id}
                       isSelected={selectedIds.has(note.id)}
                       bulkMode={selectedIds.size > 0}
+                      currentFolder={selectedFolder}
                       onCardClick={handleCardClick}
                       onCheckbox={handleCheckbox}
                     />

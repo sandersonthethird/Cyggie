@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
+import { appendOutboxRow, currentSyncContext } from '../sync-wrapper'
 import type { Note, NoteFilterView, NoteCreateData, NoteUpdateData } from '@shared/types/note'
 
 interface NoteRow {
@@ -320,10 +321,22 @@ export function renameFolder(oldPath: string, newPath: string): void {
       SELECT path FROM note_folders WHERE path = ? OR path GLOB ?
     `).all(oldPath, oldPath + '/*') as { path: string }[]
 
+    // PK rename = DELETE old + INSERT new in the outbox protocol. The wrapper
+    // emits the INSERT for the root newPath; we emit (a) a DELETE for every
+    // old path we removed (including the root) and (b) an INSERT for every
+    // non-root new path. Skip the root INSERT to avoid double-emission.
+    const ctx = currentSyncContext()
     for (const { path } of oldFolderPaths) {
       const newFolderPath = newPath + path.slice(oldPath.length)
       db.prepare('DELETE FROM note_folders WHERE path = ?').run(path)
       db.prepare('INSERT OR IGNORE INTO note_folders (path) VALUES (?)').run(newFolderPath)
+
+      if (ctx) {
+        appendOutboxRow(db, { table: 'note_folders', op: 'delete', row: { path } })
+        if (path !== oldPath) {
+          appendOutboxRow(db, { table: 'note_folders', op: 'insert', row: { path: newFolderPath } })
+        }
+      }
     }
   })
   tx()
@@ -332,15 +345,40 @@ export function renameFolder(oldPath: string, newPath: string): void {
 export function deleteFolder(path: string): void {
   const db = getDatabase()
   const tx = db.transaction(() => {
+    // Capture matched folder rows BEFORE delete so the outbox can emit one
+    // entry per cascaded path (the wrapper only knows about the root).
+    const matched = db.prepare(`
+      SELECT path FROM note_folders WHERE path = ? OR path GLOB ?
+    `).all(path, path + '/*') as { path: string }[]
+
     // Clear folder_path on all notes in this folder and its children
-    db.prepare(`
+    const cleared = db.prepare(`
       UPDATE notes SET folder_path = NULL
       WHERE folder_path = ? OR folder_path GLOB ?
     `).run(path, path + '/*')
 
-    db.prepare(`
+    const removed = db.prepare(`
       DELETE FROM note_folders WHERE path = ? OR path GLOB ?
     `).run(path, path + '/*')
+
+    // Cascade outbox: one delete per non-root path. Root is handled by the
+    // withSync wrapper via captureBeforeDelete. Skipped when there's no
+    // active sync context (raw repo tests).
+    const ctx = currentSyncContext()
+    if (ctx) {
+      for (const m of matched) {
+        if (m.path === path) continue
+        appendOutboxRow(db, { table: 'note_folders', op: 'delete', row: { path: m.path } })
+      }
+    }
+
+    // Diagnostic: surfaces in the main-process terminal. Removable once
+    // we've confirmed the "Skills folder still there" repro is resolved
+    // (tracked in TODOS.md).
+    console.log(
+      `[notes.repo] deleteFolder("${path}") — notes cleared: ${cleared.changes}, ` +
+      `folder rows removed: ${removed.changes}, cascade outbox: ${ctx ? matched.length - 1 : 0}`,
+    )
   })
   tx()
 }
