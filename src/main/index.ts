@@ -13,6 +13,10 @@ import { cleanupOrphanedTempFiles, getActiveRecordingMeetingId } from './video/v
 import { getPendingForQuit } from './ipc/_finalizations'
 import { getCurrentUserId } from './security/current-user'
 import {
+  migrateLegacyEncryptedCredentials,
+  migrateLegacyEncryptedApiKeys,
+} from './security/credentials'
+import {
   bootstrapSync,
   shutdownSync,
   setSyncStatusBroadcastTarget,
@@ -249,6 +253,16 @@ app.whenReady().then(() => {
 
   // Ensure a local current-user identity exists so new writes are attributable.
   const startupUserId = getCurrentUserId()
+
+  // One-time wipe of safeStorage-encrypted credentials in dev. Must run
+  // BEFORE bootstrapSync, because the agent's first tick tries to decrypt
+  // the access token — leaving a stale encrypted blob in the settings table
+  // would either resurface the keychain prompt or surface garbled tokens.
+  //
+  // v1: OAuth tokens (shipped earlier).
+  // v2: AI API keys (v1 missed these; Deepgram WS protocol crash on Record).
+  migrateLegacyEncryptedCredentials()
+  migrateLegacyEncryptedApiKeys()
 
   // Wire the desktop → Neon SyncAgent. Must run AFTER getDatabase() (so
   // migrations 096 + 097 have applied) and AFTER getCurrentUserId() (so
