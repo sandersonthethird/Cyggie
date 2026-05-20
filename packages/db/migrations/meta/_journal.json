@@ -85,6 +85,13 @@
       "when": 1779300000000,
       "tag": "0011_m3_recording_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779320000000,
+      "tag": "0012_notes_ispinned_boolean",
+      "breakpoints": true
     }
   ]
 }

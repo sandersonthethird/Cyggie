@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   index,
   integer,
   pgTable,
@@ -44,7 +45,12 @@ export const notes = pgTable(
     contactId: text('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
     sourceMeetingId: text('source_meeting_id').references(() => meetings.id, { onDelete: 'set null' }),
     themeId: text('theme_id').references(() => themes.id, { onDelete: 'set null' }),
-    isPinned: integer('is_pinned').notNull().default(0),
+    // Originally `integer` (0/1) — flipped to real boolean to match the
+    // project convention (meetings.was_impromptu, meetings.is_group_event,
+    // etc. all use real booleans). Desktop SQLite stores as int + converts
+    // in rowToNote (`is_pinned === 1`), so the SQLite shape is unchanged.
+    // Migration 0012 casts the existing column.
+    isPinned: boolean('is_pinned').notNull().default(false),
     // Hierarchical organization (migrations 057, 058)
     folderPath: text('folder_path'),
     // Provenance of imported notes (Granola, Google Docs, etc.)

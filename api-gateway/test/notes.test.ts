@@ -123,7 +123,8 @@ async function insertNote(opts: {
     companyId: opts.companyId ?? null,
     contactId: opts.contactId ?? null,
     sourceMeetingId: opts.meetingId ?? null,
-    isPinned: opts.isPinned ? 1 : 0,
+    // is_pinned flipped from integer (0/1) to real boolean in migration 0012.
+    isPinned: opts.isPinned ?? false,
     createdAt: now,
     updatedAt: now,
   })

@@ -131,6 +131,28 @@ export async function registerSyncRoutes(
               continue
             }
             const camelPayload = mapKeys(entry.payload, snakeToCamel)
+            // Stamp user_id from the JWT BEFORE running the drizzle-zod
+            // validator. The desktop's SQLite-side tables don't always have
+            // a `user_id` column (e.g. notes, where only `created_by_user_id`
+            // exists), so the outbox payload arrives without one. The JWT's
+            // `sub` is the canonical tenancy value either way; stamping
+            // pre-validation makes the validator accept the row instead of
+            // rejecting it for a missing required field. (If the payload
+            // *does* carry a userId and it disagrees with the JWT, reject —
+            // that's a cross-user-write attempt, defense-in-depth.)
+            if (spec.hasUserId) {
+              if (
+                camelPayload['userId'] != null &&
+                camelPayload['userId'] !== user.sub
+              ) {
+                rejected.push({
+                  outboxId: entry.outboxId,
+                  reason: `user_id mismatch (jwt=${user.sub} payload=${String(camelPayload['userId'])})`,
+                })
+                continue
+              }
+              camelPayload['userId'] = user.sub
+            }
             const v = validateWritePayload(
               entry.table,
               entry.op as WriteOp,
@@ -141,21 +163,6 @@ export async function registerSyncRoutes(
               continue
             }
             validatedPayload = mapKeys(v.data, camelToSnake)
-            // Force user_id alignment: every owned row's user_id MUST equal
-            // the JWT's sub. Defense-in-depth against cross-user writes.
-            if (spec.hasUserId) {
-              if (
-                validatedPayload['user_id'] != null &&
-                validatedPayload['user_id'] !== user.sub
-              ) {
-                rejected.push({
-                  outboxId: entry.outboxId,
-                  reason: `user_id mismatch (jwt=${user.sub} payload=${String(validatedPayload['user_id'])})`,
-                })
-                continue
-              }
-              validatedPayload['user_id'] = user.sub
-            }
           }
 
           // 3. Decode row_id and look up current row's lamport
