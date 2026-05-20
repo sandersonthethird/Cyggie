@@ -108,7 +108,9 @@ export async function submitTranscribeJob(args: {
   submitUrl.searchParams.set('utterances', 'true')
   submitUrl.searchParams.set('punctuate', 'true')
   submitUrl.searchParams.set('callback', callbackUrl.toString())
-  submitUrl.searchParams.set('callback_method', 'POST')
+  // NOTE: don't send `callback_method` — Deepgram deprecated that param and
+  // current API returns 400 "Invalid query string" if it's present.
+  // Callbacks always fire POST now.
 
   let requestId: string | null = null
   try {
