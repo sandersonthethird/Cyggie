@@ -122,11 +122,34 @@ export async function registerRecordingRoutes(
         createdByUserId: user.sub,
       })
 
-      // Kick off the Deepgram batch transcription. submitTranscribeJob writes
-      // back `meetings.deepgram_request_id` on its own; we don't await the
-      // transcript itself — the webhook (or on-boot reconciler) does the
-      // persist + push.
-      void submitTranscribeJob({ env, meetingId, audioFilePath: audioPath })
+      // Submit to Deepgram BEFORE responding 202. Two reasons:
+      //
+      //   1. Fly auto-stops idle machines aggressively. A fire-and-forget
+      //      Promise that outlives the HTTP response gets SIGTERM'd mid-fetch
+      //      — observed via meetings rows flipping to status='error' with
+      //      deepgram_request_id=null and a ~300ms turnaround.
+      //   2. The submit itself returns in ~1-2s — Deepgram returns the
+      //      request_id immediately and processes the transcription on its
+      //      side. Holding the request for that brief window is acceptable.
+      //
+      // After submitTranscribeJob resolves with a request_id, the row is
+      // persisted; the webhook (or on-boot reconciler) handles the actual
+      // transcript persistence + APNs push without needing this request to
+      // stay open.
+      const result = await submitTranscribeJob({
+        env,
+        meetingId,
+        audioFilePath: audioPath,
+      })
+      if (result.error) {
+        // submitTranscribeJob already called markMeetingError; surface a
+        // clearer error to the client.
+        throw new GatewayError({
+          statusCode: 502,
+          code: 'TRANSCRIBE_SUBMIT_FAILED',
+          message: `Deepgram submit failed: ${result.error}`,
+        })
+      }
 
       return reply.code(202).send({ meetingId })
     },
