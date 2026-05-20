@@ -36,6 +36,7 @@ import { addPending, removePending } from '@cyggie/services/recording/pending-fi
 import type { GatewayEnv } from '../env'
 import { readFile } from 'node:fs/promises'
 import { timingSafeEqual } from 'node:crypto'
+import { Sentry } from '../sentry'
 
 // ─── Deepgram batch types (subset we actually use) ───────────────────────────
 
@@ -135,10 +136,35 @@ export async function submitTranscribeJob(args: {
     })
     if (!res.ok) {
       const errBody = await res.text().catch(() => '<no body>')
+      // Sniff first 16 bytes of the audio so we can verify the container
+      // header in Sentry without needing the audio file itself. Valid M4A
+      // starts with `....ftypM4A ` (or `....ftypmp42`/`isom`). Raw AAC ADTS
+      // starts with `FF F1`/`FF F9`. CAF starts with `caff`.
+      const audioHeadHex = Array.from(audio.subarray(0, 16))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join(' ')
+      const audioHeadAscii = Array.from(audio.subarray(0, 16))
+        .map((b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '.'))
+        .join('')
       console.error('[transcribe] Deepgram submit failed:', {
         meetingId,
         status: res.status,
         body: errBody.slice(0, 500),
+        audioBytes: audio.byteLength,
+        audioHeadHex,
+        audioHeadAscii,
+      })
+      Sentry.captureMessage('Deepgram submit returned non-2xx', {
+        level: 'error',
+        extra: {
+          meetingId,
+          status: res.status,
+          deepgramBody: errBody.slice(0, 2000),
+          audioBytes: audio.byteLength,
+          audioHeadHex,
+          audioHeadAscii,
+          submitUrl: submitUrl.toString(),
+        },
       })
       await markMeetingError(db, meetingId, `deepgram_${res.status}`)
       return { requestId: null, error: `deepgram_${res.status}` }
