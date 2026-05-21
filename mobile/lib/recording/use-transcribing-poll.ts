@@ -15,7 +15,7 @@
 //        │       │                                                         │
 //        │       ▼                                                         │
 //        │   data.status === 'transcribed'                                 │
-//        │     → cleanupLocalAudio + markDone + router.replace(/meetings)  │
+//        │     → discardPendingUploadFile + markDone + router.replace(/meetings)  │
 //        │   data.status === 'empty'                                       │
 //        │     → same cleanup; meeting detail shows "no speech" banner     │
 //        │   data.status === 'error' AND updated_at < 30min ago            │
@@ -28,7 +28,7 @@
 //        └──────────────────────────────────────────────────────────────── ┘
 //
 // Cleanup = FileSystem.deleteAsync(pendingUpload.localUri) +
-//           clearPendingUpload() (MMKV) — see `cleanupLocalAudio()` below.
+//           clearPendingUpload() (MMKV) — see `discardPendingUploadFile()` below.
 //           Idempotent / safe to call when the pending entry is already gone.
 //
 // The status-mapping decision is extracted into the pure function
@@ -43,23 +43,10 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { router } from 'expo-router'
-import * as FileSystem from 'expo-file-system/legacy'
 import { fetchMeeting } from '../api/meetings'
 import { useRecordingStore } from './store'
-import { clearPendingUpload, loadPendingUpload } from './pending-upload'
+import { discardPendingUploadFile } from './pending-upload'
 import { decidePollAction } from './poll-action'
-
-async function cleanupLocalAudio(): Promise<void> {
-  const entry = loadPendingUpload()
-  if (entry?.localUri) {
-    try {
-      await FileSystem.deleteAsync(entry.localUri, { idempotent: true })
-    } catch {
-      // Best-effort. iOS cache will GC eventually.
-    }
-  }
-  clearPendingUpload()
-}
 
 export function useTranscribingPoll(): void {
   const status = useRecordingStore((s) => s.status)
@@ -95,7 +82,7 @@ export function useTranscribingPoll(): void {
         // Both terminal-success paths: file + MMKV cleaned up, navigate to
         // meeting detail. The detail screen surfaces an "empty" banner if
         // status='empty' so the user can discard the silent recording.
-        void cleanupLocalAudio().then(() => {
+        void discardPendingUploadFile().then(() => {
           markDone()
           // replace() so the user can't hit Back into the recording screen
           // and see stale "Transcribing…" copy.
@@ -111,12 +98,12 @@ export function useTranscribingPoll(): void {
         // Stale-sweeper or otherwise too old to retry — clean up and surface
         // a terminal message. The record.tsx error state without pendingUpload
         // shows a generic "Try again" / "Cancel" pair; user will hit Cancel.
-        void cleanupLocalAudio().then(() => {
+        void discardPendingUploadFile().then(() => {
           markError(action.message)
         })
         return
       case 'gone':
-        void cleanupLocalAudio().then(() => {
+        void discardPendingUploadFile().then(() => {
           markError(action.message)
           router.replace('/(tabs)/calendar')
         })

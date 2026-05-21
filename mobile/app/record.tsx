@@ -31,11 +31,14 @@ import {
   stopRecording,
 } from '../lib/recording/session'
 import {
+  discardPendingUploadFile,
   loadPendingUploadOrEvict,
   type PendingUpload,
 } from '../lib/recording/pending-upload'
 import { useRecordingStore } from '../lib/recording/store'
 import { useTranscribingPoll } from '../lib/recording/use-transcribing-poll'
+import { fetchMeeting } from '../lib/api/meetings'
+import { ApiError } from '../lib/api/client'
 import { colors, radii, spacing, type } from '../theme'
 
 export default function RecordScreen() {
@@ -88,13 +91,40 @@ export default function RecordScreen() {
         return
       }
       if (loaded?.meetingId) {
-        // awaiting_transcription cold-start: re-attach the poll by putting
-        // the store back into 'transcribing' state with the saved meetingId.
-        // useTranscribingPoll will pick it up on the next render tick.
-        useRecordingStore.getState().finalizeMeeting(loaded.meetingId)
-        return
-      }
-      if (loaded) {
+        // Stale meetingId in MMKV: it might be a genuinely in-flight
+        // transcription the user wants to re-attach to (force-quit
+        // mid-transcription, reopening via Record FAB), OR it might be
+        // a meeting that already terminated (transcribed/empty/error/404)
+        // but never got cleaned up because the poll wasn't running when
+        // the webhook fired. Distinguish via a one-shot fetch — re-attach
+        // only for actually-in-flight; silently clean up + start fresh
+        // for terminal cases. Tapping Record FAB should not navigate to
+        // an old finished meeting.
+        let inFlight = false
+        try {
+          const meeting = await fetchMeeting(loaded.meetingId)
+          if (cancelled) return
+          inFlight = meeting.status === 'transcribing' || meeting.status === 'recording'
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404) {
+            // Server-side deleted; treat as terminal.
+            inFlight = false
+          } else {
+            // Network blip — be conservative and re-attach so we don't
+            // accidentally clean up an in-flight job we can't reach.
+            inFlight = true
+          }
+        }
+        if (cancelled) return
+        if (inFlight) {
+          useRecordingStore.getState().finalizeMeeting(loaded.meetingId)
+          return
+        }
+        // Terminal — silently clean up and fall through to startRecording
+        await discardPendingUploadFile()
+        if (cancelled) return
+        setPendingUpload(null)
+      } else if (loaded) {
         // awaiting_upload (failed previous upload, no meetingId) → error UI
         // with the retry banner.
         useRecordingStore.getState().markError(

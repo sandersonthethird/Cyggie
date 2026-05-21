@@ -80,6 +80,25 @@ export function clearPendingUpload(): void {
 }
 
 /**
+ * Discard the persisted pending upload: best-effort delete the local audio
+ * file and clear the MMKV slot. Safe to call when nothing is persisted
+ * (idempotent no-op). Used by the terminal-status poll handlers + the
+ * user-initiated Discard action + cold-start fast-forward when a stale
+ * meetingId resolves to an already-terminal meeting.
+ */
+export async function discardPendingUploadFile(): Promise<void> {
+  const entry = loadPendingUpload()
+  if (entry?.localUri) {
+    try {
+      await FileSystem.deleteAsync(entry.localUri, { idempotent: true })
+    } catch {
+      // Best-effort — iOS cache will GC eventually.
+    }
+  }
+  clearPendingUpload()
+}
+
+/**
  * Load the pending upload, but evict (delete file + clear MMKV) if its
  * `clientRecordedAt` is older than `maxAgeMs`. Centralizes the eviction
  * policy so call sites that load the pending entry get the same behavior.

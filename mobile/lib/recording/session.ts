@@ -27,7 +27,6 @@ import * as FileSystem from 'expo-file-system/legacy'
 import { uploadRecording } from '../api/recordings'
 import {
   clearPendingUpload,
-  loadPendingUpload,
   savePendingUpload,
   type PendingUpload,
 } from './pending-upload'
@@ -210,14 +209,10 @@ async function performUpload(p: PendingUpload): Promise<{ meetingId: string }> {
   }
 }
 
-/** Discard the persisted pending upload (delete the local file too). */
-export async function discardPendingUpload(): Promise<void> {
-  const p = loadPendingUpload()
-  if (p?.localUri) {
-    await FileSystem.deleteAsync(p.localUri, { idempotent: true }).catch(() => {})
-  }
-  clearPendingUpload()
-}
+/** Discard the persisted pending upload (delete the local file too).
+ *  Thin re-export so the record.tsx Discard action keeps importing from
+ *  ./session; the canonical implementation lives in pending-upload.ts. */
+export { discardPendingUploadFile as discardPendingUpload } from './pending-upload'
 
 /** Safe cleanup if the user backs out of the recording screen without stopping. */
 export async function cancelRecording(): Promise<void> {
