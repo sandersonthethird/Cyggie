@@ -42,6 +42,18 @@ export interface ApnsClient {
     deviceToken: string
     meetingId: string
   }): Promise<{ ok: boolean; unregistered: string[] }>
+
+  /**
+   * Send a transcription-complete-but-empty push (best-effort). Fires when
+   * Deepgram processed the audio successfully but detected zero utterances
+   * (silent recording / sub-threshold input). Distinct from "failed" so
+   * the user gets a clear "no speech detected" copy instead of "retry".
+   */
+  sendTranscriptionEmpty(args: {
+    deviceToken: string
+    meetingId: string
+    title: string
+  }): Promise<{ ok: boolean; unregistered: string[] }>
 }
 
 export function initApnsClient(env: GatewayEnv): ApnsClient {
@@ -80,6 +92,14 @@ export function initApnsClient(env: GatewayEnv): ApnsClient {
         bundleId: env.APNS_BUNDLE_ID,
         title: 'Cyggie',
         body: 'Transcription failed. Tap to retry.',
+        meetingId,
+      }),
+    sendTranscriptionEmpty: ({ deviceToken, meetingId, title }) =>
+      send({
+        deviceToken,
+        bundleId: env.APNS_BUNDLE_ID,
+        title: 'Cyggie',
+        body: `"${title}" recorded — no speech detected.`,
         meetingId,
       }),
   }

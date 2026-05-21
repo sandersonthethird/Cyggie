@@ -15,6 +15,7 @@ import { useQuery } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
+  deleteMeeting,
   fetchMeeting,
   type MeetingDetail,
   type MeetingLinkedCompany,
@@ -98,6 +99,7 @@ export default function MeetingDetailScreen() {
             <Hero meeting={meeting} />
             <StatsCard meeting={meeting} />
             {meeting.isGroupEvent && <GroupEventBanner />}
+            {meeting.status === 'empty' && <EmptyTranscriptBanner meetingId={meeting.id} />}
             <SegmentControl value={segment} onChange={setSegment} />
             {segment === 'overview' && <OverviewSection meeting={meeting} />}
             {segment === 'transcript' && (
@@ -203,6 +205,57 @@ function GroupEventBanner() {
         </Text>
         <Text style={styles.groupEventBannerSubtitle}>Toggle from desktop</Text>
       </View>
+    </View>
+  )
+}
+
+// Shown when the meeting completed transcription but Deepgram detected 0
+// utterances — the recording was effectively silent. Lets the user discard
+// (hard-delete from gateway) or keep (dismiss the banner; meeting stays in
+// the calendar list, presumably for later manual cleanup from desktop).
+function EmptyTranscriptBanner({ meetingId }: { meetingId: string }) {
+  const [dismissed, setDismissed] = useState(false)
+  const [busy, setBusy] = useState(false)
+  if (dismissed) return null
+  const onDiscard = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await deleteMeeting(meetingId)
+      router.replace('/(tabs)/calendar')
+    } catch {
+      // If the delete fails (network blip, etc.), just leave the banner
+      // visible so the user can retry. We don't surface a toast here in
+      // V1 to keep scope minimal — they can pull-to-refresh and try again.
+      setBusy(false)
+    }
+  }
+  return (
+    <View style={styles.emptyTranscriptBanner}>
+      <Ionicons name="mic-off-outline" size={18} color={colors.text2} />
+      <View style={styles.groupEventBannerText}>
+        <Text style={styles.groupEventBannerTitle}>No speech detected</Text>
+        <Text style={styles.groupEventBannerSubtitle}>
+          The recording may have been silent or too quiet.
+        </Text>
+      </View>
+      <Pressable
+        onPress={onDiscard}
+        disabled={busy}
+        style={({ pressed }) => [styles.emptyBannerBtn, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Discard empty meeting"
+      >
+        <Text style={styles.emptyBannerBtnText}>Discard</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => setDismissed(true)}
+        style={({ pressed }) => [styles.emptyBannerLink, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Keep meeting"
+      >
+        <Text style={styles.emptyBannerLinkText}>Keep</Text>
+      </Pressable>
     </View>
   )
 }
@@ -553,6 +606,40 @@ const styles = StyleSheet.create({
     color: colors.text3,
     fontSize: type.caption,
     marginTop: 2,
+  },
+  emptyTranscriptBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.surface3,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    borderRadius: radii.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  emptyBannerBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.crimson,
+  },
+  emptyBannerBtnText: {
+    color: colors.crimson,
+    fontSize: type.caption,
+    fontWeight: '600',
+  },
+  emptyBannerLink: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  emptyBannerLinkText: {
+    color: colors.text3,
+    fontSize: type.caption,
+    fontWeight: '500',
   },
   statCell: { flex: 1, alignItems: 'center', paddingHorizontal: 4 },
   statDivider: {

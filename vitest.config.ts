@@ -22,7 +22,13 @@ export default defineConfig({
     include: [
       'src/tests/**/*.test.{ts,tsx}',
       'web/middleware.test.ts',
-      'api-gateway/test/**/*.test.ts'
+      'api-gateway/test/**/*.test.ts',
+      // Mobile pure-JS unit tests. Tests covering React-Native-specific
+      // surfaces (UI rendering, native modules) belong in a separate
+      // mobile-side runner that knows how to mock the RN bridge — these
+      // tests only exercise plain TS modules with mocked file-system and
+      // MMKV, so the root node runner is fine for them.
+      'mobile/lib/**/__tests__/**/*.test.ts'
     ],
     // Default placeholder values for M3-newly-required env vars. Individual
     // tests can override (e.g. recordings-quota.test.ts sets a lower quota).

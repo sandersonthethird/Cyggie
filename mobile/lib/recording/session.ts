@@ -166,8 +166,16 @@ export async function retryPendingUpload(p: PendingUpload): Promise<{ meetingId:
 }
 
 /**
- * Shared upload path used by both fresh stop() and retry(). On error,
- * persists the pending-upload metadata to MMKV so it survives app restart.
+ * Shared upload path used by both fresh stop() and retry(). On success,
+ * stores the server-assigned meetingId in the pending entry and KEEPS the
+ * local audio file (cleanup happens later when the poll detects a terminal
+ * status). On error, persists the pending-upload metadata so the user can
+ * retry after an app restart.
+ *
+ * Why keep the file post-upload: if Deepgram's callback later sets
+ * status='error', mobile can re-upload from the local copy rather than
+ * losing the recording. See use-transcribing-poll.ts for the cleanup +
+ * retry-promotion paths.
  */
 async function performUpload(p: PendingUpload): Promise<{ meetingId: string }> {
   try {
@@ -179,10 +187,9 @@ async function performUpload(p: PendingUpload): Promise<{ meetingId: string }> {
       onProgress: (frac) => useRecordingStore.getState().setUploadProgress(frac),
     })
     useRecordingStore.getState().finalizeMeeting(result.meetingId)
-    clearPendingUpload()
-    // Best-effort cleanup. The gateway has the audio now; phone copy is
-    // disposable. Failure here is non-fatal (cache will get GC'd by iOS).
-    void FileSystem.deleteAsync(p.localUri, { idempotent: true }).catch(() => {})
+    // Transition the pending entry from awaiting_upload → awaiting_transcription
+    // by stamping it with the server-assigned meetingId. Audio file stays put.
+    savePendingUpload({ ...p, meetingId: result.meetingId, lastError: undefined })
     return { meetingId: result.meetingId }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Upload failed'
@@ -197,7 +204,7 @@ async function performUpload(p: PendingUpload): Promise<{ meetingId: string }> {
     } catch {
       // ignore — file size is cosmetic
     }
-    savePendingUpload({ ...p, fileSizeBytes, lastError: message })
+    savePendingUpload({ ...p, fileSizeBytes, lastError: message, meetingId: undefined })
     useRecordingStore.getState().markError(message)
     throw err
   }

@@ -30,7 +30,10 @@ import {
   startRecording,
   stopRecording,
 } from '../lib/recording/session'
-import { loadPendingUpload } from '../lib/recording/pending-upload'
+import {
+  loadPendingUploadOrEvict,
+  type PendingUpload,
+} from '../lib/recording/pending-upload'
 import { useRecordingStore } from '../lib/recording/store'
 import { useTranscribingPoll } from '../lib/recording/use-transcribing-poll'
 import { colors, radii, spacing, type } from '../theme'
@@ -44,32 +47,63 @@ export default function RecordScreen() {
 
   // Poll /meetings/:id every 10s while we're in 'transcribing'. Fires
   // markDone + navigates to meeting detail when the gateway flips status to
-  // 'transcribed'. This is the working fallback for "transcript ready" while
-  // we wait on the Apple Developer Program approval needed for APNs push.
-  // When APNs lands, the notification handler in _layout.tsx also navigates;
-  // first one to win owns the transition (router.replace is idempotent).
+  // 'transcribed' or 'empty'. This is the working fallback for
+  // "transcript ready" while we wait on the Apple Developer Program
+  // approval needed for APNs push. When APNs lands, the notification
+  // handler in _layout.tsx also navigates; first one to win owns the
+  // transition (router.replace is idempotent).
   useTranscribingPoll()
 
-  const [pendingUpload, setPendingUpload] = useState(() => loadPendingUpload())
+  // pendingUpload is loaded asynchronously because loadPendingUploadOrEvict
+  // does a filesystem deleteAsync for stale entries. Null = "no entry OR
+  // entry evicted as too old". Undefined = "still loading on first render".
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null | undefined>(
+    undefined,
+  )
 
-  // Auto-start when arriving fresh from the Record FAB — unless there's a
-  // pending failed upload waiting to be retried. In that case we land on the
-  // error state and let the user choose Retry / Discard.
+  // Auto-start when arriving fresh from the Record FAB — UNLESS:
+  //  • a previous failed upload is awaiting retry (no meetingId in MMKV), OR
+  //  • a previous in-flight transcription is awaiting completion (meetingId
+  //    present in MMKV — likely user force-quit mid-transcription and is
+  //    reopening the app).
+  //
+  // Both cases land us on this screen in a non-recording state so the user
+  // can choose what to do (retry / discard / wait for poll).
   useEffect(() => {
-    if (status !== 'idle') return
-    if (pendingUpload) {
-      useRecordingStore.getState().markError(
-        pendingUpload.lastError ?? 'Previous upload failed — tap to retry.',
-      )
-      return
+    let cancelled = false
+    void (async () => {
+      const loaded = await loadPendingUploadOrEvict()
+      if (cancelled) return
+      setPendingUpload(loaded)
+      if (status !== 'idle') return
+      if (loaded?.meetingId) {
+        // awaiting_transcription cold-start: re-attach the poll by putting
+        // the store back into 'transcribing' state with the saved meetingId.
+        // useTranscribingPoll will pick it up on the next render tick.
+        useRecordingStore.getState().finalizeMeeting(loaded.meetingId)
+        return
+      }
+      if (loaded) {
+        // awaiting_upload (failed previous upload, no meetingId) → error UI
+        // with the retry banner.
+        useRecordingStore.getState().markError(
+          loaded.lastError ?? 'Previous upload failed — tap to retry.',
+        )
+        return
+      }
+      try {
+        await startRecording()
+      } catch (err) {
+        Alert.alert(
+          'Microphone unavailable',
+          err instanceof Error ? err.message : 'Could not start recording',
+        )
+        router.back()
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-    startRecording().catch((err) => {
-      Alert.alert(
-        'Microphone unavailable',
-        err instanceof Error ? err.message : 'Could not start recording',
-      )
-      router.back()
-    })
     // Don't include status in deps — only run on initial mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -137,6 +171,20 @@ export default function RecordScreen() {
         err instanceof Error ? err.message : 'Could not restart recording',
       )
     }
+  }
+
+  // While loadPendingUploadOrEvict is running (one tick on cold-start, plus
+  // any time we have a stale entry to delete), avoid flashing the
+  // "fresh recording" UI. The useEffect drives the actual state transition
+  // once pendingUpload resolves.
+  if (pendingUpload === undefined) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.crimson} />
+        </View>
+      </SafeAreaView>
+    )
   }
 
   return (

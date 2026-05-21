@@ -21,10 +21,11 @@ process.env['NODE_ENV'] = 'test'
 process.env['DEEPGRAM_WEBHOOK_SECRET'] = 'test-webhook-secret-at-least-16-chars'
 if (!process.env['DEEPGRAM_API_KEY']) process.env['DEEPGRAM_API_KEY'] = 'test-deepgram-key'
 
-// Capture-mode APNs provider: every sendTranscriptionReady call is recorded
-// into `apnsCalls`. The 410 path is driven via `setApnsResultForNextCall`.
+// Capture-mode APNs provider: every sendTranscriptionReady / Empty call is
+// recorded into `apnsCalls` with a `kind` discriminator so path-5 can assert
+// which APNs method fired. The 410 path is driven via `setApnsResultForNextCall`.
 type ApnsResult = { ok: boolean; unregistered: string[] }
-const apnsCalls: Array<{ deviceToken: string; meetingId: string; title: string }> = []
+const apnsCalls: Array<{ kind: 'ready' | 'empty'; deviceToken: string; meetingId: string; title: string }> = []
 let nextApnsResult: ApnsResult = { ok: true, unregistered: [] }
 function setApnsResultForNextCall(r: ApnsResult): void {
   nextApnsResult = r
@@ -37,12 +38,22 @@ vi.mock('../src/push/apns', () => ({
       meetingId: string
       title: string
     }) => {
-      apnsCalls.push(args)
+      apnsCalls.push({ kind: 'ready', ...args })
       const r = nextApnsResult
       nextApnsResult = { ok: true, unregistered: [] }
       return r
     },
     sendTranscriptionFailed: async () => ({ ok: true, unregistered: [] }),
+    sendTranscriptionEmpty: async (args: {
+      deviceToken: string
+      meetingId: string
+      title: string
+    }) => {
+      apnsCalls.push({ kind: 'empty', ...args })
+      const r = nextApnsResult
+      nextApnsResult = { ok: true, unregistered: [] }
+      return r
+    },
   }),
 }))
 
@@ -169,6 +180,7 @@ describe('POST /recordings/deepgram-webhook', () => {
 
     expect(apnsCalls).toHaveLength(1)
     expect(apnsCalls[0]).toEqual({
+      kind: 'ready',
       deviceToken: 'dev-token-aaa',
       meetingId,
       title: 'Webhook Test Meeting',
@@ -218,6 +230,42 @@ describe('POST /recordings/deepgram-webhook', () => {
     })
     expect(meeting?.status).toBe('error')
     expect(apnsCalls).toHaveLength(0)
+  })
+
+  test('path 5: Deepgram returns 2xx with empty utterances → status=empty + APNs empty', async () => {
+    const { meetingId } = await setupUserSessionMeeting({
+      apnsDeviceToken: 'dev-token-empty-1',
+    })
+    const emptyPayload = {
+      metadata: { duration: 12.4, channels: 1, request_id: 'dg-req-empty-1' },
+      results: {
+        channels: [{ alternatives: [{ transcript: '', words: [] }] }],
+        utterances: [],
+      },
+    }
+    const res = await app.inject({
+      method: 'POST',
+      url: `/recordings/deepgram-webhook?meetingId=${meetingId}&secret=${env.DEEPGRAM_WEBHOOK_SECRET}`,
+      headers: { 'content-type': 'application/json' },
+      payload: emptyPayload,
+    })
+    expect(res.statusCode).toBe(200)
+
+    const meeting = await db.query.meetings.findFirst({
+      where: eq(schema.meetings.id, meetingId),
+    })
+    expect(meeting?.status).toBe('empty')
+    expect(meeting?.durationSeconds).toBe(12)
+    expect(meeting?.speakerCount).toBe(0)
+    expect(meeting?.transcriptSegments).toEqual([])
+
+    expect(apnsCalls).toHaveLength(1)
+    expect(apnsCalls[0]).toEqual({
+      kind: 'empty',
+      deviceToken: 'dev-token-empty-1',
+      meetingId,
+      title: 'Webhook Test Meeting',
+    })
   })
 
   test('path 3: APNs 410 Unregistered → session token cleaned up', async () => {

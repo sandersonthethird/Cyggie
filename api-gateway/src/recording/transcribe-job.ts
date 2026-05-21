@@ -398,10 +398,18 @@ async function persistTranscriptAndPush(
   const speakerMap = buildSpeakerMap(payload)
   const durationSeconds = Math.floor(payload.metadata?.duration ?? 0)
 
+  // Branch on segment count. Deepgram returns a valid 2xx with an empty
+  // utterances array when the audio was processed but no speech was
+  // detected — silence, near-silence, or sub-threshold input. Mobile shows
+  // a "no speech detected" banner so the user can discard the recording
+  // rather than seeing a confusing "transcribed" meeting with empty body.
+  const isEmpty = segments.length === 0
+  const newStatus = isEmpty ? 'empty' : 'transcribed'
+
   await db
     .update(schema.meetings)
     .set({
-      status: 'transcribed',
+      status: newStatus,
       transcriptSegments: segments,
       speakerMap,
       speakerCount: Object.keys(speakerMap).length,
@@ -439,11 +447,17 @@ async function persistTranscriptAndPush(
   const apns = initApnsClient(env)
   for (const s of sessions) {
     if (!s.apnsDeviceToken) continue
-    const result = await apns.sendTranscriptionReady({
-      deviceToken: s.apnsDeviceToken,
-      meetingId: meeting.id,
-      title: meeting.title,
-    })
+    const result = isEmpty
+      ? await apns.sendTranscriptionEmpty({
+          deviceToken: s.apnsDeviceToken,
+          meetingId: meeting.id,
+          title: meeting.title,
+        })
+      : await apns.sendTranscriptionReady({
+          deviceToken: s.apnsDeviceToken,
+          meetingId: meeting.id,
+          title: meeting.title,
+        })
     for (const deadToken of result.unregistered) {
       await db
         .update(schema.sessions)

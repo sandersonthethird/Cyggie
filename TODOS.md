@@ -64,7 +64,7 @@ Required before the first non-local gateway deploy:
 | Fly.io deploy (api-gateway) | ⏳ | Needs `fly` CLI + Fly account; `fly launch` from `api-gateway/` |
 | Sentry account + DSN | ⏳ | `SENTRY_DSN` env var slot already wired in [api-gateway/src/env.ts](api-gateway/src/env.ts) |
 | Broader observability platform (Axiom / Honeycomb / Datadog / etc.) | 🔜 **Phase 2** | Sentry covers ~80% of V1 ops needs at single-firm scale. Layer a logs+traces platform when multi-firm growth or an oncall rotation justifies the cost. `DATADOG_API_KEY` slot in [env.ts](api-gateway/src/env.ts) left in place as an optional env var; populate when the platform is picked. |
-| Cloudflare R2 bucket (private + signed URLs) | ⏳ | For canonical WAV storage in M4 |
+| Cloudflare R2 bucket (private + signed URLs) | 🔜 **post-V1** | Originally planned for M4 canonical-WAV storage. Phone-side audio retention (mobile keeps the audio until `status='transcribed'` lands) removed the recording-durability driver — see [mobile/lib/recording/pending-upload.ts](mobile/lib/recording/pending-upload.ts) + [use-transcribing-poll.ts](mobile/lib/recording/use-transcribing-poll.ts). The real R2 driver becomes (a) re-transcribe ("re-process meeting X with model Y"), (b) "download original audio" UX, or (c) the post-V1 web client where the phone is no longer the canonical audio source. Revisit when the first concrete ask arrives. |
 | APNs key + bundle ID | ⏳ | For push notifications in M2 |
 | EAS Build subscription (Expo) | ⏳ | Required for M1a dev client builds |
 | Apple Developer Program | ⏳ | Required for TestFlight + App Store in M6/M7 |
@@ -126,6 +126,20 @@ Default Phase 2 recommendation: **Sentry + Axiom** (~$0-30/mo total).
 | Phase 1.5a | Desktop → Neon one-way sync (writeWithSync barrel, SyncAgent, /sync/push, drizzle-zod validators, dead-letter) | ✅ shipped | commits 7066796 / 99e1c38 / 36ff7f3 / 1778f7e — 59/59 + 17/17 tests, deployed to Fly. Desktop OAuth now wired so the SyncAgent has a real JWT. |
 | Phase 1.5b | Mobile → Neon writes (PATCH routes, mobile-side outbox, GET /sync/pull) | ⏳ pending | Ships when M4–M5 add mobile-side editing flows |
 | Phase 1.5c | Real-time push (SSE + APNs, sub-second propagation) | ⏳ pending | Ships when polling-refetch latency hurts |
+
+### Mobile meeting list filter parity for past `'scheduled'` rows
+
+**What:** Audit the Expo client's meeting list filter (`mobile/`) to ensure past `'scheduled'` and past `'error'` rows render in the Past view, matching the desktop behaviour shipped via the "i had a meeting" fix.
+
+**Why:** Desktop now seeds a `'scheduled'` row whenever the meeting notifier fires for a calendar event (and a reconcile loop creates rows for past events the notifier missed). These rows propagate to Neon via the outbox → mobile via M2 sync. If the mobile filter still mirrors the *old* desktop filter (status whitelist of `'recording'/'transcribed'/'summarized'`), the user will hit the same disappearing-meeting bug on phone.
+
+**Context:** The desktop filter relax + helper extraction landed alongside this TODO. See plan `/Users/sandersoncass/.claude/plans/i-had-a-meeting-adaptive-seal.md`. The meeting-status state machine + visibility rules are now documented inline at [src/shared/types/meeting.ts](src/shared/types/meeting.ts) above the `MeetingStatus` union.
+
+**Depends on:** M2 meeting list has shipped already (commits 45bd145 / f571dd3) — this is a post-ship audit. Should land before M3 starts adding write paths to the same screens, since M3 will compound any filter mismatch.
+
+**Effort:** S (audit + likely a one-line filter change + 1-2 tests).
+
+**Priority:** P2 — bug is user-facing but only triggers once the user has both desktop and mobile installed and dismisses a notification on desktop.
 
 ### Cloud-side Gmail + Drive services (post-V1 — Model A backlog)
 

@@ -44,6 +44,10 @@ const MeetingDetailSchema = z.object({
   date: z.string(),
   durationSeconds: z.number().nullable(),
   status: z.string(),
+  // ISO timestamp of last server-side mutation. Mobile uses this to decide
+  // whether a status='error' meeting is recent enough to be retryable —
+  // see use-transcribing-poll.ts (30min age filter).
+  updatedAt: z.string(),
   wasImpromptu: z.boolean(),
   // Group-event ingestion gate (migration 098). When true, the desktop did not
   // seed contacts/companies from this meeting's attendee list. Mobile shows a
@@ -180,6 +184,7 @@ export async function registerMeetingRoutes(
         date: new Date(meeting.date).toISOString(),
         durationSeconds: meeting.durationSeconds,
         status: meeting.status,
+        updatedAt: new Date(meeting.updatedAt).toISOString(),
         wasImpromptu: meeting.wasImpromptu,
         isGroupEvent: meeting.isGroupEvent,
         meetingPlatform: meeting.meetingPlatform,
@@ -193,6 +198,45 @@ export async function registerMeetingRoutes(
         linkedCompanies,
         linkedContacts,
       }
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // DELETE /meetings/:id — user-scoped hard delete.
+  //
+  // Used by the empty-transcript "Discard" action so the user can clean up
+  // silent / sub-threshold recordings without leaving an empty meeting row
+  // cluttering the calendar list. Dependent rows
+  // (meeting_company_links, meeting_speaker_contact_links) are removed via
+  // ON DELETE CASCADE on the schema-level FKs. notes.source_meeting_id and
+  // tasks.meeting_id are nulled (ON DELETE SET NULL).
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'DELETE',
+    url: '/meetings/:id',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(64) }),
+      response: { 200: z.object({ ok: z.literal(true) }) },
+    },
+    handler: async (req) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id } = req.params
+
+      const existing = await db.query.meetings.findFirst({
+        where: and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)),
+        columns: { id: true },
+      })
+      if (!existing) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'MEETING_NOT_FOUND',
+          message: 'Meeting not found',
+        })
+      }
+
+      await db.delete(schema.meetings).where(eq(schema.meetings.id, id))
+      return { ok: true as const }
     },
   })
 }
