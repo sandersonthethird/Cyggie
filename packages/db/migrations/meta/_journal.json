@@ -99,6 +99,13 @@
       "when": 1779323548011,
       "tag": "0013_sessions_recovered_at",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1779400000000,
+      "tag": "0014_meetings_calendar_event_per_user",
+      "breakpoints": true
     }
   ]
 }

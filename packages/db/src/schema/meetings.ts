@@ -123,9 +123,13 @@ export const meetings = pgTable(
     index('meetings_status_idx').on(t.status),
     index('meetings_created_by_idx').on(t.createdByUserId),
     index('meetings_updated_by_idx').on(t.updatedByUserId),
-    // Calendar event dedup (migration 064) — UNIQUE only where calendar_event_id is set.
-    uniqueIndex('meetings_calendar_event_idx')
-      .on(t.calendarEventId)
+    // Calendar event dedup — UNIQUE per-user (migration 0014 — was global-
+    // unique in 064; the global constraint blocked multi-tenant operation
+    // because two users invited to the same Google calendar event share
+    // the event id and couldn't both have a row). One meeting per
+    // (user_id, calendar_event_id) pair, where calendar_event_id is set.
+    uniqueIndex('meetings_user_calendar_event_idx')
+      .on(t.userId, t.calendarEventId)
       .where(sql`${t.calendarEventId} IS NOT NULL`),
   ],
 )

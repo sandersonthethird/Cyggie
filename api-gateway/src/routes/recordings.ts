@@ -99,10 +99,24 @@ export async function registerRecordingRoutes(
         })
       }
 
-      // Persist audio. For V1 we write to OS tmp; Fly volumes / R2 is a
-      // follow-up. The path is stored on the meeting row so the on-boot
-      // reconciler (and future re-transcribe paths) can find the audio again.
-      const meetingId = createId()
+      // Find-or-create the meeting row. When the mobile client previously
+      // tapped a calendar event (POST /meetings/from-calendar-event) we
+      // already have a row at status='scheduled' for this (user, calEventId).
+      // Reuse it — flipping its status to 'recording' and attaching the
+      // audio path — so that pre-recording notes survive and we don't break
+      // the per-user UNIQUE on (user_id, calendar_event_id) (migration 0014).
+      let existing: { id: string } | undefined
+      if (calendarEventId) {
+        existing = await db.query.meetings.findFirst({
+          where: and(
+            eq(schema.meetings.userId, user.sub),
+            eq(schema.meetings.calendarEventId, calendarEventId),
+          ),
+          columns: { id: true },
+        })
+      }
+      const meetingId = existing?.id ?? createId()
+
       // Save as .m4a — that's what expo-av actually produces (MPEG-4 audio
       // container with AAC codec inside). The extension is cosmetic for
       // Deepgram (it inspects the bytes, not the path) but consistency
@@ -112,20 +126,36 @@ export async function registerRecordingRoutes(
       const audioPath = join(audioDir, `${meetingId}.m4a`)
       await writeFile(audioPath, audioBuffer)
 
-      // Mobile recordings are always impromptu (the user tapped Record FAB
-      // from the Calendar tab). M5 will let them attach to a calendar event
-      // post-hoc; for now `was_impromptu=true` is the truth.
-      await db.insert(schema.meetings).values({
-        id: meetingId,
-        userId: user.sub,
-        title,
-        date: recordedAt,
-        calendarEventId,
-        recordingPath: audioPath,
-        status: 'recording',
-        wasImpromptu: true,
-        createdByUserId: user.sub,
-      })
+      if (existing) {
+        // Pre-existing scheduled meeting (from /meetings/from-calendar-event).
+        // Flip into recording, attach the audio. Don't clobber notes/title —
+        // the user may have set them ahead of the meeting.
+        await db
+          .update(schema.meetings)
+          .set({
+            recordingPath: audioPath,
+            status: 'recording',
+            updatedAt: new Date(),
+            updatedByUserId: user.sub,
+          })
+          .where(eq(schema.meetings.id, meetingId))
+      } else {
+        // No prior row — fully impromptu (Record FAB outside a calendar slot)
+        // or a calendar event we've never tapped. `was_impromptu=true`
+        // matches the FAB path; the from-cal-event path would have created
+        // a row first, so reaching here implies impromptu.
+        await db.insert(schema.meetings).values({
+          id: meetingId,
+          userId: user.sub,
+          title,
+          date: recordedAt,
+          calendarEventId,
+          recordingPath: audioPath,
+          status: 'recording',
+          wasImpromptu: true,
+          createdByUserId: user.sub,
+        })
+      }
 
       // Submit to Deepgram BEFORE responding 202. Two reasons:
       //

@@ -303,6 +303,119 @@ the delete works after the fix.
 
 ---
 
+## P1 — Sync (Phase 1.5b follow-ups, post-mobile-tap-to-view PR)
+
+These 8 items were captured during the plan-ceo and plan-eng reviews of
+the mobile calendar-tap-to-view + notes-editing PR. Stage 1 of that PR
+shipped the gateway + migration + tests; the remaining mobile work and
+these TODOs follow.
+
+### T1 — `/sync/pull` pagination
+**What:** Add `limit` + `cursor` to `GET /sync/pull`. The endpoint
+returns all user-scoped meetings with `lamport > since` ordered by
+lamport ASC; for first-launch (since=0) on a heavy account this could
+return hundreds of rows in one shot.
+**Why:** Plan-ceo-review 11B accepted unbounded responses for V1's
+single-firm scale. Hard cliff at ~500 meetings/user.
+**Pros:** Bounded latency + memory at the gateway and on mobile.
+**Cons:** Adds a stateful cursor on both sides; ~half a day of work.
+**Context:** [api-gateway/src/routes/sync.ts](api-gateway/src/routes/sync.ts) — current handler returns full result set with `serverLamport` reflecting the max.
+**Depends on:** Real signal that a user crossed the cliff. Until then defer.
+
+### T2 — Outbox DLQ debug screen on mobile
+**What:** Settings → Dev tools view showing the mobile MMKV outbox DLQ
+(entries that hit 10 retries). Lets a dev or support engineer see what
+failed and force-replay.
+**Why:** When the outbox starts dropping entries to DLQ in the wild,
+there's currently no surface to see why. Sentry will capture the
+exception but not the entry contents.
+**Pros:** Faster diagnosis; ability to manually retry stuck writes.
+**Cons:** Dev-only UX; ~half a day.
+**Depends on:** Mobile sync infrastructure shipped (Stage 2 of the
+calendar-tap PR).
+
+### T3 — Port enrichment to `@cyggie/services` so gateway can fire it
+**What:** Extract `syncContactsFromAttendees` + company-enrichment from
+the desktop main-process IPC layer into `@cyggie/services` so the
+gateway's `POST /meetings/from-calendar-event` can run the same side
+effects as desktop's `prepareMeetingFromCalendarEvent`.
+**Why:** Plan-ceo-review 4A: the gateway path currently SKIPS contact
+sync + company enrichment. Desktop catches up via Phase 1.5c.
+Eventually mobile-originated meetings should produce the same CRM
+state as desktop-originated ones, server-side, without waiting for the
+user's laptop to come online.
+**Pros:** Eliminates the temporal hole; mobile-first users get CRM data
+in real-time.
+**Cons:** Multi-week port; the enrichment depends on heavy services
+(Drive, Gmail, AI) that would need to run server-side.
+**Depends on:** Phase 1.5c bidirectional sync (T4).
+
+### T4 — Phase 1.5c: desktop pulls from Neon
+**What:** Mirror of `GET /sync/pull` on the desktop side — the desktop
+SyncAgent polls the gateway for rows updated by mobile and applies them
+to the local SQLite. Closes the round-trip so mobile-originated edits
+appear on desktop without a manual refresh.
+**Why:** V1 desktop assumes it's the source of truth. Once mobile can
+PATCH notes, desktop needs to learn about those updates.
+**Pros:** True bidirectional sync; the original 1.5 vision.
+**Cons:** Significant: 2-3 weeks. Requires reconciling lamport across
+two outboxes (desktop's and mobile's).
+**Depends on:** Mobile sync infrastructure shipped (Stage 2).
+
+### T5 — Record button on meeting detail screen
+**What:** Add a "Record" button to the mobile meeting detail screen so a
+user can tap an upcoming event → see notes → tap Record without going
+back to the calendar tab. Recording reuses the existing meeting row
+(per `/recordings/upload` find-or-update — already shipped).
+**Why:** Workflow polish; current Record FAB is global, not contextual.
+**Pros:** Removes a navigation step in the most common flow.
+**Cons:** Small UX work — mostly arranging the existing recording
+plumbing under a new button.
+**Depends on:** Mobile UI shipped (Stage 2).
+
+### T6 — Hostile-QA chaos test
+**What:** Maestro / Detox script that types ~1000 keystrokes/sec into
+the mobile notes editor while the gateway intermittently 5xxs. Verify
+the outbox drains, no entries are lost, and lamport stays monotonic.
+**Why:** Plan-eng-review test ambition check — proves resilience under
+adversarial conditions.
+**Pros:** Catches race conditions our unit tests miss (e.g. coalescing
+under high write rate + intermittent failures).
+**Cons:** Maestro chaos harness doesn't exist yet; ~3 days to build.
+**Depends on:** Mobile sync infrastructure shipped (Stage 2).
+
+### T7 — Maestro E2E flow
+**What:** Maestro test for the full happy path: calendar tap → type
+notes → background app → resume → re-open meeting → verify notes
+restored from MMKV draft + synced via outbox.
+**Why:** Plan-ceo-review verification step — this is the demo flow.
+**Pros:** Regression guard against the canonical user journey.
+**Cons:** Maestro tests are slow + flaky; ~1 day to write + stabilize.
+**Depends on:** Mobile UI shipped (Stage 2).
+
+### T8 — Lamport-forgery protection (forge-able locks)
+**What:** Both `/sync/push` (Phase 1.5a, shipped) and `PATCH /meetings/:id`
+(this PR) use **client-sourced** lamport with Last-Write-Wins compare.
+A malicious client could send a huge `lamport` value (e.g. `BigInt.MAX`)
+to permanently lock out all future writes from any other device. Both
+write paths share this vulnerability; the fix must coordinate them.
+**Why:** Caught in plan-ceo-review audit of `/sync/push` (sync.ts:201-225)
+before adopting the same primitive in PATCH. Pathological for current
+single-firm beta but real for any multi-tenant or hostile-client model.
+**Possible fixes:**
+- Server-sourced lamport (server increments; client sends `baseLamport`
+  it last saw). Requires changing both /sync/push (desktop outbox)
+  AND PATCH (mobile outbox) atomically.
+- Per-user lamport ceiling: reject any incoming lamport > stored + N
+  (where N is some sane batch size like 1000). Cheap; preserves
+  client-sourced LWW.
+**Pros:** Closes the lockout vector before multi-tenant ships.
+**Cons:** Coordinated change across both write paths; risk of
+breaking the desktop outbox if not careful.
+**Depends on:** Decision on which fix. Recommend ceiling for V1.
+
+---
+
 ## P2 — Contacts (Performance)
 
 ### Pre-compute contact activity touchpoints

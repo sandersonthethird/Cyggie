@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
+import { sql } from 'drizzle-orm'
+import { schema } from '@cyggie/db'
 import { OWNED_TABLES_BY_NAME } from '@cyggie/db/sync/owned-tables'
 import { decodeRowId } from '@cyggie/db/sync/encode-row-id'
 import {
   validateWritePayload,
   type WriteOp,
 } from '@cyggie/db/postgres/write-validators'
-import { getPool } from '../db'
+import { getDb, getPool } from '../db'
 import type { GatewayEnv } from '../env'
 
 // =============================================================================
@@ -286,6 +288,80 @@ export async function registerSyncRoutes(
       )
 
       return reply.send({ acked, rejected, conflicts })
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // GET /sync/pull?since=<lamport> — mobile pulls deltas from Neon.
+  //
+  // Returns user-scoped meetings rows with lamport > since, ordered by
+  // lamport ASC. Mobile persists the highest seen lamport as
+  // `lastPullLamport` in MMKV; subsequent calls only return the delta.
+  //
+  // No pagination per plan-ceo-review 11B — first-launch since=0 is the
+  // only unbounded case, accepted for current single-firm scale. Hard
+  // cliff documented at ~500 meetings/user.
+  //
+  // For V1, only meetings are returned. Other tables can join this
+  // endpoint as the schema grows (notes/contacts/etc. once Phase 1.5c
+  // pulls them into the mobile read path).
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'GET',
+    url: '/sync/pull',
+    schema: {
+      querystring: z.object({
+        since: z.string().min(1).max(40).default('0'),
+      }),
+      response: {
+        200: z.object({
+          meetings: z.array(z.unknown()),
+          serverLamport: z.string(),
+        }),
+      },
+    },
+    handler: async (req) => {
+      const user = req.requireFirm()
+      const since = req.query.since
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+
+      // BigInt-safe comparison via explicit numeric cast. Lamport is stored as
+      // text because Postgres bigint values can exceed JS safe-integer range
+      // (matches /sync/push's serialization convention). Drizzle's gt() would
+      // do lexicographic comparison on a text column — wrong for numerics —
+      // so we use raw SQL fragments in the where/orderBy clauses. Going
+      // through drizzle's query builder gives us camelCase row keys
+      // (consistent with the rest of the API) instead of pg-pool snake_case.
+      const rows = await db
+        .select()
+        .from(schema.meetings)
+        .where(
+          sql`${schema.meetings.userId} = ${user.sub}
+              AND CAST(${schema.meetings.lamport} AS numeric) > CAST(${since} AS numeric)`,
+        )
+        .orderBy(sql`CAST(${schema.meetings.lamport} AS numeric) ASC`)
+
+      const serverLamport = rows.length > 0
+        ? String(
+            rows.reduce((max, r) => {
+              const v = BigInt(r.lamport ?? '0')
+              return v > max ? v : max
+            }, BigInt(since)),
+          )
+        : since
+
+      req.log.info(
+        {
+          userId: user.sub,
+          since,
+          rowCount: rows.length,
+          metric: 'sync.pull.row_count',
+          count: rows.length,
+        },
+        'sync.pull complete',
+      )
+
+      return { meetings: rows, serverLamport }
     },
   })
 }

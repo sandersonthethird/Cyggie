@@ -1,7 +1,8 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, gt, sql } from 'drizzle-orm'
+import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
@@ -48,6 +49,11 @@ const MeetingDetailSchema = z.object({
   // whether a status='error' meeting is recent enough to be retryable —
   // see use-transcribing-poll.ts (30min age filter).
   updatedAt: z.string(),
+  // Monotonic lamport clock for this row. Mobile reads this when starting
+  // to edit notes; subsequent PATCH carries the value back (incremented
+  // client-side) for Last-Write-Wins compare on the server. Stored as a
+  // string because Postgres bigint values can exceed JS safe-integer range.
+  lamport: z.string(),
   wasImpromptu: z.boolean(),
   // Group-event ingestion gate (migration 098). When true, the desktop did not
   // seed contacts/companies from this meeting's attendee list. Mobile shows a
@@ -110,6 +116,73 @@ function normalizeSegments(
   return { hasTranscript: out.length > 0, segments: out }
 }
 
+/**
+ * Build a MeetingDetail response from a `meetings` row + its linked
+ * companies/contacts. Shared by GET, POST /from-calendar-event, PATCH,
+ * and the GET /sync/pull list builder so the wire shape stays single-
+ * source-of-truth.
+ */
+async function buildMeetingDetail(
+  db: ReturnType<typeof getDb>,
+  meeting: typeof schema.meetings.$inferSelect,
+): Promise<z.infer<typeof MeetingDetailSchema>> {
+  const linkedCompanies = await db
+    .select({
+      id: schema.orgCompanies.id,
+      name: schema.orgCompanies.canonicalName,
+    })
+    .from(schema.meetingCompanyLinks)
+    .innerJoin(
+      schema.orgCompanies,
+      eq(schema.meetingCompanyLinks.companyId, schema.orgCompanies.id),
+    )
+    .where(eq(schema.meetingCompanyLinks.meetingId, meeting.id))
+
+  const linkedContacts = await db
+    .select({
+      id: schema.contacts.id,
+      fullName: schema.contacts.fullName,
+      title: schema.contacts.title,
+      speakerIndex: schema.meetingSpeakerContactLinks.speakerIndex,
+    })
+    .from(schema.meetingSpeakerContactLinks)
+    .innerJoin(
+      schema.contacts,
+      eq(schema.meetingSpeakerContactLinks.contactId, schema.contacts.id),
+    )
+    .where(eq(schema.meetingSpeakerContactLinks.meetingId, meeting.id))
+    .orderBy(asc(schema.meetingSpeakerContactLinks.speakerIndex))
+
+  const speakerMap =
+    (meeting.speakerMap as Record<string, unknown> | null) ?? null
+  const { hasTranscript, segments } = normalizeSegments(
+    meeting.transcriptSegments,
+    speakerMap,
+  )
+
+  return {
+    id: meeting.id,
+    title: meeting.title,
+    date: new Date(meeting.date).toISOString(),
+    durationSeconds: meeting.durationSeconds,
+    status: meeting.status,
+    updatedAt: new Date(meeting.updatedAt).toISOString(),
+    lamport: meeting.lamport,
+    wasImpromptu: meeting.wasImpromptu,
+    isGroupEvent: meeting.isGroupEvent,
+    meetingPlatform: meeting.meetingPlatform,
+    meetingUrl: meeting.meetingUrl,
+    notes: meeting.notes,
+    attendees: (meeting.attendees as string[] | null) ?? null,
+    attendeeEmails: (meeting.attendeeEmails as string[] | null) ?? null,
+    speakerCount: meeting.speakerCount,
+    hasTranscript,
+    transcriptSegments: segments,
+    linkedCompanies,
+    linkedContacts,
+  }
+}
+
 export async function registerMeetingRoutes(
   app: FastifyInstance,
   env: GatewayEnv,
@@ -141,63 +214,206 @@ export async function registerMeetingRoutes(
           message: 'Meeting not found',
         })
       }
+      return buildMeetingDetail(db, meeting)
+    },
+  })
 
-      // Linked companies (via meeting_company_links).
-      const linkedCompanies = await db
-        .select({
-          id: schema.orgCompanies.id,
-          name: schema.orgCompanies.canonicalName,
+  // ───────────────────────────────────────────────────────────────────────
+  // POST /meetings/from-calendar-event — idempotent find-or-create.
+  //
+  // Mobile taps a calendar event card → calls this → lands on the meeting
+  // detail screen with status='scheduled' (or whatever the existing row
+  // says). Mirrors desktop's prepareMeetingFromCalendarEvent contract.
+  //
+  // Race-safe via Postgres unique-violation recovery: after migration 0014
+  // the index is (user_id, calendar_event_id) so the catch-and-refind
+  // pattern handles concurrent taps from the same user.
+  //
+  // Side effects (audit log, contact sync, company enrichment) are
+  // SKIPPED on the gateway path per plan-ceo-review 4A — desktop runs
+  // them when Phase 1.5c lands.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/meetings/from-calendar-event',
+    schema: {
+      body: z.object({
+        calendarEventId: z.string().min(1).max(256),
+        title: z.string().min(1).max(512),
+        startTime: z.string().datetime(),
+        attendees: z.array(z.string()).optional(),
+        attendeeEmails: z.array(z.string()).optional(),
+        meetingUrl: z.string().optional(),
+        meetingPlatform: z.string().optional(),
+      }),
+      response: { 200: MeetingDetailSchema, 201: MeetingDetailSchema },
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const body = req.body
+
+      // 1. Find existing row scoped to (user_id, calendar_event_id).
+      const existing = await db.query.meetings.findFirst({
+        where: and(
+          eq(schema.meetings.userId, user.sub),
+          eq(schema.meetings.calendarEventId, body.calendarEventId),
+        ),
+      })
+      if (existing) {
+        return reply.code(200).send(await buildMeetingDetail(db, existing))
+      }
+
+      // 2. Insert. Catch 23505 (race against concurrent insert) → re-find.
+      const newId = createId()
+      try {
+        await db.insert(schema.meetings).values({
+          id: newId,
+          userId: user.sub,
+          title: body.title,
+          date: new Date(body.startTime),
+          status: 'scheduled',
+          calendarEventId: body.calendarEventId,
+          meetingPlatform: body.meetingPlatform ?? null,
+          meetingUrl: body.meetingUrl ?? null,
+          attendees: body.attendees ?? null,
+          attendeeEmails: body.attendeeEmails ?? null,
+          wasImpromptu: false,
+          createdByUserId: user.sub,
+          // lamport defaults to '0' per schema
         })
-        .from(schema.meetingCompanyLinks)
-        .innerJoin(
-          schema.orgCompanies,
-          eq(schema.meetingCompanyLinks.companyId, schema.orgCompanies.id),
-        )
-        .where(eq(schema.meetingCompanyLinks.meetingId, id))
+      } catch (err) {
+        // pg unique-violation = 23505. Drizzle wraps Postgres errors so we
+        // check the underlying `code` if present.
+        const code = err instanceof Error && 'code' in err ? (err as { code?: string }).code : null
+        if (code === '23505') {
+          const raced = await db.query.meetings.findFirst({
+            where: and(
+              eq(schema.meetings.userId, user.sub),
+              eq(schema.meetings.calendarEventId, body.calendarEventId),
+            ),
+          })
+          if (raced) {
+            req.log.info(
+              { calendarEventId: body.calendarEventId, userId: user.sub, metric: 'meetings.from_cal_event.collision_recovered' },
+              'meetings.from_cal_event 23505 recovered via re-find',
+            )
+            return reply.code(200).send(await buildMeetingDetail(db, raced))
+          }
+        }
+        throw err
+      }
 
-      // Linked contacts (via meeting_speaker_contact_links).
-      const linkedContacts = await db
-        .select({
-          id: schema.contacts.id,
-          fullName: schema.contacts.fullName,
-          title: schema.contacts.title,
-          speakerIndex: schema.meetingSpeakerContactLinks.speakerIndex,
+      const created = await db.query.meetings.findFirst({
+        where: eq(schema.meetings.id, newId),
+      })
+      if (!created) {
+        // Pathological — insert succeeded but read couldn't find it.
+        throw new GatewayError({
+          statusCode: 500,
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to read back created meeting',
         })
-        .from(schema.meetingSpeakerContactLinks)
-        .innerJoin(
-          schema.contacts,
-          eq(schema.meetingSpeakerContactLinks.contactId, schema.contacts.id),
-        )
-        .where(eq(schema.meetingSpeakerContactLinks.meetingId, id))
-        .orderBy(asc(schema.meetingSpeakerContactLinks.speakerIndex))
+      }
+      req.log.info(
+        { meetingId: newId, calendarEventId: body.calendarEventId, userId: user.sub, metric: 'meetings.from_cal_event.created' },
+        'meeting created from calendar event',
+      )
+      return reply.code(201).send(await buildMeetingDetail(db, created))
+    },
+  })
 
-      const speakerMap =
-        (meeting.speakerMap as Record<string, unknown> | null) ?? null
-      const { hasTranscript, segments } = normalizeSegments(
-        meeting.transcriptSegments,
-        speakerMap,
+  // ───────────────────────────────────────────────────────────────────────
+  // PATCH /meetings/:id — partial update (notes only for V1).
+  //
+  // Lamport semantics MATCH the existing /sync/push handler
+  // (sync.ts:201-225) — Last-Write-Wins, client-sourced lamport.
+  // Incoming.lamport > stored → apply. Else → 409 with current detail
+  // so the mobile outbox can drop the loser entry + refetch.
+  //
+  // Audit log: every notes update is logged. The notes content itself
+  // is NOT logged (pino redact on the request body); only size delta
+  // and lamport movement.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'PATCH',
+    url: '/meetings/:id',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(64) }),
+      body: z.object({
+        notes: z.string().max(64_000).nullable(),
+        lamport: z.string().min(1).max(40),
+      }),
+      response: { 200: MeetingDetailSchema, 409: MeetingDetailSchema },
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id } = req.params
+      const body = req.body
+
+      const meeting = await db.query.meetings.findFirst({
+        where: and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)),
+      })
+      if (!meeting) {
+        // 404 (not 403) — don't leak the existence of meetings owned by other users.
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'MEETING_NOT_FOUND',
+          message: 'Meeting not found',
+        })
+      }
+
+      // Lamport LWW compare. Stored as text; compare as BigInt because
+      // Postgres bigint values can exceed JS safe-integer range. Matches
+      // the existing /sync/push comparison logic (sync.ts:202-225).
+      const incoming = BigInt(body.lamport)
+      const stored = BigInt(meeting.lamport ?? '0')
+      if (incoming <= stored) {
+        req.log.info(
+          { meetingId: id, userId: user.sub, incoming: body.lamport, stored: meeting.lamport, metric: 'meetings.patch.notes.conflict_409' },
+          'patch rejected: lamport not strictly greater than stored',
+        )
+        return reply.code(409).send(await buildMeetingDetail(db, meeting))
+      }
+
+      const fromLength = meeting.notes?.length ?? 0
+      const toLength = body.notes?.length ?? 0
+
+      await db
+        .update(schema.meetings)
+        .set({
+          notes: body.notes,
+          lamport: body.lamport,
+          updatedAt: new Date(),
+          updatedByUserId: user.sub,
+        })
+        .where(eq(schema.meetings.id, id))
+
+      // Audit log: track lamport movement + size delta, NOT content.
+      await db.insert(schema.auditLog).values({
+        userId: user.sub,
+        eventType: 'meeting.notes.update',
+        actor: 'user',
+        targetKind: 'meeting',
+        targetId: id,
+        details: {
+          fromLength,
+          toLength,
+          lamportFrom: meeting.lamport,
+          lamportTo: body.lamport,
+        },
+      })
+
+      req.log.info(
+        { meetingId: id, userId: user.sub, fromLength, toLength, metric: 'meetings.patch.notes.success', bytesIn: toLength },
+        'notes updated',
       )
 
-      return {
-        id: meeting.id,
-        title: meeting.title,
-        date: new Date(meeting.date).toISOString(),
-        durationSeconds: meeting.durationSeconds,
-        status: meeting.status,
-        updatedAt: new Date(meeting.updatedAt).toISOString(),
-        wasImpromptu: meeting.wasImpromptu,
-        isGroupEvent: meeting.isGroupEvent,
-        meetingPlatform: meeting.meetingPlatform,
-        meetingUrl: meeting.meetingUrl,
-        notes: meeting.notes,
-        attendees: (meeting.attendees as string[] | null) ?? null,
-        attendeeEmails: (meeting.attendeeEmails as string[] | null) ?? null,
-        speakerCount: meeting.speakerCount,
-        hasTranscript,
-        transcriptSegments: segments,
-        linkedCompanies,
-        linkedContacts,
-      }
+      const updated = await db.query.meetings.findFirst({
+        where: eq(schema.meetings.id, id),
+      })
+      return reply.code(200).send(await buildMeetingDetail(db, updated!))
     },
   })
 

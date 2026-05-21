@@ -39,6 +39,13 @@ const CalendarEventSchema = z.object({
    * failed (we degrade gracefully — the pill is purely additive UX).
    */
   recordingStatus: z.string().optional(),
+  /**
+   * Meeting id if this calendar event has an associated meeting row.
+   * Used by mobile's tap handler to navigate directly to /meetings/<id>
+   * without an extra round-trip through POST /meetings/from-calendar-event.
+   * Absent when no meeting exists yet (mobile then auto-creates on tap).
+   */
+  meetingId: z.string().optional(),
 })
 
 export async function registerCalendarRoutes(
@@ -167,6 +174,7 @@ export async function registerCalendarRoutes(
         try {
           const recordings = await db
             .select({
+              id: schema.meetings.id,
               calendarEventId: schema.meetings.calendarEventId,
               status: schema.meetings.status,
             })
@@ -177,20 +185,21 @@ export async function registerCalendarRoutes(
                 inArray(schema.meetings.calendarEventId, calEventIds),
               ),
             )
-          const statusByCalEventId = new Map<string, string>()
+          const byCalEventId = new Map<string, { id: string; status: string }>()
           for (const r of recordings) {
-            if (r.calendarEventId) statusByCalEventId.set(r.calendarEventId, r.status)
+            if (r.calendarEventId) byCalEventId.set(r.calendarEventId, { id: r.id, status: r.status })
           }
           for (const ev of events) {
-            const status = statusByCalEventId.get(ev.calendarEventId)
-            if (status) {
-              ;(ev as { recordingStatus?: string }).recordingStatus = status
+            const m = byCalEventId.get(ev.calendarEventId)
+            if (m) {
+              ;(ev as { recordingStatus?: string; meetingId?: string }).recordingStatus = m.status
+              ;(ev as { recordingStatus?: string; meetingId?: string }).meetingId = m.id
             }
           }
         } catch (err) {
           req.log.warn(
             { err: err instanceof Error ? err.message : String(err) },
-            'meetings join failed; returning calendar events without recordingStatus',
+            'meetings join failed; returning calendar events without recordingStatus/meetingId',
           )
         }
       }
