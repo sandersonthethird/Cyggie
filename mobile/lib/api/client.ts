@@ -1,4 +1,3 @@
-import Constants from 'expo-constants'
 import { useAuthStore } from '../auth/store'
 import { getRefreshToken } from '../auth/storage'
 import { getOrCreateDeviceId } from '../auth/device'
@@ -14,9 +13,9 @@ import { refreshTokens } from '../auth/oauth'
 // so we don't fire multiple /auth/refresh calls with the same refresh token
 // (only the first would succeed; rotation would invalidate the others).
 
-const GATEWAY_URL =
-  (Constants.expoConfig?.extra?.['gatewayUrl'] as string | undefined) ??
-  'https://cyggie-gateway.fly.dev'
+// Read directly from process.env so Metro inlines at JS-bundle time —
+// see the matching note in oauth.ts for rationale.
+const GATEWAY_URL = process.env['EXPO_PUBLIC_GATEWAY_URL'] ?? 'https://cyggie-gateway.fly.dev'
 
 export class ApiError extends Error {
   readonly status: number

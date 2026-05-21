@@ -1,4 +1,3 @@
-import Constants from 'expo-constants'
 import * as WebBrowser from 'expo-web-browser'
 import {
   parseCallbackUrl as sharedParseCallbackUrl,
@@ -30,8 +29,11 @@ import { getOrCreateDeviceId } from './device'
 // No raw refresh token ever lands in URL bars or browser history — it's
 // only in the deep-link query string that's never rendered or logged.
 
-const GATEWAY_URL = (Constants.expoConfig?.extra?.['gatewayUrl'] as string | undefined) ??
-  'https://cyggie-gateway.fly.dev'
+// Read directly from process.env so Metro inlines this at JS-bundle time —
+// changing mobile/.env + a Metro reload picks up the new value. Reading from
+// Constants.expoConfig.extra requires a native rebuild (the manifest is baked
+// at expo prebuild / pnpm ios time), which is too slow for dev iteration.
+const GATEWAY_URL = process.env['EXPO_PUBLIC_GATEWAY_URL'] ?? 'https://cyggie-gateway.fly.dev'
 
 // Surfaces a typo'd or unset EXPO_PUBLIC_GATEWAY_URL — otherwise the silent
 // prod fallback reproduces the exact 503 symptom the env var was meant to
@@ -124,6 +126,83 @@ export async function startSignIn(): Promise<SignInResult> {
 
 // Re-export the canonical parser so existing call sites keep working.
 export const parseCallbackUrl = sharedParseCallbackUrl
+
+/**
+ * Recover a session whose cyggie:// deep link never reached the app.
+ *
+ * ASWebAuthenticationSession on iOS can return type='dismiss' or 'cancel'
+ * AFTER the gateway has already minted a session and 302'd to
+ * cyggie://auth-callback?session=… — the redirect just never makes it back.
+ * The repro is documented above (lines 84-94) and survives the defensive
+ * `dismissAuthSession()` we already call.
+ *
+ * On dismiss, the sign-in screen calls into this helper. We poll
+ * POST /auth/session/claim-by-device for ~15 s. If the gateway finds a
+ * session minted in the last 120 s for our device_id, it re-mints fresh
+ * tokens, marks the session recovered (single-use), and returns them. If
+ * the user really did cancel, the poll keeps getting 404s and times out
+ * to `{ kind: 'cancel' }` — same UX as today.
+ */
+export async function pollForRecoveredSession(deviceId: string): Promise<SignInResult> {
+  const startedAt = Date.now()
+  const MAX_DURATION_MS = 15_000
+  const NORMAL_INTERVAL_MS = 1_500
+  const BACKOFF_INTERVAL_MS = 3_000
+
+  while (Date.now() - startedAt < MAX_DURATION_MS) {
+    let res: Response
+    try {
+      res = await fetch(`${GATEWAY_URL}/auth/session/claim-by-device`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: deviceId }),
+      })
+    } catch {
+      await sleep(BACKOFF_INTERVAL_MS)
+      continue
+    }
+
+    if (res.status === 200) {
+      try {
+        const body = (await res.json()) as {
+          session: string
+          refresh: string
+          user_id: string
+          action: SignInAction
+          email: string | null
+        }
+        return {
+          kind: 'success',
+          accessToken: body.session,
+          refreshToken: body.refresh,
+          userId: body.user_id,
+          action: body.action,
+          email: body.email ?? null,
+        }
+      } catch (err) {
+        return {
+          kind: 'error',
+          code: 'CALLBACK_INVALID_URL',
+          message: err instanceof Error ? err.message : 'Bad claim response',
+        }
+      }
+    }
+
+    // 404 NO_RECENT_SESSION: keep polling at the normal cadence.
+    // 429 RATE_LIMITED: back off.
+    // 5xx: also back off — the gateway might be transiently down.
+    const wait = res.status === 429 || res.status >= 500
+      ? BACKOFF_INTERVAL_MS
+      : NORMAL_INTERVAL_MS
+    await sleep(wait)
+  }
+
+  return { kind: 'cancel' }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 /** Rotates the refresh token; returns a new access + refresh pair. */
 export async function refreshTokens(opts: {

@@ -85,19 +85,27 @@ interface MeetingForFinalize {
   deepgramRequestId: string | null
 }
 
-// ─── Debug ring buffer for last few Deepgram errors ────────────────────────
+// ─── Debug ring buffer for last few Deepgram submit events ────────────────
 // Persisted in-memory so /_debug/last-deepgram-errors can read them out
 // without re-deriving from logs (Fly's log endpoint is flaky for this).
-// Capped + non-PII (no audio content beyond the 16-byte container header).
+// Capped + non-PII (no audio content beyond ~32 bytes total).
+//
+// `outcome` differentiates failed submits (status 4xx/5xx) from successful
+// ones (status 200 + a request_id). Successful entries let us diagnose
+// "submit succeeded but transcript was empty" cases — silent recordings
+// from the iOS Simulator typically produce a tiny M4A (~5-10KB) while real
+// speech at 32kbps AAC is ~4KB/sec.
 
 export interface DeepgramErrorRecord {
   at: string
+  outcome: 'error' | 'success'
   meetingId: string
   status: number
   deepgramBody: string
   audioBytes: number
   audioHeadHex: string
   audioHeadAscii: string
+  audioMidHex?: string
   submitUrl: string
 }
 
@@ -198,6 +206,7 @@ export async function submitTranscribeJob(args: {
       })
       recordDeepgramError({
         at: new Date().toISOString(),
+        outcome: 'error',
         meetingId,
         status: res.status,
         deepgramBody: errBody.slice(0, 2000),
@@ -211,6 +220,33 @@ export async function submitTranscribeJob(args: {
     }
     const body = (await res.json()) as { request_id?: string }
     requestId = body.request_id ?? null
+
+    // Record successful submits too, so /_debug/last-deepgram-errors lets us
+    // diagnose "transcribed but empty transcript" — typically caused by a
+    // silent simulator recording. Mid-file byte sample helps tell encoded
+    // silence from real speech without decoding the AAC.
+    const audioHeadHex = Array.from(audio.subarray(0, 16))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join(' ')
+    const audioHeadAscii = Array.from(audio.subarray(0, 16))
+      .map((b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '.'))
+      .join('')
+    const mid = Math.max(0, Math.floor(audio.byteLength / 2) - 16)
+    const audioMidHex = Array.from(audio.subarray(mid, mid + 32))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join(' ')
+    recordDeepgramError({
+      at: new Date().toISOString(),
+      outcome: 'success',
+      meetingId,
+      status: res.status,
+      deepgramBody: `request_id=${requestId ?? '<none>'}`,
+      audioBytes: audio.byteLength,
+      audioHeadHex,
+      audioHeadAscii,
+      audioMidHex,
+      submitUrl: submitUrl.toString(),
+    })
   } catch (err) {
     console.error('[transcribe] Deepgram submit threw:', {
       meetingId,

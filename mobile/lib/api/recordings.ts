@@ -14,7 +14,6 @@
 // JSON, so it routes through the normal api.post().
 // =============================================================================
 
-import Constants from 'expo-constants'
 // expo-file-system v19 moved the upload-task API under /legacy. The new
 // top-level File class doesn't have a direct upload helper yet, and the
 // legacy createUploadTask is still fully supported in SDK 54.
@@ -22,9 +21,11 @@ import * as FileSystem from 'expo-file-system/legacy'
 import { api, ApiError } from './client'
 import { useAuthStore } from '../auth/store'
 
-const GATEWAY_URL =
-  (Constants.expoConfig?.extra?.['gatewayUrl'] as string | undefined) ??
-  'https://cyggie-gateway.fly.dev'
+// Read directly from process.env so Metro inlines this at JS-bundle time —
+// changing mobile/.env + a Metro reload picks up the new value. Reading from
+// Constants.expoConfig.extra requires a native rebuild (the manifest is
+// baked at expo prebuild / pnpm ios time), which is too slow for dev.
+const GATEWAY_URL = process.env['EXPO_PUBLIC_GATEWAY_URL'] ?? 'https://cyggie-gateway.fly.dev'
 
 export interface UploadRecordingArgs {
   /** Absolute file:// URI of the recorded audio on the device. */
