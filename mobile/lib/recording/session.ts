@@ -10,10 +10,13 @@
 //     └─ store.beginRecording()
 //
 //   stopRecording()
-//     ├─ recording.stopAndUnloadAsync()
-//     ├─ store.beginUploading()
+//     ├─ recording.stopAndUnloadAsync()  (on throw → store.markError)
+//     └─ performUpload({ localUri, … })
+//
+//   performUpload() — shared by stopRecording + retryPendingUpload
+//     ├─ store.beginUploading()           ← state = 'uploading'
 //     ├─ uploadRecording({ localUri, onProgress: store.setUploadProgress })
-//     ├─ store.finalizeMeeting(meetingId)   ← state = 'transcribing'
+//     ├─ store.finalizeMeeting(meetingId) ← state = 'transcribing'
 //     └─ return { meetingId }
 //
 // We don't clean up the local audio file until after upload acks; that way
@@ -128,7 +131,13 @@ export async function stopRecording(args: {
     maxDurationTimer = null
   }
 
-  await recording.stopAndUnloadAsync()
+  try {
+    await recording.stopAndUnloadAsync()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Failed to stop recording'
+    useRecordingStore.getState().markError(msg)
+    throw err
+  }
   const localUri = recording.getURI()
   if (!localUri) {
     useRecordingStore.getState().markError('Recording produced no audio file')
@@ -160,7 +169,6 @@ export async function retryPendingUpload(p: PendingUpload): Promise<{ meetingId:
     )
     throw new Error('Local audio file missing')
   }
-  useRecordingStore.getState().beginUploading()
   return performUpload(p)
 }
 
@@ -177,6 +185,7 @@ export async function retryPendingUpload(p: PendingUpload): Promise<{ meetingId:
  * retry-promotion paths.
  */
 async function performUpload(p: PendingUpload): Promise<{ meetingId: string }> {
+  useRecordingStore.getState().beginUploading()
   try {
     const result = await uploadRecording({
       localUri: p.localUri,
@@ -223,13 +232,14 @@ export async function cancelRecording(): Promise<void> {
     clearTimeout(maxDurationTimer)
     maxDurationTimer = null
   }
-  if (!recording) return
-  try {
-    await recording.stopAndUnloadAsync()
-    const uri = recording.getURI()
-    if (uri) await FileSystem.deleteAsync(uri, { idempotent: true })
-  } catch {
-    // best-effort
+  if (recording) {
+    try {
+      await recording.stopAndUnloadAsync()
+      const uri = recording.getURI()
+      if (uri) await FileSystem.deleteAsync(uri, { idempotent: true })
+    } catch {
+      // best-effort
+    }
   }
   useRecordingStore.getState().reset()
 }
