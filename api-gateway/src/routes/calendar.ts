@@ -3,7 +3,7 @@ import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { google } from 'googleapis'
 import { OAuth2Client } from 'google-auth-library'
-import { eq } from 'drizzle-orm'
+import { eq, and, inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
@@ -30,6 +30,15 @@ const CalendarEventSchema = z.object({
   location: z.string().optional(),
   meetingUrl: z.string().optional(),
   isAllDay: z.boolean(),
+  /**
+   * Server-side meeting status if this calendar event has an associated
+   * recording in the meetings table (joined by calendar_event_id). Mobile
+   * uses this to render a small pill on the calendar card so the user
+   * sees "Transcribing…" / "Failed" / etc. without tapping in.
+   * Absent when there's no linked meeting or when the meetings lookup
+   * failed (we degrade gracefully — the pill is purely additive UX).
+   */
+  recordingStatus: z.string().optional(),
 })
 
 export async function registerCalendarRoutes(
@@ -148,6 +157,43 @@ export async function registerCalendarRoutes(
           isAllDay: ev.start?.dateTime == null,
         }
       })
+
+      // Augment with recording status from the meetings table. The pill is
+      // purely additive UX — wrap defensively so a Neon hiccup or a future
+      // refactor of the meetings table cannot break the calendar list,
+      // which is the core feature of this route.
+      const calEventIds = events.map((e) => e.calendarEventId).filter((id) => id.length > 0)
+      if (calEventIds.length > 0) {
+        try {
+          const recordings = await db
+            .select({
+              calendarEventId: schema.meetings.calendarEventId,
+              status: schema.meetings.status,
+            })
+            .from(schema.meetings)
+            .where(
+              and(
+                eq(schema.meetings.userId, user.sub),
+                inArray(schema.meetings.calendarEventId, calEventIds),
+              ),
+            )
+          const statusByCalEventId = new Map<string, string>()
+          for (const r of recordings) {
+            if (r.calendarEventId) statusByCalEventId.set(r.calendarEventId, r.status)
+          }
+          for (const ev of events) {
+            const status = statusByCalEventId.get(ev.calendarEventId)
+            if (status) {
+              ;(ev as { recordingStatus?: string }).recordingStatus = status
+            }
+          }
+        } catch (err) {
+          req.log.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'meetings join failed; returning calendar events without recordingStatus',
+          )
+        }
+      }
 
       return { events }
     },

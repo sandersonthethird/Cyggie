@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View, Pressable } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import type { CalendarEvent } from '../lib/api/calendar'
+import { MeetingStatusPill } from './MeetingStatusPill'
 import { colors, radii, spacing, type } from '../theme'
 
 // Meeting row anatomy from WIREFRAME 1.
@@ -79,6 +80,14 @@ export function MeetingRow({ event, variant, onPress }: MeetingRowProps) {
       </View>
 
       <View style={styles.endCol}>
+        {/*
+         * Recording-status pill — surfaces transcribing / empty / error
+         * states for events with an associated recording in the meetings
+         * table. Stacks above the variant badge when both apply; renders
+         * nothing when event.recordingStatus is absent / 'transcribed' /
+         * unknown, keeping non-recorded events visually unchanged.
+         */}
+        <MeetingStatusPill compact status={event.recordingStatus} />
         {variant === 'next' && (
           <View style={styles.nextBadge}>
             <View style={styles.nextDot} />
@@ -198,6 +207,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'flex-start',
     minWidth: 56,
+    gap: spacing.xs,
   },
   endSlot: { width: 1, height: 1 },
 

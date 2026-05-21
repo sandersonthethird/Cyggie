@@ -17,6 +17,14 @@ export interface CalendarEvent {
   location?: string
   meetingUrl?: string
   isAllDay: boolean
+  /**
+   * Server-side meeting status if there's a recording in the meetings
+   * table tied to this calendar event (joined by calendar_event_id).
+   * Drives the small status pill on the calendar card. Absent when
+   * there's no linked recording — events without a recording render
+   * the existing variant badge unchanged.
+   */
+  recordingStatus?: string
 }
 
 interface CalendarEventsResponse {

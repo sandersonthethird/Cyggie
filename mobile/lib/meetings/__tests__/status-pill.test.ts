@@ -14,6 +14,16 @@ describe('decideStatusPill', () => {
     })
   })
 
+  it("maps the server's brief 'recording' window to the same Transcribing… pill", () => {
+    // calendar-list rendering can catch a meeting in the brief
+    // upload-landed-but-not-yet-submitted-to-deepgram state. From the
+    // user's POV that's still 'we have it, processing' — same pill.
+    expect(decideStatusPill('recording')).toEqual({
+      label: 'Transcribing…',
+      tone: 'info',
+    })
+  })
+
   it('maps empty → warning pill', () => {
     expect(decideStatusPill('empty')).toEqual({
       label: 'No speech',
@@ -28,7 +38,7 @@ describe('decideStatusPill', () => {
     })
   })
 
-  it.each(['transcribed', 'recording', 'idle', 'done', 'unknown-status', ''])(
+  it.each(['transcribed', 'idle', 'done', 'unknown-status', ''])(
     'returns null (no pill) for status=%j',
     (status) => {
       expect(decideStatusPill(status)).toBeNull()
