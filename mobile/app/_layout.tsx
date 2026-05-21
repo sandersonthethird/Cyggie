@@ -11,6 +11,7 @@ import * as WebBrowser from 'expo-web-browser'
 import { useAuthStore } from '../lib/auth/store'
 import { mmkvAsyncStorage } from '../lib/cache/mmkv'
 import { registerForPushNotifications } from '../lib/push/register'
+import { initSync, shutdownSync } from '../lib/sync/boot'
 
 // Required at module top-level so any pending ASWebAuthenticationSession
 // redirect (e.g. from a previous sign-in that closed mid-flow) is flushed
@@ -76,6 +77,17 @@ export default function RootLayout() {
   useEffect(() => {
     if (authStatus !== 'signed_in') return
     void registerForPushNotifications()
+  }, [authStatus])
+
+  // Phase 1.5b — wire the sync outbox/agent the first time we're signed in.
+  // initSync is idempotent; shutdown on full sign-out so the periodic drain
+  // doesn't continue firing against a signed-out gateway client.
+  useEffect(() => {
+    if (authStatus === 'signed_in') {
+      initSync()
+      return () => shutdownSync()
+    }
+    return undefined
   }, [authStatus])
 
   // Notification tap handler — when the user taps a "transcript ready" push,

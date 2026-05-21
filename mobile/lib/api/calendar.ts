@@ -25,6 +25,13 @@ export interface CalendarEvent {
    * the existing variant badge unchanged.
    */
   recordingStatus?: string
+  /**
+   * Meeting id if this calendar event has an associated meeting row.
+   * Mobile uses this to navigate directly to /meetings/<id> on tap
+   * without an extra round-trip through POST /meetings/from-calendar-event.
+   * Absent when no meeting exists yet (mobile then auto-creates on tap).
+   */
+  meetingId?: string
 }
 
 interface CalendarEventsResponse {

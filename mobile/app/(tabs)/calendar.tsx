@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -11,20 +11,27 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useQuery } from '@tanstack/react-query'
+import { useFocusEffect } from '@react-navigation/native'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
   bucketEvents,
   eventsForDate,
   fetchCalendarEvents,
+  type CalendarEvent,
 } from '../../lib/api/calendar'
+import { prepareMeetingFromCalendarEvent } from '../../lib/api/meetings'
 import { useAuthStore } from '../../lib/auth/store'
 import { Avatar } from '../../components/Avatar'
 import { MeetingRow } from '../../components/MeetingRow'
 import { NowRail } from '../../components/NowRail'
 import { RecordFab } from '../../components/RecordFab'
+import { appStateStorage } from '../../lib/cache/mmkv'
+import { pullSince } from '../../lib/sync/pull'
 import { colors, radii, spacing, type } from '../../theme'
+
+const ONBOARDING_TOOLTIP_KEY = 'onboarding.notes-tooltip-seen'
 
 // Calendar home — WIREFRAME 1.
 //
@@ -41,6 +48,9 @@ import { colors, radii, spacing, type } from '../../theme'
 export default function CalendarTab() {
   const userId = useAuthStore((s) => s.userId)
   const signOut = useAuthStore((s) => s.signOut)
+  const queryClient = useQueryClient()
+  const tapBusyRef = useRef(false)
+  const [tooltipVisible, setTooltipVisible] = useState(false)
 
   // Pin "now" per render cycle, tick every minute so the next-meeting
   // highlight migrates naturally as time passes (without a network refetch).
@@ -71,6 +81,79 @@ export default function CalendarTab() {
       void signOut().then(() => router.replace('/(auth)/sign-in'))
     }
   }, [query.error, signOut])
+
+  // Phase 1.5b — pull deltas from Neon whenever the tab focuses so writes
+  // from another device (desktop, second phone) appear without a manual
+  // refresh. Failures are silent — the next tick will retry.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false
+      void pullSince()
+        .then((res) => {
+          if (cancelled) return
+          if (res.changedIds.length === 0) return
+          for (const id of res.changedIds) {
+            queryClient.invalidateQueries({ queryKey: ['meetings', 'detail', id] })
+          }
+        })
+        .catch(() => undefined)
+      return () => {
+        cancelled = true
+      }
+    }, [queryClient]),
+  )
+
+  // D7 — first-tap onboarding tooltip. Show after the first calendar load,
+  // dismiss permanently once tapped.
+  useEffect(() => {
+    if (tooltipVisible) return
+    if (!query.data || query.data.length === 0) return
+    if (appStateStorage.getString(ONBOARDING_TOOLTIP_KEY)) return
+    setTooltipVisible(true)
+  }, [query.data, tooltipVisible])
+
+  const dismissTooltip = useCallback(() => {
+    appStateStorage.set(ONBOARDING_TOOLTIP_KEY, '1')
+    setTooltipVisible(false)
+  }, [])
+
+  const handleEventPress = useCallback(
+    async (event: CalendarEvent) => {
+      // Guard against double-tap while the prepare round-trip is in flight.
+      if (tapBusyRef.current) return
+      dismissTooltip()
+      // Fast path: gateway already linked a meeting via the /calendar/events
+      // join. Skip the round-trip and navigate directly.
+      if (event.meetingId) {
+        router.push(`/meetings/${event.meetingId}`)
+        return
+      }
+      tapBusyRef.current = true
+      try {
+        const meeting = await prepareMeetingFromCalendarEvent({
+          calendarEventId: event.calendarEventId,
+          title: event.title,
+          startTime: event.start,
+          attendees: event.attendees.map((a) => a.displayName ?? a.email),
+          attendeeEmails: event.attendees.map((a) => a.email).filter((e) => e.length > 0),
+          ...(event.meetingUrl ? { meetingUrl: event.meetingUrl } : {}),
+        })
+        router.push(`/meetings/${meeting.id}`)
+        // Refresh the calendar list — the next render should now carry the
+        // linked meetingId so a follow-up tap takes the fast path.
+        void queryClient.invalidateQueries({ queryKey: ['calendar', 'events', 'today'] })
+      } catch (err) {
+        if (err instanceof ApiError && err.reauthRequired) {
+          await signOut()
+          router.replace('/(auth)/sign-in')
+        }
+        // Other errors (network blip, 5xx) — silent for V1; user re-taps.
+      } finally {
+        tapBusyRef.current = false
+      }
+    },
+    [dismissTooltip, queryClient, signOut],
+  )
 
   const meetingCount = todays.length
 
@@ -130,11 +213,20 @@ export default function CalendarTab() {
 
         {query.data && meetingCount === 0 && <EmptyState />}
 
+        {tooltipVisible && (
+          <OnboardingTooltip onDismiss={dismissTooltip} />
+        )}
+
         {buckets.earlier.length > 0 && (
           <View style={styles.section}>
             <SectionHeader label="Earlier today" />
             {buckets.earlier.map((ev) => (
-              <MeetingRow key={ev.id} event={ev} variant="past" />
+              <MeetingRow
+                key={ev.id}
+                event={ev}
+                variant="past"
+                onPress={() => void handleEventPress(ev)}
+              />
             ))}
           </View>
         )}
@@ -148,7 +240,12 @@ export default function CalendarTab() {
           <View style={styles.section}>
             <SectionHeader label="Now" highlight />
             {buckets.now.map((ev) => (
-              <MeetingRow key={ev.id} event={ev} variant="active" />
+              <MeetingRow
+                key={ev.id}
+                event={ev}
+                variant="active"
+                onPress={() => void handleEventPress(ev)}
+              />
             ))}
           </View>
         )}
@@ -156,7 +253,11 @@ export default function CalendarTab() {
         {buckets.next && (
           <View style={styles.section}>
             <SectionHeader label="Up next" highlight />
-            <MeetingRow event={buckets.next} variant="next" />
+            <MeetingRow
+              event={buckets.next}
+              variant="next"
+              onPress={() => void handleEventPress(buckets.next!)}
+            />
           </View>
         )}
 
@@ -164,7 +265,12 @@ export default function CalendarTab() {
           <View style={styles.section}>
             <SectionHeader label="Later today" />
             {buckets.later.map((ev) => (
-              <MeetingRow key={ev.id} event={ev} variant="later" />
+              <MeetingRow
+                key={ev.id}
+                event={ev}
+                variant="later"
+                onPress={() => void handleEventPress(ev)}
+              />
             ))}
           </View>
         )}
@@ -173,6 +279,32 @@ export default function CalendarTab() {
       </ScrollView>
 
       <RecordFab onPress={() => router.push('/record')} />
+    </View>
+  )
+}
+
+function OnboardingTooltip({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <View style={styles.tooltip}>
+      <View style={styles.tooltipIcon}>
+        <Ionicons name="bulb-outline" size={16} color={colors.crimson} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.tooltipTitle}>Tap any event to take notes</Text>
+        <Text style={styles.tooltipSubtitle}>
+          Notes sync across your devices — type ahead of a meeting, see them on
+          desktop.
+        </Text>
+      </View>
+      <Pressable
+        onPress={onDismiss}
+        hitSlop={10}
+        style={({ pressed }) => [styles.tooltipClose, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss tip"
+      >
+        <Ionicons name="close" size={16} color={colors.text3} />
+      </Pressable>
     </View>
   )
 }
@@ -369,4 +501,41 @@ const styles = StyleSheet.create({
   retryText: { color: colors.text, fontSize: type.bodyTight, fontWeight: '500' },
 
   footer: { height: spacing.xl },
+
+  tooltip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.crimsonMuted,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.crimson,
+  },
+  tooltipIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tooltipTitle: {
+    color: colors.text,
+    fontSize: type.bodyTight,
+    fontWeight: '600',
+  },
+  tooltipSubtitle: {
+    color: colors.text3,
+    fontSize: type.caption + 1,
+    marginTop: 2,
+  },
+  tooltipClose: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 })

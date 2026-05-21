@@ -11,7 +11,7 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
@@ -24,6 +24,13 @@ import {
 } from '../../lib/api/meetings'
 import { useAuthStore } from '../../lib/auth/store'
 import { MeetingStatusPill } from '../../components/MeetingStatusPill'
+import { NotesEditor } from '../../components/NotesEditor'
+import { NotesConflictModal, type ConflictPayload } from '../../components/NotesConflictModal'
+import { subscribeToConflicts } from '../../lib/sync/conflict-bus'
+import { rememberLastYours } from '../../lib/sync/boot'
+import { tick as tickClock } from '../../lib/sync/clock'
+import { enqueue } from '../../lib/sync/outbox'
+import { drainNow } from '../../lib/sync/agent'
 import {
   discardPendingUploadFileByMeetingId,
   loadPendingUploadByMeetingId,
@@ -49,6 +56,8 @@ export default function MeetingDetailScreen() {
   const id = typeof params.id === 'string' ? params.id : ''
   const signOut = useAuthStore((s) => s.signOut)
   const [segment, setSegment] = useState<Segment>('overview')
+  const queryClient = useQueryClient()
+  const [conflict, setConflict] = useState<ConflictPayload | null>(null)
 
   const query = useQuery({
     queryKey: ['meetings', 'detail', id],
@@ -62,6 +71,51 @@ export default function MeetingDetailScreen() {
       void signOut().then(() => router.replace('/(auth)/sign-in'))
     }
   }, [query.error, signOut])
+
+  // Subscribe to sync conflicts for THIS meeting only — other meeting
+  // conflicts will be picked up when the user navigates to them.
+  useEffect(() => {
+    if (!id) return
+    return subscribeToConflicts((event) => {
+      if (event.meetingId !== id) return
+      setConflict({
+        meetingId: event.meetingId,
+        yours: event.yours,
+        theirs: event.theirs,
+      })
+      // Refetch so the UI reflects the server's authoritative state.
+      void queryClient.invalidateQueries({ queryKey: ['meetings', 'detail', id] })
+    })
+  }, [id, queryClient])
+
+  const onChangeEnqueued = (next: string | null) => {
+    rememberLastYours(id, next)
+  }
+
+  const onReplaceTheirs = (yours: string | null) => {
+    // Re-PATCH with a fresh lamport — guaranteed > server's because the
+    // pull/merge after the 409 catches us up to the server's lamport, and
+    // tickClock() returns server+1+.
+    const lamport = tickClock()
+    enqueue({
+      op: 'meeting.notes.update',
+      resourceId: id,
+      payload: { notes: yours, lamport },
+    })
+    setConflict(null)
+    void drainNow()
+  }
+  const onDiscardBoth = (_theirs: string | null) => {
+    // Server already has `theirs`; nothing to enqueue. Just clear local
+    // state and let the next refetch repopulate the editor.
+    setConflict(null)
+    void queryClient.invalidateQueries({ queryKey: ['meetings', 'detail', id] })
+  }
+  const onKeepYoursLocally = () => {
+    // Leave it on screen for the user — next keystroke will enqueue with
+    // a fresh lamport (server-merged via the agent's 200 path).
+    setConflict(null)
+  }
 
   const meeting = query.data
 
@@ -110,7 +164,9 @@ export default function MeetingDetailScreen() {
             {meeting.status === 'error' && <RetryUploadBanner meetingId={meeting.id} />}
             <TerminalCleanupSideEffect meetingStatus={meeting.status} meetingId={meeting.id} />
             <SegmentControl value={segment} onChange={setSegment} />
-            {segment === 'overview' && <OverviewSection meeting={meeting} />}
+            {segment === 'overview' && (
+              <OverviewSection meeting={meeting} onChangeEnqueued={onChangeEnqueued} />
+            )}
             {segment === 'transcript' && (
               <TranscriptSection
                 segments={meeting.transcriptSegments}
@@ -124,6 +180,13 @@ export default function MeetingDetailScreen() {
           </>
         ) : null}
       </ScrollView>
+      <NotesConflictModal
+        payload={conflict}
+        onReplaceTheirs={onReplaceTheirs}
+        onKeepYours={onKeepYoursLocally}
+        onDiscardBoth={onDiscardBoth}
+        onDismiss={onKeepYoursLocally}
+      />
     </View>
   )
 }
@@ -422,15 +485,23 @@ function SegmentControl({
   )
 }
 
-function OverviewSection({ meeting }: { meeting: MeetingDetail }) {
+function OverviewSection({
+  meeting,
+  onChangeEnqueued,
+}: {
+  meeting: MeetingDetail
+  onChangeEnqueued?: (next: string | null) => void
+}) {
   return (
     <View style={styles.section}>
-      {meeting.notes ? (
-        <View style={styles.descBlock}>
-          <Text style={styles.descHeading}>Notes</Text>
-          <Text style={styles.descText}>{meeting.notes}</Text>
-        </View>
-      ) : null}
+      <NotesEditor
+        meetingId={meeting.id}
+        status={meeting.status}
+        serverNotes={meeting.notes}
+        serverUpdatedAt={meeting.updatedAt}
+        serverLamport={meeting.lamport}
+        onChangeEnqueued={onChangeEnqueued}
+      />
 
       {meeting.linkedCompanies.length > 0 && (
         <View style={styles.descBlock}>
@@ -459,11 +530,6 @@ function OverviewSection({ meeting }: { meeting: MeetingDetail }) {
         </View>
       )}
 
-      {!meeting.notes &&
-        meeting.linkedCompanies.length === 0 &&
-        (!meeting.attendees || meeting.attendees.length === 0) && (
-          <Text style={styles.emptyInline}>No notes, companies, or attendees yet.</Text>
-        )}
     </View>
   )
 }
