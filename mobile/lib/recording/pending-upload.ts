@@ -1,44 +1,60 @@
 // =============================================================================
-// pending-upload.ts — MMKV-backed persistence for a recording in flight.
+// pending-upload.ts — MMKV-backed persistence for recordings in flight.
 //
-// Lifecycle (post phone-side-retention):
+// Multi-slot: each recording owns its own MMKV entry keyed by a
+// client-generated `clientRecordingId` (set at recording start). This lets
+// multiple in-flight transcriptions coexist — the user can stop one
+// recording (which goes into the server-side transcribe queue) and
+// immediately start a new one without losing the older audio file or its
+// retry-upload safety net.
+//
+// Lifecycle (per recording):
 //
 //   recording finished
-//        │  stopRecording → performUpload
+//        │  stopRecording → performUpload(p)
 //        ▼
-//   awaiting_upload  (no meetingId, audio on disk)
+//   awaiting_upload  (slot created, no meetingId, audio on disk)
 //        │  upload-success: set meetingId, KEEP audio on disk
 //        ▼
-//   awaiting_transcription  (meetingId present, audio on disk)
-//        │  poll detects status='transcribed' or 'empty'
-//        │  → FileSystem.deleteAsync(localUri) + clearPendingUpload()
+//   awaiting_transcription  (meetingId stored, audio on disk)
+//        │  /record poll OR meeting-detail side-effect detects terminal
 //        ▼
-//   gone
+//   discardPendingUploadFileByMeetingId(meetingId)
+//        │  → FileSystem.deleteAsync(localUri) + slot removed
+//        ▼
+//   gone (only this recording's slot; other slots untouched)
 //
-// Why the audio survives upload-success: if the gateway later sets
-// status='error' (Deepgram callback returned a failure variant, etc.) we
-// can re-upload from the local file rather than losing the recording.
-// See use-transcribing-poll.ts for the cleanup + retry promotion logic.
+// Storage layout in MMKV (single appStateStorage instance):
+//   cyggie.pending-upload.v2:<clientRecordingId>  →  PendingUpload JSON
+//   cyggie.pending-upload.v1                       →  legacy single-slot,
+//                                                     migrated on first
+//                                                     v2 read
 //
-// Only one pending recording exists at a time — the user can't be in the
-// middle of two recordings simultaneously. Storing a single JSON blob
-// under a fixed key is enough.
+// Discovery: appStateStorage.getAllKeys() filtered by the v2 prefix —
+// no separate index needed.
 // =============================================================================
 
 import * as FileSystem from 'expo-file-system/legacy'
 import { appStateStorage } from '../cache/mmkv'
 
-const PENDING_UPLOAD_KEY = 'cyggie.pending-upload.v1'
+const KEY_PREFIX = 'cyggie.pending-upload.v2:'
+const LEGACY_KEY = 'cyggie.pending-upload.v1'
 
 /**
- * Eviction window: drop pendingUpload entries older than this. Prevents
- * orphan audio files from accumulating if server-side state is permanently
- * broken (no transcription callback ever arrives, no error status set,
- * user forgot they had a pending recording).
+ * Eviction window: drop pendingUpload entries older than this. Protects
+ * against orphan audio files accumulating if server-side state is
+ * permanently broken or the user forgot they had a pending recording.
  */
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000
 
 export interface PendingUpload {
+  /**
+   * Stable client-generated ID set at recording start. Survives across
+   * upload, transcription, and retry — the MMKV slot key is derived from
+   * this so multiple recordings can be tracked simultaneously without
+   * clobbering each other.
+   */
+  clientRecordingId: string
   localUri: string
   /** Optional original title — we may not have one if the user never typed it. */
   title?: string
@@ -59,35 +75,71 @@ export interface PendingUpload {
   meetingId?: string
 }
 
-export function savePendingUpload(value: PendingUpload): void {
-  appStateStorage.set(PENDING_UPLOAD_KEY, JSON.stringify(value))
+/**
+ * Lightweight unique-id generator. Timestamp + random suffix is plenty
+ * for collision avoidance on a single device — no external uuid dep.
+ */
+export function generateClientRecordingId(): string {
+  return `rec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-export function loadPendingUpload(): PendingUpload | null {
-  const raw = appStateStorage.getString(PENDING_UPLOAD_KEY)
+function keyFor(clientRecordingId: string): string {
+  return KEY_PREFIX + clientRecordingId
+}
+
+export function savePendingUpload(p: PendingUpload): void {
+  appStateStorage.set(keyFor(p.clientRecordingId), JSON.stringify(p))
+}
+
+export function loadPendingUploadById(clientRecordingId: string): PendingUpload | null {
+  const raw = appStateStorage.getString(keyFor(clientRecordingId))
   if (!raw) return null
   try {
     return JSON.parse(raw) as PendingUpload
   } catch {
-    // Corrupt blob — clear it so the user isn't stuck.
-    appStateStorage.delete(PENDING_UPLOAD_KEY)
+    // Corrupt blob — clear it so it doesn't keep failing parse forever.
+    appStateStorage.delete(keyFor(clientRecordingId))
     return null
   }
 }
 
-export function clearPendingUpload(): void {
-  appStateStorage.delete(PENDING_UPLOAD_KEY)
+/**
+ * Returns all pendingUpload entries, sorted most-recent first by
+ * clientRecordedAt. Skips corrupt blobs (also clears them as a side
+ * effect). Performs the one-time v1→v2 migration on each call
+ * (idempotent — does nothing once the legacy slot is empty).
+ */
+export function loadAllPendingUploads(): PendingUpload[] {
+  migrateLegacyEntry()
+  const keys = appStateStorage.getAllKeys().filter((k) => k.startsWith(KEY_PREFIX))
+  const out: PendingUpload[] = []
+  for (const key of keys) {
+    const raw = appStateStorage.getString(key)
+    if (!raw) continue
+    try {
+      out.push(JSON.parse(raw) as PendingUpload)
+    } catch {
+      appStateStorage.delete(key)
+    }
+  }
+  return out.sort((a, b) => (a.clientRecordedAt > b.clientRecordedAt ? -1 : 1))
+}
+
+export function loadPendingUploadByMeetingId(meetingId: string): PendingUpload | null {
+  return loadAllPendingUploads().find((p) => p.meetingId === meetingId) ?? null
+}
+
+export function clearPendingUploadById(clientRecordingId: string): void {
+  appStateStorage.delete(keyFor(clientRecordingId))
 }
 
 /**
- * Discard the persisted pending upload: best-effort delete the local audio
- * file and clear the MMKV slot. Safe to call when nothing is persisted
- * (idempotent no-op). Used by the terminal-status poll handlers + the
- * user-initiated Discard action + cold-start fast-forward when a stale
- * meetingId resolves to an already-terminal meeting.
+ * Best-effort delete the local audio file + clear the MMKV slot for a
+ * specific recording. Safe to call when the file or slot is already gone
+ * (idempotent no-op).
  */
-export async function discardPendingUploadFile(): Promise<void> {
-  const entry = loadPendingUpload()
+export async function discardPendingUploadFileById(clientRecordingId: string): Promise<void> {
+  const entry = loadPendingUploadById(clientRecordingId)
   if (entry?.localUri) {
     try {
       await FileSystem.deleteAsync(entry.localUri, { idempotent: true })
@@ -95,34 +147,64 @@ export async function discardPendingUploadFile(): Promise<void> {
       // Best-effort — iOS cache will GC eventually.
     }
   }
-  clearPendingUpload()
+  clearPendingUploadById(clientRecordingId)
+}
+
+/** Same as discardPendingUploadFileById but looks up the entry by meetingId. */
+export async function discardPendingUploadFileByMeetingId(meetingId: string): Promise<void> {
+  const entry = loadPendingUploadByMeetingId(meetingId)
+  if (!entry) return
+  await discardPendingUploadFileById(entry.clientRecordingId)
 }
 
 /**
- * Load the pending upload, but evict (delete file + clear MMKV) if its
- * `clientRecordedAt` is older than `maxAgeMs`. Centralizes the eviction
- * policy so call sites that load the pending entry get the same behavior.
+ * Load the most-recent pending upload (by clientRecordedAt), evicting any
+ * entries older than `maxAgeMs` first. Used on /record cold-start to
+ * decide whether to re-attach a poll, surface a retry UI, or start a
+ * fresh recording.
  *
- * Returns null in both the no-entry and just-evicted cases — the caller
- * treats them identically.
+ * Returns null in the no-entry, all-stale, or just-evicted-most-recent
+ * cases — callers treat them identically.
+ *
+ * Note: eviction is a full pass over ALL entries, not just the most
+ * recent — so old stale entries get cleaned up even when there's a
+ * fresher one to return.
  */
-export async function loadPendingUploadOrEvict(
+export async function loadMostRecentPendingUploadOrEvict(
   maxAgeMs: number = DEFAULT_MAX_AGE_MS,
 ): Promise<PendingUpload | null> {
-  const entry = loadPendingUpload()
-  if (!entry) return null
-  const ageMs = Date.now() - new Date(entry.clientRecordedAt).getTime()
-  // Guard against malformed timestamps (NaN comparisons are always false)
-  // by also checking the upper bound — if Date.parse fails, age is NaN.
-  if (!Number.isFinite(ageMs) || ageMs >= maxAgeMs) {
-    try {
-      await FileSystem.deleteAsync(entry.localUri, { idempotent: true })
-    } catch {
-      // Best-effort — even if the file is unreachable, clear MMKV so the
-      // user isn't stuck staring at a stale pending entry forever.
+  const all = loadAllPendingUploads()
+  if (all.length === 0) return null
+  const survivors: PendingUpload[] = []
+  for (const entry of all) {
+    const ageMs = Date.now() - new Date(entry.clientRecordedAt).getTime()
+    if (!Number.isFinite(ageMs) || ageMs >= maxAgeMs) {
+      await discardPendingUploadFileById(entry.clientRecordingId)
+    } else {
+      survivors.push(entry)
     }
-    clearPendingUpload()
-    return null
   }
-  return entry
+  return survivors[0] ?? null
+}
+
+/**
+ * One-time copy of any v1 single-slot entry into a v2 keyed slot. Runs
+ * inline on every loadAllPendingUploads call; idempotent once the legacy
+ * key is empty. Assigns a freshly-generated clientRecordingId.
+ *
+ * Exported so the rewriting tests can call it directly without relying
+ * on a side-effect through loadAllPendingUploads.
+ */
+export function migrateLegacyEntry(): void {
+  const raw = appStateStorage.getString(LEGACY_KEY)
+  if (!raw) return
+  try {
+    const legacy = JSON.parse(raw) as Omit<PendingUpload, 'clientRecordingId'>
+    if (legacy && typeof legacy === 'object' && typeof legacy.localUri === 'string') {
+      savePendingUpload({ ...legacy, clientRecordingId: generateClientRecordingId() })
+    }
+  } catch {
+    // Malformed legacy blob — drop it rather than carry corruption forward.
+  }
+  appStateStorage.delete(LEGACY_KEY)
 }

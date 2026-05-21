@@ -15,7 +15,7 @@
 //        │       │                                                         │
 //        │       ▼                                                         │
 //        │   data.status === 'transcribed'                                 │
-//        │     → discardPendingUploadFile + markDone + router.replace(/meetings)  │
+//        │     → discardByMeetingId + markDone + router.replace(/meetings)  │
 //        │   data.status === 'empty'                                       │
 //        │     → same cleanup; meeting detail shows "no speech" banner     │
 //        │   data.status === 'error' AND updated_at < 30min ago            │
@@ -28,7 +28,7 @@
 //        └──────────────────────────────────────────────────────────────── ┘
 //
 // Cleanup = FileSystem.deleteAsync(pendingUpload.localUri) +
-//           clearPendingUpload() (MMKV) — see `discardPendingUploadFile()` below.
+//           clearPendingUpload() (MMKV) — see `discardPendingUploadFileByMeetingId(meetingId)` below.
 //           Idempotent / safe to call when the pending entry is already gone.
 //
 // The status-mapping decision is extracted into the pure function
@@ -45,7 +45,7 @@ import { useQuery } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { fetchMeeting } from '../api/meetings'
 import { useRecordingStore } from './store'
-import { discardPendingUploadFile } from './pending-upload'
+import { discardPendingUploadFileByMeetingId } from './pending-upload'
 import { decidePollAction } from './poll-action'
 
 export function useTranscribingPoll(): void {
@@ -82,7 +82,7 @@ export function useTranscribingPoll(): void {
         // Both terminal-success paths: file + MMKV cleaned up, navigate to
         // meeting detail. The detail screen surfaces an "empty" banner if
         // status='empty' so the user can discard the silent recording.
-        void discardPendingUploadFile().then(() => {
+        void discardPendingUploadFileByMeetingId(meetingId).then(() => {
           markDone()
           // replace() so the user can't hit Back into the recording screen
           // and see stale "Transcribing…" copy.
@@ -98,12 +98,12 @@ export function useTranscribingPoll(): void {
         // Stale-sweeper or otherwise too old to retry — clean up and surface
         // a terminal message. The record.tsx error state without pendingUpload
         // shows a generic "Try again" / "Cancel" pair; user will hit Cancel.
-        void discardPendingUploadFile().then(() => {
+        void discardPendingUploadFileByMeetingId(meetingId).then(() => {
           markError(action.message)
         })
         return
       case 'gone':
-        void discardPendingUploadFile().then(() => {
+        void discardPendingUploadFileByMeetingId(meetingId).then(() => {
           markError(action.message)
           router.replace('/(tabs)/calendar')
         })

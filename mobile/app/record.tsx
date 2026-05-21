@@ -31,15 +31,37 @@ import {
   stopRecording,
 } from '../lib/recording/session'
 import {
-  discardPendingUploadFile,
-  loadPendingUploadOrEvict,
+  discardPendingUploadFileById,
+  loadMostRecentPendingUploadOrEvict,
   type PendingUpload,
 } from '../lib/recording/pending-upload'
 import { useRecordingStore } from '../lib/recording/store'
 import { useTranscribingPoll } from '../lib/recording/use-transcribing-poll'
 import { fetchMeeting } from '../lib/api/meetings'
 import { ApiError } from '../lib/api/client'
+import {
+  decideMountAction,
+  type MeetingProbeResult,
+} from '../lib/recording/mount-action'
 import { colors, radii, spacing, type } from '../theme'
+
+/**
+ * One-shot fetch of the meeting's current server-side status, normalized
+ * into the `MeetingProbeResult` shape decideMountAction consumes.
+ * 'transcribing' / 'recording' → in-flight; anything else terminal;
+ * 404 → 'gone'; any other error → 'unknown' (conservative re-attach).
+ */
+async function probeMeeting(meetingId: string): Promise<MeetingProbeResult> {
+  try {
+    const meeting = await fetchMeeting(meetingId)
+    const s = meeting.status
+    if (s === 'transcribing' || s === 'recording') return { kind: 'in-flight' }
+    return { kind: 'terminal' }
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return { kind: 'gone' }
+    return { kind: 'unknown' }
+  }
+}
 
 export default function RecordScreen() {
   const status = useRecordingStore((s) => s.status)
@@ -64,47 +86,61 @@ export default function RecordScreen() {
     undefined,
   )
 
-  // Mount-time decision tree. Principle: tap Record FAB = "I want to record
-  // now". Honor that intent unless there's literally an active local-side
-  // operation we can't interrupt.
-  //
-  // Store-state handling:
-  //   • 'recording' / 'uploading' — active local work; don't disturb.
-  //     (Effectively unreachable from a FAB tap — calendar UI is hidden
-  //     behind /record when mounted — but safe to early-return.)
-  //   • 'transcribing' — leftover poll from a previous session the user
-  //     backed out of. Server-side transcription completes regardless;
-  //     the meeting will appear in the calendar list when done. We reset
-  //     locally + discard the MMKV pendingUpload (losing retry-upload
-  //     safety net for that older recording) so the user can start fresh.
-  //     We never tell the gateway to cancel — there's no such API; the
-  //     in-flight job runs to completion server-side.
-  //   • 'done' / 'error' — terminal from a previous session that never
-  //     got cleaned up. Reset + start fresh.
-  //   • 'idle' — fresh visit. Check MMKV for a stale entry to either
-  //     re-attach (in-flight elsewhere) or treat as awaiting_upload retry.
+  // Mount-time dispatch. The actual decision logic lives in mount-action.ts
+  // as a pure function so it can be unit-tested without a React renderer
+  // (mirrors poll-action.ts). This useEffect just loads inputs, asks the
+  // pure function what to do, and runs the side effects.
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const loaded = await loadPendingUploadOrEvict()
+      const loaded = await loadMostRecentPendingUploadOrEvict()
       if (cancelled) return
       setPendingUpload(loaded)
+
+      // Probe the gateway only when we actually need it (idle + pending
+      // with meetingId). Skipping the probe in other branches keeps cold-
+      // start instant for the common case.
+      let probe: MeetingProbeResult | undefined
       const currentStatus = useRecordingStore.getState().status
-      if (currentStatus === 'recording' || currentStatus === 'uploading') {
-        // Active local-side operation — don't interrupt.
-        return
+      if (currentStatus === 'idle' && loaded?.meetingId) {
+        probe = await probeMeeting(loaded.meetingId)
+        if (cancelled) return
       }
-      if (currentStatus !== 'idle') {
-        // Leftover non-idle state from a previous session (transcribing /
-        // done / error). User tapped Record FAB → background the old,
-        // start fresh. Server-side state is untouched; any in-flight
-        // transcription will appear in the calendar list when it completes.
-        if (loaded) {
-          await discardPendingUploadFile()
+
+      const action = decideMountAction({
+        storeStatus: currentStatus,
+        pending: loaded,
+        probe,
+      })
+
+      switch (action.kind) {
+        case 'preserve':
+          // Active local work in progress — leave alone.
+          return
+        case 'reset-and-start-fresh':
+          useRecordingStore.getState().reset()
+          await startFresh()
+          return
+        case 'start-fresh':
+          await startFresh()
+          return
+        case 'reattach-poll':
+          useRecordingStore.getState().finalizeMeeting(action.meetingId)
+          return
+        case 'discard-and-start-fresh':
+          await discardPendingUploadFileById(action.clientRecordingId)
           if (cancelled) return
           setPendingUpload(null)
-        }
-        useRecordingStore.getState().reset()
+          await startFresh()
+          return
+        case 'show-retry-ui':
+          useRecordingStore.getState().markError(
+            action.pending.lastError ?? 'Previous upload failed — tap to retry.',
+          )
+          return
+      }
+
+      async function startFresh(): Promise<void> {
         try {
           await startRecording()
         } catch (err) {
@@ -114,58 +150,6 @@ export default function RecordScreen() {
           )
           router.back()
         }
-        return
-      }
-      if (loaded?.meetingId) {
-        // Stale meetingId in MMKV: it might be a genuinely in-flight
-        // transcription the user wants to re-attach to (force-quit
-        // mid-transcription, reopening via Record FAB), OR it might be
-        // a meeting that already terminated (transcribed/empty/error/404)
-        // but never got cleaned up because the poll wasn't running when
-        // the webhook fired. Distinguish via a one-shot fetch — re-attach
-        // only for actually-in-flight; silently clean up + start fresh
-        // for terminal cases. Tapping Record FAB should not navigate to
-        // an old finished meeting.
-        let inFlight = false
-        try {
-          const meeting = await fetchMeeting(loaded.meetingId)
-          if (cancelled) return
-          inFlight = meeting.status === 'transcribing' || meeting.status === 'recording'
-        } catch (err) {
-          if (err instanceof ApiError && err.status === 404) {
-            // Server-side deleted; treat as terminal.
-            inFlight = false
-          } else {
-            // Network blip — be conservative and re-attach so we don't
-            // accidentally clean up an in-flight job we can't reach.
-            inFlight = true
-          }
-        }
-        if (cancelled) return
-        if (inFlight) {
-          useRecordingStore.getState().finalizeMeeting(loaded.meetingId)
-          return
-        }
-        // Terminal — silently clean up and fall through to startRecording
-        await discardPendingUploadFile()
-        if (cancelled) return
-        setPendingUpload(null)
-      } else if (loaded) {
-        // awaiting_upload (failed previous upload, no meetingId) → error UI
-        // with the retry banner.
-        useRecordingStore.getState().markError(
-          loaded.lastError ?? 'Previous upload failed — tap to retry.',
-        )
-        return
-      }
-      try {
-        await startRecording()
-      } catch (err) {
-        Alert.alert(
-          'Microphone unavailable',
-          err instanceof Error ? err.message : 'Could not start recording',
-        )
-        router.back()
       }
     })()
     return () => {
@@ -222,8 +206,13 @@ export default function RecordScreen() {
   }
 
   const onDiscardPending = async () => {
-    await discardPendingUpload()
-    setPendingUpload(null)
+    // The Discard button on the retry-UI is only visible when we have a
+    // loaded pendingUpload (the surrounding render guards on truthy
+    // pendingUpload), so the null-check below is defensive.
+    if (pendingUpload) {
+      await discardPendingUpload(pendingUpload.clientRecordingId)
+      setPendingUpload(null)
+    }
     reset()
     router.back()
   }

@@ -23,6 +23,13 @@ import {
   type TranscriptSegment,
 } from '../../lib/api/meetings'
 import { useAuthStore } from '../../lib/auth/store'
+import { MeetingStatusPill } from '../../components/MeetingStatusPill'
+import {
+  discardPendingUploadFileByMeetingId,
+  loadPendingUploadByMeetingId,
+  type PendingUpload,
+} from '../../lib/recording/pending-upload'
+import { retryPendingUpload } from '../../lib/recording/session'
 import { colors, radii, spacing, type } from '../../theme'
 
 // Meeting detail — third entity in the read-only CRM triangle.
@@ -100,6 +107,8 @@ export default function MeetingDetailScreen() {
             <StatsCard meeting={meeting} />
             {meeting.isGroupEvent && <GroupEventBanner />}
             {meeting.status === 'empty' && <EmptyTranscriptBanner meetingId={meeting.id} />}
+            {meeting.status === 'error' && <RetryUploadBanner meetingId={meeting.id} />}
+            <TerminalCleanupSideEffect meetingStatus={meeting.status} meetingId={meeting.id} />
             <SegmentControl value={segment} onChange={setSegment} />
             {segment === 'overview' && <OverviewSection meeting={meeting} />}
             {segment === 'transcript' && (
@@ -133,6 +142,9 @@ function Hero({ meeting }: { meeting: MeetingDetail }) {
         {meeting.title}
       </Text>
       <Text style={styles.heroSubtitle}>{formatDateLong(meeting.date)}</Text>
+      <View style={styles.heroPillRow}>
+        <MeetingStatusPill status={meeting.status} />
+      </View>
       {meeting.meetingUrl && (
         <View style={styles.heroLinks}>
           <LinkChip
@@ -258,6 +270,122 @@ function EmptyTranscriptBanner({ meetingId }: { meetingId: string }) {
       </Pressable>
     </View>
   )
+}
+
+/**
+ * Shown when a backgrounded recording's transcription errored AND the
+ * local audio file is still in MMKV (the safety net). Lets the user
+ * re-upload from the local file (creates a new meeting) and auto-deletes
+ * the errored row so they're not left with a duplicate.
+ *
+ * Renders nothing when there is no local file to retry from — that
+ * case is the same as any other terminal error: the failure is visible
+ * via the StatusPill in the Hero, but recovery requires re-recording.
+ */
+function RetryUploadBanner({ meetingId }: { meetingId: string }) {
+  const [pending, setPending] = useState<PendingUpload | null | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const [errMsg, setErrMsg] = useState<string | null>(null)
+  useEffect(() => {
+    setPending(loadPendingUploadByMeetingId(meetingId))
+  }, [meetingId])
+  if (pending === undefined) return null // initial load — render nothing this tick
+  if (!pending) return null // no local backup; nothing this banner can do
+
+  const onRetry = async () => {
+    if (busy) return
+    setBusy(true)
+    setErrMsg(null)
+    try {
+      await retryPendingUpload(pending)
+      // Best-effort delete of the errored meeting so the calendar list
+      // isn't left with a duplicate of the same recording. If this fails
+      // (network blip / gateway down) the new meeting still exists; the
+      // user can manually discard the old one later.
+      try {
+        await deleteMeeting(meetingId)
+      } catch {
+        // ignore; user can manually discard later
+      }
+      router.replace('/(tabs)/calendar')
+    } catch (err) {
+      setBusy(false)
+      setErrMsg(err instanceof Error ? err.message : 'Retry failed')
+    }
+  }
+
+  const onDiscard = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      // Wipe the local file + MMKV slot first, then ask the gateway to
+      // delete the meeting row. We do MMKV first so a gateway failure
+      // doesn't strand the local file forever.
+      await discardPendingUploadFileByMeetingId(meetingId)
+      try {
+        await deleteMeeting(meetingId)
+      } catch {
+        // ignore — local cleanup already happened
+      }
+      router.replace('/(tabs)/calendar')
+    } catch {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <View style={styles.emptyTranscriptBanner}>
+      <Ionicons name="cloud-upload-outline" size={18} color={colors.text2} />
+      <View style={styles.groupEventBannerText}>
+        <Text style={styles.groupEventBannerTitle}>Transcription failed</Text>
+        <Text style={styles.groupEventBannerSubtitle}>
+          {errMsg ?? 'Your recording is still on this phone — tap to retry.'}
+        </Text>
+      </View>
+      <Pressable
+        onPress={onRetry}
+        disabled={busy}
+        style={({ pressed }) => [styles.emptyBannerBtn, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Retry upload"
+      >
+        <Text style={styles.emptyBannerBtnText}>Retry</Text>
+      </Pressable>
+      <Pressable
+        onPress={onDiscard}
+        style={({ pressed }) => [styles.emptyBannerLink, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Discard recording"
+      >
+        <Text style={styles.emptyBannerLinkText}>Discard</Text>
+      </Pressable>
+    </View>
+  )
+}
+
+/**
+ * Side-effect-only component: when the user opens a meeting that has
+ * already reached a terminal status (transcribed / empty) and there's
+ * still a local pendingUpload entry for it, silently discard the entry.
+ * This closes the cleanup loop for backgrounded recordings whose poll
+ * never ran to terminal — eventually the user opens the meeting from
+ * the calendar list and we reap the orphaned audio file at that moment.
+ * Renders nothing.
+ */
+function TerminalCleanupSideEffect({
+  meetingStatus,
+  meetingId,
+}: {
+  meetingStatus: string
+  meetingId: string
+}) {
+  useEffect(() => {
+    if (meetingStatus !== 'transcribed' && meetingStatus !== 'empty') return
+    // Fire-and-forget; the entry might not exist (most common case) —
+    // discardPendingUploadFileByMeetingId is a no-op then.
+    void discardPendingUploadFileByMeetingId(meetingId)
+  }, [meetingStatus, meetingId])
+  return null
 }
 
 function SegmentControl({
@@ -555,6 +683,11 @@ const styles = StyleSheet.create({
     fontSize: type.bodyTight,
     marginTop: 4,
     textAlign: 'center',
+  },
+  heroPillRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
   },
   heroLinks: {
     flexDirection: 'row',

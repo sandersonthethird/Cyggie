@@ -29,7 +29,8 @@ import { Audio } from 'expo-av'
 import * as FileSystem from 'expo-file-system/legacy'
 import { uploadRecording } from '../api/recordings'
 import {
-  clearPendingUpload,
+  clearPendingUploadById,
+  generateClientRecordingId,
   savePendingUpload,
   type PendingUpload,
 } from './pending-upload'
@@ -37,6 +38,7 @@ import { useRecordingStore } from './store'
 
 let activeRecording: Audio.Recording | null = null
 let recordingStartedAt: Date | null = null
+let activeRecordingId: string | null = null
 let maxDurationTimer: ReturnType<typeof setTimeout> | null = null
 
 // Hard cap on a single recording. 8 hours is the spec'd limit + aligns with
@@ -103,6 +105,10 @@ export async function startRecording(): Promise<void> {
   const { recording } = await Audio.Recording.createAsync(RECORDING_OPTIONS)
   activeRecording = recording
   recordingStartedAt = new Date()
+  // Mint the stable client-side id for this recording. Used as the MMKV
+  // slot key by performUpload + savePendingUpload, so multiple recordings
+  // can coexist in storage without clobbering each other.
+  activeRecordingId = generateClientRecordingId()
   useRecordingStore.getState().beginRecording()
 
   // Auto-stop at the 8hr cap. Fire-and-forget — if the user already stopped
@@ -126,6 +132,9 @@ export async function stopRecording(args: {
   activeRecording = null
   const startedAt = recordingStartedAt
   recordingStartedAt = null
+  // Capture + clear the active id locally; performUpload owns it from here.
+  const clientRecordingId = activeRecordingId ?? generateClientRecordingId()
+  activeRecordingId = null
   if (maxDurationTimer) {
     clearTimeout(maxDurationTimer)
     maxDurationTimer = null
@@ -147,6 +156,7 @@ export async function stopRecording(args: {
   const recordedAtIso = startedAt?.toISOString() ?? new Date().toISOString()
 
   return performUpload({
+    clientRecordingId,
     localUri,
     title: args.title,
     calEventId: args.calEventId,
@@ -163,7 +173,9 @@ export async function retryPendingUpload(p: PendingUpload): Promise<{ meetingId:
   // memory pressure (rare for AAC; documenting the guard for sanity).
   const info = await FileSystem.getInfoAsync(p.localUri)
   if (!info.exists) {
-    clearPendingUpload()
+    // The audio is gone — nothing to retry. Clear only this specific
+    // recording's slot; other in-flight recordings (if any) are untouched.
+    clearPendingUploadById(p.clientRecordingId)
     useRecordingStore.getState().markError(
       'The recording file is no longer available — please record again.',
     )
@@ -218,10 +230,11 @@ async function performUpload(p: PendingUpload): Promise<{ meetingId: string }> {
   }
 }
 
-/** Discard the persisted pending upload (delete the local file too).
- *  Thin re-export so the record.tsx Discard action keeps importing from
- *  ./session; the canonical implementation lives in pending-upload.ts. */
-export { discardPendingUploadFile as discardPendingUpload } from './pending-upload'
+/** Discard a specific pending upload by its clientRecordingId — deletes
+ *  the local audio file and clears the MMKV slot. Thin re-export so the
+ *  record.tsx Discard action keeps importing from ./session; the
+ *  canonical implementation lives in pending-upload.ts. */
+export { discardPendingUploadFileById as discardPendingUpload } from './pending-upload'
 
 /** Safe cleanup if the user backs out of the recording screen without stopping. */
 export async function cancelRecording(): Promise<void> {

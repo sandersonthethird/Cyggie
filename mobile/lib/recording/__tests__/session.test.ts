@@ -17,7 +17,8 @@ let recordingUri: string | null = 'file:///recording.m4a'
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
-// In-memory MMKV double
+// In-memory MMKV double. getAllKeys is implemented because the multi-slot
+// pending-upload helpers iterate via prefix scan.
 const mmkvStore = new Map<string, string>()
 vi.mock('../../cache/mmkv', () => ({
   appStateStorage: {
@@ -28,6 +29,7 @@ vi.mock('../../cache/mmkv', () => ({
     delete: (k: string) => {
       mmkvStore.delete(k)
     },
+    getAllKeys: () => Array.from(mmkvStore.keys()),
   },
 }))
 
@@ -121,6 +123,7 @@ afterEach(async () => {
 describe('performUpload — success path (via retryPendingUpload)', () => {
   it('does NOT call FileSystem.deleteAsync on success', async () => {
     await retryPendingUpload({
+      clientRecordingId: 'rec-a',
       localUri: 'file:///a.m4a',
       clientRecordedAt: new Date().toISOString(),
     })
@@ -130,22 +133,28 @@ describe('performUpload — success path (via retryPendingUpload)', () => {
     expect(fileSystemDeleteCalls).toEqual([])
   })
 
-  it('saves the pending entry with meetingId set + clears lastError', async () => {
+  it('saves the pending entry with meetingId set + clears lastError, under the v2 slot key', async () => {
     uploadShouldReturn = { meetingId: 'mtg-1234' }
     await retryPendingUpload({
+      clientRecordingId: 'rec-success-1',
       localUri: 'file:///a.m4a',
       clientRecordedAt: new Date().toISOString(),
       lastError: 'previous attempt failed',
     })
-    const stored = JSON.parse(mmkvStore.get('cyggie.pending-upload.v1') ?? '{}')
+    // Multi-slot: each recording lives at its own keyed slot.
+    const stored = JSON.parse(
+      mmkvStore.get('cyggie.pending-upload.v2:rec-success-1') ?? '{}',
+    )
     expect(stored.meetingId).toBe('mtg-1234')
     expect(stored.lastError).toBeUndefined()
     expect(stored.localUri).toBe('file:///a.m4a')
+    expect(stored.clientRecordingId).toBe('rec-success-1')
   })
 
   it('flips store to transcribing via finalizeMeeting before persisting MMKV', async () => {
     uploadShouldReturn = { meetingId: 'mtg-abc' }
     await retryPendingUpload({
+      clientRecordingId: 'rec-order',
       localUri: 'file:///a.m4a',
       clientRecordedAt: new Date().toISOString(),
     })
@@ -159,6 +168,32 @@ describe('performUpload — success path (via retryPendingUpload)', () => {
       order.indexOf('finalizeMeeting'),
     )
   })
+
+  it('two sequential retries with different clientRecordingIds produce two separate MMKV entries', async () => {
+    // Multi-slot invariant: starting a new recording while a previous one
+    // is still in MMKV must not clobber the older entry. Sequential
+    // retries here stand in for the user's "tap Record FAB during
+    // transcribing" flow, which is the original driver for multi-slot.
+    uploadShouldReturn = { meetingId: 'mtg-A' }
+    await retryPendingUpload({
+      clientRecordingId: 'rec-A',
+      localUri: 'file:///A.m4a',
+      clientRecordedAt: '2026-05-21T10:00:00Z',
+    })
+    uploadShouldReturn = { meetingId: 'mtg-B' }
+    await retryPendingUpload({
+      clientRecordingId: 'rec-B',
+      localUri: 'file:///B.m4a',
+      clientRecordedAt: '2026-05-21T10:05:00Z',
+    })
+
+    expect(mmkvStore.has('cyggie.pending-upload.v2:rec-A')).toBe(true)
+    expect(mmkvStore.has('cyggie.pending-upload.v2:rec-B')).toBe(true)
+    const a = JSON.parse(mmkvStore.get('cyggie.pending-upload.v2:rec-A')!)
+    const b = JSON.parse(mmkvStore.get('cyggie.pending-upload.v2:rec-B')!)
+    expect(a.meetingId).toBe('mtg-A')
+    expect(b.meetingId).toBe('mtg-B')
+  })
 })
 
 describe('performUpload — failure path (via retryPendingUpload)', () => {
@@ -166,11 +201,14 @@ describe('performUpload — failure path (via retryPendingUpload)', () => {
     uploadShouldThrow = new Error('Upload failed (502)')
     await expect(
       retryPendingUpload({
+        clientRecordingId: 'rec-fail',
         localUri: 'file:///b.m4a',
         clientRecordedAt: new Date().toISOString(),
       }),
     ).rejects.toThrow('Upload failed (502)')
-    const stored = JSON.parse(mmkvStore.get('cyggie.pending-upload.v1') ?? '{}')
+    const stored = JSON.parse(
+      mmkvStore.get('cyggie.pending-upload.v2:rec-fail') ?? '{}',
+    )
     expect(stored.lastError).toBe('Upload failed (502)')
     expect(stored.meetingId).toBeUndefined()
     // File must also not be deleted on failure — same audio is the basis
@@ -178,16 +216,28 @@ describe('performUpload — failure path (via retryPendingUpload)', () => {
     expect(fileSystemDeleteCalls).toEqual([])
   })
 
-  it('aborts with a clear error when the local file is gone before retry', async () => {
+  it('aborts + clears only THIS recording slot when the local file is gone', async () => {
     fileExistsResponse = false
+    // Seed a sibling slot that must NOT be touched — multi-slot invariant.
+    mmkvStore.set(
+      'cyggie.pending-upload.v2:rec-sibling',
+      JSON.stringify({
+        clientRecordingId: 'rec-sibling',
+        localUri: 'file:///sibling.m4a',
+        clientRecordedAt: new Date().toISOString(),
+      }),
+    )
     await expect(
       retryPendingUpload({
+        clientRecordingId: 'rec-gone',
         localUri: 'file:///gone.m4a',
         clientRecordedAt: new Date().toISOString(),
       }),
     ).rejects.toThrow('Local audio file missing')
-    // MMKV cleared so the user isn't stuck with an un-retryable entry
-    expect(mmkvStore.get('cyggie.pending-upload.v1')).toBeUndefined()
+    // The vanished entry's slot is cleared so the user isn't stuck.
+    expect(mmkvStore.has('cyggie.pending-upload.v2:rec-gone')).toBe(false)
+    // The sibling slot stays — proves the cleanup is by-id, not bulk.
+    expect(mmkvStore.has('cyggie.pending-upload.v2:rec-sibling')).toBe(true)
   })
 })
 

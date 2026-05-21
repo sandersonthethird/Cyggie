@@ -178,6 +178,13 @@ Recommendation: narrow to Calendar for V1 cleanliness; build the incremental-aut
 
 The full per-migration audit is in [packages/db/MIGRATION_AUDIT.md](packages/db/MIGRATION_AUDIT.md). 69 of 95 source SQLite migrations are covered by the consolidated drizzle schema. Remaining 26 are either inline-during-port, skip-superseded, or repair-scripts deferred to a `data-quality-passes.ts` script not yet written.
 
+### M3 follow-ups (deferred from multi-slot pendingUpload PR)
+
+| Item | Why | Pointer |
+|---|---|---|
+| Cancellable uploads via AbortController | Today's `uploadRecording` uses `expo-file-system/legacy.createUploadTask` which has no AbortSignal. The cold-start `'uploading'` branch in [mount-action.ts](mobile/lib/recording/mount-action.ts) early-returns as "preserve" because we can't interrupt a fetch-in-progress without orphaning the file. Uploads are <5s in practice so this is currently dead code — but if upload latency grows or we want explicit-cancel UX, AbortController is the prerequisite. | [mobile/lib/api/recordings.ts](mobile/lib/api/recordings.ts) `uploadRecording` |
+| Recordings discoverability surface | The calendar list shows Google Calendar events (`fetchCalendarEvents`), not recording meetings. If a user records 3 impromptu meetings and navigates away, there's no UI today that lists them — only direct nav to `/meetings/[id]`. Background-recording status pills make sense once such a surface exists; this PR added the StatusPill component + tested mapping for that future use. Options: (a) "Recordings" tab, (b) "Recent recordings" section in calendar list, (c) include recording rows in search. | Plan: extend gateway with `GET /meetings?filter=recent`, then mount a list view on mobile |
+
 ### Required tests still owed (from eng review)
 
 | Test | Milestone | Path | Status |
