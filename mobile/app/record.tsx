@@ -3,8 +3,11 @@
 //
 // State-driven by useRecordingStore:
 //
-//   idle          → unexpected (we navigate in via tap-FAB → startRecording);
-//                   show a Start button as a safety net so the user isn't stuck.
+//   idle          → transient: mount logic is in flight (gateway probe +
+//                   startRecording's permission/audio-session setup). Shows a
+//                   "Starting…" spinner with Cancel as escape hatch. A 5s
+//                   watchdog surfaces "Microphone unavailable" if
+//                   Audio.Recording.createAsync hangs.
 //   recording     → big elapsed timer + crimson Stop button. iOS shows a
 //                   red status bar via UIBackgroundModes:audio.
 //   uploading     → "Uploading…" + progress bar (uploadProgress).
@@ -44,6 +47,30 @@ import {
   type MeetingProbeResult,
 } from '../lib/recording/mount-action'
 import { colors, radii, spacing, type } from '../theme'
+
+/**
+ * Watchdog around startRecording. If Audio.Recording.createAsync hangs
+ * (rare platform-edge case — file lock, audio session contention) the
+ * spinner UI would otherwise be visible indefinitely. The 5s timeout
+ * surfaces the same "Microphone unavailable" alert + router.back() path
+ * the existing throw cases use.
+ */
+const START_RECORDING_TIMEOUT_MS = 5000
+
+async function startRecordingWithTimeout(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('Microphone did not start in time')),
+      START_RECORDING_TIMEOUT_MS,
+    )
+  })
+  try {
+    await Promise.race([startRecording(), timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 /**
  * One-shot fetch of the meeting's current server-side status, normalized
@@ -142,7 +169,7 @@ export default function RecordScreen() {
 
       async function startFresh(): Promise<void> {
         try {
-          await startRecording()
+          await startRecordingWithTimeout()
         } catch (err) {
           Alert.alert(
             'Microphone unavailable',
@@ -220,7 +247,7 @@ export default function RecordScreen() {
   const onStartFresh = async () => {
     reset()
     try {
-      await startRecording()
+      await startRecordingWithTimeout()
     } catch (err) {
       Alert.alert(
         'Microphone unavailable',
@@ -245,7 +272,17 @@ export default function RecordScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {(status === 'idle' || status === 'recording') && (
+      {status === 'idle' && (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={colors.crimson} />
+          <Text style={[styles.heading, { marginTop: spacing.md }]}>Starting…</Text>
+          <Pressable onPress={onCancel} style={styles.cancelLink}>
+            <Text style={styles.cancelText}>Cancel</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {status === 'recording' && (
         <View style={styles.center}>
           <Text style={styles.heading}>Recording</Text>
           <Text style={styles.timer}>{formatElapsed(elapsed)}</Text>

@@ -734,6 +734,16 @@ the delete works after the fix.
 
 ## P2 — Tests
 
+### React render testing infrastructure for mobile/
+**What:** Stand up `@testing-library/react-native` (or `react-test-renderer`) for the `mobile/` workspace and add render tests for `RecordScreen`'s full state matrix (idle → recording → uploading → transcribing → done → error, plus the pendingUpload-loading branch).
+**Why:** Mobile currently has unit tests only for pure-function decision logic (`mount-action.ts`, `poll-action.ts`, `status-pill.ts`, `session.ts`, `pending-upload.ts`). Render-level bugs slip through unchecked. The recording screen has now had **6 user-visible regressions in a single session** (`a8d545e`, `1205ff0`, `ae71266`, `03b7604`, `206eb57` mount-action extract, and this one) — every one of them was a state→UI rendering mismatch. The mount-action.ts extraction covered the decision logic with 11 tests, but cannot catch the kind of bug fixed here (idle and recording sharing one render branch).
+**Pros:** Catches render-level regressions before they ship; lets us assert "when status=X, the user sees Y" for the RecordScreen and (eventually) MeetingDetail, RetryUploadBanner, EmptyTranscriptBanner. Aligns with the pure-function test culture already in place (state matrix is the same thing, just one layer up).
+**Cons:** ~Half-day of infra setup (vitest config + jest-dom-equivalent for RN + mock for `expo-av` / `expo-router` / `react-native-safe-area-context`); ongoing maintenance of mocks as the screen evolves. Could be premature if regressions stop after this one.
+**Context:** The natural first test would assert: given a fresh mount with `storeStatus='idle'` and `pendingUpload=null`, the rendered tree shows the spinner + "Starting…" text and **NOT** the timer (the regression this PR fixes). Other valuable cases: `status='recording'` shows the timer with the formatted elapsed; `status='error'` with a pendingUpload shows the retry banner. Mock-surface inventory: `expo-av` (already faked in `session.test.ts`), `expo-router` (just need a `router.back()` no-op), `react-native-safe-area-context` (provider). Trigger to ship: 6th regression in this area was the threshold — if this PR's JSX-only fix lands cleanly and there's no 7th, we can defer further; if another render regression hits, that's the signal to do this.
+**Effort:** M (half-day infra + 5-10 render tests for `RecordScreen`)
+**Priority:** P2
+**Depends on:** Nothing — independent of in-flight mobile work.
+
 ## P2 — Notes Import
 
 ## P2 — Notes
