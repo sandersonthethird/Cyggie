@@ -115,7 +115,10 @@ export async function registerRecordingRoutes(
           columns: { id: true },
         })
       }
-      const meetingId = existing?.id ?? createId()
+      // `meetingId` is the id we'll respond with and pass to Deepgram. It
+      // starts as the existing row's id (if found) or a fresh cuid; the
+      // 23505-recovery branch below may swap it to the racer's id.
+      let meetingId = existing?.id ?? createId()
 
       // Save as .m4a — that's what expo-av actually produces (MPEG-4 audio
       // container with AAC codec inside). The extension is cosmetic for
@@ -144,17 +147,60 @@ export async function registerRecordingRoutes(
         // or a calendar event we've never tapped. `was_impromptu=true`
         // matches the FAB path; the from-cal-event path would have created
         // a row first, so reaching here implies impromptu.
-        await db.insert(schema.meetings).values({
-          id: meetingId,
-          userId: user.sub,
-          title,
-          date: recordedAt,
-          calendarEventId,
-          recordingPath: audioPath,
-          status: 'recording',
-          wasImpromptu: true,
-          createdByUserId: user.sub,
-        })
+        //
+        // 23505 recovery: a concurrent /meetings/from-calendar-event (or
+        // another /recordings/upload) for the same (user, calEventId) may
+        // have inserted a row between our SELECT above and this INSERT.
+        // Recover by re-finding and updating that row instead — mirrors
+        // /meetings/from-calendar-event's race-recovery pattern. The audio
+        // file we already wrote stays on disk under the original meetingId
+        // path; we update the racer's row to point recordingPath at it and
+        // reassign `meetingId` so the response + Deepgram submit reference
+        // the correct row.
+        try {
+          await db.insert(schema.meetings).values({
+            id: meetingId,
+            userId: user.sub,
+            title,
+            date: recordedAt,
+            calendarEventId,
+            recordingPath: audioPath,
+            status: 'recording',
+            wasImpromptu: true,
+            createdByUserId: user.sub,
+          })
+        } catch (err) {
+          const code =
+            err instanceof Error && 'code' in err ? (err as { code?: string }).code : null
+          if (code !== '23505' || !calendarEventId) throw err
+          const raced = await db.query.meetings.findFirst({
+            where: and(
+              eq(schema.meetings.userId, user.sub),
+              eq(schema.meetings.calendarEventId, calendarEventId),
+            ),
+            columns: { id: true },
+          })
+          if (!raced) throw err
+          await db
+            .update(schema.meetings)
+            .set({
+              recordingPath: audioPath,
+              status: 'recording',
+              updatedAt: new Date(),
+              updatedByUserId: user.sub,
+            })
+            .where(eq(schema.meetings.id, raced.id))
+          req.log.info(
+            {
+              meetingId: raced.id,
+              calendarEventId,
+              userId: user.sub,
+              metric: 'recordings.upload.collision_recovered',
+            },
+            'recordings.upload 23505 recovered via re-find',
+          )
+          meetingId = raced.id
+        }
       }
 
       // Submit to Deepgram BEFORE responding 202. Two reasons:
