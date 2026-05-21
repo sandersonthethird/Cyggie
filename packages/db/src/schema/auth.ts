@@ -92,6 +92,12 @@ export const sessions = pgTable(
     apnsEnvironment: varchar('apns_environment', { length: 16 }),
     apnsTokenUpdatedAt: timestamp('apns_token_updated_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    // Set once by POST /auth/session/claim-by-device when a mobile client
+    // recovers a session whose deep-link redirect was eaten by an
+    // ASWebAuthenticationSession `dismiss`. Used as a single-use claim flag
+    // (claim succeeds only while NULL) so a leaked device_id can't be
+    // replayed to mint additional token pairs from the same session row.
+    recoveredAt: timestamp('recovered_at', { withTimezone: true }),
   },
   (t) => [
     index('sessions_user_idx').on(t.userId),
@@ -99,6 +105,9 @@ export const sessions = pgTable(
     index('sessions_expires_idx').on(t.expiresAt),
     // Lookup-by-token for the 410 cleanup path on send failure.
     index('sessions_apns_token_idx').on(t.apnsDeviceToken),
+    // Hot path for the claim-by-device recovery query — filters by
+    // device_id then takes the most-recent-and-claimable row.
+    index('sessions_device_created_idx').on(t.deviceId, t.createdAt),
   ],
 )
 

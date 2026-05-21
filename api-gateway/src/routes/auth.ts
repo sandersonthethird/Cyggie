@@ -3,7 +3,7 @@ import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
-import { and, count, eq, isNull, lt } from 'drizzle-orm'
+import { and, count, desc, eq, gt, isNull, lt } from 'drizzle-orm'
 import {
   buildAuthUrl,
   createOAuthClient,
@@ -35,6 +35,17 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     redirectUri: env.GOOGLE_OAUTH_REDIRECT_URI,
   })
+
+  // Per-device throttle for POST /auth/session/claim-by-device. The endpoint
+  // is unauthenticated by design (the device has no JWT yet) and is meant for
+  // a ~15 s polling burst after an ASWebAuthenticationSession dismiss. 10
+  // attempts per 60 s comfortably covers a 1.5 s-interval poll with retries
+  // while still cutting off a misconfigured client. Map is per-instance — we
+  // run 2 Fly machines, so the effective cap is ~20/min/device; that's still
+  // tight enough for this surface.
+  const claimByDeviceRateLimit = new Map<string, { count: number; windowStart: number }>()
+  const CLAIM_RL_WINDOW_MS = 60_000
+  const CLAIM_RL_MAX = 10
 
   const fastifyTyped = app.withTypeProvider<ZodTypeProvider>()
 
@@ -270,21 +281,10 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
       // Flow C (domain auto-join) is deferred to M6 — when it lands here, this
       // block will set firm_id on the user row server-side before computing the
       // action so the returning-user path kicks in.
-      let action: 'returning' | 'create_workspace' | 'join_firm' = userFirmId
-        ? 'returning'
-        : 'create_workspace'
-      if (!userFirmId) {
-        const pendingInvite = await db.query.invites.findFirst({
-          where: and(
-            eq(schema.invites.email, identity.email.toLowerCase()),
-            isNull(schema.invites.acceptedAt),
-            isNull(schema.invites.revokedAt),
-          ),
-        })
-        if (pendingInvite && pendingInvite.expiresAt.getTime() > Date.now()) {
-          action = 'join_firm'
-        }
-      }
+      const action = await computeOnboardingAction(db, {
+        firmId: userFirmId,
+        email: identity.email,
+      })
 
       // Redirect to the deep link with the JWT, refresh token, and the
       // onboarding hint. Target chosen per the pending row's redirect_target:
@@ -389,6 +389,161 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         avatarUrl: row.avatarUrl,
         firmId: row.firmId,
         role: row.role === 'admin' ? ('admin' as const) : ('member' as const),
+      }
+    },
+  })
+
+  // POST /auth/session/claim-by-device — recovery from ASWebAuthenticationSession dismiss.
+  //
+  // On iOS, the system auth session can return type='dismiss' (or 'cancel')
+  // AFTER the gateway has already minted a session row and 302'd to
+  // cyggie://auth-callback?session=…. The redirect never reaches the app, so
+  // mobile is stuck without tokens despite a fully-successful server-side
+  // OAuth. Mobile now polls this endpoint with its stable SecureStore device_id;
+  // we find the most-recent claimable session for that device, mark it
+  // recovered (single-use), re-mint the access JWT, and rotate the refresh
+  // token. The original refresh token (lost in the dismissed redirect) is
+  // orphaned by the rotation.
+  //
+  // Authorization model: no JWT (the whole point is the device doesn't have
+  // one). The device_id is a 32-byte SecureStore secret on the device. We add
+  // belt-and-suspenders:
+  //   • 120 s freshness window — sessions older than that can't be claimed,
+  //     so a stolen device_id can't be replayed against historic logins.
+  //   • single-use claim — recovered_at is set atomically; a second poll
+  //     returns 404 even if it knows the device_id.
+  //   • per-device rate limit — 10 attempts/min, returning 429.
+  //   • rotation — even on legitimate recovery, the refresh token rotates,
+  //     so a duplicate that leaked alongside the device_id is invalidated.
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/auth/session/claim-by-device',
+    schema: {
+      body: z.object({
+        device_id: z.string().min(8).max(64),
+      }),
+      response: {
+        200: z.object({
+          session: z.string(),
+          refresh: z.string(),
+          user_id: z.string(),
+          action: z.enum(['returning', 'create_workspace', 'join_firm']),
+          email: z.string(),
+        }),
+      },
+    },
+    handler: async (req) => {
+      const { device_id } = req.body
+
+      // Per-device throttle.
+      const now = Date.now()
+      const bucket = claimByDeviceRateLimit.get(device_id)
+      if (!bucket || now - bucket.windowStart > CLAIM_RL_WINDOW_MS) {
+        claimByDeviceRateLimit.set(device_id, { count: 1, windowStart: now })
+      } else {
+        bucket.count += 1
+        if (bucket.count > CLAIM_RL_MAX) {
+          throw new GatewayError({
+            statusCode: 429,
+            code: 'RATE_LIMITED',
+            message: 'Too many claim attempts for this device — wait a minute',
+          })
+        }
+      }
+
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const freshnessCutoff = new Date(Date.now() - 120_000)
+
+      // Find the most-recent claimable session, then atomically mark it
+      // recovered. The UPDATE's `recovered_at IS NULL` predicate closes the
+      // TOCTOU between two concurrent polls — only one returns rows.
+      const candidate = await db.query.sessions.findFirst({
+        where: and(
+          eq(schema.sessions.deviceId, device_id),
+          isNull(schema.sessions.revokedAt),
+          isNull(schema.sessions.recoveredAt),
+          gt(schema.sessions.createdAt, freshnessCutoff),
+        ),
+        orderBy: [desc(schema.sessions.createdAt)],
+      })
+      if (!candidate) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'NO_RECENT_SESSION',
+          message: 'No claimable session for this device',
+        })
+      }
+
+      const newRefresh = randomRefreshToken()
+      const newRefreshHash = hashForStorage(newRefresh)
+      const claimed = await db
+        .update(schema.sessions)
+        .set({
+          recoveredAt: new Date(),
+          refreshTokenHash: newRefreshHash,
+          lastSeenAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.sessions.id, candidate.id),
+            isNull(schema.sessions.recoveredAt),
+          ),
+        )
+        .returning({ id: schema.sessions.id, userId: schema.sessions.userId })
+      if (claimed.length === 0) {
+        // Lost the race to a concurrent poll. Treat as "nothing to claim".
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'NO_RECENT_SESSION',
+          message: 'No claimable session for this device',
+        })
+      }
+
+      const session = claimed[0]!
+      const userRow = await db.query.users.findFirst({
+        where: eq(schema.users.id, session.userId),
+      })
+      if (!userRow) {
+        throw new GatewayError({
+          statusCode: 401,
+          code: 'USER_NOT_FOUND',
+          message: 'User in session no longer exists',
+          reauthRequired: true,
+        })
+      }
+
+      const accessToken = await signAccessToken(env.JWT_SIGNING_SECRET, {
+        sub: session.userId,
+        sid: session.id,
+        device: device_id,
+        scope: ['user'],
+        firm_id: userRow.firmId,
+        role: userRow.role === 'admin' ? 'admin' : 'member',
+      })
+
+      const action = await computeOnboardingAction(db, {
+        firmId: userRow.firmId,
+        email: userRow.email,
+      })
+
+      await db.insert(schema.auditLog).values({
+        userId: session.userId,
+        deviceId: device_id,
+        eventType: 'oauth.recovered',
+        actor: 'user',
+      })
+
+      req.log.info(
+        { userId: session.userId, deviceId: device_id, sessionId: session.id, action },
+        'oauth session recovered via claim-by-device',
+      )
+
+      return {
+        session: accessToken,
+        refresh: newRefresh,
+        user_id: session.userId,
+        action,
+        email: userRow.email,
       }
     },
   })
@@ -511,6 +666,34 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
       return { ok: true as const }
     },
   })
+}
+
+// Onboarding action surfaced to mobile in the cyggie:// redirect and in the
+// claim-by-device recovery response. Kept in one place so the OAuth callback
+// and the recovery endpoint can't drift.
+//
+//   firm_id set                              → 'returning'         (Calendar)
+//   firm_id null + live invite for email     → 'join_firm'         (confirm-join)
+//   firm_id null + no live invite            → 'create_workspace'  (Flow A)
+//
+// Flow C (domain auto-join) lands in M6 by setting firm_id on the user row
+// before this runs; the returning-user branch then takes over.
+async function computeOnboardingAction(
+  db: ReturnType<typeof getDb>,
+  user: { firmId: string | null; email: string },
+): Promise<'returning' | 'create_workspace' | 'join_firm'> {
+  if (user.firmId) return 'returning'
+  const pendingInvite = await db.query.invites.findFirst({
+    where: and(
+      eq(schema.invites.email, user.email.toLowerCase()),
+      isNull(schema.invites.acceptedAt),
+      isNull(schema.invites.revokedAt),
+    ),
+  })
+  if (pendingInvite && pendingInvite.expiresAt.getTime() > Date.now()) {
+    return 'join_firm'
+  }
+  return 'create_workspace'
 }
 
 // Random base64url refresh token. 32 bytes of entropy.

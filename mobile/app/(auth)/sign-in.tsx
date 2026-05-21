@@ -8,12 +8,14 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
-import { startSignIn } from '../../lib/auth/oauth'
+import { pollForRecoveredSession, startSignIn, type SignInResult } from '../../lib/auth/oauth'
+import { getOrCreateDeviceId } from '../../lib/auth/device'
 import { useAuthStore } from '../../lib/auth/store'
 import { colors, radii, spacing, type } from '../../theme'
 
 export default function SignInScreen() {
   const [pending, setPending] = useState(false)
+  const [recovering, setRecovering] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const signIn = useAuthStore((s) => s.signIn)
 
@@ -21,7 +23,20 @@ export default function SignInScreen() {
     setError(null)
     setPending(true)
     try {
-      const result = await startSignIn()
+      let result: SignInResult = await startSignIn()
+      // ASWebAuthenticationSession occasionally returns cancel/dismiss after
+      // the gateway already minted a session (see oauth.ts header). Give the
+      // recovery endpoint ~15s to find a freshly-minted session for this
+      // device before we surrender to the cancel.
+      if (result.kind === 'cancel') {
+        setRecovering(true)
+        try {
+          const deviceId = await getOrCreateDeviceId()
+          result = await pollForRecoveredSession(deviceId)
+        } finally {
+          setRecovering(false)
+        }
+      }
       if (result.kind === 'cancel') {
         return
       }
@@ -74,6 +89,12 @@ export default function SignInScreen() {
             <Text style={styles.buttonText}>Continue with Google</Text>
           )}
         </Pressable>
+
+        {recovering && (
+          <Text style={styles.recovering} accessibilityLiveRegion="polite">
+            Finishing sign-in…
+          </Text>
+        )}
 
         {error && (
           <Text style={styles.error} accessibilityLiveRegion="polite">
@@ -130,6 +151,12 @@ const styles = StyleSheet.create({
   },
   error: {
     color: colors.crimson,
+    fontSize: type.bodyTight,
+    marginTop: spacing.lg,
+    textAlign: 'center',
+  },
+  recovering: {
+    color: colors.text3,
     fontSize: type.bodyTight,
     marginTop: spacing.lg,
     textAlign: 'center',
