@@ -64,18 +64,25 @@ export default function RecordScreen() {
     undefined,
   )
 
-  // Auto-start when arriving fresh from the Record FAB — UNLESS:
-  //  • a previous failed upload is awaiting retry (no meetingId in MMKV), OR
-  //  • a previous in-flight transcription is awaiting completion (meetingId
-  //    present in MMKV — likely user force-quit mid-transcription and is
-  //    reopening the app).
+  // Mount-time decision tree. Principle: tap Record FAB = "I want to record
+  // now". Honor that intent unless there's literally an active local-side
+  // operation we can't interrupt.
   //
-  // Terminal store states (done/error) from a *previous* recording session
-  // get reset before we decide — otherwise tapping Record FAB after
-  // completing a recording would re-render the stale "All set" / "Try
-  // again" UI instead of starting a new one. The active in-flight states
-  // (recording/uploading/transcribing) are preserved so we don't interrupt
-  // a recording in progress.
+  // Store-state handling:
+  //   • 'recording' / 'uploading' — active local work; don't disturb.
+  //     (Effectively unreachable from a FAB tap — calendar UI is hidden
+  //     behind /record when mounted — but safe to early-return.)
+  //   • 'transcribing' — leftover poll from a previous session the user
+  //     backed out of. Server-side transcription completes regardless;
+  //     the meeting will appear in the calendar list when done. We reset
+  //     locally + discard the MMKV pendingUpload (losing retry-upload
+  //     safety net for that older recording) so the user can start fresh.
+  //     We never tell the gateway to cancel — there's no such API; the
+  //     in-flight job runs to completion server-side.
+  //   • 'done' / 'error' — terminal from a previous session that never
+  //     got cleaned up. Reset + start fresh.
+  //   • 'idle' — fresh visit. Check MMKV for a stale entry to either
+  //     re-attach (in-flight elsewhere) or treat as awaiting_upload retry.
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -83,11 +90,30 @@ export default function RecordScreen() {
       if (cancelled) return
       setPendingUpload(loaded)
       const currentStatus = useRecordingStore.getState().status
-      const isStaleTerminal = currentStatus === 'done' || currentStatus === 'error'
-      if (isStaleTerminal) {
+      if (currentStatus === 'recording' || currentStatus === 'uploading') {
+        // Active local-side operation — don't interrupt.
+        return
+      }
+      if (currentStatus !== 'idle') {
+        // Leftover non-idle state from a previous session (transcribing /
+        // done / error). User tapped Record FAB → background the old,
+        // start fresh. Server-side state is untouched; any in-flight
+        // transcription will appear in the calendar list when it completes.
+        if (loaded) {
+          await discardPendingUploadFile()
+          if (cancelled) return
+          setPendingUpload(null)
+        }
         useRecordingStore.getState().reset()
-      } else if (currentStatus !== 'idle') {
-        // Active in-flight (recording/uploading/transcribing) — leave alone.
+        try {
+          await startRecording()
+        } catch (err) {
+          Alert.alert(
+            'Microphone unavailable',
+            err instanceof Error ? err.message : 'Could not start recording',
+          )
+          router.back()
+        }
         return
       }
       if (loaded?.meetingId) {
