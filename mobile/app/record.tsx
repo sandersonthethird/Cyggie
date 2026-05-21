@@ -67,15 +67,26 @@ export default function RecordScreen() {
   //    present in MMKV — likely user force-quit mid-transcription and is
   //    reopening the app).
   //
-  // Both cases land us on this screen in a non-recording state so the user
-  // can choose what to do (retry / discard / wait for poll).
+  // Terminal store states (done/error) from a *previous* recording session
+  // get reset before we decide — otherwise tapping Record FAB after
+  // completing a recording would re-render the stale "All set" / "Try
+  // again" UI instead of starting a new one. The active in-flight states
+  // (recording/uploading/transcribing) are preserved so we don't interrupt
+  // a recording in progress.
   useEffect(() => {
     let cancelled = false
     void (async () => {
       const loaded = await loadPendingUploadOrEvict()
       if (cancelled) return
       setPendingUpload(loaded)
-      if (status !== 'idle') return
+      const currentStatus = useRecordingStore.getState().status
+      const isStaleTerminal = currentStatus === 'done' || currentStatus === 'error'
+      if (isStaleTerminal) {
+        useRecordingStore.getState().reset()
+      } else if (currentStatus !== 'idle') {
+        // Active in-flight (recording/uploading/transcribing) — leave alone.
+        return
+      }
       if (loaded?.meetingId) {
         // awaiting_transcription cold-start: re-attach the poll by putting
         // the store back into 'transcribing' state with the saved meetingId.
