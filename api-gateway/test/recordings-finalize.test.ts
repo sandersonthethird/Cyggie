@@ -177,6 +177,19 @@ describe('POST /recordings/deepgram-webhook', () => {
     expect(meeting?.speakerMap).toEqual({ 0: 'Speaker 1', 1: 'Speaker 2' })
     expect(Array.isArray(meeting?.transcriptSegments)).toBe(true)
     expect((meeting?.transcriptSegments as unknown[]).length).toBe(2)
+    // Regression: stored shape must match what the read path
+    // (normalizeSegments in routes/meetings.ts) expects — speaker/text/
+    // startTime/endTime, NOT Deepgram's raw speaker/transcript/start/end.
+    // Without this assertion the webhook silently stored Deepgram's raw
+    // shape and the detail screen rendered "No transcript" despite
+    // status='transcribed'. Caught in cathedral-build E2E on 2026-05-21.
+    const segs = meeting?.transcriptSegments as Array<Record<string, unknown>>
+    expect(segs[0]).toMatchObject({
+      speaker: expect.any(Number),
+      text: expect.any(String),
+      startTime: expect.any(Number),
+      endTime: expect.any(Number),
+    })
 
     expect(apnsCalls).toHaveLength(1)
     expect(apnsCalls[0]).toEqual({

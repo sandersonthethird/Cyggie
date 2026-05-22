@@ -484,10 +484,48 @@ async function markMeetingError(
     .where(eq(schema.meetings.id, meetingId))
 }
 
-function extractSegments(payload: DeepgramBatchResult): unknown[] {
-  // For V1 we persist the utterances array as-is (Deepgram's speaker-segmented
-  // output). The mobile + desktop renderers consume this shape directly.
-  return payload.results.utterances ?? []
+function extractSegments(payload: DeepgramBatchResult): Array<{
+  speaker: number
+  text: string
+  startTime: number
+  endTime: number
+  isFinal: true
+}> {
+  // Normalize Deepgram's utterance shape into the canonical segment shape
+  // the read path expects. Deepgram returns
+  //   { speaker, transcript, start, end, words, ... }
+  // but normalizeSegments() in api-gateway/src/routes/meetings.ts expects
+  //   { speaker, text, startTime, endTime }
+  // and silently drops anything that doesn't match. Without this mapping
+  // the meeting flips to status='transcribed' but the detail screen shows
+  // "No transcript for this meeting." Found during the cathedral-build
+  // E2E run on 2026-05-21.
+  const utterances = payload.results.utterances ?? []
+  const out: Array<{
+    speaker: number
+    text: string
+    startTime: number
+    endTime: number
+    isFinal: true
+  }> = []
+  for (const u of utterances) {
+    if (
+      typeof u.speaker !== 'number' ||
+      typeof u.transcript !== 'string' ||
+      typeof u.start !== 'number' ||
+      typeof u.end !== 'number'
+    ) {
+      continue
+    }
+    out.push({
+      speaker: u.speaker,
+      text: u.transcript,
+      startTime: u.start,
+      endTime: u.end,
+      isFinal: true,
+    })
+  }
+  return out
 }
 
 function buildSpeakerMap(payload: DeepgramBatchResult): Record<number, string> {
