@@ -42,7 +42,7 @@
     "expo-updates": "~29.0.17",
     "expo-web-browser": "~15.0.0",
     "react": "19.1.0",
-    "react-native": "0.81.4",
+    "react-native": "0.81.5",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-mmkv": "^3.2.0",
     "react-native-reanimated": "~4.1.0",
@@ -53,5 +53,14 @@
   "devDependencies": {
     "@types/react": "~19.1.0",
     "typescript": "~5.9.0"
+  },
+  "expo": {
+    "install": {
+      "exclude": [
+        "@react-navigation/bottom-tabs",
+        "@react-navigation/native",
+        "@react-navigation/native-stack"
+      ]
+    }
   }
 }
