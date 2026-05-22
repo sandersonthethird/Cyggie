@@ -32,6 +32,32 @@ import type { GatewayEnv } from '../env'
 
 const TRANSCRIPT_CONTEXT_BUDGET = 50_000
 
+// T24 key resolution. Order:
+//   1. user_credentials row for (userId, 'anthropic') — set by desktop's
+//      Settings UI via PUT /user-credentials/anthropic.
+//   2. env.ANTHROPIC_API_KEY — single-firm beta fallback. Will be removed
+//      when multi-tenant onboarding lands and the env key becomes a leak
+//      vector for any user without their own row.
+//   3. null → caller throws CHAT_UNAVAILABLE.
+async function resolveAnthropicKey(
+  env: GatewayEnv,
+  userId: string,
+): Promise<string | null> {
+  const db = getDb(env.GATEWAY_DATABASE_URL)
+  const rows = await db
+    .select({ value: schema.userCredentials.value })
+    .from(schema.userCredentials)
+    .where(
+      and(
+        eq(schema.userCredentials.userId, userId),
+        eq(schema.userCredentials.provider, 'anthropic'),
+      ),
+    )
+    .limit(1)
+  if (rows[0]) return rows[0].value
+  return env.ANTHROPIC_API_KEY ?? null
+}
+
 export async function registerChatRoutes(
   app: FastifyInstance,
   env: GatewayEnv,
@@ -56,11 +82,13 @@ export async function registerChatRoutes(
       const user = req.requireFirm()
       const { message, meetingId } = req.body
 
-      if (!env.ANTHROPIC_API_KEY) {
+      const apiKey = await resolveAnthropicKey(env, user.sub)
+      if (!apiKey) {
         throw new GatewayError({
           statusCode: 503,
           code: 'CHAT_UNAVAILABLE',
-          message: 'Chat is not configured on this gateway.',
+          message:
+            'No Anthropic API key configured. Set one in desktop Settings → AI & Transcription.',
         })
       }
 
@@ -94,7 +122,7 @@ export async function registerChatRoutes(
       }
 
       const systemPrompt = buildSystemPrompt(meetingContext)
-      const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })
+      const client = new Anthropic({ apiKey })
       const result = await client.messages.create({
         model: 'claude-sonnet-4-5-20250929',
         max_tokens: 2048,
@@ -151,11 +179,13 @@ export async function registerChatRoutes(
       const user = req.requireFirm()
       const { content, meetingId } = req.body
 
-      if (!env.ANTHROPIC_API_KEY) {
+      const apiKey = await resolveAnthropicKey(env, user.sub)
+      if (!apiKey) {
         throw new GatewayError({
           statusCode: 503,
           code: 'CHAT_UNAVAILABLE',
-          message: 'Enhance is not configured on this gateway.',
+          message:
+            'No Anthropic API key configured. Set one in desktop Settings → AI & Transcription.',
         })
       }
 
@@ -181,7 +211,7 @@ export async function registerChatRoutes(
       }
 
       const systemPrompt = buildEnhanceSystemPrompt(transcriptCtx)
-      const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })
+      const client = new Anthropic({ apiKey })
       const result = await client.messages.create({
         model: 'claude-sonnet-4-5-20250929',
         max_tokens: 4096,

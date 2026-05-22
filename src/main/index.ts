@@ -23,6 +23,7 @@ import {
   shutdownSync,
   setSyncStatusBroadcastTarget,
 } from './services/sync-bootstrap'
+import { backfillAnthropicKeyOnLaunch } from './services/gateway-credentials'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
 
@@ -271,6 +272,14 @@ app.whenReady().then(() => {
   // configureSyncGlobals can resolve user_id on each call).
   void startupUserId
   bootstrapSync()
+
+  // T24 — push the user's local Anthropic key up to the gateway so
+  // mobile chat uses the same value. Idempotent (gateway upserts), so
+  // this both backfills first-time users and self-heals drift if the
+  // gateway was wiped while the desktop was offline. Runs after a 2s
+  // delay inside the helper so it doesn't compete with the SyncAgent's
+  // first tick or token refresh.
+  backfillAnthropicKeyOnLaunch()
 
   // System audio loopback is handled by electron-audio-loopback's IPC
   // handlers (enable-loopback-audio / disable-loopback-audio) registered

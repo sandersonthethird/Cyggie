@@ -6,6 +6,7 @@ import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { backfillMeetingSummaryNotes } from '../services/meeting-notes-backfill.service'
 import { getCurrentUserId } from '../security/current-user'
 import { isSafeStorageActive } from '../security/credentials'
+import { pushAnthropicKey } from '../services/gateway-credentials'
 
 // settings.ipc.ts — read/write/test paths for AppSettings.
 //
@@ -96,6 +97,14 @@ export function registerSettingsHandlers(): void {
     // threat surface as the rest of the on-disk SQLite DB, and matches
     // storeCredential() in credentials.ts.
     settingsRepo.setSetting(key, storedValue)
+
+    // T24 — mirror the Claude key to the gateway so mobile chat resolves
+    // it from user_credentials instead of a separate gateway env key.
+    // Fire-and-forget; pushAnthropicKey swallows errors so a transient
+    // network blip doesn't break the desktop save.
+    if (key === 'claudeApiKey' && value.trim().length > 0) {
+      void pushAnthropicKey(value)
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_ALL, () => {
