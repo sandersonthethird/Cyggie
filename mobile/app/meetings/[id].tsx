@@ -242,6 +242,32 @@ function LinkChip({
 }
 
 function StatsCard({ meeting }: { meeting: MeetingDetail }) {
+  // Pre-transcript states (scheduled / error / empty) lack actual duration
+  // + speaker data. Use the scheduled slot length when available;
+  // otherwise render a 2-cell layout that just shows Status. Avoids the
+  // "— / Scheduled / —" placeholder look.
+  if (!meeting.hasTranscript) {
+    const rawSlot = meeting.scheduledEndAt
+      ? Math.round(
+          (Date.parse(meeting.scheduledEndAt) - Date.parse(meeting.date)) / 60_000,
+        )
+      : NaN
+    // Number.isFinite guard prevents NaN reaching the rendered string in
+    // the corner case where scheduledEndAt is malformed.
+    const slotMin = Number.isFinite(rawSlot) ? Math.max(1, rawSlot) : null
+    return (
+      <View style={styles.statsCard}>
+        {slotMin !== null && (
+          <>
+            <StatCell label="Duration" value={`${slotMin} min`} />
+            <View style={styles.statDivider} />
+          </>
+        )}
+        <StatCell label="Status" value={humanize(meeting.status)} />
+      </View>
+    )
+  }
+  // Transcribed rows (post-Deepgram) keep the existing 3-cell layout.
   return (
     <View style={styles.statsCard}>
       <StatCell

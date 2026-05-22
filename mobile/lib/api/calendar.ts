@@ -61,6 +61,26 @@ export async function fetchCalendarEvents(opts: FetchCalendarOpts = {}): Promise
 }
 
 /**
+ * Convert any date-shaped input to a UTC ISO string, or null when input is
+ * missing or unparseable. Used by the calendar-tap handler so all-day
+ * events (where `end` may be missing) or malformed values don't crash
+ * `new Date(...).toISOString()` with a RangeError.
+ *
+ *   safeIso(null)                          → null
+ *   safeIso('')                            → null
+ *   safeIso('not-a-date')                  → null
+ *   safeIso('2026-05-22T10:00:00-04:00')   → '2026-05-22T14:00:00.000Z'
+ *   safeIso('2026-05-22T14:00:00.000Z')    → same
+ *   safeIso('2026-05-22')                  → '2026-05-22T00:00:00.000Z'
+ */
+export function safeIso(input: string | null | undefined): string | null {
+  if (!input) return null
+  const d = new Date(input)
+  if (!Number.isFinite(d.getTime())) return null
+  return d.toISOString()
+}
+
+/**
  * Filter helper — events for "today" (caller's local timezone). The gateway
  * returns a wider window; mobile filters down to a single day at render time.
  */
@@ -114,4 +134,122 @@ export function bucketEvents(events: CalendarEvent[], now: Date): BucketedEvents
   const next = upcoming[0] ?? null
   const later = upcoming.slice(1)
   return { earlier, now: nowList, next, later }
+}
+
+/**
+ * A single calendar day's events, used by the Upcoming and Past segments
+ * of the mobile calendar tab.
+ *
+ * dayKey is 'YYYY-MM-DD' in local timezone — stable React key + avoids
+ * the toISOString() UTC-shift gotcha.
+ */
+export interface CalendarDaySection {
+  dayKey: string
+  date: Date
+  events: CalendarEvent[]
+}
+
+/**
+ * Group events into per-day sections from `from` (inclusive) up to
+ * `from + days` (exclusive). Skips days with zero events. Sections
+ * are always returned chronologically — caller reverses for Past.
+ *
+ * Single responsibility: grouping only. Labels are computed by the
+ * caller via `formatDayLabel(section.date, now)` at render time so
+ * relative wording stays in sync with the per-minute now ticker.
+ *
+ * Event placement rules (matches desktop's groupCalendarEventsByDate):
+ *   - Bucket by the event's START local-day.
+ *   - All-day events sort first within their day.
+ *   - Non-all-day sort by `start` ASC.
+ */
+export function groupByDay(
+  events: CalendarEvent[],
+  from: Date,
+  days: number,
+): CalendarDaySection[] {
+  const windowStart = startOfDay(from)
+  const windowEnd = addDays(windowStart, days)
+  const byKey = new Map<string, CalendarDaySection>()
+  for (const ev of events) {
+    const start = new Date(ev.start)
+    if (Number.isNaN(start.getTime())) continue
+    const day = startOfDay(start)
+    if (day < windowStart || day >= windowEnd) continue
+    const key = dayKeyOf(day)
+    let section = byKey.get(key)
+    if (!section) {
+      section = { dayKey: key, date: day, events: [] }
+      byKey.set(key, section)
+    }
+    section.events.push(ev)
+  }
+  for (const section of byKey.values()) {
+    section.events.sort(compareEventsWithinDay)
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.date.getTime() - b.date.getTime())
+}
+
+/**
+ * Human-readable label for a calendar day relative to `now`.
+ *   same day    → 'Today'
+ *   +1 day      → 'Tomorrow'
+ *   -1 day      → 'Yesterday'
+ *   +2..+6 days → weekday name ('Wednesday')
+ *   else        → full date ('Thursday, May 28')
+ */
+export function formatDayLabel(day: Date, now: Date): string {
+  const a = startOfDay(day).getTime()
+  const b = startOfDay(now).getTime()
+  const diffDays = Math.round((a - b) / 86400_000)
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Tomorrow'
+  if (diffDays === -1) return 'Yesterday'
+  if (diffDays >= 2 && diffDays <= 6) {
+    return day.toLocaleDateString(undefined, { weekday: 'long' })
+  }
+  return day.toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
+/**
+ * Compute the calendar fetch window relative to `now`. The mobile
+ * calendar tab pulls 7 days of past events and 14 days of future
+ * events. Past start is snapped to local midnight so day-boundary
+ * filtering is deterministic; future end is `now + 14d` (no snap —
+ * the gateway returns whatever falls in the window).
+ */
+export function getCalendarFetchWindow(now: Date): { from: Date; to: Date } {
+  const from = startOfDay(now)
+  from.setDate(from.getDate() - 7)
+  const to = new Date(now.getTime() + 14 * 86400_000)
+  return { from, to }
+}
+
+function startOfDay(d: Date): Date {
+  const out = new Date(d)
+  out.setHours(0, 0, 0, 0)
+  return out
+}
+
+function addDays(d: Date, n: number): Date {
+  const out = new Date(d)
+  out.setDate(out.getDate() + n)
+  return out
+}
+
+function dayKeyOf(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function compareEventsWithinDay(a: CalendarEvent, b: CalendarEvent): number {
+  if (a.isAllDay && !b.isAllDay) return -1
+  if (!a.isAllDay && b.isAllDay) return 1
+  return new Date(a.start).getTime() - new Date(b.start).getTime()
 }

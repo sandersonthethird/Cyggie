@@ -1,8 +1,21 @@
+import { useRef } from 'react'
 import { StyleSheet, Text, View, Pressable } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from 'react-native-gesture-handler/ReanimatedSwipeable'
+import {
+  runOnJS,
+  useAnimatedReaction,
+  type SharedValue,
+} from 'react-native-reanimated'
 import type { CalendarEvent } from '../lib/api/calendar'
 import { MeetingStatusPill } from './MeetingStatusPill'
 import { colors, radii, spacing, type } from '../theme'
+
+// Past this drag distance (in px), the swipe auto-commits without
+// requiring a tap on the Hide button. Matches the iOS Mail pattern.
+const FULL_DISMISS_THRESHOLD = 180
 
 // Meeting row anatomy from WIREFRAME 1.
 //
@@ -28,15 +41,22 @@ export interface MeetingRowProps {
   event: CalendarEvent
   variant: MeetingRowVariant
   onPress?: () => void
+  /**
+   * When provided, the row becomes swipe-to-dismiss: swipe left reveals
+   * a "Hide" button on the right; tap-to-confirm calls onDismiss().
+   * Omit to disable the gesture entirely (no Swipeable wrapper).
+   */
+  onDismiss?: () => void
 }
 
-export function MeetingRow({ event, variant, onPress }: MeetingRowProps) {
+export function MeetingRow({ event, variant, onPress, onDismiss }: MeetingRowProps) {
   const start = event.isAllDay ? null : new Date(event.start)
   const end = event.isAllDay ? null : new Date(event.end)
   const durationMin =
     start && end ? Math.max(1, Math.round((end.getTime() - start.getTime()) / 60_000)) : 0
+  const swipeRef = useRef<SwipeableMethods | null>(null)
 
-  return (
+  const inner = (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [
@@ -106,6 +126,75 @@ export function MeetingRow({ event, variant, onPress }: MeetingRowProps) {
           <View style={styles.endSlot} />
         )}
       </View>
+    </Pressable>
+  )
+
+  if (!onDismiss) return inner
+
+  // Swipe interactions:
+  //   • Short swipe (past rightThreshold) → reveals Hide button, tap to confirm.
+  //   • Long swipe (past FULL_DISMISS_THRESHOLD) → auto-dismiss without tap.
+  // overshootRight=true lets the user pull beyond the Hide button's
+  // resting width to trigger the auto-dismiss path.
+  return (
+    <ReanimatedSwipeable
+      ref={swipeRef}
+      friction={2}
+      rightThreshold={40}
+      overshootRight
+      renderRightActions={(_progress, translation, swipeable) => (
+        <HideRightAction
+          translation={translation}
+          swipeable={swipeable}
+          onDismiss={onDismiss}
+        />
+      )}
+    >
+      {inner}
+    </ReanimatedSwipeable>
+  )
+}
+
+function HideRightAction({
+  translation,
+  swipeable,
+  onDismiss,
+}: {
+  translation: SharedValue<number>
+  swipeable: SwipeableMethods
+  onDismiss: () => void
+}) {
+  // Guards against the auto-dismiss path firing more than once if the
+  // user wiggles back and forth across the threshold during a single
+  // gesture.
+  const firedRef = useRef(false)
+
+  const commit = () => {
+    if (firedRef.current) return
+    firedRef.current = true
+    swipeable.close()
+    onDismiss()
+  }
+
+  useAnimatedReaction(
+    () => translation.value,
+    (val, prev) => {
+      // translation is negative when swiping leftward.
+      const crossed = val <= -FULL_DISMISS_THRESHOLD
+      const wasCrossed = prev !== null && prev <= -FULL_DISMISS_THRESHOLD
+      if (crossed && !wasCrossed) runOnJS(commit)()
+    },
+  )
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Hide event"
+      onPress={commit}
+      style={({ pressed }) => [styles.hideAction, pressed && styles.pressed]}
+    >
+      <Ionicons name="eye-off-outline" size={18} color={colors.surface} />
+      <Text style={styles.hideActionText}>Hide</Text>
     </Pressable>
   )
 }
@@ -245,8 +334,18 @@ const styles = StyleSheet.create({
     borderRadius: 99,
     backgroundColor: colors.rec,
   },
-})
 
-// Silence unused-icon-import warning until M2 wires the Notes-badge variant.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const _IoniconsRef = Ionicons
+  hideAction: {
+    width: 92,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: colors.crimson,
+  },
+  hideActionText: {
+    color: colors.surface,
+    fontSize: type.bodyTight,
+    fontWeight: '600',
+  },
+})

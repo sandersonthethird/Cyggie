@@ -19,17 +19,27 @@ import {
   bucketEvents,
   eventsForDate,
   fetchCalendarEvents,
+  formatDayLabel,
+  getCalendarFetchWindow,
+  groupByDay,
+  safeIso,
+  type CalendarDaySection,
   type CalendarEvent,
 } from '../../lib/api/calendar'
 import { prepareMeetingFromCalendarEvent } from '../../lib/api/meetings'
 import { useAuthStore } from '../../lib/auth/store'
+import { useCalendarStore } from '../../lib/calendar/store'
 import { Avatar } from '../../components/Avatar'
+import { ErrorBanner } from '../../components/ErrorBanner'
 import { MeetingRow } from '../../components/MeetingRow'
 import { NowRail } from '../../components/NowRail'
+import { formatErrorMessage } from '../../lib/banner/banner-state'
 import { RecordFab } from '../../components/RecordFab'
 import { appStateStorage } from '../../lib/cache/mmkv'
 import { pullSince } from '../../lib/sync/pull'
 import { colors, radii, spacing, type } from '../../theme'
+
+type Segment = 'today' | 'upcoming' | 'past'
 
 const ONBOARDING_TOOLTIP_KEY = 'onboarding.notes-tooltip-seen'
 
@@ -51,6 +61,15 @@ export default function CalendarTab() {
   const queryClient = useQueryClient()
   const tapBusyRef = useRef(false)
   const [tooltipVisible, setTooltipVisible] = useState(false)
+  // T13: inline error banner for non-auth failures in the tap handler.
+  // Auto-dismisses after 4s; race-safe via useEffect cleanup.
+  const [bannerMsg, setBannerMsg] = useState<string | null>(null)
+  useEffect(() => {
+    if (!bannerMsg) return
+    const t = setTimeout(() => setBannerMsg(null), 4000)
+    return () => clearTimeout(t)
+  }, [bannerMsg])
+  const [segment, setSegment] = useState<Segment>('today')
 
   // Pin "now" per render cycle, tick every minute so the next-meeting
   // highlight migrates naturally as time passes (without a network refetch).
@@ -60,18 +79,69 @@ export default function CalendarTab() {
     return () => clearInterval(handle)
   }, [])
 
+  // Day-granular memo key — Upcoming/Past derivations only need to refire
+  // when the calendar day rolls over, not every minute the `now` ticker fires.
+  const nowDay = useMemo(() => now.toDateString(), [now])
+
   const query = useQuery({
-    queryKey: ['calendar', 'events', 'today'],
-    queryFn: ({ signal }) => fetchCalendarEvents({ signal }),
+    queryKey: ['calendar', 'events', 'window'],
+    queryFn: ({ signal }) => {
+      // Use a fresh `new Date()` here (not the per-minute `now` state).
+      // Window is day-granular and we don't want a refetch every tick.
+      const { from, to } = getCalendarFetchWindow(new Date())
+      return fetchCalendarEvents({ from, to, signal })
+    },
     staleTime: 30_000,
   })
 
-  const todays = useMemo(() => {
-    if (!query.data) return []
-    return eventsForDate(query.data, now)
-  }, [query.data, now])
+  const dismissedIds = useCalendarStore((s) => s.dismissedIds)
+  const isDismissed = useCalendarStore((s) => s.isDismissed)
+  const dismiss = useCalendarStore((s) => s.dismiss)
+  const undismissAll = useCalendarStore((s) => s.undismissAll)
+
+  // Filter dismissed events at the source so all three segments see the
+  // same visible-event population. Re-derives only when query.data or
+  // the dismissed set changes.
+  const visibleEvents = useMemo(
+    () => (query.data ?? []).filter((ev) => !isDismissed(ev.id)),
+    [query.data, isDismissed, dismissedIds],
+  )
+
+  const todays = useMemo(() => eventsForDate(visibleEvents, now), [visibleEvents, now])
 
   const buckets = useMemo(() => bucketEvents(todays, now), [todays, now])
+
+  // Upcoming and Past derivations key on nowDay so they don't recompute
+  // every minute. Day-granular is correct — sections shift only on
+  // midnight crossings.
+  const upcomingSections = useMemo<CalendarDaySection[]>(() => {
+    if (visibleEvents.length === 0) return []
+    const tomorrow = new Date(now)
+    tomorrow.setHours(0, 0, 0, 0)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    return groupByDay(visibleEvents, tomorrow, 13)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleEvents, nowDay])
+
+  const pastSections = useMemo<CalendarDaySection[]>(() => {
+    if (visibleEvents.length === 0) return []
+    const sevenAgo = new Date(now)
+    sevenAgo.setHours(0, 0, 0, 0)
+    sevenAgo.setDate(sevenAgo.getDate() - 7)
+    return [...groupByDay(visibleEvents, sevenAgo, 7)].reverse()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleEvents, nowDay])
+
+  const upcomingCount = useMemo(
+    () => upcomingSections.reduce((n, s) => n + s.events.length, 0),
+    [upcomingSections],
+  )
+  const pastCount = useMemo(
+    () => pastSections.reduce((n, s) => n + s.events.length, 0),
+    [pastSections],
+  )
+  const totalAcrossWindow = todays.length + upcomingCount + pastCount
+
   const dateLabel = useMemo(() => formatDateHeader(now), [now])
   const nowLabel = useMemo(() => formatNowLabel(now), [now])
 
@@ -104,18 +174,31 @@ export default function CalendarTab() {
   )
 
   // D7 — first-tap onboarding tooltip. Show after the first calendar load,
-  // dismiss permanently once tapped.
+  // dismiss permanently once tapped. Only triggers on the Today segment;
+  // switching away dismisses it (so it doesn't reappear on segment return).
   useEffect(() => {
     if (tooltipVisible) return
-    if (!query.data || query.data.length === 0) return
+    if (segment !== 'today') return
+    if (totalAcrossWindow === 0) return
     if (appStateStorage.getString(ONBOARDING_TOOLTIP_KEY)) return
     setTooltipVisible(true)
-  }, [query.data, tooltipVisible])
+  }, [segment, totalAcrossWindow, tooltipVisible])
 
   const dismissTooltip = useCallback(() => {
     appStateStorage.set(ONBOARDING_TOOLTIP_KEY, '1')
     setTooltipVisible(false)
   }, [])
+
+  const handleSegmentChange = useCallback(
+    (next: Segment) => {
+      if (next === segment) return
+      // Switching segments counts as acknowledging the tooltip — partners who
+      // explore the new segments don't need the prompt anymore.
+      if (tooltipVisible) dismissTooltip()
+      setSegment(next)
+    },
+    [segment, tooltipVisible, dismissTooltip],
+  )
 
   const handleEventPress = useCallback(
     async (event: CalendarEvent) => {
@@ -130,32 +213,43 @@ export default function CalendarTab() {
       }
       tapBusyRef.current = true
       try {
-        // Normalize the start time to UTC ISO (Z suffix). Google Calendar
-        // hands us either `2026-05-22T10:00:00-04:00` (timed) or
-        // `2026-05-22` (all-day); the gateway's z.string().datetime()
-        // schema rejects both. new Date(...).toISOString() canonicalizes
-        // to YYYY-MM-DDTHH:mm:ss.sssZ.
-        const startTimeIso = new Date(event.start).toISOString()
+        // Normalize start/end to UTC ISO (Z suffix). Gateway now accepts
+        // TZ offsets (T10) so this is robustness — and safeIso also
+        // protects against the all-day case where event.end can be
+        // empty/null (`new Date('').toISOString()` would otherwise throw
+        // RangeError; safeIso returns null and we omit endTime).
+        const startTimeIso = safeIso(event.start)
+        const endTimeIso = safeIso(event.end)
+        if (!startTimeIso) {
+          // Defensive — should never happen since calendar list filters out
+          // events without a parseable start. If it does, skip the tap
+          // rather than crash.
+          return
+        }
         const meeting = await prepareMeetingFromCalendarEvent({
           calendarEventId: event.calendarEventId,
           title: event.title,
           startTime: startTimeIso,
           attendees: event.attendees.map((a) => a.displayName ?? a.email),
           attendeeEmails: event.attendees.map((a) => a.email).filter((e) => e.length > 0),
+          ...(endTimeIso ? { endTime: endTimeIso } : {}),
           ...(event.meetingUrl ? { meetingUrl: event.meetingUrl } : {}),
         })
         router.push(`/meetings/${meeting.id}`)
         // Refresh the calendar list — the next render should now carry the
         // linked meetingId so a follow-up tap takes the fast path.
-        void queryClient.invalidateQueries({ queryKey: ['calendar', 'events', 'today'] })
+        void queryClient.invalidateQueries({ queryKey: ['calendar', 'events', 'window'] })
       } catch (err) {
         if (err instanceof ApiError && err.reauthRequired) {
           await signOut()
           router.replace('/(auth)/sign-in')
           return
         }
-        // Surface other errors to the dev console so silent failures don't
-        // get lost. User-visible toast lands in a follow-up.
+        // T13: surface non-auth failures via the inline error banner.
+        // formatErrorMessage returns null for the reauth case (handled
+        // above) so we won't ever double-show.
+        const msg = formatErrorMessage(err)
+        if (msg) setBannerMsg(msg)
         console.error('[calendar] handleEventPress failed', err)
       } finally {
         tapBusyRef.current = false
@@ -164,20 +258,20 @@ export default function CalendarTab() {
     [dismissTooltip, queryClient, signOut],
   )
 
-  const meetingCount = todays.length
+  const title = segmentTitle(segment)
+  const subtitle = segmentSubtitle(segment, dateLabel, todays.length, upcomingCount, pastCount)
+  const segmentEmpty =
+    (segment === 'today' && todays.length === 0) ||
+    (segment === 'upcoming' && upcomingCount === 0) ||
+    (segment === 'past' && pastCount === 0)
 
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.appbar}>
           <View style={styles.appbarTitleWrap}>
-            <Text style={styles.appbarTitle}>Today</Text>
-            <Text style={styles.appbarSubtitle}>
-              {dateLabel}
-              {meetingCount > 0
-                ? ` · ${meetingCount} meeting${meetingCount === 1 ? '' : 's'}`
-                : ''}
-            </Text>
+            <Text style={styles.appbarTitle}>{title}</Text>
+            <Text style={styles.appbarSubtitle}>{subtitle}</Text>
           </View>
           <View style={styles.appbarActions}>
             <Pressable
@@ -191,13 +285,14 @@ export default function CalendarTab() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Account"
-              onPress={() => openAccountSheet(userId, signOut)}
+              onPress={() => openAccountSheet(userId, signOut, dismissedIds.size, undismissAll)}
               hitSlop={8}
             >
               <Avatar initials={initialsFromUserId(userId)} size={32} />
             </Pressable>
           </View>
         </View>
+        <SegmentControl active={segment} onChange={handleSegmentChange} />
       </SafeAreaView>
 
       <ScrollView
@@ -210,6 +305,8 @@ export default function CalendarTab() {
           />
         }
       >
+        <ErrorBanner message={bannerMsg} onDismiss={() => setBannerMsg(null)} />
+
         {query.isLoading && !query.data && (
           <View style={styles.center}>
             <ActivityIndicator color={colors.crimson} />
@@ -220,69 +317,109 @@ export default function CalendarTab() {
           <ErrorState error={query.error} onRetry={() => query.refetch()} />
         )}
 
-        {query.data && meetingCount === 0 && <EmptyState />}
+        {query.data && segmentEmpty && <EmptyState segment={segment} />}
 
-        {tooltipVisible && (
+        {tooltipVisible && segment === 'today' && (
           <OnboardingTooltip onDismiss={dismissTooltip} />
         )}
 
-        {buckets.earlier.length > 0 && (
-          <View style={styles.section}>
-            <SectionHeader label="Earlier today" />
-            {buckets.earlier.map((ev) => (
-              <MeetingRow
-                key={ev.id}
-                event={ev}
-                variant="past"
-                onPress={() => void handleEventPress(ev)}
-              />
-            ))}
-          </View>
+        {segment === 'today' && (
+          <>
+            {buckets.earlier.length > 0 && (
+              <View style={styles.section}>
+                <SectionHeader label="Earlier today" />
+                {buckets.earlier.map((ev) => (
+                  <MeetingRow
+                    key={ev.id}
+                    event={ev}
+                    variant="past"
+                    onPress={() => void handleEventPress(ev)}
+                    onDismiss={() => dismiss(ev.id)}
+                  />
+                ))}
+              </View>
+            )}
+
+            {(buckets.earlier.length > 0 ||
+              buckets.now.length > 0 ||
+              buckets.next ||
+              buckets.later.length > 0) && <NowRail label={nowLabel} />}
+
+            {buckets.now.length > 0 && (
+              <View style={styles.section}>
+                <SectionHeader label="Now" highlight />
+                {buckets.now.map((ev) => (
+                  <MeetingRow
+                    key={ev.id}
+                    event={ev}
+                    variant="active"
+                    onPress={() => void handleEventPress(ev)}
+                    onDismiss={() => dismiss(ev.id)}
+                  />
+                ))}
+              </View>
+            )}
+
+            {buckets.next && (
+              <View style={styles.section}>
+                <SectionHeader label="Up next" highlight />
+                <MeetingRow
+                  event={buckets.next}
+                  variant="next"
+                  onPress={() => void handleEventPress(buckets.next!)}
+                  onDismiss={() => dismiss(buckets.next!.id)}
+                />
+              </View>
+            )}
+
+            {buckets.later.length > 0 && (
+              <View style={styles.section}>
+                <SectionHeader label="Later today" />
+                {buckets.later.map((ev) => (
+                  <MeetingRow
+                    key={ev.id}
+                    event={ev}
+                    variant="later"
+                    onPress={() => void handleEventPress(ev)}
+                    onDismiss={() => dismiss(ev.id)}
+                  />
+                ))}
+              </View>
+            )}
+          </>
         )}
 
-        {(buckets.earlier.length > 0 ||
-          buckets.now.length > 0 ||
-          buckets.next ||
-          buckets.later.length > 0) && <NowRail label={nowLabel} />}
+        {segment === 'upcoming' &&
+          upcomingSections.map((section) => (
+            <View key={section.dayKey} style={styles.section}>
+              <SectionHeader label={formatDayLabel(section.date, now).toUpperCase()} />
+              {section.events.map((ev) => (
+                <MeetingRow
+                  key={ev.id}
+                  event={ev}
+                  variant="later"
+                  onPress={() => void handleEventPress(ev)}
+                  onDismiss={() => dismiss(ev.id)}
+                />
+              ))}
+            </View>
+          ))}
 
-        {buckets.now.length > 0 && (
-          <View style={styles.section}>
-            <SectionHeader label="Now" highlight />
-            {buckets.now.map((ev) => (
-              <MeetingRow
-                key={ev.id}
-                event={ev}
-                variant="active"
-                onPress={() => void handleEventPress(ev)}
-              />
-            ))}
-          </View>
-        )}
-
-        {buckets.next && (
-          <View style={styles.section}>
-            <SectionHeader label="Up next" highlight />
-            <MeetingRow
-              event={buckets.next}
-              variant="next"
-              onPress={() => void handleEventPress(buckets.next!)}
-            />
-          </View>
-        )}
-
-        {buckets.later.length > 0 && (
-          <View style={styles.section}>
-            <SectionHeader label="Later today" />
-            {buckets.later.map((ev) => (
-              <MeetingRow
-                key={ev.id}
-                event={ev}
-                variant="later"
-                onPress={() => void handleEventPress(ev)}
-              />
-            ))}
-          </View>
-        )}
+        {segment === 'past' &&
+          pastSections.map((section) => (
+            <View key={section.dayKey} style={styles.section}>
+              <SectionHeader label={formatDayLabel(section.date, now).toUpperCase()} />
+              {section.events.map((ev) => (
+                <MeetingRow
+                  key={ev.id}
+                  event={ev}
+                  variant="past"
+                  onPress={() => void handleEventPress(ev)}
+                  onDismiss={() => dismiss(ev.id)}
+                />
+              ))}
+            </View>
+          ))}
 
         <View style={styles.footer} />
       </ScrollView>
@@ -290,6 +427,70 @@ export default function CalendarTab() {
       <RecordFab onPress={() => router.push('/record')} />
     </View>
   )
+}
+
+function SegmentControl({
+  active,
+  onChange,
+}: {
+  active: Segment
+  onChange: (next: Segment) => void
+}) {
+  const items: { key: Segment; label: string }[] = [
+    { key: 'today', label: 'Today' },
+    { key: 'upcoming', label: 'Upcoming' },
+    { key: 'past', label: 'Past' },
+  ]
+  return (
+    <View style={styles.segmentWrap}>
+      {items.map((item) => {
+        const isActive = item.key === active
+        return (
+          <Pressable
+            key={item.key}
+            accessibilityRole="button"
+            accessibilityLabel={item.label}
+            accessibilityState={{ selected: isActive }}
+            onPress={() => onChange(item.key)}
+            style={({ pressed }) => [
+              styles.segmentChip,
+              isActive && styles.segmentChipActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text
+              style={[styles.segmentChipText, isActive && styles.segmentChipTextActive]}
+            >
+              {item.label}
+            </Text>
+          </Pressable>
+        )
+      })}
+    </View>
+  )
+}
+
+function segmentTitle(segment: Segment): string {
+  if (segment === 'today') return 'Today'
+  if (segment === 'upcoming') return 'Upcoming'
+  return 'Past'
+}
+
+function segmentSubtitle(
+  segment: Segment,
+  dateLabel: string,
+  todayCount: number,
+  upcomingCount: number,
+  pastCount: number,
+): string {
+  if (segment === 'today') {
+    if (todayCount === 0) return dateLabel
+    return `${dateLabel} · ${todayCount} meeting${todayCount === 1 ? '' : 's'}`
+  }
+  if (segment === 'upcoming') {
+    return `Next 14 days · ${upcomingCount} meeting${upcomingCount === 1 ? '' : 's'}`
+  }
+  return `Last 7 days · ${pastCount} meeting${pastCount === 1 ? '' : 's'}`
 }
 
 function OnboardingTooltip({ onDismiss }: { onDismiss: () => void }) {
@@ -329,14 +530,26 @@ function SectionHeader({ label, highlight }: { label: string; highlight?: boolea
   )
 }
 
-function EmptyState() {
+function EmptyState({ segment }: { segment: Segment }) {
+  const copy = (() => {
+    if (segment === 'today') {
+      return { title: 'No meetings today', subtitle: 'Pull down to refresh.' }
+    }
+    if (segment === 'upcoming') {
+      return {
+        title: 'No upcoming meetings',
+        subtitle: "You're clear for the next two weeks.",
+      }
+    }
+    return { title: 'No recent meetings', subtitle: 'The past week was quiet.' }
+  })()
   return (
     <View style={styles.center}>
       <View style={styles.emptyIconWrap}>
         <Ionicons name="calendar-clear-outline" size={36} color={colors.text4} />
       </View>
-      <Text style={styles.emptyTitle}>No meetings today</Text>
-      <Text style={styles.emptySubtitle}>Pull down to refresh.</Text>
+      <Text style={styles.emptyTitle}>{copy.title}</Text>
+      <Text style={styles.emptySubtitle}>{copy.subtitle}</Text>
     </View>
   )
 }
@@ -383,11 +596,31 @@ function initialsFromUserId(userId: string | null): string {
   return userId.slice(0, 2).toUpperCase()
 }
 
-function openAccountSheet(_userId: string | null, signOut: () => Promise<void>): void {
-  Alert.alert('Account', undefined, [
-    { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
-    { text: 'Cancel', style: 'cancel' },
-  ])
+function openAccountSheet(
+  _userId: string | null,
+  signOut: () => Promise<void>,
+  hiddenCount: number,
+  undismissAll: () => void,
+): void {
+  const buttons: Parameters<typeof Alert.alert>[2] = []
+  if (hiddenCount > 0) {
+    buttons.push({
+      text: `Show hidden events (${hiddenCount})`,
+      onPress: () => {
+        Alert.alert(
+          `Restore ${hiddenCount} hidden event${hiddenCount === 1 ? '' : 's'}?`,
+          undefined,
+          [
+            { text: 'Restore', onPress: () => undismissAll() },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        )
+      },
+    })
+  }
+  buttons.push({ text: 'Sign out', style: 'destructive', onPress: () => void signOut() })
+  buttons.push({ text: 'Cancel', style: 'cancel' })
+  Alert.alert('Account', undefined, buttons)
 }
 
 const styles = StyleSheet.create({
@@ -403,8 +636,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
     backgroundColor: colors.surface,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
   },
   appbarTitleWrap: { flex: 1, minWidth: 0 },
   appbarTitle: {
@@ -434,6 +665,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   pressed: { opacity: 0.6 },
+
+  segmentWrap: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+    backgroundColor: colors.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  segmentChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface3,
+  },
+  segmentChipActive: {
+    backgroundColor: colors.crimson,
+  },
+  segmentChipText: {
+    color: colors.text2,
+    fontSize: type.bodyTight,
+    fontWeight: '600',
+  },
+  segmentChipTextActive: {
+    color: colors.surface,
+  },
 
   scroll: { paddingBottom: 140, backgroundColor: colors.bg },
 

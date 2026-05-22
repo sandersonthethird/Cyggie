@@ -34,6 +34,10 @@ export interface MeetingDetail {
   /** Monotonic lamport clock. Mobile snapshots this when starting an edit
    *  session and increments it for the outbox PATCH (Last-Write-Wins). */
   lamport: string
+  /** Scheduled end time from the originating calendar event (migration 0015).
+   *  Null on impromptu rows. Detail screen renders "X min scheduled"
+   *  pre-recording from (scheduledEndAt - date). */
+  scheduledEndAt: string | null
   wasImpromptu: boolean
   // Group-event ingestion gate. When true, no contacts/companies were seeded
   // from this meeting's attendee list. Mobile shows a read-only banner;
@@ -73,6 +77,7 @@ export interface PrepareMeetingFromCalendarEventInput {
   calendarEventId: string
   title: string
   startTime: string // ISO
+  endTime?: string // ISO; omit for all-day or unknown
   attendees?: string[]
   attendeeEmails?: string[]
   meetingUrl?: string
