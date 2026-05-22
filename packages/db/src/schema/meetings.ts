@@ -56,6 +56,12 @@ export const meetings = pgTable(
     // SQLite stored as ISO TEXT; Postgres uses timestamptz. The data migration
     // script (Phase 0.3) parses the ISO strings on read.
     date: timestamp('date', { withTimezone: true }).notNull(),
+    // Scheduled end time from the originating calendar event (migration 0015).
+    // Only set on rows created from POST /meetings/from-calendar-event; null
+    // for impromptu / Record-FAB-originated rows. Detail screen renders
+    // "X min scheduled" pre-recording from (scheduledEndAt - date). Once
+    // status flips to 'transcribed' the actual durationSeconds takes over.
+    scheduledEndAt: timestamp('scheduled_end_at', { withTimezone: true }),
     durationSeconds: integer('duration_seconds'),
     calendarEventId: text('calendar_event_id'),
     meetingPlatform: varchar('meeting_platform', { length: 32 }),

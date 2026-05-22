@@ -94,6 +94,7 @@ async function insertMeeting(opts: {
   userId: string
   title?: string
   date?: Date
+  scheduledEndAt?: Date | null
   durationSeconds?: number
   transcriptSegments?: unknown
   speakerMap?: Record<string, string>
@@ -106,6 +107,7 @@ async function insertMeeting(opts: {
     userId: opts.userId,
     title: opts.title ?? 'Test Meeting',
     date: opts.date ?? new Date(),
+    scheduledEndAt: opts.scheduledEndAt ?? null,
     durationSeconds: opts.durationSeconds ?? 1800,
     status: 'completed',
     transcriptSegments: opts.transcriptSegments ?? null,
@@ -145,6 +147,7 @@ describe('GET /meetings/:id', () => {
       userId,
       title: 'Discovery call',
       date: new Date('2026-05-15T10:00:00Z'),
+      scheduledEndAt: new Date('2026-05-15T11:00:00Z'),
       durationSeconds: 1800,
       notes: 'Discussed roadmap.',
       speakerMap: { '0': 'Sandy', '1': 'Priya' },
@@ -220,6 +223,10 @@ describe('GET /meetings/:id', () => {
     expect(body.id).toBe(meetingId)
     expect(body.title).toBe('Discovery call')
     expect(body.date).toBe('2026-05-15T10:00:00.000Z')
+    // T12: scheduledEndAt round-trips on the GET response.
+    expect((body as unknown as { scheduledEndAt: string | null }).scheduledEndAt).toBe(
+      '2026-05-15T11:00:00.000Z',
+    )
     expect(body.durationSeconds).toBe(1800)
     expect(body.status).toBe('completed')
     expect(body.wasImpromptu).toBe(false)

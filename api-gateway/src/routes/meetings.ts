@@ -54,6 +54,10 @@ const MeetingDetailSchema = z.object({
   // client-side) for Last-Write-Wins compare on the server. Stored as a
   // string because Postgres bigint values can exceed JS safe-integer range.
   lamport: z.string(),
+  // Scheduled end time from the calendar event (migration 0015). Set on
+  // /from-calendar-event creation; null for impromptu rows. Detail screen
+  // uses (scheduledEndAt - date) to render "X min scheduled" pre-recording.
+  scheduledEndAt: z.string().nullable(),
   wasImpromptu: z.boolean(),
   // Group-event ingestion gate (migration 098). When true, the desktop did not
   // seed contacts/companies from this meeting's attendee list. Mobile shows a
@@ -168,6 +172,7 @@ async function buildMeetingDetail(
     status: meeting.status,
     updatedAt: new Date(meeting.updatedAt).toISOString(),
     lamport: meeting.lamport,
+    scheduledEndAt: meeting.scheduledEndAt ? new Date(meeting.scheduledEndAt).toISOString() : null,
     wasImpromptu: meeting.wasImpromptu,
     isGroupEvent: meeting.isGroupEvent,
     meetingPlatform: meeting.meetingPlatform,
@@ -181,6 +186,88 @@ async function buildMeetingDetail(
     linkedCompanies,
     linkedContacts,
   }
+}
+
+/**
+ * Diff calendar-sourced fields between an existing meeting row and an
+ * incoming /from-cal-event payload. Returns the subset of columns that
+ * need refreshing + the list of changed field names for logging.
+ *
+ * Comparison normalization:
+ *   • Dates compared as getTime() (handles Date vs ISO string mismatch).
+ *   • Arrays compared as sorted JSON (order-insensitive deep equal).
+ *   • Strings + null compared with `!==`.
+ *
+ * Returns `{ changed: [], set: {} }` when nothing differs — caller can
+ * short-circuit the UPDATE.
+ */
+interface FromCalEventBody {
+  title: string
+  startTime: string
+  endTime?: string | undefined
+  meetingPlatform?: string | undefined
+  meetingUrl?: string | undefined
+  attendees?: string[] | undefined
+  attendeeEmails?: string[] | undefined
+}
+
+function diffCalendarFields(
+  existing: typeof schema.meetings.$inferSelect,
+  body: FromCalEventBody,
+): { changed: string[]; set: Partial<typeof schema.meetings.$inferInsert> } {
+  const changed: string[] = []
+  const set: Partial<typeof schema.meetings.$inferInsert> = {}
+
+  if (existing.title !== body.title) {
+    changed.push('title')
+    set.title = body.title
+  }
+
+  const incomingDateMs = new Date(body.startTime).getTime()
+  if (existing.date.getTime() !== incomingDateMs) {
+    changed.push('date')
+    set.date = new Date(body.startTime)
+  }
+
+  const storedEndMs = existing.scheduledEndAt?.getTime() ?? null
+  const incomingEndMs = body.endTime ? new Date(body.endTime).getTime() : null
+  if (storedEndMs !== incomingEndMs) {
+    changed.push('scheduledEndAt')
+    set.scheduledEndAt = body.endTime ? new Date(body.endTime) : null
+  }
+
+  const incomingPlatform = body.meetingPlatform ?? null
+  if (existing.meetingPlatform !== incomingPlatform) {
+    changed.push('meetingPlatform')
+    set.meetingPlatform = incomingPlatform
+  }
+
+  const incomingUrl = body.meetingUrl ?? null
+  if (existing.meetingUrl !== incomingUrl) {
+    changed.push('meetingUrl')
+    set.meetingUrl = incomingUrl
+  }
+
+  const sortedJSON = (xs: string[] | null | undefined): string =>
+    xs && xs.length > 0 ? JSON.stringify([...xs].sort()) : 'null'
+  const incomingAttendees = body.attendees ?? null
+  if (
+    sortedJSON(existing.attendees as string[] | null) !==
+    sortedJSON(incomingAttendees)
+  ) {
+    changed.push('attendees')
+    set.attendees = incomingAttendees
+  }
+  const incomingEmails = body.attendeeEmails ?? null
+  if (
+    sortedJSON(existing.attendeeEmails as string[] | null) !==
+    sortedJSON(incomingEmails)
+  ) {
+    changed.push('attendeeEmails')
+    set.attendeeEmails = incomingEmails
+  }
+
+  return { changed, set }
 }
 
 export async function registerMeetingRoutes(
@@ -240,7 +327,12 @@ export async function registerMeetingRoutes(
       body: z.object({
         calendarEventId: z.string().min(1).max(256),
         title: z.string().min(1).max(512),
-        startTime: z.string().datetime(),
+        // T10: accept both UTC Z and timezone-offset ISO. Mobile sends UTC
+        // already; this opens the surface to curl + desktop sync + scripts
+        // without 400-ing on offset form.
+        startTime: z.string().datetime({ offset: true }),
+        // T12: optional end time. Same offset acceptance.
+        endTime: z.string().datetime({ offset: true }).optional(),
         attendees: z.array(z.string()).optional(),
         attendeeEmails: z.array(z.string()).optional(),
         meetingUrl: z.string().optional(),
@@ -261,6 +353,31 @@ export async function registerMeetingRoutes(
         ),
       })
       if (existing) {
+        // Refresh calendar-sourced fields if any differ from the incoming
+        // payload. Closes the staleness window when a user moves / renames
+        // a Google Calendar event and re-taps it. Notes + lamport are NOT
+        // refreshed — those come from the PATCH path.
+        const refresh = diffCalendarFields(existing, body)
+        if (refresh.changed.length > 0) {
+          await db
+            .update(schema.meetings)
+            .set({ ...refresh.set, updatedAt: new Date(), updatedByUserId: user.sub })
+            .where(and(eq(schema.meetings.id, existing.id), eq(schema.meetings.userId, user.sub)))
+          const refreshed = await db.query.meetings.findFirst({
+            where: eq(schema.meetings.id, existing.id),
+          })
+          req.log.info(
+            {
+              meetingId: existing.id,
+              calendarEventId: body.calendarEventId,
+              userId: user.sub,
+              changedFields: refresh.changed,
+              metric: 'meetings.from_cal_event.refreshed',
+            },
+            'meetings.from_cal_event refreshed calendar-sourced fields',
+          )
+          return reply.code(200).send(await buildMeetingDetail(db, refreshed!))
+        }
         return reply.code(200).send(await buildMeetingDetail(db, existing))
       }
 
@@ -272,6 +389,7 @@ export async function registerMeetingRoutes(
           userId: user.sub,
           title: body.title,
           date: new Date(body.startTime),
+          scheduledEndAt: body.endTime ? new Date(body.endTime) : null,
           status: 'scheduled',
           calendarEventId: body.calendarEventId,
           meetingPlatform: body.meetingPlatform ?? null,

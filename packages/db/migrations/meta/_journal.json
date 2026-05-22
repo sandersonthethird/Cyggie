@@ -106,6 +106,13 @@
       "when": 1779400000000,
       "tag": "0014_meetings_calendar_event_per_user",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1779449000000,
+      "tag": "0015_meetings_scheduled_end_at",
+      "breakpoints": true
     }
   ]
 }

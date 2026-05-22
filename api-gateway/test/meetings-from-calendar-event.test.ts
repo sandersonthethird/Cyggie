@@ -227,4 +227,204 @@ describe('POST /meetings/from-calendar-event', () => {
     })
     expect(res.statusCode).toBe(400)
   })
+
+  test('T12: endTime provided is stored as scheduled_end_at', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-end-' + createId()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: {
+        calendarEventId: calEventId,
+        title: 'With end',
+        startTime: '2026-05-22T15:00:00.000Z',
+        endTime: '2026-05-22T16:00:00.000Z',
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    const body = res.json() as { id: string; scheduledEndAt: string | null }
+    await reapMeeting(body.id)
+    expect(body.scheduledEndAt).toBe('2026-05-22T16:00:00.000Z')
+    const row = await db.query.meetings.findFirst({
+      where: and(
+        eq(schema.meetings.userId, userId),
+        eq(schema.meetings.calendarEventId, calEventId),
+      ),
+    })
+    expect(row?.scheduledEndAt?.toISOString()).toBe('2026-05-22T16:00:00.000Z')
+  })
+
+  test('T12: endTime omitted leaves scheduled_end_at null', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-noend-' + createId()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: {
+        calendarEventId: calEventId,
+        title: 'Without end',
+        startTime: '2026-05-22T15:00:00.000Z',
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    const body = res.json() as { id: string; scheduledEndAt: string | null }
+    await reapMeeting(body.id)
+    expect(body.scheduledEndAt).toBeNull()
+    const row = await db.query.meetings.findFirst({
+      where: and(
+        eq(schema.meetings.userId, userId),
+        eq(schema.meetings.calendarEventId, calEventId),
+      ),
+    })
+    expect(row?.scheduledEndAt).toBeNull()
+  })
+
+  test('re-tap with changed endTime refreshes scheduled_end_at (Issue 2)', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-refresh-' + createId()
+    const startTime = '2026-05-22T15:00:00.000Z'
+    const payload = (endTime: string) => ({
+      calendarEventId: calEventId,
+      title: 'Movable',
+      startTime,
+      endTime,
+    })
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: payload('2026-05-22T15:30:00.000Z'),
+    })
+    expect(first.statusCode).toBe(201)
+    const firstBody = first.json() as { id: string; scheduledEndAt: string | null }
+    await reapMeeting(firstBody.id)
+    expect(firstBody.scheduledEndAt).toBe('2026-05-22T15:30:00.000Z')
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: payload('2026-05-22T16:00:00.000Z'),
+    })
+    expect(second.statusCode).toBe(200)
+    const secondBody = second.json() as { id: string; scheduledEndAt: string | null }
+    expect(secondBody.id).toBe(firstBody.id)
+    expect(secondBody.scheduledEndAt).toBe('2026-05-22T16:00:00.000Z')
+
+    const row = await db.query.meetings.findFirst({
+      where: and(
+        eq(schema.meetings.userId, userId),
+        eq(schema.meetings.calendarEventId, calEventId),
+      ),
+    })
+    expect(row?.scheduledEndAt?.toISOString()).toBe('2026-05-22T16:00:00.000Z')
+  })
+
+  test('re-tap with changed title refreshes title (Eng TODO_C)', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-title-' + createId()
+    const base = { calendarEventId: calEventId, startTime: '2026-05-22T15:00:00.000Z' }
+    const first = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { ...base, title: 'Original' },
+    })
+    expect(first.statusCode).toBe(201)
+    await reapMeeting((first.json() as { id: string }).id)
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { ...base, title: 'Renamed' },
+    })
+    expect(second.statusCode).toBe(200)
+    const body = second.json() as { title: string }
+    expect(body.title).toBe('Renamed')
+    const row = await db.query.meetings.findFirst({
+      where: and(
+        eq(schema.meetings.userId, userId),
+        eq(schema.meetings.calendarEventId, calEventId),
+      ),
+    })
+    expect(row?.title).toBe('Renamed')
+  })
+
+  test('re-tap with identical payload does NOT touch updated_at', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-noop-' + createId()
+    const payload = {
+      calendarEventId: calEventId,
+      title: 'Same',
+      startTime: '2026-05-22T15:00:00.000Z',
+      endTime: '2026-05-22T15:30:00.000Z',
+    }
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload,
+    })
+    expect(first.statusCode).toBe(201)
+    const firstId = (first.json() as { id: string }).id
+    await reapMeeting(firstId)
+    const rowBefore = await db.query.meetings.findFirst({
+      where: eq(schema.meetings.id, firstId),
+    })
+
+    // Wait so any UPDATE would produce a measurably different updated_at.
+    await new Promise((r) => setTimeout(r, 50))
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload,
+    })
+    expect(second.statusCode).toBe(200)
+
+    const rowAfter = await db.query.meetings.findFirst({
+      where: eq(schema.meetings.id, firstId),
+    })
+    expect(rowAfter?.updatedAt?.toISOString()).toBe(rowBefore?.updatedAt?.toISOString())
+    // touch userId so it's not flagged as unused
+    expect(rowAfter?.userId).toBe(userId)
+  })
+
+  test('T10: accepts ISO datetime with timezone offset (not just UTC Z)', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-tz-' + createId()
+    // -04:00 offset form — what Google Calendar returns natively. Before T10
+    // this would 400 with "Invalid ISO datetime" because Zod's default
+    // .datetime() only accepts Z-suffixed UTC.
+    const res = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: {
+        calendarEventId: calEventId,
+        title: 'TZ-offset tap',
+        startTime: '2026-05-22T10:00:00-04:00',
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    const body = res.json() as { id: string; date: string }
+    await reapMeeting(body.id)
+    // Date roundtripped to UTC ISO in the response (gateway re-serializes).
+    expect(body.date).toBe('2026-05-22T14:00:00.000Z')
+
+    // Verify DB row stored the correct moment.
+    const row = await db.query.meetings.findFirst({
+      where: and(
+        eq(schema.meetings.userId, userId),
+        eq(schema.meetings.calendarEventId, calEventId),
+      ),
+    })
+    expect(row?.date?.toISOString()).toBe('2026-05-22T14:00:00.000Z')
+  })
 })
