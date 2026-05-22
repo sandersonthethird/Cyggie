@@ -1,4 +1,4 @@
-import { getAccessToken } from '../auth/cyggie-auth'
+import { getAccessToken, refresh as refreshCyggieAuth } from '../auth/cyggie-auth'
 import { getCredential } from '../security/credentials'
 
 // T24 — desktop → gateway credential push.
@@ -27,20 +27,25 @@ const GATEWAY_URL =
 /**
  * Push the user's Anthropic key to the gateway. Best-effort — does not
  * throw, only logs. Caller doesn't need to await.
+ *
+ * Implements the same 401 → refresh → retry pattern as the SyncAgent's
+ * push transport so a stale cached access token doesn't drop the
+ * backfill on the floor (which would leave mobile chat using the env
+ * fallback indefinitely).
  */
 export async function pushAnthropicKey(value: string): Promise<void> {
   if (!value || value.trim().length === 0) return
 
-  const token = await getAccessToken()
-  if (!token) {
+  const tokenA = await getAccessToken()
+  if (!tokenA) {
     console.log(
       '[gateway-credentials] no access token; skipping anthropic key push',
     )
     return
   }
 
-  try {
-    const res = await fetch(`${GATEWAY_URL}/user-credentials/anthropic`, {
+  const tryOnce = (token: string): Promise<Response> =>
+    fetch(`${GATEWAY_URL}/user-credentials/anthropic`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -48,6 +53,20 @@ export async function pushAnthropicKey(value: string): Promise<void> {
       },
       body: JSON.stringify({ value }),
     })
+
+  try {
+    let res = await tryOnce(tokenA)
+    if (res.status === 401) {
+      // Cached token was stale. Force a refresh and retry once.
+      const fresh = await refreshCyggieAuth()
+      if (!fresh) {
+        console.warn(
+          '[gateway-credentials] push 401 and refresh failed; giving up (will retry next launch)',
+        )
+        return
+      }
+      res = await tryOnce(fresh)
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       console.warn(
