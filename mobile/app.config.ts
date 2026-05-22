@@ -13,6 +13,12 @@ const config: ExpoConfig = {
   scheme: 'cyggie',
   userInterfaceStyle: 'automatic',
   newArchEnabled: true,
+  runtimeVersion: {
+    policy: 'appVersion',
+  },
+  updates: {
+    url: 'https://u.expo.dev/89a313ae-ea7b-4694-8bed-44218370b9cc',
+  },
   ios: {
     bundleIdentifier: 'com.cyggie.mobile',
     supportsTablet: false,
@@ -45,6 +51,9 @@ const config: ExpoConfig = {
     // Gateway URL surfaces at runtime via expo-constants. Override per-env via
     // EAS Build profiles (eas.json — lands in M6 before TestFlight).
     gatewayUrl: process.env['EXPO_PUBLIC_GATEWAY_URL'] ?? 'https://cyggie-gateway.fly.dev',
+    eas: {
+      projectId: '89a313ae-ea7b-4694-8bed-44218370b9cc',
+    },
   },
 }
 
