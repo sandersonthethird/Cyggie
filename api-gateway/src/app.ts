@@ -22,6 +22,7 @@ import { registerSyncRoutes } from './routes/sync'
 import { registerDebugRoutes } from './routes/_debug'
 import { registerFirmRoutes } from './routes/firms'
 import { registerRecordingRoutes } from './routes/recordings'
+import { registerChatRoutes } from './routes/chat'
 
 export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   const app = Fastify({
@@ -72,6 +73,7 @@ export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   await registerSearchRoutes(app, env)
   await registerSyncRoutes(app, env)
   await registerRecordingRoutes(app, env)
+  await registerChatRoutes(app, env)
   await registerDebugRoutes(app, env)
 
   return app

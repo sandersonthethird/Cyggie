@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
     "@deepgram/sdk": "^3.10.1",

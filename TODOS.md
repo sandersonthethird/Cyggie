@@ -205,6 +205,26 @@ The full per-migration audit is in [packages/db/MIGRATION_AUDIT.md](packages/db/
 
 ---
 
+### M5-thin follow-ups (deferred from the pre-build M5-thin slice)
+
+The M5-thin slice (commit TBD on `main`, 2026-05-22) shipped a working
+Chat tab + Notes Enhance button against new gateway routes `POST /chat/messages`
+and `POST /chat/enhance-notes`. Both are stateless one-shots — no
+persistence, no streaming, no citations, no Tiptap rewrite. These items
+fill out full M5 in subsequent passes.
+
+| # | What | Why | Effort | Notes |
+|---|---|---|---|---|
+| **T17** | **Chat session persistence + Neon sync** | Mobile Chat tab forgets every conversation on tab unmount. Desktop has `chat_sessions` + `chat_session_messages` tables (migrations 078-080) but they're SQLite-local — never written to Neon. To make mobile chat persist AND sync to desktop, mirror those tables in Neon, add `GET /chat/sessions`, `POST /chat/sessions`, `GET /chat/sessions/:id/messages`, then route desktop writes through the Phase 1.5a outbox the same way `meetings` flow does. | L (~3-5 days) | Reuses `withSync` wrapper + applyRemote primitive from Phase 1.5a/c. T14 covers the multi-table pull side. |
+| **T18** | **SSE streaming for /chat/messages** | Today the route awaits the full Claude response (often 8-15s for long replies) before returning anything. UX would be much better with token-by-token streaming. Anthropic SDK supports `client.messages.stream()`; Fastify handles SSE via `reply.raw.write()`. | M (~2 days) | Mobile-side: `EventSource`-style consumer via `expo-fetch` or a polyfill (RN doesn't have `EventSource` natively). Test against a mocked SSE producer to keep Claude out of CI. |
+| **T19** | **Multi-turn chat (history sent with each message)** | The current route is one-shot — every message is a fresh conversation. Users will expect "as we just discussed…" follow-ups. Cheapest path: client sends `messages: [{role,content}…]` array, gateway forwards as-is to Anthropic. Needs context-budget management (truncate oldest user turns when total exceeds ~50KB). | S (~half day) | Depends on T17 only if we want history to survive app kill. Without T17, history lives in `useState`. |
+| **T20** | **Citations into transcript ranges** | When the chat reply references a meeting, link `[1]` `[2]` style citations back to specific transcript segments. Tap a citation in mobile → scrolls to that point in the meeting detail's transcript view. | L (~3 days) | Requires the chat prompt to ask for structured `<cite seg="…">` blocks + a parse step on the gateway. Mobile UI changes are small once the data shape lands. |
+| **T21** | **Tiptap notes editor (replace plain TextInput on meeting detail)** | Plain TextInput works but is single-style and clunky for multi-paragraph notes. Tiptap (via `@tiptap/react-native` or equivalent) gets us bullets, headings, links. Desktop already uses Tiptap — porting brings parity. | L (~4-5 days) | Notes Enhance still works through Tiptap (replace the editor content via the doc API). |
+| **T22** | **"Diff modal" for Enhance** | Today's Enhance is silent-replace (with a confirm dialog). Better UX: show before/after side-by-side, let user accept/reject hunks. | M (~2 days) | Use existing `diff` package (already a mobile dep). Mobile diff UI patterns from MeetingDetail conflict modal. |
+| **T23** | **Test coverage for new chat routes** | `POST /chat/messages` and `POST /chat/enhance-notes` ship without tests because external-API routes were skipped (Anthropic SDK call). Cleanest path: a tiny `FakeAnthropic` mock in `api-gateway/test/_helpers/` + 4-5 happy/error cases per route. | M (~1 day) | Matches the fake-Deepgram pattern already in TODOS (Phase 0.6 follow-up). |
+
+---
+
 ## P2 — Sync (Phase 1.5a follow-ups)
 
 Captured during the 1.5a ship. None block the existing shipped slice but
