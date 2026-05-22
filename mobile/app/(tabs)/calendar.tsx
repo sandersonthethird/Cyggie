@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -94,10 +93,12 @@ export default function CalendarTab() {
     staleTime: 30_000,
   })
 
+  // dismissedIds is consumed only as a useMemo dep below — isDismissed is a
+  // stable function reference, so without subscribing to the Set the filter
+  // wouldn't re-derive when partners hide/restore events.
   const dismissedIds = useCalendarStore((s) => s.dismissedIds)
   const isDismissed = useCalendarStore((s) => s.isDismissed)
   const dismiss = useCalendarStore((s) => s.dismiss)
-  const undismissAll = useCalendarStore((s) => s.undismissAll)
 
   // Filter dismissed events at the source so all three segments see the
   // same visible-event population. Re-derives only when query.data or
@@ -284,8 +285,8 @@ export default function CalendarTab() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Account"
-              onPress={() => openAccountSheet(userId, signOut, dismissedIds.size, undismissAll)}
+              accessibilityLabel="Settings"
+              onPress={() => router.push('/settings')}
               hitSlop={8}
             >
               <Avatar initials={initialsFromUserId(userId)} size={32} />
@@ -594,33 +595,6 @@ function initialsFromUserId(userId: string | null): string {
   // userId is a cuid2 — first two alphas as a stable placeholder until
   // /auth/me's displayName lands. M2 swaps this for real initials.
   return userId.slice(0, 2).toUpperCase()
-}
-
-function openAccountSheet(
-  _userId: string | null,
-  signOut: () => Promise<void>,
-  hiddenCount: number,
-  undismissAll: () => void,
-): void {
-  const buttons: Parameters<typeof Alert.alert>[2] = []
-  if (hiddenCount > 0) {
-    buttons.push({
-      text: `Show hidden events (${hiddenCount})`,
-      onPress: () => {
-        Alert.alert(
-          `Restore ${hiddenCount} hidden event${hiddenCount === 1 ? '' : 's'}?`,
-          undefined,
-          [
-            { text: 'Restore', onPress: () => undismissAll() },
-            { text: 'Cancel', style: 'cancel' },
-          ],
-        )
-      },
-    })
-  }
-  buttons.push({ text: 'Sign out', style: 'destructive', onPress: () => void signOut() })
-  buttons.push({ text: 'Cancel', style: 'cancel' })
-  Alert.alert('Account', undefined, buttons)
 }
 
 const styles = StyleSheet.create({
