@@ -451,6 +451,14 @@ export const IPC_CHANNELS = {
   // Main → renderer push: fires on every SyncAgent state transition so the
   // Cloud Sync settings panel updates without polling.
   SYNC_STATUS_CHANGED: 'sync:status-changed',
+  // Phase 1.5c — desktop pulls from Neon. Pull state transitions surface
+  // alongside push state for a unified "Cloud Sync" indicator.
+  SYNC_PULL_STATUS_CHANGED: 'sync:pull-status-changed',
+  // Main → renderer push: emitted by SyncPullService.applyRemoteMeetings
+  // after each 50-row sub-batch commit. Renderer subscribers (e.g.
+  // useMeetings) invalidate TanStack queries for the listed ids so the UI
+  // reflects pulled changes immediately rather than on next manual refresh.
+  MEETINGS_REMOTE_APPLIED: 'sync:meetings-remote-applied',
 
   // Cyggie cloud auth (Desktop OAuth slice)
   CYGGIE_AUTH_SIGN_IN: 'cyggie-auth:sign-in',

@@ -1,0 +1,340 @@
+// Tests for the Phase 1.5c pull-side apply primitive.
+//
+// Approach: build a minimal in-memory SQLite with just the columns
+// applyRemoteMeetings touches. Bypasses buildTestDbFull (which currently
+// stops at migration 095) since this test only needs `users`, `meetings`,
+// and `sync_state`.
+
+import Database from 'better-sqlite3'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { applyRemoteMeetings, type PulledMeetingRow } from '@main/services/sync-remote-apply'
+
+const DEVICE_ID = 'device-test-1'
+const USER_ID = 'user-test-1'
+
+function freshDb(): Database.Database {
+  const db = new Database(':memory:')
+  db.pragma('foreign_keys = ON')
+
+  // Minimal users table (only the columns the FK-existence pre-check reads).
+  db.exec(`
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY,
+      google_sub TEXT,
+      email TEXT,
+      display_name TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `)
+
+  // Subset of the production meetings schema sufficient to round-trip an
+  // applyRemote write. Lamport is the key correctness column.
+  db.exec(`
+    CREATE TABLE meetings (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      date TEXT NOT NULL,
+      duration_seconds INTEGER,
+      calendar_event_id TEXT,
+      meeting_platform TEXT,
+      meeting_url TEXT,
+      transcript_path TEXT,
+      summary_path TEXT,
+      recording_path TEXT,
+      transcript_drive_id TEXT,
+      summary_drive_id TEXT,
+      template_id TEXT,
+      speaker_count INTEGER NOT NULL DEFAULT 0,
+      speaker_map TEXT NOT NULL DEFAULT '{}',
+      transcript_segments TEXT,
+      notes TEXT,
+      attendees TEXT,
+      attendee_emails TEXT,
+      chat_messages TEXT,
+      companies TEXT,
+      dismissed_companies TEXT,
+      status TEXT NOT NULL DEFAULT 'recording',
+      was_impromptu INTEGER NOT NULL DEFAULT 0,
+      is_group_event INTEGER NOT NULL DEFAULT 0,
+      is_group_event_user_set INTEGER NOT NULL DEFAULT 0,
+      scheduled_end_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      lamport TEXT NOT NULL DEFAULT '0'
+    )
+  `)
+
+  // Child table — proves applyRemote does NOT cascade-delete via REPLACE.
+  db.exec(`
+    CREATE TABLE meeting_company_links (
+      meeting_id TEXT NOT NULL,
+      company_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (meeting_id, company_id),
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+    )
+  `)
+
+  db.exec(`
+    CREATE TABLE sync_state (
+      device_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      last_pushed_lamport TEXT NOT NULL DEFAULT '0',
+      last_pulled_lamport TEXT NOT NULL DEFAULT '0',
+      last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `)
+
+  // Outbox so a regression where applyRemote calls withSync would have
+  // an observable place to land.
+  db.exec(`
+    CREATE TABLE outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      table_name TEXT NOT NULL,
+      row_id TEXT NOT NULL,
+      op TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      lamport TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      acked_at TEXT
+    )
+  `)
+
+  // Seed the user row that applyRemote's pre-check requires.
+  db.prepare('INSERT INTO users (id) VALUES (?)').run(USER_ID)
+  return db
+}
+
+function makeRow(overrides: Partial<PulledMeetingRow> & { id: string; lamport: string }): PulledMeetingRow {
+  return {
+    id: overrides.id,
+    userId: USER_ID,
+    title: 'Test',
+    date: '2026-05-22T10:00:00.000Z',
+    durationSeconds: null,
+    calendarEventId: null,
+    meetingPlatform: null,
+    meetingUrl: null,
+    transcriptPath: null,
+    summaryPath: null,
+    recordingPath: null,
+    transcriptDriveId: null,
+    summaryDriveId: null,
+    templateId: null,
+    speakerCount: 0,
+    speakerMap: {},
+    transcriptSegments: null,
+    notes: null,
+    attendees: null,
+    attendeeEmails: null,
+    chatMessages: null,
+    companies: null,
+    dismissedCompanies: null,
+    status: 'scheduled',
+    wasImpromptu: false,
+    isGroupEvent: false,
+    isGroupEventUserSet: false,
+    scheduledEndAt: null,
+    createdAt: '2026-05-22T10:00:00.000Z',
+    updatedAt: '2026-05-22T10:00:00.000Z',
+    lamport: overrides.lamport,
+    ...overrides,
+  }
+}
+
+describe('applyRemoteMeetings', () => {
+  let db: Database.Database
+  beforeEach(() => {
+    db = freshDb()
+  })
+  afterEach(() => {
+    db.close()
+  })
+
+  it('inserts a new row when no local row exists', () => {
+    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-1', lamport: '5', title: 'Hello' }),
+    ])
+    expect(result.appliedIds).toEqual(['mtg-1'])
+    const row = db.prepare('SELECT id, title, lamport FROM meetings WHERE id = ?').get('mtg-1') as
+      | { id: string; title: string; lamport: string }
+      | undefined
+    expect(row?.title).toBe('Hello')
+    expect(row?.lamport).toBe('5')
+  })
+
+  it('skips a row whose lamport is <= local', () => {
+    db.prepare(
+      "INSERT INTO meetings (id, title, date, lamport) VALUES ('mtg-1', 'Local', '2026-05-22T10:00:00.000Z', '10')",
+    ).run()
+    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-1', lamport: '5', title: 'Older' }),
+    ])
+    expect(result.appliedIds).toEqual([])
+    expect(result.skippedLowLamport).toBe(1)
+    const row = db.prepare('SELECT title FROM meetings WHERE id = ?').get('mtg-1') as { title: string }
+    expect(row.title).toBe('Local')
+  })
+
+  it('skips equal lamport (must be strictly greater)', () => {
+    db.prepare(
+      "INSERT INTO meetings (id, title, date, lamport) VALUES ('mtg-1', 'Local', '2026-05-22T10:00:00.000Z', '7')",
+    ).run()
+    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-1', lamport: '7', title: 'Tied' }),
+    ])
+    expect(result.appliedIds).toEqual([])
+    expect(result.skippedLowLamport).toBe(1)
+  })
+
+  it('overwrites row when incoming lamport > local', () => {
+    db.prepare(
+      "INSERT INTO meetings (id, title, date, lamport) VALUES ('mtg-1', 'Local', '2026-05-22T10:00:00.000Z', '5')",
+    ).run()
+    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-1', lamport: '6', title: 'Newer' }),
+    ])
+    expect(result.appliedIds).toEqual(['mtg-1'])
+    const row = db.prepare('SELECT title, lamport FROM meetings WHERE id = ?').get('mtg-1') as {
+      title: string
+      lamport: string
+    }
+    expect(row.title).toBe('Newer')
+    expect(row.lamport).toBe('6')
+  })
+
+  it('does NOT cascade-delete child rows on overwrite (ON CONFLICT UPDATE, not REPLACE)', () => {
+    db.prepare(
+      "INSERT INTO meetings (id, title, date, lamport) VALUES ('mtg-1', 'Local', '2026-05-22T10:00:00.000Z', '5')",
+    ).run()
+    db.prepare(
+      "INSERT INTO meeting_company_links (meeting_id, company_id) VALUES ('mtg-1', 'co-1')",
+    ).run()
+
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-1', lamport: '99' }),
+    ])
+
+    const link = db
+      .prepare("SELECT meeting_id, company_id FROM meeting_company_links WHERE meeting_id = 'mtg-1'")
+      .get() as { meeting_id: string } | undefined
+    expect(link?.meeting_id).toBe('mtg-1')
+  })
+
+  it('does NOT emit any outbox row (bypasses withSync entirely)', () => {
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-1', lamport: '5' }),
+    ])
+    const count = (db.prepare('SELECT count(*) AS n FROM outbox').get() as { n: number }).n
+    expect(count).toBe(0)
+  })
+
+  it('bumps sync_state.last_pulled_lamport AND last_pushed_lamport (Issue 1A)', () => {
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-1', lamport: '50' }),
+      makeRow({ id: 'mtg-2', lamport: '99' }),
+    ])
+    const state = db
+      .prepare(
+        'SELECT last_pulled_lamport, last_pushed_lamport FROM sync_state WHERE device_id = ?',
+      )
+      .get(DEVICE_ID) as
+      | { last_pulled_lamport: string; last_pushed_lamport: string }
+      | undefined
+    expect(state?.last_pulled_lamport).toBe('99')
+    expect(state?.last_pushed_lamport).toBe('99')
+  })
+
+  it('does NOT regress last_pushed_lamport when incoming is below local high-water', () => {
+    db.prepare(
+      "INSERT INTO sync_state (device_id, user_id, last_pushed_lamport) VALUES (?, ?, '500')",
+    ).run(DEVICE_ID, USER_ID)
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-1', lamport: '10' }),
+    ])
+    const state = db
+      .prepare('SELECT last_pushed_lamport FROM sync_state WHERE device_id = ?')
+      .get(DEVICE_ID) as { last_pushed_lamport: string }
+    expect(state.last_pushed_lamport).toBe('500')
+  })
+
+  it('pre-skips rows whose userId does not match any local user', () => {
+    const result = applyRemoteMeetings(db, DEVICE_ID, 'unknown-user', [
+      makeRow({ id: 'mtg-1', lamport: '5', userId: 'unknown-user' }),
+    ])
+    expect(result.appliedIds).toEqual([])
+    expect(result.skippedPreValidation).toBe(1)
+    const count = (db.prepare('SELECT count(*) AS n FROM meetings').get() as { n: number }).n
+    expect(count).toBe(0)
+  })
+
+  it('pre-skips malformed rows (missing required fields) without crashing', () => {
+    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      // @ts-expect-error — intentional malformed shape
+      { id: 'no-lamport', userId: USER_ID, title: 'Bad' },
+      makeRow({ id: 'mtg-good', lamport: '5' }),
+    ])
+    expect(result.appliedIds).toEqual(['mtg-good'])
+    expect(result.skippedPreValidation).toBe(1)
+  })
+
+  it('emits onApplied callback with applied ids (Issue 5A IPC hook)', () => {
+    const onApplied = vi.fn()
+    applyRemoteMeetings(
+      db,
+      DEVICE_ID,
+      USER_ID,
+      [
+        makeRow({ id: 'a', lamport: '1' }),
+        makeRow({ id: 'b', lamport: '2' }),
+      ],
+      { onApplied },
+    )
+    expect(onApplied).toHaveBeenCalledTimes(1)
+    expect(onApplied.mock.calls[0][0]).toEqual(['a', 'b'])
+  })
+
+  it('chunks into sub-batches of opts.chunkSize, emitting onApplied per chunk (Issue 4A)', () => {
+    const onApplied = vi.fn()
+    const rows = Array.from({ length: 5 }, (_, i) =>
+      makeRow({ id: `mtg-${i}`, lamport: String(i + 1) }),
+    )
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, rows, { chunkSize: 2, onApplied })
+    // 5 rows in 2-row chunks → [2, 2, 1] = 3 invocations
+    expect(onApplied).toHaveBeenCalledTimes(3)
+    expect(onApplied.mock.calls[0][0]).toHaveLength(2)
+    expect(onApplied.mock.calls[1][0]).toHaveLength(2)
+    expect(onApplied.mock.calls[2][0]).toHaveLength(1)
+  })
+
+  it('preserves JSON fields (attendees, attendeeEmails, transcriptSegments)', () => {
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-json',
+        lamport: '1',
+        attendees: ['Alice', 'Bob'],
+        attendeeEmails: ['alice@example.com', 'bob@example.com'],
+        transcriptSegments: [{ speaker: 0, text: 'Hi', startTime: 0, endTime: 1 }],
+      }),
+    ])
+    const row = db
+      .prepare(
+        'SELECT attendees, attendee_emails, transcript_segments FROM meetings WHERE id = ?',
+      )
+      .get('mtg-json') as {
+      attendees: string
+      attendee_emails: string
+      transcript_segments: string
+    }
+    expect(JSON.parse(row.attendees)).toEqual(['Alice', 'Bob'])
+    expect(JSON.parse(row.attendee_emails)).toEqual(['alice@example.com', 'bob@example.com'])
+    expect(JSON.parse(row.transcript_segments)).toEqual([
+      { speaker: 0, text: 'Hi', startTime: 0, endTime: 1 },
+    ])
+  })
+})

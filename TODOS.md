@@ -467,6 +467,54 @@ post-Deepgram.
 **Effort:** new migration + schema field + endpoint body field +
 detail-screen render + tests. ~half day.
 
+### T14 — Phase 1.5c expansion: pull more tables alongside meetings
+**What:** Extend the gateway's `GET /sync/pull` and the desktop's
+`applyRemoteMeetings` to also pull `notes`, `contacts`,
+`org_companies`, `contact_emails`, `org_company_aliases`. Mirrors the
+push-side owned-tables set.
+**Why:** Phase 1.5c shipped meetings-only because that's the only
+table mobile writes to today. As M5 (chat → chat_sessions /
+chat_session_messages) or M6 (settings → user prefs) introduces
+mobile writes to other tables, those tables' edits will be stranded
+on Neon — same problem 1.5c just solved for meetings.
+**Pros:** Symmetric with push side; closes the bidirectional loop
+for all owned data.
+**Cons:** ~2 weeks of work; gateway response gets bigger; pagination
+becomes more urgent (per T1).
+**Context:** The applyRemote primitive shipped in 1.5c
+([src/main/services/sync-remote-apply.ts](src/main/services/sync-remote-apply.ts))
+is the reuse target — copy the hand-rolled camelCase→snake_case
+mapping pattern per table. Gateway extends
+[api-gateway/src/routes/sync.ts](api-gateway/src/routes/sync.ts) to
+return `{ meetings, notes, contacts, ... }` keyed by table name.
+**Effort:** L (~2 weeks)
+**Priority:** P2 — trigger when M5 ships
+**Depends on / blocked by:** M5 (or M6) introducing mobile writes
+to the additional tables.
+
+### T15 — Extract `PollingService` base when there's a third polling service
+**What:** sync-agent.ts (push) and sync-pull.service.ts (pull) share
+patterns: 60s tick, exp backoff (2s → 60s ceiling), state machine
+with `idle / pulling-or-flushing / backing_off / paused_no_auth`,
+state-change IPC, `lastError` field, `triggerX()` external trigger.
+~80 lines of duplicated boilerplate today.
+**Why:** Rule of three. Two implementations is fine; three signals
+real duplication.
+**Pros:** Single source of truth for backoff curve, state transitions,
+mutex semantics.
+**Cons:** Premature today. The two services have subtly different
+edge cases (push has flush-in-flight tracking + ack_pending state;
+pull doesn't) — base class would need extension points that don't
+exist until we see what the third service needs.
+**Context:** Build when the third polling service lands — likely the
+real-time SSE/APNs subscriber (Phase 1.5d) or a future job-runner.
+[src/main/services/sync-agent.ts](src/main/services/sync-agent.ts) and
+[src/main/services/sync-pull.service.ts](src/main/services/sync-pull.service.ts)
+are the merge targets.
+**Effort:** M (~3 days incl. test migrations)
+**Priority:** P3 — code-quality investment, no user-visible effect.
+**Depends on / blocked by:** Third polling service landing.
+
 ### T13 — Mobile: gracefully surface non-401 errors from handleEventPress
 **What:** `mobile/app/(tabs)/calendar.tsx`'s tap handler currently
 `console.error`s non-reauth errors but doesn't show anything to the

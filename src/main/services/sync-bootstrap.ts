@@ -5,6 +5,7 @@ import { configureSyncGlobals } from '@cyggie/db/sqlite/repositories/_sync'
 import { getCurrentUserId } from '../security/current-user'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { SyncAgent, type SyncTransport, type PushBatchResponse } from './sync-agent'
+import { SyncPullService, type PullTransport, type PullResponse } from './sync-pull.service'
 import { registerSyncIpc } from '../ipc/sync.ipc'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import {
@@ -33,6 +34,7 @@ const GATEWAY_URL = process.env['CYGGIE_GATEWAY_URL'] ?? 'https://cyggie-gateway
 const DEVICE_ID_KEY = 'syncDeviceId'
 
 let agent: SyncAgent | null = null
+let pullService: SyncPullService | null = null
 let statusBroadcastTarget: WebContents | null = null
 
 /**
@@ -115,6 +117,48 @@ const transport: SyncTransport = {
 }
 
 /**
+ * GET /sync/pull transport — same 401 → refresh → retry pattern as push.
+ * Returns the parsed body; throws on non-2xx (the pull service maps the
+ * error into backoff / sign-out states).
+ */
+const pullTransport: PullTransport = {
+  async pull({ deviceId, since }) {
+    const tokenA = await getAccessTokenForSync()
+    if (!tokenA) {
+      throw Object.assign(new Error('NO_ACCESS_TOKEN'), { status: 401 })
+    }
+    const url = `${GATEWAY_URL}/sync/pull?since=${encodeURIComponent(since)}`
+    const tryOnce = async (token: string): Promise<Response> =>
+      fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
+
+    let res = await tryOnce(tokenA)
+    if (res.status === 401) {
+      const fresh = await refreshCyggieAuth()
+      if (!fresh) {
+        throw Object.assign(new Error('UNAUTHORIZED'), { status: 401 })
+      }
+      res = await tryOnce(fresh)
+    }
+    if (res.status === 401) {
+      await signOutCyggieAuth()
+      throw Object.assign(new Error('UNAUTHORIZED'), { status: 401 })
+    }
+    if (res.status >= 500) {
+      throw Object.assign(new Error(`gateway ${res.status}`), { status: res.status })
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => `${res.status}`)
+      throw Object.assign(new Error(`gateway 4xx: ${text.slice(0, 200)}`), { status: res.status })
+    }
+    // deviceId is not currently used in the request body (gateway scopes by
+    // JWT.sub) but we keep it in the transport signature for parity with
+    // /sync/push and for future per-device pull filtering.
+    void deviceId
+    return (await res.json()) as PullResponse
+  },
+}
+
+/**
  * Initialize sync. Idempotent — calling twice is a no-op.
  */
 export function bootstrapSync(): void {
@@ -153,7 +197,30 @@ export function bootstrapSync(): void {
 
   // 4. Kick off the periodic tick.
   agent.start()
-  console.log('[sync] bootstrap complete; agent started')
+
+  // 5. Phase 1.5c — construct + start the pull-side service. Shares the
+  // SyncAgent reference so its pre-tick mutex check can read push state.
+  pullService = new SyncPullService({
+    db: getDatabase(),
+    getDeviceId: () => getOrCreateDeviceId(),
+    getUserId: () => getCurrentUserId() ?? null,
+    getAccessToken: getAccessTokenForSync,
+    syncAgent: agent,
+    transport: pullTransport,
+    onMeetingsApplied: (ids) => {
+      // Surgical TanStack invalidation in the renderer (Issue 5A).
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.MEETINGS_REMOTE_APPLIED, { ids })
+    },
+    onStateChange: (snapshot) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed()) return
+      wc.send(IPC_CHANNELS.SYNC_PULL_STATUS_CHANGED, snapshot)
+    },
+  })
+  pullService.start()
+  console.log('[sync] bootstrap complete; agent + pull service started')
 }
 
 /**
@@ -164,6 +231,15 @@ export function bootstrapSync(): void {
  */
 export function triggerSyncFlush(): void {
   agent?.triggerFlush()
+}
+
+/**
+ * Phase 1.5c — trigger an immediate pull. Called by app focus / sign-in
+ * transitions so the user doesn't wait up to 60s for the periodic tick.
+ * No-op when the service isn't running.
+ */
+export function triggerSyncPull(): void {
+  pullService?.triggerPull()
 }
 
 /**

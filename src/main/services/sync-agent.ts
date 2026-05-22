@@ -176,6 +176,16 @@ export class SyncAgent {
     return result.changes
   }
 
+  /**
+   * Returns the agent's current internal state. Phase 1.5c (SyncPullService)
+   * reads this at the top of each pull tick to enforce the push/pull mutex
+   * (drops the tick when state !== 'idle' so the two never overlap).
+   * Public read of a snapshot value — no mutation, no race.
+   */
+  getState(): SyncState {
+    return this.state
+  }
+
   snapshot(): SyncStateSnapshot {
     const counts = this.cfg.db
       .prepare(
