@@ -77,6 +77,7 @@ async function insertContact(opts: {
   userId: string
   fullName: string
   companyId?: string
+  email?: string
 }): Promise<string> {
   const id = TEST_PREFIX + 'ct-' + createId().slice(0, 8)
   await db.insert(schema.contacts).values({
@@ -85,9 +86,18 @@ async function insertContact(opts: {
     fullName: opts.fullName,
     normalizedName: opts.fullName.toLowerCase(),
     primaryCompanyId: opts.companyId ?? null,
+    email: opts.email ?? null,
   })
   createdContactIds.push(id)
   return id
+}
+
+async function insertContactEmailAlias(contactId: string, email: string): Promise<void> {
+  await db.insert(schema.contactEmails).values({
+    contactId,
+    email,
+    isPrimary: 0,
+  })
 }
 
 async function insertMeeting(opts: {
@@ -100,6 +110,8 @@ async function insertMeeting(opts: {
   speakerMap?: Record<string, string>
   notes?: string
   wasImpromptu?: boolean
+  attendees?: string[] | null
+  attendeeEmails?: string[] | null
 }): Promise<string> {
   const id = TEST_PREFIX + 'mtg-' + createId().slice(0, 8)
   await db.insert(schema.meetings).values({
@@ -114,8 +126,12 @@ async function insertMeeting(opts: {
     speakerMap: opts.speakerMap ?? {},
     notes: opts.notes ?? null,
     wasImpromptu: opts.wasImpromptu ?? false,
-    attendees: ['Alice', 'Bob'] as never,
-    attendeeEmails: ['alice@example.com', 'bob@example.com'] as never,
+    attendees: (opts.attendees === undefined
+      ? ['Alice', 'Bob']
+      : opts.attendees) as never,
+    attendeeEmails: (opts.attendeeEmails === undefined
+      ? ['alice@example.com', 'bob@example.com']
+      : opts.attendeeEmails) as never,
     speakerCount: 2,
   })
   createdMeetingIds.push(id)
@@ -308,5 +324,161 @@ describe('GET /meetings/:id', () => {
   test('401 when no auth header', async () => {
     const res = await app.inject({ method: 'GET', url: '/meetings/whatever' })
     expect(res.statusCode).toBe(401)
+  })
+
+  // ─── attendeeContacts resolution ──────────────────────────────────────
+  // Mirrors desktop's two-table lookup (contacts.email + contact_emails.email)
+  // at packages/db/src/sqlite/repositories/contact.repo.ts:429-439.
+  // Scoped by user_id so cross-tenant data can't leak via shared email.
+  test('attendeeContacts resolves primary email to contactId; unmatched emails are null', async () => {
+    const userId = await insertTestUser()
+    const matchedEmail = `priya-${TEST_PREFIX}@example.com`
+    const matchedContactId = await insertContact({
+      userId,
+      fullName: 'Priya ' + TEST_PREFIX,
+      email: matchedEmail,
+    })
+    const meetingId = await insertMeeting({
+      userId,
+      attendees: ['Priya', 'Stranger'],
+      attendeeEmails: [matchedEmail, `unknown-${TEST_PREFIX}@example.com`],
+    })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/meetings/${meetingId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      attendeeContacts: Array<{ name: string; email: string | null; contactId: string | null }>
+    }
+    expect(body.attendeeContacts).toEqual([
+      { name: 'Priya', email: matchedEmail, contactId: matchedContactId },
+      { name: 'Stranger', email: `unknown-${TEST_PREFIX}@example.com`, contactId: null },
+    ])
+  })
+
+  test('attendeeContacts resolves emails case-insensitively', async () => {
+    const userId = await insertTestUser()
+    const storedEmail = `Mixed.Case-${TEST_PREFIX}@Example.COM`
+    const matchedContactId = await insertContact({
+      userId,
+      fullName: 'Casey ' + TEST_PREFIX,
+      email: storedEmail,
+    })
+    const attendeeEmail = storedEmail.toLowerCase()
+    const meetingId = await insertMeeting({
+      userId,
+      attendees: ['Casey'],
+      attendeeEmails: [attendeeEmail],
+    })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/meetings/${meetingId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      attendeeContacts: Array<{ name: string; email: string | null; contactId: string | null }>
+    }
+    expect(body.attendeeContacts).toEqual([
+      { name: 'Casey', email: attendeeEmail, contactId: matchedContactId },
+    ])
+  })
+
+  test('attendeeContacts resolves via contact_emails alias table (not just primary email)', async () => {
+    const userId = await insertTestUser()
+    const primaryEmail = `primary-${TEST_PREFIX}@example.com`
+    const aliasEmail = `work-alias-${TEST_PREFIX}@example.com`
+    const matchedContactId = await insertContact({
+      userId,
+      fullName: 'Alias-Owner ' + TEST_PREFIX,
+      email: primaryEmail,
+    })
+    await insertContactEmailAlias(matchedContactId, aliasEmail)
+
+    const meetingId = await insertMeeting({
+      userId,
+      attendees: ['Alias-Owner'],
+      // Attendee is invited via the alias, not the primary email.
+      attendeeEmails: [aliasEmail],
+    })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/meetings/${meetingId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      attendeeContacts: Array<{ name: string; email: string | null; contactId: string | null }>
+    }
+    expect(body.attendeeContacts).toEqual([
+      { name: 'Alias-Owner', email: aliasEmail, contactId: matchedContactId },
+    ])
+  })
+
+  test('attendeeContacts does not leak contacts across user_id (cross-tenant safety)', async () => {
+    const ownerA = await insertTestUser()
+    const ownerB = await insertTestUser()
+    // Owner B has a contact with this exact email. Owner A's meeting should
+    // NOT pick up B's contact when its own attendee list happens to include
+    // the same email — the user_id scope must filter it out.
+    const sharedEmail = `shared-${TEST_PREFIX}@example.com`
+    await insertContact({
+      userId: ownerB,
+      fullName: 'Bs Contact ' + TEST_PREFIX,
+      email: sharedEmail,
+    })
+
+    const meetingId = await insertMeeting({
+      userId: ownerA,
+      attendees: ['Some Person'],
+      attendeeEmails: [sharedEmail],
+    })
+
+    const jwt = await mintJwt(ownerA)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/meetings/${meetingId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      attendeeContacts: Array<{ name: string; email: string | null; contactId: string | null }>
+    }
+    // contactId must be null — B's contact must not leak into A's meeting.
+    expect(body.attendeeContacts).toEqual([
+      { name: 'Some Person', email: sharedEmail, contactId: null },
+    ])
+  })
+
+  test('attendeeContacts is [] when meeting has no attendees', async () => {
+    const userId = await insertTestUser()
+    const meetingId = await insertMeeting({
+      userId,
+      attendees: null,
+      attendeeEmails: null,
+    })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/meetings/${meetingId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { attendeeContacts: unknown[] }
+    expect(body.attendeeContacts).toEqual([])
   })
 })

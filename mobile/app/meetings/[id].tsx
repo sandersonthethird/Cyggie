@@ -160,6 +160,7 @@ export default function MeetingDetailScreen() {
             <Hero meeting={meeting} />
             <StatsCard meeting={meeting} />
             {meeting.isGroupEvent && <GroupEventBanner />}
+            {meeting.status === 'scheduled' && <RecordCTA meeting={meeting} />}
             {meeting.status === 'empty' && <EmptyTranscriptBanner meetingId={meeting.id} />}
             {meeting.status === 'error' && <RetryUploadBanner meetingId={meeting.id} />}
             <TerminalCleanupSideEffect meetingStatus={meeting.status} meetingId={meeting.id} />
@@ -292,6 +293,42 @@ function StatCell({ label, value }: { label: string; value: string }) {
         {value}
       </Text>
       <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  )
+}
+
+/**
+ * T5 — "Record" CTA for scheduled meetings. Tapping navigates to /record
+ * with the meeting's calendarEventId + title as query params, so the
+ * resulting upload finds-or-updates this row via /recordings/upload's
+ * (userId, calEventId) find-or-update path. Avoids the previous
+ * "go back to Calendar, hit the FAB, get an impromptu meeting instead"
+ * dance the E2E run surfaced.
+ *
+ * Renders nothing when calendarEventId is null (impromptu-created
+ * scheduled rows shouldn't get this CTA — no calendar event to
+ * associate with).
+ */
+function RecordCTA({ meeting }: { meeting: MeetingDetail }) {
+  if (!meeting.calendarEventId) return null
+  const onPress = () => {
+    const params = new URLSearchParams({
+      calEventId: meeting.calendarEventId!,
+      title: meeting.title,
+    })
+    router.push(`/record?${params.toString()}` as never)
+  }
+  return (
+    <View style={styles.recordCta}>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.recordCtaBtn, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Start recording this meeting"
+      >
+        <Ionicons name="mic" size={18} color="#fff" />
+        <Text style={styles.recordCtaText}>Start recording</Text>
+      </Pressable>
     </View>
   )
 }
@@ -820,6 +857,25 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  recordCta: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+  },
+  recordCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.crimson,
+    paddingVertical: 14,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radii.lg,
+  },
+  recordCtaText: {
+    color: '#FFFFFF',
+    fontSize: type.body + 1,
+    fontWeight: '600',
   },
   groupEventBannerText: { flex: 1 },
   groupEventBannerTitle: {

@@ -38,6 +38,11 @@ export interface MeetingDetail {
    *  Null on impromptu rows. Detail screen renders "X min scheduled"
    *  pre-recording from (scheduledEndAt - date). */
   scheduledEndAt: string | null
+  /** Calendar event id (T5). Mobile uses this to wire the "Record" CTA
+   *  on scheduled meetings so the resulting upload finds-or-updates
+   *  this row instead of inserting an impromptu one. Null when there's
+   *  no originating calendar event (Record-FAB-created impromptu). */
+  calendarEventId: string | null
   wasImpromptu: boolean
   // Group-event ingestion gate. When true, no contacts/companies were seeded
   // from this meeting's attendee list. Mobile shows a read-only banner;

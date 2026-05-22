@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { and, asc, eq, gt, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
@@ -40,6 +40,17 @@ const LinkedContactSchema = z.object({
   speakerIndex: z.number(),
 })
 
+// Per-attendee resolution: the calendar event lists invitees as flat
+// strings; we resolve each invitee's email against the user's contacts
+// table so mobile can render clickable chips that route to the contact
+// view. Independent of `linkedContacts`, which is populated post-
+// transcription via speaker→contact tagging.
+const AttendeeContactSchema = z.object({
+  name: z.string(),
+  email: z.string().nullable(),
+  contactId: z.string().nullable(),
+})
+
 const MeetingDetailSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -59,6 +70,11 @@ const MeetingDetailSchema = z.object({
   // /from-calendar-event creation; null for impromptu rows. Detail screen
   // uses (scheduledEndAt - date) to render "X min scheduled" pre-recording.
   scheduledEndAt: z.string().nullable(),
+  // T5 — surfaced for the "Record" CTA on scheduled meetings. Mobile
+  // passes it into /record so the upload's find-or-update branch lights
+  // up this row instead of inserting an impromptu one. Null on rows
+  // created from the Record FAB (no originating calendar event).
+  calendarEventId: z.string().nullable(),
   wasImpromptu: z.boolean(),
   // Group-event ingestion gate (migration 098). When true, the desktop did not
   // seed contacts/companies from this meeting's attendee list. Mobile shows a
@@ -75,6 +91,7 @@ const MeetingDetailSchema = z.object({
   transcriptSegments: z.array(TranscriptSegmentSchema),
   linkedCompanies: z.array(LinkedCompanySchema),
   linkedContacts: z.array(LinkedContactSchema),
+  attendeeContacts: z.array(AttendeeContactSchema),
 })
 
 // Shape we trust to be present in the jsonb column. Lax — anything malformed
@@ -158,6 +175,75 @@ async function buildMeetingDetail(
     .where(eq(schema.meetingSpeakerContactLinks.meetingId, meeting.id))
     .orderBy(asc(schema.meetingSpeakerContactLinks.speakerIndex))
 
+  // Resolve each calendar attendee email to a contact id, mirroring
+  // the desktop's two-table lookup at
+  // packages/db/src/sqlite/repositories/contact.repo.ts:429-439:
+  //
+  //   email matches  →  contacts.email  (primary)
+  //                  →  contact_emails.email  (aliases)
+  //
+  // Always scoped by contacts.user_id so cross-tenant data can't leak
+  // even if two firms have a contact with the same email. Unmatched
+  // attendees (or those with no email at all) get a contactId of null
+  // and render as non-clickable chips on mobile.
+  const attendeeNames = (meeting.attendees as string[] | null) ?? []
+  const attendeeEmails = (meeting.attendeeEmails as string[] | null) ?? []
+  const lowercasedEmails = Array.from(
+    new Set(
+      attendeeEmails
+        .filter((e): e is string => typeof e === 'string' && e.length > 0)
+        .map((e) => e.toLowerCase()),
+    ),
+  )
+  const emailToContactId = new Map<string, string>()
+  if (lowercasedEmails.length > 0) {
+    // Primary email column on contacts.
+    const primaryMatches = await db
+      .select({
+        id: schema.contacts.id,
+        email: sql<string>`lower(${schema.contacts.email})`,
+      })
+      .from(schema.contacts)
+      .where(
+        and(
+          eq(schema.contacts.userId, meeting.userId),
+          inArray(sql`lower(${schema.contacts.email})`, lowercasedEmails),
+        ),
+      )
+    for (const row of primaryMatches) {
+      if (row.email) emailToContactId.set(row.email, row.id)
+    }
+
+    // Alias emails on contact_emails. Inner-join with contacts to scope by user_id.
+    const aliasMatches = await db
+      .select({
+        id: schema.contactEmails.contactId,
+        email: sql<string>`lower(${schema.contactEmails.email})`,
+      })
+      .from(schema.contactEmails)
+      .innerJoin(schema.contacts, eq(schema.contactEmails.contactId, schema.contacts.id))
+      .where(
+        and(
+          eq(schema.contacts.userId, meeting.userId),
+          inArray(sql`lower(${schema.contactEmails.email})`, lowercasedEmails),
+        ),
+      )
+    for (const row of aliasMatches) {
+      if (row.email && !emailToContactId.has(row.email)) {
+        emailToContactId.set(row.email, row.id)
+      }
+    }
+  }
+  const attendeeContacts = attendeeNames.map((name, idx) => {
+    const rawEmail = attendeeEmails[idx]
+    const email =
+      typeof rawEmail === 'string' && rawEmail.length > 0 ? rawEmail : null
+    const contactId = email
+      ? emailToContactId.get(email.toLowerCase()) ?? null
+      : null
+    return { name, email, contactId }
+  })
+
   const speakerMap =
     (meeting.speakerMap as Record<string, unknown> | null) ?? null
   const { hasTranscript, segments } = normalizeSegments(
@@ -174,6 +260,7 @@ async function buildMeetingDetail(
     updatedAt: new Date(meeting.updatedAt).toISOString(),
     lamport: meeting.lamport,
     scheduledEndAt: meeting.scheduledEndAt ? new Date(meeting.scheduledEndAt).toISOString() : null,
+    calendarEventId: meeting.calendarEventId,
     wasImpromptu: meeting.wasImpromptu,
     isGroupEvent: meeting.isGroupEvent,
     meetingPlatform: meeting.meetingPlatform,
@@ -186,6 +273,7 @@ async function buildMeetingDetail(
     transcriptSegments: segments,
     linkedCompanies,
     linkedContacts,
+    attendeeContacts,
   }
 }
 

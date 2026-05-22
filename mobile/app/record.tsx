@@ -25,7 +25,7 @@
 import { useEffect, useState } from 'react'
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { router } from 'expo-router'
+import { router, useLocalSearchParams } from 'expo-router'
 import {
   cancelRecording,
   discardPendingUpload,
@@ -96,6 +96,21 @@ export default function RecordScreen() {
   const uploadProgress = useRecordingStore((s) => s.uploadProgress)
   const error = useRecordingStore((s) => s.error)
   const reset = useRecordingStore((s) => s.reset)
+
+  // T5 — calendar-context entry point. When the user taps "Record" on a
+  // scheduled meeting's detail screen, the route carries `calEventId` (and
+  // `title` for display). On stop, we pass these into the upload so the
+  // gateway's /recordings/upload find-or-update path lights up the
+  // existing meeting row instead of inserting an impromptu one.
+  const params = useLocalSearchParams<{ calEventId?: string; title?: string }>()
+  const calEventId =
+    typeof params.calEventId === 'string' && params.calEventId.length > 0
+      ? params.calEventId
+      : undefined
+  const calendarTitle =
+    typeof params.title === 'string' && params.title.length > 0
+      ? params.title
+      : undefined
 
   // Poll /meetings/:id every 10s while we're in 'transcribing'. Fires
   // markDone + navigates to meeting detail when the gateway flips status to
@@ -197,12 +212,13 @@ export default function RecordScreen() {
 
   const onStop = async () => {
     try {
-      // Pass a client-side title so the gateway doesn't default to a
-      // server-generated UTC timestamp (Fly machine TZ). Format mirrors the
-      // server fallback shape but uses the user's local timezone.
+      // Prefer the calendar-event title when we arrived from a scheduled
+      // meeting (T5). Otherwise generate a local-timezone fallback so the
+      // gateway doesn't default to its UTC server-side title.
       const now = new Date()
-      const title = `Meeting ${now.toLocaleDateString()} ${now.toLocaleTimeString()}`
-      await stopRecording({ title })
+      const title =
+        calendarTitle ?? `Meeting ${now.toLocaleDateString()} ${now.toLocaleTimeString()}`
+      await stopRecording({ title, ...(calEventId ? { calEventId } : {}) })
       // Stay on this screen showing the "Transcribing…" copy. The APNs push
       // (or a manual return) takes the user to /meetings/[id].
     } catch (err) {
