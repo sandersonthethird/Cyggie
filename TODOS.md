@@ -515,6 +515,33 @@ are the merge targets.
 **Priority:** P3 — code-quality investment, no user-visible effect.
 **Depends on / blocked by:** Third polling service landing.
 
+### T16 — Mobile: surface impromptu (no-cal-event) meetings somewhere
+
+**What:** Add a way to find past impromptu meetings on mobile.
+Impromptu rows (Record FAB outside any calendar slot) have
+`calendar_event_id = null`, so they never appear in the calendar tab's
+Past segment. Today they're only reachable via the just-completed
+recording flow's auto-navigate; a user who closes the app or kills the
+recording screen permanently loses the ability to find that meeting on
+mobile.
+
+**Why:** Surfaced during the M6 ship-readiness audit. Mobile's "Past"
+segment is calendar-only. Impromptu meetings are real meetings that
+need a UI entry point.
+
+**Options:**
+- A "My Recordings" section on the calendar tab (above Past?) that
+  lists impromptu meetings from the last 7 days.
+- A new Meetings tab (would need wireframe + nav rework).
+- An "impromptu" row group inside the Past segment, merging calendar
+  events + impromptu rows by date.
+
+**Effort:** M (~1 day for option 1; ~3 days for a new tab).
+**Priority:** P2 — real gap, but not a blocker for TestFlight cohort 1
+since impromptu recordings are rare in the typical "calendar-anchored"
+workflow.
+**Depends on / blocked by:** Nothing.
+
 ### T13 — Mobile: gracefully surface non-401 errors from handleEventPress
 **What:** `mobile/app/(tabs)/calendar.tsx`'s tap handler currently
 `console.error`s non-reauth errors but doesn't show anything to the
