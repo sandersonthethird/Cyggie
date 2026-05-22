@@ -75,20 +75,33 @@ describe('classifyBucket', () => {
 })
 
 describe('isUnreviewed', () => {
+  const now = new Date('2026-04-20T14:00:00Z')
+
   it('returns false for summarized meetings', () => {
-    expect(isUnreviewed(makeMeeting({ status: 'summarized' }))).toBe(false)
+    expect(isUnreviewed(makeMeeting({ status: 'summarized' }), now)).toBe(false)
   })
 
-  it('returns false for scheduled meetings', () => {
-    expect(isUnreviewed(makeMeeting({ status: 'scheduled' }))).toBe(false)
+  it('returns false for future scheduled meetings (not yet happened)', () => {
+    const future = makeMeeting({ status: 'scheduled', date: '2026-04-21T09:00:00Z' })
+    expect(isUnreviewed(future, now)).toBe(false)
+  })
+
+  it('returns true for past scheduled meetings (notified-but-not-recorded)', () => {
+    const past = makeMeeting({ status: 'scheduled', date: '2026-04-19T09:00:00Z' })
+    expect(isUnreviewed(past, now)).toBe(true)
   })
 
   it('returns true for transcribed meetings', () => {
-    expect(isUnreviewed(makeMeeting({ status: 'transcribed' }))).toBe(true)
+    expect(isUnreviewed(makeMeeting({ status: 'transcribed' }), now)).toBe(true)
   })
 
   it('returns true for recording meetings', () => {
-    expect(isUnreviewed(makeMeeting({ status: 'recording' }))).toBe(true)
+    expect(isUnreviewed(makeMeeting({ status: 'recording' }), now)).toBe(true)
+  })
+
+  it('returns true for past error meetings (recording failed)', () => {
+    const past = makeMeeting({ status: 'error', date: '2026-04-19T09:00:00Z' })
+    expect(isUnreviewed(past, now)).toBe(true)
   })
 })
 

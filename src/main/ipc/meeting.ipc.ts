@@ -24,7 +24,8 @@ import {
 import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName, listMeetingCompanies } from '@cyggie/db/sqlite/repositories'
 import { upsert as upsertCompanyCache, getByDomain as getCompanyCacheByDomain } from '@cyggie/db/sqlite/repositories/company.repo'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
-import type { MeetingListFilter } from '../../shared/types/meeting'
+import type { Meeting, MeetingListFilter } from '../../shared/types/meeting'
+import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
 import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 
@@ -113,6 +114,90 @@ export function appendCompanyIfMissing(companies: string[] | null, canonicalName
 function removeCompanyFromList(companies: string[] | null, canonicalName: string): string[] {
   if (!companies) return []
   return companies.filter((n) => n.toLowerCase() !== canonicalName.toLowerCase())
+}
+
+/**
+ * Idempotently create a `'scheduled'` meeting row from a calendar event.
+ *
+ * Three callers:
+ *   1. MEETING_PREPARE IPC — user taps "Prepare" on a calendar badge.
+ *   2. meeting-notifier — toast fires (~2 min lead window).
+ *   3. calendar reconcile — past-event backfill on calendar fetch.
+ *
+ * All three converge on the same invariant: any calendar event the user
+ * has crossed paths with becomes a SQLite meeting row. The
+ * `findMeetingByCalendarEventId` guard makes repeat calls a no-op.
+ *
+ * Side effects (only on first creation, when !isGroupEvent):
+ *   - logAudit('meeting', id, 'create')
+ *   - syncContactsFromAttendees (fire-and-forget on failure)
+ *   - enrichCompaniesForMeeting (fire-and-forget)
+ *
+ * NOTE: the redundant `syncContactsFromAttendees` call that used to live
+ * inline in MEETING_PREPARE was removed (migration 098 / plan Part 2). It
+ * re-ran against unchanged stored attendees on every calendar poll and was
+ * the primary resurrection vector for user-deleted contacts. Re-syncing
+ * only happens on attendee CHANGE via MEETING_UPDATE.
+ */
+export function prepareMeetingFromCalendarEvent(
+  event: {
+    id: string
+    title: string
+    startTime: string
+    platform: MeetingPlatform | null
+    meetingUrl: string | null
+    attendees: string[]
+    attendeeEmails: string[]
+  },
+  userId: string | null,
+): Meeting {
+  const existing = meetingRepo.findMeetingByCalendarEventId(event.id)
+  if (existing) return existing
+
+  const companies = event.attendeeEmails.length > 0
+    ? extractCompaniesFromEmails(event.attendeeEmails)
+    : extractCompaniesFromAttendees(event.attendees)
+
+  const isGroupEvent = event.attendeeEmails.length > GROUP_EVENT_ATTENDEE_THRESHOLD
+  console.info(
+    `[meeting:autoflag] meetingId=new attendeeCount=${event.attendeeEmails.length} value=${isGroupEvent} metric=meeting.group_event.autoflag count=1`,
+  )
+  const meeting = meetingRepo.createMeeting({
+    title: event.title,
+    date: event.startTime,
+    calendarEventId: event.id,
+    meetingPlatform: event.platform,
+    meetingUrl: event.meetingUrl,
+    attendees: event.attendees.length > 0 ? event.attendees : null,
+    attendeeEmails: event.attendeeEmails.length > 0 ? event.attendeeEmails : null,
+    companies: isGroupEvent ? null : (companies.length > 0 ? companies : null),
+    status: 'scheduled',
+    isGroupEvent,
+  }, userId)
+  logAudit(userId, 'meeting', meeting.id, 'create', {
+    source: 'calendar-prepare',
+    calendarEventId: event.id,
+    isGroupEvent,
+  })
+
+  if (!isGroupEvent) {
+    try {
+      syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails, userId)
+    } catch (err) {
+      console.error('[Contacts] Failed to sync from prepared meeting:', err)
+    }
+
+    const emails = event.attendeeEmails.length > 0
+      ? event.attendeeEmails
+      : event.attendees.filter((a) => a.includes('@'))
+    if (emails.length > 0) {
+      enrichCompaniesForMeeting(meeting.id, emails).catch((err) =>
+        console.error('[Company Enrichment] Failed:', err),
+      )
+    }
+  }
+
+  return meeting
 }
 
 export function registerMeetingHandlers(): void {
@@ -371,65 +456,15 @@ export function registerMeetingHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.MEETING_PREPARE,
     (_event, calendarEventId: string, title: string, date: string, platform?: string, meetingUrl?: string, attendees?: string[], attendeeEmails?: string[]) => {
-      // Check if a meeting already exists for this calendar event.
-      // NOTE: the redundant `syncContactsFromAttendees` call that used to live
-      // here was removed (migration 098 / plan Part 2). It re-ran against
-      // unchanged stored attendees on every calendar poll and was the primary
-      // resurrection vector for user-deleted contacts. Re-syncing only happens
-      // on attendee CHANGE via MEETING_UPDATE.
-      const existing = meetingRepo.findMeetingByCalendarEventId(calendarEventId)
-      if (existing) {
-        return existing
-      }
-
-      // Use heuristic names for immediate response
-      const companies = attendeeEmails && attendeeEmails.length > 0
-        ? extractCompaniesFromEmails(attendeeEmails)
-        : extractCompaniesFromAttendees(attendees || [])
-
-      // Group-event auto-flag at create (migration 098). >THRESHOLD attendees →
-      // skip the seeding entirely; meeting row keeps the raw attendee list but
-      // no contacts/companies are auto-created.
-      const userId = getCurrentUserId()
-      const isGroupEvent = (attendeeEmails?.length ?? 0) > GROUP_EVENT_ATTENDEE_THRESHOLD
-      console.info(
-        `[meeting:autoflag] meetingId=new attendeeCount=${attendeeEmails?.length ?? 0} value=${isGroupEvent} metric=meeting.group_event.autoflag count=1`,
-      )
-      const meeting = meetingRepo.createMeeting({
+      return prepareMeetingFromCalendarEvent({
+        id: calendarEventId,
         title,
-        date,
-        calendarEventId,
-        meetingPlatform: (platform as import('../../shared/constants/meeting-apps').MeetingPlatform) || null,
+        startTime: date,
+        platform: (platform as MeetingPlatform) || null,
         meetingUrl: meetingUrl || null,
-        attendees: attendees || null,
-        attendeeEmails: attendeeEmails || null,
-        companies: isGroupEvent ? null : (companies.length > 0 ? companies : null),
-        status: 'scheduled',
-        isGroupEvent
-      }, userId)
-      logAudit(userId, 'meeting', meeting.id, 'create', {
-        source: 'calendar-prepare',
-        calendarEventId,
-        isGroupEvent
-      })
-
-      if (!isGroupEvent) {
-        try {
-          syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails, userId)
-        } catch (err) {
-          console.error('[Contacts] Failed to sync from prepared meeting:', err)
-        }
-
-        // Fire off async enrichment to resolve true company names
-        const emails = attendeeEmails || (attendees || []).filter((a) => a.includes('@'))
-        if (emails.length > 0) {
-          enrichCompaniesForMeeting(meeting.id, emails).catch((err) =>
-            console.error('[Company Enrichment] Failed:', err)
-          )
-        }
-      }
-
-      return meeting
+        attendees: attendees ?? [],
+        attendeeEmails: attendeeEmails ?? [],
+      }, getCurrentUserId())
     }
   )
 

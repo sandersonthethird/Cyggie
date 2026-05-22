@@ -2,6 +2,31 @@ import type { MeetingPlatform } from '../constants/meeting-apps'
 import type { TranscriptSegment } from './recording'
 import type { CompanyEntityType, CompanyPipelineStage } from './company'
 
+// MeetingStatus state machine + Past-list visibility.
+//
+//   created by:
+//     - meeting-notifier (toast fires for upcoming event)
+//     - calendar reconcile (past-events backfill on fetch)
+//     - MEETING_PREPARE IPC (user taps Prepare on upcoming badge)
+//     - MEETING_CREATE_MANUAL (manual note flow)
+//          │
+//          ▼
+//     ┌──────────┐  start recording   ┌───────────┐  finalize   ┌─────────────┐  summarize  ┌────────────┐
+//     │ scheduled│ ─────────────────▶ │ recording │ ──────────▶ │ transcribed │ ──────────▶ │ summarized │
+//     └──────────┘                    └───────────┘             └─────────────┘             └────────────┘
+//                                          │
+//                                          │ failure / orphaned recording  ┌───────┐
+//                                          └─────────────────────────────▶ │ error │
+//                                                                          └───────┘
+//
+//   Past-list visibility (after "i had a meeting" fix):
+//     scheduled past   ✓  shown   (was hidden)
+//     recording past   ✓  shown   (normally flipped to error on startup)
+//     transcribed past ✓  shown
+//     summarized past  ✓  shown
+//     error past       ✓  shown   (was hidden)
+//
+//   Future-dated 'scheduled' rows are NOT shown in Past (date <= now filter).
 export type MeetingStatus = 'scheduled' | 'recording' | 'transcribed' | 'summarized' | 'error'
 
 export type MeetingBucket = 'all' | 'today' | 'upcoming' | 'past' | 'unreviewed'

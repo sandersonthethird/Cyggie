@@ -6,6 +6,8 @@ import { initMain as initAudioLoopback } from 'electron-audio-loopback'
 import { createTray } from './tray'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { registerAllHandlers } from './ipc'
+import { fetchAndEnrichCalendarEvents, calendarCacheKey } from './ipc/calendar.ipc'
+import { persistentCache } from './cache/persistent-cache'
 import { initializeStorage, setStoragePath, getRecordingsDir, getStoragePath } from './storage/paths'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from '@cyggie/db/sqlite/repositories'
@@ -382,6 +384,19 @@ app.whenReady().then(() => {
 
   // Register IPC handlers
   registerAllHandlers()
+
+  // One-shot startup calendar reconcile: invalidate the 1h cache so the next
+  // fetch is fresh, then trigger it. This is what surfaces past calendar
+  // events the notifier missed (app closed during lead window, event added
+  // retroactively, this fix landing today). Fire-and-forget — UI doesn't
+  // block on it.
+  persistentCache.invalidate(calendarCacheKey())
+  fetchAndEnrichCalendarEvents().catch((err) =>
+    console.error(
+      `[Startup] calendar reconcile failed metric=meeting.reconcile.startup.failed count=1`,
+      err,
+    ),
+  )
 
   // Create window and tray
   mainWindow = createWindow()

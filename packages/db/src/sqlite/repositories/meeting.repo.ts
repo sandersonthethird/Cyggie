@@ -537,14 +537,25 @@ export function cleanupStaleRecordings(): number {
 }
 
 /**
- * Delete scheduled meetings whose date has passed (more than 2 hours ago)
- * AND that the user never engaged with (no notes typed). Meetings with
- * pre-meeting notes are preserved regardless of age.
+ * Delete *truly empty* scheduled meeting stubs whose date has passed (>2h ago).
+ * A row qualifies for deletion only if the user never engaged with it:
+ *   - no notes typed
+ *   - no calendar event link (notifier seed / reconcile / MEETING_PREPARE all
+ *     set calendar_event_id, so this protects user-engaged rows)
+ *   - no attendees attached
+ * Rows seeded automatically from calendar events survive. See "i had a meeting"
+ * plan for context.
  */
 export function cleanupExpiredScheduledMeetings(): number {
   const db = getDatabase()
   const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-  const condition = "status = 'scheduled' AND date < ? AND (notes IS NULL OR trim(notes) = '')"
+  const condition = `
+    status = 'scheduled'
+    AND date < ?
+    AND (notes IS NULL OR trim(notes) = '')
+    AND calendar_event_id IS NULL
+    AND (attendees IS NULL OR attendees = '[]')
+  `
 
   // First get the IDs so we can clean up FTS too
   const expiredRows = db.prepare(

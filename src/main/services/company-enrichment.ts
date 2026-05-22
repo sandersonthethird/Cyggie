@@ -14,6 +14,12 @@ function getPersistedEntityType(
   return orgCompanyRepo.getEntityTypeByNameOrDomain(companyName, domain) || null
 }
 
+// In-flight dedup: concurrent callers for the same domain share one network/LLM
+// roundtrip. Without this, the post-deploy reconcile burst (Step 5 in
+// "i had a meeting" plan) could fire N parallel enrichments for the same
+// domain across N meetings before the cache row is written.
+const enrichInFlight = new Map<string, Promise<string>>()
+
 /**
  * Enrich a single domain: resolve its true company name via website fetch + LLM fallback.
  * Returns the display name and caches it.
@@ -28,6 +34,17 @@ function getPersistedEntityType(
  *      the cache for first-time domains).
  */
 export async function enrichCompany(domain: string): Promise<string> {
+  const existing = enrichInFlight.get(domain)
+  if (existing) return existing
+
+  const promise = enrichCompanyInner(domain).finally(() => {
+    enrichInFlight.delete(domain)
+  })
+  enrichInFlight.set(domain, promise)
+  return promise
+}
+
+async function enrichCompanyInner(domain: string): Promise<string> {
   // 0. Authoritative org_companies lookup — supersedes any cache value.
   const canonicalName = orgCompanyRepo.getCompanyCanonicalNameByDomain(domain)
   if (canonicalName) {

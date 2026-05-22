@@ -163,14 +163,11 @@ export default function MeetingList() {
     dismissEvent(event.id)
   }
 
-  // Only show meetings that have been transcribed or summarized (not scheduled, recording, or error)
-  // Also require the meeting date to be in the past so future meetings with notes don't appear here
+  // Show every past meeting in the DB regardless of status. Scheduled-past =
+  // notified-but-not-recorded; error-past = recording failed. Hiding either
+  // was silent data loss. Future-dated rows stay out of Past (Upcoming handles them).
   const now = new Date()
-  const pastMeetings = meetings.filter(
-    (m) =>
-      (m.status === 'recording' || m.status === 'transcribed' || m.status === 'summarized') &&
-      new Date(m.date) <= now
-  )
+  const pastMeetings = meetings.filter((m) => new Date(m.date) <= now)
 
   const displayItems = hasSearch
     ? searchResults.map((r) => ({

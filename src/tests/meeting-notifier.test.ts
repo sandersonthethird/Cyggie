@@ -60,9 +60,10 @@ vi.mock('electron', () => {
 
 // ─── Mock: calendar deps ──────────────────────────────────────────────────────
 
-const { mockGetUpcomingEvents, mockIsCalendarConnected, tmpRef } = vi.hoisted(() => ({
+const { mockGetUpcomingEvents, mockIsCalendarConnected, mockPrepareMeeting, tmpRef } = vi.hoisted(() => ({
   mockGetUpcomingEvents: vi.fn(),
   mockIsCalendarConnected: vi.fn(),
+  mockPrepareMeeting: vi.fn(),
   tmpRef: { dir: '' as string }
 }))
 
@@ -75,7 +76,12 @@ vi.mock('../main/calendar/google-auth', () => ({
 }))
 
 vi.mock('../main/security/current-user', () => ({
-  getCurrentUserProfile: () => ({ email: 'test@example.com', displayName: 'Test', id: 't' })
+  getCurrentUserProfile: () => ({ email: 'test@example.com', displayName: 'Test', id: 't' }),
+  getCurrentUserId: () => 'user-test'
+}))
+
+vi.mock('../main/ipc/meeting.ipc', () => ({
+  prepareMeetingFromCalendarEvent: (event: unknown, userId: unknown) => mockPrepareMeeting(event, userId)
 }))
 
 vi.mock('../main/storage/paths', () => ({
@@ -109,6 +115,7 @@ describe('meeting-notifier', () => {
     notificationShowCalls.length = 0
     mockGetUpcomingEvents.mockReset()
     mockIsCalendarConnected.mockReset().mockReturnValue(true)
+    mockPrepareMeeting.mockReset().mockReturnValue({ id: 'meeting-mock' })
     __test.resetState()
   })
 
@@ -286,5 +293,62 @@ describe('meeting-notifier', () => {
     __test.loadNotifiedIds()
     // Lookback filter on load already drops the expired entry.
     expect(__test.getNotifiedRecords()).toHaveLength(0)
+  })
+
+  // ── New: notifier-seeds-DB-row behaviour (i had a meeting fix) ─────────────
+
+  it('persists a scheduled meeting row exactly once when notification fires', async () => {
+    const now = new Date('2026-05-12T15:00:00.000Z').getTime()
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+
+    const event = makeEvent({
+      id: 'evt-persist',
+      startTime: new Date(now + 60_000).toISOString(),
+      endTime: new Date(now + 60_000 + 30 * 60_000).toISOString(),
+      attendees: ['jeff@example.com'],
+      attendeeEmails: ['jeff@example.com'],
+    })
+    mockGetUpcomingEvents.mockResolvedValue([event])
+
+    // First check fires notification AND persists.
+    await __test.checkUpcomingMeetings()
+    expect(notificationShowCalls).toHaveLength(1)
+    expect(mockPrepareMeeting).toHaveBeenCalledTimes(1)
+    const [passedEvent, passedUserId] = mockPrepareMeeting.mock.calls[0]
+    expect(passedEvent).toMatchObject({ id: 'evt-persist', title: 'Test meeting' })
+    expect(passedUserId).toBe('user-test')
+
+    // Second check is a no-op (markNotified guards on notifiedEventIds).
+    await __test.checkUpcomingMeetings()
+    expect(notificationShowCalls).toHaveLength(1)
+    expect(mockPrepareMeeting).toHaveBeenCalledTimes(1)
+  })
+
+  it('DB persist failure does NOT prevent the notification from firing', async () => {
+    const now = new Date('2026-05-12T15:00:00.000Z').getTime()
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+
+    mockPrepareMeeting.mockImplementation(() => {
+      throw new Error('SQLITE_BUSY')
+    })
+
+    mockGetUpcomingEvents.mockResolvedValue([
+      makeEvent({
+        id: 'evt-db-fail',
+        startTime: new Date(now + 60_000).toISOString(),
+        endTime: new Date(now + 60_000 + 30 * 60_000).toISOString(),
+      }),
+    ])
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await __test.checkUpcomingMeetings()
+    expect(notificationShowCalls).toHaveLength(1)
+    expect(mockPrepareMeeting).toHaveBeenCalledTimes(1)
+    // Structured metric log for observability (Decision 1A).
+    const loggedMessages = errorSpy.mock.calls.map((c) => String(c[0]))
+    expect(loggedMessages.some((m) => m.includes('meeting.notifier_persist.failed'))).toBe(true)
+    errorSpy.mockRestore()
   })
 })

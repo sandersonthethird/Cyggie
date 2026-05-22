@@ -79,6 +79,52 @@ export async function getUpcomingEvents(hoursAhead = 24): Promise<CalendarEvent[
 }
 
 /**
+ * Fetch calendar events spanning a window that may include the past.
+ * `hoursBack` shifts `timeMin` backward; `hoursAhead` is the forward window.
+ *
+ * Why a separate function from getUpcomingEvents: callers that need to fetch
+ * past events for backfill/reconcile should be explicit about that intent.
+ * getUpcomingEvents stays purely future-looking so its callers (notifier,
+ * meeting auto-detection) don't accidentally start touching past events.
+ */
+export async function getEventsAround(
+  hoursBack: number,
+  hoursAhead: number,
+): Promise<CalendarEvent[]> {
+  if (!isCalendarConnected()) return []
+
+  const auth = getOAuth2Client()
+  if (!auth) return []
+
+  const calendar = google.calendar({ version: 'v3', auth })
+
+  const now = new Date()
+  const earlier = new Date(now.getTime() - hoursBack * 60 * 60 * 1000)
+  const later = new Date(now.getTime() + hoursAhead * 60 * 60 * 1000)
+
+  try {
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: earlier.toISOString(),
+      timeMax: later.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 100,
+    })
+
+    const items = response.data.items || []
+    console.log(
+      `[Calendar] Fetched ${items.length} events from Google Calendar (back=${hoursBack}h, ahead=${hoursAhead}h)`,
+    )
+
+    return mapGoogleEvents(items)
+  } catch (err) {
+    console.error('Failed to fetch calendar events around now:', err)
+    return []
+  }
+}
+
+/**
  * Fetch a specific calendar event by ID.
  * Used when the caller already knows the calendarEventId (prevents overlap mixups).
  */

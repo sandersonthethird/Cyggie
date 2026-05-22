@@ -6,8 +6,9 @@ import { isCalendarConnected } from './google-auth'
 import { MEETING_APPS } from '../../shared/constants/meeting-apps'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
-import { getCurrentUserProfile } from '../security/current-user'
+import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
 import { getStoragePath } from '../storage/paths'
+import { prepareMeetingFromCalendarEvent } from '../ipc/meeting.ipc'
 
 const POLL_INTERVAL_MS = 20 * 1000 // Check every 20 seconds
 const NOTIFY_LEAD_MS = 2 * 60 * 1000 // Notify up to 2 minutes before start
@@ -66,6 +67,30 @@ function markNotified(event: CalendarEvent): void {
   notifiedRecords.push({ id: event.id, endTime: event.endTime })
   notifiedEventIds.add(event.id)
   persistNotifiedIds()
+
+  // Persist a 'scheduled' meeting row so the event survives the notification
+  // dismissal — without this, dismissing a notification left no DB trace and
+  // the user could never find the meeting later. Idempotent via
+  // findMeetingByCalendarEventId inside the helper.
+  try {
+    prepareMeetingFromCalendarEvent(
+      {
+        id: event.id,
+        title: event.title,
+        startTime: event.startTime,
+        platform: event.platform,
+        meetingUrl: event.meetingUrl,
+        attendees: event.attendees,
+        attendeeEmails: event.attendeeEmails,
+      },
+      getCurrentUserId(),
+    )
+  } catch (err) {
+    console.error(
+      `[MeetingNotifier] persist failed eventId=${event.id} metric=meeting.notifier_persist.failed count=1`,
+      err,
+    )
+  }
 }
 
 function getMainWindow(): BrowserWindow | null {

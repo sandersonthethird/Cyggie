@@ -26,8 +26,12 @@ export function classifyBucket(meeting: Meeting, now: Date): Exclude<MeetingBuck
   return 'upcoming'
 }
 
-export function isUnreviewed(meeting: Meeting): boolean {
-  return meeting.status !== 'summarized' && meeting.status !== 'scheduled'
+export function isUnreviewed(meeting: Meeting, now: Date): boolean {
+  if (meeting.status === 'summarized') return false
+  // Future 'scheduled' = hasn't happened yet, not "unreviewed". Past 'scheduled'
+  // = notified-but-not-recorded; user may want to add notes after the fact.
+  if (meeting.status === 'scheduled' && new Date(meeting.date) > now) return false
+  return true
 }
 
 export function isLive(meeting: Meeting, now: Date): boolean {
@@ -145,7 +149,7 @@ export function computeCounts(meetings: Meeting[], now: Date): MeetingCounts {
   for (const m of meetings) {
     const bucket = classifyBucket(m, now)
     counts[bucket]++
-    if (isUnreviewed(m)) counts.unreviewed++
+    if (isUnreviewed(m, now)) counts.unreviewed++
     if (m.company?.stage) {
       counts.byStage[m.company.stage] = (counts.byStage[m.company.stage] ?? 0) + 1
     }
@@ -226,7 +230,7 @@ export function useMeetings(options?: UseMeetingsOptions) {
 
     if (bucket && bucket !== 'all') {
       if (bucket === 'unreviewed') {
-        result = result.filter(m => isUnreviewed(m))
+        result = result.filter(m => isUnreviewed(m, now))
       } else {
         result = result.filter(m => classifyBucket(m, now) === bucket)
       }

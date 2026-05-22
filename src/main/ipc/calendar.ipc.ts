@@ -11,6 +11,7 @@ import {
 } from '../calendar/google-auth'
 import {
   getUpcomingEvents,
+  getEventsAround,
   getEventsInRange,
   getCurrentMeetingEvent
 } from '../calendar/google-calendar'
@@ -21,13 +22,17 @@ import {
 } from '../calendar/meeting-notifier'
 import { enrichDomainsFromCalendarEvents } from '../services/company-enrichment'
 import { persistentCache } from '../cache/persistent-cache'
+import { prepareMeetingFromCalendarEvent } from './meeting.ipc'
+import { getCurrentUserId } from '../security/current-user'
+import type { CalendarEvent } from '../../shared/types/calendar'
 
 let pollingInterval: ReturnType<typeof setInterval> | null = null
 
 const CALENDAR_LOOKAHEAD_HOURS = 720
+const CALENDAR_LOOKBACK_HOURS = 24
 const CALENDAR_CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
 
-function calendarCacheKey(): string {
+export function calendarCacheKey(): string {
   // Scope cache by user so multi-account doesn't serve cross-account data.
   // Anonymous fallback when no account is connected — those calls fail
   // upstream anyway, so the key doesn't matter much.
@@ -35,13 +40,49 @@ function calendarCacheKey(): string {
   return `calendar-events-${email}-${CALENDAR_LOOKAHEAD_HOURS}`
 }
 
-async function fetchAndEnrichCalendarEvents(): Promise<Awaited<ReturnType<typeof getUpcomingEvents>>> {
-  const events = await getUpcomingEvents(CALENDAR_LOOKAHEAD_HOURS)
+/**
+ * Reconcile past calendar events into the meetings table. Idempotent via
+ * `findMeetingByCalendarEventId` inside the helper — re-running on the same
+ * set is a cheap pile of indexed reads. See "i had a meeting" plan.
+ */
+function reconcilePastEvents(events: CalendarEvent[]): void {
+  const userId = getCurrentUserId()
+  const now = Date.now()
+  for (const ev of events) {
+    if (new Date(ev.startTime).getTime() >= now) continue
+    try {
+      prepareMeetingFromCalendarEvent(
+        {
+          id: ev.id,
+          title: ev.title,
+          startTime: ev.startTime,
+          platform: ev.platform,
+          meetingUrl: ev.meetingUrl,
+          attendees: ev.attendees,
+          attendeeEmails: ev.attendeeEmails,
+        },
+        userId,
+      )
+    } catch (err) {
+      console.error(
+        `[CalendarReconcile] persist failed eventId=${ev.id} metric=meeting.reconcile.failed count=1`,
+        err,
+      )
+    }
+  }
+}
+
+export async function fetchAndEnrichCalendarEvents(): Promise<CalendarEvent[]> {
+  const events = await getEventsAround(CALENDAR_LOOKBACK_HOURS, CALENDAR_LOOKAHEAD_HOURS)
+  reconcilePastEvents(events)
   enrichDomainsFromCalendarEvents(events).catch((err) =>
     console.error('[Company Enrichment] Calendar events enrichment failed:', err)
   )
   triggerImmediateCheck()
-  return events
+  // Return future-only slice so the Upcoming UI and downstream callers
+  // don't suddenly see past events.
+  const nowMs = Date.now()
+  return events.filter((e) => new Date(e.startTime).getTime() >= nowMs)
 }
 
 export function registerCalendarHandlers(): void {
