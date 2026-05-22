@@ -414,6 +414,68 @@ single-firm beta but real for any multi-tenant or hostile-client model.
 breaking the desktop outbox if not careful.
 **Depends on:** Decision on which fix. Recommend ceiling for V1.
 
+### T9 — Mobile calendar tab: show multi-day events (today + next 14)
+**What:** The Calendar tab today shows only today's events. Gateway
+already returns the next 14 days; mobile filters it down to one day.
+Extend to show today (bucketed Earlier/Now/Next/Later as today) +
+date-headed sections for the next ~14 days, mirroring desktop's
+`groupCalendarEventsByDate` pattern.
+**Why:** With zero events today the tab feels empty even when the
+user has a meeting tomorrow. Cuts directly against the "what's next"
+value the tab is supposed to provide.
+**Plan:** Saved at `/Users/sandersoncass/.claude/plans/claude-code-prompt-jolly-eagle.md`
+(written during the cathedral-build E2E session). Add `groupByDay()`
++ `formatDayLabel()` to `mobile/lib/api/calendar.ts`; render
+multi-section list in `mobile/app/(tabs)/calendar.tsx` keeping the
+today buckets intact.
+**Effort:** ~80 lines + tests, ~45min.
+**Depends on:** Nothing.
+
+### T10 — Gateway Zod: accept ISO datetime with timezone offset
+**What:** `POST /meetings/from-calendar-event` uses `z.string().datetime()`
+which only accepts `Z` (UTC) suffix. Mobile currently works around it
+by `new Date(event.start).toISOString()` before sending — but any other
+caller (a script, a future curl test, the desktop sync agent if it
+adopts this endpoint) will hit a confusing 400.
+**Fix:** change to `z.string().datetime({ offset: true })`. Both UTC
+Z and offset forms accepted; gateway can still normalize to UTC
+internally via `new Date(...).toISOString()`.
+**Why:** Caught in `8c34cfd` E2E run — every tap initially 400'd.
+Robustness fix; no behavioral change for the mobile path that now
+sends UTC.
+**Effort:** 1-line schema change + 1 new test case in
+`api-gateway/test/meetings-from-calendar-event.test.ts`.
+
+### T11 — Meeting detail: hide empty stats for `scheduled` rows
+**What:** StatsCard renders Duration / Status / Speakers always.
+For `status='scheduled'` rows (no recording yet), Duration is `—` and
+Speakers is `—`. Two of three cells are empty placeholders.
+**Fix:** when meeting.status === 'scheduled', omit Duration + Speakers
+cells. Or replace Duration with the calendar slot length once T12
+(below) lands.
+**Why:** UX polish — surfaced by the cathedral-build E2E review.
+
+### T12 — Persist scheduled end time on meetings table
+**What:** `POST /meetings/from-calendar-event` accepts startTime but
+not endTime. The detail screen can't render a meaningful "Duration"
+for scheduled rows because we never stored the slot length.
+**Fix:** Add `scheduled_end_at` (timestamptz, nullable) to meetings
+table via a new migration. Persist from /from-calendar-event when the
+calendar event has both start + end. Detail screen renders
+"60 min scheduled" pre-recording, transitions to actual duration
+post-Deepgram.
+**Effort:** new migration + schema field + endpoint body field +
+detail-screen render + tests. ~half day.
+
+### T13 — Mobile: gracefully surface non-401 errors from handleEventPress
+**What:** `mobile/app/(tabs)/calendar.tsx`'s tap handler currently
+`console.error`s non-reauth errors but doesn't show anything to the
+user. A 5xx during prepareMeetingFromCalendarEvent looks like a no-op
+tap.
+**Fix:** show a small toast / inline error banner. Reuse whatever
+toast system gets adopted in M6.
+**Why:** Caught during E2E — 400s on early taps were invisible.
+
 ---
 
 ## P2 — Contacts (Performance)
