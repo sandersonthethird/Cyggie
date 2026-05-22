@@ -197,7 +197,12 @@ export default function RecordScreen() {
 
   const onStop = async () => {
     try {
-      await stopRecording({})
+      // Pass a client-side title so the gateway doesn't default to a
+      // server-generated UTC timestamp (Fly machine TZ). Format mirrors the
+      // server fallback shape but uses the user's local timezone.
+      const now = new Date()
+      const title = `Meeting ${now.toLocaleDateString()} ${now.toLocaleTimeString()}`
+      await stopRecording({ title })
       // Stay on this screen showing the "Transcribing…" copy. The APNs push
       // (or a manual return) takes the user to /meetings/[id].
     } catch (err) {

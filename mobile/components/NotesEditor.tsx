@@ -80,7 +80,9 @@ export function NotesEditor({
   // updates when the agent drains).
   const [pendCount, setPendCount] = useState<number>(pendingCount())
   const [lastSavedAtMs, setLastSavedAtMs] = useState<number | null>(null)
-  const [, setTick] = useState(0) // force re-render for the relative timestamp
+  // No time-tick: the "Last edited X ago" label updates only when the
+  // component re-renders for other reasons (refetch, typing, pending
+  // count change). Avoids the continuous flicker.
 
   // Auto-focus (D4) — only when scheduled + empty. The ref's `focus()` call
   // runs after the autoFocus prop has primed the native input, hardening the
@@ -145,13 +147,12 @@ export function NotesEditor({
     [flushSave],
   )
 
-  // Periodic refresh of pendingCount + relative-time tick. 5s is a reasonable
-  // cadence: agent retries are at minimum 1s, but the label only needs to
-  // update at low frequency for the human reading it.
+  // Periodic poll of the outbox pending count for the "Saving (N)…" label.
+  // 5s is fine for human-visible feedback. Only re-renders when the count
+  // actually changes (setState bails when the value is identical).
   useEffect(() => {
     const interval = setInterval(() => {
       setPendCount(pendingCount())
-      setTick((t) => t + 1)
     }, 5_000)
     return () => clearInterval(interval)
   }, [])
@@ -190,11 +191,10 @@ export function NotesEditor({
     [pendCount, lastSavedAtMs],
   )
 
-  const relativeLabel = useMemo(
-    () => formatRelative(serverUpdatedAt, Date.now()),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [serverUpdatedAt, /* re-runs whenever setTick fires */],
-  )
+  // Computed every render (not memoized) so the 5s setTick interval
+  // above actually advances the label. Cheap pure-fn call — no perf
+  // concern here.
+  const relativeLabel = formatRelative(serverUpdatedAt, Date.now())
 
   return (
     <View style={styles.wrap}>

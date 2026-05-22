@@ -34,6 +34,9 @@ const config: ExpoConfig = {
     'expo-router',
     'expo-secure-store',
     'expo-web-browser',
+    // Required by @expo/vector-icons (Ionicons fonts) — autolinking only
+    // picks up direct deps, hence the explicit install + plugin entry.
+    'expo-font',
     // M3 push notifications. Icon/color defaults are fine for V1;
     // branding tightening lands in M6 polish.
     ['expo-notifications', { sounds: [] }],

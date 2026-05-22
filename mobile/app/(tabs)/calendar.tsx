@@ -130,10 +130,16 @@ export default function CalendarTab() {
       }
       tapBusyRef.current = true
       try {
+        // Normalize the start time to UTC ISO (Z suffix). Google Calendar
+        // hands us either `2026-05-22T10:00:00-04:00` (timed) or
+        // `2026-05-22` (all-day); the gateway's z.string().datetime()
+        // schema rejects both. new Date(...).toISOString() canonicalizes
+        // to YYYY-MM-DDTHH:mm:ss.sssZ.
+        const startTimeIso = new Date(event.start).toISOString()
         const meeting = await prepareMeetingFromCalendarEvent({
           calendarEventId: event.calendarEventId,
           title: event.title,
-          startTime: event.start,
+          startTime: startTimeIso,
           attendees: event.attendees.map((a) => a.displayName ?? a.email),
           attendeeEmails: event.attendees.map((a) => a.email).filter((e) => e.length > 0),
           ...(event.meetingUrl ? { meetingUrl: event.meetingUrl } : {}),
@@ -146,8 +152,11 @@ export default function CalendarTab() {
         if (err instanceof ApiError && err.reauthRequired) {
           await signOut()
           router.replace('/(auth)/sign-in')
+          return
         }
-        // Other errors (network blip, 5xx) — silent for V1; user re-taps.
+        // Surface other errors to the dev console so silent failures don't
+        // get lost. User-visible toast lands in a follow-up.
+        console.error('[calendar] handleEventPress failed', err)
       } finally {
         tapBusyRef.current = false
       }
