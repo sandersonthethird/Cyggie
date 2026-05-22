@@ -32,6 +32,34 @@ import type { GatewayEnv } from '../env'
 
 const TRANSCRIPT_CONTEXT_BUDGET = 50_000
 
+// Surface upstream Anthropic errors as meaningful 4xx/5xx instead of the
+// generic 500 INTERNAL_ERROR. Caught the first time when a user hit a
+// per-key spend limit and the gateway returned "An unexpected error
+// occurred" — the actual message from Anthropic was clear and actionable
+// ("You have reached your specified API usage limits. You will regain
+// access on YYYY-MM-DD"). Forward it verbatim so the mobile UI shows
+// the real cause.
+//
+// Status passthrough: most Anthropic errors are 4xx (user-facing key /
+// quota issues). 5xx from Anthropic itself becomes 502 (bad gateway)
+// since the gateway proxied to an upstream that failed.
+function toGatewayErrorIfAnthropic(err: unknown): GatewayError | null {
+  if (!(err instanceof Anthropic.APIError)) return null
+  // Anthropic errors have .status (number, undefined for connection errors)
+  // and a meaningful .message stripped of HTTP envelope noise.
+  const status = typeof err.status === 'number' && err.status > 0 ? err.status : 502
+  // Anthropic wraps the message as "STATUS {json}" in stringified form.
+  // Pull the user-facing reason from .error.error.message if present.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const reason = (err as any).error?.error?.message ?? err.message
+  return new GatewayError({
+    statusCode: status >= 500 ? 502 : status,
+    code: 'CHAT_PROVIDER_ERROR',
+    message: typeof reason === 'string' ? reason : 'Upstream AI provider error',
+    details: { upstreamStatus: status },
+  })
+}
+
 // T24 key resolution. Order:
 //   1. user_credentials row for (userId, 'anthropic') — set by desktop's
 //      Settings UI via PUT /user-credentials/anthropic.
@@ -123,12 +151,19 @@ export async function registerChatRoutes(
 
       const systemPrompt = buildSystemPrompt(meetingContext)
       const client = new Anthropic({ apiKey })
-      const result = await client.messages.create({
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 2048,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: message }],
-      })
+      let result
+      try {
+        result = await client.messages.create({
+          model: 'claude-sonnet-4-5-20250929',
+          max_tokens: 2048,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: message }],
+        })
+      } catch (err) {
+        const gw = toGatewayErrorIfAnthropic(err)
+        if (gw) throw gw
+        throw err
+      }
 
       // The SDK returns a content array — we asked for a single text reply,
       // so any text blocks concatenated is the answer.
@@ -212,12 +247,19 @@ export async function registerChatRoutes(
 
       const systemPrompt = buildEnhanceSystemPrompt(transcriptCtx)
       const client = new Anthropic({ apiKey })
-      const result = await client.messages.create({
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: `ORIGINAL NOTES:\n${content}` }],
-      })
+      let result
+      try {
+        result = await client.messages.create({
+          model: 'claude-sonnet-4-5-20250929',
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: `ORIGINAL NOTES:\n${content}` }],
+        })
+      } catch (err) {
+        const gw = toGatewayErrorIfAnthropic(err)
+        if (gw) throw gw
+        throw err
+      }
 
       const enhanced = result.content
         .filter((b): b is Anthropic.TextBlock => b.type === 'text')
