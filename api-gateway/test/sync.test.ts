@@ -518,4 +518,74 @@ describe('POST /sync/push', () => {
     // Zod min(1) on batch → 400
     expect(res.statusCode).toBe(400)
   })
+
+  test('T8: lamport in the far future is rejected per-entry (siblings still apply)', async () => {
+    const userId = await insertUser()
+    const jwt = await mintJwt(userId)
+    const goodCompanyId = TEST_PREFIX + 'co-good-' + createId().slice(0, 8)
+    const badCompanyId = TEST_PREFIX + 'co-bad-' + createId().slice(0, 8)
+    createdCompanyIds.push(goodCompanyId, badCompanyId)
+
+    const huge = (2n ** 63n - 1n).toString()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: {
+        authorization: `Bearer ${jwt}`,
+        'content-type': 'application/json',
+      },
+      payload: {
+        deviceId: TEST_PREFIX + 'device',
+        batch: [
+          {
+            outboxId: 100,
+            table: 'org_companies',
+            rowId: goodCompanyId,
+            op: 'insert',
+            payload: companyPayload({
+              id: goodCompanyId,
+              name: 'Good ' + TEST_PREFIX,
+              userId,
+              lamport: '100',
+            }),
+            lamport: '100',
+          },
+          {
+            outboxId: 200,
+            table: 'org_companies',
+            rowId: badCompanyId,
+            op: 'insert',
+            payload: companyPayload({
+              id: badCompanyId,
+              name: 'Forged ' + TEST_PREFIX,
+              userId,
+              lamport: huge,
+            }),
+            lamport: huge,
+          },
+        ],
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      acked: number[]
+      rejected: Array<{ outboxId: number; reason: string }>
+    }
+    // Good entry acked; forged entry rejected per-entry without aborting batch.
+    expect(body.acked).toEqual([100])
+    expect(body.rejected).toHaveLength(1)
+    expect(body.rejected[0]?.outboxId).toBe(200)
+    expect(body.rejected[0]?.reason).toContain('LAMPORT_OUT_OF_RANGE')
+
+    // Good row is in DB; forged row is NOT.
+    const goodRow = await db.query.orgCompanies.findFirst({
+      where: eq(schema.orgCompanies.id, goodCompanyId),
+    })
+    expect(goodRow?.canonicalName).toBe('Good ' + TEST_PREFIX)
+    const badRow = await db.query.orgCompanies.findFirst({
+      where: eq(schema.orgCompanies.id, badCompanyId),
+    })
+    expect(badRow).toBeUndefined()
+  })
 })

@@ -238,4 +238,43 @@ describe('PATCH /meetings/:id', () => {
     })
     expect(res.statusCode).toBe(401)
   })
+
+  test('T8: lamport in the far future → 400 LAMPORT_OUT_OF_RANGE', async () => {
+    const { userId, jwt } = await setupUser()
+    const meetingId = await insertMeeting({ userId, lamport: '5', notes: 'baseline' })
+    // BigInt.MAX-shaped value (the forgery scenario).
+    const huge = (2n ** 63n - 1n).toString()
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/meetings/${meetingId}`,
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { notes: 'forge', lamport: huge },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({
+      error: { code: 'LAMPORT_OUT_OF_RANGE' },
+    })
+
+    // Existing row untouched.
+    const row = await db.query.meetings.findFirst({ where: eq(schema.meetings.id, meetingId) })
+    expect(row?.notes).toBe('baseline')
+    expect(row?.lamport).toBe('5')
+  })
+
+  test('T8: lamport within 5-minute skew is accepted (clock-drift tolerance)', async () => {
+    const { userId, jwt } = await setupUser()
+    const meetingId = await insertMeeting({ userId, lamport: '0', notes: 'baseline' })
+    // 2 minutes in the future — well within the 5-min tolerance.
+    const slightlyAhead = String(Date.now() + 2 * 60 * 1000)
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/meetings/${meetingId}`,
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { notes: 'forward', lamport: slightlyAhead },
+    })
+    expect(res.statusCode).toBe(200)
+    const row = await db.query.meetings.findFirst({ where: eq(schema.meetings.id, meetingId) })
+    expect(row?.notes).toBe('forward')
+    expect(row?.lamport).toBe(slightlyAhead)
+  })
 })

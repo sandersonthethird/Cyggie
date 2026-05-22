@@ -11,6 +11,7 @@ import {
 } from '@cyggie/db/postgres/write-validators'
 import { getDb, getPool } from '../db'
 import type { GatewayEnv } from '../env'
+import { validateClientLamport } from '../sync/validate-lamport'
 
 // =============================================================================
 // POST /sync/push — receives outbox batches from the desktop SyncAgent.
@@ -113,6 +114,32 @@ export async function registerSyncRoutes(
               outboxId: entry.outboxId,
               reason: `Unknown table '${entry.table}'`,
             })
+            continue
+          }
+
+          // T8 — ceiling check on incoming lamport before any DB I/O.
+          // Lamport tracks wall clock on the client side; anything more
+          // than 5 minutes in the future is forgery / pathological skew.
+          // Reject as a per-entry rejection (NOT a batch failure) so
+          // legitimate sibling rows in the batch still get applied.
+          const lamportCheck = validateClientLamport(entry.lamport)
+          if (!lamportCheck.valid) {
+            rejected.push({
+              outboxId: entry.outboxId,
+              reason: `LAMPORT_OUT_OF_RANGE (${lamportCheck.reason})`,
+            })
+            req.log.warn(
+              {
+                outboxId: entry.outboxId,
+                userId: user.sub,
+                table: entry.table,
+                rowId: entry.rowId,
+                incoming: entry.lamport,
+                reason: lamportCheck.reason,
+                metric: 'sync.push.lamport_rejected',
+              },
+              'sync.push rejected entry: lamport out of range',
+            )
             continue
           }
 

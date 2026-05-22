@@ -7,6 +7,7 @@ import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
+import { validateClientLamport } from '../sync/validate-lamport'
 
 // =============================================================================
 // /meetings — M2 read surface. Only detail today (list lives on Calendar
@@ -470,6 +471,34 @@ export async function registerMeetingRoutes(
       const { id } = req.params
       const body = req.body
 
+      // T8 — ceiling check on the incoming lamport. The client clock is
+      // supposed to track wall time (lamport = max(local, Date.now()) + 1
+      // in nextLamport on both desktop and mobile), so anything more than
+      // 5 minutes in the future is either a forgery (BigInt.MAX lockout)
+      // or a pathologically clock-skewed device. Reject loudly with 400
+      // before any DB write.
+      const lamportCheck = validateClientLamport(body.lamport)
+      if (!lamportCheck.valid) {
+        req.log.warn(
+          {
+            meetingId: id,
+            userId: user.sub,
+            incoming: body.lamport,
+            reason: lamportCheck.reason,
+            metric: 'meetings.patch.lamport_rejected',
+          },
+          'patch rejected: lamport out of range',
+        )
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'LAMPORT_OUT_OF_RANGE',
+          message:
+            lamportCheck.reason === 'unparseable'
+              ? 'lamport is not a valid integer'
+              : 'lamport is too far in the future',
+        })
+      }
+
       const meeting = await db.query.meetings.findFirst({
         where: and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)),
       })
@@ -485,7 +514,7 @@ export async function registerMeetingRoutes(
       // Lamport LWW compare. Stored as text; compare as BigInt because
       // Postgres bigint values can exceed JS safe-integer range. Matches
       // the existing /sync/push comparison logic (sync.ts:202-225).
-      const incoming = BigInt(body.lamport)
+      const incoming = lamportCheck.bigint
       const stored = BigInt(meeting.lamport ?? '0')
       if (incoming <= stored) {
         req.log.info(
