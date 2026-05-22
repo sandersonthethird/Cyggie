@@ -1,7 +1,7 @@
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { router, Stack } from 'expo-router'
+import { router } from 'expo-router'
 import Constants from 'expo-constants'
 import { useAuthStore } from '../lib/auth/store'
 import { useCalendarStore } from '../lib/calendar/store'
@@ -41,16 +41,25 @@ export default function SettingsScreen() {
   }
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          headerTitle: 'Settings',
-          headerBackTitle: 'Back',
-          headerTintColor: colors.text,
-          headerStyle: { backgroundColor: colors.surface },
-        }}
-      />
-      <SafeAreaView edges={['bottom']} style={styles.root}>
+    <View style={styles.root}>
+      <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
+        <View style={styles.topbar}>
+          <Pressable
+            onPress={() =>
+              router.canGoBack() ? router.back() : router.replace('/(tabs)/calendar')
+            }
+            hitSlop={8}
+            style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
+            accessibilityLabel="Back"
+            accessibilityRole="button"
+          >
+            <Ionicons name="chevron-back" size={22} color={colors.text} />
+          </Pressable>
+          <Text style={styles.topbarTitle}>Settings</Text>
+          <View style={styles.backBtn} />
+        </View>
+      </SafeAreaView>
+      <SafeAreaView edges={['bottom']} style={styles.bodyArea}>
         <ScrollView contentContainerStyle={styles.scroll}>
           <Section title="Account">
             <Row label="Signed in as" value={truncateUserId(userId)} />
@@ -93,7 +102,7 @@ export default function SettingsScreen() {
           <Text style={styles.footer}>Cyggie · M6-light preview</Text>
         </ScrollView>
       </SafeAreaView>
-    </>
+    </View>
   )
 }
 
@@ -163,6 +172,34 @@ function RowAction({ icon, label, onPress, destructive }: RowActionProps): React
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  safeArea: { backgroundColor: colors.surface },
+  bodyArea: { flex: 1, backgroundColor: colors.bg },
+
+  topbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topbarTitle: {
+    flex: 1,
+    color: colors.text,
+    fontSize: type.h2,
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingHorizontal: spacing.sm,
+  },
+
   scroll: { padding: spacing.lg, gap: spacing.lg },
 
   section: { gap: spacing.sm },
