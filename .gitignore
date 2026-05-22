@@ -9,3 +9,6 @@ dist/
 .env*.local
 import/
 cyggie.db
+
+# Claude Code per-project scratch (settings, scheduled task locks).
+.claude/
