@@ -82,13 +82,28 @@ const DATE_KEYS = new Set([
 // columns as z.number()) rejects with "expected number, received boolean".
 // Coerce true→1, false→0 for known integer-flag columns at the validator
 // boundary so the existing desktop mappers don't need to change shape.
+// IMPORTANT: this set is column-name-keyed, NOT schema-aware. Only include
+// columns that are stored as Postgres `integer` but get mapped to JS
+// boolean on the desktop side. The audit must be done per-column against
+// the actual schema — *some* `is_*` flags in this codebase are Postgres
+// `boolean` (e.g., meetings.is_group_event), in which case the desktop
+// emits a boolean that drizzle-zod *accepts* without coerce, and adding
+// them here flips the wire format wrong and breaks the write.
+//
+// Audited 2026-05-23 against schemas in packages/db/src/schema:
+//   ✅ Postgres integer:
+//      - chat_sessions.is_active / is_pinned / is_archived
+//      - org_companies.include_in_companies_view
+//   ❌ Postgres boolean (DO NOT add here):
+//      - meetings.is_group_event / is_group_event_user_set
+//
+// `isFinal` inside transcript_segments JSONB rows is handled by the
+// containing JSON, not by zod column validation — also stays out.
 const INT_FLAG_KEYS = new Set([
   'isActive', 'is_active',
   'isPinned', 'is_pinned',
   'isArchived', 'is_archived',
-  'isGroupEvent', 'is_group_event',
-  'isGroupEventUserSet', 'is_group_event_user_set',
-  'isFinal', 'is_final',
+  'includeInCompaniesView', 'include_in_companies_view',
 ])
 
 function coercePayload(input: unknown): unknown {

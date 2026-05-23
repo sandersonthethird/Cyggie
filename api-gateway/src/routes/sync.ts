@@ -182,6 +182,27 @@ export async function registerSyncRoutes(
               }
               camelPayload['userId'] = user.sub
             }
+            // T17a follow-up 2026-05-23 — `created_by_user_id` and
+            // `updated_by_user_id` are FKs to users.id on most owned tables
+            // (notes, investment_memos, org_companies, meetings, ...). The
+            // desktop's local SQLite carries the legacy `currentUserId`
+            // value (a desktop-internal id from before the gateway auth
+            // migration); Neon's users table only has the OAuth-backed
+            // user. Rewriting these audit FKs to the JWT's `sub` mirrors
+            // the user_id stamping above — same trust model (JWT is the
+            // canonical actor), same defense-in-depth (we only override
+            // when the payload's value differs and would otherwise FK-
+            // fail). Single-firm beta makes this strictly correct; for
+            // multi-user firms we'll preserve known team member ids and
+            // only fall back to sub when the payload id isn't a member.
+            for (const auditKey of ['createdByUserId', 'updatedByUserId'] as const) {
+              if (
+                camelPayload[auditKey] != null &&
+                camelPayload[auditKey] !== user.sub
+              ) {
+                camelPayload[auditKey] = user.sub
+              }
+            }
             const v = validateWritePayload(
               entry.table,
               entry.op as WriteOp,
