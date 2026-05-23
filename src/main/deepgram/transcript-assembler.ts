@@ -675,7 +675,18 @@ export class TranscriptAssembler {
   }
 
   getSerializableState(): TranscriptSegment[] {
-    return [...this.finalizedSegments]
+    // T39 (2026-05-23) — strip per-word metadata at persistence boundary.
+    // Live assembly needs `words` for re-segmentation, but persisting them
+    // bloats each meeting row to 1-4 MB (mostly per-word timing JSON),
+    // which broke desktop→Neon sync. Read consumers (transcript display,
+    // chat context-builders, FTS) only need utterance-level text + timing.
+    return this.finalizedSegments.map((s) => ({
+      speaker: s.speaker,
+      text: s.text,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      isFinal: s.isFinal,
+    }))
   }
 
   reset(): void {

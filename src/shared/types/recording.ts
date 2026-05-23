@@ -14,7 +14,15 @@ export interface TranscriptSegment {
   startTime: number
   endTime: number
   isFinal: boolean
-  words: TranscriptWord[]
+  /**
+   * Per-word timing + confidence metadata. PRESENT during live assembly
+   * (the TranscriptAssembler needs words for its re-segmentation logic);
+   * ABSENT after persistence (getSerializableState strips it, T39
+   * 2026-05-23 — meeting rows were averaging 1 MB and topping out at
+   * 4 MB because of this column, which broke desktop→Neon sync). Read
+   * code must treat this as optional.
+   */
+  words?: TranscriptWord[]
 }
 
 export interface RecordingStatus {
