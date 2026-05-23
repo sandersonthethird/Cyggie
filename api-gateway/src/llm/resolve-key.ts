@@ -46,6 +46,20 @@ export async function resolveAnthropicKey(
 // since the gateway proxied to an upstream that failed.
 export function toGatewayErrorIfAnthropic(err: unknown): GatewayError | null {
   if (!(err instanceof Anthropic.APIError)) return null
+  // APIUserAbortError fires when our server-side AbortController timer
+  // pulls the plug because Claude is taking too long. The default
+  // message "Request was aborted." is technically correct but useless
+  // to the end user — they don't know what aborted means. Surface it
+  // as a 504 with an actionable string instead.
+  if (err instanceof Anthropic.APIUserAbortError) {
+    return new GatewayError({
+      statusCode: 504,
+      code: 'CHAT_TIMEOUT',
+      message:
+        'Enhance is taking longer than the server timeout. Long transcripts can push past 60s — try again, or shorten the meeting on desktop first.',
+      details: { upstreamStatus: 0 },
+    })
+  }
   const status = typeof err.status === 'number' && err.status > 0 ? err.status : 502
   // Anthropic wraps the message as "STATUS {json}" in stringified form.
   // Pull the user-facing reason from .error.error.message if present.

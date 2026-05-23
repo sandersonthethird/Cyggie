@@ -819,11 +819,15 @@ export async function registerMeetingRoutes(
         })
       }
 
-      // 30s timeout — bounds the worst-case for a hung Anthropic call.
-      // Mobile pads to 45s on its side so the gateway timeout always
-      // fires first and surfaces a clean CHAT_PROVIDER_ERROR.
+      // 60s timeout — bounds the worst-case for a hung Anthropic call.
+      // First version was 30s; bumped after a 54-min transcript on the
+      // founder_checkin template hit 30.2s and got cleanly aborted with
+      // a working summary 90% drafted. 60s gives Claude room for long
+      // transcripts without keeping the request open indefinitely.
+      // Mobile pads to 75s so the gateway timeout always fires first
+      // and surfaces a clean CHAT_TIMEOUT instead of a bare AbortError.
       const abortController = new AbortController()
-      const timeoutHandle = setTimeout(() => abortController.abort(), 30_000)
+      const timeoutHandle = setTimeout(() => abortController.abort(), 60_000)
 
       const client = new Anthropic({ apiKey })
       let result

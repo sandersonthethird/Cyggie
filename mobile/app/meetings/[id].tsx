@@ -112,11 +112,11 @@ export default function MeetingDetailScreen() {
       setEnhanceModalOpen(false)
       setEnhanceSubmitting(true)
       setEnhanceError(null)
-      // 45s client-side timeout — gateway's own AbortSignal fires at 30s,
-      // mobile pads to 45s so the upstream timeout always wins and we
-      // surface a clean CHAT_PROVIDER_ERROR rather than a bare AbortError.
+      // 75s client-side timeout — gateway's own AbortSignal fires at 60s,
+      // mobile pads to 75s so the upstream timeout always wins and we
+      // surface a clean CHAT_TIMEOUT rather than a bare AbortError.
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 45_000)
+      const timeout = setTimeout(() => controller.abort(), 75_000)
       void (async () => {
         try {
           await enhanceMeeting(id, { templateId }, { signal: controller.signal })
@@ -131,9 +131,11 @@ export default function MeetingDetailScreen() {
                 ? 'No transcript yet — wait for transcription to finish, then try again.'
                 : err.code === 'CHAT_UNAVAILABLE'
                   ? 'No Anthropic API key configured. Paste one in desktop Settings → AI & Transcription.'
-                  : err.message
+                  : err.code === 'CHAT_TIMEOUT'
+                    ? 'Enhance took too long. Long transcripts can push past 60s — try again, or summarize on desktop where streaming is supported.'
+                    : err.message
               : err instanceof Error && err.name === 'AbortError'
-                ? 'Enhance timed out. Try again — Claude may be slow right now.'
+                ? 'Enhance took too long on your device. Try again.'
                 : 'Could not enhance. Try again.'
           setEnhanceError(msg)
         } finally {
