@@ -4,7 +4,12 @@ import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { configureSyncGlobals } from '@cyggie/db/sqlite/repositories/_sync'
 import { getCurrentUserId } from '../security/current-user'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
-import { SyncAgent, type SyncTransport, type PushBatchResponse } from './sync-agent'
+import {
+  SyncAgent,
+  PayloadTooLargeError,
+  type SyncTransport,
+  type PushBatchResponse,
+} from './sync-agent'
 import { SyncPullService, type PullTransport, type PullResponse } from './sync-pull.service'
 import { registerSyncIpc } from '../ipc/sync.ipc'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
@@ -107,6 +112,12 @@ const transport: SyncTransport = {
     }
     if (res.status >= 500) {
       throw new Error(`gateway ${res.status}`)
+    }
+    // T38: 413 PAYLOAD_TOO_LARGE — propagate a typed error so the agent
+    // can halve its batch size and retry rather than treat it as a
+    // generic 4xx (which would mark rows rejected after MAX_ATTEMPTS).
+    if (res.status === 413) {
+      throw new PayloadTooLargeError(`gateway 413`)
     }
     if (!res.ok) {
       const text = await res.text().catch(() => `${res.status}`)

@@ -731,22 +731,23 @@ export function registerMeetingHandlers(): void {
       const db = getDatabase()
 
       if (contactId && contactName) {
-        // LINK: rename speaker + insert join row
+        // LINK: rename speaker + insert join row + auto-tag companion note.
+        // All three writes go through wrapped repo functions so each owned-
+        // table mutation emits its own outbox row and reaches Neon.
         const updatedSpeakerMap = { ...meeting.speakerMap, [speakerIndex]: contactName }
         const updated = meetingRepo.updateMeeting(meetingId, { speakerMap: updatedSpeakerMap }, userId)
         if (!updated) throw new Error('Failed to update meeting')
 
-        db.prepare(
-          'INSERT OR REPLACE INTO meeting_speaker_contact_links (meeting_id, speaker_index, contact_id) VALUES (?, ?, ?)'
-        ).run(meetingId, speakerIndex, contactId)
+        meetingRepo.linkMeetingSpeakerContact(meetingId, speakerIndex, contactId)
 
-        // Auto-tag companion note (first-link-wins, non-fatal)
+        // Auto-tag companion note (first-link-wins, non-fatal). Uses the
+        // wrapped tagNote so the contact_id propagates to mobile.
         try {
           const companionNote = db
             .prepare('SELECT id, contact_id FROM notes WHERE source_meeting_id = ? LIMIT 1')
             .get(meetingId) as { id: string; contact_id: string | null } | undefined
           if (companionNote && !companionNote.contact_id) {
-            db.prepare('UPDATE notes SET contact_id = ? WHERE id = ?').run(contactId, companionNote.id)
+            meetingRepo.tagNote(companionNote.id, { contactId })
           }
         } catch (err) {
           console.warn('[MeetingDetail] Failed to auto-tag companion note:', err)
@@ -754,15 +755,13 @@ export function registerMeetingHandlers(): void {
 
         logAudit(userId, 'meeting', meetingId, 'tag_speaker_contact', { speakerIndex, contactId })
       } else {
-        // UNLINK: reset speaker name + delete join row
+        // UNLINK: reset speaker name + delete join row.
         const defaultName = `Speaker ${speakerIndex}`
         const updatedSpeakerMap = { ...meeting.speakerMap, [speakerIndex]: defaultName }
         const updated = meetingRepo.updateMeeting(meetingId, { speakerMap: updatedSpeakerMap }, userId)
         if (!updated) throw new Error('Failed to update meeting')
 
-        db.prepare(
-          'DELETE FROM meeting_speaker_contact_links WHERE meeting_id = ? AND speaker_index = ?'
-        ).run(meetingId, speakerIndex)
+        meetingRepo.unlinkMeetingSpeakerContact(meetingId, speakerIndex)
 
         logAudit(userId, 'meeting', meetingId, 'untag_speaker_contact', { speakerIndex })
       }

@@ -30,21 +30,43 @@ import { persistLastPushedLamport } from '@cyggie/db/sync/sync-clock'
 // transactions and can be unit-tested with a mocked transport.
 // =============================================================================
 
-// Lowered from 200 → 25 on 2026-05-23 after T17a A1 exposed a latent
-// problem: outbox entries for meetings carry the full row including
-// large `transcript_segments` JSONB, so a 200-row batch routinely
-// exceeded the gateway's 10 MB bodyLimit and triggered 413s (an attempt
-// to lift bodyLimit to 50 MB caused V8 to OOM-SIGABRT in JSON.parse on
-// the 512 MB Fly machines — see commit fb70402). 25 keeps batches
-// comfortably under 10 MB even with chunky transcripts; the trade-off
-// is more roundtrips per drain pass, which is fine at single-firm-beta
-// scale. Real fix is T38 (adaptive batching + outbox payload trimming);
-// when T38 lands this constant returns to 200 or becomes adaptive.
-const BATCH_SIZE = 25
+// Hard ceiling — the agent never pulls more than this per drain pass.
+// T38 made this adaptive: on 413 the agent halves the active size and
+// persists the new ceiling to `sync_state.safe_batch_size`. Combined
+// with payload trimming in `withSync` (large JSONB columns dropped from
+// UPDATE outbox rows when unchanged), 200 is comfortable at single-firm
+// scale; the adaptive halver covers pathological cases where a hot
+// meeting accumulates a multi-MB transcript_segments diff inside one
+// batch window.
+const BATCH_SIZE_CEILING = 200
+// Floor when halving — below this we stop shrinking and let the
+// agent's regular failure path (rejected/dead) handle the row. A
+// single row that overflows 10 MB after trimming is pathological and
+// almost certainly indicates an upstream bug (e.g. a transcript that
+// should be chunked).
+const BATCH_SIZE_FLOOR = 1
+// After this many consecutive successful flushes that drained a full
+// batch (i.e. there were >= currentBatchSize rows pending), the agent
+// tries doubling its batch size back toward the ceiling. Slow growth
+// prevents oscillation around the real safe size.
+const BATCH_GROWTH_SUCCESS_THRESHOLD = 10
 const TICK_INTERVAL_MS = 5_000
 const MAX_ATTEMPTS = 5
 const BACKOFF_INITIAL_MS = 2_000
 const BACKOFF_MAX_MS = 60_000
+
+/**
+ * Thrown by `SyncTransport.push` when the gateway returns 413
+ * (FST_ERR_CTP_BODY_TOO_LARGE). The agent catches this specifically
+ * and halves its current batch size for the retry, distinguishing
+ * "payload was too big" from generic 4xx (which mark rows as rejected).
+ */
+export class PayloadTooLargeError extends Error {
+  constructor(message = 'payload too large') {
+    super(message)
+    this.name = 'PayloadTooLargeError'
+  }
+}
 
 interface OutboxEntry {
   id: number
@@ -145,9 +167,84 @@ export class SyncAgent {
   private lastFlushAt: number | null = null
   private lastError: string | null = null
   private nextRetryAt: number | null = null
+  /**
+   * T38 — adaptive batch size. Initialized from `sync_state.safe_batch_size`
+   * (NULL → ceiling). Halved on 413, persisted on change. Grows back
+   * toward the ceiling after sustained full-batch successes.
+   */
+  private currentBatchSize: number
+  private consecutiveFullBatchSuccesses = 0
 
   constructor(cfg: SyncAgentConfig) {
     this.cfg = cfg
+    this.currentBatchSize = this.loadPersistedBatchSize() ?? this.maxBatchSize()
+  }
+
+  private maxBatchSize(): number {
+    // Test seam: `cfg.batchSize` clamps the ceiling. Production uses
+    // BATCH_SIZE_CEILING.
+    return this.cfg.batchSize ?? BATCH_SIZE_CEILING
+  }
+
+  private loadPersistedBatchSize(): number | null {
+    const deviceId = this.cfg.getDeviceId()
+    const row = this.cfg.db
+      .prepare(
+        `SELECT safe_batch_size FROM sync_state WHERE device_id = ?`,
+      )
+      .get(deviceId) as { safe_batch_size: number | null } | undefined
+    const v = row?.safe_batch_size
+    if (v == null || v <= 0) return null
+    // Clamp to the compiled ceiling — a stale persisted value larger
+    // than the current ceiling shouldn't override the code's intent.
+    return Math.min(v, this.maxBatchSize())
+  }
+
+  private persistBatchSize(size: number): void {
+    const deviceId = this.cfg.getDeviceId()
+    const userId = this.cfg.getUserId()
+    if (!userId) return // no auth → can't write user-scoped row
+    this.cfg.db
+      .prepare(
+        `INSERT INTO sync_state (device_id, user_id, safe_batch_size)
+         VALUES (?, ?, ?)
+         ON CONFLICT(device_id) DO UPDATE SET safe_batch_size = excluded.safe_batch_size`,
+      )
+      .run(deviceId, userId, size)
+  }
+
+  /**
+   * Halve the current batch size in response to a 413 from the gateway.
+   * Floors at BATCH_SIZE_FLOOR. Persists the new size. Resets the
+   * growth counter so we don't grow back until we've validated the
+   * smaller size at least N successful flushes in a row.
+   */
+  private shrinkBatchSize(): void {
+    const next = Math.max(
+      BATCH_SIZE_FLOOR,
+      Math.floor(this.currentBatchSize / 2),
+    )
+    if (next === this.currentBatchSize) return
+    this.currentBatchSize = next
+    this.consecutiveFullBatchSuccesses = 0
+    this.persistBatchSize(next)
+  }
+
+  /**
+   * Grow toward the ceiling after sustained success. Doubles the
+   * current size, clamped to the ceiling. Persists the new size.
+   * Caller decides when growth is warranted (typically: a streak of
+   * full-batch flushes succeeded, meaning we have evidence the bigger
+   * size would have worked).
+   */
+  private growBatchSize(): void {
+    const ceiling = this.maxBatchSize()
+    if (this.currentBatchSize >= ceiling) return
+    const next = Math.min(ceiling, this.currentBatchSize * 2)
+    if (next === this.currentBatchSize) return
+    this.currentBatchSize = next
+    this.consecutiveFullBatchSuccesses = 0
+    this.persistBatchSize(next)
   }
 
   /** Starts the periodic tick + does an immediate drain attempt. */
@@ -251,7 +348,7 @@ export class SyncAgent {
   }
 
   private async doFlush(): Promise<void> {
-    const batchSize = this.cfg.batchSize ?? BATCH_SIZE
+    const batchSize = this.currentBatchSize
     const rows = this.cfg.db
       .prepare(
         `SELECT id, user_id, device_id, table_name, row_id, op, payload, lamport, attempts
@@ -297,6 +394,32 @@ export class SyncAgent {
         batch,
       })
     } catch (err) {
+      // T38: a 413 means the batch payload exceeded the gateway's body
+      // limit. Halve currentBatchSize, persist, and retry on the next
+      // tick (or immediately via the post-flush re-fire below). Do NOT
+      // mark rows as failed — they're still pending; the next pass will
+      // pull a smaller subset.
+      if (err instanceof PayloadTooLargeError) {
+        const prev = this.currentBatchSize
+        this.shrinkBatchSize()
+        this.lastError = `payload too large: batch ${prev} → ${this.currentBatchSize}`
+        // If we were already at the floor, the same row will trip 413
+        // again. Back off to avoid a tight retry loop on a pathological
+        // row that overflows even at size 1.
+        if (prev === this.currentBatchSize) {
+          this.scheduleBackoff()
+        } else {
+          // Re-fire with the smaller size. Chain onto the wrapping
+          // flushInFlight's `.finally` so the re-fire's flushOnce()
+          // sees the in-flight handle CLEARED — otherwise it would
+          // short-circuit onto the still-set current promise and be a
+          // no-op (the clear happens in a `.finally` attached in
+          // flushOnce; ours runs after because it's attached later).
+          this.setState('idle')
+          this.scheduleRefire()
+        }
+        return
+      }
       // Network / 5xx — exponential backoff and retry.
       this.lastError = err instanceof Error ? err.message : String(err)
       this.scheduleBackoff()
@@ -310,6 +433,24 @@ export class SyncAgent {
     this.lastFlushAt = this.clock().now()
     this.lastError = null
     this.setState('idle')
+
+    // T38: track full-batch successes. When the queue is deep enough
+    // that we drain a full batch each pass AND we're below the ceiling,
+    // a streak of successes is evidence the previously-discovered
+    // ceiling is too conservative — try growing back.
+    if (
+      rows.length >= batchSize &&
+      this.currentBatchSize < this.maxBatchSize()
+    ) {
+      this.consecutiveFullBatchSuccesses++
+      if (
+        this.consecutiveFullBatchSuccesses >= BATCH_GROWTH_SUCCESS_THRESHOLD
+      ) {
+        this.growBatchSize()
+      }
+    } else {
+      this.consecutiveFullBatchSuccesses = 0
+    }
 
     // Persist lamport high-water mark.
     const maxLamport = batch.reduce<bigint>((acc, e) => {
@@ -328,10 +469,12 @@ export class SyncAgent {
       }
     }
 
-    // If we drained a full batch, immediately try again — more work likely
-    // queued behind it.
+    // If we drained a full batch, immediately try again — more work
+    // likely queued behind it. Same chaining-via-`finally` trick as the
+    // 413 retry above so the re-fire actually starts a new flush
+    // instead of attaching to the still-settling one.
     if (rows.length >= batchSize) {
-      void this.flushOnce().catch(() => undefined)
+      this.scheduleRefire()
     }
   }
 
@@ -385,6 +528,27 @@ export class SyncAgent {
     this.nextRetryAt = this.clock().now() + this.backoffMs
     this.backoffMs = Math.min(this.backoffMs * 2, BACKOFF_MAX_MS)
     this.setState('backing_off')
+  }
+
+  /**
+   * Queue an immediate re-fire to drain whatever's left in the outbox.
+   * Chains onto the currently-in-flight flush's `.finally` so the
+   * existing in-flight handle is cleared before our flushOnce() runs;
+   * a bare `void this.flushOnce()` would short-circuit onto the
+   * still-set in-flight promise and be a no-op.
+   */
+  private scheduleRefire(): void {
+    const inflight = this.flushInFlight
+    if (inflight == null) {
+      // No flush in progress — safe to fire directly.
+      void this.flushOnce().catch(() => undefined)
+      return
+    }
+    void inflight.finally(() => {
+      // running flag may have flipped during the in-flight flush
+      // (stop() called); flushOnce checks this anyway, so we don't.
+      void this.flushOnce().catch(() => undefined)
+    })
   }
 }
 

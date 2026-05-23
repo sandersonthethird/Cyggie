@@ -588,6 +588,38 @@ export function cleanupExpiredScheduledMeetings(): number {
   return result.changes
 }
 
+// =============================================================================
+// meeting_speaker_contact_links — speaker→contact tag on a transcribed meeting.
+//
+// Both functions are raw (un-wrapped); the barrel wraps them with withSync()
+// so the link row reaches Neon. Before that wrapping landed, the IPC handler
+// for MEETING_TAG_SPEAKER_CONTACT did `INSERT OR REPLACE` / `DELETE` directly
+// in-line, which mutated SQLite without emitting an outbox row — mobile never
+// saw the link, breaking the contact-detail "Meetings" tab + Last Touch stat
+// for any tagged-but-not-attendee contact.
+// =============================================================================
+
+export function linkMeetingSpeakerContact(
+  meetingId: string,
+  speakerIndex: number,
+  contactId: string,
+): void {
+  const db = getDatabase()
+  db.prepare(
+    'INSERT OR REPLACE INTO meeting_speaker_contact_links (meeting_id, speaker_index, contact_id) VALUES (?, ?, ?)',
+  ).run(meetingId, speakerIndex, contactId)
+}
+
+export function unlinkMeetingSpeakerContact(
+  meetingId: string,
+  speakerIndex: number,
+): void {
+  const db = getDatabase()
+  db.prepare(
+    'DELETE FROM meeting_speaker_contact_links WHERE meeting_id = ? AND speaker_index = ?',
+  ).run(meetingId, speakerIndex)
+}
+
 /**
  * deleteMeeting — cleanup waterfall.
  *

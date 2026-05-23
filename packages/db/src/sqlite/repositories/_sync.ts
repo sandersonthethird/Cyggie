@@ -89,6 +89,23 @@ export interface WithSyncOpts<TArgs extends readonly unknown[], TResult> {
     db: Database.Database,
     args: TArgs,
   ) => Record<string, unknown> | null
+  /**
+   * For updates on tables with `largeColumns` declared: function that
+   * SELECTs the row before the inner fn runs. The wrapper compares each
+   * `largeColumns` value pre vs post and OMITS unchanged values from
+   * the outbox payload (T38 — payload trimming).
+   *
+   * Must return the row in the same shape as the inner fn's return value
+   * (same key naming, same nested object/array shapes) so the diff is
+   * apples-to-apples. Conventionally: `(_db, [id]) => rawRepo.getX(id)`.
+   *
+   * No-op without `OwnedTableSpec.largeColumns`. Declaring this without
+   * `largeColumns` just costs a wasted SELECT.
+   */
+  captureBeforeUpdate?: (
+    db: Database.Database,
+    args: TArgs,
+  ) => Record<string, unknown> | null
 }
 
 export interface EmitState<TArgs, TResult> {
@@ -153,6 +170,19 @@ export function withSync<
           preDelete = opts.captureBeforeDelete(db, args)
         }
 
+        // T38: for updates on tables with large columns, snapshot the row
+        // BEFORE the inner fn runs so we can diff and trim unchanged
+        // large columns out of the outbox payload.
+        let preUpdate: Record<string, unknown> | null = null
+        if (
+          opts.op === 'update' &&
+          opts.captureBeforeUpdate &&
+          spec.largeColumns &&
+          spec.largeColumns.length > 0
+        ) {
+          preUpdate = opts.captureBeforeUpdate(db, args)
+        }
+
         const result = fn(...args)
 
         // Emit the primary outbox row.
@@ -160,9 +190,19 @@ export function withSync<
           opts.op === 'delete'
             ? preDelete
             : (result as Record<string, unknown> | null)
-        const row = opts.extractRow
+        const rawRow = opts.extractRow
           ? opts.extractRow({ args, result, preDelete })
           : defaultRow
+
+        // Apply large-column trimming for updates with a pre-state.
+        const row =
+          opts.op === 'update' &&
+          rawRow != null &&
+          preUpdate != null &&
+          spec.largeColumns &&
+          spec.largeColumns.length > 0
+            ? trimUnchangedLargeColumns(rawRow, preUpdate, spec.largeColumns)
+            : rawRow
 
         if (row != null && typeof row === 'object') {
           appendOutboxRowWithSpec(db, spec, opts.op, row)
@@ -201,3 +241,33 @@ export function withSync<
  * stamp deviceId / userId onto an inner row).
  */
 export { currentSyncContext }
+
+/**
+ * T38: returns a shallow copy of `row` with any key in `largeColumns`
+ * whose value is JSON-equal to its pre-update counterpart deleted.
+ *
+ * Equality uses `JSON.stringify` on both sides — fine for the JSON-y
+ * payloads we trim (arrays of segments, message lists, markdown strings).
+ * Both sides must come from the same source shape (the repo's getX) so
+ * key order and nested shapes line up.
+ *
+ * If a large column is missing on either side, treat it as changed and
+ * keep it — conservative choice that errs toward over-sending rather
+ * than silently dropping a real edit.
+ *
+ * Exported for test access.
+ */
+export function trimUnchangedLargeColumns(
+  row: Record<string, unknown>,
+  preUpdate: Record<string, unknown>,
+  largeColumns: readonly string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row }
+  for (const col of largeColumns) {
+    if (!(col in out) || !(col in preUpdate)) continue
+    if (JSON.stringify(out[col]) === JSON.stringify(preUpdate[col])) {
+      delete out[col]
+    }
+  }
+  return out
+}
