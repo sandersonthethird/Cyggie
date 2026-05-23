@@ -1,6 +1,35 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
+// T17a A1 followup (caught by plan-eng-review 2026-05-23): write paths in
+// this IPC layer used to import directly from `chat-session.repo`, which
+// bypassed the sync-wrapped barrel and silently dropped desktop rename /
+// pin / archive / delete / createNew / appendModalTurn writes from the
+// outbox. Only `chat-persistence.ts` had been migrated in the original
+// T17a A1; this layer was missed.
+//
+// All write paths now go through the barrel so they emit outbox rows via
+// `withSync()`. Reads pass through the raw repo (cheap import) since
+// reads don't need outbox emission and the barrel's read pass-throughs
+// are identical functions.
+//
+// `endActive` stays raw on purpose — it's a conditional UPDATE-or-DELETE
+// that can't be cleanly wrapped (withSync expects a single op). When
+// endActive runs INSIDE the wrapped createChatSession (the normal "start
+// a new chat for an existing context" flow), the cascade is documented
+// as intentionally un-emitted in repositories/index.ts. The IPC's
+// CHAT_SESSION_END_ACTIVE handler is a rare external-only path; if a
+// future surface needs it to sync, lift endActive into the barrel with
+// op-discrimination logic at that point.
 import * as chatSessionRepo from '@cyggie/db/sqlite/repositories/chat-session.repo'
+import {
+  appendChatMessage,
+  archiveChatSession,
+  createChatSession,
+  deleteChatSession,
+  pinChatSession,
+  renameChatSession,
+  unpinChatSession,
+} from '@cyggie/db/sqlite/repositories'
 import { getCurrentUserId } from '../security/current-user'
 import type { ChatContextKind } from '../../shared/utils/chat-context'
 
@@ -49,6 +78,7 @@ export function registerChatSessionHandlers(): void {
     (_event, contextId: string) => {
       if (!contextId) return
       const userId = getCurrentUserId()
+      // Stays on the raw repo — see header note on endActive.
       chatSessionRepo.endActive(contextId, userId)
     }
   )
@@ -67,7 +97,7 @@ export function registerChatSessionHandlers(): void {
         throw new Error('contextId and contextKind are required')
       }
       const userId = getCurrentUserId()
-      return chatSessionRepo.createNew(
+      return createChatSession(
         data.contextId,
         data.contextKind,
         data.contextLabel ?? null,
@@ -83,7 +113,7 @@ export function registerChatSessionHandlers(): void {
         throw new Error('sessionId and title are required')
       }
       const userId = getCurrentUserId()
-      return chatSessionRepo.rename(data.sessionId, data.title, userId)
+      return renameChatSession(data.sessionId, data.title, userId)
     }
   )
 
@@ -92,7 +122,7 @@ export function registerChatSessionHandlers(): void {
     (_event, sessionId: string) => {
       if (!sessionId) throw new Error('sessionId is required')
       const userId = getCurrentUserId()
-      chatSessionRepo.pin(sessionId, userId)
+      pinChatSession(sessionId, userId)
     }
   )
 
@@ -101,7 +131,7 @@ export function registerChatSessionHandlers(): void {
     (_event, sessionId: string) => {
       if (!sessionId) throw new Error('sessionId is required')
       const userId = getCurrentUserId()
-      chatSessionRepo.unpin(sessionId, userId)
+      unpinChatSession(sessionId, userId)
     }
   )
 
@@ -110,7 +140,7 @@ export function registerChatSessionHandlers(): void {
     (_event, sessionId: string) => {
       if (!sessionId) throw new Error('sessionId is required')
       const userId = getCurrentUserId()
-      chatSessionRepo.archive(sessionId, userId)
+      archiveChatSession(sessionId, userId)
     }
   )
 
@@ -119,7 +149,7 @@ export function registerChatSessionHandlers(): void {
     (_event, sessionId: string) => {
       if (!sessionId) throw new Error('sessionId is required')
       const userId = getCurrentUserId()
-      chatSessionRepo.deleteSession(sessionId, userId)
+      deleteChatSession(sessionId, userId)
     }
   )
 
@@ -137,7 +167,7 @@ export function registerChatSessionHandlers(): void {
         throw new Error('sessionId, role, and content are required')
       }
       const userId = getCurrentUserId()
-      return chatSessionRepo.appendMessage(
+      return appendChatMessage(
         { sessionId: data.sessionId, role: data.role, content: data.content },
         userId
       )
