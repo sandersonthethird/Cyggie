@@ -46,14 +46,14 @@ export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
     },
     trustProxy: true,
     disableRequestLogging: env.NODE_ENV === 'test',
-    // 50 MB — sized for SyncAgent push batches that include large JSONB
-    // payloads (meetings.transcript_segments). T17a uncovered that adding
-    // chat_session_messages to the outbox tipped 200-row batches over the
-    // previous 10 MB limit (FST_ERR_CTP_BODY_TOO_LARGE in fly logs
-    // 2026-05-23). Proper fix is adaptive batching + payload trimming
-    // (filed as a follow-up); 50 MB is the pragmatic bandaid that drains
-    // today's accumulated outbox.
-    bodyLimit: 50 * 1024 * 1024,
+    // 10 MB. NOT 50 MB. The 2026-05-23 attempt to lift this to 50 MB
+    // (commit 0f306b7) caused the gateway to OOM-SIGABRT inside V8 JSON
+    // parsing on a real Sandy push — Fly machines are only 512 MB and
+    // a 50 MB raw body parses to ~5-10x that in JS object form, blowing
+    // past the resident-set budget. 413 is the lesser evil here: it tells
+    // the SyncAgent the batch is too big without killing the gateway.
+    // Real fix is T38 (adaptive batching + outbox payload trimming).
+    bodyLimit: 10 * 1024 * 1024,
   })
 
   app.setValidatorCompiler(validatorCompiler)
