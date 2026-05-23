@@ -213,6 +213,33 @@ export function bootstrapSync(): void {
       if (!wc || wc.isDestroyed() || ids.length === 0) return
       wc.send(IPC_CHANNELS.MEETINGS_REMOTE_APPLIED, { ids })
     },
+    // T14 — per-table IPC fanout for the other owned tables. Each renderer
+    // subscriber decides which invalidation set fires when each event arrives.
+    onNotesApplied: (ids) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.NOTES_REMOTE_APPLIED, { ids })
+    },
+    onOrgCompaniesApplied: (ids) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.ORG_COMPANIES_REMOTE_APPLIED, { ids })
+    },
+    onOrgCompanyAliasesApplied: (ids) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.ORG_COMPANY_ALIASES_REMOTE_APPLIED, { ids })
+    },
+    onContactsApplied: (ids) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.CONTACTS_REMOTE_APPLIED, { ids })
+    },
+    onContactEmailsApplied: (ids) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.CONTACT_EMAILS_REMOTE_APPLIED, { ids })
+    },
     onStateChange: (snapshot) => {
       const wc = statusBroadcastTarget
       if (!wc || wc.isDestroyed()) return

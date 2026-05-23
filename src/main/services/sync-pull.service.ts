@@ -35,7 +35,20 @@
 // =============================================================================
 
 import type Database from 'better-sqlite3'
-import { applyRemoteMeetings, type PulledMeetingRow } from './sync-remote-apply'
+import {
+  applyRemoteMeetings,
+  applyRemoteNotes,
+  applyRemoteOrgCompanies,
+  applyRemoteOrgCompanyAliases,
+  applyRemoteContacts,
+  applyRemoteContactEmails,
+  type PulledMeetingRow,
+  type PulledNoteRow,
+  type PulledOrgCompanyRow,
+  type PulledOrgCompanyAliasRow,
+  type PulledContactRow,
+  type PulledContactEmailRowWire,
+} from './sync-remote-apply'
 import type { SyncAgent } from './sync-agent'
 
 const PULL_INTERVAL_MS = 60_000
@@ -58,6 +71,13 @@ export interface PullStateSnapshot {
 
 export interface PullResponse {
   meetings: PulledMeetingRow[]
+  /** T14 — additional owned tables. All optional on the client side so
+   *  older gateway responses (without these keys) still work. */
+  notes?: PulledNoteRow[]
+  orgCompanies?: PulledOrgCompanyRow[]
+  orgCompanyAliases?: PulledOrgCompanyAliasRow[]
+  contacts?: PulledContactRow[]
+  contactEmails?: PulledContactEmailRowWire[]
   serverLamport: string
 }
 
@@ -83,6 +103,12 @@ export interface SyncPullServiceConfig {
   /** Optional IPC callback for renderer cache invalidation (Issue 5A).
    *  Production wiring lives in sync-bootstrap.ts. */
   onMeetingsApplied?: (ids: string[]) => void
+  /** T14 — per-table IPC callbacks for the other owned tables. */
+  onNotesApplied?: (ids: string[]) => void
+  onOrgCompaniesApplied?: (ids: string[]) => void
+  onOrgCompanyAliasesApplied?: (ids: string[]) => void
+  onContactsApplied?: (ids: string[]) => void
+  onContactEmailsApplied?: (ids: string[]) => void
   /** Optional state-change subscriber (Issue 5A SYNC_PULL_STATUS_CHANGED). */
   onStateChange?: (snapshot: PullStateSnapshot) => void
   /** Optional pino logger. */
@@ -212,10 +238,74 @@ export class SyncPullService {
       return
     }
 
-    // Apply rows (chunked 50-at-a-time inside applyRemoteMeetings).
-    let result: { appliedIds: string[]; skippedLowLamport: number; skippedPreValidation: number }
+    // Apply rows (chunked 50-at-a-time inside each applyRemoteX call).
+    // T14 — one apply call per owned table. Each is independent; a
+    // top-level crash in one (caught by the outer try) backs off the
+    // whole tick.
+    //
+    // Order matters for FK satisfaction:
+    //   org_companies → org_company_aliases (child of orgCompanies)
+    //   contacts → contact_emails (child of contacts)
+    //   meetings (no FK to the above)
+    //   notes (may reference companies/contacts/meetings)
+    const empty = { appliedIds: [] as string[], skippedLowLamport: 0, skippedPreValidation: 0 }
+    let meetingsResult: typeof empty = empty
+    let notesResult: typeof empty = empty
+    let orgCompaniesResult: typeof empty = empty
+    let orgCompanyAliasesResult: typeof empty = empty
+    let contactsResult: typeof empty = empty
+    let contactEmailsResult: typeof empty = empty
+
     try {
-      result = applyRemoteMeetings(
+      if (response.orgCompanies && response.orgCompanies.length > 0) {
+        orgCompaniesResult = applyRemoteOrgCompanies(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.orgCompanies,
+          {
+            onApplied: this.cfg.onOrgCompaniesApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
+      if (response.orgCompanyAliases && response.orgCompanyAliases.length > 0) {
+        orgCompanyAliasesResult = applyRemoteOrgCompanyAliases(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.orgCompanyAliases,
+          {
+            onApplied: this.cfg.onOrgCompanyAliasesApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
+      if (response.contacts && response.contacts.length > 0) {
+        contactsResult = applyRemoteContacts(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.contacts,
+          {
+            onApplied: this.cfg.onContactsApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
+      if (response.contactEmails && response.contactEmails.length > 0) {
+        contactEmailsResult = applyRemoteContactEmails(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.contactEmails,
+          {
+            onApplied: this.cfg.onContactEmailsApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
+      meetingsResult = applyRemoteMeetings(
         this.cfg.db,
         deviceId,
         userId,
@@ -225,9 +315,21 @@ export class SyncPullService {
           ...(this.cfg.log ? { log: this.cfg.log } : {}),
         },
       )
+      if (response.notes && response.notes.length > 0) {
+        notesResult = applyRemoteNotes(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.notes,
+          {
+            onApplied: this.cfg.onNotesApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
     } catch (err) {
       // Top-level apply failure (something other than per-sub-batch
-      // rollback, which is handled inside applyRemoteMeetings). Back off.
+      // rollback, which is handled inside applyRemoteX). Back off.
       this.lastError = err instanceof Error ? err.message : String(err)
       this.cfg.log?.error?.(
         { metric: 'sync.pull.apply_error', error: this.lastError },
@@ -242,13 +344,31 @@ export class SyncPullService {
     this.backoffMs = BACKOFF_INITIAL_MS
     this.nextRetryAt = null
     this.setState('idle')
+    const allResults = [
+      meetingsResult,
+      notesResult,
+      orgCompaniesResult,
+      orgCompanyAliasesResult,
+      contactsResult,
+      contactEmailsResult,
+    ]
     this.cfg.log?.info?.(
       {
         metric: 'sync.pull.complete',
-        rowCount: response.meetings.length,
-        appliedCount: result.appliedIds.length,
-        skippedLowLamport: result.skippedLowLamport,
-        skippedPreValidation: result.skippedPreValidation,
+        meetingRowCount: response.meetings.length,
+        meetingsAppliedCount: meetingsResult.appliedIds.length,
+        noteRowCount: response.notes?.length ?? 0,
+        notesAppliedCount: notesResult.appliedIds.length,
+        orgCompanyRowCount: response.orgCompanies?.length ?? 0,
+        orgCompaniesAppliedCount: orgCompaniesResult.appliedIds.length,
+        orgCompanyAliasRowCount: response.orgCompanyAliases?.length ?? 0,
+        orgCompanyAliasesAppliedCount: orgCompanyAliasesResult.appliedIds.length,
+        contactRowCount: response.contacts?.length ?? 0,
+        contactsAppliedCount: contactsResult.appliedIds.length,
+        contactEmailRowCount: response.contactEmails?.length ?? 0,
+        contactEmailsAppliedCount: contactEmailsResult.appliedIds.length,
+        skippedLowLamport: allResults.reduce((a, r) => a + r.skippedLowLamport, 0),
+        skippedPreValidation: allResults.reduce((a, r) => a + r.skippedPreValidation, 0),
         serverLamport: response.serverLamport,
       },
       'sync.pull complete',

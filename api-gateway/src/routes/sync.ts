@@ -399,6 +399,11 @@ export async function registerSyncRoutes(
       response: {
         200: z.object({
           meetings: z.array(z.unknown()),
+          notes: z.array(z.unknown()),
+          orgCompanies: z.array(z.unknown()),
+          orgCompanyAliases: z.array(z.unknown()),
+          contacts: z.array(z.unknown()),
+          contactEmails: z.array(z.unknown()),
           serverLamport: z.string(),
         }),
       },
@@ -415,18 +420,108 @@ export async function registerSyncRoutes(
       // so we use raw SQL fragments in the where/orderBy clauses. Going
       // through drizzle's query builder gives us camelCase row keys
       // (consistent with the rest of the API) instead of pg-pool snake_case.
-      const rows = await db
-        .select()
-        .from(schema.meetings)
-        .where(
-          sql`${schema.meetings.userId} = ${user.sub}
-              AND CAST(${schema.meetings.lamport} AS numeric) > CAST(${since} AS numeric)`,
-        )
-        .orderBy(sql`CAST(${schema.meetings.lamport} AS numeric) ASC`)
+      //
+      // T14 — pull every owned table in parallel. The slowest one (usually
+      // meetings with its jsonb transcript_segments) sets total latency.
+      //
+      // org_company_aliases + contact_emails don't carry user_id directly
+      // (they're cascade-children); we filter via JOIN onto the parent.
+      const sinceParam = since
+      const [
+        meetings,
+        notes,
+        orgCompanies,
+        orgCompanyAliases,
+        contacts,
+        contactEmails,
+      ] = await Promise.all([
+        db
+          .select()
+          .from(schema.meetings)
+          .where(
+            sql`${schema.meetings.userId} = ${user.sub}
+                AND CAST(${schema.meetings.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.meetings.lamport} AS numeric) ASC`),
+        db
+          .select()
+          .from(schema.notes)
+          .where(
+            sql`${schema.notes.userId} = ${user.sub}
+                AND CAST(${schema.notes.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.notes.lamport} AS numeric) ASC`),
+        db
+          .select()
+          .from(schema.orgCompanies)
+          .where(
+            sql`${schema.orgCompanies.userId} = ${user.sub}
+                AND CAST(${schema.orgCompanies.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.orgCompanies.lamport} AS numeric) ASC`),
+        // org_company_aliases: scope via INNER JOIN onto org_companies for
+        // user_id, but select only alias columns so the row shape matches
+        // the table's drizzle-zod schema (camelCase, no extra parent fields).
+        db
+          .select({
+            id: schema.orgCompanyAliases.id,
+            companyId: schema.orgCompanyAliases.companyId,
+            aliasValue: schema.orgCompanyAliases.aliasValue,
+            aliasType: schema.orgCompanyAliases.aliasType,
+            lamport: schema.orgCompanyAliases.lamport,
+            createdAt: schema.orgCompanyAliases.createdAt,
+          })
+          .from(schema.orgCompanyAliases)
+          .innerJoin(
+            schema.orgCompanies,
+            sql`${schema.orgCompanies.id} = ${schema.orgCompanyAliases.companyId}`,
+          )
+          .where(
+            sql`${schema.orgCompanies.userId} = ${user.sub}
+                AND CAST(${schema.orgCompanyAliases.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.orgCompanyAliases.lamport} AS numeric) ASC`),
+        db
+          .select()
+          .from(schema.contacts)
+          .where(
+            sql`${schema.contacts.userId} = ${user.sub}
+                AND CAST(${schema.contacts.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.contacts.lamport} AS numeric) ASC`),
+        // contact_emails: scope via INNER JOIN onto contacts for user_id;
+        // select only email columns to keep the row shape clean.
+        db
+          .select({
+            contactId: schema.contactEmails.contactId,
+            email: schema.contactEmails.email,
+            isPrimary: schema.contactEmails.isPrimary,
+            lamport: schema.contactEmails.lamport,
+            createdAt: schema.contactEmails.createdAt,
+          })
+          .from(schema.contactEmails)
+          .innerJoin(
+            schema.contacts,
+            sql`${schema.contacts.id} = ${schema.contactEmails.contactId}`,
+          )
+          .where(
+            sql`${schema.contacts.userId} = ${user.sub}
+                AND CAST(${schema.contactEmails.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.contactEmails.lamport} AS numeric) ASC`),
+      ])
 
-      const serverLamport = rows.length > 0
+      const allRows = [
+        ...meetings,
+        ...notes,
+        ...orgCompanies,
+        ...orgCompanyAliases,
+        ...contacts,
+        ...contactEmails,
+      ] as Array<{ lamport: string | null }>
+      const serverLamport = allRows.length > 0
         ? String(
-            rows.reduce((max, r) => {
+            allRows.reduce((max, r) => {
               const v = BigInt(r.lamport ?? '0')
               return v > max ? v : max
             }, BigInt(since)),
@@ -437,14 +532,26 @@ export async function registerSyncRoutes(
         {
           userId: user.sub,
           since,
-          rowCount: rows.length,
+          meetingCount: meetings.length,
+          noteCount: notes.length,
+          orgCompanyCount: orgCompanies.length,
+          orgCompanyAliasCount: orgCompanyAliases.length,
+          contactCount: contacts.length,
+          contactEmailCount: contactEmails.length,
           metric: 'sync.pull.row_count',
-          count: rows.length,
         },
         'sync.pull complete',
       )
 
-      return { meetings: rows, serverLamport }
+      return {
+        meetings,
+        notes,
+        orgCompanies,
+        orgCompanyAliases,
+        contacts,
+        contactEmails,
+        serverLamport,
+      }
     },
   })
 }

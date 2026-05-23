@@ -107,53 +107,111 @@ export interface ApplyRemoteResult {
   skippedPreValidation: number
 }
 
+// =============================================================================
+// T14 — Generic apply helper.
+//
+// The orchestration (pre-validate, chunk into sub-batches, transaction,
+// lamport LWW per row, bump sync_state, emit IPC) is identical across
+// owned tables. Only the upsert SQL + the IPC channel name differ.
+//
+// Each table provides a TableSpec describing:
+//   - tableName: the SQLite table being written (informational + logging)
+//   - selectLamportSql: e.g. "SELECT lamport FROM notes WHERE id = ?"
+//     Optional second-and-onwards params for composite PKs.
+//   - rowKey(row): returns the value(s) used to lookup the local lamport,
+//     in the same order as selectLamportSql binds.
+//   - rowId(row): returns a stringified identifier for logging + IPC.
+//   - upsert(db, row): performs the actual INSERT ON CONFLICT DO UPDATE.
+//
+// The helper handles the rest — including the cross-table-shared FK
+// pre-validation (local user row exists) and the per-chunk transaction +
+// sync_state bump (Issue 1A: both last_pulled_lamport AND
+// last_pushed_lamport advance so nextLamport() seeds correctly).
+// =============================================================================
+
+export interface PulledRow {
+  id: string
+  userId?: string
+  lamport: string
+  [field: string]: unknown
+}
+
+export interface TableSpec<RowT extends PulledRow> {
+  tableName: string
+  /** Composite-PK SELECT: pass keys to bind in the same order as
+   *  rowKey() returns them. Single-PK tables use a single binding. */
+  selectLamportSql: string
+  rowKey(row: RowT): unknown[]
+  rowId(row: RowT): string
+  upsert(db: Database.Database, row: RowT): void
+  /** Optional extra row-shape validation beyond the default id+lamport
+   *  check. Returns false to drop the row. */
+  validate?(row: RowT): boolean
+  /** True when rows carry a userId field that must match the local user.
+   *  False for cascade-child tables like contact_emails / org_company_aliases. */
+  hasUserId: boolean
+}
+
 /**
- * Apply pulled meeting rows to local SQLite. Returns the ids that were
- * actually written (rows where incoming.lamport > local.lamport).
+ * Generic apply primitive. Mechanically equivalent to applyRemoteMeetings
+ * but parameterized so the other 4 owned tables (notes, contacts,
+ * org_companies, contact_emails, org_company_aliases) can reuse it.
+ *
+ * Returns the row ids (via spec.rowId) that were actually written
+ * (incoming.lamport > local.lamport). Rows with lower-or-equal lamport
+ * are skipped silently.
  */
-export function applyRemoteMeetings(
+export function applyRemoteRows<RowT extends PulledRow>(
   db: Database.Database,
   deviceId: string,
   userId: string,
-  rows: PulledMeetingRow[],
+  rows: RowT[],
+  spec: TableSpec<RowT>,
   opts: ApplyRemoteOptions = {},
 ): ApplyRemoteResult {
   const chunkSize = opts.chunkSize ?? CHUNK_SIZE
   const log = opts.log ?? {}
   const onApplied = opts.onApplied
+  const tableName = spec.tableName
 
-  // --- Pre-validation (Issue 3) ---------------------------------------------
-  // Gateway is the canonical trust boundary; pre-validation here is just
-  // a defensive shape check + a foreign-key existence guard. drizzle-zod
-  // validators expect Date objects on timestamp fields, but pull
-  // responses arrive as JSON strings — type mismatch makes the validator
-  // reject every row. The shape + FK checks are sufficient.
-  const validated: PulledMeetingRow[] = []
+  // --- Pre-validation -------------------------------------------------------
+  const validated: RowT[] = []
   let skippedPreValidation = 0
 
-  // Cache the users-table lookup so we don't run a SELECT per row.
-  const localUserExists = db
-    .prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1')
-    .get(userId)
-  if (!localUserExists) {
-    log.warn?.(
-      { userId, metric: 'sync.pull.fk_pre_skip', count: rows.length },
-      'sync.pull skipped batch — local user row missing',
-    )
-    return { appliedIds: [], skippedLowLamport: 0, skippedPreValidation: rows.length }
+  if (spec.hasUserId) {
+    // Cache the users-table lookup so we don't run a SELECT per row.
+    const localUserExists = db
+      .prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1')
+      .get(userId)
+    if (!localUserExists) {
+      log.warn?.(
+        { userId, tableName, metric: 'sync.pull.fk_pre_skip', count: rows.length },
+        'sync.pull skipped batch — local user row missing',
+      )
+      return { appliedIds: [], skippedLowLamport: 0, skippedPreValidation: rows.length }
+    }
   }
 
   for (const row of rows) {
-    // Required-field check — id + userId + lamport are non-negotiable.
+    // Required-field check — id + lamport (+ userId when hasUserId) are
+    // non-negotiable.
     if (
       typeof row?.id !== 'string' ||
-      typeof row?.userId !== 'string' ||
-      typeof row?.lamport !== 'string'
+      typeof row?.lamport !== 'string' ||
+      (spec.hasUserId && typeof row?.userId !== 'string')
     ) {
       skippedPreValidation++
       log.warn?.(
-        { metric: 'sync.pull.malformed_pre_skip', id: (row as { id?: unknown })?.id },
+        { tableName, metric: 'sync.pull.malformed_pre_skip', id: (row as { id?: unknown })?.id },
         'sync.pull skipped row — missing required fields',
+      )
+      continue
+    }
+    if (spec.validate && !spec.validate(row)) {
+      skippedPreValidation++
+      log.warn?.(
+        { tableName, metric: 'sync.pull.invalid_pre_skip', id: row.id },
+        'sync.pull skipped row — spec.validate rejected',
       )
       continue
     }
@@ -170,10 +228,11 @@ export function applyRemoteMeetings(
     let subBatchHighWater = 0n
 
     const apply = db.transaction(() => {
+      const selectStmt = db.prepare(spec.selectLamportSql)
       for (const row of chunk) {
-        const local = db
-          .prepare('SELECT lamport FROM meetings WHERE id = ?')
-          .get(row.id) as { lamport: string } | undefined
+        const local = selectStmt.get(...spec.rowKey(row)) as
+          | { lamport: string }
+          | undefined
         const localLamport = local ? BigInt(local.lamport) : -1n
         const incomingLamport = BigInt(row.lamport)
         if (incomingLamport <= localLamport) {
@@ -181,16 +240,12 @@ export function applyRemoteMeetings(
           continue
         }
 
-        // INSERT ON CONFLICT DO UPDATE — preserves FK children (meeting_company_links etc.)
-        // INSERT OR REPLACE would cascade-delete them.
-        upsertMeetingRow(db, row)
-        subBatchApplied.push(row.id)
+        spec.upsert(db, row)
+        subBatchApplied.push(spec.rowId(row))
         if (incomingLamport > subBatchHighWater) subBatchHighWater = incomingLamport
       }
 
       if (subBatchApplied.length > 0) {
-        // Bump last_pulled_lamport to max-applied + bump last_pushed_lamport
-        // (Issue 1A) so nextLamport() seeds above incoming high-water.
         const hw = subBatchHighWater.toString()
         db.prepare(
           `INSERT INTO sync_state (device_id, user_id, last_pushed_lamport, last_pulled_lamport)
@@ -210,10 +265,9 @@ export function applyRemoteMeetings(
     try {
       apply()
     } catch (err) {
-      // Issue 4A: rollback whole sub-batch. last_pulled_lamport unchanged
-      // → next pull tick re-fetches the same range; idempotent retry.
       log.warn?.(
         {
+          tableName,
           metric: 'sync.pull.tx_rollback',
           chunkStart: i,
           chunkSize: chunk.length,
@@ -229,6 +283,7 @@ export function applyRemoteMeetings(
       onApplied?.(subBatchApplied)
       log.info?.(
         {
+          tableName,
           metric: 'sync.pull.applied',
           appliedCount: subBatchApplied.length,
           highWater: subBatchHighWater.toString(),
@@ -239,6 +294,740 @@ export function applyRemoteMeetings(
   }
 
   return { appliedIds, skippedLowLamport, skippedPreValidation }
+}
+
+/**
+ * Apply pulled meeting rows to local SQLite. Returns the ids that were
+ * actually written (rows where incoming.lamport > local.lamport).
+ */
+export function applyRemoteMeetings(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledMeetingRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  return applyRemoteRows(db, deviceId, userId, rows, MEETINGS_SPEC, opts)
+}
+
+const MEETINGS_SPEC: TableSpec<PulledMeetingRow> = {
+  tableName: 'meetings',
+  hasUserId: true,
+  selectLamportSql: 'SELECT lamport FROM meetings WHERE id = ?',
+  rowKey: (row) => [row.id],
+  rowId: (row) => row.id,
+  upsert: (db, row) => upsertMeetingRow(db, row),
+}
+
+// ─── Notes (T14) ─────────────────────────────────────────────────────────
+
+/** Shape of a pulled note row (gateway returns drizzle camelCase). */
+export interface PulledNoteRow extends PulledRow {
+  id: string
+  userId: string
+  title: string | null
+  content: string
+  companyId: string | null
+  contactId: string | null
+  sourceMeetingId: string | null
+  themeId: string | null
+  isPinned: boolean
+  folderPath: string | null
+  importSource: string | null
+  sourceDigestId: string | null
+  createdByUserId: string | null
+  updatedByUserId: string | null
+  lamport: string
+  createdAt: string | Date
+  updatedAt: string | Date
+}
+
+export function applyRemoteNotes(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledNoteRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  return applyRemoteRows(db, deviceId, userId, rows, NOTES_SPEC, opts)
+}
+
+const NOTES_SPEC: TableSpec<PulledNoteRow> = {
+  tableName: 'notes',
+  hasUserId: true,
+  selectLamportSql: 'SELECT lamport FROM notes WHERE id = ?',
+  rowKey: (row) => [row.id],
+  rowId: (row) => row.id,
+  upsert: (db, row) => upsertNoteRow(db, row),
+}
+
+function upsertNoteRow(db: Database.Database, row: PulledNoteRow): void {
+  // SQLite notes table has no user_id column — Postgres carries it but
+  // desktop scopes via created_by_user_id. Drop userId from the upsert.
+  db.prepare(
+    `INSERT INTO notes (
+       id, title, content,
+       company_id, contact_id, source_meeting_id, theme_id,
+       is_pinned, folder_path, import_source, source_digest_id,
+       created_by_user_id, updated_by_user_id,
+       created_at, updated_at, lamport
+     ) VALUES (
+       @id, @title, @content,
+       @companyId, @contactId, @sourceMeetingId, @themeId,
+       @isPinned, @folderPath, @importSource, @sourceDigestId,
+       @createdByUserId, @updatedByUserId,
+       @createdAt, @updatedAt, @lamport
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       content = excluded.content,
+       company_id = excluded.company_id,
+       contact_id = excluded.contact_id,
+       source_meeting_id = excluded.source_meeting_id,
+       theme_id = excluded.theme_id,
+       is_pinned = excluded.is_pinned,
+       folder_path = excluded.folder_path,
+       import_source = excluded.import_source,
+       source_digest_id = excluded.source_digest_id,
+       created_by_user_id = excluded.created_by_user_id,
+       updated_by_user_id = excluded.updated_by_user_id,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       lamport = excluded.lamport`,
+  ).run({
+    id: row.id,
+    title: row.title,
+    content: row.content,
+    companyId: row.companyId,
+    contactId: row.contactId,
+    sourceMeetingId: row.sourceMeetingId,
+    themeId: row.themeId,
+    isPinned: row.isPinned ? 1 : 0,
+    folderPath: row.folderPath,
+    importSource: row.importSource,
+    sourceDigestId: row.sourceDigestId,
+    createdByUserId: row.createdByUserId,
+    updatedByUserId: row.updatedByUserId,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+    lamport: row.lamport,
+  })
+}
+
+// ─── Org Companies (T14) ─────────────────────────────────────────────────
+
+/** Shape of a pulled org_companies row (gateway returns drizzle camelCase). */
+export interface PulledOrgCompanyRow extends PulledRow {
+  id: string
+  userId: string
+  canonicalName: string
+  normalizedName: string
+  description: string | null
+  primaryDomain: string | null
+  websiteUrl: string | null
+  linkedinCompanyUrl: string | null
+  twitterHandle: string | null
+  crunchbaseUrl: string | null
+  angellistUrl: string | null
+  stage: string | null
+  pipelineStage: string | null
+  priority: string | null
+  status: string
+  entityType: string
+  includeInCompaniesView: number
+  classificationSource: string
+  classificationConfidence: number | null
+  industry: string | null
+  crmProvider: string | null
+  crmCompanyId: string | null
+  city: string | null
+  state: string | null
+  hqAddress: string | null
+  foundingYear: number | null
+  employeeCountRange: string | null
+  targetCustomer: string | null
+  businessModel: string | null
+  productStage: string | null
+  revenueModel: string | null
+  arr: number | null
+  burnRate: number | null
+  runwayMonths: number | null
+  lastFundingDate: string | Date | null
+  totalFundingRaised: number | null
+  leadInvestor: string | null
+  leadInvestorCompanyId: string | null
+  coInvestors: unknown
+  round: string | null
+  raiseSize: number | null
+  postMoneyValuation: number | null
+  relationshipOwner: string | null
+  dealSource: string | null
+  warmIntroSource: string | null
+  referralContactId: string | null
+  nextFollowupDate: string | Date | null
+  investmentSize: string | null
+  ownershipPct: string | null
+  followonInvestmentSize: string | null
+  totalInvested: string | null
+  investmentRound: string | null
+  initialInvestmentSecurity: string | null
+  dateOfInitialInvestment: string | Date | null
+  initialRoundSize: number | null
+  lastCompanyValuation: number | null
+  followonCheck: number | null
+  followonDate: string | Date | null
+  followonCheck2: number | null
+  followonDate2: string | Date | null
+  investmentMark: number | null
+  portfolioFund: string | null
+  sourceType: string | null
+  sourceEntityType: string | null
+  sourceEntityId: string | null
+  keyTakeaways: string | null
+  fieldSources: unknown
+  lamport: string
+  createdAt: string | Date
+  updatedAt: string | Date
+}
+
+export function applyRemoteOrgCompanies(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledOrgCompanyRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  return applyRemoteRows(db, deviceId, userId, rows, ORG_COMPANIES_SPEC, opts)
+}
+
+const ORG_COMPANIES_SPEC: TableSpec<PulledOrgCompanyRow> = {
+  tableName: 'org_companies',
+  hasUserId: true,
+  selectLamportSql: 'SELECT lamport FROM org_companies WHERE id = ?',
+  rowKey: (row) => [row.id],
+  rowId: (row) => row.id,
+  upsert: (db, row) => upsertOrgCompanyRow(db, row),
+}
+
+function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): void {
+  // SQLite org_companies has no user_id column — Postgres carries it for
+  // multi-tenant filtering; desktop is single-user.
+  db.prepare(
+    `INSERT INTO org_companies (
+       id, canonical_name, normalized_name, description,
+       primary_domain, website_url, linkedin_company_url, twitter_handle,
+       crunchbase_url, angellist_url,
+       stage, pipeline_stage, priority, status,
+       entity_type, include_in_companies_view, classification_source, classification_confidence,
+       industry, crm_provider, crm_company_id,
+       city, state, hq_address,
+       founding_year, employee_count_range,
+       target_customer, business_model, product_stage, revenue_model,
+       arr, burn_rate, runway_months, last_funding_date, total_funding_raised,
+       lead_investor, lead_investor_company_id, co_investors,
+       round, raise_size, post_money_valuation,
+       relationship_owner, deal_source, warm_intro_source, referral_contact_id, next_followup_date,
+       investment_size, ownership_pct, followon_investment_size, total_invested,
+       investment_round, initial_investment_security, date_of_initial_investment,
+       initial_round_size, last_company_valuation,
+       followon_check, followon_date, followon_check_2, followon_date_2, investment_mark,
+       portfolio_fund, source_type, source_entity_type, source_entity_id,
+       key_takeaways, field_sources,
+       created_at, updated_at, lamport
+     ) VALUES (
+       @id, @canonicalName, @normalizedName, @description,
+       @primaryDomain, @websiteUrl, @linkedinCompanyUrl, @twitterHandle,
+       @crunchbaseUrl, @angellistUrl,
+       @stage, @pipelineStage, @priority, @status,
+       @entityType, @includeInCompaniesView, @classificationSource, @classificationConfidence,
+       @industry, @crmProvider, @crmCompanyId,
+       @city, @state, @hqAddress,
+       @foundingYear, @employeeCountRange,
+       @targetCustomer, @businessModel, @productStage, @revenueModel,
+       @arr, @burnRate, @runwayMonths, @lastFundingDate, @totalFundingRaised,
+       @leadInvestor, @leadInvestorCompanyId, @coInvestors,
+       @round, @raiseSize, @postMoneyValuation,
+       @relationshipOwner, @dealSource, @warmIntroSource, @referralContactId, @nextFollowupDate,
+       @investmentSize, @ownershipPct, @followonInvestmentSize, @totalInvested,
+       @investmentRound, @initialInvestmentSecurity, @dateOfInitialInvestment,
+       @initialRoundSize, @lastCompanyValuation,
+       @followonCheck, @followonDate, @followonCheck2, @followonDate2, @investmentMark,
+       @portfolioFund, @sourceType, @sourceEntityType, @sourceEntityId,
+       @keyTakeaways, @fieldSources,
+       @createdAt, @updatedAt, @lamport
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       canonical_name = excluded.canonical_name,
+       normalized_name = excluded.normalized_name,
+       description = excluded.description,
+       primary_domain = excluded.primary_domain,
+       website_url = excluded.website_url,
+       linkedin_company_url = excluded.linkedin_company_url,
+       twitter_handle = excluded.twitter_handle,
+       crunchbase_url = excluded.crunchbase_url,
+       angellist_url = excluded.angellist_url,
+       stage = excluded.stage,
+       pipeline_stage = excluded.pipeline_stage,
+       priority = excluded.priority,
+       status = excluded.status,
+       entity_type = excluded.entity_type,
+       include_in_companies_view = excluded.include_in_companies_view,
+       classification_source = excluded.classification_source,
+       classification_confidence = excluded.classification_confidence,
+       industry = excluded.industry,
+       crm_provider = excluded.crm_provider,
+       crm_company_id = excluded.crm_company_id,
+       city = excluded.city,
+       state = excluded.state,
+       hq_address = excluded.hq_address,
+       founding_year = excluded.founding_year,
+       employee_count_range = excluded.employee_count_range,
+       target_customer = excluded.target_customer,
+       business_model = excluded.business_model,
+       product_stage = excluded.product_stage,
+       revenue_model = excluded.revenue_model,
+       arr = excluded.arr,
+       burn_rate = excluded.burn_rate,
+       runway_months = excluded.runway_months,
+       last_funding_date = excluded.last_funding_date,
+       total_funding_raised = excluded.total_funding_raised,
+       lead_investor = excluded.lead_investor,
+       lead_investor_company_id = excluded.lead_investor_company_id,
+       co_investors = excluded.co_investors,
+       round = excluded.round,
+       raise_size = excluded.raise_size,
+       post_money_valuation = excluded.post_money_valuation,
+       relationship_owner = excluded.relationship_owner,
+       deal_source = excluded.deal_source,
+       warm_intro_source = excluded.warm_intro_source,
+       referral_contact_id = excluded.referral_contact_id,
+       next_followup_date = excluded.next_followup_date,
+       investment_size = excluded.investment_size,
+       ownership_pct = excluded.ownership_pct,
+       followon_investment_size = excluded.followon_investment_size,
+       total_invested = excluded.total_invested,
+       investment_round = excluded.investment_round,
+       initial_investment_security = excluded.initial_investment_security,
+       date_of_initial_investment = excluded.date_of_initial_investment,
+       initial_round_size = excluded.initial_round_size,
+       last_company_valuation = excluded.last_company_valuation,
+       followon_check = excluded.followon_check,
+       followon_date = excluded.followon_date,
+       followon_check_2 = excluded.followon_check_2,
+       followon_date_2 = excluded.followon_date_2,
+       investment_mark = excluded.investment_mark,
+       portfolio_fund = excluded.portfolio_fund,
+       source_type = excluded.source_type,
+       source_entity_type = excluded.source_entity_type,
+       source_entity_id = excluded.source_entity_id,
+       key_takeaways = excluded.key_takeaways,
+       field_sources = excluded.field_sources,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       lamport = excluded.lamport`,
+  ).run({
+    id: row.id,
+    canonicalName: row.canonicalName,
+    normalizedName: row.normalizedName,
+    description: row.description,
+    primaryDomain: row.primaryDomain,
+    websiteUrl: row.websiteUrl,
+    linkedinCompanyUrl: row.linkedinCompanyUrl,
+    twitterHandle: row.twitterHandle,
+    crunchbaseUrl: row.crunchbaseUrl,
+    angellistUrl: row.angellistUrl,
+    stage: row.stage,
+    pipelineStage: row.pipelineStage,
+    priority: row.priority,
+    status: row.status,
+    entityType: row.entityType,
+    includeInCompaniesView: row.includeInCompaniesView,
+    classificationSource: row.classificationSource,
+    classificationConfidence: row.classificationConfidence,
+    industry: row.industry,
+    crmProvider: row.crmProvider,
+    crmCompanyId: row.crmCompanyId,
+    city: row.city,
+    state: row.state,
+    hqAddress: row.hqAddress,
+    foundingYear: row.foundingYear,
+    employeeCountRange: row.employeeCountRange,
+    targetCustomer: row.targetCustomer,
+    businessModel: row.businessModel,
+    productStage: row.productStage,
+    revenueModel: row.revenueModel,
+    arr: row.arr,
+    burnRate: row.burnRate,
+    runwayMonths: row.runwayMonths,
+    lastFundingDate: row.lastFundingDate ? toIso(row.lastFundingDate) : null,
+    totalFundingRaised: row.totalFundingRaised,
+    leadInvestor: row.leadInvestor,
+    leadInvestorCompanyId: row.leadInvestorCompanyId,
+    coInvestors: stringify(row.coInvestors),
+    round: row.round,
+    raiseSize: row.raiseSize,
+    postMoneyValuation: row.postMoneyValuation,
+    relationshipOwner: row.relationshipOwner,
+    dealSource: row.dealSource,
+    warmIntroSource: row.warmIntroSource,
+    referralContactId: row.referralContactId,
+    nextFollowupDate: row.nextFollowupDate ? toIso(row.nextFollowupDate) : null,
+    investmentSize: row.investmentSize,
+    ownershipPct: row.ownershipPct,
+    followonInvestmentSize: row.followonInvestmentSize,
+    totalInvested: row.totalInvested,
+    investmentRound: row.investmentRound,
+    initialInvestmentSecurity: row.initialInvestmentSecurity,
+    dateOfInitialInvestment: row.dateOfInitialInvestment ? toIso(row.dateOfInitialInvestment) : null,
+    initialRoundSize: row.initialRoundSize,
+    lastCompanyValuation: row.lastCompanyValuation,
+    followonCheck: row.followonCheck,
+    followonDate: row.followonDate ? toIso(row.followonDate) : null,
+    followonCheck2: row.followonCheck2,
+    followonDate2: row.followonDate2 ? toIso(row.followonDate2) : null,
+    investmentMark: row.investmentMark,
+    portfolioFund: row.portfolioFund,
+    sourceType: row.sourceType,
+    sourceEntityType: row.sourceEntityType,
+    sourceEntityId: row.sourceEntityId,
+    keyTakeaways: row.keyTakeaways,
+    fieldSources: stringify(row.fieldSources),
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+    lamport: row.lamport,
+  })
+}
+
+// ─── Org Company Aliases (T14) ───────────────────────────────────────────
+
+export interface PulledOrgCompanyAliasRow extends PulledRow {
+  id: string
+  companyId: string
+  aliasValue: string
+  aliasType: string
+  lamport: string
+  createdAt: string | Date
+}
+
+export function applyRemoteOrgCompanyAliases(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledOrgCompanyAliasRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  return applyRemoteRows(db, deviceId, userId, rows, ORG_COMPANY_ALIASES_SPEC, opts)
+}
+
+const ORG_COMPANY_ALIASES_SPEC: TableSpec<PulledOrgCompanyAliasRow> = {
+  tableName: 'org_company_aliases',
+  // No user_id on this cascade-child table — scoping derives from parent
+  // org_companies.user_id. Local user existence is checked elsewhere.
+  hasUserId: false,
+  selectLamportSql: 'SELECT lamport FROM org_company_aliases WHERE id = ?',
+  rowKey: (row) => [row.id],
+  rowId: (row) => row.id,
+  upsert: (db, row) => upsertOrgCompanyAliasRow(db, row),
+}
+
+function upsertOrgCompanyAliasRow(
+  db: Database.Database,
+  row: PulledOrgCompanyAliasRow,
+): void {
+  db.prepare(
+    `INSERT INTO org_company_aliases (
+       id, company_id, alias_value, alias_type, created_at, lamport
+     ) VALUES (
+       @id, @companyId, @aliasValue, @aliasType, @createdAt, @lamport
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       company_id = excluded.company_id,
+       alias_value = excluded.alias_value,
+       alias_type = excluded.alias_type,
+       created_at = excluded.created_at,
+       lamport = excluded.lamport`,
+  ).run({
+    id: row.id,
+    companyId: row.companyId,
+    aliasValue: row.aliasValue,
+    aliasType: row.aliasType,
+    createdAt: toIso(row.createdAt),
+    lamport: row.lamport,
+  })
+}
+
+// ─── Contacts (T14) ──────────────────────────────────────────────────────
+
+export interface PulledContactRow extends PulledRow {
+  id: string
+  userId: string
+  fullName: string
+  firstName: string | null
+  lastName: string | null
+  normalizedName: string
+  email: string | null
+  phone: string | null
+  primaryCompanyId: string | null
+  title: string | null
+  contactType: string | null
+  linkedinUrl: string | null
+  crmContactId: string | null
+  crmProvider: string | null
+  twitterHandle: string | null
+  otherSocials: unknown
+  city: string | null
+  state: string | null
+  timezone: string | null
+  pronouns: string | null
+  birthday: string | null
+  university: string | null
+  previousCompanies: unknown
+  workHistory: unknown
+  educationHistory: unknown
+  tags: unknown
+  relationshipStrength: string | null
+  lastMetEvent: string | null
+  warmIntroPath: string | null
+  investorStage: string | null
+  fundSize: number | null
+  typicalCheckSizeMin: number | null
+  typicalCheckSizeMax: number | null
+  investmentStageFocus: unknown
+  investmentSectorFocus: unknown
+  investmentSectorFocusNotes: string | null
+  proudPortfolioCompanies: unknown
+  linkedinHeadline: string | null
+  linkedinSkills: unknown
+  linkedinEnrichedAt: string | Date | null
+  talentPipeline: string | null
+  keyTakeaways: string | null
+  fieldSources: unknown
+  notes: string | null
+  lastMeetingAt: string | Date | null
+  lastEmailAt: string | Date | null
+  lamport: string
+  createdAt: string | Date
+  updatedAt: string | Date
+}
+
+export function applyRemoteContacts(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledContactRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  return applyRemoteRows(db, deviceId, userId, rows, CONTACTS_SPEC, opts)
+}
+
+const CONTACTS_SPEC: TableSpec<PulledContactRow> = {
+  tableName: 'contacts',
+  hasUserId: true,
+  selectLamportSql: 'SELECT lamport FROM contacts WHERE id = ?',
+  rowKey: (row) => [row.id],
+  rowId: (row) => row.id,
+  upsert: (db, row) => upsertContactRow(db, row),
+}
+
+function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
+  // SQLite contacts has no user_id column.
+  db.prepare(
+    `INSERT INTO contacts (
+       id, full_name, first_name, last_name, normalized_name,
+       email, phone,
+       primary_company_id, title, contact_type,
+       linkedin_url, crm_contact_id, crm_provider, twitter_handle, other_socials,
+       city, state, timezone, pronouns, birthday,
+       university, previous_companies, work_history, education_history,
+       tags, relationship_strength, last_met_event, warm_intro_path,
+       investor_stage, fund_size, typical_check_size_min, typical_check_size_max,
+       investment_stage_focus, investment_sector_focus, investment_sector_focus_notes,
+       proud_portfolio_companies, linkedin_headline, linkedin_skills, linkedin_enriched_at,
+       talent_pipeline, key_takeaways, field_sources, notes,
+       last_meeting_at, last_email_at,
+       created_at, updated_at, lamport
+     ) VALUES (
+       @id, @fullName, @firstName, @lastName, @normalizedName,
+       @email, @phone,
+       @primaryCompanyId, @title, @contactType,
+       @linkedinUrl, @crmContactId, @crmProvider, @twitterHandle, @otherSocials,
+       @city, @state, @timezone, @pronouns, @birthday,
+       @university, @previousCompanies, @workHistory, @educationHistory,
+       @tags, @relationshipStrength, @lastMetEvent, @warmIntroPath,
+       @investorStage, @fundSize, @typicalCheckSizeMin, @typicalCheckSizeMax,
+       @investmentStageFocus, @investmentSectorFocus, @investmentSectorFocusNotes,
+       @proudPortfolioCompanies, @linkedinHeadline, @linkedinSkills, @linkedinEnrichedAt,
+       @talentPipeline, @keyTakeaways, @fieldSources, @notes,
+       @lastMeetingAt, @lastEmailAt,
+       @createdAt, @updatedAt, @lamport
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       full_name = excluded.full_name,
+       first_name = excluded.first_name,
+       last_name = excluded.last_name,
+       normalized_name = excluded.normalized_name,
+       email = excluded.email,
+       phone = excluded.phone,
+       primary_company_id = excluded.primary_company_id,
+       title = excluded.title,
+       contact_type = excluded.contact_type,
+       linkedin_url = excluded.linkedin_url,
+       crm_contact_id = excluded.crm_contact_id,
+       crm_provider = excluded.crm_provider,
+       twitter_handle = excluded.twitter_handle,
+       other_socials = excluded.other_socials,
+       city = excluded.city,
+       state = excluded.state,
+       timezone = excluded.timezone,
+       pronouns = excluded.pronouns,
+       birthday = excluded.birthday,
+       university = excluded.university,
+       previous_companies = excluded.previous_companies,
+       work_history = excluded.work_history,
+       education_history = excluded.education_history,
+       tags = excluded.tags,
+       relationship_strength = excluded.relationship_strength,
+       last_met_event = excluded.last_met_event,
+       warm_intro_path = excluded.warm_intro_path,
+       investor_stage = excluded.investor_stage,
+       fund_size = excluded.fund_size,
+       typical_check_size_min = excluded.typical_check_size_min,
+       typical_check_size_max = excluded.typical_check_size_max,
+       investment_stage_focus = excluded.investment_stage_focus,
+       investment_sector_focus = excluded.investment_sector_focus,
+       investment_sector_focus_notes = excluded.investment_sector_focus_notes,
+       proud_portfolio_companies = excluded.proud_portfolio_companies,
+       linkedin_headline = excluded.linkedin_headline,
+       linkedin_skills = excluded.linkedin_skills,
+       linkedin_enriched_at = excluded.linkedin_enriched_at,
+       talent_pipeline = excluded.talent_pipeline,
+       key_takeaways = excluded.key_takeaways,
+       field_sources = excluded.field_sources,
+       notes = excluded.notes,
+       last_meeting_at = excluded.last_meeting_at,
+       last_email_at = excluded.last_email_at,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       lamport = excluded.lamport`,
+  ).run({
+    id: row.id,
+    fullName: row.fullName,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    normalizedName: row.normalizedName,
+    email: row.email,
+    phone: row.phone,
+    primaryCompanyId: row.primaryCompanyId,
+    title: row.title,
+    contactType: row.contactType,
+    linkedinUrl: row.linkedinUrl,
+    crmContactId: row.crmContactId,
+    crmProvider: row.crmProvider,
+    twitterHandle: row.twitterHandle,
+    otherSocials: stringify(row.otherSocials),
+    city: row.city,
+    state: row.state,
+    timezone: row.timezone,
+    pronouns: row.pronouns,
+    birthday: row.birthday,
+    university: row.university,
+    previousCompanies: stringify(row.previousCompanies),
+    workHistory: stringify(row.workHistory),
+    educationHistory: stringify(row.educationHistory),
+    tags: stringify(row.tags),
+    relationshipStrength: row.relationshipStrength,
+    lastMetEvent: row.lastMetEvent,
+    warmIntroPath: row.warmIntroPath,
+    investorStage: row.investorStage,
+    fundSize: row.fundSize,
+    typicalCheckSizeMin: row.typicalCheckSizeMin,
+    typicalCheckSizeMax: row.typicalCheckSizeMax,
+    investmentStageFocus: stringify(row.investmentStageFocus),
+    investmentSectorFocus: stringify(row.investmentSectorFocus),
+    investmentSectorFocusNotes: row.investmentSectorFocusNotes,
+    proudPortfolioCompanies: stringify(row.proudPortfolioCompanies),
+    linkedinHeadline: row.linkedinHeadline,
+    linkedinSkills: stringify(row.linkedinSkills),
+    linkedinEnrichedAt: row.linkedinEnrichedAt ? toIso(row.linkedinEnrichedAt) : null,
+    talentPipeline: row.talentPipeline,
+    keyTakeaways: row.keyTakeaways,
+    fieldSources: stringify(row.fieldSources),
+    notes: row.notes,
+    lastMeetingAt: row.lastMeetingAt ? toIso(row.lastMeetingAt) : null,
+    lastEmailAt: row.lastEmailAt ? toIso(row.lastEmailAt) : null,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+    lamport: row.lamport,
+  })
+}
+
+// ─── Contact Emails (T14) ────────────────────────────────────────────────
+
+/** Wire shape — composite PK (contactId, email); gateway sends no `id`. */
+export interface PulledContactEmailRowWire {
+  contactId: string
+  email: string
+  isPrimary: number
+  lamport: string
+  createdAt: string | Date
+}
+
+interface PulledContactEmailRow extends PulledRow {
+  id: string
+  contactId: string
+  email: string
+  isPrimary: number
+  lamport: string
+  createdAt: string | Date
+}
+
+export function applyRemoteContactEmails(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledContactEmailRowWire[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  // Synthesise the id for log + IPC use. Gateway doesn't include one (the
+  // PK is composite on the wire) so we add it before passing through.
+  const stamped: PulledContactEmailRow[] = rows.map((r) => ({
+    ...r,
+    id: `${r.contactId}:${r.email}`,
+  }))
+  return applyRemoteRows(db, deviceId, userId, stamped, CONTACT_EMAILS_SPEC, opts)
+}
+
+const CONTACT_EMAILS_SPEC: TableSpec<PulledContactEmailRow> = {
+  tableName: 'contact_emails',
+  hasUserId: false,
+  selectLamportSql:
+    'SELECT lamport FROM contact_emails WHERE contact_id = ? AND email = ?',
+  rowKey: (row) => [row.contactId, row.email],
+  rowId: (row) => `${row.contactId}:${row.email}`,
+  upsert: (db, row) => upsertContactEmailRow(db, row),
+}
+
+function upsertContactEmailRow(
+  db: Database.Database,
+  row: PulledContactEmailRow,
+): void {
+  db.prepare(
+    `INSERT INTO contact_emails (
+       contact_id, email, is_primary, created_at, lamport
+     ) VALUES (
+       @contactId, @email, @isPrimary, @createdAt, @lamport
+     )
+     ON CONFLICT(contact_id, email) DO UPDATE SET
+       is_primary = excluded.is_primary,
+       created_at = excluded.created_at,
+       lamport = excluded.lamport`,
+  ).run({
+    contactId: row.contactId,
+    email: row.email,
+    isPrimary: row.isPrimary ? 1 : 0,
+    createdAt: toIso(row.createdAt),
+    lamport: row.lamport,
+  })
 }
 
 // ─── Upsert helper ───────────────────────────────────────────────────────────

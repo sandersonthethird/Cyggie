@@ -36,10 +36,24 @@ const db = getDb(env.GATEWAY_DATABASE_URL)
 const TEST_PREFIX = `test-pull-${Date.now().toString(36)}-`
 const createdUserIds: string[] = []
 const createdMeetingIds: string[] = []
+const createdCompanyIds: string[] = []
+const createdContactIds: string[] = []
+const createdNoteIds: string[] = []
 
 afterAll(async () => {
+  // Delete in FK-safe order — children before parents.
+  if (createdNoteIds.length > 0) {
+    await db.delete(schema.notes).where(inArray(schema.notes.id, createdNoteIds))
+  }
   if (createdMeetingIds.length > 0) {
     await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
+  }
+  if (createdContactIds.length > 0) {
+    // contact_emails + org_company_aliases cascade via FK, no manual cleanup.
+    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
+  }
+  if (createdCompanyIds.length > 0) {
+    await db.delete(schema.orgCompanies).where(inArray(schema.orgCompanies.id, createdCompanyIds))
   }
   if (createdUserIds.length > 0) {
     await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
@@ -189,5 +203,137 @@ describe('GET /sync/pull', () => {
   test('401 without Bearer', async () => {
     const res = await app.inject({ method: 'GET', url: '/sync/pull' })
     expect(res.statusCode).toBe(401)
+  })
+
+  // T14 — additional owned tables (notes already covered above; this group
+  // verifies org_companies, org_company_aliases, contacts, contact_emails
+  // are all returned and user-scoped via INNER JOIN for cascade-children).
+  test('T14 — returns rows from every owned table for the user', async () => {
+    const { userId, jwt } = await setupUser()
+
+    // Seed one of each.
+    const companyId = TEST_PREFIX + 'co-' + createId().slice(0, 6)
+    await db.insert(schema.orgCompanies).values({
+      id: companyId,
+      userId,
+      canonicalName: 'Acme',
+      normalizedName: `acme-${companyId}`,
+      lamport: '11',
+      createdByUserId: userId,
+    })
+    createdCompanyIds.push(companyId)
+
+    const aliasId = TEST_PREFIX + 'al-' + createId().slice(0, 6)
+    await db.insert(schema.orgCompanyAliases).values({
+      id: aliasId,
+      companyId,
+      aliasValue: 'Acme Corp',
+      aliasType: 'name',
+      lamport: '12',
+    })
+
+    const contactId = TEST_PREFIX + 'ct-' + createId().slice(0, 6)
+    await db.insert(schema.contacts).values({
+      id: contactId,
+      userId,
+      fullName: 'Alice',
+      normalizedName: `alice-${contactId}`,
+      lamport: '13',
+      createdByUserId: userId,
+    })
+    createdContactIds.push(contactId)
+
+    await db.insert(schema.contactEmails).values({
+      contactId,
+      email: `${contactId}@example.com`,
+      isPrimary: 1,
+      lamport: '14',
+    })
+
+    await insertMeeting(userId, '15')
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      meetings: Array<{ lamport: string }>
+      notes: unknown[]
+      orgCompanies: Array<{ id: string; lamport: string }>
+      orgCompanyAliases: Array<{ id: string; companyId: string }>
+      contacts: Array<{ id: string; lamport: string }>
+      contactEmails: Array<{ contactId: string; email: string }>
+      serverLamport: string
+    }
+
+    expect(body.orgCompanies.find((c) => c.id === companyId)).toBeTruthy()
+    expect(body.orgCompanyAliases.find((a) => a.id === aliasId)).toBeTruthy()
+    expect(body.contacts.find((c) => c.id === contactId)).toBeTruthy()
+    expect(body.contactEmails.find((e) => e.contactId === contactId)).toBeTruthy()
+    expect(body.meetings).toHaveLength(1)
+    expect(body.serverLamport).toBe('15')
+  })
+
+  test('T14 — cascade-child tables (aliases, contact_emails) are user-scoped via JOIN', async () => {
+    const alice = await setupUser()
+    const bob = await setupUser()
+
+    // Bob has a company + alias + contact + contact_email.
+    const bobCompanyId = TEST_PREFIX + 'co-' + createId().slice(0, 6)
+    await db.insert(schema.orgCompanies).values({
+      id: bobCompanyId,
+      userId: bob.userId,
+      canonicalName: 'BobCo',
+      normalizedName: `bobco-${bobCompanyId}`,
+      lamport: '21',
+      createdByUserId: bob.userId,
+    })
+    createdCompanyIds.push(bobCompanyId)
+
+    await db.insert(schema.orgCompanyAliases).values({
+      id: TEST_PREFIX + 'al-' + createId().slice(0, 6),
+      companyId: bobCompanyId,
+      aliasValue: 'B.C.',
+      aliasType: 'name',
+      lamport: '22',
+    })
+
+    const bobContactId = TEST_PREFIX + 'ct-' + createId().slice(0, 6)
+    await db.insert(schema.contacts).values({
+      id: bobContactId,
+      userId: bob.userId,
+      fullName: 'BobContact',
+      normalizedName: `bobcontact-${bobContactId}`,
+      lamport: '23',
+      createdByUserId: bob.userId,
+    })
+    createdContactIds.push(bobContactId)
+
+    await db.insert(schema.contactEmails).values({
+      contactId: bobContactId,
+      email: `${bobContactId}@example.com`,
+      isPrimary: 1,
+      lamport: '24',
+    })
+
+    // Alice pulls — should see none of Bob's rows.
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${alice.jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      orgCompanies: Array<{ id: string }>
+      orgCompanyAliases: Array<{ companyId: string }>
+      contacts: Array<{ id: string }>
+      contactEmails: Array<{ contactId: string }>
+    }
+    expect(body.orgCompanies.find((c) => c.id === bobCompanyId)).toBeFalsy()
+    expect(body.orgCompanyAliases.find((a) => a.companyId === bobCompanyId)).toBeFalsy()
+    expect(body.contacts.find((c) => c.id === bobContactId)).toBeFalsy()
+    expect(body.contactEmails.find((e) => e.contactId === bobContactId)).toBeFalsy()
   })
 })

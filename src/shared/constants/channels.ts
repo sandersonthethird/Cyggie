@@ -459,6 +459,14 @@ export const IPC_CHANNELS = {
   // useMeetings) invalidate TanStack queries for the listed ids so the UI
   // reflects pulled changes immediately rather than on next manual refresh.
   MEETINGS_REMOTE_APPLIED: 'sync:meetings-remote-applied',
+  // T14 — same pattern for the other owned tables that 1.5c is being
+  // extended to. Renderer subscribers (useNotes, useContacts, etc.)
+  // invalidate TanStack queries for the listed ids.
+  NOTES_REMOTE_APPLIED: 'sync:notes-remote-applied',
+  CONTACTS_REMOTE_APPLIED: 'sync:contacts-remote-applied',
+  ORG_COMPANIES_REMOTE_APPLIED: 'sync:org-companies-remote-applied',
+  CONTACT_EMAILS_REMOTE_APPLIED: 'sync:contact-emails-remote-applied',
+  ORG_COMPANY_ALIASES_REMOTE_APPLIED: 'sync:org-company-aliases-remote-applied',
 
   // Cyggie cloud auth (Desktop OAuth slice)
   CYGGIE_AUTH_SIGN_IN: 'cyggie-auth:sign-in',
