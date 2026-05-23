@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   Linking,
   Pressable,
   RefreshControl,
@@ -76,7 +77,33 @@ export default function CompanyDetailScreen() {
           <Text style={styles.topbarTitle} numberOfLines={1}>
             {company?.name ?? ''}
           </Text>
-          <View style={styles.backBtn} />
+          {/* T17b Slice 2 — "Chat about this company" entry point. Disabled
+              until company loads (we need name for the session label). */}
+          <Pressable
+            onPress={() => {
+              if (!company) return
+              const label = company.name || 'this company'
+              router.push({
+                pathname: '/chat/[contextKind]/[contextId]',
+                params: {
+                  contextKind: 'company',
+                  contextId: `company:${company.id}`,
+                  label,
+                },
+              })
+            }}
+            hitSlop={8}
+            disabled={!company}
+            style={({ pressed }) => [
+              styles.backBtn,
+              !company && { opacity: 0.4 },
+              pressed && styles.pressed,
+            ]}
+            accessibilityLabel="Chat about this company"
+            accessibilityRole="button"
+          >
+            <Ionicons name="chatbubble-ellipses-outline" size={22} color={colors.text} />
+          </Pressable>
         </View>
       </SafeAreaView>
 
@@ -141,15 +168,27 @@ function Hero({ company }: { company: CompanyDetail }) {
           {company.websiteUrl && (
             <LinkChip
               icon="globe-outline"
-              label="Website"
-              onPress={() => void Linking.openURL(company.websiteUrl!)}
+              label={domainLabel(company.primaryDomain, company.websiteUrl)}
+              onPress={() =>
+                openExternal(
+                  ensureHttpUrl(company.websiteUrl!),
+                  'Website',
+                  company.websiteUrl!,
+                )
+              }
             />
           )}
           {company.linkedinCompanyUrl && (
             <LinkChip
               icon="logo-linkedin"
               label="LinkedIn"
-              onPress={() => void Linking.openURL(company.linkedinCompanyUrl!)}
+              onPress={() =>
+                openExternal(
+                  ensureHttpUrl(company.linkedinCompanyUrl!),
+                  'LinkedIn',
+                  company.linkedinCompanyUrl!,
+                )
+              }
             />
           )}
         </View>
@@ -273,7 +312,6 @@ function OverviewSection({ company }: { company: CompanyDetail }) {
           label: 'Founded',
           value: company.foundingYear ? String(company.foundingYear) : null,
         },
-        { label: 'Domain', value: company.primaryDomain },
       ].filter((r): r is { label: string; value: string } => Boolean(r.value)),
     [company],
   )
@@ -600,6 +638,35 @@ function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void })
       </Pressable>
     </View>
   )
+}
+
+async function openExternal(url: string, label: string, fallback: string) {
+  try {
+    await Linking.openURL(url)
+  } catch {
+    Alert.alert(label, fallback)
+  }
+}
+
+function ensureHttpUrl(raw: string): string {
+  const trimmed = raw.trim()
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  return `https://${trimmed.replace(/^\/+/, '')}`
+}
+
+function domainLabel(primaryDomain: string | null, websiteUrl: string | null): string {
+  if (primaryDomain && primaryDomain.trim().length > 0) {
+    return primaryDomain.trim().replace(/^www\./i, '')
+  }
+  if (websiteUrl) {
+    try {
+      const url = new URL(websiteUrl)
+      return url.hostname.replace(/^www\./i, '')
+    } catch {
+      return websiteUrl.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/.*$/, '')
+    }
+  }
+  return 'Website'
 }
 
 function initials(name: string): string {

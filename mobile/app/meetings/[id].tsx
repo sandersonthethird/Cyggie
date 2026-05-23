@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   Linking,
   Pressable,
   RefreshControl,
@@ -29,12 +30,14 @@ import {
   enhanceMeeting,
   fetchMeeting,
   fetchTemplates,
+  type AttendeeContact,
   type MeetingDetail,
   type MeetingLinkedCompany,
   type MeetingLinkedContact,
   type SummaryTemplate,
   type TranscriptSegment,
 } from '../../lib/api/meetings'
+import { attendeeLabel } from '../../lib/attendee'
 import { EnhanceModal } from '../../components/EnhanceModal'
 import { useAuthStore } from '../../lib/auth/store'
 import { MeetingStatusPill } from '../../components/MeetingStatusPill'
@@ -241,7 +244,7 @@ export default function MeetingDetailScreen() {
             <Hero meeting={meeting} />
             <StatsCard meeting={meeting} />
             {meeting.isGroupEvent && <GroupEventBanner />}
-            {meeting.status === 'scheduled' && <RecordCTA meeting={meeting} />}
+            <MeetingActionsRow meeting={meeting} />
             {meeting.status === 'empty' && <EmptyTranscriptBanner meetingId={meeting.id} />}
             {meeting.status === 'error' && <RetryUploadBanner meetingId={meeting.id} />}
             <TerminalCleanupSideEffect meetingStatus={meeting.status} meetingId={meeting.id} />
@@ -314,7 +317,13 @@ function Hero({ meeting }: { meeting: MeetingDetail }) {
           <LinkChip
             icon="videocam-outline"
             label={meeting.meetingPlatform ?? 'Join'}
-            onPress={() => void Linking.openURL(meeting.meetingUrl!)}
+            onPress={() =>
+              openExternal(
+                meeting.meetingUrl!,
+                meeting.meetingPlatform ?? 'Meeting link',
+                meeting.meetingUrl!,
+              )
+            }
           />
         </View>
       )}
@@ -419,16 +428,80 @@ function RecordCTA({ meeting }: { meeting: MeetingDetail }) {
     router.push(`/record?${params.toString()}` as never)
   }
   return (
-    <View style={styles.recordCta}>
-      <Pressable
-        onPress={onPress}
-        style={({ pressed }) => [styles.recordCtaBtn, pressed && styles.pressed]}
-        accessibilityRole="button"
-        accessibilityLabel="Start recording this meeting"
-      >
-        <Ionicons name="mic" size={18} color="#fff" />
-        <Text style={styles.recordCtaText}>Start recording</Text>
-      </Pressable>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.recordCtaBtn, pressed && styles.pressed]}
+      accessibilityRole="button"
+      accessibilityLabel="Start recording this meeting"
+    >
+      <Ionicons name="mic" size={18} color="#fff" />
+      <Text style={styles.recordCtaText}>Start recording</Text>
+    </Pressable>
+  )
+}
+
+/**
+ * T17b — "Chat about this meeting" CTA. Gated on the meeting having
+ * *something* worth asking about: a transcript, the user's notes, or a
+ * persisted summary. Pure-stub scheduled rows (status='scheduled', no
+ * content yet) don't get this CTA — there's nothing to ground a
+ * conversation in, and the user would just hit the empty-context branch
+ * of the gateway's context-builder.
+ */
+function meetingHasContent(meeting: MeetingDetail): boolean {
+  if (meeting.hasTranscript) return true
+  if (meeting.notes && meeting.notes.trim().length > 0) return true
+  if (meeting.summary && meeting.summary.trim().length > 0) return true
+  return false
+}
+
+function ChatCTA({ meeting }: { meeting: MeetingDetail }) {
+  if (!meetingHasContent(meeting)) return null
+  const onPress = () => {
+    router.push({
+      pathname: '/chat/[contextKind]/[contextId]',
+      params: {
+        contextKind: 'meeting',
+        contextId: `meeting:${meeting.id}`,
+        label: meeting.title,
+      },
+    })
+  }
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.chatCtaBtn, pressed && styles.pressed]}
+      accessibilityRole="button"
+      accessibilityLabel="Chat about this meeting"
+    >
+      <Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.crimson} />
+      <Text style={styles.chatCtaText}>Chat</Text>
+    </Pressable>
+  )
+}
+
+/**
+ * Single horizontal action band shared by Record + Chat. Each child is
+ * independently conditional; whichever ones render flex evenly.
+ * Returns null when neither would render so we don't leave an empty
+ * row taking up vertical space above the segment control.
+ */
+function MeetingActionsRow({ meeting }: { meeting: MeetingDetail }) {
+  const showRecord = meeting.status === 'scheduled' && Boolean(meeting.calendarEventId)
+  const showChat = meetingHasContent(meeting)
+  if (!showRecord && !showChat) return null
+  return (
+    <View style={styles.actionsRow}>
+      {showRecord && (
+        <View style={styles.actionsRowItem}>
+          <RecordCTA meeting={meeting} />
+        </View>
+      )}
+      {showChat && (
+        <View style={styles.actionsRowItem}>
+          <ChatCTA meeting={meeting} />
+        </View>
+      )}
     </View>
   )
 }
@@ -688,19 +761,16 @@ function OverviewSection({
         </View>
       )}
 
-      {meeting.attendees && meeting.attendees.length > 0 && (
+      {meeting.attendeeContacts.length > 0 && (
         <View style={styles.descBlock}>
           <Text style={styles.descHeading}>
-            Attendees ({meeting.attendees.length})
+            Attendees ({meeting.attendeeContacts.length})
           </Text>
-          {meeting.attendees.map((name, idx) => (
-            <Text key={idx} style={styles.attendeeText}>
-              {name}
-              {meeting.attendeeEmails?.[idx]
-                ? `  ·  ${meeting.attendeeEmails[idx]}`
-                : ''}
-            </Text>
-          ))}
+          <View style={styles.chipRow}>
+            {meeting.attendeeContacts.map((a, idx) => (
+              <AttendeePill key={`${a.email ?? a.name}-${idx}`} attendee={a} />
+            ))}
+          </View>
         </View>
       )}
 
@@ -719,6 +789,34 @@ function CompanyPill({ company }: { company: MeetingLinkedCompany }) {
         {company.name}
       </Text>
     </Pressable>
+  )
+}
+
+function AttendeePill({ attendee }: { attendee: AttendeeContact }) {
+  const label = attendeeLabel(attendee)
+  if (attendee.contactId) {
+    const contactId = attendee.contactId
+    return (
+      <Pressable
+        onPress={() => router.push(`/contacts/${contactId}`)}
+        style={({ pressed }) => [styles.attendeePill, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
+        <Ionicons name="person-outline" size={12} color={colors.chipSky} />
+        <Text style={styles.attendeePillText} numberOfLines={1}>
+          {label}
+        </Text>
+        <Ionicons name="chevron-forward" size={12} color={colors.chipSky} />
+      </Pressable>
+    )
+  }
+  return (
+    <View style={[styles.attendeePill, styles.attendeePillDim]}>
+      <Text style={styles.attendeePillText} numberOfLines={1}>
+        {label}
+      </Text>
+    </View>
   )
 }
 
@@ -955,6 +1053,14 @@ function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void })
   )
 }
 
+async function openExternal(url: string, label: string, fallback: string) {
+  try {
+    await Linking.openURL(url)
+  } catch {
+    Alert.alert(label, fallback)
+  }
+}
+
 function initials(name: string): string {
   const words = name.trim().split(/\s+/).slice(0, 2)
   if (words.length === 0) return '?'
@@ -1100,6 +1206,16 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
   },
+  // T17b — Record + Chat share one action band per detail screen so they
+  // sit side-by-side when both apply (rare — Record is scheduled-only,
+  // Chat needs content). Each item gets flex:1 for equal-width split.
+  actionsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+  },
+  actionsRowItem: { flex: 1 },
   recordCtaBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1112,6 +1228,25 @@ const styles = StyleSheet.create({
   },
   recordCtaText: {
     color: '#FFFFFF',
+    fontSize: type.body + 1,
+    fontWeight: '600',
+  },
+  // Chat CTA — outline crimson rather than solid, so when Record + Chat
+  // are both visible the primary action (Record) reads as primary.
+  chatCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.surface,
+    paddingVertical: 14,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.crimson,
+  },
+  chatCtaText: {
+    color: colors.crimson,
     fontSize: type.body + 1,
     fontWeight: '600',
   },
@@ -1234,11 +1369,6 @@ const styles = StyleSheet.create({
     fontSize: type.body + 1,
     lineHeight: 21,
   },
-  attendeeText: {
-    color: colors.text2,
-    fontSize: type.body,
-    paddingVertical: 3,
-  },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1255,6 +1385,24 @@ const styles = StyleSheet.create({
   },
   companyPillText: {
     color: colors.crimson,
+    fontSize: type.bodyTight,
+    fontWeight: '600',
+    maxWidth: 200,
+  },
+  attendeePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: colors.chipSkyMuted,
+    borderRadius: radii.pill,
+  },
+  attendeePillDim: {
+    opacity: 0.6,
+  },
+  attendeePillText: {
+    color: colors.chipSky,
     fontSize: type.bodyTight,
     fontWeight: '600',
     maxWidth: 200,

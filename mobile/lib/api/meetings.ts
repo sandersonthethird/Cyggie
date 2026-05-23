@@ -22,6 +22,13 @@ export interface MeetingLinkedContact {
   speakerIndex: number
 }
 
+export interface AttendeeContact {
+  name: string
+  email: string | null
+  contactId: string | null
+  contactFullName: string | null
+}
+
 export interface MeetingDetail {
   id: string
   title: string
@@ -59,13 +66,12 @@ export interface MeetingDetail {
    * EXPO_PUBLIC_FEATURE_SUMMARY_TAB === '1'.
    */
   summary: string | null
-  attendees: string[] | null
-  attendeeEmails: string[] | null
   speakerCount: number
   hasTranscript: boolean
   transcriptSegments: TranscriptSegment[]
   linkedCompanies: MeetingLinkedCompany[]
   linkedContacts: MeetingLinkedContact[]
+  attendeeContacts: AttendeeContact[]
 }
 
 export async function fetchMeeting(

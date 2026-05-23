@@ -220,7 +220,6 @@ describe('GET /meetings/:id', () => {
       status: string
       wasImpromptu: boolean
       notes: string | null
-      attendees: string[]
       hasTranscript: boolean
       transcriptSegments: Array<{
         speaker: number
@@ -249,7 +248,6 @@ describe('GET /meetings/:id', () => {
     expect(body.status).toBe('completed')
     expect(body.wasImpromptu).toBe(false)
     expect(body.notes).toBe('Discussed roadmap.')
-    expect(body.attendees).toEqual(['Alice', 'Bob'])
 
     // Transcript: 2 valid segments (malformed one dropped), words/isFinal stripped.
     expect(body.hasTranscript).toBe(true)
@@ -365,12 +363,13 @@ describe('GET /meetings/:id', () => {
   // Mirrors desktop's two-table lookup (contacts.email + contact_emails.email)
   // at packages/db/src/sqlite/repositories/contact.repo.ts:429-439.
   // Scoped by user_id so cross-tenant data can't leak via shared email.
-  test('attendeeContacts resolves primary email to contactId; unmatched emails are null', async () => {
+  test('attendeeContacts resolves primary email to contactId + contactFullName; unmatched emails are null', async () => {
     const userId = await insertTestUser()
     const matchedEmail = `priya-${TEST_PREFIX}@example.com`
+    const matchedFullName = 'Priya ' + TEST_PREFIX
     const matchedContactId = await insertContact({
       userId,
-      fullName: 'Priya ' + TEST_PREFIX,
+      fullName: matchedFullName,
       email: matchedEmail,
     })
     const meetingId = await insertMeeting({
@@ -388,20 +387,36 @@ describe('GET /meetings/:id', () => {
 
     expect(res.statusCode).toBe(200)
     const body = res.json() as {
-      attendeeContacts: Array<{ name: string; email: string | null; contactId: string | null }>
+      attendeeContacts: Array<{
+        name: string
+        email: string | null
+        contactId: string | null
+        contactFullName: string | null
+      }>
     }
     expect(body.attendeeContacts).toEqual([
-      { name: 'Priya', email: matchedEmail, contactId: matchedContactId },
-      { name: 'Stranger', email: `unknown-${TEST_PREFIX}@example.com`, contactId: null },
+      {
+        name: 'Priya',
+        email: matchedEmail,
+        contactId: matchedContactId,
+        contactFullName: matchedFullName,
+      },
+      {
+        name: 'Stranger',
+        email: `unknown-${TEST_PREFIX}@example.com`,
+        contactId: null,
+        contactFullName: null,
+      },
     ])
   })
 
   test('attendeeContacts resolves emails case-insensitively', async () => {
     const userId = await insertTestUser()
     const storedEmail = `Mixed.Case-${TEST_PREFIX}@Example.COM`
+    const matchedFullName = 'Casey ' + TEST_PREFIX
     const matchedContactId = await insertContact({
       userId,
-      fullName: 'Casey ' + TEST_PREFIX,
+      fullName: matchedFullName,
       email: storedEmail,
     })
     const attendeeEmail = storedEmail.toLowerCase()
@@ -420,10 +435,20 @@ describe('GET /meetings/:id', () => {
 
     expect(res.statusCode).toBe(200)
     const body = res.json() as {
-      attendeeContacts: Array<{ name: string; email: string | null; contactId: string | null }>
+      attendeeContacts: Array<{
+        name: string
+        email: string | null
+        contactId: string | null
+        contactFullName: string | null
+      }>
     }
     expect(body.attendeeContacts).toEqual([
-      { name: 'Casey', email: attendeeEmail, contactId: matchedContactId },
+      {
+        name: 'Casey',
+        email: attendeeEmail,
+        contactId: matchedContactId,
+        contactFullName: matchedFullName,
+      },
     ])
   })
 
@@ -431,9 +456,10 @@ describe('GET /meetings/:id', () => {
     const userId = await insertTestUser()
     const primaryEmail = `primary-${TEST_PREFIX}@example.com`
     const aliasEmail = `work-alias-${TEST_PREFIX}@example.com`
+    const matchedFullName = 'Alias-Owner ' + TEST_PREFIX
     const matchedContactId = await insertContact({
       userId,
-      fullName: 'Alias-Owner ' + TEST_PREFIX,
+      fullName: matchedFullName,
       email: primaryEmail,
     })
     await insertContactEmailAlias(matchedContactId, aliasEmail)
@@ -454,10 +480,20 @@ describe('GET /meetings/:id', () => {
 
     expect(res.statusCode).toBe(200)
     const body = res.json() as {
-      attendeeContacts: Array<{ name: string; email: string | null; contactId: string | null }>
+      attendeeContacts: Array<{
+        name: string
+        email: string | null
+        contactId: string | null
+        contactFullName: string | null
+      }>
     }
     expect(body.attendeeContacts).toEqual([
-      { name: 'Alias-Owner', email: aliasEmail, contactId: matchedContactId },
+      {
+        name: 'Alias-Owner',
+        email: aliasEmail,
+        contactId: matchedContactId,
+        contactFullName: matchedFullName,
+      },
     ])
   })
 
@@ -489,11 +525,16 @@ describe('GET /meetings/:id', () => {
 
     expect(res.statusCode).toBe(200)
     const body = res.json() as {
-      attendeeContacts: Array<{ name: string; email: string | null; contactId: string | null }>
+      attendeeContacts: Array<{
+        name: string
+        email: string | null
+        contactId: string | null
+        contactFullName: string | null
+      }>
     }
-    // contactId must be null — B's contact must not leak into A's meeting.
+    // contactId + contactFullName must be null — B's contact must not leak into A's meeting.
     expect(body.attendeeContacts).toEqual([
-      { name: 'Some Person', email: sharedEmail, contactId: null },
+      { name: 'Some Person', email: sharedEmail, contactId: null, contactFullName: null },
     ])
   })
 

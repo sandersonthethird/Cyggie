@@ -38,6 +38,7 @@ export const colors = {
   // these; included now so MeetingRow can stub a slot consistently)
   chipViolet: '#7C3AED',
   chipSky: '#0369A1',
+  chipSkyMuted: '#E0F2FE',
 } as const
 
 export const spacing = {

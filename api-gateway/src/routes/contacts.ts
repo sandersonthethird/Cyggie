@@ -48,6 +48,12 @@ const ContactDetailSchema = ContactListItemSchema.extend({
   notes: z.string().nullable(),
   keyTakeaways: z.string().nullable(),
   lastEmailAt: z.string().nullable(),
+  // Most recent of (live max meeting date via speaker_contact_links) and
+  // (denormalized last_email_at). Mirrors the way company detail computes
+  // last_touch from meeting_company_links — see companies.ts. Surfaced here
+  // because the denormalized last_meeting_at column can be stale for contacts
+  // imported outside the writeWithSync path.
+  lastTouchAt: z.string().nullable(),
   recentMeetings: z.array(
     z.object({
       id: z.string(),
@@ -235,6 +241,102 @@ export async function registerContactRoutes(
         .orderBy(desc(schema.meetings.date))
         .limit(10)
 
+      // lastTouchAt is the most recent of three signals:
+      //   1. Speaker-tagged meetings via meeting_speaker_contact_links
+      //      (only populated after a recording is transcribed AND a speaker
+      //      is tagged — narrow coverage).
+      //   2. Calendar meetings where this contact appears in attendee_emails
+      //      (broad coverage — every calendar invite). Matched against the
+      //      contact's primary email + contact_emails aliases.
+      //   3. Denormalized contacts.last_email_at (maintained by desktop
+      //      writeWithSync hooks on email writes).
+      // (1) alone misses every calendar invite the contact didn't get tagged
+      // in, which is why the field showed empty for most contacts.
+      const aliasRows = await db
+        .select({ email: schema.contactEmails.email })
+        .from(schema.contactEmails)
+        .where(eq(schema.contactEmails.contactId, id))
+
+      const lowerEmails = Array.from(
+        new Set(
+          [row.email, ...aliasRows.map((r) => r.email)]
+            .filter((e): e is string => Boolean(e && e.trim()))
+            .map((e) => e.toLowerCase().trim()),
+        ),
+      )
+
+      const [speakerMeetingAgg] = await db
+        .select({
+          lastMeetingAt: sql<Date | null>`max(${schema.meetings.date})`,
+        })
+        .from(schema.meetingSpeakerContactLinks)
+        .innerJoin(
+          schema.meetings,
+          eq(schema.meetingSpeakerContactLinks.meetingId, schema.meetings.id),
+        )
+        .where(
+          and(
+            eq(schema.meetingSpeakerContactLinks.contactId, id),
+            eq(schema.meetings.userId, user.sub),
+          ),
+        )
+
+      let attendeeMeetingAt: Date | null = null
+      if (lowerEmails.length > 0) {
+        const [attendeeAgg] = await db
+          .select({
+            lastMeetingAt: sql<Date | null>`max(${schema.meetings.date})`,
+          })
+          .from(schema.meetings)
+          .where(
+            and(
+              eq(schema.meetings.userId, user.sub),
+              sql`EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(${schema.meetings.attendeeEmails}) AS ae(email)
+                WHERE lower(ae.email) IN (${sql.join(
+                  lowerEmails.map((e) => sql`${e}`),
+                  sql`, `,
+                )})
+              )`,
+            ),
+          )
+        attendeeMeetingAt = attendeeAgg?.lastMeetingAt ?? null
+      }
+
+      const speakerMs = speakerMeetingAgg?.lastMeetingAt
+        ? new Date(speakerMeetingAgg.lastMeetingAt).getTime()
+        : null
+      const attendeeMs = attendeeMeetingAt ? new Date(attendeeMeetingAt).getTime() : null
+      const emailMs = row.lastEmailAt ? new Date(row.lastEmailAt).getTime() : null
+      const candidateMs = [speakerMs, attendeeMs, emailMs].filter(
+        (ms): ms is number => ms != null,
+      )
+      const lastTouchAt =
+        candidateMs.length > 0
+          ? new Date(Math.max(...candidateMs)).toISOString()
+          : null
+
+      // Temporary diagnostic for the "Last touch blank" debugging in
+      // 2026-05-23 — surfaces which of the three signals (speaker-link
+      // meetings, calendar attendee-email match, denormalized last_email_at)
+      // contributed. Remove once the push-pipeline gap is fixed and
+      // backfilled.
+      req.log.info(
+        {
+          contactId: id,
+          fullName: row.fullName,
+          emailsChecked: lowerEmails,
+          speakerLinkLastMeetingAt: speakerMs ? new Date(speakerMs).toISOString() : null,
+          attendeeEmailLastMeetingAt: attendeeMs
+            ? new Date(attendeeMs).toISOString()
+            : null,
+          denormalizedLastEmailAt: emailMs ? new Date(emailMs).toISOString() : null,
+          lastTouchAt,
+        },
+        'contact_last_touch_debug',
+      )
+
       return {
         id: row.id,
         fullName: row.fullName,
@@ -264,6 +366,7 @@ export async function registerContactRoutes(
         lastEmailAt: row.lastEmailAt
           ? new Date(row.lastEmailAt).toISOString()
           : null,
+        lastTouchAt,
         recentMeetings: recentMeetings.map((m) => ({
           id: m.id,
           title: m.title,

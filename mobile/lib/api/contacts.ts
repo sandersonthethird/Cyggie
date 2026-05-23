@@ -37,6 +37,7 @@ export interface ContactDetail extends ContactListItem {
   notes: string | null
   keyTakeaways: string | null
   lastEmailAt: string | null
+  lastTouchAt: string | null
   recentMeetings: ContactMeetingRef[]
 }
 

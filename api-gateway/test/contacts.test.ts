@@ -306,6 +306,7 @@ describe('GET /contacts/:id', () => {
       primaryCompanyId: string | null
       primaryCompanyName: string | null
       lastMeetingAt: string | null
+      lastTouchAt: string | null
       recentMeetings: Array<{ id: string; title: string; date: string }>
     }
 
@@ -317,6 +318,9 @@ describe('GET /contacts/:id', () => {
     expect(body.primaryCompanyId).toBe(companyId)
     expect(body.primaryCompanyName).toBe('Detail Co ' + TEST_PREFIX)
     expect(body.lastMeetingAt).toBe('2026-05-10T10:00:00.000Z')
+    // lastTouchAt is the max of the live meeting subquery + denormalized
+    // lastEmailAt. No emails here, so it equals the latest meeting date.
+    expect(body.lastTouchAt).toBe('2026-05-10T10:00:00.000Z')
 
     // Meetings sorted DESC by date.
     expect(body.recentMeetings[0]?.id).toBe(m2)

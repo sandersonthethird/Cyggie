@@ -61,6 +61,7 @@ const AttendeeContactSchema = z.object({
   name: z.string(),
   email: z.string().nullable(),
   contactId: z.string().nullable(),
+  contactFullName: z.string().nullable(),
 })
 
 const MeetingDetailSchema = z.object({
@@ -101,8 +102,6 @@ const MeetingDetailSchema = z.object({
   // without needing local-disk access. Null when the meeting hasn't been
   // summarized yet (or predates the dual-write).
   summary: z.string().nullable(),
-  attendees: z.array(z.string()).nullable(),
-  attendeeEmails: z.array(z.string()).nullable(),
   speakerCount: z.number(),
   hasTranscript: z.boolean(),
   transcriptSegments: z.array(TranscriptSegmentSchema),
@@ -157,9 +156,8 @@ function normalizeSegments(
 
 /**
  * Build a MeetingDetail response from a `meetings` row + its linked
- * companies/contacts. Shared by GET, POST /from-calendar-event, PATCH,
- * and the GET /sync/pull list builder so the wire shape stays single-
- * source-of-truth.
+ * companies/contacts. Shared by GET /meetings/:id, POST /from-calendar-event,
+ * and PATCH /meetings/:id so the wire shape stays single-source-of-truth.
  */
 async function buildMeetingDetail(
   db: ReturnType<typeof getDb>,
@@ -212,12 +210,13 @@ async function buildMeetingDetail(
         .map((e) => e.toLowerCase()),
     ),
   )
-  const emailToContactId = new Map<string, string>()
+  const emailToContact = new Map<string, { id: string; fullName: string }>()
   if (lowercasedEmails.length > 0) {
     // Primary email column on contacts.
     const primaryMatches = await db
       .select({
         id: schema.contacts.id,
+        fullName: schema.contacts.fullName,
         email: sql<string>`lower(${schema.contacts.email})`,
       })
       .from(schema.contacts)
@@ -228,13 +227,14 @@ async function buildMeetingDetail(
         ),
       )
     for (const row of primaryMatches) {
-      if (row.email) emailToContactId.set(row.email, row.id)
+      if (row.email) emailToContact.set(row.email, { id: row.id, fullName: row.fullName })
     }
 
     // Alias emails on contact_emails. Inner-join with contacts to scope by user_id.
     const aliasMatches = await db
       .select({
         id: schema.contactEmails.contactId,
+        fullName: schema.contacts.fullName,
         email: sql<string>`lower(${schema.contactEmails.email})`,
       })
       .from(schema.contactEmails)
@@ -246,8 +246,8 @@ async function buildMeetingDetail(
         ),
       )
     for (const row of aliasMatches) {
-      if (row.email && !emailToContactId.has(row.email)) {
-        emailToContactId.set(row.email, row.id)
+      if (row.email && !emailToContact.has(row.email)) {
+        emailToContact.set(row.email, { id: row.id, fullName: row.fullName })
       }
     }
   }
@@ -255,10 +255,13 @@ async function buildMeetingDetail(
     const rawEmail = attendeeEmails[idx]
     const email =
       typeof rawEmail === 'string' && rawEmail.length > 0 ? rawEmail : null
-    const contactId = email
-      ? emailToContactId.get(email.toLowerCase()) ?? null
-      : null
-    return { name, email, contactId }
+    const match = email ? emailToContact.get(email.toLowerCase()) ?? null : null
+    return {
+      name,
+      email,
+      contactId: match?.id ?? null,
+      contactFullName: match?.fullName ?? null,
+    }
   })
 
   const speakerMap =
@@ -284,8 +287,6 @@ async function buildMeetingDetail(
     meetingUrl: meeting.meetingUrl,
     notes: meeting.notes,
     summary: meeting.summary ?? null,
-    attendees: (meeting.attendees as string[] | null) ?? null,
-    attendeeEmails: (meeting.attendeeEmails as string[] | null) ?? null,
     speakerCount: meeting.speakerCount,
     hasTranscript,
     transcriptSegments: segments,

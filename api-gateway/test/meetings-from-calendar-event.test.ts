@@ -99,7 +99,12 @@ describe('POST /meetings/from-calendar-event', () => {
       date: string
       wasImpromptu: boolean
       lamport: string
-      attendees: string[] | null
+      attendeeContacts: Array<{
+        name: string
+        email: string | null
+        contactId: string | null
+        contactFullName: string | null
+      }>
       meetingPlatform: string | null
       meetingUrl: string | null
     }
@@ -110,7 +115,10 @@ describe('POST /meetings/from-calendar-event', () => {
     expect(body.wasImpromptu).toBe(false)
     expect(body.meetingPlatform).toBe('google_meet')
     expect(body.meetingUrl).toBe('https://meet.google.com/abc-defg-hij')
-    expect(body.attendees).toEqual(['Alice', 'Bob'])
+    expect(body.attendeeContacts).toEqual([
+      { name: 'Alice', email: 'alice@example.com', contactId: null, contactFullName: null },
+      { name: 'Bob', email: 'bob@example.com', contactId: null, contactFullName: null },
+    ])
     expect(typeof body.lamport).toBe('string')
 
     // Verify DB state

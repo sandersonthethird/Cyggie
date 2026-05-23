@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   Linking,
   Pressable,
   RefreshControl,
@@ -71,7 +72,33 @@ export default function ContactDetailScreen() {
           <Text style={styles.topbarTitle} numberOfLines={1}>
             {contact?.fullName ?? ''}
           </Text>
-          <View style={styles.backBtn} />
+          {/* T17b Slice 2 — "Chat about this contact" entry point. Disabled
+              until contact loads (we need fullName for the session label). */}
+          <Pressable
+            onPress={() => {
+              if (!contact) return
+              const label = contact.fullName || 'this contact'
+              router.push({
+                pathname: '/chat/[contextKind]/[contextId]',
+                params: {
+                  contextKind: 'contact',
+                  contextId: `contact:${contact.id}`,
+                  label,
+                },
+              })
+            }}
+            hitSlop={8}
+            disabled={!contact}
+            style={({ pressed }) => [
+              styles.backBtn,
+              !contact && { opacity: 0.4 },
+              pressed && styles.pressed,
+            ]}
+            accessibilityLabel="Chat about this contact"
+            accessibilityRole="button"
+          >
+            <Ionicons name="chatbubble-ellipses-outline" size={22} color={colors.text} />
+          </Pressable>
         </View>
       </SafeAreaView>
 
@@ -146,21 +173,21 @@ function Hero({ contact }: { contact: ContactDetail }) {
           <LinkChip
             icon="mail-outline"
             label="Email"
-            onPress={() => void Linking.openURL(`mailto:${contact.email}`)}
+            onPress={() => openExternal(`mailto:${contact.email}`, 'Email', contact.email!)}
           />
         )}
         {contact.phone && (
           <LinkChip
             icon="call-outline"
             label="Call"
-            onPress={() => void Linking.openURL(`tel:${contact.phone}`)}
+            onPress={() => openExternal(`tel:${contact.phone}`, 'Phone', contact.phone!)}
           />
         )}
         {contact.linkedinUrl && (
           <LinkChip
             icon="logo-linkedin"
             label="LinkedIn"
-            onPress={() => void Linking.openURL(contact.linkedinUrl!)}
+            onPress={() => openExternal(contact.linkedinUrl!, 'LinkedIn', contact.linkedinUrl!)}
           />
         )}
       </View>
@@ -189,13 +216,10 @@ function LinkChip({
 }
 
 function StatsCard({ contact }: { contact: ContactDetail }) {
-  const lastMeeting = formatRelativeDay(contact.lastMeetingAt)
-  const lastEmail = formatRelativeDay(contact.lastEmailAt)
+  const lastTouch = formatRelativeDay(contact.lastTouchAt)
   return (
     <View style={styles.statsCard}>
-      <StatCell label="Last meeting" value={lastMeeting} />
-      <View style={styles.statDivider} />
-      <StatCell label="Last email" value={lastEmail} />
+      <StatCell label="Last touch" value={lastTouch} />
       <View style={styles.statDivider} />
       <StatCell
         label="Type"
@@ -394,6 +418,15 @@ function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void })
       </Pressable>
     </View>
   )
+}
+
+async function openExternal(url: string, label: string, fallback: string) {
+  try {
+    await Linking.openURL(url)
+  } catch (err) {
+    if (__DEV__) console.warn(`[openExternal] failed to open ${url}`, err)
+    Alert.alert(label, fallback)
+  }
 }
 
 function initials(name: string): string {
