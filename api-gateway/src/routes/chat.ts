@@ -671,6 +671,151 @@ export async function registerChatRoutes(
       )
 
       const client = new Anthropic({ apiKey })
+
+      // ─── Branch: streaming vs blocking ────────────────────────────────
+      //
+      // Streaming opt-in: client sends `Accept: text/event-stream` (cleaner
+      // than a `?stream=1` query param; mirrors the SSE convention). Without
+      // the header, the blocking path runs unchanged (bit-for-bit identical
+      // wire format to the pre-T18 behavior).
+      const wantsStream = String(req.headers.accept ?? '').includes('text/event-stream')
+
+      if (wantsStream) {
+        // STREAM PATH — write SSE response.
+        //
+        // reply.hijack() disables Fastify's auto-response machinery so our
+        // raw writes don't conflict with a duplicate response Fastify would
+        // otherwise emit after the handler returns. Without this, every
+        // streaming response ends with "ERR_HTTP_HEADERS_SENT" or a hung
+        // client.
+        //
+        // Anti-buffering headers: required so fly-proxy + any intermediary
+        // forwards bytes immediately rather than buffering until the response
+        // ends. Without these, the streaming "works" locally but tokens
+        // arrive in one chunk in production. flushHeaders() forces the
+        // headers out before the first token.
+        reply.hijack()
+        reply.raw.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          'X-Accel-Buffering': 'no',
+          Connection: 'keep-alive',
+        })
+        reply.raw.flushHeaders()
+
+        let assembledText = ''
+        try {
+          const stream = client.messages.stream(
+            {
+              model: 'claude-sonnet-4-5-20250929',
+              max_tokens: 2048,
+              system: systemPrompt,
+              messages: claudeMessages,
+            },
+            { signal: abortController.signal },
+          )
+          for await (const event of stream) {
+            if (
+              event.type === 'content_block_delta' &&
+              event.delta.type === 'text_delta'
+            ) {
+              const deltaText = event.delta.text
+              assembledText += deltaText
+              reply.raw.write(
+                `event: token\ndata: ${JSON.stringify({ text: deltaText })}\n\n`,
+              )
+            }
+          }
+          // Drain to ensure stream.finalMessage() returns the final usage.
+          await stream.finalMessage()
+        } catch (err) {
+          clearTimeout(timeoutHandle)
+          // Abort: client navigated away or 60s timer fired. No DB writes,
+          // no done event — just close the stream cleanly.
+          if (err instanceof Anthropic.APIUserAbortError) {
+            req.log.info(
+              {
+                metric: 'chat.sessions.append.abort',
+                sessionId: id,
+                userId: user.sub,
+                duration_ms: Date.now() - startedAtMs,
+                tokensSoFar: assembledText.length,
+              },
+              'message append: stream aborted',
+            )
+            reply.raw.end()
+            return reply
+          }
+          // Other Anthropic / network error: emit error event + close.
+          const gw = toGatewayErrorIfAnthropic(err)
+          const code = gw?.code ?? 'CHAT_STREAM_ERROR'
+          const message = gw?.message ?? 'Streaming failed'
+          req.log.warn(
+            {
+              metric: 'chat.sessions.append.error',
+              sessionId: id,
+              userId: user.sub,
+              duration_ms: Date.now() - startedAtMs,
+              errCode: code,
+              streaming: true,
+            },
+            'message append: upstream anthropic error (stream)',
+          )
+          reply.raw.write(
+            `event: error\ndata: ${JSON.stringify({ code, message })}\n\n`,
+          )
+          reply.raw.end()
+          return reply
+        }
+        clearTimeout(timeoutHandle)
+
+        // Empty-tokens edge case (refusal, model glitch): still persist an
+        // empty assistant message and emit `event: done`. Parity with
+        // blocking-path behavior where messages.create returning empty text
+        // would produce an empty assistant row.
+        const replyText = assembledText.trim()
+        const persisted = await persistMessagePair({
+          db,
+          session,
+          userId: user.sub,
+          content,
+          replyText,
+          clientLamport,
+          incomingLamport,
+          historyLength: historyRows.length,
+        }).catch((err) => {
+          req.log.error(
+            { err, sessionId: id, userId: user.sub },
+            'message append: persist failed (stream)',
+          )
+          reply.raw.write(
+            `event: error\ndata: ${JSON.stringify({ code: 'INTERNAL_ERROR', message: 'Failed to persist messages' })}\n\n`,
+          )
+          reply.raw.end()
+          return null
+        })
+        if (!persisted) return reply
+
+        req.log.info(
+          {
+            metric: 'chat.sessions.append.complete',
+            sessionId: id,
+            userId: user.sub,
+            contextKind: session.contextKind,
+            duration_ms: Date.now() - startedAtMs,
+            replyLength: replyText.length,
+            streaming: true,
+            truncatedTurns,
+          },
+          'message append: complete (stream)',
+        )
+
+        reply.raw.write(`event: done\ndata: ${JSON.stringify(persisted)}\n\n`)
+        reply.raw.end()
+        return reply
+      }
+
+      // ─── BLOCKING PATH — unchanged contract for non-streaming callers ──
       let result: Anthropic.Message
       try {
         result = await client.messages.create(
@@ -716,76 +861,16 @@ export async function registerChatRoutes(
         })
       }
 
-      // Server-mint lamport for assistant message + session bump.
-      const wallLamport = BigInt(Date.now())
-      const assistantLamport = (
-        (incomingLamport > wallLamport ? incomingLamport : wallLamport) + 1n
-      ).toString()
-
-      const userMessageId = createId()
-      const assistantMessageId = createId()
-      const nowDate = new Date()
-
-      // Persist both messages + bump session metadata. Three writes; on
-      // any failure throw 500 and the client retries (idempotent by id).
-      try {
-        await db.insert(schema.chatSessionMessages).values([
-          {
-            id: userMessageId,
-            sessionId: session.id,
-            role: 'user',
-            content,
-            lamport: clientLamport,
-          },
-          {
-            id: assistantMessageId,
-            sessionId: session.id,
-            role: 'assistant',
-            content: replyText,
-            lamport: assistantLamport,
-          },
-        ])
-
-        // Auto-title on first exchange: when title is null and we just
-        // added the first user+assistant pair, take the first ~60 chars
-        // of the user message as the title. Heuristic; T-something tracks
-        // an LLM-generated title later.
-        const isFirstExchange = historyRows.length === 0
-        const previewText = replyText.slice(0, 200)
-        const autoTitle =
-          isFirstExchange && !session.title
-            ? content.slice(0, 60).trim()
-            : session.title
-
-        await db
-          .update(schema.chatSessions)
-          .set({
-            title: autoTitle,
-            previewText,
-            messageCount: session.messageCount + 2,
-            lastMessageAt: nowDate,
-            lamport: assistantLamport,
-            updatedAt: nowDate,
-            updatedByUserId: user.sub,
-          })
-          .where(eq(schema.chatSessions.id, session.id))
-      } catch (err) {
-        req.log.error(
-          { err, sessionId: id, userId: user.sub },
-          'message append: persist failed',
-        )
-        throw new GatewayError({
-          statusCode: 500,
-          code: 'INTERNAL_ERROR',
-          message: 'Failed to persist messages',
-        })
-      }
-
-      // Re-fetch the updated session for the response. Cheap; one row.
-      const [updatedSession] = await db
-        .select()
-        .from(schema.chatSessions)
-        .where(eq(schema.chatSessions.id, session.id))
+      const persisted = await persistMessagePair({
+        db,
+        session,
+        userId: user.sub,
+        content,
+        replyText,
+        clientLamport,
+        incomingLamport,
+        historyLength: historyRows.length,
+      })
 
       req.log.info(
         {
@@ -798,40 +883,125 @@ export async function registerChatRoutes(
           outputTokens: result.usage?.output_tokens ?? null,
           model: result.model,
           replyLength: replyText.length,
+          truncatedTurns,
         },
         'message append: complete',
       )
 
-      // Build the response. We re-fetch messages so the client gets the
-      // canonical createdAt timestamps.
-      const userMessage = {
-        id: userMessageId,
-        sessionId: session.id,
-        role: 'user' as const,
-        content,
-        citations: null,
-        attachmentsJson: null,
-        createdAt: nowDate.toISOString(),
-        lamport: clientLamport,
-      }
-      const assistantMessage = {
-        id: assistantMessageId,
-        sessionId: session.id,
-        role: 'assistant' as const,
-        content: replyText,
-        citations: null,
-        attachmentsJson: null,
-        createdAt: nowDate.toISOString(),
-        lamport: assistantLamport,
-      }
-
-      return {
-        session: serializeSession(updatedSession!),
-        userMessage,
-        assistantMessage,
-      }
+      return persisted
     },
   })
+}
+
+// Shared persist helper used by both the blocking and streaming branches
+// of POST /chat/sessions/:id/messages. Performs the lamport mint, the
+// 2-message INSERT + session UPDATE + re-fetch, and assembles the
+// response payload in the canonical shape both clients expect.
+//
+// On INSERT/UPDATE failure: throws GatewayError 500. Streaming caller
+// catches that, emits `event: error`, and ends the response; blocking
+// caller lets it propagate as a normal 500.
+async function persistMessagePair(args: {
+  db: ReturnType<typeof getDb>
+  session: SessionRow
+  userId: string
+  content: string
+  replyText: string
+  clientLamport: string
+  incomingLamport: bigint
+  historyLength: number
+}): Promise<{
+  session: z.infer<typeof ChatSessionListItemSchema>
+  userMessage: z.infer<typeof ChatMessageSchema>
+  assistantMessage: z.infer<typeof ChatMessageSchema>
+}> {
+  const { db, session, userId, content, replyText, clientLamport, incomingLamport, historyLength } = args
+
+  // Server-mint lamport for assistant message + session bump.
+  const wallLamport = BigInt(Date.now())
+  const assistantLamport = (
+    (incomingLamport > wallLamport ? incomingLamport : wallLamport) + 1n
+  ).toString()
+
+  const userMessageId = createId()
+  const assistantMessageId = createId()
+  const nowDate = new Date()
+
+  try {
+    await db.insert(schema.chatSessionMessages).values([
+      {
+        id: userMessageId,
+        sessionId: session.id,
+        role: 'user',
+        content,
+        lamport: clientLamport,
+      },
+      {
+        id: assistantMessageId,
+        sessionId: session.id,
+        role: 'assistant',
+        content: replyText,
+        lamport: assistantLamport,
+      },
+    ])
+
+    // Auto-title on first exchange: when title is null and we just added
+    // the first user+assistant pair, take the first ~60 chars of the
+    // user message as the title. Heuristic; LLM-generated title later.
+    const isFirstExchange = historyLength === 0
+    const previewText = replyText.slice(0, 200)
+    const autoTitle =
+      isFirstExchange && !session.title ? content.slice(0, 60).trim() : session.title
+
+    await db
+      .update(schema.chatSessions)
+      .set({
+        title: autoTitle,
+        previewText,
+        messageCount: session.messageCount + 2,
+        lastMessageAt: nowDate,
+        lamport: assistantLamport,
+        updatedAt: nowDate,
+        updatedByUserId: userId,
+      })
+      .where(eq(schema.chatSessions.id, session.id))
+  } catch (err) {
+    throw new GatewayError({
+      statusCode: 500,
+      code: 'INTERNAL_ERROR',
+      message: 'Failed to persist messages',
+      details: { err: String(err) },
+    })
+  }
+
+  const [updatedSession] = await db
+    .select()
+    .from(schema.chatSessions)
+    .where(eq(schema.chatSessions.id, session.id))
+
+  return {
+    session: serializeSession(updatedSession!),
+    userMessage: {
+      id: userMessageId,
+      sessionId: session.id,
+      role: 'user' as const,
+      content,
+      citations: null,
+      attachmentsJson: null,
+      createdAt: nowDate.toISOString(),
+      lamport: clientLamport,
+    },
+    assistantMessage: {
+      id: assistantMessageId,
+      sessionId: session.id,
+      role: 'assistant' as const,
+      content: replyText,
+      citations: null,
+      attachmentsJson: null,
+      createdAt: nowDate.toISOString(),
+      lamport: assistantLamport,
+    },
+  }
 }
 
 // T17a A3 — system prompt for chat-session messages. Tells the model
