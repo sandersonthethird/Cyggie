@@ -586,6 +586,22 @@ tap.
 toast system gets adopted in M6.
 **Why:** Caught during E2E — 400s on early taps were invisible.
 
+### T39 — Memo sync pull-side primitives (multi-desktop V2)
+**What:** Mirror the T14 work for memos — add
+`applyRemoteInvestmentMemos` + `applyRemoteInvestmentMemoVersions`
+primitives in `sync-remote-apply.ts`, extend the gateway `GET /sync/pull`
+to return both arrays, wire the pull service + IPC channels
+(`INVESTMENT_MEMOS_REMOTE_APPLIED`, `INVESTMENT_MEMO_VERSIONS_REMOTE_APPLIED`).
+**Why:** The 2026-05-23 memo-sync commit (push + backfill) closes the
+desktop→Neon→mobile path. It does NOT close desktop A → Neon → desktop B,
+which only matters once a user runs two desktops. Single-desktop today.
+**Pros:** Symmetric with the other 6 tables already on the pull path
+(meetings, notes, org_companies, aliases, contacts, contact_emails).
+**Cons:** ~half a day, plus tests; zero user value until multi-desktop.
+**Context:** Same pattern as commit 27f83fe (T14). Memos in OWNED_TABLES
+Layer 3; versions Layer 4. The TableSpec helper makes this mechanical.
+**Depends on / blocked by:** First multi-desktop user signal.
+
 ---
 
 ## P2 — Contacts (Performance)
