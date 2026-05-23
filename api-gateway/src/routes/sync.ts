@@ -317,7 +317,24 @@ export async function registerSyncRoutes(
               validatedPayload['lamport'] = entry.lamport
               const cols = Object.keys(validatedPayload)
               const placeholders = cols.map((_, i) => `$${i + 1}`)
-              const params = cols.map((c) => validatedPayload![c])
+              // node-postgres serializes JS arrays as Postgres ARRAY format
+              // (`{a,b,c}`) by default — wrong for JSONB columns, which
+              // expect JSON syntax (`["a","b","c"]`). For plain objects
+              // node-pg already serializes via JSON.stringify, but the
+              // ambiguity is real and we get "invalid input syntax for
+              // type json" rejections for any meetings row whose
+              // attendees / companies / chat_messages JSONB column has
+              // a populated array. Pre-stringify here so the wire format
+              // is unambiguous regardless of node-pg's column inference.
+              // Skip Date — node-pg's native Date→timestamptz path is
+              // correct and stringifying breaks it.
+              const params = cols.map((c) => {
+                const v = validatedPayload![c]
+                if (v === null || v === undefined) return v
+                if (v instanceof Date) return v
+                if (typeof v === 'object') return JSON.stringify(v)
+                return v
+              })
               const conflictCols = spec.primaryKey.map((c) => `"${c}"`).join(', ')
               const updateSets = cols
                 .filter((c) => !spec.primaryKey.includes(c))

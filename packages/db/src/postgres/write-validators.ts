@@ -82,59 +82,63 @@ const DATE_KEYS = new Set([
 // columns as z.number()) rejects with "expected number, received boolean".
 // Coerce true→1, false→0 for known integer-flag columns at the validator
 // boundary so the existing desktop mappers don't need to change shape.
-// IMPORTANT: this set is column-name-keyed, NOT schema-aware. Only include
-// columns that are stored as Postgres `integer` but get mapped to JS
-// boolean on the desktop side. The audit must be done per-column against
-// the actual schema — *some* `is_*` flags in this codebase are Postgres
-// `boolean` (e.g., meetings.is_group_event), in which case the desktop
-// emits a boolean that drizzle-zod *accepts* without coerce, and adding
-// them here flips the wire format wrong and breaks the write.
+// TABLE-AWARE int-flag coerce. Same column name maps to different Postgres
+// types across tables — `is_pinned` is `integer` in chat_sessions but
+// `boolean` in notes, etc. A single column-name-keyed coerce can't get
+// both right (the symptom: round-3 drain rejected notes.isPinned because
+// the coerce flipped the JS boolean to a number that drizzle-zod then
+// rejected). The fix is to look up per-table which keys need
+// boolean→integer at the validator boundary.
 //
-// Audited 2026-05-23 against schemas in packages/db/src/schema:
-//   ✅ Postgres integer:
-//      - chat_sessions.is_active / is_pinned / is_archived
-//      - org_companies.include_in_companies_view
-//   ❌ Postgres boolean (DO NOT add here):
-//      - meetings.is_group_event / is_group_event_user_set
-//
-// `isFinal` inside transcript_segments JSONB rows is handled by the
-// containing JSON, not by zod column validation — also stays out.
-const INT_FLAG_KEYS = new Set([
-  'isActive', 'is_active',
-  'isPinned', 'is_pinned',
-  'isArchived', 'is_archived',
-  'includeInCompaniesView', 'include_in_companies_view',
-])
-
-function coercePayload(input: unknown): unknown {
-  if (input === null || typeof input !== 'object') return input
-  const out: Record<string, unknown> = { ...(input as Record<string, unknown>) }
-  for (const key of Object.keys(out)) {
-    const v = out[key]
-    if (DATE_KEYS.has(key) && typeof v === 'string') {
-      const d = new Date(v)
-      if (Number.isFinite(d.getTime())) {
-        out[key] = d
-      }
-      continue
-    }
-    if (INT_FLAG_KEYS.has(key) && typeof v === 'boolean') {
-      out[key] = v ? 1 : 0
-      continue
-    }
-  }
-  return out
+// Audited 2026-05-23 — keys here MUST be Postgres `integer` columns in
+// the named table that the desktop's mapper emits as JS boolean. Adding
+// a key here for a Postgres `boolean` column would flip the wire format
+// wrong and reject correct writes.
+const INT_FLAG_KEYS_BY_TABLE: Record<string, ReadonlySet<string>> = {
+  chat_sessions: new Set([
+    'isActive', 'is_active',
+    'isPinned', 'is_pinned',
+    'isArchived', 'is_archived',
+  ]),
+  org_companies: new Set([
+    'includeInCompaniesView', 'include_in_companies_view',
+  ]),
+  // notes.is_pinned → Postgres boolean (no coerce — passes through as-is)
+  // meetings.is_group_event(_user_set) → Postgres boolean (no coerce)
+  // chat_session_messages — no flag columns
+  // Other tables — extend here if a new flag column needs coercion.
 }
 
-// Back-compat alias — earlier code only had the date-coerce variant.
-const coerceDateStrings = coercePayload
+function makeCoerce(intFlagKeys: ReadonlySet<string>): (input: unknown) => unknown {
+  return (input: unknown): unknown => {
+    if (input === null || typeof input !== 'object') return input
+    const out: Record<string, unknown> = { ...(input as Record<string, unknown>) }
+    for (const key of Object.keys(out)) {
+      const v = out[key]
+      if (DATE_KEYS.has(key) && typeof v === 'string') {
+        const d = new Date(v)
+        if (Number.isFinite(d.getTime())) {
+          out[key] = d
+        }
+        continue
+      }
+      if (intFlagKeys.has(key) && typeof v === 'boolean') {
+        out[key] = v ? 1 : 0
+        continue
+      }
+    }
+    return out
+  }
+}
 
-function bundleFor(table: unknown): ValidatorBundle {
+function bundleFor(table: unknown, tableName: string): ValidatorBundle {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const t = table as any
+  const intFlagKeys = INT_FLAG_KEYS_BY_TABLE[tableName] ?? new Set<string>()
+  const coerce = makeCoerce(intFlagKeys)
   return {
-    insert: z.preprocess(coerceDateStrings, createInsertSchema(t)),
-    update: z.preprocess(coerceDateStrings, createUpdateSchema(t)),
+    insert: z.preprocess(coerce, createInsertSchema(t)),
+    update: z.preprocess(coerce, createUpdateSchema(t)),
     // Delete payloads are loose — gateway only reads the PK columns from
     // the decoded outbox.row_id.
     delete: z.record(z.string(), z.unknown()),
@@ -142,26 +146,26 @@ function bundleFor(table: unknown): ValidatorBundle {
 }
 
 export const WRITE_VALIDATORS: Record<string, ValidatorBundle> = {
-  templates: bundleFor(templates),
-  themes: bundleFor(themes),
-  pipeline_configs: bundleFor(pipelineConfigs),
-  speakers: bundleFor(speakers),
-  pipeline_stages: bundleFor(pipelineStages),
-  org_companies: bundleFor(orgCompanies),
-  org_company_aliases: bundleFor(orgCompanyAliases),
-  contacts: bundleFor(contacts),
-  contact_emails: bundleFor(contactEmails),
-  meetings: bundleFor(meetings),
-  meeting_speakers: bundleFor(meetingSpeakers),
-  meeting_company_links: bundleFor(meetingCompanyLinks),
-  meeting_speaker_contact_links: bundleFor(meetingSpeakerContactLinks),
-  notes: bundleFor(notes),
-  note_folders: bundleFor(noteFolders),
-  tasks: bundleFor(tasks),
-  chat_sessions: bundleFor(chatSessions),
-  chat_session_messages: bundleFor(chatSessionMessages),
-  investment_memos: bundleFor(investmentMemos),
-  investment_memo_versions: bundleFor(investmentMemoVersions),
+  templates: bundleFor(templates, 'templates'),
+  themes: bundleFor(themes, 'themes'),
+  pipeline_configs: bundleFor(pipelineConfigs, 'pipeline_configs'),
+  speakers: bundleFor(speakers, 'speakers'),
+  pipeline_stages: bundleFor(pipelineStages, 'pipeline_stages'),
+  org_companies: bundleFor(orgCompanies, 'org_companies'),
+  org_company_aliases: bundleFor(orgCompanyAliases, 'org_company_aliases'),
+  contacts: bundleFor(contacts, 'contacts'),
+  contact_emails: bundleFor(contactEmails, 'contact_emails'),
+  meetings: bundleFor(meetings, 'meetings'),
+  meeting_speakers: bundleFor(meetingSpeakers, 'meeting_speakers'),
+  meeting_company_links: bundleFor(meetingCompanyLinks, 'meeting_company_links'),
+  meeting_speaker_contact_links: bundleFor(meetingSpeakerContactLinks, 'meeting_speaker_contact_links'),
+  notes: bundleFor(notes, 'notes'),
+  note_folders: bundleFor(noteFolders, 'note_folders'),
+  tasks: bundleFor(tasks, 'tasks'),
+  chat_sessions: bundleFor(chatSessions, 'chat_sessions'),
+  chat_session_messages: bundleFor(chatSessionMessages, 'chat_session_messages'),
+  investment_memos: bundleFor(investmentMemos, 'investment_memos'),
+  investment_memo_versions: bundleFor(investmentMemoVersions, 'investment_memo_versions'),
 }
 
 export type WriteOp = 'insert' | 'update' | 'delete'
