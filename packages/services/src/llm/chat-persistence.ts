@@ -1,4 +1,12 @@
-import * as chatSessionRepo from '@cyggie/db/sqlite/repositories/chat-session.repo'
+// T17a — chat persistence now flows through the sync-wrapped barrel
+// (writes emit outbox entries → Neon via Phase 1.5a SyncAgent). Reads use
+// the same barrel for one-import simplicity.
+import {
+  appendChatMessage,
+  createChatSession,
+  getActiveChatSessionForContext,
+  setChatSessionTitleIfMissing,
+} from '@cyggie/db/sqlite/repositories'
 import { generateChatTitle } from './chat-title'
 import type { ChatContextKind } from '@shared/utils/chat-context'
 import type { ChatAttachment } from '@shared/types/chat'
@@ -59,12 +67,13 @@ export async function withChatPersistence<T>(
   let sessionId: string | null = null
   let sessionWasUntitled = false
   try {
-    const session = chatSessionRepo.getOrCreateActive(
-      contextId,
-      contextKind,
-      contextLabel,
-      userId
-    )
+    // T17a — getOrCreateActive is split into get-then-create so the create
+    // path goes through the wrapped barrel (emits outbox). The existing
+    // session case is a pure read; no outbox emission needed.
+    let session = getActiveChatSessionForContext(contextId)
+    if (!session) {
+      session = createChatSession(contextId, contextKind, contextLabel, userId)
+    }
     sessionId = session.id
     sessionWasUntitled = !session.title
   } catch (err) {
@@ -77,7 +86,7 @@ export async function withChatPersistence<T>(
 
   if (sessionId) {
     try {
-      chatSessionRepo.appendMessage(
+      appendChatMessage(
         {
           sessionId,
           role: 'user',
@@ -107,7 +116,7 @@ export async function withChatPersistence<T>(
 
     if (assistantText) {
       try {
-        chatSessionRepo.appendMessage(
+        appendChatMessage(
           { sessionId, role: 'assistant', content: assistantText },
           userId
         )
@@ -127,7 +136,7 @@ export async function withChatPersistence<T>(
       const fallback = userMessage.content.slice(0, 80)
       generateChatTitle(transcript, fallback)
         .then((title) => {
-          if (sessionId && title) chatSessionRepo.setTitleIfMissing(sessionId, title)
+          if (sessionId && title) setChatSessionTitleIfMissing(sessionId, title)
         })
         .catch((err) => {
           console.warn('[chat-persistence] title generation failed', {
@@ -156,7 +165,7 @@ export async function withSessionPersistence<T>(opts: {
   const { sessionId, userMessage, runLLM, extractText, userId } = opts
 
   try {
-    chatSessionRepo.appendMessage(
+    appendChatMessage(
       {
         sessionId,
         role: 'user',
@@ -186,7 +195,7 @@ export async function withSessionPersistence<T>(opts: {
 
   if (assistantText) {
     try {
-      chatSessionRepo.appendMessage(
+      appendChatMessage(
         { sessionId, role: 'assistant', content: assistantText },
         userId
       )

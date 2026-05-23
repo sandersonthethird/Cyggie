@@ -51,6 +51,7 @@ import * as rawMeeting from './meeting.repo'
 import * as rawContact from './contact.repo'
 import * as rawOrgCompany from './org-company.repo'
 import * as rawNotes from './notes.repo'
+import * as rawChatSession from './chat-session.repo'
 import { getDatabase } from '../connection'
 
 // ── meetings ────────────────────────────────────────────────────────────────
@@ -340,6 +341,97 @@ export const deleteFolder = withSync(rawNotes.deleteFolder, {
   op: 'delete',
   captureBeforeDelete: (_db, [path]) => ({ path }),
 })
+
+// ── chat sessions (T17a) ────────────────────────────────────────────────────
+//
+// chat_sessions + chat_session_messages are both in OWNED_TABLES. Writes
+// flow through these wrapped exports so they reach Neon via the Phase 1.5a
+// outbox.
+//
+// Known gap (same pattern as createMeeting's meeting_company_links cascade):
+//   appendMessage INSERTs a row in chat_session_messages AND issues a
+//   cascading UPDATE on chat_sessions (message_count + last_message_at +
+//   preview_text). The wrapper emits ONE outbox entry — the new message
+//   row in chat_session_messages. The cascading session-row update is
+//   un-emitted; mobile picks up the new message_count / last_message_at
+//   on its next refetch of the sessions list, which is the existing
+//   eventual-consistency contract.
+//
+//   createNew also internally calls endActive (which UPDATEs the previously-
+//   active session's is_active=0, or DELETEs it if empty). Same pattern:
+//   the wrapper emits the INSERT for the new session; the old-session
+//   transition is un-emitted. Mobile sees it via refetch.
+
+// createNew INSERTs a new active chat_sessions row (and demotes any prior
+// active one for the same contextId via internal endActive).
+export const createChatSession = withSync(rawChatSession.createNew, {
+  table: 'chat_sessions',
+  op: 'insert',
+})
+
+// appendMessage INSERTs into chat_session_messages. The cascading session-
+// row update is intentionally un-emitted (see header note).
+export const appendChatMessage = withSync(rawChatSession.appendMessage, {
+  table: 'chat_session_messages',
+  op: 'insert',
+})
+
+// rename returns ChatSession | null. The wrapper expects a row; extractRow
+// re-reads the session post-update to keep payload shape consistent even
+// when the call updated 0 rows (caller passes an unknown sessionId).
+export const renameChatSession = withSync(rawChatSession.rename, {
+  table: 'chat_sessions',
+  op: 'update',
+  extractRow: ({ args }) =>
+    rawChatSession.getSession(args[0]) as unknown as Record<string, unknown> | null,
+})
+
+// setTitleIfMissing returns void; re-read.
+export const setChatSessionTitleIfMissing = withSync(
+  rawChatSession.setTitleIfMissing,
+  {
+    table: 'chat_sessions',
+    op: 'update',
+    extractRow: ({ args }) =>
+      rawChatSession.getSession(args[0]) as unknown as Record<string, unknown> | null,
+  },
+)
+
+export const pinChatSession = withSync(rawChatSession.pin, {
+  table: 'chat_sessions',
+  op: 'update',
+  extractRow: ({ args }) =>
+    rawChatSession.getSession(args[0]) as unknown as Record<string, unknown> | null,
+})
+
+export const unpinChatSession = withSync(rawChatSession.unpin, {
+  table: 'chat_sessions',
+  op: 'update',
+  extractRow: ({ args }) =>
+    rawChatSession.getSession(args[0]) as unknown as Record<string, unknown> | null,
+})
+
+export const archiveChatSession = withSync(rawChatSession.archive, {
+  table: 'chat_sessions',
+  op: 'update',
+  extractRow: ({ args }) =>
+    rawChatSession.getSession(args[0]) as unknown as Record<string, unknown> | null,
+})
+
+export const deleteChatSession = withSync(rawChatSession.deleteSession, {
+  table: 'chat_sessions',
+  op: 'delete',
+  captureBeforeDelete: (_db, [sessionId]) =>
+    rawChatSession.getSession(sessionId) as unknown as Record<string, unknown> | null,
+})
+
+// Pass-throughs (reads)
+export const getActiveChatSessionForContext = rawChatSession.getActiveForContext
+export const getChatSession = rawChatSession.getSession
+export const listRecentChatSessions = rawChatSession.listRecent
+export const loadChatMessages = rawChatSession.loadMessages
+export const searchChatSessions = rawChatSession.search
+export const getChatMessageCount = rawChatSession.getMessageCount
 
 // Re-export the database accessor so the rare caller that needs it can
 // continue to import from the barrel rather than reaching into connection.ts.
