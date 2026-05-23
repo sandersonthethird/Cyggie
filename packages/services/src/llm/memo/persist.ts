@@ -1,5 +1,8 @@
 import { getDatabase } from '@cyggie/db/sqlite/connection'
-import * as memoRepo from '@cyggie/db/sqlite/repositories/investment-memo.repo'
+// Use the barrel so saveMemoVersion flows through the sync outbox. Nested
+// better-sqlite3 transactions use a SAVEPOINT under the outer db.transaction
+// below, so atomicity with the evidence inserts is preserved.
+import * as memoRepo from '@cyggie/db/sqlite/repositories'
 import { bulkInsert as bulkInsertEvidence } from '@cyggie/db/sqlite/repositories/memo-evidence.repo'
 import type { EvidenceRow } from '@shared/types/thesis'
 

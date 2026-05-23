@@ -52,6 +52,8 @@ import * as rawContact from './contact.repo'
 import * as rawOrgCompany from './org-company.repo'
 import * as rawNotes from './notes.repo'
 import * as rawChatSession from './chat-session.repo'
+import * as rawMemo from './investment-memo.repo'
+import type { InvestmentMemoWithLatest } from '@shared/types/company'
 import { getDatabase } from '../connection'
 
 // ── meetings ────────────────────────────────────────────────────────────────
@@ -71,6 +73,13 @@ export const createMeeting = withSync(rawMeeting.createMeeting, {
 export const updateMeeting = withSync(rawMeeting.updateMeeting, {
   table: 'meetings',
   op: 'update',
+  // T38: snapshot meeting state before the update so the wrapper can
+  // diff large JSONB columns (transcriptSegments, chatMessages, summary,
+  // notes) against post-update and omit unchanged ones from the outbox
+  // payload. Keeps a status-flip or title-rename from dragging a 5 MB
+  // transcript across the wire on every change.
+  captureBeforeUpdate: (_db, [id]) =>
+    rawMeeting.getMeeting(id) as unknown as Record<string, unknown> | null,
 })
 
 export const deleteMeeting = withSync(rawMeeting.deleteMeeting, {
@@ -79,6 +88,40 @@ export const deleteMeeting = withSync(rawMeeting.deleteMeeting, {
   captureBeforeDelete: (_db, [id]) =>
     rawMeeting.getMeeting(id) as unknown as Record<string, unknown> | null,
 })
+
+// meeting_speaker_contact_links is a composite-PK join table (meeting_id,
+// speaker_index). Without wrapping, the speaker-tag IPC handler's raw
+// INSERT/DELETE never reached the outbox, so mobile never saw which contact
+// a speaker was tagged as — Last Touch / Meetings tab broke. Both fns return
+// void; the row we want in the outbox is the link itself.
+export const linkMeetingSpeakerContact = withSync(
+  rawMeeting.linkMeetingSpeakerContact,
+  {
+    table: 'meeting_speaker_contact_links',
+    op: 'insert',
+    extractRow: ({ args }) => ({
+      meeting_id: args[0],
+      speaker_index: args[1],
+      contact_id: args[2],
+    }),
+  },
+)
+
+export const unlinkMeetingSpeakerContact = withSync(
+  rawMeeting.unlinkMeetingSpeakerContact,
+  {
+    table: 'meeting_speaker_contact_links',
+    op: 'delete',
+    captureBeforeDelete: (db, [meetingId, speakerIndex]) => {
+      const row = db
+        .prepare(
+          `SELECT * FROM meeting_speaker_contact_links WHERE meeting_id = ? AND speaker_index = ?`,
+        )
+        .get(meetingId, speakerIndex)
+      return row as Record<string, unknown> | null
+    },
+  },
+)
 
 // Pass-throughs (read-only or owned-table-irrelevant)
 export const findMeetingByCalendarEventId = rawMeeting.findMeetingByCalendarEventId
@@ -432,6 +475,95 @@ export const listRecentChatSessions = rawChatSession.listRecent
 export const loadChatMessages = rawChatSession.loadMessages
 export const searchChatSessions = rawChatSession.search
 export const getChatMessageCount = rawChatSession.getMessageCount
+
+// ── investment memos (2026-05-23) ───────────────────────────────────────────
+//
+// Added to unblock the mobile Memos tab on company detail. Desktop is the
+// only writer; mobile reads via the gateway /memos route. The barrel wraps
+// the three write entry points so memo writes flow to Neon via the outbox.
+//
+// Cascade pattern: saveMemoVersion does an INSERT on investment_memo_versions
+// AND an UPDATE on investment_memos (bumping latest_version_number). The
+// wrapper emits ONE outbox row (the version insert); the raw repo emits a
+// second outbox row for the parent memo update inside the same transaction
+// (see appendOutboxRow call in investment-memo.repo.ts). Same pattern as
+// note_folders cascade-deletes.
+//
+// extractRow on inserts/updates re-SELECTs the full SQLite row (snake_case,
+// includes lamport + created_by_user_id) because the raw fn returns a
+// partial camelCase DTO. The gateway's snakeToCamel bridge expects the
+// snake_case payload that SELECT * produces.
+
+function selectMemoRow(memoId: string): Record<string, unknown> | null {
+  return getDatabase()
+    .prepare('SELECT * FROM investment_memos WHERE id = ?')
+    .get(memoId) as Record<string, unknown> | null
+}
+function selectMemoVersionRow(versionId: string): Record<string, unknown> | null {
+  return getDatabase()
+    .prepare('SELECT * FROM investment_memo_versions WHERE id = ?')
+    .get(versionId) as Record<string, unknown> | null
+}
+
+export const createMemo = withSync(rawMemo.createMemo, {
+  table: 'investment_memos',
+  op: 'insert',
+  extractRow: ({ result }) => {
+    const r = result as { id: string } | null
+    return r ? selectMemoRow(r.id) : null
+  },
+})
+
+export const updateMemoStatus = withSync(rawMemo.updateMemoStatus, {
+  table: 'investment_memos',
+  op: 'update',
+  extractRow: ({ args }) => selectMemoRow(args[0]),
+})
+
+export const saveMemoVersion = withSync(rawMemo.saveMemoVersion, {
+  table: 'investment_memo_versions',
+  op: 'insert',
+  extractRow: ({ result }) => {
+    const r = result as { id: string } | null
+    return r ? selectMemoVersionRow(r.id) : null
+  },
+})
+
+// getOrCreateMemoForCompany — composite of (find OR (createMemo + saveMemoVersion)).
+// Reimplemented here so the inner calls use the WRAPPED versions above and
+// therefore reach Neon. The raw version in the repo calls raw createMemo +
+// raw saveMemoVersion, which would bypass the outbox.
+export function getOrCreateMemoForCompany(
+  companyId: string,
+  companyName: string,
+  userId: string | null = null,
+): InvestmentMemoWithLatest {
+  const existing = rawMemo.getLatestMemoForCompany(companyId)
+  if (existing) return existing
+
+  const memo = createMemo(
+    { companyId, title: `${companyName} Investment Memo` },
+    userId,
+  )
+  const initialContent = rawMemo.buildInitialMemoContent(companyName)
+  const version = saveMemoVersion(
+    memo.id,
+    { contentMarkdown: initialContent, changeNote: 'Initial draft' },
+    userId,
+  )
+  return { ...memo, latestVersion: version, latestVersionNumber: version.versionNumber }
+}
+
+// Pass-throughs (reads + non-owned-table writes)
+export const getMemo = rawMemo.getMemo
+export const getLatestMemoForCompany = rawMemo.getLatestMemoForCompany
+export const listMemoVersions = rawMemo.listMemoVersions
+export const listMemoVersionsSummary = rawMemo.listMemoVersionsSummary
+export const getMemoLatestVersion = rawMemo.getMemoLatestVersion
+export const getMemoVersion = rawMemo.getMemoVersion
+// recordMemoExport writes investment_memo_exports — NOT in OWNED_TABLES
+// (exports are local artifacts; mobile doesn't read them). Pass-through.
+export const recordMemoExport = rawMemo.recordMemoExport
 
 // Re-export the database accessor so the rare caller that needs it can
 // continue to import from the barrel rather than reaching into connection.ts.

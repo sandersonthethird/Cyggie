@@ -1,7 +1,10 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as companyRepo from '@cyggie/db/sqlite/repositories'
-import * as memoRepo from '@cyggie/db/sqlite/repositories/investment-memo.repo'
+// Memo writes flow through the sync-wrapped barrel so they reach Neon via
+// the outbox. Reads pass through unchanged. Re-bind under the existing
+// `memoRepo.*` namespace so the rest of the file is unchanged.
+import * as memoRepo from '@cyggie/db/sqlite/repositories'
 import * as artifactRepo from '@cyggie/db/sqlite/repositories/artifact.repo'
 import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 

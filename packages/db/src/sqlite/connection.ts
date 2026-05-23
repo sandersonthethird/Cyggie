@@ -98,6 +98,8 @@ import { runLamportOnOwnedTablesMigration } from './migrations/096-lamport-on-ow
 import { runSyncOutboxStateMigration } from './migrations/097-sync-outbox-state'
 import { runGroupEventAndTombstonesMigration } from './migrations/098-group-event-and-tombstones'
 import { runMeetingsSummaryTextMigration } from './migrations/099-meetings-summary-text'
+import { runSyncStateSafeBatchSizeMigration } from './migrations/100-sync-state-safe-batch-size'
+import { runMemoSyncLamportMigration } from './migrations/101-memo-sync-lamport'
 
 let db: Database.Database | null = null
 
@@ -234,6 +236,8 @@ export function getDatabase(): Database.Database {
     runSyncOutboxStateMigration(db)
     runGroupEventAndTombstonesMigration(db)
     runMeetingsSummaryTextMigration(db)
+    runSyncStateSafeBatchSizeMigration(db)
+    runMemoSyncLamportMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or

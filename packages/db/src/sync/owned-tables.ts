@@ -53,6 +53,24 @@ export interface OwnedTableSpec {
    * a future multi-user-on-desktop world.
    */
   hasUserId: boolean
+  /**
+   * Property names (camelCase, matching the shape the repo's update fn
+   * returns — NOT raw SQL column names) on the post-update row whose
+   * values can grow large enough to push a sync batch past the gateway's
+   * body limit. T38: for `update` ops, the `withSync` wrapper diffs each
+   * of these against the pre-update row state and OMITS unchanged values
+   * from the outbox payload. The gateway upsert treats missing columns
+   * as no-change, so omission is safe.
+   *
+   * Only meaningful in combination with `WithSyncOpts.captureBeforeUpdate`
+   * — the wrapper needs a pre-update snapshot to compare against. Without
+   * `captureBeforeUpdate`, declaring `largeColumns` has no effect.
+   *
+   * Inserts and deletes pass through unchanged (an insert needs the full
+   * row to satisfy NOT NULL constraints on Postgres; a delete only carries
+   * the PK).
+   */
+  largeColumns?: readonly string[]
 }
 
 // Order matters: parents before children. Matches `allMigrators()`.
@@ -77,11 +95,31 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
   // ── Layer 3 ────────────────────────────────────────────────────────────
   { table: 'org_company_aliases', primaryKey: ['id'], hasUserId: false },
   { table: 'contacts', primaryKey: ['id'], hasUserId: true },
+  // Investment memos — added 2026-05-23 to unblock the mobile Memos tab on
+  // company detail. SQLite table lacks user_id (created_by_user_id only),
+  // matching the notes pattern — hasUserId: true makes the gateway stamp
+  // user_id from JWT.sub before validating the payload.
+  { table: 'investment_memos', primaryKey: ['id'], hasUserId: true },
 
   // ── Layer 4 ────────────────────────────────────────────────────────────
   // contact_emails uses composite (contact_id, email).
   { table: 'contact_emails', primaryKey: ['contact_id', 'email'], hasUserId: false },
-  { table: 'meetings', primaryKey: ['id'], hasUserId: true },
+  // investment_memo_versions — append-only child of investment_memos.
+  // Lamport stored but never compared (UNIQUE(memo_id, version_number)
+  // gives natural dedup); the field exists only because the sync protocol
+  // requires every owned-table row to carry one.
+  { table: 'investment_memo_versions', primaryKey: ['id'], hasUserId: false },
+  {
+    table: 'meetings',
+    primaryKey: ['id'],
+    hasUserId: true,
+    // T38: meetings carry the largest JSONB columns in the schema. A
+    // single transcriptSegments array can run to several MB; chatMessages
+    // and summary grow over the meeting's lifetime. Most updates touch
+    // none of them (title rename, status flip, etc.), so trimming them
+    // out of the outbox payload when unchanged keeps batches small.
+    largeColumns: ['transcriptSegments', 'chatMessages', 'summary', 'notes'],
+  },
 
   // ── Layer 5 ────────────────────────────────────────────────────────────
   { table: 'meeting_speakers', primaryKey: ['meeting_id', 'speaker_index'], hasUserId: false },

@@ -15,6 +15,7 @@ import { templates } from '../schema/templates'
 import { themes } from '../schema/themes'
 import { pipelineConfigs, pipelineStages } from '../schema/pipeline'
 import { chatSessions, chatSessionMessages } from '../schema/chat'
+import { investmentMemos, investmentMemoVersions } from '../schema/memos'
 
 // =============================================================================
 // write-validators.ts — drizzle-zod-derived zod schemas for inbound outbox
@@ -144,6 +145,8 @@ export const WRITE_VALIDATORS: Record<string, ValidatorBundle> = {
   tasks: bundleFor(tasks),
   chat_sessions: bundleFor(chatSessions),
   chat_session_messages: bundleFor(chatSessionMessages),
+  investment_memos: bundleFor(investmentMemos),
+  investment_memo_versions: bundleFor(investmentMemoVersions),
 }
 
 export type WriteOp = 'insert' | 'update' | 'delete'

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 import { getSetting } from './settings.repo'
+import { appendOutboxRow, currentSyncContext } from '../sync-wrapper'
 import type {
   InvestmentMemo,
   InvestmentMemoVersion,
@@ -65,7 +66,7 @@ function renderMemoTemplate(template: string, companyName: string): string {
   return rendered
 }
 
-function buildInitialMemoContent(companyName: string): string {
+export function buildInitialMemoContent(companyName: string): string {
   const configuredTemplate = getSetting(MEMO_DEFAULT_TEMPLATE_SETTING_KEY)
   if (configuredTemplate?.trim()) {
     const rendered = renderMemoTemplate(configuredTemplate, companyName).trim()
@@ -328,6 +329,19 @@ export function saveMemoVersion(
       SET latest_version_number = ?, updated_at = datetime('now')
       WHERE id = ?
     `).run(versionNumber, memoId)
+  }
+
+  // Cascade-emit the parent memo update so Neon sees the bumped
+  // latest_version_number. The wrapped saveMemoVersion call (in the
+  // barrel) emits the version INSERT; this handles the second write.
+  // Both share the same lamport (one per transaction).
+  if (currentSyncContext()) {
+    const memoRow = db
+      .prepare('SELECT * FROM investment_memos WHERE id = ?')
+      .get(memoId) as Record<string, unknown> | undefined
+    if (memoRow) {
+      appendOutboxRow(db, { table: 'investment_memos', op: 'update', row: memoRow })
+    }
   }
 
   const saved = db

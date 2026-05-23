@@ -25,6 +25,7 @@ import {
 } from './services/sync-bootstrap'
 import { backfillProviderKeysOnLaunch } from './services/gateway-credentials'
 import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.service'
+import { backfillMemosForSyncOnLaunch } from './services/memo-sync-backfill.service'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
 
@@ -289,6 +290,14 @@ app.whenReady().then(() => {
   // 2s inside the helper for the same reason as the Anthropic backfill —
   // off the critical startup path, away from the SyncAgent first tick.
   backfillMissingSummariesOnLaunch(startupUserId)
+
+  // Memo sync backfill (2026-05-23) — memos joined the sync engine via
+  // migration 101 + OWNED_TABLES additions, but historical memo + version
+  // rows have no outbox entry and never reach Neon. This pass enqueues
+  // one outbox INSERT per row still at lamport='0', so the mobile Memos
+  // tab on company detail sees them after the next /sync/push drain.
+  // Idempotent: lamport='0' is the only candidate set.
+  backfillMemosForSyncOnLaunch(startupUserId)
 
   // System audio loopback is handled by electron-audio-loopback's IPC
   // handlers (enable-loopback-audio / disable-loopback-audio) registered

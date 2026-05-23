@@ -60,6 +60,11 @@ export const investmentMemoVersions = pgTable(
     createdBy: text('created_by'),
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    // Lamport added by migration 0019 — needed because the sync push handler
+    // does a uniform "SELECT lamport WHERE PK" lookup before UPSERT. Versions
+    // are append-only (UNIQUE(memo_id, version_number) handles dedup), so
+    // the value is effectively cosmetic but the protocol requires it.
+    lamport: text('lamport').notNull().default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
