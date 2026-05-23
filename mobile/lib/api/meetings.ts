@@ -139,3 +139,55 @@ export async function updateMeetingNotes(
     input,
   )
 }
+
+// =============================================================================
+// Enhance — POST /meetings/:id/enhance.
+//
+// Server-side AI summary of the meeting transcript via a user-picked
+// template. The gateway resolves the user's Anthropic key, calls Claude,
+// writes the result to meetings.summary, bumps lamport, transitions
+// status to 'summarized', and returns the summary.
+//
+// AbortSignal threading: caller (the meeting detail screen) mints a
+// controller + a 45s timer to bound the worst case and to cancel on
+// component unmount (Issue 4B/4C from the eng review).
+// =============================================================================
+
+export interface EnhanceMeetingInput {
+  templateId: string
+}
+
+export interface EnhanceMeetingResult {
+  summary: string
+  lamport: string
+  status: string
+}
+
+export async function enhanceMeeting(
+  id: string,
+  input: EnhanceMeetingInput,
+  opts?: { signal?: AbortSignal },
+): Promise<EnhanceMeetingResult> {
+  return api.post<EnhanceMeetingResult, EnhanceMeetingInput>(
+    `/meetings/${encodeURIComponent(id)}/enhance`,
+    input,
+    opts,
+  )
+}
+
+// =============================================================================
+// Templates — GET /templates. Source for the EnhanceModal picker.
+// Cached by TanStack at the call-site with a 1hr staleTime since the
+// list rarely changes.
+// =============================================================================
+
+export interface SummaryTemplate {
+  id: string
+  name: string
+  description: string
+}
+
+export async function fetchTemplates(): Promise<SummaryTemplate[]> {
+  const result = await api.get<{ templates: SummaryTemplate[] }>('/templates')
+  return result.templates
+}

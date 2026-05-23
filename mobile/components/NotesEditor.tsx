@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
-import { Ionicons } from '@expo/vector-icons'
-import { ApiError } from '../lib/api/client'
-import { enhanceNotes } from '../lib/api/chat'
+import { StyleSheet, Text, TextInput, View } from 'react-native'
 import { appStateStorage } from '../lib/cache/mmkv'
 import { enqueue, pendingCount } from '../lib/sync/outbox'
 import { tick as tickClock } from '../lib/sync/clock'
@@ -150,46 +147,6 @@ export function NotesEditor({
     [flushSave],
   )
 
-  // M5-thin: Enhance with AI. Posts current notes + meetingId to the
-  // gateway, swaps the editor value, and lets the existing debounce/outbox
-  // path persist the result. Confirms before replace so a long stream of
-  // typing isn't silently overwritten.
-  const [enhancing, setEnhancing] = useState(false)
-  const onEnhance = useCallback(() => {
-    const current = value.trim()
-    if (current.length === 0 || enhancing) return
-    Alert.alert(
-      'Enhance with AI?',
-      'Your notes will be replaced with a cleaned-up version. You can undo by typing.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Enhance',
-          onPress: async () => {
-            setEnhancing(true)
-            try {
-              const { enhanced } = await enhanceNotes({
-                content: value,
-                meetingId,
-              })
-              handleChange(enhanced)
-            } catch (err) {
-              const msg =
-                err instanceof ApiError
-                  ? err.code === 'CHAT_UNAVAILABLE'
-                    ? 'Enhance is not configured on the server yet.'
-                    : err.message
-                  : 'Something went wrong. Please try again.'
-              Alert.alert('Could not enhance notes', msg)
-            } finally {
-              setEnhancing(false)
-            }
-          },
-        },
-      ],
-    )
-  }, [value, meetingId, enhancing, handleChange])
-
   // Periodic poll of the outbox pending count for the "Saving (N)…" label.
   // 5s is fine for human-visible feedback. Only re-renders when the count
   // actually changes (setState bails when the value is identical).
@@ -243,36 +200,13 @@ export function NotesEditor({
     <View style={styles.wrap}>
       <View style={styles.headerRow}>
         <Text style={styles.heading}>Notes</Text>
-        <View style={styles.headerActions}>
-          {saveLabel.text ? (
-            <Text
-              style={[styles.saveLabel, saveLabel.isWarning && styles.saveLabelWarn]}
-            >
-              {saveLabel.text}
-            </Text>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Enhance with AI"
-            onPress={onEnhance}
-            disabled={enhancing || value.trim().length === 0}
-            hitSlop={8}
-            style={({ pressed }) => [
-              styles.enhanceBtn,
-              (enhancing || value.trim().length === 0) && styles.enhanceBtnDisabled,
-              pressed && styles.enhanceBtnPressed,
-            ]}
+        {saveLabel.text ? (
+          <Text
+            style={[styles.saveLabel, saveLabel.isWarning && styles.saveLabelWarn]}
           >
-            {enhancing ? (
-              <ActivityIndicator size="small" color={colors.crimson} />
-            ) : (
-              <>
-                <Ionicons name="sparkles-outline" size={12} color={colors.crimson} />
-                <Text style={styles.enhanceLabel}>Enhance</Text>
-              </>
-            )}
-          </Pressable>
-        </View>
+            {saveLabel.text}
+          </Text>
+        ) : null}
       </View>
       <TextInput
         ref={inputRef}
@@ -322,35 +256,6 @@ const styles = StyleSheet.create({
   },
   saveLabelWarn: {
     color: colors.crimson,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  enhanceBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.crimson,
-    backgroundColor: colors.crimsonMuted,
-    minHeight: 22,
-  },
-  enhanceBtnDisabled: {
-    opacity: 0.4,
-  },
-  enhanceBtnPressed: {
-    opacity: 0.6,
-  },
-  enhanceLabel: {
-    color: colors.crimson,
-    fontSize: type.caption,
-    fontWeight: '600',
-    letterSpacing: 0.2,
   },
   input: {
     color: colors.text,

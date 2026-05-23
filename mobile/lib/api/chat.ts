@@ -1,8 +1,12 @@
 import { api } from './client'
 
-// M5-thin client wrapper for the gateway's stateless one-shot chat + notes
-// enhance endpoints. No session persistence here — caller owns the message
-// list. Follow-ups: sessions, streaming, citations (see TODOS M5).
+// M5-thin client wrapper for the gateway's stateless one-shot chat
+// endpoint. No session persistence — caller owns the message list.
+// Follow-ups: sessions, streaming, citations (see TODOS M5 — T17-T20).
+//
+// The /chat/enhance-notes endpoint that lived here has been removed.
+// Desktop-parity Enhance (transcript → AI summary via template) now
+// lives in lib/api/meetings.ts::enhanceMeeting().
 
 export interface SendChatMessageInput {
   message: string
@@ -15,17 +19,4 @@ export interface SendChatMessageResult {
 
 export function sendChatMessage(input: SendChatMessageInput): Promise<SendChatMessageResult> {
   return api.post<SendChatMessageResult>('/chat/messages', input)
-}
-
-export interface EnhanceNotesInput {
-  content: string
-  meetingId?: string
-}
-
-export interface EnhanceNotesResult {
-  enhanced: string
-}
-
-export function enhanceNotes(input: EnhanceNotesInput): Promise<EnhanceNotesResult> {
-  return api.post<EnhanceNotesResult>('/chat/enhance-notes', input)
 }

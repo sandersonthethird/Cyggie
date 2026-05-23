@@ -8,6 +8,18 @@ import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
+import Anthropic from '@anthropic-ai/sdk'
+import { resolveAnthropicKey, toGatewayErrorIfAnthropic } from '../llm/resolve-key'
+import {
+  flattenSegments,
+  hasTranscriptContent,
+  truncateTranscript,
+} from '../llm/transcript-flatten'
+import {
+  TEMPLATE_IDS,
+  findTemplate,
+  substitutePlaceholders,
+} from '../templates/meeting-summary-templates'
 
 // =============================================================================
 // /meetings — M2 read surface. Only detail today (list lives on Calendar
@@ -668,6 +680,249 @@ export async function registerMeetingRoutes(
   // ON DELETE CASCADE on the schema-level FKs. notes.source_meeting_id and
   // tasks.meeting_id are nulled (ON DELETE SET NULL).
   // ───────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────
+  // POST /meetings/:id/enhance — desktop-parity Enhance for mobile.
+  //
+  // Reads the meeting's transcript + notes, runs them through Claude with
+  // a user-picked template (vc_pitch | founder_checkin | partners | lp |
+  // general), and writes the resulting markdown back to meetings.summary.
+  // Also bumps lamport + transitions status to 'summarized'. Mirrors
+  // desktop's generateSummary() service so a meeting summarized from
+  // mobile and one summarized from desktop look identical.
+  //
+  // Server-side write (Claude → gateway → Neon). Concurrent with the
+  // desktop summarizer's dual-write path: lamport LWW resolves the race
+  // (Issue 1B accepted for single-firm beta).
+  //
+  // 30s server-side timeout via AbortSignal so a hung Anthropic call
+  // can't hold the request open indefinitely (Issue 2 gap fix).
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/meetings/:id/enhance',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(64) }),
+      body: z.object({
+        templateId: z.enum(TEMPLATE_IDS as unknown as [string, ...string[]]),
+      }),
+      response: {
+        200: z.object({
+          summary: z.string(),
+          lamport: z.string(),
+          status: z.string(),
+        }),
+      },
+    },
+    handler: async (req) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id } = req.params
+      const { templateId } = req.body
+      const startedAtMs = Date.now()
+
+      req.log.info(
+        { metric: 'meetings.enhance.start', meetingId: id, templateId, userId: user.sub },
+        'enhance start',
+      )
+
+      // Load meeting + verify ownership. DB error wrap (Issue 2 gap fix).
+      // Ordering note: ownership check FIRST (before key resolution) so a
+      // request for someone else's meeting returns 404, not 503. Key
+      // resolution happens last, just before the Anthropic call.
+      let meeting: typeof schema.meetings.$inferSelect | undefined
+      try {
+        meeting = await db.query.meetings.findFirst({
+          where: and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)),
+        })
+      } catch (err) {
+        req.log.error({ err, meetingId: id, userId: user.sub }, 'enhance: meeting fetch failed')
+        throw new GatewayError({
+          statusCode: 500,
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to load meeting',
+        })
+      }
+      if (!meeting) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'MEETING_NOT_FOUND',
+          message: 'Meeting not found',
+        })
+      }
+
+      // Issue 1A — strict transcript gate. Null, empty array, or all
+      // empty-text segments all reject the same way.
+      if (!hasTranscriptContent(meeting.transcriptSegments)) {
+        req.log.info(
+          { metric: 'meetings.enhance.rejected_no_transcript', meetingId: id, userId: user.sub },
+          'enhance rejected: no transcript',
+        )
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'NO_TRANSCRIPT',
+          message: 'No transcript available to summarize.',
+        })
+      }
+
+      const template = findTemplate(templateId)
+      if (!template) {
+        // Zod enum should have blocked this, but defense in depth.
+        req.log.warn(
+          { metric: 'meetings.enhance.rejected_invalid_template', templateId, userId: user.sub },
+          'enhance rejected: invalid template',
+        )
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'INVALID_TEMPLATE',
+          message: 'Unknown templateId',
+        })
+      }
+
+      // Build prompt context. Speakers come from speakerMap when present;
+      // fall back to "Unknown participants" so the template variable
+      // doesn't render literally.
+      const speakerMap = (meeting.speakerMap as Record<string, string> | null) ?? null
+      const speakerNames = speakerMap ? Object.values(speakerMap) : []
+      const speakers = speakerNames.length > 0 ? speakerNames.join(', ') : 'Unknown participants'
+
+      const durationMin = meeting.durationSeconds
+        ? `${Math.round(meeting.durationSeconds / 60)} minutes`
+        : 'Unknown'
+
+      const transcriptFlat = truncateTranscript(
+        flattenSegments(meeting.transcriptSegments),
+      )
+
+      const userPrompt = substitutePlaceholders(template, {
+        meetingTitle: meeting.title ?? '(untitled)',
+        date: new Date(meeting.date).toLocaleDateString(),
+        duration: durationMin,
+        speakers,
+        transcript: transcriptFlat,
+        notes: meeting.notes ?? '',
+      })
+
+      // Resolve key just before the Anthropic call — keeps the
+      // earlier gates (ownership, transcript shape, template id) free
+      // to return their proper status codes for users with no key set.
+      const apiKey = await resolveAnthropicKey(env, user.sub)
+      if (!apiKey) {
+        req.log.warn(
+          { metric: 'meetings.enhance.rejected_no_key', meetingId: id, userId: user.sub },
+          'enhance rejected: no anthropic key',
+        )
+        throw new GatewayError({
+          statusCode: 503,
+          code: 'CHAT_UNAVAILABLE',
+          message:
+            'No Anthropic API key configured. Set one in desktop Settings → AI & Transcription.',
+        })
+      }
+
+      // 30s timeout — bounds the worst-case for a hung Anthropic call.
+      // Mobile pads to 45s on its side so the gateway timeout always
+      // fires first and surfaces a clean CHAT_PROVIDER_ERROR.
+      const abortController = new AbortController()
+      const timeoutHandle = setTimeout(() => abortController.abort(), 30_000)
+
+      const client = new Anthropic({ apiKey })
+      let result
+      try {
+        result = await client.messages.create(
+          {
+            model: 'claude-sonnet-4-5-20250929',
+            max_tokens: 4096,
+            system: template.systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }],
+          },
+          { signal: abortController.signal },
+        )
+      } catch (err) {
+        clearTimeout(timeoutHandle)
+        const gw = toGatewayErrorIfAnthropic(err)
+        if (gw) {
+          req.log.warn(
+            {
+              metric: 'meetings.enhance.error',
+              meetingId: id,
+              userId: user.sub,
+              duration_ms: Date.now() - startedAtMs,
+              upstreamStatus: gw.details && typeof gw.details === 'object' && 'upstreamStatus' in gw.details
+                ? (gw.details as { upstreamStatus: number }).upstreamStatus
+                : null,
+              errCode: gw.code,
+            },
+            'enhance: upstream anthropic error',
+          )
+          throw gw
+        }
+        req.log.error({ err, meetingId: id, userId: user.sub }, 'enhance: unhandled error')
+        throw err
+      }
+      clearTimeout(timeoutHandle)
+
+      const summaryText = result.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map((b) => b.text)
+        .join('')
+        .trim()
+
+      if (!summaryText) {
+        throw new GatewayError({
+          statusCode: 502,
+          code: 'CHAT_EMPTY',
+          message: 'Claude returned no text content.',
+        })
+      }
+
+      // Server-mint lamport: BigInt math to stay safe at large values,
+      // matches client-side max-of-local-or-wallclock pattern (validate-lamport.ts:12).
+      const storedLamport = BigInt(meeting.lamport ?? '0')
+      const wallLamport = BigInt(Date.now())
+      const nextLamport = ((storedLamport > wallLamport ? storedLamport : wallLamport) + 1n).toString()
+
+      try {
+        await db
+          .update(schema.meetings)
+          .set({
+            summary: summaryText,
+            status: 'summarized',
+            lamport: nextLamport,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)))
+      } catch (err) {
+        req.log.error({ err, meetingId: id, userId: user.sub }, 'enhance: meeting update failed')
+        throw new GatewayError({
+          statusCode: 500,
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to persist summary',
+        })
+      }
+
+      req.log.info(
+        {
+          metric: 'meetings.enhance.complete',
+          meetingId: id,
+          templateId,
+          userId: user.sub,
+          duration_ms: Date.now() - startedAtMs,
+          inputTokens: result.usage?.input_tokens ?? null,
+          outputTokens: result.usage?.output_tokens ?? null,
+          model: result.model,
+          summaryLength: summaryText.length,
+        },
+        'enhance complete',
+      )
+
+      return {
+        summary: summaryText,
+        lamport: nextLamport,
+        status: 'summarized',
+      }
+    },
+  })
+
   fastifyTyped.route({
     method: 'DELETE',
     url: '/meetings/:id',

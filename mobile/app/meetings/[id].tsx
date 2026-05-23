@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Linking,
@@ -26,12 +26,16 @@ const SUMMARY_TAB_ENABLED =
   process.env['EXPO_PUBLIC_FEATURE_SUMMARY_TAB'] === '1'
 import {
   deleteMeeting,
+  enhanceMeeting,
   fetchMeeting,
+  fetchTemplates,
   type MeetingDetail,
   type MeetingLinkedCompany,
   type MeetingLinkedContact,
+  type SummaryTemplate,
   type TranscriptSegment,
 } from '../../lib/api/meetings'
+import { EnhanceModal } from '../../components/EnhanceModal'
 import { useAuthStore } from '../../lib/auth/store'
 import { MeetingStatusPill } from '../../components/MeetingStatusPill'
 import { NotesEditor } from '../../components/NotesEditor'
@@ -75,6 +79,71 @@ export default function MeetingDetailScreen() {
     enabled: id.length > 0,
     staleTime: 30_000,
   })
+
+  // Enhance UI state. Only relevant when SUMMARY_TAB_ENABLED, but the
+  // hooks have to run unconditionally to satisfy rules-of-hooks.
+  const [enhanceModalOpen, setEnhanceModalOpen] = useState(false)
+  const [enhanceSubmitting, setEnhanceSubmitting] = useState(false)
+  const [enhanceError, setEnhanceError] = useState<string | null>(null)
+  const enhanceMountedRef = useRef(true)
+  useEffect(() => {
+    return () => {
+      enhanceMountedRef.current = false
+    }
+  }, [])
+
+  // Templates fetched once and cached an hour (rarely change).
+  const templatesQuery = useQuery({
+    queryKey: ['templates'],
+    queryFn: () => fetchTemplates(),
+    enabled: SUMMARY_TAB_ENABLED && id.length > 0,
+    staleTime: 60 * 60 * 1000,
+  })
+
+  const onEnhanceClick = useCallback(() => {
+    if (enhanceSubmitting) return
+    setEnhanceError(null)
+    setEnhanceModalOpen(true)
+  }, [enhanceSubmitting])
+
+  const onEnhanceSelectTemplate = useCallback(
+    (templateId: string) => {
+      if (!id || enhanceSubmitting) return
+      setEnhanceModalOpen(false)
+      setEnhanceSubmitting(true)
+      setEnhanceError(null)
+      // 45s client-side timeout — gateway's own AbortSignal fires at 30s,
+      // mobile pads to 45s so the upstream timeout always wins and we
+      // surface a clean CHAT_PROVIDER_ERROR rather than a bare AbortError.
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 45_000)
+      void (async () => {
+        try {
+          await enhanceMeeting(id, { templateId }, { signal: controller.signal })
+          if (!enhanceMountedRef.current) return
+          // Force a refetch so SummarySection rerenders with the new content.
+          await queryClient.invalidateQueries({ queryKey: ['meetings', 'detail', id] })
+        } catch (err) {
+          if (!enhanceMountedRef.current) return
+          const msg =
+            err instanceof ApiError
+              ? err.code === 'NO_TRANSCRIPT'
+                ? 'No transcript yet — wait for transcription to finish, then try again.'
+                : err.code === 'CHAT_UNAVAILABLE'
+                  ? 'No Anthropic API key configured. Paste one in desktop Settings → AI & Transcription.'
+                  : err.message
+              : err instanceof Error && err.name === 'AbortError'
+                ? 'Enhance timed out. Try again — Claude may be slow right now.'
+                : 'Could not enhance. Try again.'
+          setEnhanceError(msg)
+        } finally {
+          clearTimeout(timeout)
+          if (enhanceMountedRef.current) setEnhanceSubmitting(false)
+        }
+      })()
+    },
+    [id, enhanceSubmitting, queryClient],
+  )
 
   useEffect(() => {
     if (query.error instanceof ApiError && query.error.reauthRequired) {
@@ -185,7 +254,13 @@ export default function MeetingDetailScreen() {
               />
             )}
             {segment === 'summary' && SUMMARY_TAB_ENABLED && (
-              <SummarySection summary={meeting.summary} status={meeting.status} />
+              <SummarySection
+                summary={meeting.summary}
+                status={meeting.status}
+                onEnhanceClick={onEnhanceClick}
+                submitting={enhanceSubmitting}
+                enhanceError={enhanceError}
+              />
             )}
             {segment === 'people' && (
               <PeopleSection contacts={meeting.linkedContacts} />
@@ -201,6 +276,16 @@ export default function MeetingDetailScreen() {
         onDiscardBoth={onDiscardBoth}
         onDismiss={onKeepYoursLocally}
       />
+      {SUMMARY_TAB_ENABLED && (
+        <EnhanceModal
+          open={enhanceModalOpen}
+          templates={templatesQuery.data ?? []}
+          isLoading={templatesQuery.isLoading}
+          hasExistingSummary={Boolean(meeting?.summary)}
+          onSelect={onEnhanceSelectTemplate}
+          onDismiss={() => setEnhanceModalOpen(false)}
+        />
+      )}
     </View>
   )
 }
@@ -681,10 +766,12 @@ function TranscriptSection({
 //
 //   status='transcribing'           → "Summary will be ready once
 //                                      transcription completes."
-//   status terminal && summary null → "No summary yet — open on desktop
-//                                      to generate one."
-//   summary present                 → render markdown via
-//                                      react-native-markdown-display
+//   status terminal && summary null → Enhance CTA (NEW — was "open on
+//                                      desktop"; now mobile can trigger).
+//   summary present                 → Re-enhance pill + markdown render.
+//
+// Enhance flow is delegated to the parent via onEnhanceClick + submitting
+// + enhanceError props; this component is presentation-only.
 //
 // Wrapped in <ErrorBoundary> so a malformed markdown payload (e.g.
 // unbalanced fence, weird mathy chars) can't white-screen the whole
@@ -692,11 +779,18 @@ function TranscriptSection({
 function SummarySection({
   summary,
   status,
+  onEnhanceClick,
+  submitting,
+  enhanceError,
 }: {
   summary: string | null
   status: string
+  onEnhanceClick: () => void
+  submitting: boolean
+  enhanceError: string | null
 }) {
   const display = decideSummaryDisplay({ summary, status })
+
   if (display.kind === 'transcribing-wait') {
     return (
       <View style={styles.section}>
@@ -706,17 +800,36 @@ function SummarySection({
       </View>
     )
   }
+
   if (display.kind === 'empty') {
     return (
       <View style={styles.section}>
-        <Text style={styles.emptyInline}>
-          No summary yet — open on desktop to generate one.
-        </Text>
+        <View style={styles.emptyEnhanceWrap}>
+          <Text style={styles.emptyInline}>
+            No summary yet. Enhance to generate one with Cyggie.
+          </Text>
+          <EnhanceButton
+            label="Enhance"
+            submitting={submitting}
+            onPress={onEnhanceClick}
+          />
+          {enhanceError && <Text style={styles.enhanceErrorText}>{enhanceError}</Text>}
+        </View>
       </View>
     )
   }
+
   return (
     <View style={styles.section}>
+      <View style={styles.reEnhanceRow}>
+        <EnhanceButton
+          label="Re-enhance"
+          submitting={submitting}
+          onPress={onEnhanceClick}
+          compact
+        />
+      </View>
+      {enhanceError && <Text style={styles.enhanceErrorText}>{enhanceError}</Text>}
       <View style={styles.kvCard}>
         <View style={styles.summaryBlock}>
           <ErrorBoundary
@@ -731,6 +844,44 @@ function SummarySection({
         </View>
       </View>
     </View>
+  )
+}
+
+function EnhanceButton({
+  label,
+  submitting,
+  onPress,
+  compact,
+}: {
+  label: string
+  submitting: boolean
+  onPress: () => void
+  compact?: boolean
+}): React.JSX.Element {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label} summary`}
+      onPress={onPress}
+      disabled={submitting}
+      style={({ pressed }) => [
+        styles.enhanceBtn,
+        compact && styles.enhanceBtnCompact,
+        submitting && styles.enhanceBtnDisabled,
+        pressed && !submitting && styles.enhanceBtnPressed,
+      ]}
+    >
+      {submitting ? (
+        <ActivityIndicator size="small" color={colors.surface} />
+      ) : (
+        <>
+          <Ionicons name="sparkles" size={compact ? 12 : 14} color={colors.surface} />
+          <Text style={[styles.enhanceBtnLabel, compact && styles.enhanceBtnLabelCompact]}>
+            {label}
+          </Text>
+        </>
+      )}
+    </Pressable>
   )
 }
 
@@ -1126,6 +1277,49 @@ const styles = StyleSheet.create({
   summaryBlock: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  emptyEnhanceWrap: {
+    alignItems: 'flex-start',
+    gap: spacing.md,
+  },
+  reEnhanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: spacing.sm,
+  },
+  enhanceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.crimson,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    minHeight: 36,
+  },
+  enhanceBtnCompact: {
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 4,
+    minHeight: 26,
+  },
+  enhanceBtnDisabled: {
+    backgroundColor: colors.text4,
+  },
+  enhanceBtnPressed: {
+    opacity: 0.8,
+  },
+  enhanceBtnLabel: {
+    color: colors.surface,
+    fontSize: type.body,
+    fontWeight: '600',
+  },
+  enhanceBtnLabelCompact: {
+    fontSize: type.caption,
+  },
+  enhanceErrorText: {
+    color: colors.crimson,
+    fontSize: type.caption,
+    marginBottom: spacing.sm,
   },
   segmentHeaderRow: {
     flexDirection: 'row',
