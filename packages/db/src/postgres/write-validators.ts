@@ -74,20 +74,44 @@ const DATE_KEYS = new Set([
   'lastSyncedAt', 'last_synced_at',
 ])
 
-function coerceDateStrings(input: unknown): unknown {
+// 2026-05-23 — desktop repo mappers (mapSession, mapMeeting, etc.) convert
+// SQLite integer flags to JS booleans for renderer ergonomics. The outbox
+// payload picks up the DTO shape (boolean) instead of the DB shape
+// (integer), so drizzle-zod's createUpdateSchema (which sees `integer`
+// columns as z.number()) rejects with "expected number, received boolean".
+// Coerce true→1, false→0 for known integer-flag columns at the validator
+// boundary so the existing desktop mappers don't need to change shape.
+const INT_FLAG_KEYS = new Set([
+  'isActive', 'is_active',
+  'isPinned', 'is_pinned',
+  'isArchived', 'is_archived',
+  'isGroupEvent', 'is_group_event',
+  'isGroupEventUserSet', 'is_group_event_user_set',
+  'isFinal', 'is_final',
+])
+
+function coercePayload(input: unknown): unknown {
   if (input === null || typeof input !== 'object') return input
   const out: Record<string, unknown> = { ...(input as Record<string, unknown>) }
   for (const key of Object.keys(out)) {
-    if (!DATE_KEYS.has(key)) continue
     const v = out[key]
-    if (typeof v !== 'string') continue
-    const d = new Date(v)
-    if (Number.isFinite(d.getTime())) {
-      out[key] = d
+    if (DATE_KEYS.has(key) && typeof v === 'string') {
+      const d = new Date(v)
+      if (Number.isFinite(d.getTime())) {
+        out[key] = d
+      }
+      continue
+    }
+    if (INT_FLAG_KEYS.has(key) && typeof v === 'boolean') {
+      out[key] = v ? 1 : 0
+      continue
     }
   }
   return out
 }
+
+// Back-compat alias — earlier code only had the date-coerce variant.
+const coerceDateStrings = coercePayload
 
 function bundleFor(table: unknown): ValidatorBundle {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

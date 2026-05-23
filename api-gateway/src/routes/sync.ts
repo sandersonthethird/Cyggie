@@ -317,6 +317,12 @@ export async function registerSyncRoutes(
             await client.query('ROLLBACK TO SAVEPOINT entry_sp')
             await client.query('RELEASE SAVEPOINT entry_sp')
             rejected.push({ outboxId: entry.outboxId, reason: msg })
+            // Pull Postgres-specific error fields when present (pg DatabaseError
+            // exposes code/detail/hint/position/where on top of message). The
+            // bare `.message` often loses the column name or offending value
+            // that makes a "invalid input syntax for type json" debuggable.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const pgErr = err as any
             req.log.warn(
               {
                 outboxId: entry.outboxId,
@@ -325,6 +331,13 @@ export async function registerSyncRoutes(
                 op: entry.op,
                 rowId: entry.rowId,
                 reason: msg,
+                pgCode: pgErr?.code ?? null,
+                pgDetail: pgErr?.detail ?? null,
+                pgHint: pgErr?.hint ?? null,
+                pgPosition: pgErr?.position ?? null,
+                pgWhere: pgErr?.where ?? null,
+                pgColumn: pgErr?.column ?? null,
+                pgRoutine: pgErr?.routine ?? null,
                 metric: 'sync.push.sql_failed',
               },
               'sync.push rejected entry: sql failure',
