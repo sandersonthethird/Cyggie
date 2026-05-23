@@ -73,6 +73,9 @@ const DATE_KEYS = new Set([
   'endsAt', 'ends_at',
   'scheduledEndAt', 'scheduled_end_at',
   'lastSyncedAt', 'last_synced_at',
+  // org_companies portfolio-row fields surfaced by tonight's drain.
+  'dateOfInitialInvestment', 'date_of_initial_investment',
+  'followonDate', 'followon_date',
 ])
 
 // 2026-05-23 — desktop repo mappers (mapSession, mapMeeting, etc.) convert
