@@ -48,12 +48,53 @@ interface ValidatorBundle {
 // for the table name (not a string); the helper signature would need
 // drizzle's internal types to express it. The drizzle-zod functions accept
 // any PgTable at runtime, so the loose typing here is a pragmatic shortcut.
+//
+// 2026-05-23 — drizzle-zod's stock `createInsertSchema` / `createUpdateSchema`
+// emit `z.date()` for timestamp columns, which only accepts `Date` instances.
+// Desktop SQLite stores timestamps as ISO strings and the outbox payload
+// carries those strings unchanged. This caused every meeting/notes/etc.
+// UPDATE to fail validation today with messages like
+// `date: Invalid input: expected date, received string`. The preprocess
+// below converts well-formed ISO strings to Date objects before validation;
+// other values pass through untouched. The list of affected keys is
+// table-agnostic — anything matching a date column name across the
+// owned-table schemas (created_at, updated_at, last_message_at, deleted_at,
+// joined_at, date) and their camelCase equivalents. False positives are
+// guarded by an `isFinite(d.getTime())` check.
+const DATE_KEYS = new Set([
+  'date',
+  'createdAt', 'created_at',
+  'updatedAt', 'updated_at',
+  'lastMessageAt', 'last_message_at',
+  'deletedAt', 'deleted_at',
+  'joinedAt', 'joined_at',
+  'startsAt', 'starts_at',
+  'endsAt', 'ends_at',
+  'scheduledEndAt', 'scheduled_end_at',
+  'lastSyncedAt', 'last_synced_at',
+])
+
+function coerceDateStrings(input: unknown): unknown {
+  if (input === null || typeof input !== 'object') return input
+  const out: Record<string, unknown> = { ...(input as Record<string, unknown>) }
+  for (const key of Object.keys(out)) {
+    if (!DATE_KEYS.has(key)) continue
+    const v = out[key]
+    if (typeof v !== 'string') continue
+    const d = new Date(v)
+    if (Number.isFinite(d.getTime())) {
+      out[key] = d
+    }
+  }
+  return out
+}
+
 function bundleFor(table: unknown): ValidatorBundle {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const t = table as any
   return {
-    insert: createInsertSchema(t),
-    update: createUpdateSchema(t),
+    insert: z.preprocess(coerceDateStrings, createInsertSchema(t)),
+    update: z.preprocess(coerceDateStrings, createUpdateSchema(t)),
     // Delete payloads are loose — gateway only reads the PK columns from
     // the decoded outbox.row_id.
     delete: z.record(z.string(), z.unknown()),
