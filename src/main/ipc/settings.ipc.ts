@@ -6,7 +6,13 @@ import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { backfillMeetingSummaryNotes } from '../services/meeting-notes-backfill.service'
 import { getCurrentUserId } from '../security/current-user'
 import { isSafeStorageActive } from '../security/credentials'
-import { pushAnthropicKey, pushDeepgramKey } from '../services/gateway-credentials'
+import {
+  pushAnthropicKey,
+  pushDeepgramKey,
+  pushExaKey,
+  pushOpenAiKey,
+  pushWebShareKey,
+} from '../services/gateway-credentials'
 
 // settings.ipc.ts — read/write/test paths for AppSettings.
 //
@@ -110,6 +116,18 @@ export function registerSettingsHandlers(): void {
     // user bills against their own Deepgram account.
     if (key === 'deepgramApiKey' && value.trim().length > 0) {
       void pushDeepgramKey(value)
+    }
+    // T33 — pre-plumb the remaining providers so they're available when
+    // T3 (enrichment relocation) ships gateway routes that need them.
+    // No gateway code consumes these today; pushing now is harmless.
+    if (key === 'openAiApiKey' && value.trim().length > 0) {
+      void pushOpenAiKey(value)
+    }
+    if (key === 'exaApiKey' && value.trim().length > 0) {
+      void pushExaKey(value)
+    }
+    if (key === 'webShareApiKey' && value.trim().length > 0) {
+      void pushWebShareKey(value)
     }
   })
 

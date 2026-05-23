@@ -29,7 +29,13 @@ import type { GatewayEnv } from '../env'
 // the upstream provider on the next chat — that's the right signal.
 // =============================================================================
 
-const ALLOWED_PROVIDERS = ['anthropic', 'openai', 'deepgram'] as const
+// T33 widened this enum to include 'exa' and 'webshare' alongside the
+// already-supported Anthropic / OpenAI / Deepgram. The Drizzle schema's
+// CHECK constraint must match (see packages/db/src/schema/user_credentials.ts
+// and migration 0018_user_credentials_more_providers.sql).
+// 'memo' is intentionally absent — memo-writing stays desktop-only, so
+// the gateway never needs to hold a per-user memo key.
+const ALLOWED_PROVIDERS = ['anthropic', 'openai', 'deepgram', 'exa', 'webshare'] as const
 
 export async function registerUserCredentialRoutes(
   app: FastifyInstance,

@@ -25,8 +25,10 @@ const GATEWAY_URL =
   process.env['CYGGIE_GATEWAY_URL'] ?? 'https://cyggie-gateway.fly.dev'
 
 /** Providers that can be pushed to the gateway. Mirrors the gateway's
- * ALLOWED_PROVIDERS in routes/user-credentials.ts. */
-export type PushableProvider = 'anthropic' | 'deepgram'
+ * ALLOWED_PROVIDERS in routes/user-credentials.ts. T33 added openai,
+ * exa, and webshare. Memo deliberately excluded — memo-writing stays
+ * desktop-only. */
+export type PushableProvider = 'anthropic' | 'deepgram' | 'openai' | 'exa' | 'webshare'
 
 /**
  * Push a provider key to the gateway. Best-effort — does not throw, only
@@ -92,9 +94,21 @@ export async function pushProviderKey(
 export const pushAnthropicKey = (value: string): Promise<void> =>
   pushProviderKey('anthropic', value)
 
-/** New: Deepgram push, mirrors pushAnthropicKey. */
+/** Deepgram push, mirrors pushAnthropicKey. */
 export const pushDeepgramKey = (value: string): Promise<void> =>
   pushProviderKey('deepgram', value)
+
+/** T33 — OpenAI push. */
+export const pushOpenAiKey = (value: string): Promise<void> =>
+  pushProviderKey('openai', value)
+
+/** T33 — Exa push. */
+export const pushExaKey = (value: string): Promise<void> =>
+  pushProviderKey('exa', value)
+
+/** T33 — WebShare push. */
+export const pushWebShareKey = (value: string): Promise<void> =>
+  pushProviderKey('webshare', value)
 
 /**
  * On desktop launch, push any locally-stored provider keys to the
@@ -113,6 +127,16 @@ export function backfillProviderKeysOnLaunch(): void {
 
     const deepgramKey = getCredential('deepgramApiKey')
     if (deepgramKey) void pushDeepgramKey(deepgramKey)
+
+    // T33 — additional providers. Memo intentionally excluded.
+    const openAiKey = getCredential('openAiApiKey')
+    if (openAiKey) void pushOpenAiKey(openAiKey)
+
+    const exaKey = getCredential('exaApiKey')
+    if (exaKey) void pushExaKey(exaKey)
+
+    const webShareKey = getCredential('webShareApiKey')
+    if (webShareKey) void pushWebShareKey(webShareKey)
   }, 2000)
 }
 

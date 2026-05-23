@@ -21,7 +21,7 @@ import type { GatewayEnv } from '../env'
 async function resolveProviderKeyFromDb(
   env: GatewayEnv,
   userId: string,
-  provider: 'anthropic' | 'deepgram',
+  provider: 'anthropic' | 'deepgram' | 'openai' | 'exa' | 'webshare',
 ): Promise<string | null> {
   const db = getDb(env.GATEWAY_DATABASE_URL)
   const rows = await db
@@ -55,6 +55,33 @@ export async function resolveDeepgramKey(
   userId: string,
 ): Promise<string | null> {
   return resolveProviderKeyFromDb(env, userId, 'deepgram')
+}
+
+// T33 (2026-05-23) — per-user keys for OpenAI / Exa / WebShare. Nothing
+// on the gateway calls these today; the keys are pre-plumbed for T3
+// (enrichment relocation), which is the only future caller that
+// benefits. No env fallbacks: these providers have never had gateway
+// env vars, and adding one would be a multi-tenant trap.
+
+export async function resolveOpenAiKey(
+  env: GatewayEnv,
+  userId: string,
+): Promise<string | null> {
+  return resolveProviderKeyFromDb(env, userId, 'openai')
+}
+
+export async function resolveExaKey(
+  env: GatewayEnv,
+  userId: string,
+): Promise<string | null> {
+  return resolveProviderKeyFromDb(env, userId, 'exa')
+}
+
+export async function resolveWebShareKey(
+  env: GatewayEnv,
+  userId: string,
+): Promise<string | null> {
+  return resolveProviderKeyFromDb(env, userId, 'webshare')
 }
 
 // Surface upstream Anthropic errors as meaningful 4xx/5xx instead of the

@@ -39,7 +39,7 @@ export const userCredentials = pgTable(
     // Forward-compatible: add new providers via ALTER TABLE ... ADD CONSTRAINT.
     check(
       'user_credentials_provider_check',
-      sql`${t.provider} IN ('anthropic', 'openai', 'deepgram')`,
+      sql`${t.provider} IN ('anthropic', 'openai', 'deepgram', 'exa', 'webshare')`,
     ),
   ],
 )
