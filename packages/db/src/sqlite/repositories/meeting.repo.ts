@@ -19,6 +19,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     meetingUrl: row.meeting_url,
     transcriptPath: row.transcript_path,
     summaryPath: row.summary_path,
+    summary: row.summary ?? null,
     notes: row.notes,
     transcriptSegments: row.transcript_segments ? JSON.parse(row.transcript_segments) : null,
     transcriptDriveId: row.transcript_drive_id ?? null,
@@ -400,6 +401,12 @@ export function updateMeeting(
     durationSeconds: number
     transcriptPath: string
     summaryPath: string
+    /**
+     * AI-generated meeting summary markdown. Dual-written by the desktop
+     * summarizer alongside summaryPath so mobile can render it via
+     * GET /meetings/:id. See packages/services/src/llm/summarizer.ts.
+     */
+    summary: string | null
     notes: string | null
     transcriptSegments: TranscriptSegment[] | null
     transcriptDriveId: string
@@ -439,6 +446,10 @@ export function updateMeeting(
   if (data.summaryPath !== undefined) {
     sets.push('summary_path = ?')
     params.push(data.summaryPath)
+  }
+  if (data.summary !== undefined) {
+    sets.push('summary = ?')
+    params.push(data.summary)
   }
   if (data.notes !== undefined) {
     sets.push('notes = ?')

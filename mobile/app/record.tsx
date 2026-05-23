@@ -40,6 +40,7 @@ import {
 } from '../lib/recording/pending-upload'
 import { useRecordingStore } from '../lib/recording/store'
 import { useTranscribingPoll } from '../lib/recording/use-transcribing-poll'
+import { useAuthStore } from '../lib/auth/store'
 import { fetchMeeting } from '../lib/api/meetings'
 import { ApiError } from '../lib/api/client'
 import {
@@ -96,6 +97,7 @@ export default function RecordScreen() {
   const uploadProgress = useRecordingStore((s) => s.uploadProgress)
   const error = useRecordingStore((s) => s.error)
   const reset = useRecordingStore((s) => s.reset)
+  const userId = useAuthStore((s) => s.userId)
 
   // T5 — calendar-context entry point. When the user taps "Record" on a
   // scheduled meeting's detail screen, the route carries `calEventId` (and
@@ -133,9 +135,10 @@ export default function RecordScreen() {
   // (mirrors poll-action.ts). This useEffect just loads inputs, asks the
   // pure function what to do, and runs the side effects.
   useEffect(() => {
+    if (!userId) return
     let cancelled = false
     void (async () => {
-      const loaded = await loadMostRecentPendingUploadOrEvict()
+      const loaded = await loadMostRecentPendingUploadOrEvict(userId)
       if (cancelled) return
       setPendingUpload(loaded)
 
@@ -197,9 +200,10 @@ export default function RecordScreen() {
     return () => {
       cancelled = true
     }
-    // Don't include status in deps — only run on initial mount.
+    // Don't include status in deps — only re-run when userId becomes
+    // available (post-hydrate). Mount-time decision is one-shot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [userId])
 
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {

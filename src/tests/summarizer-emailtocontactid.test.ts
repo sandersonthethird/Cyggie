@@ -28,12 +28,17 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
 }))
 
-// ─── Mock: meeting.repo ───────────────────────────────────────────────────────
+// ─── Mock: meetingRepo barrel ─────────────────────────────────────────────────
+// Summarizer imports `* as meetingRepo from '@cyggie/db/sqlite/repositories'`
+// (the sync-wrapped barrel) per CLAUDE.md, so writes flow through withSync
+// → outbox. The unit test mocks the barrel directly — calling the real
+// barrel here would require configureSyncGlobals() + a real SQLite + the
+// outbox table, none of which this test cares about.
 
 const mockGetMeeting = vi.fn()
 const mockUpdateMeeting = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories', () => ({
   getMeeting: (...args: unknown[]) => mockGetMeeting(...args),
   updateMeeting: (...args: unknown[]) => mockUpdateMeeting(...args),
 }))
@@ -189,5 +194,33 @@ describe('generateSummary — emailToContactId regression', () => {
     // Before the fix, entityId would be { id: 'c1', fullName: 'Alice Smith' }
     expect(payload.entityId).toBe('c1')
     expect(typeof payload.entityId).toBe('string')
+  })
+})
+
+describe('generateSummary — Item 2: writes summary column for mobile read path', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockGetMeeting.mockReturnValue(FAKE_MEETING)
+    mockGetTemplate.mockReturnValue(FAKE_TEMPLATE)
+    mockUpdateMeeting.mockReturnValue(undefined)
+  })
+
+  it('dual-writes summary content to BOTH summaryPath AND the new summary column', async () => {
+    await generateSummary('m1', 't1', null)
+
+    // The post-generation updateMeeting call (the one that sets status to
+    // summarized) MUST include the markdown body in the summary column so
+    // the desktop → outbox → Neon path surfaces it to mobile via
+    // GET /meetings/:id.
+    const summarizedCall = mockUpdateMeeting.mock.calls.find(
+      (call) => (call[1] as { status?: string }).status === 'summarized'
+    )
+    expect(summarizedCall).toBeDefined()
+
+    const [meetingId, patch] = summarizedCall!
+    expect(meetingId).toBe('m1')
+    expect(patch.summary).toBe('Test summary output')
+    expect(patch.summaryPath).toBe('summaries/m1.md')
+    expect(patch.status).toBe('summarized')
   })
 })

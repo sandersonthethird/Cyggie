@@ -54,7 +54,19 @@ interface FetchOpts<TBody> {
 
 let refreshInFlight: Promise<string | null> | null = null
 
-async function ensureFreshAccessToken(): Promise<string | null> {
+/**
+ * Force a /auth/refresh round-trip and update the auth store with the
+ * rotated tokens. Returns the new access token, or null when refresh
+ * fails (e.g. revoked refresh token — the store is signed out in that
+ * case).
+ *
+ * Exported so the multipart upload path
+ * ([recordings.ts](./recordings.ts)) can mirror the canonical 401 →
+ * refresh → retry pattern without going through `apiFetch` (which
+ * doesn't support the native createUploadTask transport). All callers
+ * share the single in-flight promise so concurrent 401s coalesce.
+ */
+export async function ensureFreshAccessToken(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight
   refreshInFlight = (async () => {
     try {

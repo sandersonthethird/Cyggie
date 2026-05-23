@@ -11,6 +11,7 @@ import * as WebBrowser from 'expo-web-browser'
 import { useAuthStore } from '../lib/auth/store'
 import { mmkvAsyncStorage } from '../lib/cache/mmkv'
 import { registerForPushNotifications } from '../lib/push/register'
+import { loadMostRecentPendingUploadOrEvict } from '../lib/recording/pending-upload'
 import { initSync, shutdownSync } from '../lib/sync/boot'
 
 // Required at module top-level so any pending ASWebAuthenticationSession
@@ -63,6 +64,7 @@ Notifications.setNotificationHandler({
 export default function RootLayout() {
   const hydrate = useAuthStore((s) => s.hydrate)
   const authStatus = useAuthStore((s) => s.status)
+  const userId = useAuthStore((s) => s.userId)
 
   // Rehydrate auth state from SecureStore once on mount. Until this resolves,
   // status='idle' → status='loading'; the index dispatcher waits for one of
@@ -89,6 +91,32 @@ export default function RootLayout() {
     }
     return undefined
   }, [authStatus])
+
+  // 3A — post-signin recovery surface for unsent recordings. If the user
+  // is signed in AND has a recoverable PendingUpload (audio still on
+  // disk, MMKV slot present, owned by this userId), route them straight
+  // to /record so the retry banner is visible immediately. Without this,
+  // a refresh-fail signOut would dump them at the calendar with no
+  // affordance for their stranded recording.
+  //
+  // Idempotent: the route's mount-action logic decides what to render
+  // based on the same MMKV state; running this twice is harmless. We
+  // gate on userId not just authStatus so the effect doesn't fire
+  // during the brief signed_in-but-userId-null hydrate window.
+  useEffect(() => {
+    if (authStatus !== 'signed_in') return
+    if (!userId) return
+    let cancelled = false
+    void (async () => {
+      const pending = await loadMostRecentPendingUploadOrEvict(userId)
+      if (cancelled) return
+      if (!pending) return
+      router.replace('/record')
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [authStatus, userId])
 
   // Notification tap handler — when the user taps a "transcript ready" push,
   // navigate straight to the meeting detail. The payload carries meetingId

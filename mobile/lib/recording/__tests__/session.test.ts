@@ -96,6 +96,14 @@ vi.mock('../store', () => ({
   },
 }))
 
+// Auth store: session.ts reads userId at stopRecording time to stamp the
+// PendingUpload (1A user-scoping). Tests get a stable fake user.
+vi.mock('../../auth/store', () => ({
+  useAuthStore: {
+    getState: () => ({ userId: 'user-test' }),
+  },
+}))
+
 const { retryPendingUpload, startRecording, stopRecording, cancelRecording } =
   await import('../session')
 
@@ -124,6 +132,7 @@ describe('performUpload — success path (via retryPendingUpload)', () => {
   it('does NOT call FileSystem.deleteAsync on success', async () => {
     await retryPendingUpload({
       clientRecordingId: 'rec-a',
+      userId: 'user-test',
       localUri: 'file:///a.m4a',
       clientRecordedAt: new Date().toISOString(),
     })
@@ -137,6 +146,7 @@ describe('performUpload — success path (via retryPendingUpload)', () => {
     uploadShouldReturn = { meetingId: 'mtg-1234' }
     await retryPendingUpload({
       clientRecordingId: 'rec-success-1',
+      userId: 'user-test',
       localUri: 'file:///a.m4a',
       clientRecordedAt: new Date().toISOString(),
       lastError: 'previous attempt failed',
@@ -155,6 +165,7 @@ describe('performUpload — success path (via retryPendingUpload)', () => {
     uploadShouldReturn = { meetingId: 'mtg-abc' }
     await retryPendingUpload({
       clientRecordingId: 'rec-order',
+      userId: 'user-test',
       localUri: 'file:///a.m4a',
       clientRecordedAt: new Date().toISOString(),
     })
@@ -177,12 +188,14 @@ describe('performUpload — success path (via retryPendingUpload)', () => {
     uploadShouldReturn = { meetingId: 'mtg-A' }
     await retryPendingUpload({
       clientRecordingId: 'rec-A',
+      userId: 'user-test',
       localUri: 'file:///A.m4a',
       clientRecordedAt: '2026-05-21T10:00:00Z',
     })
     uploadShouldReturn = { meetingId: 'mtg-B' }
     await retryPendingUpload({
       clientRecordingId: 'rec-B',
+      userId: 'user-test',
       localUri: 'file:///B.m4a',
       clientRecordedAt: '2026-05-21T10:05:00Z',
     })
@@ -202,6 +215,7 @@ describe('performUpload — failure path (via retryPendingUpload)', () => {
     await expect(
       retryPendingUpload({
         clientRecordingId: 'rec-fail',
+        userId: 'user-test',
         localUri: 'file:///b.m4a',
         clientRecordedAt: new Date().toISOString(),
       }),
@@ -230,6 +244,7 @@ describe('performUpload — failure path (via retryPendingUpload)', () => {
     await expect(
       retryPendingUpload({
         clientRecordingId: 'rec-gone',
+        userId: 'user-test',
         localUri: 'file:///gone.m4a',
         clientRecordedAt: new Date().toISOString(),
       }),

@@ -54,6 +54,14 @@ export interface Meeting {
   meetingUrl: string | null
   transcriptPath: string | null
   summaryPath: string | null
+  /**
+   * AI-generated meeting summary markdown. Dual-written by the desktop
+   * summarizer alongside summaryPath so mobile can render it via
+   * GET /meetings/:id (Item 2). Migration 099. Null when the meeting
+   * hasn't been summarized yet, or for meetings that predate the
+   * dual-write (no automatic backfill in single-firm beta).
+   */
+  summary: string | null
   recordingPath: string | null
   transcriptDriveId: string | null
   summaryDriveId: string | null

@@ -1,3 +1,4 @@
+import { useInfiniteQuery, type UseInfiniteQueryResult } from '@tanstack/react-query'
 import { api } from './client'
 
 // Typed client for /calendar/* gateway routes.
@@ -36,28 +37,42 @@ export interface CalendarEvent {
 
 interface CalendarEventsResponse {
   events: CalendarEvent[]
+  /**
+   * Google-issued opaque pagination token, surfaced by the gateway when
+   * more events exist in the same window beyond `limit`. fetchCalendarPage
+   * drains the chain before advancing the day cursor — see the inline
+   * diagram above useCalendarInfiniteQuery.
+   */
+  nextPageToken?: string
 }
 
 interface FetchCalendarOpts {
   from?: Date
   to?: Date
   limit?: number
+  pageToken?: string
   signal?: AbortSignal
 }
 
 /**
  * GET /calendar/events — Google Calendar events for the user's primary
  * calendar. Default window if from/to omitted: gateway uses now → +14 days.
+ *
+ * Returns the full response (events + optional nextPageToken). Use
+ * `fetchCalendarPage` when you want the infinite-scroll cursor +
+ * pageToken drain bundled together.
  */
-export async function fetchCalendarEvents(opts: FetchCalendarOpts = {}): Promise<CalendarEvent[]> {
+export async function fetchCalendarEvents(
+  opts: FetchCalendarOpts = {},
+): Promise<CalendarEventsResponse> {
   const params = new URLSearchParams()
   if (opts.from) params.set('from', opts.from.toISOString())
   if (opts.to) params.set('to', opts.to.toISOString())
   if (opts.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts.pageToken) params.set('pageToken', opts.pageToken)
   const qs = params.toString()
   const path = qs ? `/calendar/events?${qs}` : '/calendar/events'
-  const body = await api.get<CalendarEventsResponse>(path, { signal: opts.signal })
-  return body.events
+  return api.get<CalendarEventsResponse>(path, { signal: opts.signal })
 }
 
 /**
@@ -216,17 +231,166 @@ export function formatDayLabel(day: Date, now: Date): string {
 }
 
 /**
- * Compute the calendar fetch window relative to `now`. The mobile
- * calendar tab pulls 7 days of past events and 14 days of future
- * events. Past start is snapped to local midnight so day-boundary
- * filtering is deterministic; future end is `now + 14d` (no snap —
- * the gateway returns whatever falls in the window).
+ * Compute the today-only fetch window. Calendar tab's Today segment
+ * uses this single-day fetch separately from Past/Upcoming, which now
+ * use infinite-scroll (see useCalendarInfiniteQuery).
  */
-export function getCalendarFetchWindow(now: Date): { from: Date; to: Date } {
+export function getCalendarTodayWindow(now: Date): { from: Date; to: Date } {
   const from = startOfDay(now)
-  from.setDate(from.getDate() - 7)
-  const to = new Date(now.getTime() + 14 * 86400_000)
+  const to = addDays(from, 1)
   return { from, to }
+}
+
+// ─── Infinite-scroll for Past / Upcoming ────────────────────────────────────
+//
+// 30-day pages with limit=250. Cursor advances by 30d per page. When the
+// gateway response includes nextPageToken (Google's pagination signal),
+// we drain the chain at the CURRENT cursor before advancing — closes
+// the silent-truncation gap for dense weeks (>250 events in 30 days).
+//
+//   cursor (Date)             ┌── pageToken drain ──┐
+//      │                      │                     │
+//      ▼                      ▼                     │
+//   fetchCalendarPage({direction, cursor, pageToken: undefined})
+//      │
+//      ├─ events.length === limit + nextPageToken?
+//      │     └─ return {events, nextCursor: cursor, nextPageToken}  ← stay on day cursor, advance token
+//      │
+//      ├─ events.length < limit + nextPageToken? (rare; partial page with more)
+//      │     └─ return {events, nextCursor: cursor, nextPageToken}  ← drain anyway
+//      │
+//      ├─ events.length === 0
+//      │     └─ emptyCount === MAX-1? return {events, nextCursor: null} (STOP)
+//      │     └─ else: return {events, nextCursor: cursor ± PAGE_DAYS}
+//      │
+//      └─ events present, no nextPageToken
+//            └─ return {events, nextCursor: cursor ± PAGE_DAYS, nextPageToken: undefined}
+
+export const PAGE_DAYS = 30
+export const PAGE_LIMIT = 250
+/**
+ * Stop loading more pages after this many consecutive empty pages.
+ * Calibrated for "user took a 3-month sabbatical" (gap of 3 empty
+ * months) — 5 pages × 30 days = 150 days. Beyond that, we assume the
+ * user's history doesn't extend further. Single-empty isn't enough
+ * because a partner can easily have a single quiet month.
+ */
+export const MAX_EMPTY_PAGES_BEFORE_STOP = 5
+
+export type ScrollDirection = 'past' | 'future'
+
+export interface CalendarPage {
+  events: CalendarEvent[]
+  /**
+   * Next cursor to fetch FROM. `null` signals the empty-stop heuristic
+   * fired (TanStack's getNextPageParam returns undefined → hasNextPage
+   * becomes false → cached). When `nextPageToken` is present, the
+   * cursor stays the same — the drain happens before advancing.
+   */
+  nextCursor: Date | null
+  nextPageToken?: string
+  /** Tracks consecutive empties so the next page knows when to stop. */
+  emptyCount: number
+}
+
+/**
+ * Fetch one infinite-scroll page for the given direction. Caller (TanStack
+ * `useInfiniteQuery`) supplies the cursor + accumulated emptyCount via
+ * pageParam; we return the events + the next cursor (or null to stop).
+ */
+export async function fetchCalendarPage(opts: {
+  direction: ScrollDirection
+  cursor: Date
+  emptyCount: number
+  pageToken?: string
+  signal?: AbortSignal
+}): Promise<CalendarPage> {
+  const { direction, cursor, emptyCount, pageToken, signal } = opts
+  const from = direction === 'past' ? addDays(cursor, -PAGE_DAYS) : cursor
+  const to = direction === 'past' ? cursor : addDays(cursor, PAGE_DAYS)
+
+  const response = await fetchCalendarEvents({
+    from,
+    to,
+    limit: PAGE_LIMIT,
+    ...(pageToken ? { pageToken } : {}),
+    ...(signal ? { signal } : {}),
+  })
+
+  // Truncation drain: if Google said there's more in this window, stay
+  // on the same day cursor and return the pageToken so the next round
+  // of useInfiniteQuery fetches it. emptyCount resets because we got
+  // events back.
+  if (response.nextPageToken) {
+    return {
+      events: response.events,
+      nextCursor: cursor,
+      nextPageToken: response.nextPageToken,
+      emptyCount: 0,
+    }
+  }
+
+  if (response.events.length === 0) {
+    const nextEmpty = emptyCount + 1
+    if (nextEmpty >= MAX_EMPTY_PAGES_BEFORE_STOP) {
+      return { events: [], nextCursor: null, emptyCount: nextEmpty }
+    }
+    const nextCursor =
+      direction === 'past' ? addDays(cursor, -PAGE_DAYS) : addDays(cursor, PAGE_DAYS)
+    return { events: [], nextCursor, emptyCount: nextEmpty }
+  }
+
+  // Non-empty page, no more in this window — advance to the next 30-day
+  // slice and reset the empty counter.
+  const nextCursor =
+    direction === 'past' ? addDays(cursor, -PAGE_DAYS) : addDays(cursor, PAGE_DAYS)
+  return { events: response.events, nextCursor, emptyCount: 0 }
+}
+
+interface UseCalendarInfiniteQueryOpts {
+  direction: ScrollDirection
+  /**
+   * Anchor "now" — cursor starts at startOfTomorrow() for future and
+   * startOfToday() for past. Stable across renders so TanStack's cache
+   * key doesn't churn per minute.
+   */
+  now: Date
+}
+
+type CalendarPageParam = { cursor: Date; emptyCount: number; pageToken?: string }
+
+/**
+ * Shared infinite-query hook for Past + Upcoming. Page boundaries:
+ *   - past:   first page fetches [today-30d, today); cursor=startOfToday()
+ *   - future: first page fetches [tomorrow, tomorrow+30d); cursor=startOfTomorrow()
+ * Half-open intervals make boundary days unique — no cross-page dedup.
+ */
+export function useCalendarInfiniteQuery(
+  opts: UseCalendarInfiniteQueryOpts,
+): UseInfiniteQueryResult<{ pages: CalendarPage[]; pageParams: CalendarPageParam[] }, Error> {
+  const initialCursor =
+    opts.direction === 'past' ? startOfDay(opts.now) : addDays(startOfDay(opts.now), 1)
+  return useInfiniteQuery({
+    queryKey: ['calendar', opts.direction] as const,
+    queryFn: ({ pageParam, signal }) =>
+      fetchCalendarPage({
+        direction: opts.direction,
+        cursor: pageParam.cursor,
+        emptyCount: pageParam.emptyCount,
+        ...(pageParam.pageToken ? { pageToken: pageParam.pageToken } : {}),
+        signal,
+      }),
+    initialPageParam: { cursor: initialCursor, emptyCount: 0 } as CalendarPageParam,
+    getNextPageParam: (lastPage): CalendarPageParam | undefined => {
+      if (lastPage.nextCursor === null) return undefined
+      return {
+        cursor: lastPage.nextCursor,
+        emptyCount: lastPage.emptyCount,
+        ...(lastPage.nextPageToken ? { pageToken: lastPage.nextPageToken } : {}),
+      }
+    },
+    staleTime: 30_000,
+  })
 }
 
 function startOfDay(d: Date): Date {

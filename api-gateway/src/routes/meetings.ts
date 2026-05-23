@@ -84,6 +84,11 @@ const MeetingDetailSchema = z.object({
   meetingPlatform: z.string().nullable(),
   meetingUrl: z.string().nullable(),
   notes: z.string().nullable(),
+  // AI-generated meeting summary markdown. Item 2 — dual-written by the
+  // desktop summarizer alongside `summaryPath` so mobile can render it
+  // without needing local-disk access. Null when the meeting hasn't been
+  // summarized yet (or predates the dual-write).
+  summary: z.string().nullable(),
   attendees: z.array(z.string()).nullable(),
   attendeeEmails: z.array(z.string()).nullable(),
   speakerCount: z.number(),
@@ -266,6 +271,7 @@ async function buildMeetingDetail(
     meetingPlatform: meeting.meetingPlatform,
     meetingUrl: meeting.meetingUrl,
     notes: meeting.notes,
+    summary: meeting.summary ?? null,
     attendees: (meeting.attendees as string[] | null) ?? null,
     attendeeEmails: (meeting.attendeeEmails as string[] | null) ?? null,
     speakerCount: meeting.speakerCount,

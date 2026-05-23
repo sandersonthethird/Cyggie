@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  FlatList,
+  type ListRenderItem,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -11,7 +13,11 @@ import {
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useFocusEffect } from '@react-navigation/native'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
@@ -19,11 +25,13 @@ import {
   eventsForDate,
   fetchCalendarEvents,
   formatDayLabel,
-  getCalendarFetchWindow,
+  getCalendarTodayWindow,
   groupByDay,
   safeIso,
+  useCalendarInfiniteQuery,
   type CalendarDaySection,
   type CalendarEvent,
+  type CalendarPage,
 } from '../../lib/api/calendar'
 import { prepareMeetingFromCalendarEvent } from '../../lib/api/meetings'
 import { useAuthStore } from '../../lib/auth/store'
@@ -82,16 +90,27 @@ export default function CalendarTab() {
   // when the calendar day rolls over, not every minute the `now` ticker fires.
   const nowDay = useMemo(() => now.toDateString(), [now])
 
-  const query = useQuery({
-    queryKey: ['calendar', 'events', 'window'],
+  // Stable "now" anchor for the infinite queries so cursor + queryKey
+  // don't churn per-minute. Recomputes once per calendar day.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const nowAnchor = useMemo(() => new Date(), [nowDay])
+
+  // Today's events: single-day window (today only). Past/Upcoming
+  // segments handle everything outside today via infinite scroll.
+  const todayQuery = useQuery({
+    queryKey: ['calendar', 'today', nowDay],
     queryFn: ({ signal }) => {
-      // Use a fresh `new Date()` here (not the per-minute `now` state).
-      // Window is day-granular and we don't want a refetch every tick.
-      const { from, to } = getCalendarFetchWindow(new Date())
+      const { from, to } = getCalendarTodayWindow(new Date())
       return fetchCalendarEvents({ from, to, signal })
     },
     staleTime: 30_000,
   })
+
+  // Item 1 — true infinite scroll for past + upcoming. Each page is a
+  // 30-day window; cursor advances per page; pageToken drains in-window
+  // truncation (>250 events). 5 consecutive empty pages stops loading.
+  const upcomingInf = useCalendarInfiniteQuery({ direction: 'future', now: nowAnchor })
+  const pastInf = useCalendarInfiniteQuery({ direction: 'past', now: nowAnchor })
 
   // dismissedIds is consumed only as a useMemo dep below — isDismissed is a
   // stable function reference, so without subscribing to the Set the filter
@@ -100,58 +119,88 @@ export default function CalendarTab() {
   const isDismissed = useCalendarStore((s) => s.isDismissed)
   const dismiss = useCalendarStore((s) => s.dismiss)
 
-  // Filter dismissed events at the source so all three segments see the
-  // same visible-event population. Re-derives only when query.data or
-  // the dismissed set changes.
-  const visibleEvents = useMemo(
-    () => (query.data ?? []).filter((ev) => !isDismissed(ev.id)),
-    [query.data, isDismissed, dismissedIds],
-  )
-
-  const todays = useMemo(() => eventsForDate(visibleEvents, now), [visibleEvents, now])
+  // Today is filtered down to the events that fall in today's local day +
+  // not dismissed; then bucketed into earlier/now/next/later.
+  const todays = useMemo(() => {
+    const todayEvents = (todayQuery.data?.events ?? []).filter((ev) => !isDismissed(ev.id))
+    return eventsForDate(todayEvents, now)
+  }, [todayQuery.data, isDismissed, dismissedIds, now])
 
   const buckets = useMemo(() => bucketEvents(todays, now), [todays, now])
 
-  // Upcoming and Past derivations key on nowDay so they don't recompute
-  // every minute. Day-granular is correct — sections shift only on
-  // midnight crossings.
+  // Flatten infinite-query pages → events → groupByDay. Keys on nowDay so
+  // section derivation runs at most once per day-flip (and once per page
+  // load). The groupByDay window spans from the earliest cursor to today
+  // (past) or from tomorrow to the latest cursor (future) — we ask
+  // groupByDay for "all days touched by these events" by computing a
+  // tight window around min/max event date.
+  const upcomingEvents = useMemo(
+    () =>
+      (upcomingInf.data?.pages ?? [])
+        .flatMap((p) => p.events)
+        .filter((ev) => !isDismissed(ev.id)),
+    [upcomingInf.data, isDismissed, dismissedIds],
+  )
+  const pastEvents = useMemo(
+    () =>
+      (pastInf.data?.pages ?? [])
+        .flatMap((p) => p.events)
+        .filter((ev) => !isDismissed(ev.id)),
+    [pastInf.data, isDismissed, dismissedIds],
+  )
+
   const upcomingSections = useMemo<CalendarDaySection[]>(() => {
-    if (visibleEvents.length === 0) return []
-    const tomorrow = new Date(now)
+    if (upcomingEvents.length === 0) return []
+    // Span the full loaded window: tomorrow → max(event.start)+1d.
+    const tomorrow = new Date(nowAnchor)
     tomorrow.setHours(0, 0, 0, 0)
     tomorrow.setDate(tomorrow.getDate() + 1)
-    return groupByDay(visibleEvents, tomorrow, 13)
+    const maxStart = upcomingEvents.reduce(
+      (acc, ev) => Math.max(acc, new Date(ev.start).getTime()),
+      tomorrow.getTime(),
+    )
+    const daysSpan = Math.max(
+      1,
+      Math.ceil((maxStart - tomorrow.getTime()) / 86400_000) + 1,
+    )
+    return groupByDay(upcomingEvents, tomorrow, daysSpan)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEvents, nowDay])
+  }, [upcomingEvents, nowDay])
 
   const pastSections = useMemo<CalendarDaySection[]>(() => {
-    if (visibleEvents.length === 0) return []
-    const sevenAgo = new Date(now)
-    sevenAgo.setHours(0, 0, 0, 0)
-    sevenAgo.setDate(sevenAgo.getDate() - 7)
-    return [...groupByDay(visibleEvents, sevenAgo, 7)].reverse()
+    if (pastEvents.length === 0) return []
+    // Span min(event.start) → today exclusive.
+    const startOfToday = new Date(nowAnchor)
+    startOfToday.setHours(0, 0, 0, 0)
+    const minStart = pastEvents.reduce(
+      (acc, ev) => Math.min(acc, new Date(ev.start).getTime()),
+      startOfToday.getTime(),
+    )
+    const earliestDay = new Date(minStart)
+    earliestDay.setHours(0, 0, 0, 0)
+    const daysSpan = Math.max(
+      1,
+      Math.ceil((startOfToday.getTime() - earliestDay.getTime()) / 86400_000),
+    )
+    return [...groupByDay(pastEvents, earliestDay, daysSpan)].reverse()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEvents, nowDay])
+  }, [pastEvents, nowDay])
 
-  const upcomingCount = useMemo(
-    () => upcomingSections.reduce((n, s) => n + s.events.length, 0),
-    [upcomingSections],
-  )
-  const pastCount = useMemo(
-    () => pastSections.reduce((n, s) => n + s.events.length, 0),
-    [pastSections],
-  )
+  const upcomingCount = upcomingEvents.length
+  const pastCount = pastEvents.length
   const totalAcrossWindow = todays.length + upcomingCount + pastCount
 
   const dateLabel = useMemo(() => formatDateHeader(now), [now])
   const nowLabel = useMemo(() => formatNowLabel(now), [now])
 
-  // 401 reauth_required → kick to sign-in.
+  // 401 reauth_required → kick to sign-in. Any of the three queries
+  // can surface this; first one wins.
   useEffect(() => {
-    if (query.error instanceof ApiError && query.error.reauthRequired) {
+    const err = todayQuery.error ?? upcomingInf.error ?? pastInf.error
+    if (err instanceof ApiError && err.reauthRequired) {
       void signOut().then(() => router.replace('/(auth)/sign-in'))
     }
-  }, [query.error, signOut])
+  }, [todayQuery.error, upcomingInf.error, pastInf.error, signOut])
 
   // Phase 1.5b — pull deltas from Neon whenever the tab focuses so writes
   // from another device (desktop, second phone) appear without a manual
@@ -237,9 +286,12 @@ export default function CalendarTab() {
           ...(event.meetingUrl ? { meetingUrl: event.meetingUrl } : {}),
         })
         router.push(`/meetings/${meeting.id}`)
-        // Refresh the calendar list — the next render should now carry the
-        // linked meetingId so a follow-up tap takes the fast path.
-        void queryClient.invalidateQueries({ queryKey: ['calendar', 'events', 'window'] })
+        // Refresh the relevant calendar query so the next render carries
+        // the linked meetingId (fast path on a follow-up tap). Today,
+        // upcoming and past each have their own queryKey now.
+        void queryClient.invalidateQueries({ queryKey: ['calendar', 'today'] })
+        void queryClient.invalidateQueries({ queryKey: ['calendar', 'future'] })
+        void queryClient.invalidateQueries({ queryKey: ['calendar', 'past'] })
       } catch (err) {
         if (err instanceof ApiError && err.reauthRequired) {
           await signOut()
@@ -296,121 +348,39 @@ export default function CalendarTab() {
         <SegmentControl active={segment} onChange={handleSegmentChange} />
       </SafeAreaView>
 
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        refreshControl={
-          <RefreshControl
-            refreshing={query.isRefetching}
-            onRefresh={() => query.refetch()}
-            tintColor={colors.crimson}
-          />
-        }
-      >
-        <ErrorBanner message={bannerMsg} onDismiss={() => setBannerMsg(null)} />
+      {segment === 'today' && (
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          refreshControl={
+            <RefreshControl
+              refreshing={todayQuery.isRefetching}
+              onRefresh={() => todayQuery.refetch()}
+              tintColor={colors.crimson}
+            />
+          }
+        >
+          <ErrorBanner message={bannerMsg} onDismiss={() => setBannerMsg(null)} />
 
-        {query.isLoading && !query.data && (
-          <View style={styles.center}>
-            <ActivityIndicator color={colors.crimson} />
-          </View>
-        )}
-
-        {query.error && !query.data && (
-          <ErrorState error={query.error} onRetry={() => query.refetch()} />
-        )}
-
-        {query.data && segmentEmpty && <EmptyState segment={segment} />}
-
-        {tooltipVisible && segment === 'today' && (
-          <OnboardingTooltip onDismiss={dismissTooltip} />
-        )}
-
-        {segment === 'today' && (
-          <>
-            {buckets.earlier.length > 0 && (
-              <View style={styles.section}>
-                <SectionHeader label="Earlier today" />
-                {buckets.earlier.map((ev) => (
-                  <MeetingRow
-                    key={ev.id}
-                    event={ev}
-                    variant="past"
-                    onPress={() => void handleEventPress(ev)}
-                    onDismiss={() => dismiss(ev.id)}
-                  />
-                ))}
-              </View>
-            )}
-
-            {(buckets.earlier.length > 0 ||
-              buckets.now.length > 0 ||
-              buckets.next ||
-              buckets.later.length > 0) && <NowRail label={nowLabel} />}
-
-            {buckets.now.length > 0 && (
-              <View style={styles.section}>
-                <SectionHeader label="Now" highlight />
-                {buckets.now.map((ev) => (
-                  <MeetingRow
-                    key={ev.id}
-                    event={ev}
-                    variant="active"
-                    onPress={() => void handleEventPress(ev)}
-                    onDismiss={() => dismiss(ev.id)}
-                  />
-                ))}
-              </View>
-            )}
-
-            {buckets.next && (
-              <View style={styles.section}>
-                <SectionHeader label="Up next" highlight />
-                <MeetingRow
-                  event={buckets.next}
-                  variant="next"
-                  onPress={() => void handleEventPress(buckets.next!)}
-                  onDismiss={() => dismiss(buckets.next!.id)}
-                />
-              </View>
-            )}
-
-            {buckets.later.length > 0 && (
-              <View style={styles.section}>
-                <SectionHeader label="Later today" />
-                {buckets.later.map((ev) => (
-                  <MeetingRow
-                    key={ev.id}
-                    event={ev}
-                    variant="later"
-                    onPress={() => void handleEventPress(ev)}
-                    onDismiss={() => dismiss(ev.id)}
-                  />
-                ))}
-              </View>
-            )}
-          </>
-        )}
-
-        {segment === 'upcoming' &&
-          upcomingSections.map((section) => (
-            <View key={section.dayKey} style={styles.section}>
-              <SectionHeader label={formatDayLabel(section.date, now).toUpperCase()} />
-              {section.events.map((ev) => (
-                <MeetingRow
-                  key={ev.id}
-                  event={ev}
-                  variant="later"
-                  onPress={() => void handleEventPress(ev)}
-                  onDismiss={() => dismiss(ev.id)}
-                />
-              ))}
+          {todayQuery.isLoading && !todayQuery.data && (
+            <View style={styles.center}>
+              <ActivityIndicator color={colors.crimson} />
             </View>
-          ))}
+          )}
 
-        {segment === 'past' &&
-          pastSections.map((section) => (
-            <View key={section.dayKey} style={styles.section}>
-              <SectionHeader label={formatDayLabel(section.date, now).toUpperCase()} />
-              {section.events.map((ev) => (
+          {todayQuery.error && !todayQuery.data && (
+            <ErrorState error={todayQuery.error} onRetry={() => todayQuery.refetch()} />
+          )}
+
+          {todayQuery.data && segmentEmpty && <EmptyState segment={segment} />}
+
+          {tooltipVisible && (
+            <OnboardingTooltip onDismiss={dismissTooltip} />
+          )}
+
+          {buckets.earlier.length > 0 && (
+            <View style={styles.section}>
+              <SectionHeader label="Earlier today" />
+              {buckets.earlier.map((ev) => (
                 <MeetingRow
                   key={ev.id}
                   event={ev}
@@ -420,13 +390,263 @@ export default function CalendarTab() {
                 />
               ))}
             </View>
-          ))}
+          )}
 
-        <View style={styles.footer} />
-      </ScrollView>
+          {(buckets.earlier.length > 0 ||
+            buckets.now.length > 0 ||
+            buckets.next ||
+            buckets.later.length > 0) && <NowRail label={nowLabel} />}
+
+          {buckets.now.length > 0 && (
+            <View style={styles.section}>
+              <SectionHeader label="Now" highlight />
+              {buckets.now.map((ev) => (
+                <MeetingRow
+                  key={ev.id}
+                  event={ev}
+                  variant="active"
+                  onPress={() => void handleEventPress(ev)}
+                  onDismiss={() => dismiss(ev.id)}
+                />
+              ))}
+            </View>
+          )}
+
+          {buckets.next && (
+            <View style={styles.section}>
+              <SectionHeader label="Up next" highlight />
+              <MeetingRow
+                event={buckets.next}
+                variant="next"
+                onPress={() => void handleEventPress(buckets.next!)}
+                onDismiss={() => dismiss(buckets.next!.id)}
+              />
+            </View>
+          )}
+
+          {buckets.later.length > 0 && (
+            <View style={styles.section}>
+              <SectionHeader label="Later today" />
+              {buckets.later.map((ev) => (
+                <MeetingRow
+                  key={ev.id}
+                  event={ev}
+                  variant="later"
+                  onPress={() => void handleEventPress(ev)}
+                  onDismiss={() => dismiss(ev.id)}
+                />
+              ))}
+            </View>
+          )}
+
+          <View style={styles.footer} />
+        </ScrollView>
+      )}
+
+      {segment === 'upcoming' && (
+        <InfiniteCalendarList
+          sections={upcomingSections}
+          variant="later"
+          isLoading={upcomingInf.isLoading && !upcomingInf.data}
+          isRefetching={upcomingInf.isRefetching}
+          isFetchingNextPage={upcomingInf.isFetchingNextPage}
+          hasNextPage={upcomingInf.hasNextPage}
+          error={upcomingInf.error}
+          onEndReached={() => {
+            if (upcomingInf.hasNextPage && !upcomingInf.isFetchingNextPage) {
+              void upcomingInf.fetchNextPage()
+            }
+          }}
+          onRefresh={() => {
+            // 4A — refresh first page only. Drop pages 2+ from the
+            // cache then refetch the now-single remaining page. Deeper
+            // pages reload as the user scrolls back.
+            queryClient.setQueryData<InfiniteData<CalendarPage>>(
+              ['calendar', 'future'],
+              (old) =>
+                old
+                  ? {
+                      pages: old.pages.slice(0, 1),
+                      pageParams: old.pageParams.slice(0, 1),
+                    }
+                  : old,
+            )
+            void upcomingInf.refetch()
+          }}
+          onRetry={() => upcomingInf.refetch()}
+          onEventPress={handleEventPress}
+          onEventDismiss={dismiss}
+          isEmpty={upcomingCount === 0 && !upcomingInf.isLoading}
+          emptySegment="upcoming"
+          now={now}
+          bannerMsg={bannerMsg}
+          onDismissBanner={() => setBannerMsg(null)}
+        />
+      )}
+
+      {segment === 'past' && (
+        <InfiniteCalendarList
+          sections={pastSections}
+          variant="past"
+          isLoading={pastInf.isLoading && !pastInf.data}
+          isRefetching={pastInf.isRefetching}
+          isFetchingNextPage={pastInf.isFetchingNextPage}
+          hasNextPage={pastInf.hasNextPage}
+          error={pastInf.error}
+          onEndReached={() => {
+            if (pastInf.hasNextPage && !pastInf.isFetchingNextPage) {
+              void pastInf.fetchNextPage()
+            }
+          }}
+          onRefresh={() => {
+            queryClient.setQueryData<InfiniteData<CalendarPage>>(
+              ['calendar', 'past'],
+              (old) =>
+                old
+                  ? {
+                      pages: old.pages.slice(0, 1),
+                      pageParams: old.pageParams.slice(0, 1),
+                    }
+                  : old,
+            )
+            void pastInf.refetch()
+          }}
+          onRetry={() => pastInf.refetch()}
+          onEventPress={handleEventPress}
+          onEventDismiss={dismiss}
+          isEmpty={pastCount === 0 && !pastInf.isLoading}
+          emptySegment="past"
+          now={now}
+          bannerMsg={bannerMsg}
+          onDismissBanner={() => setBannerMsg(null)}
+        />
+      )}
 
       <RecordFab onPress={() => router.push('/record')} />
     </View>
+  )
+}
+
+// ─── InfiniteCalendarList ───────────────────────────────────────────────────
+// Flat list of header/row items for the Upcoming + Past segments. Keeps
+// onEndReached on the FlatList (vs SectionList) — simpler virtualization
+// and consistent footer behavior. Flattening day sections into a single
+// list of `{type:'header'|'row'}` items keeps key stability per event.
+
+type FlatItem =
+  | { type: 'header'; key: string; date: Date }
+  | { type: 'row'; key: string; event: CalendarEvent }
+
+function flattenSections(
+  sections: CalendarDaySection[],
+): FlatItem[] {
+  const out: FlatItem[] = []
+  for (const section of sections) {
+    out.push({ type: 'header', key: `h-${section.dayKey}`, date: section.date })
+    for (const ev of section.events) {
+      out.push({ type: 'row', key: `r-${ev.id}`, event: ev })
+    }
+  }
+  return out
+}
+
+function InfiniteCalendarList({
+  sections,
+  variant,
+  isLoading,
+  isRefetching,
+  isFetchingNextPage,
+  hasNextPage,
+  error,
+  onEndReached,
+  onRefresh,
+  onRetry,
+  onEventPress,
+  onEventDismiss,
+  isEmpty,
+  emptySegment,
+  now,
+  bannerMsg,
+  onDismissBanner,
+}: {
+  sections: CalendarDaySection[]
+  variant: 'later' | 'past'
+  isLoading: boolean
+  isRefetching: boolean
+  isFetchingNextPage: boolean
+  hasNextPage: boolean
+  error: Error | null
+  onEndReached: () => void
+  onRefresh: () => void
+  onRetry: () => void
+  onEventPress: (ev: CalendarEvent) => void
+  onEventDismiss: (id: string) => void
+  isEmpty: boolean
+  emptySegment: Segment
+  now: Date
+  bannerMsg: string | null
+  onDismissBanner: () => void
+}) {
+  const data = useMemo(() => flattenSections(sections), [sections])
+
+  const renderItem: ListRenderItem<FlatItem> = useCallback(
+    ({ item }) => {
+      if (item.type === 'header') {
+        return <SectionHeader label={formatDayLabel(item.date, now).toUpperCase()} />
+      }
+      return (
+        <MeetingRow
+          event={item.event}
+          variant={variant}
+          onPress={() => onEventPress(item.event)}
+          onDismiss={() => onEventDismiss(item.event.id)}
+        />
+      )
+    },
+    [now, onEventDismiss, onEventPress, variant],
+  )
+
+  if (isLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color={colors.crimson} />
+      </View>
+    )
+  }
+
+  if (error && data.length === 0) {
+    return <ErrorState error={error} onRetry={onRetry} />
+  }
+
+  return (
+    <FlatList
+      data={data}
+      renderItem={renderItem}
+      keyExtractor={(it) => it.key}
+      onEndReached={onEndReached}
+      onEndReachedThreshold={0.5}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefetching}
+          onRefresh={onRefresh}
+          tintColor={colors.crimson}
+        />
+      }
+      ListHeaderComponent={
+        <ErrorBanner message={bannerMsg} onDismiss={onDismissBanner} />
+      }
+      ListEmptyComponent={isEmpty ? <EmptyState segment={emptySegment} /> : null}
+      ListFooterComponent={
+        isFetchingNextPage ? (
+          <View style={styles.footerSpinner}>
+            <ActivityIndicator color={colors.crimson} size="small" />
+          </View>
+        ) : hasNextPage ? null : (
+          <View style={styles.footer} />
+        )
+      }
+      contentContainerStyle={styles.scroll}
+    />
   )
 }
 
@@ -489,9 +709,11 @@ function segmentSubtitle(
     return `${dateLabel} · ${todayCount} meeting${todayCount === 1 ? '' : 's'}`
   }
   if (segment === 'upcoming') {
-    return `Next 14 days · ${upcomingCount} meeting${upcomingCount === 1 ? '' : 's'}`
+    const count = upcomingCount === 0 ? '0' : `${upcomingCount}+`
+    return `Upcoming · ${count} meeting${upcomingCount === 1 ? '' : 's'}`
   }
-  return `Last 7 days · ${pastCount} meeting${pastCount === 1 ? '' : 's'}`
+  const count = pastCount === 0 ? '0' : `${pastCount}+`
+  return `Past · ${count} meeting${pastCount === 1 ? '' : 's'}`
 }
 
 function OnboardingTooltip({ onDismiss }: { onDismiss: () => void }) {
@@ -742,6 +964,11 @@ const styles = StyleSheet.create({
   retryText: { color: colors.text, fontSize: type.bodyTight, fontWeight: '500' },
 
   footer: { height: spacing.xl },
+  footerSpinner: {
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   tooltip: {
     flexDirection: 'row',

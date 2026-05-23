@@ -28,6 +28,7 @@ import { Audio } from 'expo-av'
 // Legacy API path — see api/recordings.ts for the v19 migration note.
 import * as FileSystem from 'expo-file-system/legacy'
 import { uploadRecording } from '../api/recordings'
+import { useAuthStore } from '../auth/store'
 import {
   clearPendingUploadById,
   generateClientRecordingId,
@@ -155,8 +156,18 @@ export async function stopRecording(args: {
 
   const recordedAtIso = startedAt?.toISOString() ?? new Date().toISOString()
 
+  // Stamp the recorder's userId on the PendingUpload so loads after a
+  // signOut/signIn-as-different-user don't surface this recording to the
+  // wrong identity. Recording requires sign-in (the upload path 401s
+  // without it), so a null here is genuinely unexpected — throw loud.
+  const userId = useAuthStore.getState().userId
+  if (!userId) {
+    throw new Error('Cannot upload recording without a signed-in user')
+  }
+
   return performUpload({
     clientRecordingId,
+    userId,
     localUri,
     title: args.title,
     calEventId: args.calEventId,

@@ -109,6 +109,7 @@ async function insertMeeting(opts: {
   transcriptSegments?: unknown
   speakerMap?: Record<string, string>
   notes?: string
+  summary?: string | null
   wasImpromptu?: boolean
   attendees?: string[] | null
   attendeeEmails?: string[] | null
@@ -125,6 +126,7 @@ async function insertMeeting(opts: {
     transcriptSegments: opts.transcriptSegments ?? null,
     speakerMap: opts.speakerMap ?? {},
     notes: opts.notes ?? null,
+    summary: opts.summary ?? null,
     wasImpromptu: opts.wasImpromptu ?? false,
     attendees: (opts.attendees === undefined
       ? ['Alice', 'Bob']
@@ -292,6 +294,39 @@ describe('GET /meetings/:id', () => {
     }
     expect(body.hasTranscript).toBe(false)
     expect(body.transcriptSegments).toEqual([])
+  })
+
+  test('Item 2: surfaces summary column round-trip (populated)', async () => {
+    const userId = await insertTestUser()
+    const md = '# Recap\n\n- Discussed roadmap\n- Decided on Q3 launch'
+    const meetingId = await insertMeeting({ userId, summary: md })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/meetings/${meetingId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { summary: string | null }
+    expect(body.summary).toBe(md)
+  })
+
+  test('Item 2: summary defaults to null when column is empty (pre-migration / unsummarized)', async () => {
+    const userId = await insertTestUser()
+    const meetingId = await insertMeeting({ userId })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/meetings/${meetingId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { summary: string | null }
+    expect(body.summary).toBeNull()
   })
 
   test('404 when meeting belongs to a different user', async () => {

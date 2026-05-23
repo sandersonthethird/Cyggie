@@ -17,8 +17,11 @@ import type { GatewayEnv } from '../env'
 //      - If expired, refresh server-side using refresh_token
 //      - If refresh fails with invalid_grant, set needs_reauth=true and return
 //        reauth_required to the client
-//   3. Call Google Calendar API events.list
+//   3. Call Google Calendar API events.list (forward `pageToken` if provided)
 //   4. Return a stable normalized shape (subset of MeetingPlatform / Meeting types)
+//      along with `nextPageToken` when Google indicates more pages — mobile's
+//      infinite-scroll drains the token chain before advancing the day cursor
+//      to prevent silent truncation on dense weeks.
 
 const CalendarEventSchema = z.object({
   id: z.string(),
@@ -62,9 +65,21 @@ export async function registerCalendarRoutes(
         from: z.string().datetime().optional(),
         to: z.string().datetime().optional(),
         limit: z.coerce.number().int().min(1).max(250).default(50),
+        // Opaque Google-issued pagination token. Mobile drains the chain
+        // before advancing its day cursor — see fetchCalendarPage in
+        // mobile/lib/api/calendar.ts. Strict charset rejection prevents
+        // arbitrary strings from being proxied through to googleapis.
+        pageToken: z
+          .string()
+          .max(2048)
+          .regex(/^[A-Za-z0-9_=-]+$/)
+          .optional(),
       }),
       response: {
-        200: z.object({ events: z.array(CalendarEventSchema) }),
+        200: z.object({
+          events: z.array(CalendarEventSchema),
+          nextPageToken: z.string().optional(),
+        }),
       },
     },
     handler: async (req) => {
@@ -125,6 +140,7 @@ export async function registerCalendarRoutes(
           maxResults: req.query.limit,
           singleEvents: true,
           orderBy: 'startTime',
+          ...(req.query.pageToken ? { pageToken: req.query.pageToken } : {}),
         })
       } catch (err) {
         // Token expired during a stretch of inactivity → flip needs_reauth and bail.
@@ -204,7 +220,20 @@ export async function registerCalendarRoutes(
         }
       }
 
-      return { events }
+      // Surface Google's nextPageToken when present so mobile can drain
+      // the chain before advancing its 30-day day cursor. Absent when
+      // we're on the last page.
+      const nextPageToken = response.data.nextPageToken ?? undefined
+      // Observability: when we just returned a page at the limit, log it
+      // so we know dense-week truncation drains are firing in prod.
+      if (events.length >= req.query.limit) {
+        req.log.info(
+          { userId: user.sub, count: events.length, hasMore: !!nextPageToken, metric: 'calendar.page_truncated' },
+          'calendar page at limit; nextPageToken present? %s',
+          !!nextPageToken,
+        )
+      }
+      return nextPageToken ? { events, nextPageToken } : { events }
     },
   })
 }

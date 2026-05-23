@@ -1,20 +1,28 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The api client transitively imports expo-* / react-native modules
-// which don't parse in vitest's Node environment. We never call
-// fetchCalendarEvents in these tests, so a no-op mock is sufficient.
+// which don't parse in vitest's Node environment. The infinite-query
+// hook also pulls react via @tanstack — we only call the non-hook
+// helpers in this file, so the api mock covers them.
+const apiGetMock = vi.fn()
 vi.mock('../client', () => ({
-  api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
+  api: { get: apiGetMock, post: vi.fn(), put: vi.fn(), delete: vi.fn() },
   ApiError: class ApiError extends Error {},
 }))
 
 const {
+  bucketEvents: _bucketEvents,
   eventsForDate,
+  fetchCalendarPage,
   formatDayLabel,
-  getCalendarFetchWindow,
+  getCalendarTodayWindow,
   groupByDay,
+  MAX_EMPTY_PAGES_BEFORE_STOP,
+  PAGE_DAYS,
+  PAGE_LIMIT,
   safeIso,
 } = await import('../calendar')
+void _bucketEvents
 type CalendarEvent = import('../calendar').CalendarEvent
 
 function makeEvent(partial: Partial<CalendarEvent> & { id: string; start: string }): CalendarEvent {
@@ -185,46 +193,30 @@ describe('api/calendar', () => {
     })
   })
 
-  describe('getCalendarFetchWindow', () => {
-    it('returns from = local-midnight of now-7d, to = now+14d', () => {
+  describe('getCalendarTodayWindow', () => {
+    it('returns from = start-of-today, to = start-of-tomorrow', () => {
       const now = at(2026, 5, 22, 10, 30)
-      const { from, to } = getCalendarFetchWindow(now)
+      const { from, to } = getCalendarTodayWindow(now)
 
-      // from snapped to local midnight, 7 days before
       expect(from.getFullYear()).toBe(2026)
       expect(from.getMonth()).toBe(4) // May (0-indexed)
-      expect(from.getDate()).toBe(15)
+      expect(from.getDate()).toBe(22)
       expect(from.getHours()).toBe(0)
       expect(from.getMinutes()).toBe(0)
       expect(from.getSeconds()).toBe(0)
 
-      // to = now + exactly 14 days, no snap
-      const expectedTo = new Date(now.getTime() + 14 * 86400_000)
-      expect(to.getTime()).toBe(expectedTo.getTime())
+      expect(to.getFullYear()).toBe(2026)
+      expect(to.getMonth()).toBe(4)
+      expect(to.getDate()).toBe(23)
+      expect(to.getHours()).toBe(0)
     })
 
-    it('handles month rollover backward', () => {
-      const now = at(2026, 6, 3, 10) // June 3
-      const { from } = getCalendarFetchWindow(now)
-      expect(from.getMonth()).toBe(4) // May
-      expect(from.getDate()).toBe(27) // May 27
-    })
-
-    it('handles year rollover backward', () => {
-      const now = at(2026, 1, 3, 10) // Jan 3
-      const { from } = getCalendarFetchWindow(now)
-      expect(from.getFullYear()).toBe(2025)
-      expect(from.getMonth()).toBe(11) // December
-      expect(from.getDate()).toBe(27)
-    })
-
-    it('handles DST spring-forward (US: 2026-03-08) without losing a day', () => {
-      // March 12 in US Pacific is after spring-forward (March 8); -7d should
-      // still land on March 5 at local midnight, not March 4 23:00.
-      const now = at(2026, 3, 12, 10)
-      const { from } = getCalendarFetchWindow(now)
-      expect(from.getDate()).toBe(5)
-      expect(from.getHours()).toBe(0)
+    it('handles month rollover at end-of-month noon', () => {
+      const now = at(2026, 5, 31, 23, 30) // May 31 23:30
+      const { from, to } = getCalendarTodayWindow(now)
+      expect(from.getDate()).toBe(31)
+      expect(to.getMonth()).toBe(5) // June
+      expect(to.getDate()).toBe(1)
     })
   })
 
@@ -267,5 +259,134 @@ describe('api/calendar', () => {
       // time-of-day component for all-day events.
       expect(safeIso('2026-05-22')).toBe('2026-05-22T00:00:00.000Z')
     })
+  })
+})
+
+// ─── fetchCalendarPage (Item 1 infinite-scroll page primitive) ──────────────
+//
+// The function drives the entire infinite-scroll behavior — every
+// branch of the cursor/emptyCount/pageToken state machine has a test
+// here. Most of the "is the wrong window being fetched" classes of
+// bugs would surface as wrong api.get URLs, which we assert directly.
+
+describe('fetchCalendarPage', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+  })
+
+  function mockApiResponse(opts: {
+    events: CalendarEvent[]
+    nextPageToken?: string
+  }) {
+    apiGetMock.mockResolvedValueOnce({
+      events: opts.events,
+      ...(opts.nextPageToken ? { nextPageToken: opts.nextPageToken } : {}),
+    })
+  }
+
+  it('past direction: fetches [cursor-30d, cursor); advances cursor backward; resets emptyCount on non-empty', async () => {
+    const cursor = new Date(2026, 4, 22) // May 22 local midnight
+    mockApiResponse({
+      events: [makeEvent({ id: 'e1', start: new Date(2026, 4, 10).toISOString() })],
+    })
+
+    const page = await fetchCalendarPage({ direction: 'past', cursor, emptyCount: 0 })
+
+    expect(page.events.map((e) => e.id)).toEqual(['e1'])
+    expect(page.nextCursor).not.toBeNull()
+    // cursor advanced 30 days backward
+    const expected = new Date(cursor)
+    expected.setDate(expected.getDate() - PAGE_DAYS)
+    expect(page.nextCursor?.getTime()).toBe(expected.getTime())
+    expect(page.emptyCount).toBe(0)
+    expect(page.nextPageToken).toBeUndefined()
+
+    // The query was for the right window + limit
+    const path = apiGetMock.mock.calls[0]?.[0] as string
+    expect(path).toContain(`limit=${PAGE_LIMIT}`)
+    expect(path).toContain('from=')
+    expect(path).toContain('to=')
+  })
+
+  it('future direction: fetches [cursor, cursor+30d); advances cursor forward', async () => {
+    const cursor = new Date(2026, 4, 22)
+    mockApiResponse({
+      events: [makeEvent({ id: 'e1', start: new Date(2026, 4, 23).toISOString() })],
+    })
+
+    const page = await fetchCalendarPage({ direction: 'future', cursor, emptyCount: 0 })
+
+    const expected = new Date(cursor)
+    expected.setDate(expected.getDate() + PAGE_DAYS)
+    expect(page.nextCursor?.getTime()).toBe(expected.getTime())
+  })
+
+  it('truncation drain: nextPageToken keeps cursor + propagates token; emptyCount resets', async () => {
+    const cursor = new Date(2026, 4, 22)
+    const events = Array.from({ length: PAGE_LIMIT }, (_, i) =>
+      makeEvent({ id: `e${i}`, start: new Date(2026, 4, 22, 10, i).toISOString() }),
+    )
+    mockApiResponse({ events, nextPageToken: 'tok-2' })
+
+    const page = await fetchCalendarPage({ direction: 'past', cursor, emptyCount: 3 })
+
+    // Cursor stays on the same window so the next call drains the token
+    expect(page.nextCursor?.getTime()).toBe(cursor.getTime())
+    expect(page.nextPageToken).toBe('tok-2')
+    expect(page.emptyCount).toBe(0)
+  })
+
+  it('forwards an inbound pageToken to the gateway as a query param', async () => {
+    mockApiResponse({ events: [] })
+    await fetchCalendarPage({
+      direction: 'past',
+      cursor: new Date(2026, 4, 22),
+      emptyCount: 0,
+      pageToken: 'tok-A',
+    })
+    const path = apiGetMock.mock.calls[0]?.[0] as string
+    expect(path).toContain('pageToken=tok-A')
+  })
+
+  it('empty page: increments emptyCount; advances cursor; still has nextCursor', async () => {
+    mockApiResponse({ events: [] })
+    const cursor = new Date(2026, 4, 22)
+
+    const page = await fetchCalendarPage({ direction: 'past', cursor, emptyCount: 2 })
+
+    expect(page.events).toEqual([])
+    expect(page.emptyCount).toBe(3)
+    expect(page.nextCursor).not.toBeNull()
+  })
+
+  it('stops after MAX_EMPTY_PAGES_BEFORE_STOP consecutive empties (nextCursor=null)', async () => {
+    mockApiResponse({ events: [] })
+
+    const page = await fetchCalendarPage({
+      direction: 'past',
+      cursor: new Date(2026, 4, 22),
+      emptyCount: MAX_EMPTY_PAGES_BEFORE_STOP - 1,
+    })
+
+    expect(page.events).toEqual([])
+    expect(page.emptyCount).toBe(MAX_EMPTY_PAGES_BEFORE_STOP)
+    expect(page.nextCursor).toBeNull()
+  })
+
+  it('non-empty page after 4 empties resets the counter (does not trip the stop on next empty)', async () => {
+    // After this call returns emptyCount=0, the next empty page only sees
+    // emptyCount=0+1=1 — well below the stop threshold.
+    mockApiResponse({
+      events: [makeEvent({ id: 'e1', start: new Date(2026, 4, 1).toISOString() })],
+    })
+
+    const page = await fetchCalendarPage({
+      direction: 'past',
+      cursor: new Date(2026, 4, 22),
+      emptyCount: 4,
+    })
+
+    expect(page.emptyCount).toBe(0)
+    expect(page.nextCursor).not.toBeNull()
   })
 })

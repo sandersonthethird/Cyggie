@@ -51,6 +51,14 @@ export interface MeetingDetail {
   meetingPlatform: string | null
   meetingUrl: string | null
   notes: string | null
+  /**
+   * AI-generated summary markdown (Item 2). Populated by the desktop
+   * summarizer's dual-write — null until the meeting has been summarized
+   * (or for pre-migration meetings that haven't been re-summarized yet).
+   * Mobile renders this in the Summary tab when feature flag
+   * EXPO_PUBLIC_FEATURE_SUMMARY_TAB === '1'.
+   */
+  summary: string | null
   attendees: string[] | null
   attendeeEmails: string[] | null
   speakerCount: number

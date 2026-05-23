@@ -44,6 +44,7 @@ import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { fetchMeeting } from '../api/meetings'
+import { useAuthStore } from '../auth/store'
 import { useRecordingStore } from './store'
 import { discardPendingUploadFileByMeetingId } from './pending-upload'
 import { decidePollAction } from './poll-action'
@@ -53,6 +54,7 @@ export function useTranscribingPoll(): void {
   const meetingId = useRecordingStore((s) => s.meetingId)
   const markDone = useRecordingStore((s) => s.markDone)
   const markError = useRecordingStore((s) => s.markError)
+  const userId = useAuthStore((s) => s.userId)
 
   const { data, error } = useQuery({
     queryKey: ['meeting', meetingId, 'transcribing-poll'],
@@ -73,6 +75,7 @@ export function useTranscribingPoll(): void {
 
   useEffect(() => {
     if (status !== 'transcribing' || !meetingId) return
+    if (!userId) return
     const action = decidePollAction({ data, error, nowMs: Date.now() })
     switch (action.kind) {
       case 'noop':
@@ -82,7 +85,7 @@ export function useTranscribingPoll(): void {
         // Both terminal-success paths: file + MMKV cleaned up, navigate to
         // meeting detail. The detail screen surfaces an "empty" banner if
         // status='empty' so the user can discard the silent recording.
-        void discardPendingUploadFileByMeetingId(meetingId).then(() => {
+        void discardPendingUploadFileByMeetingId(meetingId, userId).then(() => {
           markDone()
           // replace() so the user can't hit Back into the recording screen
           // and see stale "Transcribing…" copy.
@@ -98,16 +101,16 @@ export function useTranscribingPoll(): void {
         // Stale-sweeper or otherwise too old to retry — clean up and surface
         // a terminal message. The record.tsx error state without pendingUpload
         // shows a generic "Try again" / "Cancel" pair; user will hit Cancel.
-        void discardPendingUploadFileByMeetingId(meetingId).then(() => {
+        void discardPendingUploadFileByMeetingId(meetingId, userId).then(() => {
           markError(action.message)
         })
         return
       case 'gone':
-        void discardPendingUploadFileByMeetingId(meetingId).then(() => {
+        void discardPendingUploadFileByMeetingId(meetingId, userId).then(() => {
           markError(action.message)
           router.replace('/(tabs)/calendar')
         })
         return
     }
-  }, [status, data, error, meetingId, markDone, markError])
+  }, [status, data, error, meetingId, markDone, markError, userId])
 }

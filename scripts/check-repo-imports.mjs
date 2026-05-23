@@ -26,6 +26,12 @@ const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
 // Directories to scan. Web has its own ESLint setup; mobile doesn't talk to
 // SQLite repos. Tests are explicitly excluded.
+//
+// NOTE: packages/services/src is NOT scanned today. A 2026-05-22 audit
+// (during Item 2's summarizer fix) found ~30 pre-existing direct repo
+// imports across packages/services/* — extending the scan would block CI
+// until each is migrated to the barrel. Filed as a follow-up sync-audit
+// TODO so this script's coverage matches the spirit of CLAUDE.md.
 const SCAN_DIRS = ['src', 'packages/db/src/sqlite/repositories']
 const SKIP_PATH_PARTS = [
   'node_modules',

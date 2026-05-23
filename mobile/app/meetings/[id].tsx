@@ -9,11 +9,21 @@ import {
   Text,
   View,
 } from 'react-native'
+import Markdown from 'react-native-markdown-display'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
+import { ErrorBoundary } from '../../components/ErrorBoundary'
+import { decideSummaryDisplay } from '../../lib/meetings/summary-display'
+
+// Feature flag — Item 2 Summary tab. Off by default until spot-checks on
+// rendered summaries confirm the markdown lib + ErrorBoundary fallback
+// behave as expected in prod. Read inline at JS-bundle time (matches the
+// GATEWAY_URL pattern in mobile/lib/api/recordings.ts).
+const SUMMARY_TAB_ENABLED =
+  process.env['EXPO_PUBLIC_FEATURE_SUMMARY_TAB'] === '1'
 import {
   deleteMeeting,
   fetchMeeting,
@@ -49,7 +59,7 @@ import { colors, radii, spacing, type } from '../../theme'
 // Transcript shows: a flat list of segments with speaker labels.
 // People shows: linked contacts (via speaker_contact_links) → /contacts/:id.
 
-type Segment = 'overview' | 'transcript' | 'people'
+type Segment = 'overview' | 'transcript' | 'summary' | 'people'
 
 export default function MeetingDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>()
@@ -173,6 +183,9 @@ export default function MeetingDetailScreen() {
                 segments={meeting.transcriptSegments}
                 hasTranscript={meeting.hasTranscript}
               />
+            )}
+            {segment === 'summary' && SUMMARY_TAB_ENABLED && (
+              <SummarySection summary={meeting.summary} status={meeting.status} />
             )}
             {segment === 'people' && (
               <PeopleSection contacts={meeting.linkedContacts} />
@@ -409,12 +422,14 @@ function EmptyTranscriptBanner({ meetingId }: { meetingId: string }) {
  * via the StatusPill in the Hero, but recovery requires re-recording.
  */
 function RetryUploadBanner({ meetingId }: { meetingId: string }) {
+  const userId = useAuthStore((s) => s.userId)
   const [pending, setPending] = useState<PendingUpload | null | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [errMsg, setErrMsg] = useState<string | null>(null)
   useEffect(() => {
-    setPending(loadPendingUploadByMeetingId(meetingId))
-  }, [meetingId])
+    if (!userId) return
+    setPending(loadPendingUploadByMeetingId(meetingId, userId))
+  }, [meetingId, userId])
   if (pending === undefined) return null // initial load — render nothing this tick
   if (!pending) return null // no local backup; nothing this banner can do
 
@@ -442,12 +457,13 @@ function RetryUploadBanner({ meetingId }: { meetingId: string }) {
 
   const onDiscard = async () => {
     if (busy) return
+    if (!userId) return
     setBusy(true)
     try {
       // Wipe the local file + MMKV slot first, then ask the gateway to
       // delete the meeting row. We do MMKV first so a gateway failure
       // doesn't strand the local file forever.
-      await discardPendingUploadFileByMeetingId(meetingId)
+      await discardPendingUploadFileByMeetingId(meetingId, userId)
       try {
         await deleteMeeting(meetingId)
       } catch {
@@ -505,12 +521,14 @@ function TerminalCleanupSideEffect({
   meetingStatus: string
   meetingId: string
 }) {
+  const userId = useAuthStore((s) => s.userId)
   useEffect(() => {
     if (meetingStatus !== 'transcribed' && meetingStatus !== 'empty') return
+    if (!userId) return
     // Fire-and-forget; the entry might not exist (most common case) —
     // discardPendingUploadFileByMeetingId is a no-op then.
-    void discardPendingUploadFileByMeetingId(meetingId)
-  }, [meetingStatus, meetingId])
+    void discardPendingUploadFileByMeetingId(meetingId, userId)
+  }, [meetingStatus, meetingId, userId])
   return null
 }
 
@@ -521,9 +539,15 @@ function SegmentControl({
   value: Segment
   onChange: (s: Segment) => void
 }) {
+  // Item 2 — Summary tab appears between Transcript and People when the
+  // EXPO_PUBLIC_FEATURE_SUMMARY_TAB flag is on. Keeping order stable
+  // matters so muscle memory doesn't break when the flag flips.
   const items: Array<{ key: Segment; label: string }> = [
     { key: 'overview', label: 'Overview' },
     { key: 'transcript', label: 'Transcript' },
+    ...(SUMMARY_TAB_ENABLED
+      ? ([{ key: 'summary', label: 'Summary' }] as const)
+      : []),
     { key: 'people', label: 'People' },
   ]
   return (
@@ -644,6 +668,67 @@ function TranscriptSection({
             {idx < segments.length - 1 && <View style={styles.kvDivider} />}
           </View>
         ))}
+      </View>
+    </View>
+  )
+}
+
+// Item 2 — Summary tab.
+//
+// Three empty states based on (status, summary) — chosen so the user
+// knows whether to wait (transcribing), generate (transcribed but no
+// summary yet), or that they're looking at the real content.
+//
+//   status='transcribing'           → "Summary will be ready once
+//                                      transcription completes."
+//   status terminal && summary null → "No summary yet — open on desktop
+//                                      to generate one."
+//   summary present                 → render markdown via
+//                                      react-native-markdown-display
+//
+// Wrapped in <ErrorBoundary> so a malformed markdown payload (e.g.
+// unbalanced fence, weird mathy chars) can't white-screen the whole
+// meeting detail. Fallback copy nudges the user toward the desktop.
+function SummarySection({
+  summary,
+  status,
+}: {
+  summary: string | null
+  status: string
+}) {
+  const display = decideSummaryDisplay({ summary, status })
+  if (display.kind === 'transcribing-wait') {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.emptyInline}>
+          Summary will be ready once transcription completes.
+        </Text>
+      </View>
+    )
+  }
+  if (display.kind === 'empty') {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.emptyInline}>
+          No summary yet — open on desktop to generate one.
+        </Text>
+      </View>
+    )
+  }
+  return (
+    <View style={styles.section}>
+      <View style={styles.kvCard}>
+        <View style={styles.summaryBlock}>
+          <ErrorBoundary
+            fallback={() => (
+              <Text style={styles.emptyInline}>
+                Couldn't render summary — open on desktop.
+              </Text>
+            )}
+          >
+            <Markdown style={summaryMarkdownStyles}>{display.markdown}</Markdown>
+          </ErrorBoundary>
+        </View>
       </View>
     </View>
   )
@@ -1038,6 +1123,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 10,
   },
+  summaryBlock: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
   segmentHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1125,3 +1214,53 @@ const styles = StyleSheet.create({
 
 // Avoid shadowing `type` from theme.
 // (Style key `segmentText` above refers to RN style; theme.type is the import.)
+
+// Markdown theme for SummarySection. react-native-markdown-display takes
+// a style record keyed by markdown-it element names (heading1, paragraph,
+// code_inline, etc.) — we override only the typography to match the rest
+// of the meeting-detail surface. Everything else falls back to library
+// defaults.
+const summaryMarkdownStyles = StyleSheet.create({
+  body: { color: colors.text, fontSize: type.body + 1, lineHeight: 22 },
+  heading1: {
+    color: colors.text,
+    fontSize: type.h2,
+    fontWeight: '700',
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  heading2: {
+    color: colors.text,
+    fontSize: type.h2 - 2,
+    fontWeight: '700',
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  heading3: {
+    color: colors.text,
+    fontSize: type.body + 2,
+    fontWeight: '600',
+    marginTop: spacing.sm,
+    marginBottom: 4,
+  },
+  paragraph: { marginTop: 6, marginBottom: 6 },
+  bullet_list: { marginTop: 4, marginBottom: 4 },
+  ordered_list: { marginTop: 4, marginBottom: 4 },
+  list_item: { marginVertical: 2 },
+  code_inline: {
+    backgroundColor: colors.surface3,
+    color: colors.text,
+    paddingHorizontal: 4,
+    borderRadius: 4,
+    fontSize: type.body,
+  },
+  fence: {
+    backgroundColor: colors.surface3,
+    color: colors.text,
+    padding: spacing.sm,
+    borderRadius: radii.sm,
+    fontSize: type.bodyTight,
+  },
+  link: { color: colors.crimson },
+  strong: { fontWeight: '700', color: colors.text },
+})

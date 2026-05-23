@@ -86,6 +86,12 @@ export const meetings = pgTable(
     // Free-form notes captured during the meeting. Auto-populated post-finalize by the
     // mobile flow per WIREFRAME 6 (Meeting Notes editor with Enhance button).
     notes: text('notes'),
+    // AI-generated meeting summary (markdown). Dual-written by the desktop summarizer
+    // alongside the existing summary_path file so mobile can read the content via
+    // GET /meetings/:id without needing access to the desktop's local filesystem.
+    // Nullable: pre-migration meetings and meetings that haven't been summarized yet
+    // surface as null on mobile ("No summary yet" empty state).
+    summary: text('summary'),
     // Calendar attendees. attendees = display names/emails; attendeeEmails = parsed emails.
     attendees: jsonb('attendees'),
     attendeeEmails: jsonb('attendee_emails'),

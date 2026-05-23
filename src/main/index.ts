@@ -24,6 +24,7 @@ import {
   setSyncStatusBroadcastTarget,
 } from './services/sync-bootstrap'
 import { backfillAnthropicKeyOnLaunch } from './services/gateway-credentials'
+import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.service'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
 
@@ -280,6 +281,14 @@ app.whenReady().then(() => {
   // delay inside the helper so it doesn't compete with the SyncAgent's
   // first tick or token refresh.
   backfillAnthropicKeyOnLaunch()
+
+  // Item 4 (mobile summary tab) — bring historical summary_path content
+  // into the meetings.summary column so mobile's Summary tab can render
+  // meetings summarized before the dual-write landed. Idempotent: WHERE
+  // clause self-excludes already-backfilled rows on re-launch. Deferred
+  // 2s inside the helper for the same reason as the Anthropic backfill —
+  // off the critical startup path, away from the SyncAgent first tick.
+  backfillMissingSummariesOnLaunch(startupUserId)
 
   // System audio loopback is handled by electron-audio-loopback's IPC
   // handlers (enable-loopback-audio / disable-loopback-audio) registered

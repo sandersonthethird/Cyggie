@@ -18,6 +18,7 @@ import type { PendingUpload } from '../pending-upload'
 function makePending(overrides: Partial<PendingUpload> = {}): PendingUpload {
   return {
     clientRecordingId: 'rec-1',
+    userId: 'user-test',
     localUri: 'file:///a.m4a',
     clientRecordedAt: new Date().toISOString(),
     ...overrides,

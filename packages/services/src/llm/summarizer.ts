@@ -2,7 +2,12 @@ import { sendClear, sendPhase, sendProgress } from './send-progress'
 import { getProvider } from './provider-factory'
 import { buildPrompt } from './templates'
 import { getTemplate } from '@cyggie/db/sqlite/repositories/template.repo'
-import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+// CLAUDE.md: import from the barrel (sync-wrapped) so updateMeeting flows
+// through withSync → outbox → Neon. Before 2026-05-22 this was importing
+// from meeting.repo directly, which silently bypassed sync — so the
+// pre-existing summary_path / summary_drive_id writes never reached Neon.
+// Item 2 (mobile summary tab) is the first feature that surfaces this gap.
+import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 import { readTranscript, writeSummary } from '@main/storage/file-manager'
 import { updateSummaryIndex } from '@cyggie/db/sqlite/repositories/search.repo'
 import { hasDriveScope } from '@main/calendar/google-auth'
@@ -99,9 +104,18 @@ export async function generateSummary(
   // Save summary
   const summaryPath = writeSummary(meetingId, summary, meeting.title, meeting.date, meeting.attendees)
 
-  // Update meeting record
+  // Update meeting record.
+  //
+  // Dual-write: the summary markdown lives BOTH at `summary_path` (file on
+  // disk; legacy desktop UX reads it from there) AND in the `summary`
+  // column (Item 2 — propagates to Neon via the outbox so mobile can
+  // render it in the Summary tab via GET /meetings/:id). The two paths
+  // are intentionally redundant during the cloud-canonical migration —
+  // once the column is the source of truth everywhere, the file write
+  // can be retired.
   meetingRepo.updateMeeting(meetingId, {
     summaryPath,
+    summary,
     templateId,
     status: 'summarized'
   }, userId)

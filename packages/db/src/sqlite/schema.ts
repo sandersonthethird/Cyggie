@@ -10,6 +10,9 @@ export interface MeetingRow {
   meeting_url: string | null
   transcript_path: string | null
   summary_path: string | null
+  // AI-generated summary markdown — populated by the desktop summarizer alongside
+  // summary_path so mobile can read it via GET /meetings/:id. Migration 099.
+  summary: string | null
   notes: string | null
   transcript_segments: string | null
   transcript_drive_id: string | null
