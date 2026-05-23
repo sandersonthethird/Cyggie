@@ -1,14 +1,16 @@
 import { api, apiFetchRaw, ApiError } from './client'
 import { tick as tickLamport } from '../sync/clock'
 
-// T17a A1–A4 contract on the gateway:
-//   POST /chat/messages                       — stateless one-shot (legacy)
+// Chat API client. Gateway contract (T17a A1–A4 + 2026-05-23 cleanup):
 //   POST /chat/sessions                       — find-or-create session
 //   GET  /chat/sessions                       — paginated list
 //   GET  /chat/sessions/:id                   — session + messages
 //   PATCH /chat/sessions/:id                  — rename / pin / archive (OCC)
 //   POST /chat/sessions/:id/messages          — append user turn, run LLM,
 //                                                persist both turns
+//
+// The legacy stateless POST /chat/messages route was removed 2026-05-23
+// (T18+T19 plan, Issue 2A). All chat now flows through the session route.
 //
 // T17b mobile binds these into the persistent chat surfaces (per-entity
 // chat from detail screens + repurposed global Chat tab). Lamports are
@@ -54,21 +56,6 @@ export interface ChatMessage {
 export interface ChatSessionDetail {
   session: ChatSessionListItem
   messages: ChatMessage[]
-}
-
-// ─── Legacy: stateless one-shot (kept for back-compat until callers migrate) ─
-
-export interface SendChatMessageInput {
-  message: string
-  meetingId?: string
-}
-
-export interface SendChatMessageResult {
-  reply: string
-}
-
-export function sendChatMessage(input: SendChatMessageInput): Promise<SendChatMessageResult> {
-  return api.post<SendChatMessageResult>('/chat/messages', input)
 }
 
 // ─── T17b — session-backed chat ────────────────────────────────────────────

@@ -90,23 +90,26 @@ function serializeMessage(row: MessageRow): z.infer<typeof ChatMessageSchema> {
 }
 
 // =============================================================================
-// /chat — M5-thin: stateless one-shot Q&A against Claude.
+// /chat routes — session-backed multi-turn chat with Cyggie context.
 //
-// Body:
-//   { message: string, meetingId?: string }
+// The legacy stateless POST /chat/messages route was removed 2026-05-23
+// (T18+T19 plan). All chat now flows through the session route
+// (POST /chat/sessions/:id/messages) which persists conversation
+// history in chat_session_messages, loads prior turns into the Claude
+// context, and (post-T18) streams the reply via SSE.
 //
-// Behavior:
-//   • If meetingId provided, fetch the meeting (title + summary + first
-//     50KB of transcript) and inject as system context.
-//   • Otherwise, generic chat (model answers with no Cyggie context).
-//   • Returns the full reply as a single string (no streaming).
+// Routes registered here:
+//   • GET    /chat/sessions               — list paginated user sessions
+//   • GET    /chat/sessions/:id           — session + chronological messages
+//   • POST   /chat/sessions               — find-or-create active session
+//   • PATCH  /chat/sessions/:id           — rename / pin / archive (OCC)
+//   • POST   /chat/sessions/:id/messages  — append user turn, run LLM,
+//                                            persist both turns
 //
-// Follow-ups in TODOS as: chat_session persistence + sync, SSE streaming,
-// multi-turn history, citations into transcript ranges.
-//
-// The orphan POST /chat/enhance-notes that rewrote typed notes has been
-// removed — desktop-parity Enhance now lives at POST /meetings/:id/enhance
-// and operates on the transcript with a template (see routes/meetings.ts).
+// Removed (2026-05-23):
+//   • POST /chat/messages — stateless one-shot, no callers after T17b.
+//   • POST /chat/enhance-notes — orphan; Enhance lives at
+//     POST /meetings/:id/enhance instead.
 // =============================================================================
 
 export async function registerChatRoutes(
@@ -114,122 +117,6 @@ export async function registerChatRoutes(
   env: GatewayEnv,
 ): Promise<void> {
   const fastifyTyped = app.withTypeProvider<ZodTypeProvider>()
-
-  fastifyTyped.route({
-    method: 'POST',
-    url: '/chat/messages',
-    schema: {
-      body: z.object({
-        message: z.string().min(1).max(8000),
-        meetingId: z.string().max(64).optional(),
-      }),
-      response: {
-        200: z.object({
-          reply: z.string(),
-        }),
-      },
-    },
-    handler: async (req) => {
-      const user = req.requireFirm()
-      const { message, meetingId } = req.body
-
-      const apiKey = await resolveAnthropicKey(env, user.sub)
-      if (!apiKey) {
-        throw new GatewayError({
-          statusCode: 503,
-          code: 'CHAT_UNAVAILABLE',
-          message:
-            'No Anthropic API key configured. Set one in desktop Settings → AI & Transcription.',
-        })
-      }
-
-      let meetingContext: string | null = null
-      if (meetingId) {
-        const db = getDb(env.GATEWAY_DATABASE_URL)
-        const rows = await db
-          .select({
-            title: schema.meetings.title,
-            notes: schema.meetings.notes,
-            transcriptSegments: schema.meetings.transcriptSegments,
-          })
-          .from(schema.meetings)
-          .where(
-            and(eq(schema.meetings.id, meetingId), eq(schema.meetings.userId, user.sub)),
-          )
-          .limit(1)
-        const m = rows[0]
-        if (!m) {
-          throw new GatewayError({
-            statusCode: 404,
-            code: 'MEETING_NOT_FOUND',
-            message: 'Meeting not found.',
-          })
-        }
-        meetingContext = buildMeetingContext(
-          m.title,
-          m.notes,
-          m.transcriptSegments as unknown,
-        )
-      }
-
-      const systemPrompt = buildSystemPrompt(meetingContext)
-      const client = new Anthropic({ apiKey })
-
-      // Issue 8A telemetry — record start so we can compute duration even
-      // when the call errors out partway through.
-      const startedAtMs = Date.now()
-      req.log.info(
-        { metric: 'chat.messages.start', userId: user.sub, meetingId: meetingId ?? null },
-        'chat start',
-      )
-
-      let result
-      try {
-        result = await client.messages.create({
-          model: 'claude-sonnet-4-5-20250929',
-          max_tokens: 2048,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: message }],
-        })
-      } catch (err) {
-        const gw = toGatewayErrorIfAnthropic(err)
-        if (gw) throw gw
-        throw err
-      }
-
-      // The SDK returns a content array — we asked for a single text reply,
-      // so any text blocks concatenated is the answer.
-      const reply = result.content
-        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-        .map((b) => b.text)
-        .join('')
-        .trim()
-
-      if (!reply) {
-        throw new GatewayError({
-          statusCode: 502,
-          code: 'CHAT_EMPTY',
-          message: 'Claude returned no text content.',
-        })
-      }
-
-      req.log.info(
-        {
-          metric: 'chat.messages.complete',
-          userId: user.sub,
-          meetingId: meetingId ?? null,
-          duration_ms: Date.now() - startedAtMs,
-          inputTokens: result.usage?.input_tokens ?? null,
-          outputTokens: result.usage?.output_tokens ?? null,
-          model: result.model,
-          replyLength: reply.length,
-        },
-        'chat complete',
-      )
-
-      return { reply }
-    },
-  })
 
   // ─────────────────────────────────────────────────────────────────────────
   // T17a A2 — chat session list / detail / PATCH endpoints.
@@ -917,9 +804,9 @@ export async function registerChatRoutes(
   })
 }
 
-// T17a A3 — system prompt for chat-session messages. Same baseline as
-// the stateless /chat/messages route plus an optional context block
-// drawn from the session's contextKind+contextId.
+// T17a A3 — system prompt for chat-session messages. Tells the model
+// it is mid-conversation, plus an optional context block drawn from
+// the session's contextKind+contextId.
 function buildChatSessionSystemPrompt(contextBlock: string | null): string {
   const base =
     'You are Cyggie, a helpful AI assistant for venture investors. ' +
@@ -1098,15 +985,6 @@ async function buildContactContextForChat(
     parts.push(`Recent meetings:\n${meetingLines}`)
   }
   return parts.join('\n')
-}
-
-function buildSystemPrompt(meetingContext: string | null): string {
-  const base =
-    'You are Cyggie, a helpful AI assistant for venture investors. ' +
-    'Be concise, direct, and concrete. Avoid hedging. ' +
-    'If you do not know something, say so plainly.'
-  if (!meetingContext) return base
-  return `${base}\n\nThe user is asking in the context of the following meeting. Ground your answer in this context when relevant.\n\n${meetingContext}`
 }
 
 function buildMeetingContext(
