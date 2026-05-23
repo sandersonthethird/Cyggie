@@ -15,6 +15,10 @@ import {
   flattenSegments,
   truncateTranscript,
 } from '../llm/transcript-flatten'
+import {
+  CHAT_HISTORY_CHAR_BUDGET,
+  truncateHistoryByChars,
+} from '../llm/truncate-history'
 
 // ─── Shared schemas (T17a A2: sessions list/detail/PATCH) ────────────────────
 
@@ -521,7 +525,12 @@ export async function registerChatRoutes(
     schema: {
       params: z.object({ id: z.string().min(1).max(64) }),
       body: z.object({
-        content: z.string().min(1).max(8000),
+        // T19 — content cap is a generous safety against pathological
+        // megabyte-sized pastes; the actual user-facing cap is
+        // CHAT_HISTORY_CHAR_BUDGET (120k chars), enforced below with a
+        // typed CHAT_INPUT_TOO_LARGE 413 so mobile can surface a clean
+        // "Message too large" message.
+        content: z.string().min(1).max(200_000),
         lamport: z.string(),
       }),
       response: {
@@ -550,6 +559,19 @@ export async function registerChatRoutes(
             lamportCheck.reason === 'unparseable'
               ? 'lamport is not a valid integer'
               : 'lamport is too far in the future',
+        })
+      }
+
+      // T19 / Issue 1A — Oversize pre-check. If the current user message
+      // alone exceeds the history budget, no amount of history truncation
+      // can rescue the prompt. Reject with a typed 413 BEFORE any DB I/O,
+      // ownership lookup, or Anthropic call. Mobile surfaces this as
+      // "Message too large to send."
+      if (content.length > CHAT_HISTORY_CHAR_BUDGET) {
+        throw new GatewayError({
+          statusCode: 413,
+          code: 'CHAT_INPUT_TOO_LARGE',
+          message: 'Message too large to send.',
         })
       }
 
@@ -617,13 +639,20 @@ export async function registerChatRoutes(
       const systemPrompt = buildChatSessionSystemPrompt(contextBlock)
 
       // Compose Claude messages: history + new user message.
-      const claudeMessages: Anthropic.MessageParam[] = historyRows
+      const rawClaudeMessages: Anthropic.MessageParam[] = historyRows
         .filter((m) => m.role === 'user' || m.role === 'assistant')
         .map((m) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,
         }))
-      claudeMessages.push({ role: 'user', content })
+      rawClaudeMessages.push({ role: 'user', content })
+
+      // T19 — Trim history if the combined prompt is over the char budget.
+      // Drops oldest user/assistant pairs from the front, never the current
+      // user message. The oversize pre-check above guarantees we never hit
+      // the helper's "only one message and it's still too big" edge case.
+      const claudeMessages = truncateHistoryByChars(rawClaudeMessages, CHAT_HISTORY_CHAR_BUDGET)
+      const truncatedTurns = rawClaudeMessages.length - claudeMessages.length
 
       // 60s server-side timeout mirrors POST /meetings/:id/enhance.
       const abortController = new AbortController()
@@ -636,8 +665,9 @@ export async function registerChatRoutes(
           userId: user.sub,
           contextKind: session.contextKind,
           historyLength: historyRows.length,
+          truncatedTurns,
         },
-        'message append: start',
+        truncatedTurns > 0 ? 'message append: start (history truncated)' : 'message append: start',
       )
 
       const client = new Anthropic({ apiKey })

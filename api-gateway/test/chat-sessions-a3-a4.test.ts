@@ -307,4 +307,22 @@ describe('POST /chat/sessions/:id/messages — A3 gates', () => {
     })
     expect(res.statusCode).toBe(401)
   })
+
+  // T19 + Issue 1A — oversize content rejected with typed 413 BEFORE
+  // any DB I/O or Anthropic call. CHAT_HISTORY_CHAR_BUDGET is 120k chars;
+  // anything strictly greater is rejected.
+  test('413 CHAT_INPUT_TOO_LARGE when content exceeds the history budget', async () => {
+    const { userId, jwt } = await setupUser()
+    const sessionId = await insertSessionDirect({ userId })
+
+    const tooBig = 'x'.repeat(120_001) // 1 char over the budget
+    const res = await app.inject({
+      method: 'POST',
+      url: `/chat/sessions/${sessionId}/messages`,
+      headers: { authorization: `Bearer ${jwt}` },
+      payload: { content: tooBig, lamport: String(Date.now() + 1000) },
+    })
+    expect(res.statusCode).toBe(413)
+    expect(res.json()).toMatchObject({ error: { code: 'CHAT_INPUT_TOO_LARGE' } })
+  })
 })
