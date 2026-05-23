@@ -20,6 +20,8 @@ import {
   type CompanyMeetingRef,
   type CompanyPersonRef,
 } from '../../lib/api/companies'
+import { fetchNotes, type NoteListItem } from '../../lib/api/notes'
+import { fetchMemosForCompany, type MemoListItem } from '../../lib/api/memos'
 import { useAuthStore } from '../../lib/auth/store'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -35,7 +37,7 @@ import { colors, radii, spacing, type } from '../../theme'
 // Read-only. Editing lands in M4 once mobile sync gets the writeWithSync
 // hook from the desktop side.
 
-type Segment = 'overview' | 'meetings' | 'people'
+type Segment = 'overview' | 'meetings' | 'memos' | 'notes' | 'people'
 
 export default function CompanyDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>()
@@ -103,6 +105,8 @@ export default function CompanyDetailScreen() {
             {segment === 'meetings' && (
               <MeetingsSection meetings={company.recentMeetings} />
             )}
+            {segment === 'memos' && <CompanyMemosSection companyId={id} />}
+            {segment === 'notes' && <CompanyNotesSection companyId={id} />}
             {segment === 'people' && <PeopleSection people={company.people} />}
             <View style={{ height: spacing.xxl }} />
           </>
@@ -212,6 +216,8 @@ function SegmentControl({
   const items: Array<{ key: Segment; label: string }> = [
     { key: 'overview', label: 'Overview' },
     { key: 'meetings', label: 'Meetings' },
+    { key: 'memos', label: 'Memos' },
+    { key: 'notes', label: 'Notes' },
     { key: 'people', label: 'People' },
   ]
   return (
@@ -338,6 +344,198 @@ function MeetingsSection({ meetings }: { meetings: CompanyMeetingRef[] }) {
         ))}
       </View>
     </View>
+  )
+}
+
+function CompanyNotesSection({ companyId }: { companyId: string }) {
+  const query = useQuery({
+    queryKey: ['notes', 'company', companyId],
+    queryFn: ({ signal }) => fetchNotes({ companyId, limit: 50, signal }),
+    enabled: companyId.length > 0,
+    staleTime: 30_000,
+  })
+
+  if (query.isLoading && !query.data) {
+    return (
+      <View style={styles.section}>
+        <ActivityIndicator color={colors.crimson} />
+      </View>
+    )
+  }
+
+  if (query.error) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.emptyInline}>Couldn&apos;t load notes. Pull to refresh.</Text>
+      </View>
+    )
+  }
+
+  const notes = query.data?.notes ?? []
+  if (notes.length === 0) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.emptyInline}>No notes for this company yet.</Text>
+      </View>
+    )
+  }
+
+  return (
+    <View style={styles.section}>
+      <View style={styles.kvCard}>
+        {notes.map((n, idx) => (
+          <View key={n.id}>
+            <CompanyNoteRow note={n} />
+            {idx < notes.length - 1 && <View style={styles.kvDivider} />}
+          </View>
+        ))}
+      </View>
+    </View>
+  )
+}
+
+function CompanyNoteRow({ note }: { note: NoteListItem }) {
+  const title = note.title?.trim().length
+    ? note.title.trim()
+    : firstLineOfNote(note.contentPreview)
+  const showPreview = note.title?.trim() && note.contentPreview.length > 0
+  return (
+    <Pressable
+      onPress={() => router.push(`/notes/${note.id}`)}
+      style={({ pressed }) => [styles.meetingRow, pressed && styles.rowPressed]}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+    >
+      <View style={styles.meetingIconWrap}>
+        {note.isPinned ? (
+          <Ionicons name="bookmark" size={16} color={colors.crimson} />
+        ) : (
+          <Ionicons name="document-text-outline" size={16} color={colors.text2} />
+        )}
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.meetingTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        {showPreview ? (
+          <Text style={styles.meetingMeta} numberOfLines={2}>
+            {note.contentPreview}
+          </Text>
+        ) : (
+          <Text style={styles.meetingMeta}>{formatNoteRelative(note.updatedAt)}</Text>
+        )}
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.text4} />
+    </Pressable>
+  )
+}
+
+function firstLineOfNote(s: string): string {
+  const trimmed = s.trim()
+  if (trimmed.length === 0) return '(empty note)'
+  const nl = trimmed.indexOf('\n')
+  return nl === -1 ? trimmed : trimmed.slice(0, nl)
+}
+
+function formatNoteRelative(iso: string): string {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return ''
+  const diffMs = Date.now() - then
+  const diffMin = Math.round(diffMs / 60000)
+  if (diffMin < 1) return 'just now'
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffHr = Math.round(diffMin / 60)
+  if (diffHr < 24) return `${diffHr}h ago`
+  const diffDay = Math.round(diffHr / 24)
+  if (diffDay < 30) return `${diffDay}d ago`
+  return new Date(iso).toLocaleDateString()
+}
+
+function CompanyMemosSection({ companyId }: { companyId: string }) {
+  const query = useQuery({
+    queryKey: ['memos', 'company', companyId],
+    queryFn: ({ signal }) => fetchMemosForCompany(companyId, { signal }),
+    enabled: companyId.length > 0,
+    staleTime: 30_000,
+  })
+
+  if (query.isLoading && !query.data) {
+    return (
+      <View style={styles.section}>
+        <ActivityIndicator color={colors.crimson} />
+      </View>
+    )
+  }
+
+  if (query.error) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.emptyInline}>Couldn&apos;t load memos. Pull to refresh.</Text>
+      </View>
+    )
+  }
+
+  const memos = query.data ?? []
+  if (memos.length === 0) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.emptyInline}>
+          Memos are created on desktop. None for this company yet.
+        </Text>
+      </View>
+    )
+  }
+
+  return (
+    <View style={styles.section}>
+      <View style={styles.kvCard}>
+        {memos.map((m, idx) => (
+          <View key={m.id}>
+            <CompanyMemoRow memo={m} companyId={companyId} />
+            {idx < memos.length - 1 && <View style={styles.kvDivider} />}
+          </View>
+        ))}
+      </View>
+    </View>
+  )
+}
+
+function CompanyMemoRow({
+  memo,
+  companyId,
+}: {
+  memo: MemoListItem
+  companyId: string
+}) {
+  return (
+    <Pressable
+      onPress={() => router.push(`/companies/${companyId}/memos/${memo.id}`)}
+      style={({ pressed }) => [styles.meetingRow, pressed && styles.rowPressed]}
+      accessibilityRole="button"
+      accessibilityLabel={memo.title}
+    >
+      <View style={styles.meetingIconWrap}>
+        <Ionicons name="document-outline" size={16} color={colors.text2} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={styles.memoTitleRow}>
+          <Text style={styles.meetingTitle} numberOfLines={1}>
+            {memo.title}
+          </Text>
+          <Text style={styles.memoStatusPill}>{memo.status}</Text>
+        </View>
+        {memo.preview.length > 0 ? (
+          <Text style={styles.meetingMeta} numberOfLines={2}>
+            {memo.preview}
+          </Text>
+        ) : (
+          <Text style={styles.meetingMeta}>
+            {formatNoteRelative(memo.updatedAt)}
+          </Text>
+        )}
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.text4} />
+    </Pressable>
   )
 }
 
@@ -675,6 +873,23 @@ const styles = StyleSheet.create({
     color: colors.text3,
     fontSize: type.bodyTight,
     marginTop: 2,
+  },
+  memoTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
+  memoStatusPill: {
+    color: colors.text3,
+    fontSize: type.caption,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    backgroundColor: colors.surface3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radii.sm,
   },
 
   personRow: {
