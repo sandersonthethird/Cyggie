@@ -97,10 +97,12 @@ export async function startSignIn(): Promise<SignInResult> {
 
   let redirectUrl: string | null = null
   try {
+    console.log('[auth] startSignIn: opening WebBrowser')
     const result = await WebBrowser.openAuthSessionAsync(authUrl, CALLBACK_SCHEME, {
       showInRecents: false,
       preferEphemeralSession: false, // keep Google's "stay signed in" cookie
     })
+    console.log('[auth] startSignIn: WebBrowser returned type=' + result.type)
     if (result.type === 'cancel' || result.type === 'dismiss') {
       return { kind: 'cancel' }
     }
@@ -112,7 +114,9 @@ export async function startSignIn(): Promise<SignInResult> {
       }
     }
     redirectUrl = result.url
+    console.log('[auth] startSignIn: callback url scheme=' + new URL(redirectUrl).protocol)
   } catch (err) {
+    console.log('[auth] startSignIn: WebBrowser threw: ' + (err instanceof Error ? err.message : String(err)))
     return {
       kind: 'error',
       code: 'AUTH_SESSION',
@@ -121,7 +125,9 @@ export async function startSignIn(): Promise<SignInResult> {
   }
 
   // 3. Parse the cyggie:// deep link.
-  return parseCallbackUrl(redirectUrl)
+  const parsed = parseCallbackUrl(redirectUrl)
+  console.log('[auth] startSignIn: parse kind=' + parsed.kind)
+  return parsed
 }
 
 // Re-export the canonical parser so existing call sites keep working.
@@ -149,7 +155,10 @@ export async function pollForRecoveredSession(deviceId: string): Promise<SignInR
   const NORMAL_INTERVAL_MS = 1_500
   const BACKOFF_INTERVAL_MS = 3_000
 
+  console.log('[auth] recovery: polling /auth/session/claim-by-device')
+  let attempt = 0
   while (Date.now() - startedAt < MAX_DURATION_MS) {
+    attempt += 1
     let res: Response
     try {
       res = await fetch(`${GATEWAY_URL}/auth/session/claim-by-device`, {
@@ -157,11 +166,13 @@ export async function pollForRecoveredSession(deviceId: string): Promise<SignInR
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_id: deviceId }),
       })
-    } catch {
+    } catch (err) {
+      console.log('[auth] recovery: attempt ' + attempt + ' network err: ' + (err instanceof Error ? err.message : String(err)))
       await sleep(BACKOFF_INTERVAL_MS)
       continue
     }
 
+    console.log('[auth] recovery: attempt ' + attempt + ' status=' + res.status)
     if (res.status === 200) {
       try {
         const body = (await res.json()) as {
@@ -171,6 +182,7 @@ export async function pollForRecoveredSession(deviceId: string): Promise<SignInR
           action: SignInAction
           email: string | null
         }
+        console.log('[auth] recovery: success action=' + body.action)
         return {
           kind: 'success',
           accessToken: body.session,
@@ -180,6 +192,7 @@ export async function pollForRecoveredSession(deviceId: string): Promise<SignInR
           email: body.email ?? null,
         }
       } catch (err) {
+        console.log('[auth] recovery: parse failed: ' + (err instanceof Error ? err.message : String(err)))
         return {
           kind: 'error',
           code: 'CALLBACK_INVALID_URL',
@@ -197,6 +210,7 @@ export async function pollForRecoveredSession(deviceId: string): Promise<SignInR
     await sleep(wait)
   }
 
+  console.log('[auth] recovery: timed out after ' + attempt + ' attempts')
   return { kind: 'cancel' }
 }
 

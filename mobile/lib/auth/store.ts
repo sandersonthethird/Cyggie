@@ -64,13 +64,16 @@ export const useAuthStore = create<AuthState>((set) => ({
       getLastAction(),
     ])
     if (accessToken && userId) {
+      console.log('[auth] store.hydrate: signed_in lastAction=' + lastAction)
       set({ status: 'signed_in', accessToken, userId, lastAction })
     } else {
+      console.log('[auth] store.hydrate: signed_out (no tokens in keychain)')
       set({ status: 'signed_out', accessToken: null, userId: null, lastAction: null })
     }
   },
 
   signIn: async ({ accessToken, refreshToken, userId, action }) => {
+    console.log('[auth] store.signIn: writing tokens action=' + action)
     await Promise.all([
       setAccessToken(accessToken),
       setRefreshToken(refreshToken),
@@ -78,6 +81,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       persistLastAction(action),
     ])
     set({ status: 'signed_in', accessToken, userId, lastAction: action })
+    console.log('[auth] store.signIn: status=signed_in committed')
   },
 
   updateTokens: async ({ accessToken, refreshToken }) => {
@@ -96,7 +100,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   signOut: async () => {
+    // Stack trace captures the caller — critical for diagnosing surprise
+    // sign-outs (e.g., the OAuth-loop bug where users land back at the
+    // sign-in screen with no error shown).
+    console.log('[auth] store.signOut: called from\n' + new Error('signOut trace').stack)
     await clearAllAuthStorage()
     set({ status: 'signed_out', accessToken: null, userId: null, lastAction: null })
+    console.log('[auth] store.signOut: status=signed_out committed')
   },
 }))

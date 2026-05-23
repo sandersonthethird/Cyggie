@@ -121,6 +121,7 @@ export async function apiFetch<TResponse = unknown, TBody = unknown>(
   // 401 → maybe refresh and retry.
   if (res.status === 401 && !opts.unauthenticated) {
     const body = (await res.clone().json().catch(() => ({}))) as GatewayErrorBody
+    console.log('[auth] api: 401 on ' + path + ' reauth_required=' + (body.reauth_required === true))
     if (body.reauth_required) {
       // Gateway is explicit: refresh won't help. Sign out and surface.
       await useAuthStore.getState().signOut()
@@ -135,12 +136,14 @@ export async function apiFetch<TResponse = unknown, TBody = unknown>(
     // Try a silent refresh, then retry once.
     const fresh = await ensureFreshAccessToken()
     if (!fresh) {
+      console.log('[auth] api: refresh failed on ' + path + ' — store should now be signed_out')
       throw new ApiError({
         status: 401,
         code: body.error?.code ?? 'UNAUTHENTICATED',
         message: body.error?.message ?? 'Not signed in',
       })
     }
+    console.log('[auth] api: refresh succeeded, retrying ' + path)
     token = fresh
     res = await attemptFetch(token)
   }

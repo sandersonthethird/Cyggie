@@ -22,8 +22,10 @@ export default function SignInScreen() {
   async function onPress() {
     setError(null)
     setPending(true)
+    console.log('[auth] sign-in: onPress start')
     try {
       let result: SignInResult = await startSignIn()
+      console.log('[auth] sign-in: startSignIn returned kind=' + result.kind)
       // ASWebAuthenticationSession occasionally returns cancel/dismiss after
       // the gateway already minted a session (see oauth.ts header). Give the
       // recovery endpoint ~15s to find a freshly-minted session for this
@@ -33,18 +35,22 @@ export default function SignInScreen() {
         try {
           const deviceId = await getOrCreateDeviceId()
           result = await pollForRecoveredSession(deviceId)
+          console.log('[auth] sign-in: recovery returned kind=' + result.kind)
         } finally {
           setRecovering(false)
         }
       }
       if (result.kind === 'cancel') {
+        console.log('[auth] sign-in: returning at cancel (no recovery hit)')
         return
       }
       if (result.kind === 'error') {
+        console.log('[auth] sign-in: error code=' + result.code + ' msg=' + result.message)
         setError(`${result.code}: ${result.message}`)
         return
       }
       try {
+        console.log('[auth] sign-in: persisting tokens via store.signIn')
         await signIn({
           accessToken: result.accessToken,
           refreshToken: result.refreshToken,
@@ -55,9 +61,11 @@ export default function SignInScreen() {
         // Without this catch the user lands back at sign-in with no
         // feedback — the most painful failure mode we hit during M1b.
         const msg = err instanceof Error ? err.message : String(err)
+        console.log('[auth] sign-in: store.signIn threw: ' + msg)
         setError(`Sign-in failed after OAuth: ${msg}`)
         return
       }
+      console.log('[auth] sign-in: router.replace(/)')
       router.replace('/')
     } finally {
       setPending(false)

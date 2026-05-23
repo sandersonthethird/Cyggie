@@ -30,7 +30,17 @@ import { persistLastPushedLamport } from '@cyggie/db/sync/sync-clock'
 // transactions and can be unit-tested with a mocked transport.
 // =============================================================================
 
-const BATCH_SIZE = 200
+// Lowered from 200 → 25 on 2026-05-23 after T17a A1 exposed a latent
+// problem: outbox entries for meetings carry the full row including
+// large `transcript_segments` JSONB, so a 200-row batch routinely
+// exceeded the gateway's 10 MB bodyLimit and triggered 413s (an attempt
+// to lift bodyLimit to 50 MB caused V8 to OOM-SIGABRT in JSON.parse on
+// the 512 MB Fly machines — see commit fb70402). 25 keeps batches
+// comfortably under 10 MB even with chunky transcripts; the trade-off
+// is more roundtrips per drain pass, which is fine at single-firm-beta
+// scale. Real fix is T38 (adaptive batching + outbox payload trimming);
+// when T38 lands this constant returns to 200 or becomes adaptive.
+const BATCH_SIZE = 25
 const TICK_INTERVAL_MS = 5_000
 const MAX_ATTEMPTS = 5
 const BACKOFF_INITIAL_MS = 2_000
