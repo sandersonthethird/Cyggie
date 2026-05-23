@@ -34,9 +34,12 @@ const EnvSchema = z.object({
   SENTRY_DSN: z.string().optional(),
   DATADOG_API_KEY: z.string().optional(),
 
-  // Required as of M3 (recording): the gateway proxies all Deepgram traffic.
-  // Mobile never talks to Deepgram directly. Generate at console.deepgram.com.
-  DEEPGRAM_API_KEY: z.string().min(1),
+  // T32 PR-B (2026-05-23): per-user keys via user_credentials only. The env
+  // var is no longer read by any code path — resolveDeepgramKey returns null
+  // if the user has no row, and callers (transcribe-job) fail with
+  // deepgram_key_missing + Sentry alert. Kept optional in the schema for one
+  // release as a no-op safety belt; will be removed entirely in a follow-up.
+  DEEPGRAM_API_KEY: z.string().optional(),
   // Required as of M3: shared secret included in the Deepgram batch-callback URL
   // (https://gateway/recordings/deepgram-webhook?secret=...). The webhook handler
   // constant-time compares against this before persisting transcript / firing

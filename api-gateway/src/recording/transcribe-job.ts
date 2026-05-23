@@ -216,18 +216,31 @@ export async function submitTranscribeJob(args: {
         audioHeadHex,
         audioHeadAscii,
       })
-      Sentry.captureMessage('Deepgram submit returned non-2xx', {
-        level: 'error',
-        extra: {
-          meetingId,
-          status: res.status,
-          deepgramBody: errBody.slice(0, 2000),
-          audioBytes: audio.byteLength,
-          audioHeadHex,
-          audioHeadAscii,
-          submitUrl: submitUrl.toString(),
+      // T32 PR-B — distinguish 401 (user's Deepgram key invalid/revoked) from
+      // other non-2xx so an "auth broken" alert can fire without noise from
+      // payload errors. Tag the event for easier Sentry filtering.
+      const isAuthFailure = res.status === 401 || res.status === 403
+      Sentry.captureMessage(
+        isAuthFailure
+          ? 'Deepgram authentication failed (user key invalid/revoked)'
+          : 'Deepgram submit returned non-2xx',
+        {
+          level: 'error',
+          tags: isAuthFailure
+            ? { deepgram_unauthorized: 'true', userId: meetingForKey.userId }
+            : undefined,
+          extra: {
+            meetingId,
+            userId: meetingForKey.userId,
+            status: res.status,
+            deepgramBody: errBody.slice(0, 2000),
+            audioBytes: audio.byteLength,
+            audioHeadHex,
+            audioHeadAscii,
+            submitUrl: submitUrl.toString(),
+          },
         },
-      })
+      )
       recordDeepgramError({
         at: new Date().toISOString(),
         outcome: 'error',

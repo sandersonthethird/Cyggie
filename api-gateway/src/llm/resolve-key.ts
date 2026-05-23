@@ -46,19 +46,15 @@ export async function resolveAnthropicKey(
   return env.ANTHROPIC_API_KEY ?? null
 }
 
-// T32 — Deepgram per-user key resolution.
-//
-// PR-A (this commit): env fallback still in play so the old code path keeps
-// working until Sandy's row lands in Neon via desktop backfill.
-// PR-B (follow-up, after verification): drop the env fallback and remove
-// DEEPGRAM_API_KEY from env.ts. flyctl secrets unset DEEPGRAM_API_KEY.
+// T32 PR-B (2026-05-23) — Deepgram per-user key resolution. Env fallback
+// removed after Sandy's row landed in user_credentials. Missing key now
+// returns null; callers (transcribe-job) fail with deepgram_key_missing.
+// flyctl secrets unset DEEPGRAM_API_KEY runs after this deploys.
 export async function resolveDeepgramKey(
   env: GatewayEnv,
   userId: string,
 ): Promise<string | null> {
-  const fromDb = await resolveProviderKeyFromDb(env, userId, 'deepgram')
-  if (fromDb) return fromDb
-  return env.DEEPGRAM_API_KEY ?? null
+  return resolveProviderKeyFromDb(env, userId, 'deepgram')
 }
 
 // Surface upstream Anthropic errors as meaningful 4xx/5xx instead of the
