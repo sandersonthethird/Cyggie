@@ -232,40 +232,51 @@ export async function registerSyncRoutes(
             allParams.push(user.sub)
           }
 
-          const existingRes = await client.query<{ lamport: string | null }>(
-            `SELECT lamport FROM ${spec.table} WHERE ${whereSql}${userClause}`,
-            allParams,
-          )
-          const existing = existingRes.rows[0]
-
-          // 4. LWW compare
-          if (existing != null) {
-            const incomingLamport = BigInt(entry.lamport)
-            const existingLamport = BigInt(existing.lamport ?? '0')
-            if (incomingLamport < existingLamport) {
-              // Loser. Don't apply; ack so desktop removes from outbox.
-              conflicts.push({
-                outboxId: entry.outboxId,
-                reason: `lamport ${entry.lamport} < ${existing.lamport}`,
-              })
-              acked.push(entry.outboxId)
-              continue
-            }
-            // Equal lamports: gateway_received_at tiebreaker. We already
-            // arrived "after" the existing row (it's in the DB), so
-            // existing wins. Same behavior as < case.
-            if (incomingLamport === existingLamport) {
-              conflicts.push({
-                outboxId: entry.outboxId,
-                reason: `lamport tie at ${entry.lamport}; gateway_received_at picked prior`,
-              })
-              acked.push(entry.outboxId)
-              continue
-            }
-          }
-
-          // 5. Apply
+          // T17a follow-up (2026-05-23): wrap every DB-touching step for an
+          // entry in a SAVEPOINT so one entry's failure (FK violation,
+          // type coercion error, etc.) doesn't poison the rest of the
+          // batch. Without this, any error here aborts the outer txn and
+          // every subsequent entry's SELECT fails with 25P02 "current
+          // transaction is aborted, commands ignored until end of
+          // transaction block".
+          await client.query('SAVEPOINT entry_sp')
+          let entryFailed = false
           try {
+            const existingRes = await client.query<{ lamport: string | null }>(
+              `SELECT lamport FROM ${spec.table} WHERE ${whereSql}${userClause}`,
+              allParams,
+            )
+            const existing = existingRes.rows[0]
+
+            // 4. LWW compare
+            if (existing != null) {
+              const incomingLamport = BigInt(entry.lamport)
+              const existingLamport = BigInt(existing.lamport ?? '0')
+              if (incomingLamport < existingLamport) {
+                // Loser. Don't apply; ack so desktop removes from outbox.
+                conflicts.push({
+                  outboxId: entry.outboxId,
+                  reason: `lamport ${entry.lamport} < ${existing.lamport}`,
+                })
+                acked.push(entry.outboxId)
+                await client.query('RELEASE SAVEPOINT entry_sp')
+                continue
+              }
+              // Equal lamports: gateway_received_at tiebreaker. We already
+              // arrived "after" the existing row (it's in the DB), so
+              // existing wins. Same behavior as < case.
+              if (incomingLamport === existingLamport) {
+                conflicts.push({
+                  outboxId: entry.outboxId,
+                  reason: `lamport tie at ${entry.lamport}; gateway_received_at picked prior`,
+                })
+                acked.push(entry.outboxId)
+                await client.query('RELEASE SAVEPOINT entry_sp')
+                continue
+              }
+            }
+
+            // 5. Apply
             if (entry.op === 'delete') {
               await client.query(
                 `DELETE FROM ${spec.table} WHERE ${whereSql}${userClause}`,
@@ -278,6 +289,7 @@ export async function registerSyncRoutes(
                   outboxId: entry.outboxId,
                   reason: 'no payload',
                 })
+                await client.query('RELEASE SAVEPOINT entry_sp')
                 continue
               }
               // Always carry the new lamport on the upsert.
@@ -298,10 +310,30 @@ export async function registerSyncRoutes(
               await client.query(upsertSql, params)
             }
             acked.push(entry.outboxId)
+            await client.query('RELEASE SAVEPOINT entry_sp')
           } catch (err) {
+            entryFailed = true
             const msg = err instanceof Error ? err.message : String(err)
+            await client.query('ROLLBACK TO SAVEPOINT entry_sp')
+            await client.query('RELEASE SAVEPOINT entry_sp')
             rejected.push({ outboxId: entry.outboxId, reason: msg })
+            req.log.warn(
+              {
+                outboxId: entry.outboxId,
+                userId: user.sub,
+                table: entry.table,
+                op: entry.op,
+                rowId: entry.rowId,
+                reason: msg,
+                metric: 'sync.push.sql_failed',
+              },
+              'sync.push rejected entry: sql failure',
+            )
           }
+          // Silence "declared but never read" — `entryFailed` is the
+          // contract that future code (retry, DLQ promotion) can hang
+          // off without re-grepping rejected[].
+          void entryFailed
         }
 
         await client.query('COMMIT')
