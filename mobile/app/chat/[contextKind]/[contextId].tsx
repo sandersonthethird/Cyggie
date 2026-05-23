@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -19,9 +21,11 @@ import Markdown from 'react-native-markdown-display'
 import {
   type ChatContextKind,
   type ChatMessage,
+  type ChatSessionListItem,
   createOrGetChatSession,
   fetchChatSession,
   sendSessionMessage,
+  updateChatSession,
 } from '../../../lib/api/chat'
 import { colors, radii, spacing, type } from '../../../theme'
 
@@ -99,6 +103,11 @@ export default function ChatScreen() {
 
   const scrollRef = useRef<ScrollView | null>(null)
   const [input, setInput] = useState('')
+
+  // T17b Slice 3 — session actions sheet (Rename / Pin / Archive).
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameDraft, setRenameDraft] = useState('')
 
   const sendMut = useMutation({
     mutationFn: async (content: string) => {
@@ -216,9 +225,48 @@ export default function ChatScreen() {
           <Text style={styles.topbarTitle} numberOfLines={1}>
             {headerTitle}
           </Text>
-          <View style={styles.backBtn} />
+          {/* T17b Slice 3 — kebab opens an action sheet for rename / pin /
+              archive. Disabled until the session row has loaded (we need
+              the current state to know if "Pin" or "Unpin" should show). */}
+          <Pressable
+            onPress={() => session && setActionsOpen(true)}
+            hitSlop={8}
+            disabled={!session}
+            style={({ pressed }) => [
+              styles.backBtn,
+              !session && { opacity: 0.4 },
+              pressed && styles.pressed,
+            ]}
+            accessibilityLabel="Chat actions"
+            accessibilityRole="button"
+          >
+            <Ionicons name="ellipsis-horizontal" size={22} color={colors.text} />
+          </Pressable>
         </View>
       </SafeAreaView>
+
+      {session && (
+        <SessionActionsSheet
+          open={actionsOpen}
+          session={session}
+          onClose={() => setActionsOpen(false)}
+          onRename={() => {
+            setActionsOpen(false)
+            setRenameDraft(session.title ?? '')
+            setRenameOpen(true)
+          }}
+        />
+      )}
+      {session && (
+        <RenameModal
+          open={renameOpen}
+          initialValue={renameDraft}
+          onClose={() => setRenameOpen(false)}
+          sessionId={session.id}
+          contextKind={contextKind as ChatContextKind}
+          rawContextId={contextId}
+        />
+      )}
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -458,4 +506,371 @@ const chatMarkdownStyles = StyleSheet.create({
   },
   link: { color: colors.crimson },
   strong: { fontWeight: '700', color: colors.text },
+})
+
+// ─── Session actions sheet ────────────────────────────────────────────────
+//
+// T17b Slice 3 — Rename / Pin/Unpin / Archive. Bottom-sheet-style Modal
+// matching the past-chats sheet on the Chat tab. Each row calls
+// updateChatSession, which mints a lamport + PATCHes the gateway. The
+// 200/409 outcome bubbles up via the api-client `ok` flag — on conflict
+// we currently just toast the message; a future polish modal can present
+// the server's authoritative state for reconciliation.
+
+function SessionActionsSheet({
+  open,
+  session,
+  onClose,
+  onRename,
+}: {
+  open: boolean
+  session: ChatSessionListItem
+  onClose: () => void
+  onRename: () => void
+}): React.JSX.Element {
+  const qc = useQueryClient()
+
+  const togglePinMut = useMutation({
+    mutationFn: () => updateChatSession(session.id, { isPinned: !session.isPinned }),
+    onSuccess: (result) => {
+      if (result.ok && result.session) {
+        // Patch the cached list + detail so the kebab icon's source state
+        // updates without a roundtrip. Detail's session field is reused
+        // by the screen to compute headerTitle + the actions sheet's
+        // Pin/Unpin label.
+        qc.setQueryData(
+          ['chat', 'session-detail', session.id],
+          (prev: { session: ChatSessionListItem; messages: ChatMessage[] } | undefined) =>
+            prev ? { ...prev, session: result.session! } : prev,
+        )
+        qc.invalidateQueries({ queryKey: ['chat', 'sessions-list'] })
+        onClose()
+      } else if (!result.ok) {
+        Alert.alert(
+          session.isPinned ? 'Unpin failed' : 'Pin failed',
+          'Someone else just changed this chat. Pull to refresh and try again.',
+        )
+      }
+    },
+    onError: () => {
+      Alert.alert('Action failed', 'Please try again.')
+    },
+  })
+
+  const archiveMut = useMutation({
+    mutationFn: () => updateChatSession(session.id, { isArchived: true }),
+    onSuccess: (result) => {
+      if (result.ok) {
+        qc.invalidateQueries({ queryKey: ['chat', 'sessions-list'] })
+        qc.invalidateQueries({
+          queryKey: ['chat', 'session-by-context', session.contextKind, session.contextId],
+        })
+        onClose()
+        // Drop the user off the now-archived screen — staying on it would
+        // be confusing because the next visit to this entity will spin up
+        // a fresh active session anyway.
+        if (router.canGoBack()) router.back()
+        else router.replace('/')
+      } else {
+        Alert.alert(
+          'Archive failed',
+          'Someone else just changed this chat. Pull to refresh and try again.',
+        )
+      }
+    },
+    onError: () => {
+      Alert.alert('Action failed', 'Please try again.')
+    },
+  })
+
+  const confirmArchive = (): void => {
+    Alert.alert(
+      'Archive this chat?',
+      'Archived chats stay in your history but won’t appear in the recent list. A new chat for this context will start fresh next time.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Archive', style: 'destructive', onPress: () => archiveMut.mutate() },
+      ],
+    )
+  }
+
+  const busy = togglePinMut.isPending || archiveMut.isPending
+
+  return (
+    <Modal visible={open} animationType="fade" transparent onRequestClose={onClose}>
+      <Pressable style={actionsSheetStyles.backdrop} onPress={onClose}>
+        <Pressable style={actionsSheetStyles.card} onPress={() => undefined}>
+          <View style={actionsSheetStyles.header}>
+            <Text style={actionsSheetStyles.title}>Chat actions</Text>
+            <Pressable
+              onPress={onClose}
+              hitSlop={8}
+              style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
+              accessibilityLabel="Close"
+              accessibilityRole="button"
+            >
+              <Ionicons name="close" size={22} color={colors.text} />
+            </Pressable>
+          </View>
+
+          <ActionRow
+            icon="create-outline"
+            label="Rename"
+            disabled={busy}
+            onPress={onRename}
+          />
+          <ActionRow
+            icon={session.isPinned ? 'pin' : 'pin-outline'}
+            label={session.isPinned ? 'Unpin' : 'Pin'}
+            disabled={busy}
+            onPress={() => togglePinMut.mutate()}
+            pending={togglePinMut.isPending}
+          />
+          <ActionRow
+            icon="archive-outline"
+            label="Archive"
+            destructive
+            disabled={busy}
+            onPress={confirmArchive}
+            pending={archiveMut.isPending}
+          />
+        </Pressable>
+      </Pressable>
+    </Modal>
+  )
+}
+
+function ActionRow({
+  icon,
+  label,
+  onPress,
+  destructive = false,
+  disabled = false,
+  pending = false,
+}: {
+  icon: keyof typeof Ionicons.glyphMap
+  label: string
+  onPress: () => void
+  destructive?: boolean
+  disabled?: boolean
+  pending?: boolean
+}): React.JSX.Element {
+  const fg = destructive ? colors.crimson : colors.text
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        actionsSheetStyles.row,
+        pressed && { backgroundColor: colors.surface3 },
+        disabled && { opacity: 0.5 },
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <View style={actionsSheetStyles.rowIcon}>
+        {pending ? (
+          <ActivityIndicator size="small" color={fg} />
+        ) : (
+          <Ionicons name={icon} size={20} color={fg} />
+        )}
+      </View>
+      <Text style={[actionsSheetStyles.rowLabel, { color: fg }]}>{label}</Text>
+    </Pressable>
+  )
+}
+
+// ─── Rename modal ─────────────────────────────────────────────────────────
+//
+// Simple inline TextInput in a centered card. Native Modal's alert prompt
+// (RN's Alert.prompt) is iOS-only; we use a portable Modal instead so the
+// rename flow doesn't degrade on Android.
+
+function RenameModal({
+  open,
+  initialValue,
+  onClose,
+  sessionId,
+  contextKind,
+  rawContextId,
+}: {
+  open: boolean
+  initialValue: string
+  onClose: () => void
+  sessionId: string
+  contextKind: ChatContextKind
+  rawContextId: string
+}): React.JSX.Element {
+  const qc = useQueryClient()
+  const [value, setValue] = useState(initialValue)
+
+  // When the modal opens with a new initial (e.g. user reopened after a
+  // rename), reset the field so the prior session's title doesn't bleed
+  // through.
+  useEffect(() => {
+    if (open) setValue(initialValue)
+  }, [open, initialValue])
+
+  const renameMut = useMutation({
+    mutationFn: (next: string) => updateChatSession(sessionId, { title: next }),
+    onSuccess: (result) => {
+      if (result.ok && result.session) {
+        qc.setQueryData(
+          ['chat', 'session-detail', sessionId],
+          (prev: { session: ChatSessionListItem; messages: ChatMessage[] } | undefined) =>
+            prev ? { ...prev, session: result.session! } : prev,
+        )
+        qc.setQueryData(
+          ['chat', 'session-by-context', contextKind, rawContextId],
+          result.session,
+        )
+        qc.invalidateQueries({ queryKey: ['chat', 'sessions-list'] })
+        onClose()
+      } else {
+        Alert.alert(
+          'Rename failed',
+          'Someone else just changed this chat. Pull to refresh and try again.',
+        )
+      }
+    },
+    onError: () => {
+      Alert.alert('Rename failed', 'Please try again.')
+    },
+  })
+
+  const onSave = (): void => {
+    const trimmed = value.trim()
+    if (trimmed.length === 0 || trimmed === initialValue.trim()) {
+      onClose()
+      return
+    }
+    renameMut.mutate(trimmed)
+  }
+
+  return (
+    <Modal visible={open} animationType="fade" transparent onRequestClose={onClose}>
+      <Pressable style={renameStyles.backdrop} onPress={onClose}>
+        <Pressable style={renameStyles.card} onPress={() => undefined}>
+          <Text style={renameStyles.title}>Rename chat</Text>
+          <TextInput
+            value={value}
+            onChangeText={setValue}
+            placeholder="Chat title"
+            placeholderTextColor={colors.text4}
+            style={renameStyles.input}
+            autoFocus
+            maxLength={200}
+            editable={!renameMut.isPending}
+            onSubmitEditing={onSave}
+            returnKeyType="done"
+          />
+          <View style={renameStyles.btnRow}>
+            <Pressable
+              onPress={onClose}
+              disabled={renameMut.isPending}
+              style={({ pressed }) => [
+                renameStyles.btn,
+                renameStyles.btnSecondary,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={renameStyles.btnSecondaryText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={onSave}
+              disabled={renameMut.isPending || value.trim().length === 0}
+              style={({ pressed }) => [
+                renameStyles.btn,
+                renameStyles.btnPrimary,
+                (renameMut.isPending || value.trim().length === 0) && { opacity: 0.5 },
+                pressed && styles.pressed,
+              ]}
+            >
+              {renameMut.isPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={renameStyles.btnPrimaryText}>Save</Text>
+              )}
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  )
+}
+
+const actionsSheetStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    justifyContent: 'flex-end',
+  },
+  card: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radii.xl,
+    borderTopRightRadius: radii.xl,
+    paddingBottom: spacing.xl,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  title: { flex: 1, color: colors.text, fontSize: type.h2, fontWeight: '700' },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    gap: spacing.md,
+  },
+  rowIcon: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowLabel: { fontSize: type.body + 1, fontWeight: '500' },
+})
+
+const renameStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  card: {
+    width: '100%',
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  title: { color: colors.text, fontSize: type.h2, fontWeight: '700' },
+  input: {
+    backgroundColor: colors.surface3,
+    borderRadius: radii.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    color: colors.text,
+    fontSize: type.body + 1,
+  },
+  btnRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.sm },
+  btn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radii.lg,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnSecondary: { backgroundColor: 'transparent' },
+  btnSecondaryText: { color: colors.text3, fontSize: type.body + 1, fontWeight: '600' },
+  btnPrimary: { backgroundColor: colors.crimson },
+  btnPrimaryText: { color: '#fff', fontSize: type.body + 1, fontWeight: '600' },
 })
