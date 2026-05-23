@@ -189,6 +189,17 @@ export async function registerSyncRoutes(
             )
             if (!v.ok) {
               rejected.push({ outboxId: entry.outboxId, reason: v.reason })
+              req.log.warn(
+                {
+                  outboxId: entry.outboxId,
+                  userId: user.sub,
+                  table: entry.table,
+                  op: entry.op,
+                  reason: v.reason,
+                  metric: 'sync.push.validation_rejected',
+                },
+                'sync.push rejected entry: validation failed',
+              )
               continue
             }
             validatedPayload = mapKeys(v.data, camelToSnake)
