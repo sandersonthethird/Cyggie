@@ -23,7 +23,7 @@ import {
   shutdownSync,
   setSyncStatusBroadcastTarget,
 } from './services/sync-bootstrap'
-import { backfillAnthropicKeyOnLaunch } from './services/gateway-credentials'
+import { backfillProviderKeysOnLaunch } from './services/gateway-credentials'
 import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.service'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
@@ -280,7 +280,7 @@ app.whenReady().then(() => {
   // gateway was wiped while the desktop was offline. Runs after a 2s
   // delay inside the helper so it doesn't compete with the SyncAgent's
   // first tick or token refresh.
-  backfillAnthropicKeyOnLaunch()
+  backfillProviderKeysOnLaunch()
 
   // Item 4 (mobile summary tab) — bring historical summary_path content
   // into the meetings.summary column so mobile's Summary tab can render

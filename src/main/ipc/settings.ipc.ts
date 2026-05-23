@@ -6,7 +6,7 @@ import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { backfillMeetingSummaryNotes } from '../services/meeting-notes-backfill.service'
 import { getCurrentUserId } from '../security/current-user'
 import { isSafeStorageActive } from '../security/credentials'
-import { pushAnthropicKey } from '../services/gateway-credentials'
+import { pushAnthropicKey, pushDeepgramKey } from '../services/gateway-credentials'
 
 // settings.ipc.ts — read/write/test paths for AppSettings.
 //
@@ -104,6 +104,12 @@ export function registerSettingsHandlers(): void {
     // network blip doesn't break the desktop save.
     if (key === 'claudeApiKey' && value.trim().length > 0) {
       void pushAnthropicKey(value)
+    }
+    // T32 — same pattern for Deepgram. Gateway-side transcription routes
+    // (recording/transcribe-job.ts) resolve from user_credentials so each
+    // user bills against their own Deepgram account.
+    if (key === 'deepgramApiKey' && value.trim().length > 0) {
+      void pushDeepgramKey(value)
     }
   })
 

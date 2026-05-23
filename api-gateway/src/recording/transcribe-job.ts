@@ -37,6 +37,7 @@ import type { GatewayEnv } from '../env'
 import { readFile } from 'node:fs/promises'
 import { timingSafeEqual } from 'node:crypto'
 import { Sentry } from '../sentry'
+import { resolveDeepgramKey } from '../llm/resolve-key'
 
 // ─── Deepgram batch types (subset we actually use) ───────────────────────────
 
@@ -133,6 +134,29 @@ export async function submitTranscribeJob(args: {
   const { env, meetingId, audioFilePath } = args
   const db = getDb(env.GATEWAY_DATABASE_URL)
 
+  // T32 — resolve the user's Deepgram key from user_credentials so each user
+  // bills against their own account. PR-A: env.DEEPGRAM_API_KEY remains as a
+  // fallback until Sandy's row lands via desktop backfill. PR-B: env removed.
+  const meetingForKey = await db.query.meetings.findFirst({
+    where: eq(schema.meetings.id, meetingId),
+    columns: { userId: true },
+  })
+  if (!meetingForKey) {
+    return { requestId: null, error: 'meeting_not_found' }
+  }
+  const deepgramKey = await resolveDeepgramKey(env, meetingForKey.userId)
+  if (!deepgramKey) {
+    console.error('[transcribe] no Deepgram key for user', {
+      meetingId,
+      userId: meetingForKey.userId,
+    })
+    Sentry.captureMessage('Deepgram key missing — user_credentials + env fallback both empty', {
+      level: 'error',
+      extra: { meetingId, userId: meetingForKey.userId },
+    })
+    return { requestId: null, error: 'deepgram_key_missing' }
+  }
+
   // Build the callback URL with the shared secret. Without the secret param the
   // webhook handler rejects the request, so an attacker forging a callback
   // can't poison a meeting's transcript.
@@ -167,7 +191,7 @@ export async function submitTranscribeJob(args: {
     const res = await fetch(submitUrl.toString(), {
       method: 'POST',
       headers: {
-        Authorization: `Token ${env.DEEPGRAM_API_KEY}`,
+        Authorization: `Token ${deepgramKey}`,
         'Content-Type': 'audio/mp4',
       },
       body: audio,
@@ -332,9 +356,20 @@ export async function reconcileStuckJobs(env: GatewayEnv): Promise<{ checked: nu
   for (const m of stuck) {
     if (!m.deepgramRequestId) continue
     try {
+      // T32 — per-user Deepgram key. Skip the meeting if the user has no key
+      // (and env fallback is gone in PR-B); next reconcile pass tries again
+      // after Sandy's desktop pushes the key on next launch.
+      const deepgramKey = await resolveDeepgramKey(env, m.userId)
+      if (!deepgramKey) {
+        console.warn('[reconcile] no Deepgram key for user; skipping', {
+          meetingId: m.id,
+          userId: m.userId,
+        })
+        continue
+      }
       const res = await fetch(
         `https://api.deepgram.com/v1/listen/${encodeURIComponent(m.deepgramRequestId)}`,
-        { headers: { Authorization: `Token ${env.DEEPGRAM_API_KEY}` } },
+        { headers: { Authorization: `Token ${deepgramKey}` } },
       )
       if (res.status === 404) {
         // Deepgram never had it (request_id forgotten) OR job expired.

@@ -5,20 +5,23 @@ import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
 
-// T24 key resolution. Lifted out of routes/chat.ts so meetings.ts (and any
-// future LLM-consuming route) can share the same resolver without circular
-// route imports.
+// T24/T32 key resolution. Lifted out of routes/chat.ts so meetings.ts and
+// recording/transcribe-job.ts (and any future provider-consuming code) can
+// share the same resolver without circular route imports.
 //
 // Order:
-//   1. user_credentials row for (userId, 'anthropic') — set by desktop's
-//      Settings UI via PUT /user-credentials/anthropic.
-//   2. env.ANTHROPIC_API_KEY — single-firm beta fallback. Will be removed
-//      when multi-tenant onboarding lands and the env key becomes a leak
-//      vector for any user without their own row.
-//   3. null → caller throws CHAT_UNAVAILABLE.
-export async function resolveAnthropicKey(
+//   1. user_credentials row for (userId, provider) — set by desktop's
+//      Settings UI via PUT /user-credentials/:provider.
+//   2. env.<PROVIDER>_API_KEY — single-firm beta fallback. Deleted per
+//      provider as their multi-tenant gate ships (T24 retained Anthropic
+//      fallback; T32 PR-B removes Deepgram fallback after verifying
+//      Sandy's row exists in Neon).
+//   3. null → caller throws a provider-specific 503.
+
+async function resolveProviderKeyFromDb(
   env: GatewayEnv,
   userId: string,
+  provider: 'anthropic' | 'deepgram',
 ): Promise<string | null> {
   const db = getDb(env.GATEWAY_DATABASE_URL)
   const rows = await db
@@ -27,12 +30,35 @@ export async function resolveAnthropicKey(
     .where(
       and(
         eq(schema.userCredentials.userId, userId),
-        eq(schema.userCredentials.provider, 'anthropic'),
+        eq(schema.userCredentials.provider, provider),
       ),
     )
     .limit(1)
-  if (rows[0]) return rows[0].value
+  return rows[0]?.value ?? null
+}
+
+export async function resolveAnthropicKey(
+  env: GatewayEnv,
+  userId: string,
+): Promise<string | null> {
+  const fromDb = await resolveProviderKeyFromDb(env, userId, 'anthropic')
+  if (fromDb) return fromDb
   return env.ANTHROPIC_API_KEY ?? null
+}
+
+// T32 — Deepgram per-user key resolution.
+//
+// PR-A (this commit): env fallback still in play so the old code path keeps
+// working until Sandy's row lands in Neon via desktop backfill.
+// PR-B (follow-up, after verification): drop the env fallback and remove
+// DEEPGRAM_API_KEY from env.ts. flyctl secrets unset DEEPGRAM_API_KEY.
+export async function resolveDeepgramKey(
+  env: GatewayEnv,
+  userId: string,
+): Promise<string | null> {
+  const fromDb = await resolveProviderKeyFromDb(env, userId, 'deepgram')
+  if (fromDb) return fromDb
+  return env.DEEPGRAM_API_KEY ?? null
 }
 
 // Surface upstream Anthropic errors as meaningful 4xx/5xx instead of the
