@@ -928,11 +928,18 @@ function OverviewSection({
           </Pressable>
         </View>
         {meeting.linkedCompanies.length > 0 ? (
-          <View style={styles.chipRow}>
-            {meeting.linkedCompanies.map((c) => (
-              <CompanyPill key={c.id} company={c} onLongPress={() => confirmRemoveCompany(c)} />
-            ))}
-          </View>
+          <>
+            <View style={styles.chipRow}>
+              {meeting.linkedCompanies.map((c) => (
+                <CompanyPill
+                  key={c.id}
+                  company={c}
+                  onLongPress={() => confirmRemoveCompany(c)}
+                />
+              ))}
+            </View>
+            <Text style={styles.pillHint}>Long-press to unlink.</Text>
+          </>
         ) : (
           <Text style={styles.descEmpty}>No companies linked. Tap + to add one.</Text>
         )}
@@ -956,15 +963,18 @@ function OverviewSection({
           </Pressable>
         </View>
         {meeting.attendeeContacts.length > 0 ? (
-          <View style={styles.chipRow}>
-            {meeting.attendeeContacts.map((a, idx) => (
-              <AttendeePill
-                key={`${a.email ?? a.name}-${idx}`}
-                attendee={a}
-                onLongPress={() => confirmRemoveAttendee(attendeeLabel(a), idx)}
-              />
-            ))}
-          </View>
+          <>
+            <View style={styles.chipRow}>
+              {meeting.attendeeContacts.map((a, idx) => (
+                <AttendeePill
+                  key={`${a.email ?? a.name}-${idx}`}
+                  attendee={a}
+                  onLongPress={() => confirmRemoveAttendee(attendeeLabel(a), idx)}
+                />
+              ))}
+            </View>
+            <Text style={styles.pillHint}>Long-press to remove.</Text>
+          </>
         ) : (
           <Text style={styles.descEmpty}>No attendees yet. Tap + to add one.</Text>
         )}
@@ -989,6 +999,7 @@ function CompanyPill({
   onLongPress,
 }: {
   company: MeetingLinkedCompany
+  /** Long-press → confirm + remove. Tap navigates to the company detail. */
   onLongPress?: () => void
 }) {
   return (
@@ -997,6 +1008,10 @@ function CompanyPill({
       onLongPress={onLongPress}
       delayLongPress={400}
       style={({ pressed }) => [styles.companyPill, pressed && styles.pressed]}
+      accessibilityRole="button"
+      accessibilityLabel={
+        onLongPress ? `${company.name} (long-press to unlink)` : company.name
+      }
     >
       <Ionicons name="business-outline" size={12} color={colors.crimson} />
       <Text style={styles.companyPillText} numberOfLines={1}>
@@ -1011,11 +1026,14 @@ function AttendeePill({
   onLongPress,
 }: {
   attendee: AttendeeContact
+  /** Long-press → confirm + remove. Tap navigates to the contact when one
+   *  is resolved; for name-only attendees (no contactId) tap is inert. */
   onLongPress?: () => void
 }) {
   const label = attendeeLabel(attendee)
-  if (attendee.contactId) {
-    const contactId = attendee.contactId
+  const hasContact = Boolean(attendee.contactId)
+  const contactId = attendee.contactId
+  if (hasContact && contactId) {
     return (
       <Pressable
         onPress={() => router.push(`/contacts/${contactId}`)}
@@ -1023,7 +1041,7 @@ function AttendeePill({
         delayLongPress={400}
         style={({ pressed }) => [styles.attendeePill, pressed && styles.pressed]}
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={onLongPress ? `${label} (long-press to remove)` : label}
       >
         <Ionicons name="person-outline" size={12} color={colors.chipSky} />
         <Text style={styles.attendeePillText} numberOfLines={1}>
@@ -1033,6 +1051,8 @@ function AttendeePill({
       </Pressable>
     )
   }
+  // Name-only attendee: no contactId → no nav target, but still long-press
+  // to remove. Pressable wrapper just for the long-press handler.
   return (
     <Pressable
       onLongPress={onLongPress}
@@ -1042,6 +1062,7 @@ function AttendeePill({
         styles.attendeePillDim,
         pressed && onLongPress ? styles.pressed : null,
       ]}
+      accessibilityLabel={onLongPress ? `${label} (long-press to remove)` : label}
     >
       <Text style={styles.attendeePillText} numberOfLines={1}>
         {label}
@@ -1562,6 +1583,12 @@ const styles = StyleSheet.create({
     fontSize: type.meta,
     fontStyle: 'italic',
     marginTop: 4,
+  },
+  pillHint: {
+    color: colors.text4,
+    fontSize: type.meta - 1,
+    fontStyle: 'italic',
+    marginTop: 8,
   },
   descText: {
     color: colors.text2,
