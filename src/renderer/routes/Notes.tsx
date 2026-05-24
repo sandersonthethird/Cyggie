@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { useRemoteApply } from '../api/useRemoteApply'
 import { useStaleGuard } from '../hooks/useStaleGuard'
 import { useSearchParams } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
@@ -257,6 +258,15 @@ export default function Notes() {
   useEffect(() => {
     void fetchNotes()
   }, [fetchNotes])
+
+  // 2026-05-24 — refetch when sync-pull applies remote note changes.
+  // Mobile note edits flow through here so the list re-renders without
+  // manual refresh. Also pull folder counts since note moves can shift
+  // folder membership.
+  useRemoteApply(IPC_CHANNELS.NOTES_REMOTE_APPLIED, () => {
+    void fetchNotes()
+    void fetchFolderCounts()
+  })
 
   // --- Toast helpers ---
 

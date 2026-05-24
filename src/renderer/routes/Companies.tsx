@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStaleGuard } from '../hooks/useStaleGuard'
+import { useRemoteApply } from '../api/useRemoteApply'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { buildBackState } from '../utils/backNavState'
@@ -386,6 +387,12 @@ export default function Companies() {
     searchDebounceRef.current = setTimeout(() => { void fetchCompanies() }, 300)
     return () => { clearTimeout(searchDebounceRef.current) }
   }, [fetchCompanies])
+
+  // 2026-05-24 — refetch when sync-pull applies remote company changes
+  // (mobile create-on-the-fly via POST /companies, or any other write).
+  useRemoteApply(IPC_CHANNELS.ORG_COMPANIES_REMOTE_APPLIED, () => {
+    void fetchCompanies()
+  })
 
   // ── Ensure default saved views exist ─────────────────────────────────────────
   useEffect(() => {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Search as SearchIcon, Filter, Calendar as CalendarIcon } from 'lucide-react'
 import { api } from '../api'
+import { useRemoteApply } from '../api/useRemoteApply'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useNavigate } from 'react-router-dom'
 import { useChatStore } from '../stores/chat.store'
@@ -126,6 +127,18 @@ export default function AIChats() {
     window.addEventListener('focus', handler)
     return () => window.removeEventListener('focus', handler)
   }, [fetchList])
+
+  // 2026-05-24 (Bug B) — refetch when sync-pull applies remote chat
+  // sessions/messages. Without this, sessions created or renamed on
+  // mobile stay invisible until manual refresh or 30s cache expiry.
+  useRemoteApply(IPC_CHANNELS.CHAT_SESSIONS_REMOTE_APPLIED, () => {
+    void fetchList()
+  })
+  useRemoteApply(IPC_CHANNELS.CHAT_SESSION_MESSAGES_REMOTE_APPLIED, () => {
+    // New messages on a session bump lastMessageAt / messageCount which
+    // affects ordering + preview text in the list.
+    void fetchList()
+  })
 
   // Refetch when the modal closes — covers in-app modal mutations (locked: 1A).
   const prevModalOpen = useRef(modalOpen)

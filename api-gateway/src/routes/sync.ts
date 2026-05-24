@@ -442,6 +442,8 @@ export async function registerSyncRoutes(
           orgCompanyAliases: z.array(z.unknown()),
           contacts: z.array(z.unknown()),
           contactEmails: z.array(z.unknown()),
+          chatSessions: z.array(z.unknown()),
+          chatSessionMessages: z.array(z.unknown()),
           serverLamport: z.string(),
         }),
       },
@@ -472,6 +474,8 @@ export async function registerSyncRoutes(
         orgCompanyAliases,
         contacts,
         contactEmails,
+        chatSessions,
+        chatSessionMessages,
       ] = await Promise.all([
         db
           .select()
@@ -547,6 +551,39 @@ export async function registerSyncRoutes(
                 AND CAST(${schema.contactEmails.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.contactEmails.lamport} AS numeric) ASC`),
+        // 2026-05-24 — chat_sessions: scope by userId (column on row).
+        db
+          .select()
+          .from(schema.chatSessions)
+          .where(
+            sql`${schema.chatSessions.userId} = ${user.sub}
+                AND CAST(${schema.chatSessions.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.chatSessions.lamport} AS numeric) ASC`),
+        // chat_session_messages: composite ownership via JOIN onto
+        // chat_sessions.user_id (the messages table has no user_id
+        // column of its own).
+        db
+          .select({
+            id: schema.chatSessionMessages.id,
+            sessionId: schema.chatSessionMessages.sessionId,
+            role: schema.chatSessionMessages.role,
+            content: schema.chatSessionMessages.content,
+            citations: schema.chatSessionMessages.citations,
+            attachmentsJson: schema.chatSessionMessages.attachmentsJson,
+            createdAt: schema.chatSessionMessages.createdAt,
+            lamport: schema.chatSessionMessages.lamport,
+          })
+          .from(schema.chatSessionMessages)
+          .innerJoin(
+            schema.chatSessions,
+            sql`${schema.chatSessions.id} = ${schema.chatSessionMessages.sessionId}`,
+          )
+          .where(
+            sql`${schema.chatSessions.userId} = ${user.sub}
+                AND CAST(${schema.chatSessionMessages.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.chatSessionMessages.lamport} AS numeric) ASC`),
       ])
 
       const allRows = [
@@ -556,6 +593,8 @@ export async function registerSyncRoutes(
         ...orgCompanyAliases,
         ...contacts,
         ...contactEmails,
+        ...chatSessions,
+        ...chatSessionMessages,
       ] as Array<{ lamport: string | null }>
       const serverLamport = allRows.length > 0
         ? String(
@@ -576,6 +615,8 @@ export async function registerSyncRoutes(
           orgCompanyAliasCount: orgCompanyAliases.length,
           contactCount: contacts.length,
           contactEmailCount: contactEmails.length,
+          chatSessionCount: chatSessions.length,
+          chatSessionMessageCount: chatSessionMessages.length,
           metric: 'sync.pull.row_count',
         },
         'sync.pull complete',
@@ -588,6 +629,8 @@ export async function registerSyncRoutes(
         orgCompanyAliases,
         contacts,
         contactEmails,
+        chatSessions,
+        chatSessionMessages,
         serverLamport,
       }
     },

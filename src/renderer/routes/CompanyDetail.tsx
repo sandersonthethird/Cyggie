@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
+import { useRemoteApply } from '../api/useRemoteApply'
 import type { BackNavState } from '../utils/backNavState'
 import { Share2 } from 'lucide-react'
 import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
@@ -81,6 +82,14 @@ export default function CompanyDetail() {
 
   const setPageContext = useChatStore((s) => s.setPageContext)
 
+  const reloadCompany = useCallback(() => {
+    if (!id) return
+    window.api
+      .invoke<CompanyDetailType>(IPC_CHANNELS.COMPANY_GET, id)
+      .then((data) => setCompany(data ?? null))
+      .catch(console.error)
+  }, [id])
+
   useEffect(() => {
     if (!id) return
     setLastEnrichedAt(localStorage.getItem(companyEnrichedAtKey(id)))
@@ -92,6 +101,16 @@ export default function CompanyDetail() {
       .finally(() => setLoading(false))
   }, [id])
 
+  // 2026-05-24 — refresh on remote-apply broadcasts. Three subscriptions:
+  //   • ORG_COMPANIES: this row may have been edited on mobile
+  //   • CONTACTS: a person on the People sidebar got renamed/created
+  //   • MEETINGS: a meeting was linked to this company from mobile (the
+  //     reloadMeetings effect below picks it up via the meeting fetch)
+  useRemoteApply(IPC_CHANNELS.ORG_COMPANIES_REMOTE_APPLIED, (ids) => {
+    if (id && ids.includes(id)) reloadCompany()
+  })
+  useRemoteApply(IPC_CHANNELS.CONTACTS_REMOTE_APPLIED, () => reloadCompany())
+
   // Register this company as the chat page context so the global floating chat
   // shows entity-scoped options while on this page.
   useEffect(() => {
@@ -100,14 +119,20 @@ export default function CompanyDetail() {
     return () => setPageContext(null)
   }, [company?.id, company?.canonicalName, setPageContext])
 
-  // Fetch meetings when id or company loads
-  useEffect(() => {
+  const reloadCompanyMeetings = useCallback(() => {
     if (!id) return
     window.api
       .invoke<CompanyMeetingRef[]>(IPC_CHANNELS.COMPANY_MEETINGS, id)
       .then((data) => setCompanyMeetings(Array.isArray(data) ? data : []))
       .catch(() => setCompanyMeetings([]))
   }, [id])
+
+  // Fetch meetings when id or company loads
+  useEffect(() => {
+    reloadCompanyMeetings()
+  }, [reloadCompanyMeetings])
+
+  useRemoteApply(IPC_CHANNELS.MEETINGS_REMOTE_APPLIED, () => reloadCompanyMeetings())
 
   // Clear highlight after 3s
   useEffect(() => {

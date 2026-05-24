@@ -42,12 +42,16 @@ import {
   applyRemoteOrgCompanyAliases,
   applyRemoteContacts,
   applyRemoteContactEmails,
+  applyRemoteChatSessions,
+  applyRemoteChatSessionMessages,
   type PulledMeetingRow,
   type PulledNoteRow,
   type PulledOrgCompanyRow,
   type PulledOrgCompanyAliasRow,
   type PulledContactRow,
   type PulledContactEmailRowWire,
+  type PulledChatSessionRow,
+  type PulledChatSessionMessageRow,
 } from './sync-remote-apply'
 import type { SyncAgent } from './sync-agent'
 
@@ -78,6 +82,9 @@ export interface PullResponse {
   orgCompanyAliases?: PulledOrgCompanyAliasRow[]
   contacts?: PulledContactRow[]
   contactEmails?: PulledContactEmailRowWire[]
+  /** 2026-05-24 (Bug B) — chat tables join the pull path. */
+  chatSessions?: PulledChatSessionRow[]
+  chatSessionMessages?: PulledChatSessionMessageRow[]
   serverLamport: string
 }
 
@@ -109,6 +116,9 @@ export interface SyncPullServiceConfig {
   onOrgCompanyAliasesApplied?: (ids: string[]) => void
   onContactsApplied?: (ids: string[]) => void
   onContactEmailsApplied?: (ids: string[]) => void
+  /** 2026-05-24 (Bug B) — chat tables. */
+  onChatSessionsApplied?: (ids: string[]) => void
+  onChatSessionMessagesApplied?: (ids: string[]) => void
   /** Optional state-change subscriber (Issue 5A SYNC_PULL_STATUS_CHANGED). */
   onStateChange?: (snapshot: PullStateSnapshot) => void
   /** Optional pino logger. */
@@ -255,6 +265,8 @@ export class SyncPullService {
     let orgCompanyAliasesResult: typeof empty = empty
     let contactsResult: typeof empty = empty
     let contactEmailsResult: typeof empty = empty
+    let chatSessionsResult: typeof empty = empty
+    let chatSessionMessagesResult: typeof empty = empty
 
     try {
       if (response.orgCompanies && response.orgCompanies.length > 0) {
@@ -327,6 +339,32 @@ export class SyncPullService {
           },
         )
       }
+      // 2026-05-24 (Bug B) — chat tables. Apply order: sessions BEFORE
+      // messages (FK from chat_session_messages.session_id → chat_sessions.id).
+      if (response.chatSessions && response.chatSessions.length > 0) {
+        chatSessionsResult = applyRemoteChatSessions(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.chatSessions,
+          {
+            onApplied: this.cfg.onChatSessionsApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
+      if (response.chatSessionMessages && response.chatSessionMessages.length > 0) {
+        chatSessionMessagesResult = applyRemoteChatSessionMessages(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.chatSessionMessages,
+          {
+            onApplied: this.cfg.onChatSessionMessagesApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
     } catch (err) {
       // Top-level apply failure (something other than per-sub-batch
       // rollback, which is handled inside applyRemoteX). Back off.
@@ -351,6 +389,8 @@ export class SyncPullService {
       orgCompanyAliasesResult,
       contactsResult,
       contactEmailsResult,
+      chatSessionsResult,
+      chatSessionMessagesResult,
     ]
     this.cfg.log?.info?.(
       {
@@ -367,6 +407,10 @@ export class SyncPullService {
         contactsAppliedCount: contactsResult.appliedIds.length,
         contactEmailRowCount: response.contactEmails?.length ?? 0,
         contactEmailsAppliedCount: contactEmailsResult.appliedIds.length,
+        chatSessionRowCount: response.chatSessions?.length ?? 0,
+        chatSessionsAppliedCount: chatSessionsResult.appliedIds.length,
+        chatSessionMessageRowCount: response.chatSessionMessages?.length ?? 0,
+        chatSessionMessagesAppliedCount: chatSessionMessagesResult.appliedIds.length,
         skippedLowLamport: allResults.reduce((a, r) => a + r.skippedLowLamport, 0),
         skippedPreValidation: allResults.reduce((a, r) => a + r.skippedPreValidation, 0),
         serverLamport: response.serverLamport,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRemoteApply } from '../api/useRemoteApply'
 import { useStaleGuard } from '../hooks/useStaleGuard'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
@@ -904,6 +905,12 @@ export default function Contacts() {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
     }
   }, [loadContacts, query])
+
+  // 2026-05-24 — refetch when sync-pull applies remote contact changes
+  // (mobile create-on-the-fly via POST /contacts, or any other write).
+  useRemoteApply(IPC_CHANNELS.CONTACTS_REMOTE_APPLIED, () => {
+    void loadContacts(query)
+  })
 
   useEffect(() => {
     if (!showCreate) return

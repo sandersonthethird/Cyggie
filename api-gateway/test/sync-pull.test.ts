@@ -3,7 +3,7 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 
 // GET /sync/pull?since=<lamport> — mobile pulls deltas from Neon.
@@ -335,5 +335,99 @@ describe('GET /sync/pull', () => {
     expect(body.orgCompanyAliases.find((a) => a.companyId === bobCompanyId)).toBeFalsy()
     expect(body.contacts.find((c) => c.id === bobContactId)).toBeFalsy()
     expect(body.contactEmails.find((e) => e.contactId === bobContactId)).toBeFalsy()
+  })
+
+  // 2026-05-24 — chat tables join the pull path. Mobile-sent chat
+  // sessions and messages now flow to desktop's local SQLite via the
+  // pull tick. Two cases mirror the T14 pattern.
+  test('chat — returns sessions + messages for the user', async () => {
+    const { userId, jwt } = await setupUser()
+
+    const sessionId = TEST_PREFIX + 'sess-' + createId().slice(0, 6)
+    await db.insert(schema.chatSessions).values({
+      id: sessionId,
+      userId,
+      contextKind: 'crm',
+      contextId: `ctx-${sessionId}`, // unique per test to avoid the partial-active-unique index
+      contextLabel: null,
+      title: 'Hello',
+      lamport: '21',
+      lastMessageAt: new Date(),
+      createdByUserId: userId,
+    })
+
+    const msgId = TEST_PREFIX + 'msg-' + createId().slice(0, 6)
+    await db.insert(schema.chatSessionMessages).values({
+      id: msgId,
+      sessionId,
+      role: 'user',
+      content: 'Hi from mobile',
+      lamport: '22',
+      createdByUserId: userId,
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      chatSessions: Array<{ id: string; title: string | null }>
+      chatSessionMessages: Array<{ id: string; sessionId: string; content: string }>
+      serverLamport: string
+    }
+    expect(body.chatSessions.find((s) => s.id === sessionId)?.title).toBe('Hello')
+    expect(body.chatSessionMessages.find((m) => m.id === msgId)?.content).toBe('Hi from mobile')
+
+    // Cleanup — explicit because chat_sessions isn't in the test's
+    // cascade-cleanup arrays.
+    await db
+      .delete(schema.chatSessions)
+      .where(eq(schema.chatSessions.id, sessionId))
+  })
+
+  test('chat — sessions + messages are user-scoped (cross-user leak check)', async () => {
+    const alice = await setupUser()
+    const bob = await setupUser()
+
+    const bobSessionId = TEST_PREFIX + 'sess-' + createId().slice(0, 6)
+    await db.insert(schema.chatSessions).values({
+      id: bobSessionId,
+      userId: bob.userId,
+      contextKind: 'crm',
+      contextId: `ctx-${bobSessionId}`,
+      contextLabel: null,
+      title: 'Bobs private chat',
+      lamport: '30',
+      lastMessageAt: new Date(),
+      createdByUserId: bob.userId,
+    })
+    const bobMsgId = TEST_PREFIX + 'msg-' + createId().slice(0, 6)
+    await db.insert(schema.chatSessionMessages).values({
+      id: bobMsgId,
+      sessionId: bobSessionId,
+      role: 'user',
+      content: 'secret',
+      lamport: '31',
+      createdByUserId: bob.userId,
+    })
+
+    // Alice pulls — should NOT see Bob's session or message.
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${alice.jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      chatSessions: Array<{ id: string }>
+      chatSessionMessages: Array<{ id: string }>
+    }
+    expect(body.chatSessions.find((s) => s.id === bobSessionId)).toBeFalsy()
+    expect(body.chatSessionMessages.find((m) => m.id === bobMsgId)).toBeFalsy()
+
+    // Cleanup.
+    await db.delete(schema.chatSessions).where(eq(schema.chatSessions.id, bobSessionId))
   })
 })

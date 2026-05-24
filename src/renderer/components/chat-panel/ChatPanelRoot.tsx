@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../../api'
+import { useRemoteApply } from '../../api/useRemoteApply'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatPanelStore } from '../../stores/chat-panel.store'
 import { useChatStore } from '../../stores/chat.store'
@@ -98,6 +99,24 @@ export function ChatPanelRoot() {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSessionId])
+
+  // 2026-05-24 (Bug B) — reload the open session's messages when sync-pull
+  // applies remote chat updates. Mobile-sent messages on the currently-
+  // open session land in SQLite via pull; without this subscription the
+  // panel keeps showing the old message list.
+  useRemoteApply(IPC_CHANNELS.CHAT_SESSION_MESSAGES_REMOTE_APPLIED, () => {
+    if (!openSessionId) return
+    void loadSessionAndMessages(openSessionId, (s, msgs) => {
+      loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, msgs)
+    })
+  })
+  useRemoteApply(IPC_CHANNELS.CHAT_SESSIONS_REMOTE_APPLIED, (ids) => {
+    if (openSessionId && ids.includes(openSessionId)) {
+      void loadSessionAndMessages(openSessionId, (s, msgs) => {
+        loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, msgs)
+      })
+    }
+  })
 
   // Pick the active ContextOption to display in the chip.
   // - If panelSession has a contextId matching pageContext.contextOptions, use it.

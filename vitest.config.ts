@@ -39,6 +39,12 @@ export default defineConfig({
     environment: 'node',
     include: [
       'src/tests/**/*.test.{ts,tsx}',
+      // Renderer co-located tests (2026-05-24). Pure-JS modules in the
+      // renderer (no React rendering needed) live next to their source
+      // under src/renderer/**/__tests__/. The `// @vitest-environment
+      // jsdom` directive at the top of any file opts that file into a
+      // jsdom env for React renderHook etc.
+      'src/renderer/**/__tests__/**/*.test.{ts,tsx}',
       'web/middleware.test.ts',
       'api-gateway/test/**/*.test.ts',
       // Mobile pure-JS unit tests. Tests covering React-Native-specific

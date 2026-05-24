@@ -467,6 +467,10 @@ export const IPC_CHANNELS = {
   ORG_COMPANIES_REMOTE_APPLIED: 'sync:org-companies-remote-applied',
   CONTACT_EMAILS_REMOTE_APPLIED: 'sync:contact-emails-remote-applied',
   ORG_COMPANY_ALIASES_REMOTE_APPLIED: 'sync:org-company-aliases-remote-applied',
+  // 2026-05-24 — chat tables join the pull path so mobile-sent chat
+  // sessions + messages appear on desktop without a manual refresh.
+  CHAT_SESSIONS_REMOTE_APPLIED: 'sync:chat-sessions-remote-applied',
+  CHAT_SESSION_MESSAGES_REMOTE_APPLIED: 'sync:chat-session-messages-remote-applied',
 
   // Cyggie cloud auth (Desktop OAuth slice)
   CYGGIE_AUTH_SIGN_IN: 'cyggie-auth:sign-in',

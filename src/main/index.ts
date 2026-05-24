@@ -22,6 +22,7 @@ import {
   bootstrapSync,
   shutdownSync,
   setSyncStatusBroadcastTarget,
+  triggerSyncPull,
 } from './services/sync-bootstrap'
 import { backfillProviderKeysOnLaunch } from './services/gateway-credentials'
 import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.service'
@@ -443,6 +444,14 @@ app.whenReady().then(() => {
     } else {
       mainWindow?.show()
     }
+  })
+
+  // Trigger an immediate sync pull when the desktop window regains focus.
+  // Without this, cross-device latency is up to one full 60s pull tick
+  // after the user switches from mobile back to desktop. The pull itself
+  // is debounced inside the SyncAgent (no-op if one is already in flight).
+  app.on('browser-window-focus', () => {
+    triggerSyncPull()
   })
 })
 

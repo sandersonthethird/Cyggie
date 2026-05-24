@@ -218,14 +218,27 @@ export function bootstrapSync(): void {
     getAccessToken: getAccessTokenForSync,
     syncAgent: agent,
     transport: pullTransport,
+    // Per-table IPC fanout. Each callback below broadcasts a *_REMOTE_APPLIED
+    // event to the renderer with the affected row ids so screens can refresh
+    // without waiting for ipcCache TTL. Renderer subscribers attach via the
+    // `useRemoteApply(channel, cb)` hook (renderer/api/useRemoteApply.ts),
+    // which also runs the table → cache-key invalidation (INVALIDATIONS_BY_TABLE
+    // in renderer/api/ipcCache.ts) so the next refetch sees fresh state.
+    //
+    // Channels emitted here:
+    //   • MEETINGS_REMOTE_APPLIED                 (Issue 5A / Bug A)
+    //   • NOTES_REMOTE_APPLIED                    (T14)
+    //   • ORG_COMPANIES_REMOTE_APPLIED            (T14)
+    //   • ORG_COMPANY_ALIASES_REMOTE_APPLIED      (T14)
+    //   • CONTACTS_REMOTE_APPLIED                 (T14)
+    //   • CONTACT_EMAILS_REMOTE_APPLIED           (T14)
+    //   • CHAT_SESSIONS_REMOTE_APPLIED            (2026-05-24, Bug B)
+    //   • CHAT_SESSION_MESSAGES_REMOTE_APPLIED    (2026-05-24, Bug B)
     onMeetingsApplied: (ids) => {
-      // Surgical TanStack invalidation in the renderer (Issue 5A).
       const wc = statusBroadcastTarget
       if (!wc || wc.isDestroyed() || ids.length === 0) return
       wc.send(IPC_CHANNELS.MEETINGS_REMOTE_APPLIED, { ids })
     },
-    // T14 — per-table IPC fanout for the other owned tables. Each renderer
-    // subscriber decides which invalidation set fires when each event arrives.
     onNotesApplied: (ids) => {
       const wc = statusBroadcastTarget
       if (!wc || wc.isDestroyed() || ids.length === 0) return
@@ -250,6 +263,16 @@ export function bootstrapSync(): void {
       const wc = statusBroadcastTarget
       if (!wc || wc.isDestroyed() || ids.length === 0) return
       wc.send(IPC_CHANNELS.CONTACT_EMAILS_REMOTE_APPLIED, { ids })
+    },
+    onChatSessionsApplied: (ids) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.CHAT_SESSIONS_REMOTE_APPLIED, { ids })
+    },
+    onChatSessionMessagesApplied: (ids) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.CHAT_SESSION_MESSAGES_REMOTE_APPLIED, { ids })
     },
     onStateChange: (snapshot) => {
       const wc = statusBroadcastTarget

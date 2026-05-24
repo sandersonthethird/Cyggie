@@ -1030,6 +1030,170 @@ function upsertContactEmailRow(
   })
 }
 
+// ─── Chat Sessions (2026-05-24, Bug B) ──────────────────────────────────────
+
+/** Wire shape — gateway sends drizzle camelCase. SQLite has no
+ *  citations column on chat_sessions so we ignore extras. */
+export interface PulledChatSessionRow extends PulledRow {
+  id: string
+  userId: string
+  contextKind: string
+  contextId: string
+  contextLabel: string | null
+  title: string | null
+  previewText: string | null
+  messageCount: number
+  isActive: number | boolean
+  isPinned: number | boolean
+  isArchived: number | boolean
+  lastMessageAt: string | Date
+  createdByUserId: string | null
+  updatedByUserId: string | null
+  lamport: string
+  createdAt: string | Date
+  updatedAt: string | Date
+}
+
+export function applyRemoteChatSessions(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledChatSessionRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  return applyRemoteRows(db, deviceId, userId, rows, CHAT_SESSIONS_SPEC, opts)
+}
+
+const CHAT_SESSIONS_SPEC: TableSpec<PulledChatSessionRow> = {
+  tableName: 'chat_sessions',
+  hasUserId: true,
+  selectLamportSql: 'SELECT lamport FROM chat_sessions WHERE id = ?',
+  rowKey: (row) => [row.id],
+  rowId: (row) => row.id,
+  upsert: (db, row) => upsertChatSessionRow(db, row),
+}
+
+function upsertChatSessionRow(
+  db: Database.Database,
+  row: PulledChatSessionRow,
+): void {
+  // SQLite chat_sessions has no user_id column — Postgres carries it
+  // for multi-tenant filtering; desktop is single-user.
+  // Boolean → integer-flag conversion for the SQLite columns.
+  const intFlag = (v: number | boolean): number =>
+    typeof v === 'boolean' ? (v ? 1 : 0) : v
+  db.prepare(
+    `INSERT INTO chat_sessions (
+       id, context_id, context_kind, context_label,
+       title, preview_text, message_count,
+       is_active, is_pinned, is_archived,
+       last_message_at, created_at, updated_at,
+       created_by_user_id, updated_by_user_id, lamport
+     ) VALUES (
+       @id, @contextId, @contextKind, @contextLabel,
+       @title, @previewText, @messageCount,
+       @isActive, @isPinned, @isArchived,
+       @lastMessageAt, @createdAt, @updatedAt,
+       @createdByUserId, @updatedByUserId, @lamport
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       context_id = excluded.context_id,
+       context_kind = excluded.context_kind,
+       context_label = excluded.context_label,
+       title = excluded.title,
+       preview_text = excluded.preview_text,
+       message_count = excluded.message_count,
+       is_active = excluded.is_active,
+       is_pinned = excluded.is_pinned,
+       is_archived = excluded.is_archived,
+       last_message_at = excluded.last_message_at,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       updated_by_user_id = excluded.updated_by_user_id,
+       lamport = excluded.lamport`,
+  ).run({
+    id: row.id,
+    contextId: row.contextId,
+    contextKind: row.contextKind,
+    contextLabel: row.contextLabel,
+    title: row.title,
+    previewText: row.previewText,
+    messageCount: row.messageCount,
+    isActive: intFlag(row.isActive),
+    isPinned: intFlag(row.isPinned),
+    isArchived: intFlag(row.isArchived),
+    lastMessageAt: toIso(row.lastMessageAt),
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+    createdByUserId: row.createdByUserId,
+    updatedByUserId: row.updatedByUserId,
+    lamport: row.lamport,
+  })
+}
+
+// ─── Chat Session Messages (2026-05-24, Bug B) ──────────────────────────────
+
+/** Wire shape — gateway sends drizzle camelCase with citations etc.
+ *  SQLite has no citations column; we drop it during upsert. */
+export interface PulledChatSessionMessageRow extends PulledRow {
+  id: string
+  sessionId: string
+  role: string
+  content: string
+  attachmentsJson: unknown
+  createdAt: string | Date
+  lamport: string
+}
+
+export function applyRemoteChatSessionMessages(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledChatSessionMessageRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  return applyRemoteRows(db, deviceId, userId, rows, CHAT_SESSION_MESSAGES_SPEC, opts)
+}
+
+const CHAT_SESSION_MESSAGES_SPEC: TableSpec<PulledChatSessionMessageRow> = {
+  tableName: 'chat_session_messages',
+  // No user_id column on the messages table — ownership derives from
+  // the parent chat_sessions row (same as contact_emails posture).
+  hasUserId: false,
+  selectLamportSql: 'SELECT lamport FROM chat_session_messages WHERE id = ?',
+  rowKey: (row) => [row.id],
+  rowId: (row) => row.id,
+  upsert: (db, row) => upsertChatSessionMessageRow(db, row),
+}
+
+function upsertChatSessionMessageRow(
+  db: Database.Database,
+  row: PulledChatSessionMessageRow,
+): void {
+  db.prepare(
+    `INSERT INTO chat_session_messages (
+       id, session_id, role, content, attachments_json, created_at, lamport
+     ) VALUES (
+       @id, @sessionId, @role, @content, @attachmentsJson, @createdAt, @lamport
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       session_id = excluded.session_id,
+       role = excluded.role,
+       content = excluded.content,
+       attachments_json = excluded.attachments_json,
+       created_at = excluded.created_at,
+       lamport = excluded.lamport`,
+  ).run({
+    id: row.id,
+    sessionId: row.sessionId,
+    role: row.role,
+    content: row.content,
+    attachmentsJson: stringify(row.attachmentsJson),
+    createdAt: toIso(row.createdAt),
+    lamport: row.lamport,
+  })
+}
+
 // ─── Upsert helper ───────────────────────────────────────────────────────────
 
 function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {

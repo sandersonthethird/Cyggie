@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
+import { useRemoteApply } from '../api/useRemoteApply'
 import type { BackNavState } from '../utils/backNavState'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import type { ContactDetail as ContactDetailType, ContactMeetingRef } from '../../shared/types/contact'
@@ -50,6 +51,14 @@ export default function ContactDetail() {
 
   const setPageContext = useChatStore((s) => s.setPageContext)
 
+  const reloadContact = useCallback(() => {
+    if (!id) return
+    window.api
+      .invoke<ContactDetailType>(IPC_CHANNELS.CONTACT_GET, id)
+      .then((data) => setContact(data ?? null))
+      .catch(console.error)
+  }, [id])
+
   useEffect(() => {
     if (!id) return
     setLastEnrichedAt(localStorage.getItem(contactEnrichedAtKey(id)))
@@ -60,6 +69,18 @@ export default function ContactDetail() {
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [id])
+
+  // 2026-05-24 — refresh when sync-pull applies remote changes.
+  //   • CONTACTS: this row may have been edited on mobile
+  //   • CONTACT_EMAILS: a new email alias was added
+  //   • MEETINGS: a meeting was added to/removed from this contact
+  //     (also covered by ContactDetail's calendar/meetings reload via
+  //      contact?.id; the explicit subscription keeps the trigger fast).
+  useRemoteApply(IPC_CHANNELS.CONTACTS_REMOTE_APPLIED, (ids) => {
+    if (id && ids.includes(id)) reloadContact()
+  })
+  useRemoteApply(IPC_CHANNELS.CONTACT_EMAILS_REMOTE_APPLIED, () => reloadContact())
+  useRemoteApply(IPC_CHANNELS.MEETINGS_REMOTE_APPLIED, () => reloadContact())
 
   useEffect(() => {
     // SETTINGS_GET returns MaskedKey for encrypted keys; we only need the

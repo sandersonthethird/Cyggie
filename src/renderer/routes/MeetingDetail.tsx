@@ -46,6 +46,7 @@ import { SafeMarkdown } from '../components/SafeMarkdown'
 import styles from './MeetingDetail.module.css'
 import { api } from '../api'
 import { ipcCache } from '../api/ipcCache'
+import { useRemoteApply } from '../api/useRemoteApply'
 import { useNotesAutoSave } from '../hooks/useNotesAutoSave'
 
 /**
@@ -807,6 +808,21 @@ export default function MeetingDetail() {
   useEffect(() => {
     loadMeeting()
   }, [loadMeeting])
+
+  // 2026-05-24 — refresh when sync-pull applies remote changes to this
+  // meeting (or to the contacts / companies it references). Without
+  // these subscriptions, edits made on mobile (add/remove attendee,
+  // link company, etc.) stay invisible until manual refresh.
+  //
+  // Three channels — meetings is the obvious one; CONTACTS +
+  // ORG_COMPANIES are because attendee/company pills resolve to those
+  // related tables. If a contact gets renamed on mobile, the meeting
+  // detail's attendee pill should reflect the new name.
+  useRemoteApply(IPC_CHANNELS.MEETINGS_REMOTE_APPLIED, (ids) => {
+    if (id && ids.includes(id)) loadMeeting()
+  })
+  useRemoteApply(IPC_CHANNELS.CONTACTS_REMOTE_APPLIED, () => loadMeeting())
+  useRemoteApply(IPC_CHANNELS.ORG_COMPANIES_REMOTE_APPLIED, () => loadMeeting())
 
   useEffect(() => {
     ipcCache.get<MeetingTemplate[]>(

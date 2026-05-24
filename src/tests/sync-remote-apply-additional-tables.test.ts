@@ -13,10 +13,14 @@ import {
   applyRemoteOrgCompanyAliases,
   applyRemoteContacts,
   applyRemoteContactEmails,
+  applyRemoteChatSessions,
+  applyRemoteChatSessionMessages,
   type PulledOrgCompanyRow,
   type PulledOrgCompanyAliasRow,
   type PulledContactRow,
   type PulledContactEmailRowWire,
+  type PulledChatSessionRow,
+  type PulledChatSessionMessageRow,
 } from '@main/services/sync-remote-apply'
 
 const DEVICE_ID = 'device-test-1'
@@ -182,6 +186,37 @@ function freshDb(): Database.Database {
       lamport TEXT NOT NULL DEFAULT '0',
       PRIMARY KEY (contact_id, email),
       FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+    );
+
+    -- Chat tables (2026-05-24, Bug B).
+    CREATE TABLE chat_sessions (
+      id TEXT PRIMARY KEY,
+      context_id TEXT NOT NULL,
+      context_kind TEXT NOT NULL,
+      context_label TEXT,
+      title TEXT,
+      preview_text TEXT,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      is_pinned INTEGER NOT NULL DEFAULT 0,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      last_message_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_by_user_id TEXT,
+      updated_by_user_id TEXT,
+      lamport TEXT NOT NULL DEFAULT '0'
+    );
+
+    CREATE TABLE chat_session_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      attachments_json TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      lamport TEXT NOT NULL DEFAULT '0',
+      FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
     );
   `)
 
@@ -539,5 +574,160 @@ describe('applyRemoteContactEmails', () => {
       'SELECT email FROM contact_emails WHERE contact_id = ? ORDER BY email',
     ).all('ct-1') as { email: string }[]
     expect(rows.map((r) => r.email)).toEqual(['a@example.com', 'b@example.com'])
+  })
+})
+
+// ─── Chat tables (2026-05-24, Bug B) ────────────────────────────────────────
+
+function makeSessionRow(
+  overrides: Partial<PulledChatSessionRow> & { id: string; lamport: string },
+): PulledChatSessionRow {
+  return {
+    id: overrides.id,
+    userId: USER_ID,
+    contextKind: 'crm',
+    contextId: `ctx-${overrides.id}`,
+    contextLabel: null,
+    title: 'Test session',
+    previewText: null,
+    messageCount: 0,
+    isActive: 1,
+    isPinned: 0,
+    isArchived: 0,
+    lastMessageAt: '2026-05-24T10:00:00.000Z',
+    createdByUserId: USER_ID,
+    updatedByUserId: USER_ID,
+    createdAt: '2026-05-24T10:00:00.000Z',
+    updatedAt: '2026-05-24T10:00:00.000Z',
+    lamport: overrides.lamport,
+    ...overrides,
+  }
+}
+
+describe('applyRemoteChatSessions', () => {
+  let db: Database.Database
+  beforeEach(() => { db = freshDb() })
+  afterEach(() => { db.close() })
+
+  it('inserts a new session row', () => {
+    const r = applyRemoteChatSessions(db, DEVICE_ID, USER_ID, [
+      makeSessionRow({ id: 'sess-1', lamport: '5', title: 'Hi' }),
+    ])
+    expect(r.appliedIds).toEqual(['sess-1'])
+    const row = db.prepare('SELECT title, lamport FROM chat_sessions WHERE id = ?').get('sess-1') as
+      | { title: string; lamport: string }
+      | undefined
+    expect(row?.title).toBe('Hi')
+    expect(row?.lamport).toBe('5')
+  })
+
+  it('skips when local lamport is greater-or-equal', () => {
+    db.prepare(
+      "INSERT INTO chat_sessions (id, context_id, context_kind, title, lamport) VALUES ('sess-1', 'ctx-1', 'crm', 'Local', '10')",
+    ).run()
+    const r = applyRemoteChatSessions(db, DEVICE_ID, USER_ID, [
+      makeSessionRow({ id: 'sess-1', lamport: '5' }),
+    ])
+    expect(r.appliedIds).toEqual([])
+    expect(r.skippedLowLamport).toBe(1)
+  })
+
+  it('updates session metadata on higher lamport', () => {
+    db.prepare(
+      "INSERT INTO chat_sessions (id, context_id, context_kind, title, lamport) VALUES ('sess-1', 'ctx-old', 'crm', 'Old', '1')",
+    ).run()
+    applyRemoteChatSessions(db, DEVICE_ID, USER_ID, [
+      makeSessionRow({ id: 'sess-1', lamport: '2', title: 'Renamed', messageCount: 4 }),
+    ])
+    const row = db.prepare('SELECT title, message_count FROM chat_sessions WHERE id = ?').get('sess-1') as {
+      title: string
+      message_count: number
+    }
+    expect(row.title).toBe('Renamed')
+    expect(row.message_count).toBe(4)
+  })
+
+  it('coerces boolean isPinned/isArchived to integer flags', () => {
+    applyRemoteChatSessions(db, DEVICE_ID, USER_ID, [
+      makeSessionRow({ id: 'sess-1', lamport: '5', isPinned: true, isArchived: false }),
+    ])
+    const row = db.prepare('SELECT is_pinned, is_archived FROM chat_sessions WHERE id = ?').get('sess-1') as {
+      is_pinned: number
+      is_archived: number
+    }
+    expect(row.is_pinned).toBe(1)
+    expect(row.is_archived).toBe(0)
+  })
+})
+
+describe('applyRemoteChatSessionMessages', () => {
+  let db: Database.Database
+  beforeEach(() => {
+    db = freshDb()
+    // Seed parent session so FK is satisfied for inserts below.
+    db.prepare(
+      "INSERT INTO chat_sessions (id, context_id, context_kind, lamport) VALUES ('sess-1', 'ctx-1', 'crm', '1')",
+    ).run()
+  })
+  afterEach(() => { db.close() })
+
+  it('inserts a new message row', () => {
+    const r = applyRemoteChatSessionMessages(db, DEVICE_ID, USER_ID, [
+      {
+        id: 'msg-1',
+        sessionId: 'sess-1',
+        role: 'user',
+        content: 'Hello',
+        attachmentsJson: null,
+        createdAt: '2026-05-24T10:00:00.000Z',
+        lamport: '3',
+      },
+    ])
+    expect(r.appliedIds).toEqual(['msg-1'])
+    const row = db.prepare('SELECT role, content, lamport FROM chat_session_messages WHERE id = ?').get('msg-1') as {
+      role: string
+      content: string
+      lamport: string
+    }
+    expect(row.role).toBe('user')
+    expect(row.content).toBe('Hello')
+    expect(row.lamport).toBe('3')
+  })
+
+  it('skips when local lamport is greater-or-equal', () => {
+    db.prepare(
+      "INSERT INTO chat_session_messages (id, session_id, role, content, lamport) VALUES ('msg-1', 'sess-1', 'user', 'old', '99')",
+    ).run()
+    const r = applyRemoteChatSessionMessages(db, DEVICE_ID, USER_ID, [
+      {
+        id: 'msg-1',
+        sessionId: 'sess-1',
+        role: 'user',
+        content: 'new',
+        attachmentsJson: null,
+        createdAt: '2026-05-24T10:00:00.000Z',
+        lamport: '5',
+      },
+    ])
+    expect(r.appliedIds).toEqual([])
+    expect(r.skippedLowLamport).toBe(1)
+  })
+
+  it('serialises attachmentsJson when provided', () => {
+    applyRemoteChatSessionMessages(db, DEVICE_ID, USER_ID, [
+      {
+        id: 'msg-1',
+        sessionId: 'sess-1',
+        role: 'assistant',
+        content: 'Reply',
+        attachmentsJson: [{ kind: 'meeting', id: 'mtg-1' }],
+        createdAt: '2026-05-24T10:00:00.000Z',
+        lamport: '3',
+      },
+    ])
+    const row = db.prepare(
+      'SELECT attachments_json FROM chat_session_messages WHERE id = ?',
+    ).get('msg-1') as { attachments_json: string }
+    expect(JSON.parse(row.attachments_json)).toEqual([{ kind: 'meeting', id: 'mtg-1' }])
   })
 })

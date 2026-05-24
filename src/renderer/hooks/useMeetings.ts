@@ -6,6 +6,7 @@ import type { CompanyEntityType, CompanyPipelineStage } from '../../shared/types
 import type { CalendarEvent } from '../../shared/types/calendar'
 import { api } from '../api'
 import { ipcCache } from '../api/ipcCache'
+import { useRemoteApply } from '../api/useRemoteApply'
 
 // ── Helpers (exported for testing) ──────────────────────────────────────────
 
@@ -198,6 +199,13 @@ export function useMeetings(options?: UseMeetingsOptions) {
   useEffect(() => {
     fetchMeetings()
   }, [fetchMeetings])
+
+  // 2026-05-24 — refetch when sync-pull applies remote changes. Without
+  // this, mobile-created/updated meetings don't appear on the desktop
+  // list until the 30s ipcCache TTL expires.
+  useRemoteApply(IPC_CHANNELS.MEETINGS_REMOTE_APPLIED, () => {
+    void fetchMeetings()
+  })
 
   // Merge calendar events as synthetic meetings (dedup by calendarEventId)
   const allMeetings = useMemo(() => {
