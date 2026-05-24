@@ -271,7 +271,12 @@ function SegmentControl({
             accessibilityRole="button"
             accessibilityState={{ selected: active }}
           >
-            <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+            <Text
+              style={[styles.segmentText, active && styles.segmentTextActive]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.85}
+            >
               {it.label}
             </Text>
           </Pressable>
@@ -849,6 +854,7 @@ const styles = StyleSheet.create({
   segmentBtn: {
     flex: 1,
     paddingVertical: 8,
+    paddingHorizontal: 2,
     alignItems: 'center',
     borderRadius: radii.sm + 2,
   },

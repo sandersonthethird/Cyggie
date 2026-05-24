@@ -173,7 +173,7 @@ function Hero({ contact }: { contact: ContactDetail }) {
           <LinkChip
             icon="mail-outline"
             label="Email"
-            onPress={() => openExternal(`mailto:${contact.email}`, 'Email', contact.email!)}
+            onPress={() => openEmail(contact.email!)}
           />
         )}
         {contact.phone && (
@@ -426,6 +426,29 @@ async function openExternal(url: string, label: string, fallback: string) {
   } catch (err) {
     if (__DEV__) console.warn(`[openExternal] failed to open ${url}`, err)
     Alert.alert(label, fallback)
+  }
+}
+
+// Prefers Gmail if installed; falls back to mailto: (which on iOS opens
+// whatever the user set as the system default mail app — Apple Mail,
+// Outlook, or Gmail if they've configured it as default). Plain mailto:
+// alone ignored Gmail for users who hadn't toggled iOS's default-app
+// setting, so Apple Mail was opening even when Gmail was the obvious
+// pick. openURL rejects when the scheme isn't installed, so the catch
+// is the install-check.
+async function openEmail(email: string) {
+  const gmail = `googlegmail:///co?to=${encodeURIComponent(email)}`
+  try {
+    await Linking.openURL(gmail)
+    return
+  } catch {
+    // Gmail not installed — fall through.
+  }
+  try {
+    await Linking.openURL(`mailto:${email}`)
+  } catch (err) {
+    if (__DEV__) console.warn('[openEmail] failed', err)
+    Alert.alert('Email', email)
   }
 }
 
