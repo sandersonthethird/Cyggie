@@ -454,6 +454,24 @@ async function persistTranscriptAndPush(
   const isEmpty = segments.length === 0
   const newStatus = isEmpty ? 'empty' : 'transcribed'
 
+  // Read first — we need userId/title for the APNs push AND the stored
+  // lamport so the update can mint a strictly-greater value. Combined
+  // into one round-trip.
+  const meeting = await db.query.meetings.findFirst({
+    where: eq(schema.meetings.id, meetingId),
+    columns: { id: true, userId: true, title: true, lamport: true },
+  })
+  if (!meeting) return
+
+  // Mobile's /sync/pull filters `WHERE lamport > since`. If this update
+  // doesn't advance lamport, mobile's delta-sync silently misses the
+  // transcript even though it's persisted in Neon. Same BigInt
+  // max(stored, wallclock)+1 pattern as POST /meetings/:id/enhance
+  // (routes/meetings.ts:883-887).
+  const storedLamport = BigInt(meeting.lamport ?? '0')
+  const wallLamport = BigInt(Date.now())
+  const nextLamport = ((storedLamport > wallLamport ? storedLamport : wallLamport) + 1n).toString()
+
   await db
     .update(schema.meetings)
     .set({
@@ -462,15 +480,10 @@ async function persistTranscriptAndPush(
       speakerMap,
       speakerCount: Object.keys(speakerMap).length,
       durationSeconds,
+      lamport: nextLamport,
       updatedAt: new Date(),
     })
     .where(eq(schema.meetings.id, meetingId))
-
-  const meeting = await db.query.meetings.findFirst({
-    where: eq(schema.meetings.id, meetingId),
-    columns: { id: true, userId: true, title: true },
-  })
-  if (!meeting) return
 
   // Send APNs to every active session for this user that has a registered
   // device token. We push to ALL device tokens (the user might be recording on
@@ -526,9 +539,20 @@ async function markMeetingError(
   meetingId: string,
   _reason: string,
 ): Promise<void> {
+  // Bump lamport so mobile's /sync/pull sees the status transition. Without
+  // this the row stays at its pre-recording lamport and mobile keeps
+  // showing 'recording' indefinitely.
+  const existing = await db.query.meetings.findFirst({
+    where: eq(schema.meetings.id, meetingId),
+    columns: { lamport: true },
+  })
+  if (!existing) return
+  const storedLamport = BigInt(existing.lamport ?? '0')
+  const wallLamport = BigInt(Date.now())
+  const nextLamport = ((storedLamport > wallLamport ? storedLamport : wallLamport) + 1n).toString()
   await db
     .update(schema.meetings)
-    .set({ status: 'error', updatedAt: new Date() })
+    .set({ status: 'error', lamport: nextLamport, updatedAt: new Date() })
     .where(eq(schema.meetings.id, meetingId))
 }
 
