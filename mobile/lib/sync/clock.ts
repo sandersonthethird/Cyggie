@@ -6,10 +6,16 @@
 // matches that convention: the persisted value is a decimal string, all
 // arithmetic happens through BigInt.
 //
-// Semantics:
-//   tick()  → increment local counter, return new value
+// Semantics (mirrors desktop's packages/db/src/sync/sync-clock.ts):
+//   tick()  → max(stored, Date.now()) + 1
+//             — tracks wall clock so values interleave with server-minted
+//             lamports under LWW. The gateway's validate-lamport.ts ceiling
+//             check assumes this; a counter-only clock instantly falls
+//             behind any server-stamped row (Date.now() ≈ 1.7e12) and
+//             every subsequent write 409s.
 //   merge(serverLamport) → local = max(local, server) + 1
-//                          (call right after a successful GET /sync/pull)
+//                          (call right after a successful GET /sync/pull
+//                          OR any response that returns a server lamport)
 //   current() → peek without mutating
 //
 // Persistence: MMKV (appStateStorage) under a single key. We don't
@@ -60,7 +66,9 @@ function write(v: bigint): void {
 }
 
 export function tick(): string {
-  const next = read() + 1n
+  const prev = read()
+  const now = BigInt(Date.now())
+  const next = (prev > now ? prev : now) + 1n
   write(next)
   return next.toString()
 }

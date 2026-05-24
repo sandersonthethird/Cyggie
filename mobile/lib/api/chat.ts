@@ -1,3 +1,5 @@
+import { fetch as expoFetch } from 'expo/fetch'
+
 import { api, apiFetchRaw, ApiError, GATEWAY_URL, ensureFreshAccessToken } from './client'
 import { useAuthStore } from '../auth/store'
 import { tick as tickLamport } from '../sync/clock'
@@ -276,10 +278,15 @@ export async function sendSessionMessageStream(
     return h
   }
 
+  // expo/fetch (rather than RN's stock fetch) is required here: stock RN
+  // fetch buffers the whole response and returns `null` from `res.body`,
+  // which would short-circuit straight to a parse error. expo/fetch
+  // exposes a real ReadableStream<Uint8Array> body that delivers SSE
+  // chunks as they arrive. Other API calls keep using stock fetch.
   let token = useAuthStore.getState().accessToken
-  let res: Response
+  let res: Awaited<ReturnType<typeof expoFetch>>
   try {
-    res = await fetch(url, {
+    res = await expoFetch(url, {
       method: 'POST',
       headers: buildHeaders(token),
       body,
@@ -290,7 +297,7 @@ export async function sendSessionMessageStream(
       const fresh = await ensureFreshAccessToken()
       if (fresh) {
         token = fresh
-        res = await fetch(url, {
+        res = await expoFetch(url, {
           method: 'POST',
           headers: buildHeaders(token),
           body,
@@ -309,16 +316,25 @@ export async function sendSessionMessageStream(
   if (!res.ok) {
     // Pre-stream rejection (409 lamport, 413 oversize, 4xx, 5xx). The
     // body is JSON-shaped {error: {...}} for most failures.
-    const parsedBody = await res
-      .clone()
-      .json()
-      .catch(() => res.text().catch(() => null))
-    handlers.onError({ code: 'http', status: res.status, body: parsedBody ?? undefined })
+    //
+    // NOTE: expo/fetch's FetchResponse.clone() throws "Not implemented",
+    // so we can't use the usual `res.clone().json().catch(() => res.text())`
+    // pattern — we'd lose the body to the first .json() attempt. Read as
+    // text first, then attempt JSON parse from the string.
+    const rawBody = await res.text().catch(() => '')
+    let parsedBody: unknown = rawBody
+    if (rawBody) {
+      try {
+        parsedBody = JSON.parse(rawBody)
+      } catch {
+        // leave as raw text
+      }
+    }
+    handlers.onError({ code: 'http', status: res.status, body: parsedBody })
     return
   }
 
   if (!res.body) {
-    // Some RN polyfills don't expose body — fall back to a parse error.
     handlers.onError({
       code: 'parse',
       message: 'Response has no readable body — streaming not supported here.',
@@ -326,13 +342,20 @@ export async function sendSessionMessageStream(
     return
   }
 
-  // Stream-read + parse loop.
+  // Stream-read + parse loop. We keep a small `recentBytes` tail of the raw
+  // wire data so parse failures can surface what actually arrived — without
+  // it, a malformed `done` payload gives us nothing to diagnose remotely.
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let gatewayErrorFired = false
   let doneFired = false
+  let recentBytes = ''
+  let totalBytes = 0
+  let eventsSeen = 0
+  const RECENT_TAIL_LIMIT = 512
 
   const parser = createSseParser((ev) => {
+    eventsSeen += 1
     if (ev.event === 'token') {
       try {
         const data = JSON.parse(ev.data) as { text?: string }
@@ -346,9 +369,17 @@ export async function sendSessionMessageStream(
         doneFired = true
         handlers.onDone({ ok: true, ...data })
       } catch (err) {
+        // Capture WHY parse failed so the UI can include diagnostic info
+        // (truncated payload? unexpected chars?). The user sees a generic
+        // message; logs / future telemetry get the detail.
+        const dataPreview = ev.data.length > 200
+          ? `${ev.data.slice(0, 100)}…(${ev.data.length}B)…${ev.data.slice(-100)}`
+          : ev.data
         handlers.onError({
           code: 'parse',
-          message: err instanceof Error ? err.message : 'Bad done payload',
+          message: `done payload JSON.parse failed: ${
+            err instanceof Error ? err.message : String(err)
+          } | dataLen=${ev.data.length} preview=${dataPreview}`,
         })
       }
     } else if (ev.event === 'error') {
@@ -376,7 +407,10 @@ export async function sendSessionMessageStream(
     while (true) {
       const { value, done } = await reader.read()
       if (done) break
-      parser(decoder.decode(value, { stream: true }))
+      const chunk = decoder.decode(value, { stream: true })
+      totalBytes += chunk.length
+      recentBytes = (recentBytes + chunk).slice(-RECENT_TAIL_LIMIT)
+      parser(chunk)
     }
     parser('', true) // flush any tail without trailing newline
   } catch (err) {
@@ -389,13 +423,23 @@ export async function sendSessionMessageStream(
     return
   }
 
-  // Stream closed cleanly with no done/error event — treat as abort.
-  // Don't fire onError if the abort was the cause (caller's choice);
-  // also don't fire if done/error already fired.
+  // Stream closed cleanly with no done/error event. Most common cause: the
+  // socket was cut after some token bytes but before the gateway flushed
+  // the done event (intermediary buffering, fly proxy idle close, etc.).
+  // Surface as 'parse' (not 'network') when we DID see events, so the
+  // caller can distinguish "no data at all" (likely retryable) from
+  // "partial data, may have been billed" (don't retry).
   if (!doneFired && !gatewayErrorFired) {
-    handlers.onError({
-      code: 'network',
-      message: 'Stream ended without a done or error event.',
-    })
+    if (eventsSeen > 0) {
+      handlers.onError({
+        code: 'parse',
+        message: `Stream ended after ${eventsSeen} event(s) without done/error. totalBytes=${totalBytes} tail=${recentBytes.slice(-200)}`,
+      })
+    } else {
+      handlers.onError({
+        code: 'network',
+        message: `Stream ended without any events. totalBytes=${totalBytes}`,
+      })
+    }
   }
 }

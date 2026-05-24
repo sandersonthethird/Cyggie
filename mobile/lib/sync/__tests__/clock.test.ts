@@ -47,27 +47,37 @@ describe('sync/clock', () => {
     restore = __setClockStorageForTest(mem)
     __resetForTest()
   })
-  afterEach(() => restore())
+  afterEach(() => {
+    restore()
+    vi.useRealTimers()
+  })
 
   it('starts at 0', () => {
     expect(current()).toBe('0')
   })
 
-  it('tick increments monotonically', () => {
-    expect(tick()).toBe('1')
-    expect(tick()).toBe('2')
-    expect(tick()).toBe('3')
-    expect(current()).toBe('3')
+  it('tick returns max(stored, Date.now()) + 1', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(1_700_000_000_000))
+    expect(tick()).toBe('1700000000001')
+    // Same ms: stored (1700000000001) > now (1700000000000), so +1 from stored.
+    expect(tick()).toBe('1700000000002')
+    // Wall clock advances past stored: jumps to now+1.
+    vi.setSystemTime(new Date(1_700_000_005_000))
+    expect(tick()).toBe('1700000005001')
+    expect(current()).toBe('1700000005001')
   })
 
   it('merge advances local to max(local, server) + 1', () => {
-    tick() // 1
-    tick() // 2
-    merge('10')
-    expect(current()).toBe('11')
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(1_700_000_000_000))
+    tick() // 1700000000001
+    tick() // 1700000000002
+    merge('1700000000010')
+    expect(current()).toBe('1700000000011')
     // Local already ahead: server stays behind, local + 1.
-    merge('5')
-    expect(current()).toBe('12')
+    merge('1700000000005')
+    expect(current()).toBe('1700000000012')
   })
 
   it('handles BigInt-range values', () => {
@@ -78,17 +88,21 @@ describe('sync/clock', () => {
   })
 
   it('treats malformed persisted value as 0 (does not throw)', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(1_700_000_000_000))
     const mem = createMemoryStorage()
     mem.set('sync.clock.lamport', 'not-a-number')
     restore()
     restore = __setClockStorageForTest(mem)
     expect(current()).toBe('0')
-    expect(tick()).toBe('1')
+    expect(tick()).toBe('1700000000001')
   })
 
   it('ignores malformed merge input rather than throwing', () => {
-    tick() // 1
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(1_700_000_000_000))
+    tick() // 1700000000001
     merge('garbage')
-    expect(current()).toBe('1')
+    expect(current()).toBe('1700000000001')
   })
 })

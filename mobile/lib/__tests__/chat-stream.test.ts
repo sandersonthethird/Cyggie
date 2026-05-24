@@ -2,6 +2,15 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 // Module mocks must be hoisted by vi.mock so the module under test sees
 // the stubbed deps at import time.
+
+// expo/fetch is the RN-native streaming fetch used by sendSessionMessageStream
+// (stock RN fetch buffers the body and returns null for .body). In Node tests
+// the native module can't load — delegate to globalThis.fetch which each test
+// can stub via fetchMock.
+vi.mock('expo/fetch', () => ({
+  fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
+}))
+
 vi.mock('../auth/store', () => ({
   useAuthStore: {
     getState: () => ({ accessToken: 'test-token' }),
