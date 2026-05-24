@@ -5,7 +5,10 @@ import { refreshTokens } from '../auth/oauth'
 
 // Typed fetch wrapper that:
 //   • injects Authorization: Bearer <jwt> from the auth store
-//   • on 401 with reauth_required=true → signs out (no recovery)
+//   • on 401 with reauth_required=true → throws a typed ApiError with
+//     reauthRequired=true. Does NOT signOut; the gateway uses this flag
+//     for Google-side reauth too (calendar/Gmail), and conflating the two
+//     produced an infinite sign-in loop.
 //   • on 401 without that flag → attempts one silent /auth/refresh, retries
 //   • parses the gateway error envelope into a typed ApiError
 //
@@ -123,8 +126,13 @@ export async function apiFetch<TResponse = unknown, TBody = unknown>(
     const body = (await res.clone().json().catch(() => ({}))) as GatewayErrorBody
     console.log('[auth] api: 401 on ' + path + ' reauth_required=' + (body.reauth_required === true))
     if (body.reauth_required) {
-      // Gateway is explicit: refresh won't help. Sign out and surface.
-      await useAuthStore.getState().signOut()
+      // Gateway is explicit: refresh won't help. Surface a typed error and
+      // let per-screen handlers decide what to do. Critically, do NOT
+      // signOut() here: the gateway emits `reauth_required` for Google-side
+      // problems too (e.g. /calendar/events when the user's Google OAuth
+      // token is revoked or missing the required scope), and wiping the
+      // Cyggie session in that case produced an infinite sign-in loop —
+      // the Cyggie JWT was fine; only the Google credentials were broken.
       throw new ApiError({
         status: 401,
         code: body.error?.code ?? 'REAUTH_REQUIRED',

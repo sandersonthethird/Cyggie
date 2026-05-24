@@ -44,6 +44,17 @@ export const chatSessions = pgTable(
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     lamport: text('lamport').notNull().default('0'),
+    // Phase 2 (Mobile Chat): the global Ask Cyggie tab lets users pick
+    // companies whose context (name/industry/stage/recent meetings) gets
+    // injected into the LLM system prompt. Per-session list of company IDs;
+    // gateway expands via buildSelectedCompaniesContext (one batched query
+    // — see api-gateway/src/routes/chat.ts). Empty default for crm sessions
+    // where the user hasn't picked anything; ignored by buildContextForSession
+    // for non-crm context kinds.
+    selectedCompanyIds: jsonb('selected_company_ids')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

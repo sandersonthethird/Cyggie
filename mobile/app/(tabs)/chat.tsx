@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { Alert } from 'react-native'
+import { useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Modal,
@@ -11,15 +12,19 @@ import {
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
   type ChatContextKind,
   type ChatSessionListItem,
   createOrGetChatSession,
+  fetchChatSession,
   fetchChatSessions,
+  updateChatSession,
 } from '../../lib/api/chat'
 import { ChatComposer, type ChatComposerHandle } from '../../components/ChatComposer'
+import { CompanyMultiSelectSheet } from '../../components/CompanyMultiSelectSheet'
+import { SelectedCompaniesPillRow } from '../../components/SelectedCompaniesPillRow'
 import { useStartNewChat } from '../../components/useStartNewChat'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -62,6 +67,61 @@ export default function ChatTab(): React.JSX.Element {
   const newChatDisabled =
     sessionQuery.isLoading || startNew.isPending || messageCount === 0
 
+  // Phase 2: hydrated chips for the pill row come from session detail
+  // (gateway joins org_companies on the row's selectedCompanyIds + filters
+  // stale IDs). Shares cache with ChatComposer's identical detailQuery
+  // key (TanStack dedupes).
+  const sessionId = sessionQuery.data?.id
+  const detailQuery = useQuery({
+    queryKey: ['chat', 'session-detail', sessionId],
+    queryFn: ({ signal }) => fetchChatSession(sessionId!, { signal }),
+    enabled: Boolean(sessionId),
+    staleTime: 15_000,
+  })
+
+  const selectedCompanies = detailQuery.data?.selectedCompanies ?? []
+  const existingIds = useMemo(
+    () => selectedCompanies.map((c) => c.id),
+    [selectedCompanies],
+  )
+
+  const qc = useQueryClient()
+  const [pickerOpen, setPickerOpen] = useState(false)
+
+  // PATCH that updates the selected_company_ids array. One mutation
+  // backs both chip-remove (× on pill) and Done-tap-with-changes from the
+  // picker. On 200, invalidate session-detail so the pill row rehydrates
+  // (including the gateway's stale-ID filter pass).
+  const updateMut = useMutation({
+    mutationFn: async (nextIds: string[]) => {
+      if (!sessionId) throw new Error('Session not ready')
+      const result = await updateChatSession(sessionId, {
+        selectedCompanyIds: nextIds,
+      })
+      if (!result.ok) {
+        Alert.alert(
+          'Could not update selection',
+          'Someone else just changed this chat. Refresh and try again.',
+        )
+      }
+      return result
+    },
+    onSuccess: (result) => {
+      if (result.ok && sessionId) {
+        qc.invalidateQueries({ queryKey: ['chat', 'session-detail', sessionId] })
+        qc.invalidateQueries({
+          queryKey: ['chat', 'session-by-context', CRM_CONTEXT_KIND, CRM_CONTEXT_ID],
+        })
+      }
+    },
+    onError: () => {
+      Alert.alert(
+        'Could not update selection',
+        "Couldn't reach the server. Check your connection and try again.",
+      )
+    },
+  })
+
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.root}>
       <View style={styles.appbar}>
@@ -99,11 +159,36 @@ export default function ChatTab(): React.JSX.Element {
         </View>
       </View>
 
+      <SelectedCompaniesPillRow
+        companies={selectedCompanies}
+        onRemove={(id) =>
+          updateMut.mutate(existingIds.filter((x) => x !== id))
+        }
+        onAdd={() => setPickerOpen(true)}
+      />
+
       <ChatComposer
         ref={composerRef}
         contextKind={CRM_CONTEXT_KIND}
         contextId={CRM_CONTEXT_ID}
         contextLabel={CRM_CONTEXT_LABEL}
+      />
+
+      <CompanyMultiSelectSheet
+        open={pickerOpen}
+        initialSelectedIds={existingIds}
+        onCommit={(ids) => {
+          // Issue 2 fix from plan-eng-review: skip PATCH if user opened
+          // the sheet but didn't change anything. Saves a lamport tick +
+          // eliminates spurious 409s on no-change Done taps. Set compare
+          // is order-independent (selection has no canonical order).
+          const a = new Set(existingIds)
+          const b = new Set(ids)
+          const changed = a.size !== b.size || existingIds.some((id) => !b.has(id))
+          if (changed) updateMut.mutate(ids)
+          setPickerOpen(false)
+        }}
+        onClose={() => setPickerOpen(false)}
       />
 
       <PastChatsSheet open={pastChatsOpen} onClose={() => setPastChatsOpen(false)} />

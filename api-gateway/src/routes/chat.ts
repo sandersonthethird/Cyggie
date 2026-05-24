@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { and, asc, desc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import Anthropic from '@anthropic-ai/sdk'
 import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
@@ -38,6 +38,9 @@ const ChatSessionListItemSchema = z.object({
   lastMessageAt: z.string(),
   updatedAt: z.string(),
   lamport: z.string(),
+  // Phase 2: per-session selected company context (Ask Cyggie tab only).
+  // Default [] for sessions created before Phase 2 + for non-crm contexts.
+  selectedCompanyIds: z.array(z.string()).default([]),
 })
 
 const ChatMessageSchema = z.object({
@@ -51,9 +54,22 @@ const ChatMessageSchema = z.object({
   lamport: z.string(),
 })
 
+// Phase 2: hydrated chip shape returned alongside ChatSessionDetail. The
+// gateway's GET /chat/sessions/:id handler joins org_companies on
+// session.selectedCompanyIds so the mobile pill row can render chips with
+// names/industry/stage without a separate per-id round-trip. Stale IDs
+// (company deleted between selection and fetch) are silently filtered.
+const CompanyChipSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  industry: z.string().nullable(),
+  stage: z.string().nullable(),
+})
+
 const ChatSessionDetailSchema = z.object({
   session: ChatSessionListItemSchema,
   messages: z.array(ChatMessageSchema),
+  selectedCompanies: z.array(CompanyChipSchema).default([]),
 })
 
 // Drizzle's `integer` column returns number; the wire shape is boolean for
@@ -77,6 +93,10 @@ function serializeSession(row: SessionRow): z.infer<typeof ChatSessionListItemSc
     lastMessageAt: row.lastMessageAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     lamport: row.lamport,
+    // Default-array fallback covers the brief migration window where
+    // existing rows haven't been backfilled yet (Postgres column default
+    // is '[]'::jsonb, so this should never actually fire — defensive).
+    selectedCompanyIds: row.selectedCompanyIds ?? [],
   }
 }
 
@@ -214,14 +234,25 @@ export async function registerChatRoutes(
         .where(eq(schema.chatSessionMessages.sessionId, id))
         .orderBy(asc(schema.chatSessionMessages.createdAt))
 
+      // Phase 2: hydrate selected_company_ids into chips so the mobile
+      // pill row can render without per-id round-trips. Stale IDs
+      // (company deleted between selection and fetch) are silently
+      // dropped — they just don't appear in the result.
+      const selectedCompanies = await hydrateSelectedCompanies(
+        db,
+        session.selectedCompanyIds ?? [],
+        user.sub,
+      )
+
       return {
         session: serializeSession(session),
         messages: messages.map(serializeMessage),
+        selectedCompanies,
       }
     },
   })
 
-  // PATCH /chat/sessions/:id — partial update (title / isPinned / isArchived).
+  // PATCH /chat/sessions/:id — partial update (title / isPinned / isArchived / selectedCompanyIds).
   // Lamport LWW: same pattern as PATCH /meetings/:id. Body's lamport must be
   // strictly greater than the stored one or we 409 with the current state so
   // the client can reconcile.
@@ -234,6 +265,12 @@ export async function registerChatRoutes(
         title: z.string().min(1).max(200).optional(),
         isPinned: z.boolean().optional(),
         isArchived: z.boolean().optional(),
+        // Phase 2: replaces the entire selected-companies list (not a delta).
+        // Mobile picker emits the final array on Done; gateway stores as-is.
+        // Element IDs are NOT validated against org_companies here — stale
+        // IDs are filtered downstream when buildSelectedCompaniesContext
+        // joins (Phase 2 silently-filter-stale policy).
+        selectedCompanyIds: z.array(z.string()).optional(),
         lamport: z.string().min(1).max(40),
       }),
       response: { 200: ChatSessionListItemSchema, 409: ChatSessionListItemSchema },
@@ -323,11 +360,15 @@ export async function registerChatRoutes(
         if (body.isArchived) updates.isActive = 0
         hasField = true
       }
+      if (body.selectedCompanyIds !== undefined) {
+        updates.selectedCompanyIds = body.selectedCompanyIds
+        hasField = true
+      }
       if (!hasField) {
         throw new GatewayError({
           statusCode: 400,
           code: 'CHAT_SESSION_PATCH_EMPTY',
-          message: 'PATCH must include at least one of: title, isPinned, isArchived.',
+          message: 'PATCH must include at least one of: title, isPinned, isArchived, selectedCompanyIds.',
         })
       }
 
@@ -636,7 +677,9 @@ export async function registerChatRoutes(
       // crm) — the conversation itself + session.contextLabel provide
       // enough grounding for those flavors.
       const contextBlock = await buildContextForSession(db, session)
-      const systemPrompt = buildChatSessionSystemPrompt(contextBlock)
+      // Phase 2.5: segmented system prompt — base + (optional) context
+      // segment with cache_control. See buildChatSessionSystemSegments.
+      const systemPrompt = buildChatSessionSystemSegments(contextBlock)
 
       // Compose Claude messages: history + new user message.
       const rawClaudeMessages: Anthropic.MessageParam[] = historyRows
@@ -1004,17 +1047,42 @@ async function persistMessagePair(args: {
   }
 }
 
-// T17a A3 — system prompt for chat-session messages. Tells the model
-// it is mid-conversation, plus an optional context block drawn from
-// the session's contextKind+contextId.
-function buildChatSessionSystemPrompt(contextBlock: string | null): string {
-  const base =
-    'You are Cyggie, a helpful AI assistant for venture investors. ' +
-    'You are inside an ongoing chat conversation; reference prior turns naturally. ' +
-    'Be concise, direct, and concrete. Avoid hedging. ' +
-    'If you do not know something, say so plainly.'
-  if (!contextBlock) return base
-  return `${base}\n\nGround your answers in the following context when relevant.\n\n${contextBlock}`
+// Stable base system prompt — identical across every send, so Anthropic's
+// prompt cache hits free after the first request per cache window.
+const BASE_CHAT_SYSTEM_PROMPT =
+  'You are Cyggie, a helpful AI assistant for venture investors. ' +
+  'You are inside an ongoing chat conversation; reference prior turns naturally. ' +
+  'Be concise, direct, and concrete. Avoid hedging. ' +
+  'If you do not know something, say so plainly.'
+
+// Phase 2.5 — segmented system prompt with cache_control on the context
+// segment. Anthropic's prompt-caching layer hashes prefix segments;
+// marking the last segment with `cache_control: ephemeral` caches up
+// to and including that segment (5-min TTL). Within a session where
+// the user keeps the same company selection, the entire system prompt
+// is cached after the first send → input cost ≈ 10% of base.
+//
+// Cache invalidates when the context block bytes change (e.g. user
+// adds/removes a company, or the underlying meeting summary updates).
+// One fresh send rebuilds the cache; subsequent sends hit again.
+//
+// Returned array shape matches Anthropic's Message API:
+//   - 1 segment when contextBlock is null (base prompt only)
+//   - 2 segments when contextBlock is non-null (base + cached context)
+export function buildChatSessionSystemSegments(
+  contextBlock: string | null,
+): Anthropic.MessageCreateParams['system'] {
+  if (!contextBlock) {
+    return [{ type: 'text', text: BASE_CHAT_SYSTEM_PROMPT }]
+  }
+  return [
+    { type: 'text', text: BASE_CHAT_SYSTEM_PROMPT },
+    {
+      type: 'text',
+      text: `\n\nGround your answers in the following context when relevant.\n\n${contextBlock}`,
+      cache_control: { type: 'ephemeral' },
+    },
+  ]
 }
 
 // T17a A3 — contextKind-aware context builder. Returns a markdown-ish
@@ -1040,8 +1108,243 @@ async function buildContextForSession(
         : null
     case 'crm':
     default:
+      // Phase 2 (Mobile Chat): if the user has picked companies via the
+      // pill row, inject each one's context (name + industry + stage +
+      // description + recent meetings) — same shape buildCompanyContextForChat
+      // produces for the company-detail chat surface. Empty → null
+      // (status quo); 1+ selected → aggregated context block.
+      if (session.selectedCompanyIds && session.selectedCompanyIds.length > 0) {
+        return buildSelectedCompaniesContext(
+          db,
+          session.selectedCompanyIds,
+          session.userId,
+        )
+      }
       return null
   }
+}
+
+// Phase 2.5: defensive cap on aggregated company-context size. Raised
+// 100K → 300K to accommodate per-meeting summary + transcript content
+// (notes/summary/transcript per recent meeting × 5 meetings × ~5
+// companies fits in ~300K). Still well under Claude's 200K-token
+// (~800K-char) input window. Per the no-cap UX decision: silently
+// drops trailing companies that push past this.
+const SELECTED_COMPANIES_MAX_CHARS = 300_000
+
+// Phase 2.5: per-meeting truncation caps for the new
+// composeMeetingContextBlock helper. The transcript cap is independent
+// of the summary cap so one can't crowd out the other when both are
+// present.
+const SUMMARY_PER_MEETING_CAP = 6_000
+const TRANSCRIPT_PER_MEETING_CAP = 6_000
+const NOTES_PER_MEETING_CAP = 2_000
+
+// =============================================================================
+// composeMeetingContextBlock — formats one meeting for the LLM system prompt.
+//
+//   ┌────────────────────────────────────────────────────────────┐
+//   │ Meeting: <title> — <date>                                  │  always
+//   │                                                            │
+//   │ Notes:                                                     │  if notes
+//   │ <truncated user-written notes>                             │
+//   │                                                            │
+//   │ Summary:                                                   │  if summary
+//   │ <truncated AI-generated summary>                           │
+//   │                                                            │
+//   │ Transcript:                                                │  if transcript
+//   │ <flattened + truncated transcript>                         │
+//   └────────────────────────────────────────────────────────────┘
+//
+// Summary and transcript are BOTH included when present (no either/or
+// branching): the bug fixed in Phase 2.5 was the summary missing a
+// specific the user wanted to ask about — raw transcript carries those
+// details. Each section has its own truncation cap.
+// =============================================================================
+export function composeMeetingContextBlock(args: {
+  title: string | null
+  date: Date
+  notes: string | null
+  summary: string | null
+  transcriptSegmentsRaw: unknown
+}): string {
+  const parts: string[] = [
+    `Meeting: ${args.title ?? '(untitled)'} — ${args.date.toLocaleDateString()}`,
+  ]
+
+  if (args.notes && args.notes.trim()) {
+    parts.push(`Notes:\n${truncateString(args.notes, NOTES_PER_MEETING_CAP)}`)
+  }
+  if (args.summary && args.summary.trim()) {
+    parts.push(`Summary:\n${truncateString(args.summary, SUMMARY_PER_MEETING_CAP)}`)
+  }
+  const transcript = flattenSegments(args.transcriptSegmentsRaw)
+  if (transcript.length > 0) {
+    parts.push(`Transcript:\n${truncateString(transcript, TRANSCRIPT_PER_MEETING_CAP)}`)
+  }
+
+  return parts.join('\n\n')
+}
+
+// Plain truncation helper with a visible marker — mirrors the pattern
+// of truncateTranscript in transcript-flatten.ts but with a generic
+// marker. Local to chat.ts to avoid premature extraction.
+function truncateString(s: string, max: number): string {
+  if (s.length <= max) return s
+  return `${s.slice(0, max)}\n[...truncated...]`
+}
+
+// Hydrates a list of selected_company_ids into chip-shaped DTOs by joining
+// org_companies. Stale IDs (company deleted between selection + fetch)
+// don't appear in the result — they're silently filtered. Order is
+// stable wrt the input order so the mobile pill row is deterministic.
+async function hydrateSelectedCompanies(
+  db: ReturnType<typeof getDb>,
+  companyIds: string[],
+  userId: string,
+): Promise<Array<z.infer<typeof CompanyChipSchema>>> {
+  if (companyIds.length === 0) return []
+  const rows = await db
+    .select({
+      id: schema.orgCompanies.id,
+      name: schema.orgCompanies.canonicalName,
+      industry: schema.orgCompanies.industry,
+      stage: schema.orgCompanies.stage,
+    })
+    .from(schema.orgCompanies)
+    .where(
+      and(
+        inArray(schema.orgCompanies.id, companyIds),
+        eq(schema.orgCompanies.userId, userId),
+      ),
+    )
+  // Preserve input ordering — gives the pill row deterministic layout
+  // matching the order companies were added.
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  return companyIds
+    .map((id) => byId.get(id))
+    .filter((r): r is NonNullable<typeof r> => r !== undefined)
+}
+
+// Phase 2: batched-query context builder for the global Ask Cyggie chat's
+// selected companies. Replaces an N+1 Promise.all of
+// buildCompanyContextForChat with exactly 2 SQL round-trips regardless
+// of how many companies are selected:
+//   Query 1: every selected company in one IN-list lookup.
+//   Query 2: meetings for every selected company in one IN-list JOIN.
+// Meetings are grouped client-side and trimmed to top-5-per-company.
+//
+// Per-company output is byte-identical to buildCompanyContextForChat
+// so the LLM sees the same shape whether the user came from a company
+// detail chat OR picked the company in the global chat.
+//
+// Combined output is truncated at SELECTED_COMPANIES_MAX_CHARS — trailing
+// companies past the cap are silently dropped (no-cap UX decision).
+export async function buildSelectedCompaniesContext(
+  db: ReturnType<typeof getDb>,
+  companyIds: string[],
+  userId: string,
+): Promise<string | null> {
+  if (companyIds.length === 0) return null
+
+  // Query 1: companies — same column set as buildCompanyContextForChat.
+  const companies = await db
+    .select({
+      id: schema.orgCompanies.id,
+      name: schema.orgCompanies.canonicalName,
+      description: schema.orgCompanies.description,
+      industry: schema.orgCompanies.industry,
+      stage: schema.orgCompanies.stage,
+    })
+    .from(schema.orgCompanies)
+    .where(
+      and(
+        inArray(schema.orgCompanies.id, companyIds),
+        eq(schema.orgCompanies.userId, userId),
+      ),
+    )
+  if (companies.length === 0) return null
+
+  // Query 2: meetings for all of them in one go. We deliberately do NOT
+  // use a per-company LIMIT 5 (would need a window function); fetch
+  // ordered-by-date-desc and trim per company in JS.
+  //
+  // Phase 2.5: SELECT extended with notes/summary/transcriptSegments so
+  // composeMeetingContextBlock can render the full per-meeting context
+  // (was title+date only). Always-include-both decision means we always
+  // need transcriptSegments — no two-pass optimization.
+  const validIds = companies.map((c) => c.id)
+  const allMeetings = await db
+    .select({
+      companyId: schema.meetingCompanyLinks.companyId,
+      title: schema.meetings.title,
+      date: schema.meetings.date,
+      notes: schema.meetings.notes,
+      summary: schema.meetings.summary,
+      transcriptSegments: schema.meetings.transcriptSegments,
+    })
+    .from(schema.meetingCompanyLinks)
+    .innerJoin(
+      schema.meetings,
+      eq(schema.meetingCompanyLinks.meetingId, schema.meetings.id),
+    )
+    .where(
+      and(
+        inArray(schema.meetingCompanyLinks.companyId, validIds),
+        eq(schema.meetings.userId, userId),
+      ),
+    )
+    .orderBy(desc(schema.meetings.date))
+
+  // Bucket meetings by companyId, top-5 per (preserves desc-date order
+  // since the SQL was already ORDER BY date DESC).
+  const meetingsByCompany = new Map<string, typeof allMeetings>()
+  for (const m of allMeetings) {
+    const bucket = meetingsByCompany.get(m.companyId) ?? []
+    if (bucket.length < 5) {
+      bucket.push(m)
+      meetingsByCompany.set(m.companyId, bucket)
+    }
+  }
+
+  // Compose per-company blocks in input order (matches selection order).
+  const byId = new Map(companies.map((c) => [c.id, c]))
+  const blocks: string[] = []
+  let runningSize = 0
+  for (const id of companyIds) {
+    const c = byId.get(id)
+    if (!c) continue // stale ID, silently skip
+    const parts: string[] = [`COMPANY: ${c.name}`]
+    if (c.industry) parts.push(`Industry: ${c.industry}`)
+    if (c.stage) parts.push(`Stage: ${c.stage}`)
+    if (c.description) parts.push(`Description: ${c.description}`)
+    const meetingRows = meetingsByCompany.get(c.id) ?? []
+    if (meetingRows.length > 0) {
+      // Phase 2.5: each meeting now renders as a full block with
+      // notes/summary/transcript (whichever are present), not just
+      // a title+date line.
+      const meetingBlocks = meetingRows.map((m) =>
+        composeMeetingContextBlock({
+          title: m.title,
+          date: m.date,
+          notes: m.notes,
+          summary: m.summary,
+          transcriptSegmentsRaw: m.transcriptSegments,
+        }),
+      )
+      parts.push(`Recent meetings:\n\n${meetingBlocks.join('\n\n')}`)
+    }
+    const block = parts.join('\n')
+    // Defensive total-size cap: drop trailing blocks rather than letting
+    // the system prompt grow unbounded. Includes the "\n\n---\n\n"
+    // separator (8 chars) in the per-block accounting.
+    const blockSize = block.length + (blocks.length === 0 ? 0 : 8)
+    if (runningSize + blockSize > SELECTED_COMPANIES_MAX_CHARS) break
+    runningSize += blockSize
+    blocks.push(block)
+  }
+
+  return blocks.length === 0 ? null : blocks.join('\n\n---\n\n')
 }
 
 async function buildMeetingContextForChat(
@@ -1063,63 +1366,22 @@ async function buildMeetingContextForChat(
   return buildMeetingContext(m.title, m.notes, m.transcriptSegments as unknown)
 }
 
-async function buildCompanyContextForChat(
+// Phase 2.5: per-entity company chat delegates to the multi-company
+// helper. Single-company case is just the multi-company case with one
+// ID — same SELECT, same composition, same defensive cap, zero
+// duplication. Side effect: the per-entity surface now inherits the
+// 300K defensive cap (was unbounded). With one company × 5 meetings,
+// nowhere near the cap. Mental model: "company chat = global chat
+// with that company selected" is now literally true.
+export async function buildCompanyContextForChat(
   db: ReturnType<typeof getDb>,
   companyId: string,
   userId: string,
 ): Promise<string | null> {
-  const companyRows = await db
-    .select({
-      name: schema.orgCompanies.canonicalName,
-      description: schema.orgCompanies.description,
-      industry: schema.orgCompanies.industry,
-      stage: schema.orgCompanies.stage,
-    })
-    .from(schema.orgCompanies)
-    .where(
-      and(
-        eq(schema.orgCompanies.id, companyId),
-        eq(schema.orgCompanies.userId, userId),
-      ),
-    )
-    .limit(1)
-  const c = companyRows[0]
-  if (!c) return null
-
-  // Recent meetings linked to this company (last 5, title + date).
-  const meetingRows = await db
-    .select({
-      title: schema.meetings.title,
-      date: schema.meetings.date,
-    })
-    .from(schema.meetingCompanyLinks)
-    .innerJoin(
-      schema.meetings,
-      eq(schema.meetingCompanyLinks.meetingId, schema.meetings.id),
-    )
-    .where(
-      and(
-        eq(schema.meetingCompanyLinks.companyId, companyId),
-        eq(schema.meetings.userId, userId),
-      ),
-    )
-    .orderBy(desc(schema.meetings.date))
-    .limit(5)
-
-  const parts: string[] = [`COMPANY: ${c.name}`]
-  if (c.industry) parts.push(`Industry: ${c.industry}`)
-  if (c.stage) parts.push(`Stage: ${c.stage}`)
-  if (c.description) parts.push(`Description: ${c.description}`)
-  if (meetingRows.length > 0) {
-    const meetingLines = meetingRows
-      .map((m) => `  - ${m.title} (${new Date(m.date).toLocaleDateString()})`)
-      .join('\n')
-    parts.push(`Recent meetings:\n${meetingLines}`)
-  }
-  return parts.join('\n')
+  return buildSelectedCompaniesContext(db, [companyId], userId)
 }
 
-async function buildContactContextForChat(
+export async function buildContactContextForChat(
   db: ReturnType<typeof getDb>,
   contactId: string,
   userId: string,
@@ -1155,10 +1417,17 @@ async function buildContactContextForChat(
 
   // Recent meetings the contact participated in (last 5, via
   // meeting_speaker_contact_links).
+  //
+  // Phase 2.5: SELECT extended with notes/summary/transcriptSegments so
+  // the per-meeting render below can use composeMeetingContextBlock
+  // (same shape as the company surfaces).
   const meetingRows = await db
     .select({
       title: schema.meetings.title,
       date: schema.meetings.date,
+      notes: schema.meetings.notes,
+      summary: schema.meetings.summary,
+      transcriptSegments: schema.meetings.transcriptSegments,
     })
     .from(schema.meetingSpeakerContactLinks)
     .innerJoin(
@@ -1179,10 +1448,20 @@ async function buildContactContextForChat(
   if (companyName) parts.push(`Company: ${companyName}`)
   if (c.email) parts.push(`Email: ${c.email}`)
   if (meetingRows.length > 0) {
-    const meetingLines = meetingRows
-      .map((m) => `  - ${m.title} (${new Date(m.date).toLocaleDateString()})`)
-      .join('\n')
-    parts.push(`Recent meetings:\n${meetingLines}`)
+    // Phase 2.5: full per-meeting blocks via the shared helper (was
+    // title+date-only line). Single contact, no aggregation cap needed;
+    // per-meeting caps inside composeMeetingContextBlock keep output
+    // bounded (5 × ~10K = ~50K worst case).
+    const meetingBlocks = meetingRows.map((m) =>
+      composeMeetingContextBlock({
+        title: m.title,
+        date: m.date,
+        notes: m.notes,
+        summary: m.summary,
+        transcriptSegmentsRaw: m.transcriptSegments,
+      }),
+    )
+    parts.push(`Recent meetings:\n\n${meetingBlocks.join('\n\n')}`)
   }
   return parts.join('\n')
 }

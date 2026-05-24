@@ -44,6 +44,22 @@ export interface ChatSessionListItem {
   lastMessageAt: string
   updatedAt: string
   lamport: string
+  // Phase 2: per-session company picks for the global Ask Cyggie chat.
+  // Gateway expands these into LLM context via buildSelectedCompaniesContext.
+  // [] for sessions where the user hasn't picked anything, and for all
+  // non-crm contextKinds (which ignore this field).
+  selectedCompanyIds: string[]
+}
+
+// Phase 2: hydrated chip DTO returned in ChatSessionDetail. Gateway joins
+// org_companies on selectedCompanyIds; the pill row renders these.
+// Stale IDs (companies deleted between selection + fetch) are silently
+// filtered server-side so this list may be shorter than selectedCompanyIds.
+export interface CompanyChip {
+  id: string
+  name: string
+  industry: string | null
+  stage: string | null
 }
 
 export interface ChatMessage {
@@ -60,6 +76,7 @@ export interface ChatMessage {
 export interface ChatSessionDetail {
   session: ChatSessionListItem
   messages: ChatMessage[]
+  selectedCompanies: CompanyChip[]
 }
 
 // ─── T17b — session-backed chat ────────────────────────────────────────────
@@ -121,6 +138,8 @@ export interface UpdateChatSessionInput {
   title?: string
   isPinned?: boolean
   isArchived?: boolean
+  // Phase 2: replaces the full selected-companies list (not a delta).
+  selectedCompanyIds?: string[]
 }
 
 export interface UpdateChatSessionResult {

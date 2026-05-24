@@ -8,13 +8,44 @@ Project memory: `~/.claude/projects/-Users-sandersoncass-Apps-Cyggie/memory/proj
 
 ### Mobile Chat — three-phase rollout
 
-Plan: `~/.claude/plans/chat-on-mobile-needs-humble-crown.md` (Phase 1 detailed; Phase 2/3 locked-in decisions in the "Deferred work" section of the same file).
+Plans: `~/.claude/plans/chat-on-mobile-needs-humble-crown.md` (Phase 1) + `~/.claude/plans/mobile-chat-phase-2-global-companies-picker.md` (Phase 2).
 
 | # | Phase | Status | Notes |
 |---|---|---|---|
-| MC.1 | Mobile "New Chat" affordance (pencil icon on Ask Cyggie tab + kebab row on per-entity screens) + clear-on-session-swap + abort-in-flight | 🛠️ in flight | useStartNewChat hook + useClearOnSessionSwap hook + ChatComposer imperative `abortInflight` handle; 11 new tests across both hooks |
-| MC.2 | Global Ask Cyggie: selectable company context | ⏳ planned | Pill row above composer; per-session persistence (new `selected_company_ids` jsonb column on `chat_sessions`); POST/PATCH `/chat/sessions` extended; gateway reuses `buildCompanyContextForChat` per selected company |
+| MC.1 | Mobile "New Chat" affordance (pencil icon on Ask Cyggie tab + kebab row on per-entity screens) + clear-on-session-swap + abort-in-flight | ✅ shipped | commits 866bf1d + 2c4e695. useStartNewChat hook + useClearOnSessionSwap hook + ChatComposer imperative `abortInflight` handle; 11 new tests across both hooks |
+| MC.2 | Global Ask Cyggie: selectable company context | 🛠️ in flight | New `selected_company_ids jsonb` column on `chat_sessions` (both Postgres + SQLite mig 102); pill row + multi-select sheet; batched `buildSelectedCompaniesContext` helper (1 N+1 fix; exactly 2 queries regardless of selection size); 8 new gateway tests. RN component tests deferred per repo policy (see MC.runner below) |
 | MC.3 | Company chat: gateway-side parsed_text for flagged files | ⏳ planned | Async parse-on-flag on desktop; sync via outbox (`company_flagged_files` not currently wrapped in `withSync` — Phase 3 fixes that); gateway extends `buildCompanyContextForChat` to pull parsed text from `company_flagged_files` |
+
+### Mobile UI integration test runner (P2 infra)
+
+**What:** Stand up @testing-library/react-native (or detox) as a separate
+vitest project so React-Native component trees can be rendered and
+asserted on. Today [vitest.config.ts:50-54](vitest.config.ts#L50-L54)
+explicitly defers RN-UI tests to "a separate mobile-side runner that
+knows how to mock the RN bridge."
+
+**Why:** Phase 1 and Phase 2 plan-eng-reviews both flagged the gap; both
+deferred. ChatComposer wiring, the global tab's pill row + picker
+composition ([SelectedCompaniesPillRow](mobile/components/SelectedCompaniesPillRow.tsx),
+[CompanyMultiSelectSheet](mobile/components/CompanyMultiSelectSheet.tsx)),
+meeting screens, notes folder picker — none have integration coverage.
+Phase 2 attempted a passthrough-mock approach in jsdom (mapping RN
+View/Pressable/Text to HTML primitives) but it produced unstable test
+queries; abandoned in favor of policy compliance.
+
+**Pros:** Enables tests like "tap chip's × → updateChatSession PATCH
+fires with the right body" that today are manual-smoke only.
+
+**Cons:** Non-trivial setup (RN bridge mocking, native module shims,
+CI config). Adds a second test runner alongside the existing root vitest.
+
+**Context:** All current mobile tests live under `mobile/lib/__tests__/`
+or `mobile/components/__tests__/` and run under jsdom for the latter
+(per-file `// @vitest-environment jsdom`). RN UI tests can't reliably
+use jsdom — they need a real React-Native renderer. Look at
+@testing-library/react-native v12 + a metro-style transform.
+
+**Depends on:** Nothing — can start immediately.
 
 ### Phase 0 status (cloud foundation)
 

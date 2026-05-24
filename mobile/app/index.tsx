@@ -18,6 +18,7 @@ export default function IndexScreen() {
   const lastAction = useAuthStore((s) => s.lastAction)
 
   useEffect(() => {
+    console.log('[auth] index: dispatcher status=' + status + ' lastAction=' + lastAction)
     if (status === 'idle' || status === 'loading') return
 
     if (status === 'signed_out') {
