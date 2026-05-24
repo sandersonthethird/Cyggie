@@ -137,10 +137,15 @@ export async function apiFetch<TResponse = unknown, TBody = unknown>(
     const fresh = await ensureFreshAccessToken()
     if (!fresh) {
       console.log('[auth] api: refresh failed on ' + path + ' — store should now be signed_out')
+      // Set reauthRequired so per-screen reauth handlers (meeting detail,
+      // calendar, notes, etc.) all route to sign-in. Without this flag the
+      // user is stranded on whatever screen they're on with a generic 401
+      // even though the store is already signed out.
       throw new ApiError({
         status: 401,
         code: body.error?.code ?? 'UNAUTHENTICATED',
         message: body.error?.message ?? 'Not signed in',
+        reauthRequired: true,
       })
     }
     console.log('[auth] api: refresh succeeded, retrying ' + path)
