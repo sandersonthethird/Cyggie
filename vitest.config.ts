@@ -52,7 +52,13 @@ export default defineConfig({
       // mobile-side runner that knows how to mock the RN bridge — these
       // tests only exercise plain TS modules with mocked file-system and
       // MMKV, so the root node runner is fine for them.
-      'mobile/lib/**/__tests__/**/*.test.ts'
+      'mobile/lib/**/__tests__/**/*.test.ts',
+      // Mobile component-adjacent hook tests. These use renderHook from
+      // @testing-library/react under jsdom (opt-in per-file via
+      // `// @vitest-environment jsdom`) — pure hook contracts only, no
+      // React Native UI rendering. Tests that need actual RN UI still
+      // belong in a future mobile-side runner.
+      'mobile/components/**/__tests__/**/*.test.{ts,tsx}'
     ],
     // Default placeholder values for M3-newly-required env vars. Individual
     // tests can override (e.g. recordings-quota.test.ts sets a lower quota).

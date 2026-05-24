@@ -6,6 +6,16 @@ Tracker for the Cyggie Mobile V1 + cloud rearchitecture initiative.
 Plan: `/Users/sandersoncass/.claude/plans/claude-code-prompt-jolly-eagle.md`.
 Project memory: `~/.claude/projects/-Users-sandersoncass-Apps-Cyggie/memory/project_mobile_v1.md`.
 
+### Mobile Chat — three-phase rollout
+
+Plan: `~/.claude/plans/chat-on-mobile-needs-humble-crown.md` (Phase 1 detailed; Phase 2/3 locked-in decisions in the "Deferred work" section of the same file).
+
+| # | Phase | Status | Notes |
+|---|---|---|---|
+| MC.1 | Mobile "New Chat" affordance (pencil icon on Ask Cyggie tab + kebab row on per-entity screens) + clear-on-session-swap + abort-in-flight | 🛠️ in flight | useStartNewChat hook + useClearOnSessionSwap hook + ChatComposer imperative `abortInflight` handle; 11 new tests across both hooks |
+| MC.2 | Global Ask Cyggie: selectable company context | ⏳ planned | Pill row above composer; per-session persistence (new `selected_company_ids` jsonb column on `chat_sessions`); POST/PATCH `/chat/sessions` extended; gateway reuses `buildCompanyContextForChat` per selected company |
+| MC.3 | Company chat: gateway-side parsed_text for flagged files | ⏳ planned | Async parse-on-flag on desktop; sync via outbox (`company_flagged_files` not currently wrapped in `withSync` — Phase 3 fixes that); gateway extends `buildCompanyContextForChat` to pull parsed text from `company_flagged_files` |
+
 ### Phase 0 status (cloud foundation)
 
 | # | Phase | Status | Notes |

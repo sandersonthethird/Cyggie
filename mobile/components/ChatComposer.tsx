@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -24,6 +33,7 @@ import {
   sendSessionMessageStream,
 } from '../lib/api/chat'
 import { colors, radii, spacing, type } from '../theme'
+import { useClearOnSessionSwap } from './useClearOnSessionSwap'
 
 // =============================================================================
 // ChatComposer — shared composer used by both the global Chat tab
@@ -58,6 +68,17 @@ export interface ChatComposerProps {
   placeholder?: string
 }
 
+/**
+ * Imperative handle exposed to wrapper screens via `ref`. Used by the
+ * "New Chat" affordance (useStartNewChat hook) to abort an in-flight
+ * stream BEFORE archiving the current session — prevents a streaming
+ * reply from silently landing on the now-archived session, and avoids
+ * paying for an LLM call whose result will never be displayed.
+ */
+export interface ChatComposerHandle {
+  abortInflight: () => void
+}
+
 interface PendingMessage {
   clientId: string
   role: 'user' | 'assistant'
@@ -65,13 +86,11 @@ interface PendingMessage {
   pending?: boolean
 }
 
-export function ChatComposer({
-  contextKind,
-  contextId,
-  contextLabel,
-  emptyState,
-  placeholder,
-}: ChatComposerProps): React.JSX.Element {
+export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(
+  function ChatComposer(
+    { contextKind, contextId, contextLabel, emptyState, placeholder },
+    ref,
+  ): React.JSX.Element {
   const qc = useQueryClient()
   const scrollRef = useRef<ScrollView | null>(null)
   const [input, setInput] = useState('')
@@ -103,9 +122,61 @@ export function ChatComposer({
   // a stale closure reference). Refs avoid re-rendering on every token.
   const assistantClientIdRef = useRef<string | null>(null)
 
+  // New Chat abort plumbing: the wrapper screen calls abortInflight() via
+  // ChatComposerHandle before archiving the current session, so any
+  // in-flight LLM stream terminates cleanly (no token spend, no silent
+  // "answer landed in the archived session" trap).
+  const inflightAbortRef = useRef<AbortController | null>(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      abortInflight: () => inflightAbortRef.current?.abort(),
+    }),
+    [],
+  )
+
+  // Clear optimistic state when the New Chat affordance swaps in a new
+  // session. See useClearOnSessionSwap.ts for swap semantics.
+  useClearOnSessionSwap(sessionId, () => {
+    setPending([])
+    setInput('')
+    assistantClientIdRef.current = null
+  })
+
+  // ─── No-retry failure policy (interim of full idempotency-key design) ─────
+  //
+  // Every chat send may or may not have reached Anthropic by the time it
+  // fails on the wire. Surfacing a retry button is dangerous: tapping it
+  // re-runs the LLM call and double-charges the firm for the same logical
+  // question. We don't yet have request-id-based dedup on the gateway, so
+  // the mobile rule is:
+  //
+  //   1. On any failure outcome, refetch the session detail.
+  //   2. If server now holds both our user message AND an assistant reply,
+  //      silently restore from server (stream dropped after persistence —
+  //      the most common double-charge trap).
+  //   3. If server holds the user message but no assistant reply, surface
+  //      a non-retryable "may have been billed" error.
+  //   4. If server holds neither, surface a generic non-retryable error.
+  //
+  // No path offers automatic retry; the user explicitly starts a new
+  // question if they want to try again. Removes the entire class of
+  // "tap-to-retry → duplicate Anthropic charge" bugs.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  type MutationOutcome =
+    | { ok: true; result: SendSessionMessageResult }
+    | { ok: false; error: ChatStreamError; preSendMessageCount: number }
+
   const sendMut = useMutation({
-    mutationFn: async (content: string) => {
+    mutationFn: async (content: string): Promise<MutationOutcome> => {
       if (!sessionId) throw new Error('Session not ready')
+      // Server's truth at send-time. Prefer detail (it's the freshest count
+      // because every successful append round-trips through it) and fall
+      // back to the list-shape session for the very first send.
+      const preSendMessageCount =
+        detailQuery.data?.messages.length ?? sessionQuery.data?.messageCount ?? 0
       const assistantClientId = `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
       assistantClientIdRef.current = assistantClientId
       const userPending: PendingMessage = {
@@ -122,93 +193,202 @@ export function ChatComposer({
       setPending((prev) => [...prev, userPending, assistantPending])
       setInput('')
 
-      return new Promise<
-        { ok: true; result: SendSessionMessageResult } | { ok: false; error: ChatStreamError }
-      >(
-        (resolve) => {
-          sendSessionMessageStream(
-            sessionId,
-            { content },
-            {
-              onToken: (delta) => {
-                // Append delta to the in-flight assistant pending row.
-                // pending=true is FLIPPED to false on first token so the
-                // "Thinking…" placeholder gives way to the streaming text.
-                setPending((prev) =>
-                  prev.map((m) =>
-                    m.clientId === assistantClientId
-                      ? { ...m, pending: false, content: m.content + delta }
-                      : m,
-                  ),
-                )
-              },
-              onDone: (final) => {
-                resolve({ ok: true, result: final })
-              },
-              onError: (error) => {
-                resolve({ ok: false, error })
-              },
+      const ac = new AbortController()
+      inflightAbortRef.current = ac
+
+      return new Promise<MutationOutcome>((resolve) => {
+        sendSessionMessageStream(
+          sessionId,
+          { content },
+          {
+            onToken: (delta) => {
+              // Append delta to the in-flight assistant pending row.
+              // pending=true is FLIPPED to false on first token so the
+              // "Thinking…" placeholder gives way to the streaming text.
+              setPending((prev) =>
+                prev.map((m) =>
+                  m.clientId === assistantClientId
+                    ? { ...m, pending: false, content: m.content + delta }
+                    : m,
+                ),
+              )
             },
-          ).catch(() => {
+            onDone: (final) => {
+              resolve({ ok: true, result: final })
+            },
+            onError: (error) => {
+              resolve({ ok: false, error, preSendMessageCount })
+            },
+          },
+          ac.signal,
+        )
+          .catch(() => {
             // sendSessionMessageStream never rejects (errors go through
             // onError) but guard anyway so a future bug doesn't hang.
             resolve({
               ok: false,
               error: { code: 'network', message: 'Stream rejected unexpectedly' },
+              preSendMessageCount,
             })
           })
-        },
-      )
+          .finally(() => {
+            // Drop the ref only if we still own it — another mutate() may
+            // have replaced it concurrently (shouldn't happen with our
+            // isPending disable but be defensive).
+            if (inflightAbortRef.current === ac) inflightAbortRef.current = null
+          })
+      })
     },
-    onSuccess: (outcome) => {
+    onSuccess: async (outcome) => {
       assistantClientIdRef.current = null
       if (outcome.ok) {
         setPending([])
         if (sessionId) {
           qc.invalidateQueries({ queryKey: ['chat', 'session-detail', sessionId] })
         }
-      } else {
-        // Error path: replace pending assistant with an error stub, leave
-        // user message visible so the user can retry by resending.
-        const errMsg = errorMessageFor(outcome.error)
-        setPending((prev) =>
-          prev.map((m) =>
-            m.role === 'assistant' && m.pending !== undefined
-              ? { ...m, pending: false, content: errMsg }
-              : m,
-          ),
-        )
+        return
       }
+
+      // Failure path — interrogate server truth, then either silently
+      // recover or hard-fail without offering retry.
+      // Surface the raw error to Metro so Sandy can see WHY (the
+      // user-facing copy is intentionally generic — see failureCopy).
+      // eslint-disable-next-line no-console
+      console.warn('[chat] send failed:', outcome.error)
+      if (!sessionId) {
+        replacePendingWithError(failureCopy('unknown'))
+        return
+      }
+
+      let fresh: Awaited<ReturnType<typeof fetchChatSession>>
+      try {
+        fresh = await qc.fetchQuery({
+          queryKey: ['chat', 'session-detail', sessionId],
+          queryFn: ({ signal }) => fetchChatSession(sessionId, { signal }),
+        })
+      } catch {
+        // Refetch failed — can't tell what happened server-side. Treat as
+        // worst case (may have been billed) so the user doesn't reflexively
+        // resend.
+        replacePendingWithError(failureCopy('unknown'))
+        return
+      }
+
+      const newCount = fresh.messages.length
+      const delta = newCount - outcome.preSendMessageCount
+
+      if (delta >= 2) {
+        // Both turns persisted server-side. The wire failure was
+        // post-persistence (stream cut after Anthropic finished); the
+        // server result is authoritative — drop pending, server data
+        // already populated the cache via fetchQuery.
+        setPending([])
+        return
+      }
+      if (delta >= 1) {
+        // User message persisted but no assistant follow-up. Anthropic
+        // may have been billed for a generation that didn't complete
+        // (or completed but failed to persist). Don't offer retry.
+        setPending([])
+        appendErrorBubble(failureCopy('partially-billed'))
+        return
+      }
+      // Nothing persisted server-side — the request likely never reached
+      // the LLM. Per the no-retry policy we still don't auto-retry; user
+      // can start a new question.
+      replacePendingWithError(failureCopy(failureReasonFromError(outcome.error)))
     },
     onError: () => {
       // mutationFn itself shouldn't throw (we resolve always), but if it
-      // does, mark the assistant pending row as failed.
+      // does, surface a non-retryable error.
       assistantClientIdRef.current = null
-      setPending((prev) =>
-        prev.map((m) =>
-          m.role === 'assistant' && m.pending
-            ? { ...m, pending: false, content: '_(failed to send — tap to retry)_' }
-            : m,
-        ),
-      )
+      replacePendingWithError(failureCopy('unknown'))
     },
   })
 
-  // Per-error user-facing copy. Keeps the UX strings out of the mutation
-  // body so they can be localized later.
-  function errorMessageFor(err: ChatStreamError): string {
+  // ─── Failure-UX helpers ───────────────────────────────────────────────────
+
+  function replacePendingWithError(message: string): void {
+    setPending((prev) => {
+      const next = prev.map((m) =>
+        m.role === 'assistant' && m.pending !== undefined
+          ? { ...m, pending: false, content: message }
+          : m,
+      )
+      const hasAssistantStub = next.some(
+        (m) => m.role === 'assistant' && m.pending !== undefined,
+      )
+      if (hasAssistantStub) return next
+      // No assistant pending row left (edge case) — append a fresh stub.
+      return [
+        ...next,
+        {
+          clientId: `e-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role: 'assistant',
+          content: message,
+          pending: false,
+        },
+      ]
+    })
+  }
+
+  function appendErrorBubble(message: string): void {
+    setPending([
+      {
+        clientId: `e-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        role: 'assistant',
+        content: message,
+        pending: false,
+      },
+    ])
+  }
+
+  type FailureReason =
+    | 'too-large'
+    | 'unauthorized'
+    | 'conflict'
+    | 'network'
+    | 'parse'
+    | 'gateway'
+    | 'partially-billed'
+    | 'unknown'
+
+  function failureReasonFromError(err: ChatStreamError): FailureReason {
     switch (err.code) {
       case 'http':
-        if (err.status === 413) return '_(That message is too large. Try a shorter one.)_'
-        if (err.status === 409) return '_(Conflict — another device is also chatting here. Refresh and retry.)_'
-        if (err.status === 401) return '_(Sign in required.)_'
-        return `_(Send failed (HTTP ${err.status}). Tap to retry.)_`
-      case 'gateway_error':
-        return `_(${err.message || 'Upstream error'} — tap to retry.)_`
+        if (err.status === 413) return 'too-large'
+        if (err.status === 401) return 'unauthorized'
+        if (err.status === 409) return 'conflict'
+        return 'unknown'
       case 'network':
-        return '_(Network error — tap to retry.)_'
+        return 'network'
       case 'parse':
-        return '_(Response parsing failed — tap to retry.)_'
+        return 'parse'
+      case 'gateway_error':
+        return 'gateway'
+    }
+  }
+
+  function failureCopy(reason: FailureReason): string {
+    // Every string omits "tap to retry" — no path in this component
+    // re-runs the LLM call. User must start a new question.
+    switch (reason) {
+      case 'too-large':
+        return '_(That message is too large. Start a new question with a shorter version.)_'
+      case 'unauthorized':
+        return '_(Sign-in expired. Please sign in again.)_'
+      case 'conflict':
+        return '_(Another device is chatting in this session. Refresh to see the latest, then start a new question.)_'
+      case 'partially-billed':
+        return '_(The AI started responding but the reply didn\'t come through. To avoid double-charging, this attempt won\'t auto-retry — start a new question if you\'d like to try again.)_'
+      case 'network':
+        return '_(Connection dropped before we got a reply. Start a new question to try again.)_'
+      case 'parse':
+        return '_(Reply was malformed. Start a new question to try again.)_'
+      case 'gateway':
+        return '_(Upstream error. Start a new question to try again.)_'
+      case 'unknown':
+        return '_(Send failed. Start a new question to try again.)_'
     }
   }
 
@@ -298,7 +478,7 @@ export function ChatComposer({
       </View>
     </KeyboardAvoidingView>
   )
-}
+})
 
 // ─── helpers + subcomponents ────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -21,7 +21,8 @@ import {
   createOrGetChatSession,
   updateChatSession,
 } from '../../../lib/api/chat'
-import { ChatComposer } from '../../../components/ChatComposer'
+import { ChatComposer, type ChatComposerHandle } from '../../../components/ChatComposer'
+import { useStartNewChat } from '../../../components/useStartNewChat'
 import { colors, radii, spacing, type } from '../../../theme'
 
 // T17b Slice 1 — per-entity chat surface. Mounted from meeting / contact /
@@ -70,10 +71,15 @@ export default function ChatScreen() {
   const session = sessionQuery.data
   const headerTitle = session?.title ?? session?.contextLabel ?? contextLabel ?? 'Chat'
 
-  // T17b Slice 3 — session actions sheet (Rename / Pin / Archive).
+  // T17b Slice 3 — session actions sheet (Rename / Pin / Archive / Start new chat).
   const [actionsOpen, setActionsOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
+
+  // Forwarded to ChatComposer + into SessionActionsSheet so "Start new
+  // chat" can abort any in-flight LLM stream before archiving the
+  // session — see useStartNewChat's abortInflight callback.
+  const composerRef = useRef<ChatComposerHandle | null>(null)
 
   if (!contextKind || !contextId) {
     return (
@@ -138,6 +144,7 @@ export default function ChatScreen() {
         <SessionActionsSheet
           open={actionsOpen}
           session={session}
+          composerRef={composerRef}
           onClose={() => setActionsOpen(false)}
           onRename={() => {
             setActionsOpen(false)
@@ -158,6 +165,7 @@ export default function ChatScreen() {
       )}
 
       <ChatComposer
+        ref={composerRef}
         contextKind={contextKind as ChatContextKind}
         contextId={contextId}
         contextLabel={contextLabel}
@@ -212,15 +220,26 @@ const styles = StyleSheet.create({
 function SessionActionsSheet({
   open,
   session,
+  composerRef,
   onClose,
   onRename,
 }: {
   open: boolean
   session: ChatSessionListItem
+  composerRef: RefObject<ChatComposerHandle | null>
   onClose: () => void
   onRename: () => void
 }): React.JSX.Element {
   const qc = useQueryClient()
+
+  const startNew = useStartNewChat({
+    sessionId: session.id,
+    contextKind: session.contextKind as ChatContextKind,
+    contextId: session.contextId,
+    messageCount: session.messageCount,
+    abortInflight: () => composerRef.current?.abortInflight(),
+    onStarted: onClose,
+  })
 
   const togglePinMut = useMutation({
     mutationFn: () => updateChatSession(session.id, { isPinned: !session.isPinned }),
@@ -282,7 +301,7 @@ function SessionActionsSheet({
     )
   }
 
-  const busy = togglePinMut.isPending || archiveMut.isPending
+  const busy = togglePinMut.isPending || archiveMut.isPending || startNew.isPending
 
   return (
     <Modal visible={open} animationType="fade" transparent onRequestClose={onClose}>
@@ -306,6 +325,13 @@ function SessionActionsSheet({
             label="Rename"
             disabled={busy}
             onPress={onRename}
+          />
+          <ActionRow
+            icon="add-circle-outline"
+            label="Start new chat"
+            disabled={busy || session.messageCount === 0}
+            onPress={() => startNew.mutate()}
+            pending={startNew.isPending}
           />
           <ActionRow
             icon={session.isPinned ? 'pin' : 'pin-outline'}

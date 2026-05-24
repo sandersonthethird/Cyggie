@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Modal,
@@ -16,9 +16,11 @@ import { useQuery } from '@tanstack/react-query'
 import {
   type ChatContextKind,
   type ChatSessionListItem,
+  createOrGetChatSession,
   fetchChatSessions,
 } from '../../lib/api/chat'
-import { ChatComposer } from '../../components/ChatComposer'
+import { ChatComposer, type ChatComposerHandle } from '../../components/ChatComposer'
+import { useStartNewChat } from '../../components/useStartNewChat'
 import { colors, radii, spacing, type } from '../../theme'
 
 // T17b Slice 2 — Chat tab is the global ('crm') chat surface. The composer
@@ -32,6 +34,33 @@ const CRM_CONTEXT_LABEL = 'Ask Cyggie'
 
 export default function ChatTab(): React.JSX.Element {
   const [pastChatsOpen, setPastChatsOpen] = useState(false)
+  const composerRef = useRef<ChatComposerHandle | null>(null)
+
+  // Shares cache with ChatComposer via identical query key — TanStack
+  // dedupes the request. Used here for messageCount + sessionId so the
+  // New Chat pencil knows when to no-op / disable.
+  const sessionQuery = useQuery({
+    queryKey: ['chat', 'session-by-context', CRM_CONTEXT_KIND, CRM_CONTEXT_ID],
+    queryFn: () =>
+      createOrGetChatSession({
+        contextKind: CRM_CONTEXT_KIND,
+        contextId: CRM_CONTEXT_ID,
+        contextLabel: CRM_CONTEXT_LABEL,
+      }),
+    staleTime: 60_000,
+  })
+
+  const messageCount = sessionQuery.data?.messageCount ?? 0
+  const startNew = useStartNewChat({
+    sessionId: sessionQuery.data?.id,
+    contextKind: CRM_CONTEXT_KIND,
+    contextId: CRM_CONTEXT_ID,
+    messageCount,
+    abortInflight: () => composerRef.current?.abortInflight(),
+  })
+
+  const newChatDisabled =
+    sessionQuery.isLoading || startNew.isPending || messageCount === 0
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.root}>
@@ -43,6 +72,21 @@ export default function ChatTab(): React.JSX.Element {
               Global chat about your portfolio + pipeline
             </Text>
           </View>
+          <Pressable
+            onPress={() => startNew.mutate()}
+            hitSlop={8}
+            disabled={newChatDisabled}
+            style={({ pressed }) => [
+              styles.pastBtn,
+              newChatDisabled && styles.iconDisabled,
+              pressed && !newChatDisabled && styles.pressed,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Start new chat"
+            accessibilityState={{ disabled: newChatDisabled }}
+          >
+            <Ionicons name="create-outline" size={22} color={colors.text} />
+          </Pressable>
           <Pressable
             onPress={() => setPastChatsOpen(true)}
             hitSlop={8}
@@ -56,6 +100,7 @@ export default function ChatTab(): React.JSX.Element {
       </View>
 
       <ChatComposer
+        ref={composerRef}
         contextKind={CRM_CONTEXT_KIND}
         contextId={CRM_CONTEXT_ID}
         contextLabel={CRM_CONTEXT_LABEL}
@@ -253,6 +298,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  iconDisabled: { opacity: 0.35 },
 
   errorText: { color: colors.text3, fontSize: type.body, textAlign: 'center' },
 })
