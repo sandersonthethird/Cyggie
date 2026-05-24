@@ -15,7 +15,7 @@ import { refreshTokens } from '../auth/oauth'
 
 // Read directly from process.env so Metro inlines at JS-bundle time —
 // see the matching note in oauth.ts for rationale.
-const GATEWAY_URL = process.env['EXPO_PUBLIC_GATEWAY_URL'] ?? 'https://cyggie-gateway.fly.dev'
+export const GATEWAY_URL = process.env['EXPO_PUBLIC_GATEWAY_URL'] ?? 'https://cyggie-gateway.fly.dev'
 
 export class ApiError extends Error {
   readonly status: number

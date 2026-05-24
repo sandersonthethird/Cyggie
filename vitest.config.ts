@@ -7,6 +7,10 @@ const root = resolve(fileURLToPath(import.meta.url), '..')
 
 export default defineConfig({
   plugins: [react()],
+  // RN's `__DEV__` global isn't defined under node. Stub to false so
+  // mobile modules that gate diagnostic code on it (e.g. oauth.ts)
+  // load cleanly under the test runner.
+  define: { __DEV__: 'false' },
   resolve: {
     alias: {
       '@shared': resolve(root, 'src/shared'),
@@ -14,7 +18,21 @@ export default defineConfig({
       '@renderer': resolve(root, 'src/renderer'),
       '@cyggie/db': resolve(root, 'packages/db/src'),
       '@cyggie/services': resolve(root, 'packages/services/src'),
-      '@cyggie/shared': resolve(root, 'packages/shared/src')
+      '@cyggie/shared': resolve(root, 'packages/shared/src'),
+      // Test-only stub for `react-native`. Mobile pure-logic tests touch
+      // modules whose transitive imports pull RN's Flow-typed index.js,
+      // which rollup can't parse. The stub gives the parse path something
+      // ESM-friendly while letting individual tests vi.mock specific RN
+      // surfaces they actually exercise.
+      'react-native': resolve(root, 'mobile/lib/__tests__/_stubs/react-native.ts'),
+      // Expo native modules — same story. The chat client transitively
+      // imports auth/oauth.ts (uses expo-web-browser) + auth/storage.ts
+      // (expo-secure-store) + auth/device.ts (expo-crypto). Stub each so
+      // the import chain resolves; individual tests vi.mock the surfaces
+      // they need.
+      'expo-web-browser': resolve(root, 'mobile/lib/__tests__/_stubs/expo-empty.ts'),
+      'expo-secure-store': resolve(root, 'mobile/lib/__tests__/_stubs/expo-empty.ts'),
+      'expo-crypto': resolve(root, 'mobile/lib/__tests__/_stubs/expo-empty.ts'),
     }
   },
   test: {

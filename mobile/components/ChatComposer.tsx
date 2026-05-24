@@ -17,9 +17,11 @@ import Markdown from 'react-native-markdown-display'
 import {
   type ChatContextKind,
   type ChatMessage,
+  type ChatStreamError,
+  type SendSessionMessageResult,
   createOrGetChatSession,
   fetchChatSession,
-  sendSessionMessage,
+  sendSessionMessageStream,
 } from '../lib/api/chat'
 import { colors, radii, spacing, type } from '../theme'
 
@@ -96,41 +98,92 @@ export function ChatComposer({
     staleTime: 15_000,
   })
 
+  // T18 streaming: assistant placeholder's clientId is captured per-send
+  // so token deltas append to the right pending row (vs setPending replacing
+  // a stale closure reference). Refs avoid re-rendering on every token.
+  const assistantClientIdRef = useRef<string | null>(null)
+
   const sendMut = useMutation({
     mutationFn: async (content: string) => {
       if (!sessionId) throw new Error('Session not ready')
-      return sendSessionMessage(sessionId, { content })
-    },
-    onMutate: (content) => {
+      const assistantClientId = `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      assistantClientIdRef.current = assistantClientId
       const userPending: PendingMessage = {
         clientId: `u-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         role: 'user',
         content,
       }
       const assistantPending: PendingMessage = {
-        clientId: `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        clientId: assistantClientId,
         role: 'assistant',
         content: '',
         pending: true,
       }
       setPending((prev) => [...prev, userPending, assistantPending])
       setInput('')
+
+      return new Promise<
+        { ok: true; result: SendSessionMessageResult } | { ok: false; error: ChatStreamError }
+      >(
+        (resolve) => {
+          sendSessionMessageStream(
+            sessionId,
+            { content },
+            {
+              onToken: (delta) => {
+                // Append delta to the in-flight assistant pending row.
+                // pending=true is FLIPPED to false on first token so the
+                // "Thinking…" placeholder gives way to the streaming text.
+                setPending((prev) =>
+                  prev.map((m) =>
+                    m.clientId === assistantClientId
+                      ? { ...m, pending: false, content: m.content + delta }
+                      : m,
+                  ),
+                )
+              },
+              onDone: (final) => {
+                resolve({ ok: true, result: final })
+              },
+              onError: (error) => {
+                resolve({ ok: false, error })
+              },
+            },
+          ).catch(() => {
+            // sendSessionMessageStream never rejects (errors go through
+            // onError) but guard anyway so a future bug doesn't hang.
+            resolve({
+              ok: false,
+              error: { code: 'network', message: 'Stream rejected unexpectedly' },
+            })
+          })
+        },
+      )
     },
-    onSuccess: (result) => {
-      if (result.ok) {
+    onSuccess: (outcome) => {
+      assistantClientIdRef.current = null
+      if (outcome.ok) {
         setPending([])
         if (sessionId) {
           qc.invalidateQueries({ queryKey: ['chat', 'session-detail', sessionId] })
         }
       } else {
-        // 409 reconcile — drop optimistic state, surface server's view.
-        setPending([])
-        if (sessionId) {
-          qc.setQueryData(['chat', 'session-detail', sessionId], result.conflict)
-        }
+        // Error path: replace pending assistant with an error stub, leave
+        // user message visible so the user can retry by resending.
+        const errMsg = errorMessageFor(outcome.error)
+        setPending((prev) =>
+          prev.map((m) =>
+            m.role === 'assistant' && m.pending !== undefined
+              ? { ...m, pending: false, content: errMsg }
+              : m,
+          ),
+        )
       }
     },
     onError: () => {
+      // mutationFn itself shouldn't throw (we resolve always), but if it
+      // does, mark the assistant pending row as failed.
+      assistantClientIdRef.current = null
       setPending((prev) =>
         prev.map((m) =>
           m.role === 'assistant' && m.pending
@@ -140,6 +193,24 @@ export function ChatComposer({
       )
     },
   })
+
+  // Per-error user-facing copy. Keeps the UX strings out of the mutation
+  // body so they can be localized later.
+  function errorMessageFor(err: ChatStreamError): string {
+    switch (err.code) {
+      case 'http':
+        if (err.status === 413) return '_(That message is too large. Try a shorter one.)_'
+        if (err.status === 409) return '_(Conflict — another device is also chatting here. Refresh and retry.)_'
+        if (err.status === 401) return '_(Sign in required.)_'
+        return `_(Send failed (HTTP ${err.status}). Tap to retry.)_`
+      case 'gateway_error':
+        return `_(${err.message || 'Upstream error'} — tap to retry.)_`
+      case 'network':
+        return '_(Network error — tap to retry.)_'
+      case 'parse':
+        return '_(Response parsing failed — tap to retry.)_'
+    }
+  }
 
   const messages = useMemo<Array<ChatMessage | PendingMessage>>(() => {
     const server = detailQuery.data?.messages ?? []
