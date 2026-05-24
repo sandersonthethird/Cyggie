@@ -1,4 +1,4 @@
-import { api } from './client'
+import { api, apiFetchRaw, ApiError } from './client'
 
 // Typed client for /companies/* gateway routes. Mirrors api/calendar.ts shape.
 
@@ -75,5 +75,40 @@ export async function fetchCompany(
 ): Promise<CompanyDetail> {
   return api.get<CompanyDetail>(`/companies/${encodeURIComponent(id)}`, {
     signal: opts.signal,
+  })
+}
+
+export interface CreateCompanyInput {
+  canonicalName: string
+  primaryDomain?: string
+}
+
+export interface CreateCompanyResult {
+  /** 201 = newly created, 409 = existing returned (normalized-name collision). */
+  status: 201 | 409
+  company: CompanyListItem
+}
+
+/**
+ * POST /companies — create-on-the-fly without enrichment. Mirrors the
+ * desktop EntityPicker's "Create '{query}'" flow. On normalized-name
+ * collision (case/punctuation-insensitive) returns 409 with the
+ * existing row so the caller can substitute silently.
+ */
+export async function createCompany(
+  input: CreateCompanyInput,
+): Promise<CreateCompanyResult> {
+  const { status, body } = await apiFetchRaw('/companies', {
+    method: 'POST',
+    body: input,
+  })
+  if (status === 201 || status === 409) {
+    return { status: status as 201 | 409, company: body as CompanyListItem }
+  }
+  throw new ApiError({
+    status,
+    code: `HTTP_${status}`,
+    message: 'POST /companies failed',
+    details: body,
   })
 }

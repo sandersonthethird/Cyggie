@@ -2,10 +2,25 @@ import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { and, desc, eq, ilike, isNotNull, sql } from 'drizzle-orm'
+import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
+
+/** Normalized canonical name — lowercase + accents stripped + whitespace
+ *  collapsed. Matches desktop's org-company.repo.ts normalization so the
+ *  same dedup behavior applies whether the row was created on desktop or
+ *  via this mobile-fast-path. */
+function normalizeCompanyName(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
 // =============================================================================
 // /companies — M2 read surface for the CRM's company graph.
@@ -287,6 +302,115 @@ export async function registerCompanyRoutes(
           email: p.email,
         })),
       }
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // POST /companies — create-on-the-fly from mobile.
+  //
+  // Mirrors the desktop EntityPicker's "Create '{query}'" path for adding
+  // a company to a meeting that isn't yet in the CRM. Mobile-side
+  // posture is bare:
+  //   - Takes only canonicalName (+ optional primaryDomain).
+  //   - Does NOT trigger company enrichment (no website fetch, no LLM
+  //     fallback, no aliases population). User said "we can enrich on
+  //     desktop"; desktop's existing enrichment flow runs when the user
+  //     opens the company there.
+  //
+  // normalized_name UNIQUE collision → 409 with the existing company so
+  // the caller can silently substitute.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/companies',
+    schema: {
+      body: z.object({
+        canonicalName: z.string().min(1).max(200),
+        primaryDomain: z.string().max(200).optional(),
+      }),
+      response: {
+        201: CompanyListItemSchema,
+        409: CompanyListItemSchema,
+      },
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { canonicalName, primaryDomain } = req.body
+      const trimmedName = canonicalName.trim()
+      const normalized = normalizeCompanyName(trimmedName)
+
+      // normalized_name UNIQUE collision check. org_companies has a
+      // UNIQUE index on normalized_name; we look up first so we can
+      // return a clean 409 with the existing row instead of 500ing.
+      const existing = await db
+        .select()
+        .from(schema.orgCompanies)
+        .where(
+          and(
+            eq(schema.orgCompanies.userId, user.sub),
+            eq(schema.orgCompanies.normalizedName, normalized),
+          ),
+        )
+        .limit(1)
+      if (existing[0]) {
+        const e = existing[0]
+        return reply.code(409).send({
+          id: e.id,
+          name: e.canonicalName,
+          industry: e.industry,
+          stage: e.stage,
+          pipelineStage: e.pipelineStage,
+          status: e.status,
+          city: e.city,
+          state: e.state,
+          lastTouchAt: null,
+          meetingCount: 0,
+        })
+      }
+
+      const id = createId()
+      const nowDate = new Date()
+      const lamport = String(Date.now())
+
+      await db.insert(schema.orgCompanies).values({
+        id,
+        userId: user.sub,
+        canonicalName: trimmedName,
+        normalizedName: normalized,
+        primaryDomain: primaryDomain ?? null,
+        status: 'active',
+        entityType: 'unknown',
+        classificationSource: 'manual',
+        lamport,
+        createdAt: nowDate,
+        updatedAt: nowDate,
+        createdByUserId: user.sub,
+        updatedByUserId: user.sub,
+      })
+
+      req.log.info(
+        {
+          metric: 'companies.create.success',
+          userId: user.sub,
+          companyId: id,
+          hasDomain: Boolean(primaryDomain),
+        },
+        'company created (no enrichment)',
+      )
+
+      return reply.code(201).send({
+        id,
+        name: trimmedName,
+        industry: null,
+        stage: null,
+        pipelineStage: null,
+        status: 'active',
+        city: null,
+        state: null,
+        lastTouchAt: null,
+        meetingCount: 0,
+      })
     },
   })
 }

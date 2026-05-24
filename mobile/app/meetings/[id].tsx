@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -30,13 +30,19 @@ import {
   enhanceMeeting,
   fetchMeeting,
   fetchTemplates,
+  linkCompanyToMeeting,
+  unlinkCompanyFromMeeting,
+  updateMeetingAttendees,
   type AttendeeContact,
   type MeetingDetail,
   type MeetingLinkedCompany,
-  type MeetingLinkedContact,
   type SummaryTemplate,
   type TranscriptSegment,
 } from '../../lib/api/meetings'
+import type { ContactListItem } from '../../lib/api/contacts'
+import type { CompanyListItem } from '../../lib/api/companies'
+import { ContactPicker } from '../../components/ContactPicker'
+import { CompanyPicker } from '../../components/CompanyPicker'
 import { attendeeLabel } from '../../lib/attendee'
 import { EnhanceModal } from '../../components/EnhanceModal'
 import { useAuthStore } from '../../lib/auth/store'
@@ -59,14 +65,13 @@ import { colors, radii, spacing, type } from '../../theme'
 // Meeting detail — third entity in the read-only CRM triangle.
 //
 // Shape mirrors Company / Contact detail (hero + stats + segmented).
-// Segments are Overview / Transcript / People.
+// Segments are Overview / Transcript.
 //
 // Overview shows: notes + linked companies (as chips → /companies/:id) +
 //                 attendees list (display-name + email) + meeting platform/URL.
 // Transcript shows: a flat list of segments with speaker labels.
-// People shows: linked contacts (via speaker_contact_links) → /contacts/:id.
 
-type Segment = 'overview' | 'transcript' | 'summary' | 'people'
+type Segment = 'overview' | 'transcript' | 'summary'
 
 export default function MeetingDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>()
@@ -267,9 +272,6 @@ export default function MeetingDetailScreen() {
                 enhanceError={enhanceError}
               />
             )}
-            {segment === 'people' && (
-              <PeopleSection contacts={meeting.linkedContacts} />
-            )}
             <View style={{ height: spacing.xxl }} />
           </>
         ) : null}
@@ -296,6 +298,7 @@ export default function MeetingDetailScreen() {
 }
 
 function Hero({ meeting }: { meeting: MeetingDetail }) {
+  const joinLinkExpired = useJoinLinkExpired(meeting.scheduledEndAt)
   return (
     <View style={styles.hero}>
       <View style={styles.heroAvatar}>
@@ -317,6 +320,7 @@ function Hero({ meeting }: { meeting: MeetingDetail }) {
           <LinkChip
             icon="videocam-outline"
             label={meeting.meetingPlatform ?? 'Join'}
+            disabled={joinLinkExpired}
             onPress={() =>
               openExternal(
                 meeting.meetingUrl!,
@@ -331,22 +335,62 @@ function Hero({ meeting }: { meeting: MeetingDetail }) {
   )
 }
 
+// Meeting join links go inactive 5 minutes after the scheduled end so a
+// stale Zoom/Meet URL can't be tapped mid-next-call. Null end (impromptu,
+// or malformed) leaves the link active — we have no signal to gate on.
+const JOIN_LINK_GRACE_MS = 5 * 60_000
+// setTimeout silently clamps delays above ~2^31 ms to 1 (firing immediately),
+// which would mark a far-future meeting as expired. Skip the timer when the
+// expiry is further out than this — next remount will re-evaluate.
+const MAX_TIMEOUT_MS = 2_147_000_000
+
+function useJoinLinkExpired(scheduledEndAt: string | null): boolean {
+  const expiryMs =
+    scheduledEndAt !== null ? Date.parse(scheduledEndAt) + JOIN_LINK_GRACE_MS : NaN
+  const [expired, setExpired] = useState(
+    () => Number.isFinite(expiryMs) && Date.now() >= expiryMs,
+  )
+  useEffect(() => {
+    if (!Number.isFinite(expiryMs)) return
+    const remaining = expiryMs - Date.now()
+    if (remaining <= 0) {
+      setExpired(true)
+      return
+    }
+    setExpired(false)
+    if (remaining > MAX_TIMEOUT_MS) return
+    const timer = setTimeout(() => setExpired(true), remaining)
+    return () => clearTimeout(timer)
+  }, [expiryMs])
+  return expired
+}
+
 function LinkChip({
   icon,
   label,
   onPress,
+  disabled,
 }: {
   icon: keyof typeof Ionicons.glyphMap
   label: string
   onPress: () => void
+  disabled?: boolean
 }) {
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [styles.linkChip, pressed && styles.pressed]}
+      disabled={disabled}
+      accessibilityState={{ disabled: Boolean(disabled) }}
+      style={({ pressed }) => [
+        styles.linkChip,
+        disabled && styles.linkChipDisabled,
+        pressed && !disabled && styles.pressed,
+      ]}
     >
-      <Ionicons name={icon} size={14} color={colors.text2} />
-      <Text style={styles.linkChipText}>{label}</Text>
+      <Ionicons name={icon} size={14} color={disabled ? colors.text4 : colors.text2} />
+      <Text style={[styles.linkChipText, disabled && styles.linkChipTextDisabled]}>
+        {label}
+      </Text>
     </Pressable>
   )
 }
@@ -699,7 +743,7 @@ function SegmentControl({
   value: Segment
   onChange: (s: Segment) => void
 }) {
-  // Item 2 — Summary tab appears between Transcript and People when the
+  // Item 2 — Summary tab appears after Transcript when the
   // EXPO_PUBLIC_FEATURE_SUMMARY_TAB flag is on. Keeping order stable
   // matters so muscle memory doesn't break when the flag flips.
   const items: Array<{ key: Segment; label: string }> = [
@@ -708,7 +752,6 @@ function SegmentControl({
     ...(SUMMARY_TAB_ENABLED
       ? ([{ key: 'summary', label: 'Summary' }] as const)
       : []),
-    { key: 'people', label: 'People' },
   ]
   return (
     <View style={styles.segmentWrap}>
@@ -739,6 +782,123 @@ function OverviewSection({
   meeting: MeetingDetail
   onChangeEnqueued?: (next: string | null) => void
 }) {
+  const queryClient = useQueryClient()
+  const [contactPickerOpen, setContactPickerOpen] = useState(false)
+  const [companyPickerOpen, setCompanyPickerOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const refresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['meetings', 'detail', meeting.id] })
+  }, [queryClient, meeting.id])
+
+  // The gateway exposes attendees as the enriched `attendeeContacts` array;
+  // the raw parallel JSONB arrays (`attendees` + `attendeeEmails`) live on
+  // the meeting row itself but aren't included in the read response shape.
+  // We reconstruct them from attendeeContacts — they index-align by
+  // construction (gateway side: see meetings.ts:254 map).
+  const currentAttendeeNames = meeting.attendeeContacts.map((a) => a.name)
+  const currentAttendeeEmails = meeting.attendeeContacts.map((a) => a.email ?? '')
+
+  // Add attendee: append to the parallel attendee arrays + PATCH. Dedupe
+  // by email when present (case-insensitive); contacts without an email
+  // dedupe by exact-name match. Matches the desktop EntityPicker filter
+  // posture.
+  const addAttendee = useCallback(
+    async (contact: ContactListItem) => {
+      setContactPickerOpen(false)
+      setBusy(true)
+      try {
+        const newName = contact.fullName
+        const newEmail = contact.email ?? ''
+        const dupByEmail =
+          newEmail &&
+          currentAttendeeEmails.some((e) => e.toLowerCase() === newEmail.toLowerCase())
+        const dupByName =
+          !newEmail &&
+          currentAttendeeNames.some((n) => n.toLowerCase() === newName.toLowerCase())
+        if (dupByEmail || dupByName) {
+          return // already on the meeting; no-op
+        }
+        await updateMeetingAttendees(
+          meeting.id,
+          [...currentAttendeeNames, newName],
+          [...currentAttendeeEmails, newEmail],
+        )
+        refresh()
+      } catch (err) {
+        Alert.alert('Failed to add attendee', err instanceof Error ? err.message : 'Please try again.')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [meeting.id, currentAttendeeNames, currentAttendeeEmails, refresh],
+  )
+
+  const removeAttendeeAt = useCallback(
+    async (index: number) => {
+      if (index < 0 || index >= currentAttendeeNames.length) return
+      setBusy(true)
+      try {
+        await updateMeetingAttendees(
+          meeting.id,
+          currentAttendeeNames.filter((_, i) => i !== index),
+          currentAttendeeEmails.filter((_, i) => i !== index),
+        )
+        refresh()
+      } catch (err) {
+        Alert.alert('Failed to remove attendee', err instanceof Error ? err.message : 'Please try again.')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [meeting.id, currentAttendeeNames, currentAttendeeEmails, refresh],
+  )
+
+  const addCompany = useCallback(
+    async (company: CompanyListItem) => {
+      setCompanyPickerOpen(false)
+      setBusy(true)
+      try {
+        await linkCompanyToMeeting(meeting.id, company.id)
+        refresh()
+      } catch (err) {
+        Alert.alert('Failed to link company', err instanceof Error ? err.message : 'Please try again.')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [meeting.id, refresh],
+  )
+
+  const removeCompany = useCallback(
+    async (companyId: string) => {
+      setBusy(true)
+      try {
+        await unlinkCompanyFromMeeting(meeting.id, companyId)
+        refresh()
+      } catch (err) {
+        Alert.alert('Failed to unlink company', err instanceof Error ? err.message : 'Please try again.')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [meeting.id, refresh],
+  )
+
+  // Long-press handlers ask for confirmation before removing.
+  const confirmRemoveAttendee = (label: string, index: number): void => {
+    Alert.alert(`Remove ${label}?`, 'They will no longer appear as an attendee on this meeting.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => void removeAttendeeAt(index) },
+    ])
+  }
+  const confirmRemoveCompany = (company: MeetingLinkedCompany): void => {
+    Alert.alert(`Unlink ${company.name}?`, 'This company will no longer be linked to this meeting.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Unlink', style: 'destructive', onPress: () => void removeCompany(company.id) },
+    ])
+  }
+
   return (
     <View style={styles.section}>
       <NotesEditor
@@ -750,38 +910,92 @@ function OverviewSection({
         onChangeEnqueued={onChangeEnqueued}
       />
 
-      {meeting.linkedCompanies.length > 0 && (
-        <View style={styles.descBlock}>
-          <Text style={styles.descHeading}>Companies</Text>
+      <View style={styles.descBlock}>
+        <View style={styles.descRowHeader}>
+          <Text style={styles.descHeading}>
+            Companies
+            {meeting.linkedCompanies.length > 0 ? ` (${meeting.linkedCompanies.length})` : ''}
+          </Text>
+          <Pressable
+            onPress={() => setCompanyPickerOpen(true)}
+            disabled={busy}
+            hitSlop={8}
+            style={({ pressed }) => [styles.addBtn, pressed && styles.pressed, busy && { opacity: 0.5 }]}
+            accessibilityLabel="Link company"
+            accessibilityRole="button"
+          >
+            <Ionicons name="add" size={18} color={colors.crimson} />
+          </Pressable>
+        </View>
+        {meeting.linkedCompanies.length > 0 ? (
           <View style={styles.chipRow}>
             {meeting.linkedCompanies.map((c) => (
-              <CompanyPill key={c.id} company={c} />
+              <CompanyPill key={c.id} company={c} onLongPress={() => confirmRemoveCompany(c)} />
             ))}
           </View>
-        </View>
-      )}
+        ) : (
+          <Text style={styles.descEmpty}>No companies linked. Tap + to add one.</Text>
+        )}
+      </View>
 
-      {meeting.attendeeContacts.length > 0 && (
-        <View style={styles.descBlock}>
+      <View style={styles.descBlock}>
+        <View style={styles.descRowHeader}>
           <Text style={styles.descHeading}>
-            Attendees ({meeting.attendeeContacts.length})
+            Attendees
+            {meeting.attendeeContacts.length > 0 ? ` (${meeting.attendeeContacts.length})` : ''}
           </Text>
+          <Pressable
+            onPress={() => setContactPickerOpen(true)}
+            disabled={busy}
+            hitSlop={8}
+            style={({ pressed }) => [styles.addBtn, pressed && styles.pressed, busy && { opacity: 0.5 }]}
+            accessibilityLabel="Add attendee"
+            accessibilityRole="button"
+          >
+            <Ionicons name="add" size={18} color={colors.crimson} />
+          </Pressable>
+        </View>
+        {meeting.attendeeContacts.length > 0 ? (
           <View style={styles.chipRow}>
             {meeting.attendeeContacts.map((a, idx) => (
-              <AttendeePill key={`${a.email ?? a.name}-${idx}`} attendee={a} />
+              <AttendeePill
+                key={`${a.email ?? a.name}-${idx}`}
+                attendee={a}
+                onLongPress={() => confirmRemoveAttendee(attendeeLabel(a), idx)}
+              />
             ))}
           </View>
-        </View>
-      )}
+        ) : (
+          <Text style={styles.descEmpty}>No attendees yet. Tap + to add one.</Text>
+        )}
+      </View>
 
+      <ContactPicker
+        open={contactPickerOpen}
+        onClose={() => setContactPickerOpen(false)}
+        onPick={addAttendee}
+      />
+      <CompanyPicker
+        open={companyPickerOpen}
+        onClose={() => setCompanyPickerOpen(false)}
+        onPick={addCompany}
+      />
     </View>
   )
 }
 
-function CompanyPill({ company }: { company: MeetingLinkedCompany }) {
+function CompanyPill({
+  company,
+  onLongPress,
+}: {
+  company: MeetingLinkedCompany
+  onLongPress?: () => void
+}) {
   return (
     <Pressable
       onPress={() => router.push(`/companies/${company.id}`)}
+      onLongPress={onLongPress}
+      delayLongPress={400}
       style={({ pressed }) => [styles.companyPill, pressed && styles.pressed]}
     >
       <Ionicons name="business-outline" size={12} color={colors.crimson} />
@@ -792,13 +1006,21 @@ function CompanyPill({ company }: { company: MeetingLinkedCompany }) {
   )
 }
 
-function AttendeePill({ attendee }: { attendee: AttendeeContact }) {
+function AttendeePill({
+  attendee,
+  onLongPress,
+}: {
+  attendee: AttendeeContact
+  onLongPress?: () => void
+}) {
   const label = attendeeLabel(attendee)
   if (attendee.contactId) {
     const contactId = attendee.contactId
     return (
       <Pressable
         onPress={() => router.push(`/contacts/${contactId}`)}
+        onLongPress={onLongPress}
+        delayLongPress={400}
         style={({ pressed }) => [styles.attendeePill, pressed && styles.pressed]}
         accessibilityRole="button"
         accessibilityLabel={label}
@@ -812,11 +1034,19 @@ function AttendeePill({ attendee }: { attendee: AttendeeContact }) {
     )
   }
   return (
-    <View style={[styles.attendeePill, styles.attendeePillDim]}>
+    <Pressable
+      onLongPress={onLongPress}
+      delayLongPress={400}
+      style={({ pressed }) => [
+        styles.attendeePill,
+        styles.attendeePillDim,
+        pressed && onLongPress ? styles.pressed : null,
+      ]}
+    >
       <Text style={styles.attendeePillText} numberOfLines={1}>
         {label}
       </Text>
-    </View>
+    </Pressable>
   )
 }
 
@@ -985,53 +1215,6 @@ function EnhanceButton({
   )
 }
 
-function PeopleSection({ contacts }: { contacts: MeetingLinkedContact[] }) {
-  if (contacts.length === 0) {
-    return (
-      <View style={styles.section}>
-        <Text style={styles.emptyInline}>
-          No speakers tagged as contacts yet.
-        </Text>
-      </View>
-    )
-  }
-  // Stable sort by speakerIndex so the order matches the transcript flow.
-  const sorted = useMemo(
-    () => [...contacts].sort((a, b) => a.speakerIndex - b.speakerIndex),
-    [contacts],
-  )
-  return (
-    <View style={styles.section}>
-      <View style={styles.kvCard}>
-        {sorted.map((c, idx) => (
-          <View key={c.id}>
-            <Pressable
-              onPress={() => router.push(`/contacts/${c.id}`)}
-              style={({ pressed }) => [styles.personRow, pressed && styles.rowPressed]}
-              accessibilityRole="button"
-              accessibilityLabel={c.fullName}
-            >
-              <View style={styles.personAvatar}>
-                <Text style={styles.personAvatarText}>{initials(c.fullName)}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.personName} numberOfLines={1}>
-                  {c.fullName}
-                </Text>
-                <Text style={styles.personMeta} numberOfLines={1}>
-                  {c.title ? `${c.title}  ·  ` : ''}Speaker {c.speakerIndex + 1}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={colors.text4} />
-            </Pressable>
-            {idx < sorted.length - 1 && <View style={styles.kvDivider} />}
-          </View>
-        ))}
-      </View>
-    </View>
-  )
-}
-
 function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   const message =
     error instanceof ApiError
@@ -1059,13 +1242,6 @@ async function openExternal(url: string, label: string, fallback: string) {
   } catch {
     Alert.alert(label, fallback)
   }
-}
-
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/).slice(0, 2)
-  if (words.length === 0) return '?'
-  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase()
-  return (words[0]![0]! + words[1]![0]!).toUpperCase()
 }
 
 function humanize(raw: string): string {
@@ -1177,6 +1353,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   linkChipText: { color: colors.text2, fontSize: type.bodyTight, fontWeight: '500' },
+  linkChipDisabled: { opacity: 0.5 },
+  linkChipTextDisabled: { color: colors.text4 },
 
   statsCard: {
     flexDirection: 'row',
@@ -1364,6 +1542,27 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 6,
   },
+  descRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  addBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  descEmpty: {
+    color: colors.text4,
+    fontSize: type.meta,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
   descText: {
     color: colors.text2,
     fontSize: type.body + 1,
@@ -1486,38 +1685,6 @@ const styles = StyleSheet.create({
     color: colors.text4,
     fontSize: type.meta,
     fontWeight: '500',
-  },
-
-  personRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-  },
-  rowPressed: { backgroundColor: colors.surface3 },
-  personAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: radii.pill,
-    backgroundColor: colors.surface3,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  personAvatarText: {
-    color: colors.text2,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  personName: {
-    color: colors.text,
-    fontSize: type.body + 1,
-    fontWeight: '600',
-  },
-  personMeta: {
-    color: colors.text3,
-    fontSize: type.bodyTight,
-    marginTop: 2,
   },
 
   emptyInline: {

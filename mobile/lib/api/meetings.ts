@@ -1,4 +1,4 @@
-import { api } from './client'
+import { api, apiFetchRaw, ApiError } from './client'
 
 // Typed client for /meetings/* gateway routes.
 
@@ -144,6 +144,83 @@ export async function updateMeetingNotes(
     `/meetings/${encodeURIComponent(id)}`,
     input,
   )
+}
+
+// =============================================================================
+// Mobile attendee + company editing (2026-05-24).
+//
+// Mirrors desktop's EntityPicker-driven "add/remove attendee" + "link/unlink
+// company" flow. All four helpers mint lamport via the mobile sync clock
+// so the gateway's LWW check sees a strictly-greater value than whatever
+// the server has now. On 409 (a desktop write raced us) the caller gets
+// the current MeetingDetail back via the existing ConflictError shape.
+// =============================================================================
+
+import { tick as tickLamport } from '../sync/clock'
+
+/**
+ * PATCH /meetings/:id with the full new attendee arrays. Mirrors the
+ * desktop MEETING_UPDATE handler — gateway just stores the JSONB arrays,
+ * does NOT run `syncContactsFromAttendees` (per the "no enrichment from
+ * mobile" rule).
+ *
+ * Caller is responsible for splicing/appending the right entries first.
+ * Arrays must be the same length; gateway validates and 400s if not.
+ */
+export async function updateMeetingAttendees(
+  id: string,
+  attendees: string[],
+  attendeeEmails: string[],
+): Promise<MeetingDetail> {
+  return api.patch<
+    MeetingDetail,
+    { attendees: string[]; attendeeEmails: string[]; lamport: string }
+  >(`/meetings/${encodeURIComponent(id)}`, {
+    attendees,
+    attendeeEmails,
+    lamport: tickLamport(),
+  })
+}
+
+/**
+ * POST /meetings/:id/companies — link an existing company. Idempotent
+ * (re-link returns 200 with current detail, no duplicate row). Writes
+ * both meeting_company_links + the JSONB cache on meetings.companies.
+ */
+export async function linkCompanyToMeeting(
+  meetingId: string,
+  companyId: string,
+): Promise<MeetingDetail> {
+  return api.post<MeetingDetail, { companyId: string; lamport: string }>(
+    `/meetings/${encodeURIComponent(meetingId)}/companies`,
+    { companyId, lamport: tickLamport() },
+  )
+}
+
+/**
+ * DELETE /meetings/:id/companies/:companyId — unlink. Idempotent
+ * (unlinking a not-linked company is a 200 no-op).
+ */
+export async function unlinkCompanyFromMeeting(
+  meetingId: string,
+  companyId: string,
+): Promise<MeetingDetail> {
+  // api.delete doesn't accept a body in the existing helper; use the
+  // generic raw fetch shape via api.post pattern reversed. Simplest: a
+  // manual fetch — but the existing api client doesn't have a
+  // body-bearing DELETE. Inline an apiFetchRaw call instead.
+  const lamport = tickLamport()
+  const { status, body } = await apiFetchRaw<{ lamport: string }>(
+    `/meetings/${encodeURIComponent(meetingId)}/companies/${encodeURIComponent(companyId)}`,
+    { method: 'DELETE', body: { lamport } },
+  )
+  if (status === 200) return body as MeetingDetail
+  throw new ApiError({
+    status,
+    code: `HTTP_${status}`,
+    message: `DELETE /meetings/${meetingId}/companies/${companyId} failed`,
+    details: body,
+  })
 }
 
 // =============================================================================

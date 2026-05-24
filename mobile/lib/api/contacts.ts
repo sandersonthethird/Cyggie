@@ -1,4 +1,4 @@
-import { api } from './client'
+import { api, apiFetchRaw, ApiError } from './client'
 
 // Typed client for /contacts/* gateway routes.
 
@@ -71,5 +71,41 @@ export async function fetchContact(
 ): Promise<ContactDetail> {
   return api.get<ContactDetail>(`/contacts/${encodeURIComponent(id)}`, {
     signal: opts.signal,
+  })
+}
+
+export interface CreateContactInput {
+  fullName: string
+  email?: string
+}
+
+export interface CreateContactResult {
+  /** 201 = newly created, 409 = existing contact returned (email collision). */
+  status: 201 | 409
+  contact: ContactListItem
+}
+
+/**
+ * POST /contacts — create-on-the-fly without enrichment. Mirrors the
+ * desktop EntityPicker's "Create '{query}'" flow. If `email` collides
+ * with an existing contact, the gateway returns 409 + the existing row
+ * so the caller can substitute silently (same UX as the desktop dedup
+ * post-CONTACT_CREATE).
+ */
+export async function createContact(
+  input: CreateContactInput,
+): Promise<CreateContactResult> {
+  const { status, body } = await apiFetchRaw('/contacts', {
+    method: 'POST',
+    body: input,
+  })
+  if (status === 201 || status === 409) {
+    return { status: status as 201 | 409, contact: body as ContactListItem }
+  }
+  throw new ApiError({
+    status,
+    code: `HTTP_${status}`,
+    message: 'POST /contacts failed',
+    details: body,
   })
 }

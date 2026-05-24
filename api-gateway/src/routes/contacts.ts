@@ -2,10 +2,22 @@ import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { and, desc, eq, ilike, or, sql } from 'drizzle-orm'
+import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
+
+/** Normalized name for dedup (matches desktop's contact.repo.ts pattern):
+ *  lowercase + accents stripped + whitespace collapsed. */
+function normalizeName(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
 // =============================================================================
 // /contacts — M2 read surface for people in the CRM.
@@ -374,6 +386,122 @@ export async function registerContactRoutes(
           durationSeconds: m.durationSeconds,
         })),
       }
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // POST /contacts — create-on-the-fly from mobile.
+  //
+  // Mirrors the desktop EntityPicker's "Create '{query}'" affordance for
+  // adding an attendee that isn't yet in the CRM. Mobile path is deliberately
+  // bare:
+  //   - Takes only fullName + optional email.
+  //   - Does NOT trigger enrichment (no syncContactsFromAttendees, no
+  //     company autolink, no LLM/web fetches). The user said "we can enrich
+  //     on desktop"; desktop's existing enrichment flow runs when the user
+  //     opens the contact there.
+  //
+  // Email-uniqueness collision (one contact per email per user) → 409 with
+  // the existing contact so the caller can silently substitute.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/contacts',
+    schema: {
+      body: z.object({
+        fullName: z.string().min(1).max(200),
+        email: z.string().email().max(200).optional(),
+      }),
+      response: {
+        201: ContactListItemSchema,
+        409: ContactListItemSchema,
+      },
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { fullName, email } = req.body
+      const trimmedName = fullName.trim()
+
+      // Email-uniqueness check: contacts has UNIQUE(email) on the schema
+      // side (idx_contacts_email). If an existing contact owns this email,
+      // return it as a 409 so the caller silently substitutes instead of
+      // creating a duplicate. Without this we'd 500 on the DB constraint.
+      if (email) {
+        const existing = await db
+          .select()
+          .from(schema.contacts)
+          .where(and(eq(schema.contacts.userId, user.sub), eq(schema.contacts.email, email)))
+          .limit(1)
+        if (existing[0]) {
+          const e = existing[0]
+          return reply.code(409).send({
+            id: e.id,
+            fullName: e.fullName,
+            email: e.email,
+            title: e.title,
+            contactType: e.contactType,
+            primaryCompanyId: e.primaryCompanyId,
+            primaryCompanyName: null,
+            city: e.city,
+            state: e.state,
+            lastMeetingAt: e.lastMeetingAt ? new Date(e.lastMeetingAt).toISOString() : null,
+          })
+        }
+      }
+
+      const id = createId()
+      const nowDate = new Date()
+      const lamport = String(Date.now())
+
+      await db.insert(schema.contacts).values({
+        id,
+        userId: user.sub,
+        fullName: trimmedName,
+        normalizedName: normalizeName(trimmedName),
+        email: email ?? null,
+        lamport,
+        createdAt: nowDate,
+        updatedAt: nowDate,
+        createdByUserId: user.sub,
+        updatedByUserId: user.sub,
+      })
+
+      // If email provided, also insert into contact_emails as primary.
+      // Desktop's contact write path does this too — it's the canonical
+      // place email lives.
+      if (email) {
+        await db.insert(schema.contactEmails).values({
+          contactId: id,
+          email,
+          isPrimary: 1,
+          lamport,
+          createdAt: nowDate,
+        })
+      }
+
+      req.log.info(
+        {
+          metric: 'contacts.create.success',
+          userId: user.sub,
+          contactId: id,
+          hasEmail: Boolean(email),
+        },
+        'contact created (no enrichment)',
+      )
+
+      return reply.code(201).send({
+        id,
+        fullName: trimmedName,
+        email: email ?? null,
+        title: null,
+        contactType: null,
+        primaryCompanyId: null,
+        primaryCompanyName: null,
+        city: null,
+        state: null,
+        lastMeetingAt: null,
+      })
     },
   })
 }

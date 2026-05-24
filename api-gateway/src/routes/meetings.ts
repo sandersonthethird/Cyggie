@@ -550,7 +550,18 @@ export async function registerMeetingRoutes(
   })
 
   // ───────────────────────────────────────────────────────────────────────
-  // PATCH /meetings/:id — partial update (notes only for V1).
+  // PATCH /meetings/:id — partial update.
+  //
+  // Accepts (any subset):
+  //   - notes: full replacement of the notes column (V1)
+  //   - attendees + attendeeEmails: parallel arrays for mobile
+  //     attendee management (2026-05-24, mirrors desktop EntityPicker).
+  //     The two arrays index-align; caller passes both together so the
+  //     gateway doesn't have to reconcile partial updates. Email can
+  //     be empty string for "added without email" entries (same shape
+  //     as desktop). Enrichment (syncContactsFromAttendees) is
+  //     deliberately NOT fired here — the desktop runs it locally when
+  //     it sees the row via Phase 1.5c pull + the user opens the meeting.
   //
   // Lamport semantics MATCH the existing /sync/push handler
   // (sync.ts:201-225) — Last-Write-Wins, client-sourced lamport.
@@ -559,17 +570,42 @@ export async function registerMeetingRoutes(
   //
   // Audit log: every notes update is logged. The notes content itself
   // is NOT logged (pino redact on the request body); only size delta
-  // and lamport movement.
+  // and lamport movement. Attendee-only edits get a parallel audit row.
   // ───────────────────────────────────────────────────────────────────────
   fastifyTyped.route({
     method: 'PATCH',
     url: '/meetings/:id',
     schema: {
       params: z.object({ id: z.string().min(1).max(64) }),
-      body: z.object({
-        notes: z.string().max(64_000).nullable(),
-        lamport: z.string().min(1).max(40),
-      }),
+      body: z
+        .object({
+          notes: z.string().max(64_000).nullable().optional(),
+          attendees: z.array(z.string().max(200)).max(500).optional(),
+          attendeeEmails: z.array(z.string().max(200)).max(500).optional(),
+          lamport: z.string().min(1).max(40),
+        })
+        .refine(
+          (b) =>
+            b.notes !== undefined ||
+            b.attendees !== undefined ||
+            b.attendeeEmails !== undefined,
+          { message: 'PATCH must include at least one of: notes, attendees, attendeeEmails' },
+        )
+        .refine(
+          (b) =>
+            (b.attendees === undefined) === (b.attendeeEmails === undefined),
+          {
+            message:
+              'attendees and attendeeEmails must be sent together (parallel arrays)',
+          },
+        )
+        .refine(
+          (b) =>
+            b.attendees === undefined ||
+            b.attendeeEmails === undefined ||
+            b.attendees.length === b.attendeeEmails.length,
+          { message: 'attendees and attendeeEmails must be the same length' },
+        ),
       response: { 200: MeetingDetailSchema, 409: MeetingDetailSchema },
     },
     handler: async (req, reply) => {
@@ -631,37 +667,69 @@ export async function registerMeetingRoutes(
         return reply.code(409).send(await buildMeetingDetail(db, meeting))
       }
 
+      // Build the partial UPDATE set. Skip columns the caller didn't send.
+      const updateSet: {
+        notes?: string | null
+        attendees?: string[]
+        attendeeEmails?: string[]
+        lamport: string
+        updatedAt: Date
+        updatedByUserId: string
+      } = {
+        lamport: body.lamport,
+        updatedAt: new Date(),
+        updatedByUserId: user.sub,
+      }
+      const changed: string[] = []
       const fromLength = meeting.notes?.length ?? 0
       const toLength = body.notes?.length ?? 0
+      if (body.notes !== undefined) {
+        updateSet.notes = body.notes
+        changed.push('notes')
+      }
+      if (body.attendees !== undefined && body.attendeeEmails !== undefined) {
+        updateSet.attendees = body.attendees
+        updateSet.attendeeEmails = body.attendeeEmails
+        changed.push('attendees', 'attendeeEmails')
+      }
 
       await db
         .update(schema.meetings)
-        .set({
-          notes: body.notes,
-          lamport: body.lamport,
-          updatedAt: new Date(),
-          updatedByUserId: user.sub,
-        })
+        .set(updateSet)
         .where(eq(schema.meetings.id, id))
 
-      // Audit log: track lamport movement + size delta, NOT content.
+      // Audit log: track lamport movement + which fields changed. Content
+      // is NOT logged (pino redact on the request body); size delta only
+      // for notes.
       await db.insert(schema.auditLog).values({
         userId: user.sub,
-        eventType: 'meeting.notes.update',
+        eventType: changed.includes('notes')
+          ? 'meeting.notes.update'
+          : 'meeting.attendees.update',
         actor: 'user',
         targetKind: 'meeting',
         targetId: id,
         details: {
+          changed,
           fromLength,
           toLength,
+          attendeeCount: updateSet.attendees?.length ?? null,
           lamportFrom: meeting.lamport,
           lamportTo: body.lamport,
         },
       })
 
       req.log.info(
-        { meetingId: id, userId: user.sub, fromLength, toLength, metric: 'meetings.patch.notes.success', bytesIn: toLength },
-        'notes updated',
+        {
+          meetingId: id,
+          userId: user.sub,
+          fromLength,
+          toLength,
+          changed,
+          metric: 'meetings.patch.success',
+          bytesIn: toLength,
+        },
+        `meeting updated (${changed.join('+')})`,
       )
 
       const updated = await db.query.meetings.findFirst({
@@ -954,6 +1022,206 @@ export async function registerMeetingRoutes(
 
       await db.delete(schema.meetings).where(eq(schema.meetings.id, id))
       return { ok: true as const }
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // POST /meetings/:id/companies — link an existing company to a meeting.
+  //
+  // Mirrors desktop's MEETING_LINK_EXISTING_COMPANY IPC. Writes two
+  // places atomically:
+  //   1. meeting_company_links — normalized join (source of truth)
+  //   2. meetings.companies JSONB cache — denormalized for fast list
+  //      rendering. Append canonical_name if not already in the array.
+  //
+  // Idempotent: re-linking an already-linked company returns 200 with
+  // the current detail (no duplicate row). PK is composite (meeting_id,
+  // company_id) so the INSERT-on-conflict path is the natural guard.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/meetings/:id/companies',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(64) }),
+      body: z.object({
+        companyId: z.string().min(1).max(64),
+        lamport: z.string().min(1).max(40),
+      }),
+      response: { 200: MeetingDetailSchema },
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id } = req.params
+      const { companyId, lamport } = req.body
+
+      // Ownership: meeting + company must both belong to the user.
+      const [meeting, company] = await Promise.all([
+        db.query.meetings.findFirst({
+          where: and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)),
+        }),
+        db.query.orgCompanies.findFirst({
+          where: and(
+            eq(schema.orgCompanies.id, companyId),
+            eq(schema.orgCompanies.userId, user.sub),
+          ),
+        }),
+      ])
+      if (!meeting) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'MEETING_NOT_FOUND',
+          message: 'Meeting not found',
+        })
+      }
+      if (!company) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'COMPANY_NOT_FOUND',
+          message: 'Company not found',
+        })
+      }
+
+      // Insert into the normalized link table. ON CONFLICT DO NOTHING
+      // makes the call idempotent (re-link → no-op).
+      await db
+        .insert(schema.meetingCompanyLinks)
+        .values({
+          meetingId: id,
+          companyId,
+          confidence: 1,
+          linkedBy: 'manual',
+          createdByUserId: user.sub,
+          updatedByUserId: user.sub,
+          lamport,
+        })
+        .onConflictDoNothing()
+
+      // Update denormalized cache: ensure canonicalName is in the
+      // meetings.companies JSONB array. Idempotent dedupe via Set.
+      const currentCompanies = (meeting.companies as string[] | null) ?? []
+      if (!currentCompanies.includes(company.canonicalName)) {
+        const next = [...currentCompanies, company.canonicalName]
+        await db
+          .update(schema.meetings)
+          .set({
+            companies: next,
+            lamport,
+            updatedAt: new Date(),
+            updatedByUserId: user.sub,
+          })
+          .where(eq(schema.meetings.id, id))
+      }
+
+      req.log.info(
+        {
+          metric: 'meetings.companies.link.success',
+          meetingId: id,
+          companyId,
+          userId: user.sub,
+        },
+        'company linked to meeting',
+      )
+
+      const updated = await db.query.meetings.findFirst({
+        where: eq(schema.meetings.id, id),
+      })
+      return reply.code(200).send(await buildMeetingDetail(db, updated!))
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // DELETE /meetings/:id/companies/:companyId — unlink an existing
+  // meeting-company association.
+  //
+  // Mirrors desktop's MEETING_UNLINK_COMPANY IPC minus the
+  // `dismissedCompanies` append (desktop adds the company to the
+  // dismissed list to suppress future auto-suggestions; mobile doesn't
+  // run those auto-suggestions today so the dismissal list is moot here).
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'DELETE',
+    url: '/meetings/:id/companies/:companyId',
+    schema: {
+      params: z.object({
+        id: z.string().min(1).max(64),
+        companyId: z.string().min(1).max(64),
+      }),
+      body: z.object({
+        lamport: z.string().min(1).max(40),
+      }),
+      response: { 200: MeetingDetailSchema },
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id, companyId } = req.params
+      const { lamport } = req.body
+
+      const [meeting, company] = await Promise.all([
+        db.query.meetings.findFirst({
+          where: and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)),
+        }),
+        db.query.orgCompanies.findFirst({
+          where: and(
+            eq(schema.orgCompanies.id, companyId),
+            eq(schema.orgCompanies.userId, user.sub),
+          ),
+          columns: { id: true, canonicalName: true },
+        }),
+      ])
+      if (!meeting) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'MEETING_NOT_FOUND',
+          message: 'Meeting not found',
+        })
+      }
+
+      // Delete the link row. Idempotent — DELETE WHERE matches zero rows
+      // is fine, returns 200 with current state.
+      await db
+        .delete(schema.meetingCompanyLinks)
+        .where(
+          and(
+            eq(schema.meetingCompanyLinks.meetingId, id),
+            eq(schema.meetingCompanyLinks.companyId, companyId),
+          ),
+        )
+
+      // Splice canonicalName out of the denormalized JSONB cache if we
+      // can resolve it (we keep the array in sync; missing-from-array is
+      // fine — splice is a no-op).
+      if (company) {
+        const currentCompanies = (meeting.companies as string[] | null) ?? []
+        const next = currentCompanies.filter((n) => n !== company.canonicalName)
+        if (next.length !== currentCompanies.length) {
+          await db
+            .update(schema.meetings)
+            .set({
+              companies: next,
+              lamport,
+              updatedAt: new Date(),
+              updatedByUserId: user.sub,
+            })
+            .where(eq(schema.meetings.id, id))
+        }
+      }
+
+      req.log.info(
+        {
+          metric: 'meetings.companies.unlink.success',
+          meetingId: id,
+          companyId,
+          userId: user.sub,
+        },
+        'company unlinked from meeting',
+      )
+
+      const updated = await db.query.meetings.findFirst({
+        where: eq(schema.meetings.id, id),
+      })
+      return reply.code(200).send(await buildMeetingDetail(db, updated!))
     },
   })
 }
