@@ -23,12 +23,17 @@ export interface NoteDetail extends NoteListItem {
   createdAt: string
 }
 
+// Sentinel passed as folderPath to filter unfoldered notes (folder_path IS
+// NULL on the gateway). Mirrors desktop FolderSidebar.INBOX_SENTINEL.
+export const NOTES_INBOX_SENTINEL = '__inbox__'
+
 interface FetchNotesOpts {
   q?: string
   companyId?: string
   contactId?: string
   meetingId?: string
   untagged?: boolean
+  folderPath?: string
   limit?: number
   offset?: number
   signal?: AbortSignal
@@ -48,6 +53,7 @@ export async function fetchNotes(
   if (opts.contactId) params.set('contactId', opts.contactId)
   if (opts.meetingId) params.set('meetingId', opts.meetingId)
   if (opts.untagged) params.set('untagged', 'true')
+  if (opts.folderPath) params.set('folderPath', opts.folderPath)
   if (opts.limit !== undefined) params.set('limit', String(opts.limit))
   if (opts.offset !== undefined) params.set('offset', String(opts.offset))
   const qs = params.toString()
@@ -62,4 +68,21 @@ export async function fetchNote(
   return api.get<NoteDetail>(`/notes/${encodeURIComponent(id)}`, {
     signal: opts.signal,
   })
+}
+
+export interface NoteFolder {
+  path: string
+  count: number
+}
+
+export interface NoteFoldersResponse {
+  folders: NoteFolder[]
+  inboxCount: number
+  totalCount: number
+}
+
+export async function fetchNoteFolders(
+  opts: { signal?: AbortSignal } = {},
+): Promise<NoteFoldersResponse> {
+  return api.get<NoteFoldersResponse>('/note-folders', { signal: opts.signal })
 }

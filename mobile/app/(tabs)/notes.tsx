@@ -14,17 +14,22 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
-import { fetchNotes, type NoteListItem } from '../../lib/api/notes'
+import {
+  fetchNoteFolders,
+  fetchNotes,
+  NOTES_INBOX_SENTINEL,
+  type NoteListItem,
+} from '../../lib/api/notes'
+import { NotesFolderPicker } from '../../components/NotesFolderPicker'
 import { useAuthStore } from '../../lib/auth/store'
 import { colors, radii, spacing, type } from '../../theme'
 
 // Notes tab — M2 read surface for the unified notes table.
 //
 // Default sort (gateway): pinned DESC → updatedAt DESC.
-// Filter chips: All / Untagged. (Company- and contact-scoped filters are
-// supported by the gateway already and used by future "linked notes" links
-// from Company/Contact detail screens; the tab itself just exposes
-// All / Untagged for now.)
+// Filter chips: All / Untagged + a Folders picker (All folders / Inbox /
+// specific folder path). When a folder is selected, the list narrows to
+// that folder; sort stays pinned-then-recent.
 
 const PAGE_LIMIT = 100
 const SEARCH_DEBOUNCE_MS = 250
@@ -36,6 +41,10 @@ export default function NotesTab() {
   const [searchInput, setSearchInput] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
+  // folderSelection: null = no folder filter, NOTES_INBOX_SENTINEL = Inbox,
+  // string = exact folder path. Drives the gateway `folderPath` param.
+  const [folderSelection, setFolderSelection] = useState<string | null>(null)
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(searchInput.trim()), SEARCH_DEBOUNCE_MS)
@@ -43,16 +52,23 @@ export default function NotesTab() {
   }, [searchInput])
 
   const query = useQuery({
-    queryKey: ['notes', 'list', debouncedQ, filterMode],
+    queryKey: ['notes', 'list', debouncedQ, filterMode, folderSelection],
     queryFn: ({ signal }) =>
       fetchNotes({
         q: debouncedQ || undefined,
         untagged: filterMode === 'untagged' ? true : undefined,
+        folderPath: folderSelection ?? undefined,
         limit: PAGE_LIMIT,
         signal,
       }),
     staleTime: 30_000,
     placeholderData: keepPreviousData,
+  })
+
+  const foldersQuery = useQuery({
+    queryKey: ['notes', 'folders'],
+    queryFn: ({ signal }) => fetchNoteFolders({ signal }),
+    staleTime: 60_000,
   })
 
   useEffect(() => {
@@ -69,6 +85,8 @@ export default function NotesTab() {
     if (debouncedQ) return `${notes.length} match${notes.length === 1 ? '' : 'es'}`
     return `${total} note${total === 1 ? '' : 's'}`
   }, [debouncedQ, notes.length, query.data, query.isLoading, total])
+
+  const folderChipLabel = folderSelectionLabel(folderSelection)
 
   return (
     <View style={styles.root}>
@@ -99,6 +117,11 @@ export default function NotesTab() {
           />
         </View>
         <View style={styles.filterRow}>
+          <FolderChip
+            label={folderChipLabel}
+            active={folderSelection !== null}
+            onPress={() => setFolderPickerOpen(true)}
+          />
           <FilterChip
             label="All"
             active={filterMode === 'all'}
@@ -119,7 +142,13 @@ export default function NotesTab() {
       ) : query.error && !query.data ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
       ) : notes.length === 0 ? (
-        <EmptyState filtered={debouncedQ.length > 0 || filterMode === 'untagged'} />
+        <EmptyState
+          filtered={
+            debouncedQ.length > 0 ||
+            filterMode === 'untagged' ||
+            folderSelection !== null
+          }
+        />
       ) : (
         <FlatList
           data={notes}
@@ -136,7 +165,71 @@ export default function NotesTab() {
           }
         />
       )}
+
+      <NotesFolderPicker
+        open={folderPickerOpen}
+        folders={foldersQuery.data?.folders ?? []}
+        inboxCount={foldersQuery.data?.inboxCount ?? 0}
+        totalCount={foldersQuery.data?.totalCount ?? 0}
+        selection={folderSelection}
+        isLoading={foldersQuery.isLoading}
+        onSelect={(sel) => {
+          setFolderSelection(sel)
+          setFolderPickerOpen(false)
+        }}
+        onDismiss={() => setFolderPickerOpen(false)}
+      />
     </View>
+  )
+}
+
+function folderSelectionLabel(selection: string | null): string {
+  if (selection === null) return 'All folders'
+  if (selection === NOTES_INBOX_SENTINEL) return 'Inbox'
+  // Show only the leaf segment so the chip doesn't blow out the row width
+  // for deep paths like "Investments/AI Infrastructure/Init Labs".
+  const segments = selection.split('/')
+  return segments[segments.length - 1] ?? selection
+}
+
+function FolderChip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string
+  active: boolean
+  onPress: () => void
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Folder filter: ${label}`}
+      style={({ pressed }) => [
+        styles.filterChip,
+        styles.folderChip,
+        active && styles.filterChipActive,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Ionicons
+        name={active ? 'folder' : 'folder-outline'}
+        size={13}
+        color={active ? colors.crimson : colors.text3}
+      />
+      <Text
+        style={[styles.filterChipText, active && styles.filterChipTextActive]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      <Ionicons
+        name="chevron-down"
+        size={12}
+        color={active ? colors.crimson : colors.text3}
+      />
+    </Pressable>
   )
 }
 
@@ -312,6 +405,7 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
+    alignItems: 'center',
   },
   filterChip: {
     paddingHorizontal: 12,
@@ -326,6 +420,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   filterChipTextActive: { color: colors.crimson },
+  folderChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: 180,
+  },
 
   listContent: { paddingBottom: 140, backgroundColor: colors.bg },
   separator: {

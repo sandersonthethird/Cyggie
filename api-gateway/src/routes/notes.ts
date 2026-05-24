@@ -18,11 +18,17 @@ import type { GatewayEnv } from '../env'
 // so ?q=… falls through to that path with `plainto_tsquery`.
 //
 // Filters (all optional, mutually compatible):
-//   • companyId — notes attached to a specific company
-//   • contactId — notes attached to a specific contact
-//   • meetingId — notes that originated from a specific meeting
-//   • untagged  — notes with no company/contact attachment (default-off)
+//   • companyId  — notes attached to a specific company
+//   • contactId  — notes attached to a specific contact
+//   • meetingId  — notes that originated from a specific meeting
+//   • untagged   — notes with no company/contact attachment (default-off)
+//   • folderPath — notes in a specific folder. Sentinel "__inbox__" matches
+//                  notes with folder_path IS NULL (the desktop "Inbox").
 // =============================================================================
+
+// Mirrors the desktop FolderSidebar INBOX_SENTINEL — passed as ?folderPath
+// to filter for unfoldered notes (folder_path IS NULL).
+const INBOX_SENTINEL = '__inbox__'
 
 const NoteListItemSchema = z.object({
   id: z.string(),
@@ -72,6 +78,7 @@ export async function registerNoteRoutes(
         contactId: z.string().max(64).optional(),
         meetingId: z.string().max(64).optional(),
         untagged: z.coerce.boolean().optional(),
+        folderPath: z.string().max(512).optional(),
         limit: z.coerce.number().int().min(1).max(100).default(50),
         offset: z.coerce.number().int().min(0).default(0),
       }),
@@ -85,7 +92,16 @@ export async function registerNoteRoutes(
     handler: async (req) => {
       const user = req.requireFirm()
       const db = getDb(env.GATEWAY_DATABASE_URL)
-      const { q, companyId, contactId, meetingId, untagged, limit, offset } = req.query
+      const {
+        q,
+        companyId,
+        contactId,
+        meetingId,
+        untagged,
+        folderPath,
+        limit,
+        offset,
+      } = req.query
 
       const whereClauses = [eq(schema.notes.userId, user.sub)]
       if (companyId) whereClauses.push(eq(schema.notes.companyId, companyId))
@@ -94,6 +110,11 @@ export async function registerNoteRoutes(
       if (untagged) {
         whereClauses.push(isNull(schema.notes.companyId))
         whereClauses.push(isNull(schema.notes.contactId))
+      }
+      if (folderPath === INBOX_SENTINEL) {
+        whereClauses.push(isNull(schema.notes.folderPath))
+      } else if (folderPath) {
+        whereClauses.push(eq(schema.notes.folderPath, folderPath))
       }
       if (q) {
         // Full-text search via the GIN expression index. The expression must
@@ -231,4 +252,96 @@ export async function registerNoteRoutes(
       }
     },
   })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // GET /note-folders — list folders + per-folder note counts for the
+  // mobile folder picker. Mirrors the desktop FolderSidebar data shape
+  // (folder paths + count badges; Inbox = unfoldered notes).
+  //
+  // Returns every folder the user has created (from note_folders) plus
+  // every folder that has at least one note attached to it — the union
+  // ensures empty folders still show up in the picker, and folders that
+  // exist only because notes were imported with a folder_path still show
+  // even if they were never explicitly created.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'GET',
+    url: '/note-folders',
+    schema: {
+      response: {
+        200: z.object({
+          folders: z.array(
+            z.object({
+              path: z.string(),
+              count: z.number(),
+            }),
+          ),
+          inboxCount: z.number(),
+          totalCount: z.number(),
+        }),
+      },
+    },
+    handler: async (req) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+
+      // Counts per non-null folder path. GROUP BY on the indexed column.
+      const folderCounts = await db
+        .select({
+          path: schema.notes.folderPath,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(schema.notes)
+        .where(
+          and(
+            eq(schema.notes.userId, user.sub),
+            sql`${schema.notes.folderPath} IS NOT NULL`,
+          ),
+        )
+        .groupBy(schema.notes.folderPath)
+
+      // Explicitly created folders (may have count 0).
+      const declaredFolders = await db
+        .select({ path: schema.noteFolders.path })
+        .from(schema.noteFolders)
+        .where(eq(schema.noteFolders.userId, user.sub))
+
+      // Inbox = unfoldered notes count.
+      const [inboxRow] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.notes)
+        .where(
+          and(
+            eq(schema.notes.userId, user.sub),
+            isNull(schema.notes.folderPath),
+          ),
+        )
+
+      const [totalRow] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.notes)
+        .where(eq(schema.notes.userId, user.sub))
+
+      const countByPath = new Map<string, number>()
+      for (const r of folderCounts) {
+        if (r.path) countByPath.set(r.path, r.count)
+      }
+      for (const f of declaredFolders) {
+        if (!countByPath.has(f.path)) countByPath.set(f.path, 0)
+      }
+
+      const folders = Array.from(countByPath.entries())
+        .map(([path, count]) => ({ path, count }))
+        .sort((a, b) => a.path.localeCompare(b.path))
+
+      return {
+        folders,
+        inboxCount: inboxRow?.n ?? 0,
+        totalCount: totalRow?.n ?? 0,
+      }
+    },
+  })
 }
+
+// Re-export for clients that need to special-case the Inbox bucket.
+export { INBOX_SENTINEL as NOTES_INBOX_SENTINEL }

@@ -35,6 +35,11 @@ afterAll(async () => {
   if (createdNoteIds.length > 0) {
     await db.delete(schema.notes).where(inArray(schema.notes.id, createdNoteIds))
   }
+  if (createdFolderPaths.length > 0) {
+    await db
+      .delete(schema.noteFolders)
+      .where(inArray(schema.noteFolders.path, createdFolderPaths))
+  }
   if (createdMeetingIds.length > 0) {
     await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
   }
@@ -111,6 +116,7 @@ async function insertNote(opts: {
   contactId?: string
   meetingId?: string
   isPinned?: boolean
+  folderPath?: string | null
   updatedAt?: Date
 }): Promise<string> {
   const id = TEST_PREFIX + 'nt-' + createId().slice(0, 8)
@@ -125,11 +131,21 @@ async function insertNote(opts: {
     sourceMeetingId: opts.meetingId ?? null,
     // is_pinned flipped from integer (0/1) to real boolean in migration 0012.
     isPinned: opts.isPinned ?? false,
+    folderPath: opts.folderPath ?? null,
     createdAt: now,
     updatedAt: now,
   })
   createdNoteIds.push(id)
   return id
+}
+
+const createdFolderPaths: string[] = []
+async function insertFolder(userId: string, path: string): Promise<void> {
+  await db
+    .insert(schema.noteFolders)
+    .values({ path, userId })
+    .onConflictDoNothing()
+  createdFolderPaths.push(path)
 }
 
 async function mintJwt(userId: string): Promise<string> {
@@ -415,5 +431,115 @@ describe('GET /notes/:id', () => {
       headers: { authorization: `Bearer ${jwt}` },
     })
     expect(res.statusCode).toBe(404)
+  })
+})
+
+describe('GET /notes — folder filter', () => {
+  test('?folderPath=<path> filters to that folder only', async () => {
+    const userId = await insertUser()
+    const folderA = 'Investments-' + TEST_PREFIX
+    const folderB = 'Research-' + TEST_PREFIX
+    const inA = await insertNote({ userId, content: 'in A', folderPath: folderA })
+    await insertNote({ userId, content: 'in B', folderPath: folderB })
+    await insertNote({ userId, content: 'unfoldered' })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/notes?folderPath=${encodeURIComponent(folderA)}&limit=100`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    const body = res.json() as { notes: Array<{ id: string; folderPath: string | null }> }
+    const ours = body.notes.filter((n) => createdNoteIds.includes(n.id))
+    expect(ours.map((n) => n.id)).toEqual([inA])
+    expect(ours[0]?.folderPath).toBe(folderA)
+  })
+
+  test('?folderPath=__inbox__ filters to unfoldered notes only', async () => {
+    const userId = await insertUser()
+    await insertNote({
+      userId,
+      content: 'in folder',
+      folderPath: 'Tagged-' + TEST_PREFIX,
+    })
+    const lone = await insertNote({ userId, content: 'lonely ' + TEST_PREFIX })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/notes?folderPath=__inbox__&limit=100',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    const body = res.json() as { notes: Array<{ id: string; folderPath: string | null }> }
+    const ours = body.notes.filter((n) => createdNoteIds.includes(n.id))
+    expect(ours.map((n) => n.id)).toEqual([lone])
+    expect(ours[0]?.folderPath).toBeNull()
+  })
+
+})
+
+describe('GET /note-folders', () => {
+  test('returns folders with counts, inboxCount, and totalCount', async () => {
+    const userId = await insertUser()
+    const folderUsed = 'Used-' + TEST_PREFIX
+    const folderEmpty = 'Empty-' + TEST_PREFIX
+    await insertFolder(userId, folderEmpty)
+    await insertNote({ userId, content: 'a', folderPath: folderUsed })
+    await insertNote({ userId, content: 'b', folderPath: folderUsed })
+    await insertNote({ userId, content: 'inbox 1' })
+    await insertNote({ userId, content: 'inbox 2' })
+    await insertNote({ userId, content: 'inbox 3' })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/note-folders',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      folders: Array<{ path: string; count: number }>
+      inboxCount: number
+      totalCount: number
+    }
+
+    const used = body.folders.find((f) => f.path === folderUsed)
+    expect(used?.count).toBe(2)
+    // Empty declared folder still appears (count 0) so the picker can show it.
+    const empty = body.folders.find((f) => f.path === folderEmpty)
+    expect(empty?.count).toBe(0)
+
+    expect(body.inboxCount).toBeGreaterThanOrEqual(3)
+    expect(body.totalCount).toBeGreaterThanOrEqual(5)
+  })
+
+  test('user isolation', async () => {
+    const userA = await insertUser()
+    const userB = await insertUser()
+    const folderA = 'IsoA-' + TEST_PREFIX
+    const folderB = 'IsoB-' + TEST_PREFIX
+    await insertNote({ userId: userA, content: 'A', folderPath: folderA })
+    await insertNote({ userId: userB, content: 'B', folderPath: folderB })
+
+    const jwt = await mintJwt(userA)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/note-folders',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const body = res.json() as {
+      folders: Array<{ path: string; count: number }>
+    }
+    const paths = body.folders.map((f) => f.path)
+    expect(paths).toContain(folderA)
+    expect(paths).not.toContain(folderB)
+  })
+
+  test('401 without auth', async () => {
+    const res = await app.inject({ method: 'GET', url: '/note-folders' })
+    expect(res.statusCode).toBe(401)
   })
 })
