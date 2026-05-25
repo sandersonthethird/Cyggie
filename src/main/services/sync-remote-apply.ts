@@ -72,6 +72,12 @@ export interface PulledMeetingRow {
   speakerMap: unknown
   transcriptSegments: unknown
   notes: string | null
+  // AI-generated summary markdown (migration 099). Same column the desktop
+  // summarizer's dual-write fills in. Without this in the pull-side upsert,
+  // mobile-generated summaries (POST /meetings/:id/enhance) reach Neon but
+  // never land in desktop SQLite — the column would stay at whatever the
+  // desktop wrote locally (or NULL if the desktop never summarized).
+  summary: string | null
   attendees: unknown
   attendeeEmails: unknown
   chatMessages: unknown
@@ -1046,6 +1052,7 @@ export interface PulledChatSessionRow extends PulledRow {
   isActive: number | boolean
   isPinned: number | boolean
   isArchived: number | boolean
+  cacheEnabled: number | boolean
   lastMessageAt: string | Date
   createdByUserId: string | null
   updatedByUserId: string | null
@@ -1086,13 +1093,13 @@ function upsertChatSessionRow(
     `INSERT INTO chat_sessions (
        id, context_id, context_kind, context_label,
        title, preview_text, message_count,
-       is_active, is_pinned, is_archived,
+       is_active, is_pinned, is_archived, cache_enabled,
        last_message_at, created_at, updated_at,
        created_by_user_id, updated_by_user_id, lamport
      ) VALUES (
        @id, @contextId, @contextKind, @contextLabel,
        @title, @previewText, @messageCount,
-       @isActive, @isPinned, @isArchived,
+       @isActive, @isPinned, @isArchived, @cacheEnabled,
        @lastMessageAt, @createdAt, @updatedAt,
        @createdByUserId, @updatedByUserId, @lamport
      )
@@ -1106,6 +1113,7 @@ function upsertChatSessionRow(
        is_active = excluded.is_active,
        is_pinned = excluded.is_pinned,
        is_archived = excluded.is_archived,
+       cache_enabled = excluded.cache_enabled,
        last_message_at = excluded.last_message_at,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
@@ -1122,6 +1130,9 @@ function upsertChatSessionRow(
     isActive: intFlag(row.isActive),
     isPinned: intFlag(row.isPinned),
     isArchived: intFlag(row.isArchived),
+    // Default to 1 (on) when the gateway pre-migration sends rows without
+    // the field; same intent as the SQLite column default.
+    cacheEnabled: intFlag(row.cacheEnabled ?? true),
     lastMessageAt: toIso(row.lastMessageAt),
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
@@ -1208,7 +1219,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        transcript_drive_id, summary_drive_id,
        template_id,
        speaker_count, speaker_map, transcript_segments,
-       notes,
+       notes, summary,
        attendees, attendee_emails, chat_messages,
        companies, dismissed_companies,
        status, was_impromptu, is_group_event, is_group_event_user_set,
@@ -1221,7 +1232,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        @transcriptDriveId, @summaryDriveId,
        @templateId,
        @speakerCount, @speakerMap, @transcriptSegments,
-       @notes,
+       @notes, @summary,
        @attendees, @attendeeEmails, @chatMessages,
        @companies, @dismissedCompanies,
        @status, @wasImpromptu, @isGroupEvent, @isGroupEventUserSet,
@@ -1245,6 +1256,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        speaker_map = excluded.speaker_map,
        transcript_segments = excluded.transcript_segments,
        notes = excluded.notes,
+       summary = excluded.summary,
        attendees = excluded.attendees,
        attendee_emails = excluded.attendee_emails,
        chat_messages = excluded.chat_messages,
@@ -1276,6 +1288,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
     speakerMap: stringify(row.speakerMap),
     transcriptSegments: stringify(row.transcriptSegments),
     notes: row.notes,
+    summary: row.summary,
     attendees: stringify(row.attendees),
     attendeeEmails: stringify(row.attendeeEmails),
     chatMessages: stringify(row.chatMessages),

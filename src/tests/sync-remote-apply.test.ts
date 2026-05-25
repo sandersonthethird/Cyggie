@@ -48,6 +48,7 @@ function freshDb(): Database.Database {
       speaker_map TEXT NOT NULL DEFAULT '{}',
       transcript_segments TEXT,
       notes TEXT,
+      summary TEXT,
       attendees TEXT,
       attendee_emails TEXT,
       chat_messages TEXT,
@@ -130,6 +131,7 @@ function makeRow(overrides: Partial<PulledMeetingRow> & { id: string; lamport: s
     speakerMap: {},
     transcriptSegments: null,
     notes: null,
+    summary: null,
     attendees: null,
     attendeeEmails: null,
     chatMessages: null,
@@ -336,5 +338,33 @@ describe('applyRemoteMeetings', () => {
     expect(JSON.parse(row.transcript_segments)).toEqual([
       { speaker: 0, text: 'Hi', startTime: 0, endTime: 1 },
     ])
+  })
+
+  // Regression — `meetings.summary` (the AI-generated markdown) was added in
+  // migration 099 and is dual-written by the desktop summarizer + by the
+  // mobile POST /meetings/:id/enhance gateway route. Before this fix the
+  // upsert silently dropped the column, so a summary generated from mobile
+  // would land in Neon but never propagate to the desktop SQLite cache.
+  it('persists the summary markdown column on insert and on update', () => {
+    const summaryMarkdown = '# Meeting Summary\n\n## Key points\n- Foo\n- Bar'
+
+    // Insert path.
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-sum', lamport: '1', summary: summaryMarkdown }),
+    ])
+    let row = db
+      .prepare('SELECT summary FROM meetings WHERE id = ?')
+      .get('mtg-sum') as { summary: string | null }
+    expect(row.summary).toBe(summaryMarkdown)
+
+    // Update path — newer lamport with a different summary body overwrites.
+    const updatedMarkdown = '# Updated Summary\n\nNew content from mobile enhance.'
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-sum', lamport: '2', summary: updatedMarkdown }),
+    ])
+    row = db
+      .prepare('SELECT summary FROM meetings WHERE id = ?')
+      .get('mtg-sum') as { summary: string | null }
+    expect(row.summary).toBe(updatedMarkdown)
   })
 })
