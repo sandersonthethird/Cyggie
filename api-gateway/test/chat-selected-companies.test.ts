@@ -34,7 +34,9 @@ const {
   buildCompanyContextForChat,
   buildContactContextForChat,
   buildChatSessionSystemSegments,
+  buildContextForSession,
 } = await import('../src/routes/chat')
+const { stripContextIdPrefix } = await import('@cyggie/shared')
 
 const env = loadEnv()
 const app = await buildApp(env)
@@ -205,6 +207,35 @@ async function insertCrmSession(
   return id
 }
 
+// Per-entity session insert — mirrors what mobile's createOrGetChatSession
+// produces for the meeting/company/contact detail-screen chat. The
+// "<kind>:<entityId>" contextId shape is the production convention
+// (see packages/shared/src/chat-context-id.ts).
+async function insertEntitySession(
+  userId: string,
+  kind: 'meeting' | 'company' | 'contact',
+  entityId: string,
+): Promise<typeof schema.chatSessions.$inferSelect> {
+  const id = TEST_PREFIX + 'sess-' + createId().slice(0, 8)
+  await db.insert(schema.chatSessions).values({
+    id,
+    userId,
+    contextId: `${kind}:${entityId}`,
+    contextKind: kind,
+    contextLabel: null,
+    title: null,
+    lamport: '1',
+    lastMessageAt: new Date(),
+    createdByUserId: userId,
+  })
+  createdSessionIds.push(id)
+  const rows = await db
+    .select()
+    .from(schema.chatSessions)
+    .where(inArray(schema.chatSessions.id, [id]))
+  return rows[0]!
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PATCH /chat/sessions/:id with selectedCompanyIds
 // ──────────────────────────────────────────────────────────────────────────
@@ -298,6 +329,47 @@ describe('PATCH /chat/sessions/:id — selectedCompanyIds', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json() as { selectedCompanyIds: string[] }
     expect(body.selectedCompanyIds).toEqual([])
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// PATCH /chat/sessions/:id — cacheEnabled toggle
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('PATCH /chat/sessions/:id — cacheEnabled', () => {
+  test('200 — toggling cacheEnabled off persists and round-trips', async () => {
+    const { userId, jwt } = await setupUser()
+    const sessionId = await insertCrmSession(userId)
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/chat/sessions/${sessionId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+      payload: {
+        cacheEnabled: false,
+        lamport: String(Date.now() + 5_000),
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { id: string; cacheEnabled: boolean }
+    expect(body.id).toBe(sessionId)
+    expect(body.cacheEnabled).toBe(false)
+  })
+
+  test('200 — new sessions default to cacheEnabled=true', async () => {
+    const { userId, jwt } = await setupUser()
+    const sessionId = await insertCrmSession(userId)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/chat/sessions/${sessionId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { session: { cacheEnabled: boolean } }
+    expect(body.session.cacheEnabled).toBe(true)
   })
 })
 
@@ -639,5 +711,151 @@ describe('buildChatSessionSystemSegments — prompt cache control', () => {
     expect(ctx?.text).toContain('COMPANY: Acme')
     expect(ctx?.text).toContain('Ground your answers')
     expect(ctx?.cache_control).toEqual({ type: 'ephemeral' })
+  })
+
+  test('9c. cacheEnabled=false → context segment omits cache_control (text unchanged for byte-stability)', () => {
+    const ctxText = 'COMPANY: Acme\nIndustry: AI'
+    const cached = buildChatSessionSystemSegments(ctxText, true)
+    const uncached = buildChatSessionSystemSegments(ctxText, false)
+    const [, cachedCtx] = cached as Array<{ text: string; cache_control?: unknown }>
+    const [, uncachedCtx] = uncached as Array<{ text: string; cache_control?: unknown }>
+    // Same text bytes — cache breakpoint is the only difference.
+    expect(uncachedCtx?.text).toBe(cachedCtx?.text)
+    expect(cachedCtx?.cache_control).toEqual({ type: 'ephemeral' })
+    expect(uncachedCtx?.cache_control).toBeUndefined()
+  })
+
+  test('9d. cacheEnabled=false with null context → still single base segment', () => {
+    const segs = buildChatSessionSystemSegments(null, false)
+    expect(segs).toHaveLength(1)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// buildContextForSession — per-entity prefix stripping
+//
+// Regression coverage for the May 2026 bug where mobile per-entity chats
+// ("Ask about Vital's Vault") got an empty context block because the
+// gateway dispatcher passed contextId="company:<uuid>" straight to
+// buildCompanyContextForChat, which then queried orgCompanies.id =
+// "company:<uuid>" (zero rows) and returned null. The dispatcher now
+// calls stripContextIdPrefix to drop the "<kind>:" prefix before
+// delegating. One test per kind so a future refactor that only touches
+// one arm is caught.
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('buildContextForSession — strips <kind>: prefix before delegating', () => {
+  test('11. company kind — contextId="company:<id>" resolves to the company block', async () => {
+    const { userId } = await setupUser()
+    const uniq = createId().slice(0, 6)
+    const cid = await insertCompany(userId, `PerEntity Company ${uniq}`, {
+      industry: 'Healthcare',
+      stage: 'Series A',
+      description: 'A test company.',
+    })
+    const mid = await insertMeeting(userId, {
+      title: 'Per-entity company sync',
+      summary: 'Revenue is $4M ARR.',
+    })
+    await linkMeetingToCompany(mid, cid)
+
+    const session = await insertEntitySession(userId, 'company', cid)
+    const output = await buildContextForSession(db, session)
+
+    expect(output).not.toBeNull()
+    expect(output).toContain(`COMPANY: PerEntity Company ${uniq}`)
+    expect(output).toContain('Summary:\nRevenue is $4M ARR.')
+  })
+
+  test('12. meeting kind — contextId="meeting:<id>" resolves to the meeting block', async () => {
+    const { userId } = await setupUser()
+    const mid = await insertMeeting(userId, {
+      title: 'Founder intro call',
+      notes: 'Talked through the deck.',
+      transcriptSegments: [
+        { speaker: 1, text: 'Walked through our roadmap.', startTime: 0, endTime: 5 },
+      ],
+    })
+
+    const session = await insertEntitySession(userId, 'meeting', mid)
+    const output = await buildContextForSession(db, session)
+
+    expect(output).not.toBeNull()
+    expect(output).toContain('Founder intro call')
+    expect(output).toContain('Talked through the deck.')
+  })
+
+  test('13. contact kind — contextId="contact:<id>" resolves to the contact block', async () => {
+    const { userId } = await setupUser()
+    const uniq = createId().slice(0, 6)
+    const cid = await insertCompany(userId, `PerEntity Contact-Co ${uniq}`)
+    const contactName = `PerEntity Founder ${uniq}`
+    const contactId = await insertContact(userId, contactName, cid)
+    const mid = await insertMeeting(userId, {
+      title: 'Founder 1:1',
+      summary: 'Discussed funding plans.',
+    })
+    await linkContactToMeeting(mid, contactId)
+
+    const session = await insertEntitySession(userId, 'contact', contactId)
+    const output = await buildContextForSession(db, session)
+
+    expect(output).not.toBeNull()
+    expect(output).toContain(`CONTACT: ${contactName}`)
+    expect(output).toContain('Summary:\nDiscussed funding plans.')
+  })
+
+  test('14. dispatcher tolerates legacy bare contextId (idempotent strip)', async () => {
+    // Some older sessions (and desktop-created meeting sessions per
+    // src/shared/utils/chat-context.ts) store contextId without the
+    // "<kind>:" prefix. The strip helper is a no-op for those, so the
+    // dispatcher must still resolve them correctly.
+    const { userId } = await setupUser()
+    const uniq = createId().slice(0, 6)
+    const companyName = `PerEntity BareID ${uniq}`
+    const cid = await insertCompany(userId, companyName)
+    const id = TEST_PREFIX + 'sess-' + createId().slice(0, 8)
+    await db.insert(schema.chatSessions).values({
+      id,
+      userId,
+      contextId: cid, // bare — no "company:" prefix
+      contextKind: 'company',
+      contextLabel: null,
+      title: null,
+      lamport: '1',
+      lastMessageAt: new Date(),
+      createdByUserId: userId,
+    })
+    createdSessionIds.push(id)
+    const rows = await db
+      .select()
+      .from(schema.chatSessions)
+      .where(inArray(schema.chatSessions.id, [id]))
+
+    const output = await buildContextForSession(db, rows[0]!)
+    expect(output).not.toBeNull()
+    expect(output).toContain(`COMPANY: ${companyName}`)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// stripContextIdPrefix — unit
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('stripContextIdPrefix', () => {
+  test('15. strips matching prefix', () => {
+    expect(stripContextIdPrefix('company', 'company:abc-123')).toBe('abc-123')
+    expect(stripContextIdPrefix('meeting', 'meeting:xyz')).toBe('xyz')
+    expect(stripContextIdPrefix('contact', 'contact:foo')).toBe('foo')
+  })
+
+  test('16. no-op for bare IDs (legacy rows + crm context)', () => {
+    expect(stripContextIdPrefix('company', 'abc-123')).toBe('abc-123')
+    expect(stripContextIdPrefix('meeting', 'bareMeetingUuid')).toBe('bareMeetingUuid')
+  })
+
+  test('17. no-op when prefix is for a different kind', () => {
+    // Defensive: feeding the wrong kind doesn't accidentally chew the colon.
+    expect(stripContextIdPrefix('meeting', 'company:abc')).toBe('company:abc')
   })
 })

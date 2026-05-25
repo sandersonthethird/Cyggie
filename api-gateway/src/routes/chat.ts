@@ -1,10 +1,11 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyBaseLogger } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import Anthropic from '@anthropic-ai/sdk'
 import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
+import { stripContextIdPrefix } from '@cyggie/shared'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
@@ -41,6 +42,10 @@ const ChatSessionListItemSchema = z.object({
   // Phase 2: per-session selected company context (Ask Cyggie tab only).
   // Default [] for sessions created before Phase 2 + for non-crm contexts.
   selectedCompanyIds: z.array(z.string()).default([]),
+  // Per-chat Anthropic prompt-caching toggle (migration 0020 / SQLite 103).
+  // True = context block is cached (5-min TTL ephemeral). False = no
+  // cache_control, no cache write premium. Defaults true server-side.
+  cacheEnabled: z.boolean().default(true),
 })
 
 const ChatMessageSchema = z.object({
@@ -64,6 +69,7 @@ const CompanyChipSchema = z.object({
   name: z.string(),
   industry: z.string().nullable(),
   stage: z.string().nullable(),
+  primaryDomain: z.string().nullable(),
 })
 
 const ChatSessionDetailSchema = z.object({
@@ -97,6 +103,10 @@ function serializeSession(row: SessionRow): z.infer<typeof ChatSessionListItemSc
     // existing rows haven't been backfilled yet (Postgres column default
     // is '[]'::jsonb, so this should never actually fire — defensive).
     selectedCompanyIds: row.selectedCompanyIds ?? [],
+    // Default true: covers the brief migration window for rows created
+    // before the cache_enabled column existed. Postgres column default
+    // is true, so this fallback should never actually fire.
+    cacheEnabled: row.cacheEnabled ?? true,
   }
 }
 
@@ -271,6 +281,8 @@ export async function registerChatRoutes(
         // IDs are filtered downstream when buildSelectedCompaniesContext
         // joins (Phase 2 silently-filter-stale policy).
         selectedCompanyIds: z.array(z.string()).optional(),
+        // Per-chat prompt-caching toggle (migration 0020 / SQLite 103).
+        cacheEnabled: z.boolean().optional(),
         lamport: z.string().min(1).max(40),
       }),
       response: { 200: ChatSessionListItemSchema, 409: ChatSessionListItemSchema },
@@ -364,11 +376,15 @@ export async function registerChatRoutes(
         updates.selectedCompanyIds = body.selectedCompanyIds
         hasField = true
       }
+      if (body.cacheEnabled !== undefined) {
+        updates.cacheEnabled = body.cacheEnabled
+        hasField = true
+      }
       if (!hasField) {
         throw new GatewayError({
           statusCode: 400,
           code: 'CHAT_SESSION_PATCH_EMPTY',
-          message: 'PATCH must include at least one of: title, isPinned, isArchived, selectedCompanyIds.',
+          message: 'PATCH must include at least one of: title, isPinned, isArchived, selectedCompanyIds, cacheEnabled.',
         })
       }
 
@@ -676,10 +692,13 @@ export async function registerChatRoutes(
       // for kinds we don't have specialized builders for (search-results,
       // crm) — the conversation itself + session.contextLabel provide
       // enough grounding for those flavors.
-      const contextBlock = await buildContextForSession(db, session)
+      const contextBlock = await buildContextForSession(db, session, req.log)
       // Phase 2.5: segmented system prompt — base + (optional) context
-      // segment with cache_control. See buildChatSessionSystemSegments.
-      const systemPrompt = buildChatSessionSystemSegments(contextBlock)
+      // segment. cache_control applied only when session.cacheEnabled.
+      const systemPrompt = buildChatSessionSystemSegments(
+        contextBlock,
+        session.cacheEnabled,
+      )
 
       // Compose Claude messages: history + new user message.
       const rawClaudeMessages: Anthropic.MessageParam[] = historyRows
@@ -747,6 +766,7 @@ export async function registerChatRoutes(
         reply.raw.flushHeaders()
 
         let assembledText = ''
+        let streamUsage: Anthropic.Messages.Usage | null = null
         try {
           const stream = client.messages.stream(
             {
@@ -769,8 +789,9 @@ export async function registerChatRoutes(
               )
             }
           }
-          // Drain to ensure stream.finalMessage() returns the final usage.
-          await stream.finalMessage()
+          // Drain to capture finalMessage().usage for cache-hit telemetry.
+          const finalMsg = await stream.finalMessage()
+          streamUsage = finalMsg.usage
         } catch (err) {
           clearTimeout(timeoutHandle)
           // Abort: client navigated away or 60s timer fired. No DB writes,
@@ -853,6 +874,29 @@ export async function registerChatRoutes(
           'message append: complete (stream)',
         )
 
+        // Cache-hit telemetry. cache_creation > 0 on first cached turn;
+        // cache_read > 0 on turn 2+ within the 5-min TTL. Use to validate
+        // the per-chat cacheEnabled toggle is working as intended and to
+        // detect silent invalidators (Date.now() in a prompt, etc.).
+        if (streamUsage) {
+          req.log.info(
+            {
+              metric: 'chat.sessions.usage',
+              sessionId: id,
+              userId: user.sub,
+              cacheEnabled: session.cacheEnabled,
+              inputTokens: streamUsage.input_tokens,
+              outputTokens: streamUsage.output_tokens,
+              cacheCreationInputTokens:
+                streamUsage.cache_creation_input_tokens ?? 0,
+              cacheReadInputTokens:
+                streamUsage.cache_read_input_tokens ?? 0,
+              streaming: true,
+            },
+            'chat usage',
+          )
+        }
+
         reply.raw.write(`event: done\ndata: ${JSON.stringify(persisted)}\n\n`)
         reply.raw.end()
         return reply
@@ -929,6 +973,23 @@ export async function registerChatRoutes(
           truncatedTurns,
         },
         'message append: complete',
+      )
+
+      // Cache-hit telemetry. See streaming-path equivalent above.
+      req.log.info(
+        {
+          metric: 'chat.sessions.usage',
+          sessionId: id,
+          userId: user.sub,
+          cacheEnabled: session.cacheEnabled,
+          inputTokens: result.usage?.input_tokens ?? 0,
+          outputTokens: result.usage?.output_tokens ?? 0,
+          cacheCreationInputTokens:
+            result.usage?.cache_creation_input_tokens ?? 0,
+          cacheReadInputTokens: result.usage?.cache_read_input_tokens ?? 0,
+          streaming: false,
+        },
+        'chat usage',
       )
 
       return persisted
@@ -1066,22 +1127,34 @@ const BASE_CHAT_SYSTEM_PROMPT =
 // adds/removes a company, or the underlying meeting summary updates).
 // One fresh send rebuilds the cache; subsequent sends hit again.
 //
+// cacheEnabled: per-chat user toggle. Default true preserves the cache
+// behavior described above. When false, the context segment is emitted
+// without `cache_control` so single-turn chats don't pay the 1.25×
+// cache-write premium. See chat_sessions.cache_enabled (migration 103
+// + Postgres 0020). The break-even is ~1.28 turns per session — below
+// that, caching costs more than it saves.
+//
 // Returned array shape matches Anthropic's Message API:
 //   - 1 segment when contextBlock is null (base prompt only)
-//   - 2 segments when contextBlock is non-null (base + cached context)
+//   - 2 segments when contextBlock is non-null (base + context, with or
+//     without cache_control depending on cacheEnabled)
 export function buildChatSessionSystemSegments(
   contextBlock: string | null,
+  cacheEnabled = true,
 ): Anthropic.MessageCreateParams['system'] {
   if (!contextBlock) {
     return [{ type: 'text', text: BASE_CHAT_SYSTEM_PROMPT }]
   }
+  const contextSegment: Anthropic.TextBlockParam = {
+    type: 'text',
+    text: `\n\nGround your answers in the following context when relevant.\n\n${contextBlock}`,
+  }
+  if (cacheEnabled) {
+    contextSegment.cache_control = { type: 'ephemeral' }
+  }
   return [
     { type: 'text', text: BASE_CHAT_SYSTEM_PROMPT },
-    {
-      type: 'text',
-      text: `\n\nGround your answers in the following context when relevant.\n\n${contextBlock}`,
-      cache_control: { type: 'ephemeral' },
-    },
+    contextSegment,
   ]
 }
 
@@ -1089,23 +1162,45 @@ export function buildChatSessionSystemSegments(
 // block to inject into the system prompt, or null when the session's
 // contextKind has no specialized builder (crm/search-results — for
 // those the conversation itself + session.contextLabel are sufficient).
-async function buildContextForSession(
+//
+// contextId is stored as "<kind>:<entity-id>" (see
+// packages/shared/src/chat-context-id.ts). The per-entity arms strip the
+// prefix via stripContextIdPrefix before looking up the underlying row.
+export async function buildContextForSession(
   db: ReturnType<typeof getDb>,
   session: typeof schema.chatSessions.$inferSelect,
+  log?: FastifyBaseLogger,
 ): Promise<string | null> {
+  let result: string | null
   switch (session.contextKind) {
     case 'meeting':
-      return buildMeetingContextForChat(db, session.contextId, session.userId)
+      result = await buildMeetingContextForChat(
+        db,
+        stripContextIdPrefix('meeting', session.contextId),
+        session.userId,
+      )
+      break
     case 'company':
-      return buildCompanyContextForChat(db, session.contextId, session.userId)
+      result = await buildCompanyContextForChat(
+        db,
+        stripContextIdPrefix('company', session.contextId),
+        session.userId,
+      )
+      break
     case 'contact':
-      return buildContactContextForChat(db, session.contextId, session.userId)
+      result = await buildContactContextForChat(
+        db,
+        stripContextIdPrefix('contact', session.contextId),
+        session.userId,
+      )
+      break
     case 'search-results':
       // contextLabel holds the search query; surface it as a brief framing
       // line so Claude knows the conversation started from a search.
-      return session.contextLabel
+      result = session.contextLabel
         ? `The user is chatting in the context of a search for: "${session.contextLabel}"`
         : null
+      break
     case 'crm':
     default:
       // Phase 2 (Mobile Chat): if the user has picked companies via the
@@ -1113,15 +1208,40 @@ async function buildContextForSession(
       // description + recent meetings) — same shape buildCompanyContextForChat
       // produces for the company-detail chat surface. Empty → null
       // (status quo); 1+ selected → aggregated context block.
-      if (session.selectedCompanyIds && session.selectedCompanyIds.length > 0) {
-        return buildSelectedCompaniesContext(
-          db,
-          session.selectedCompanyIds,
-          session.userId,
-        )
-      }
-      return null
+      result =
+        session.selectedCompanyIds && session.selectedCompanyIds.length > 0
+          ? await buildSelectedCompaniesContext(
+              db,
+              session.selectedCompanyIds,
+              session.userId,
+            )
+          : null
+      break
   }
+
+  // Per-entity kinds (meeting/company/contact) always expect a non-null
+  // context block — null means the entity didn't resolve (malformed
+  // contextId prefix, wrong userId, deleted entity). Log so this class
+  // of bug is loud next time instead of silently producing ungrounded
+  // answers (the May 2026 "Vital's Vault has no revenue info" report).
+  if (
+    result === null &&
+    (session.contextKind === 'meeting' ||
+      session.contextKind === 'company' ||
+      session.contextKind === 'contact')
+  ) {
+    log?.warn(
+      {
+        sessionId: session.id,
+        userId: session.userId,
+        contextKind: session.contextKind,
+        contextId: session.contextId,
+      },
+      'chat: per-entity session resolved to null context block',
+    )
+  }
+
+  return result
 }
 
 // Phase 2.5: defensive cap on aggregated company-context size. Raised
@@ -1139,6 +1259,11 @@ const SELECTED_COMPANIES_MAX_CHARS = 300_000
 const SUMMARY_PER_MEETING_CAP = 6_000
 const TRANSCRIPT_PER_MEETING_CAP = 6_000
 const NOTES_PER_MEETING_CAP = 2_000
+
+// Phase 3 — per-flagged-file cap inside a company's context block.
+// Matches the desktop chat's existing 48KB per-item budget at
+// packages/services/src/llm/context-builders.ts:70 (COMPANY_FILE_CAPS).
+const FLAGGED_FILE_PER_FILE_CAP = 8_000
 
 // =============================================================================
 // composeMeetingContextBlock — formats one meeting for the LLM system prompt.
@@ -1210,6 +1335,7 @@ async function hydrateSelectedCompanies(
       name: schema.orgCompanies.canonicalName,
       industry: schema.orgCompanies.industry,
       stage: schema.orgCompanies.stage,
+      primaryDomain: schema.orgCompanies.primaryDomain,
     })
     .from(schema.orgCompanies)
     .where(
@@ -1307,6 +1433,34 @@ export async function buildSelectedCompaniesContext(
     }
   }
 
+  // Phase 3 — query 3: flagged files for these companies. Only rows
+  // where the desktop extraction worker has filled in extracted_text
+  // (status='done') are included; pending/extracting/failed rows are
+  // silently filtered out. Single batched IN-list keeps queries O(1)
+  // wrt N companies (Phase 2's batched-query invariant preserved).
+  const allFiles = await db
+    .select({
+      companyId: schema.companyFlaggedFiles.companyId,
+      fileName: schema.companyFlaggedFiles.fileName,
+      extractedText: schema.companyFlaggedFiles.extractedText,
+    })
+    .from(schema.companyFlaggedFiles)
+    .where(
+      and(
+        inArray(schema.companyFlaggedFiles.companyId, validIds),
+        eq(schema.companyFlaggedFiles.userId, userId),
+        eq(schema.companyFlaggedFiles.extractionStatus, 'done'),
+        isNotNull(schema.companyFlaggedFiles.extractedText),
+      ),
+    )
+
+  const filesByCompany = new Map<string, typeof allFiles>()
+  for (const f of allFiles) {
+    const bucket = filesByCompany.get(f.companyId) ?? []
+    bucket.push(f)
+    filesByCompany.set(f.companyId, bucket)
+  }
+
   // Compose per-company blocks in input order (matches selection order).
   const byId = new Map(companies.map((c) => [c.id, c]))
   const blocks: string[] = []
@@ -1333,6 +1487,27 @@ export async function buildSelectedCompaniesContext(
         }),
       )
       parts.push(`Recent meetings:\n\n${meetingBlocks.join('\n\n')}`)
+    }
+    // Phase 3: flagged-file text per company. Only rows the desktop
+    // worker has already extracted (status='done') reach here. Each
+    // capped at FLAGGED_FILE_PER_FILE_CAP independently; combined with
+    // meetings, still bounded by the 300K SELECTED_COMPANIES_MAX_CHARS
+    // defensive cap below.
+    const fileRows = filesByCompany.get(c.id) ?? []
+    if (fileRows.length > 0) {
+      const fileBlocks = fileRows
+        .filter((f) => f.extractedText && f.extractedText.trim().length > 0)
+        .map((f) => {
+          const text = f.extractedText ?? ''
+          const truncated =
+            text.length > FLAGGED_FILE_PER_FILE_CAP
+              ? `${text.slice(0, FLAGGED_FILE_PER_FILE_CAP)}\n[...truncated...]`
+              : text
+          return `### ${f.fileName}\n${truncated}`
+        })
+      if (fileBlocks.length > 0) {
+        parts.push(`Flagged documents:\n\n${fileBlocks.join('\n\n')}`)
+      }
     }
     const block = parts.join('\n')
     // Defensive total-size cap: drop trailing blocks rather than letting

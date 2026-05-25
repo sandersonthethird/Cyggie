@@ -13,8 +13,58 @@ Plans: `~/.claude/plans/chat-on-mobile-needs-humble-crown.md` (Phase 1) + `~/.cl
 | # | Phase | Status | Notes |
 |---|---|---|---|
 | MC.1 | Mobile "New Chat" affordance (pencil icon on Ask Cyggie tab + kebab row on per-entity screens) + clear-on-session-swap + abort-in-flight | ✅ shipped | commits 866bf1d + 2c4e695. useStartNewChat hook + useClearOnSessionSwap hook + ChatComposer imperative `abortInflight` handle; 11 new tests across both hooks |
-| MC.2 | Global Ask Cyggie: selectable company context | 🛠️ in flight | New `selected_company_ids jsonb` column on `chat_sessions` (both Postgres + SQLite mig 102); pill row + multi-select sheet; batched `buildSelectedCompaniesContext` helper (1 N+1 fix; exactly 2 queries regardless of selection size); 8 new gateway tests. RN component tests deferred per repo policy (see MC.runner below) |
-| MC.3 | Company chat: gateway-side parsed_text for flagged files | ⏳ planned | Async parse-on-flag on desktop; sync via outbox (`company_flagged_files` not currently wrapped in `withSync` — Phase 3 fixes that); gateway extends `buildCompanyContextForChat` to pull parsed text from `company_flagged_files` |
+| MC.2 | Global Ask Cyggie: selectable company context | ✅ shipped | commit f048214. `selected_company_ids jsonb` column on `chat_sessions` (Postgres + SQLite mig 102); pill row + multi-select sheet; batched `buildSelectedCompaniesContext` helper (3 queries regardless of selection size — companies + meetings + flagged-file text); 8 new gateway tests. RN component tests deferred per repo policy (see MC.runner below) |
+| MC.3 | Company chat: gateway-side parsed_text for flagged files | ✅ shipped | Desktop extraction worker fills `extracted_text` on flag; `company_flagged_files` wrapped in `withSync` via four verbs (`flagFile` / `unflagFile` / `refreshFlaggedFile` / `updateFlaggedFileExtraction`) at [packages/db/src/sqlite/repositories/index.ts:579-626](packages/db/src/sqlite/repositories/index.ts#L579-L626); gateway `buildSelectedCompaniesContext` Query 3 pulls extracted_text with `status='done'` filter, 8K per-file cap, 300K total cap ([api-gateway/src/routes/chat.ts:1386-1461](api-gateway/src/routes/chat.ts#L1386-L1461)); 7-case test suite at [api-gateway/test/chat-flagged-files.test.ts](api-gateway/test/chat-flagged-files.test.ts). Desktop pull-side primitive (multi-device) deferred — see T-MC.3-pull in P2 — Sync section |
+
+### Chat sessions — schema split for contextId (post-Mobile-V1)
+
+**What:** Replace the `chat_sessions.contextId = "<kind>:<entity-id>"`
+string convention with a real schema split: keep `context_kind` (already
+exists) and add a new `entity_id` column, then move the
+`chat_sessions_active_idx` unique index from `contextId` alone to
+`(context_kind, entity_id) WHERE is_active=1`. Drop the
+`stripContextIdPrefix` helper and the mobile-side template-literal
+encode sites once the migration is complete.
+
+**Why:** The current `<kind>:<id>` string is a workaround for the
+unique index living on `contextId` alone. The May 2026 "company-detail
+chat has empty context" bug existed because the encoding rule was
+implicit and the gateway dispatcher silently dropped the prefix
+mismatch. A schema split would make typos structurally impossible —
+the entity column would be a bare UUID with no string parsing. Also
+fixes the desktop-vs-mobile encoding asymmetry: today
+[src/shared/utils/chat-context.ts:30](src/shared/utils/chat-context.ts#L30)
+writes bare meetingId for kind=meeting on desktop while mobile prefixes
+all three kinds, which means cross-device session syncing has to
+defensively strip in both shapes.
+
+**Pros:** Eliminates an entire bug class; deletes the
+`@cyggie/shared/chat-context-id` helper, the mobile encode sites, and
+the gateway/renderer decode sites; lets the database enforce what's
+currently a string convention spread across three packages.
+
+**Cons:** Postgres migration with backfill (split every existing
+`contextId` by `:`); coordinated changes in mobile (3 entry points),
+desktop renderer ([ChatPanelRoot.tsx](src/renderer/components/chat-panel/ChatPanelRoot.tsx)),
+gateway (every read of `contextId`), schema, sync layer
+([owned-tables.ts](packages/db/src/sync/owned-tables.ts)), and the chat
+test suites. Probably 8–12 files. Cannot ship without all clients
+shipping simultaneously (mobile App Store rollout window applies).
+
+**Context:** The prefix convention dates to commit `e34a390` ("Slice
+1"). Decode sites today: `stripContextIdPrefix` in
+[packages/shared/src/chat-context-id.ts](packages/shared/src/chat-context-id.ts)
+(added in the May 2026 bugfix PR) and its two call-sites in the gateway
+dispatcher + desktop renderer. Encode sites: mobile
+[companies/[id].tsx](mobile/app/companies/[id].tsx),
+[contacts/[id].tsx](mobile/app/contacts/[id].tsx),
+[meetings/[id].tsx](mobile/app/meetings/[id].tsx) (template literal).
+The bugfix PR also added a `'per-entity session resolved to null
+context block'` warning that covers the immediate observability gap,
+so this work is no longer urgent — purely structural cleanup.
+
+**Depends on:** Nothing — entirely independent. Defer until the mobile
+App Store release cadence allows coordinated client + server rollout.
 
 ### Mobile UI integration test runner (P2 infra)
 
@@ -150,6 +200,53 @@ Contenders (decide alongside the M3 scale point):
 | Datadog | Best-in-class breadth + maturity | $50-100/mo+ |
 
 Default Phase 2 recommendation: **Sentry + Axiom** (~$0-30/mo total).
+
+### Surface Anthropic `usage` from `ClaudeProvider.generateSummary`
+
+**What:** Widen the desktop `LLMProvider.generateSummary` return type
+from bare text to `{ text: string; usage: Anthropic.Messages.Usage }` so
+call sites (company / contact key-takeaways, meeting summarizer, the two
+summary-sync field-extractors) can record `cache_read_input_tokens` /
+`cache_creation_input_tokens` the same way `agent_runs.*` columns do
+today for agent-loop runs.
+
+**Why:** Without this, any future decision to enable prompt caching on
+those one-shot paths is blind — we can't measure whether the regen-rate
+clears the 1.28-turn break-even, and silent invalidators in shared
+system prompts go unnoticed. The internal AI chat path
+([api-gateway/src/routes/chat.ts](api-gateway/src/routes/chat.ts))
+already logs `chat.sessions.usage` post-stream after the
+`cacheEnabled`-toggle work landed; this TODO mirrors that pattern to the
+desktop summarizer surface.
+
+**Pros:** Unlocks a data-driven decision on whether to add caching to
+key-takeaways / summary-sync; reuses the same `metric=chat.sessions.usage`
+shape so a future cost dashboard works uniformly across surfaces.
+
+**Cons:** Touches every `generateSummary` call site (~5 files). Requires
+either a separate per-route audit log or a new lightweight
+`llm_call_usage` table (desktop). The boolean return-shape change is
+backwards-incompatible across the interface.
+
+**Context:** Plan
+`~/.claude/plans/make-sure-we-re-using-inherited-mango.md` deferred this
+deliberately while shipping the per-chat caching toggle. Today the
+provider returns bare text; widening to `{text, usage}` is the
+prerequisite for any future LLM-cost dashboard that covers desktop
+flows. See [packages/services/src/llm/claude-provider.ts](packages/services/src/llm/claude-provider.ts)
++ call sites in [company-key-takeaways.ts](packages/services/src/llm/company-key-takeaways.ts),
+[contact-key-takeaways.ts](packages/services/src/llm/contact-key-takeaways.ts),
+[summarizer.ts](packages/services/src/llm/summarizer.ts),
+[company-summary-sync.service.ts](packages/services/src/company-summary-sync.service.ts),
+[contact-summary-sync.service.ts](packages/services/src/contact-summary-sync.service.ts).
+
+**Effort:** M (~4 hours: interface change + 5 call-site touches +
+audit-log / log-line plumbing + tests).
+
+**Priority:** P2 — enables a future caching decision, not blocking
+current work.
+
+**Depends on:** Nothing.
 
 ### Mobile milestones (post-Phase 0)
 
@@ -543,7 +640,21 @@ post-Deepgram.
 **Effort:** new migration + schema field + endpoint body field +
 detail-screen render + tests. ~half day.
 
-### T14 — Phase 1.5c expansion: pull more tables alongside meetings
+### T14 — Phase 1.5c expansion: pull more tables alongside meetings ✅ shipped
+**STATUS:** ✅ shipped (commit `6a8e702`, 2026-05-24). All eight
+mobile-mutable owned tables now flow through the desktop pull path:
+meetings + notes + org_companies + org_company_aliases + contacts +
+contact_emails (T14 original scope) plus chat_sessions +
+chat_session_messages (added in the same commit as Bug B of the sync-
+staleness fix). Same commit also wired renderer subscriptions to all
+six existing `*_REMOTE_APPLIED` IPC broadcasts (Bug A) via a new
+`useRemoteApply` hook + `INVALIDATIONS_BY_TABLE` map at
+[src/renderer/api/useRemoteApply.ts](src/renderer/api/useRemoteApply.ts)
+and [src/renderer/api/ipcCache.ts](src/renderer/api/ipcCache.ts), and
+added `app.on('browser-window-focus', triggerSyncPull)` to drop cross-
+device latency from up-to-60s to ~1s on focus. 33 new tests; existing
+suites untouched. **Original scope below preserved for archaeology.**
+
 **What:** Extend the gateway's `GET /sync/pull` and the desktop's
 `applyRemoteMeetings` to also pull `notes`, `contacts`,
 `org_companies`, `contact_emails`, `org_company_aliases`. Mirrors the
@@ -626,6 +737,38 @@ tap.
 **Fix:** show a small toast / inline error banner. Reuse whatever
 toast system gets adopted in M6.
 **Why:** Caught during E2E — 400s on early taps were invisible.
+
+### T-MC.3-pull — Desktop pull-side for `company_flagged_files` (multi-desktop V2)
+**What:** Mirror the T14 / T39 pattern for flagged files. Add
+`applyRemoteCompanyFlaggedFiles` + `COMPANY_FLAGGED_FILES_SPEC` in
+[src/main/services/sync-remote-apply.ts](src/main/services/sync-remote-apply.ts)
+(`hasUserId: true`, no INNER JOIN needed — table is user-scoped via
+`user_id` column directly). Add `companyFlaggedFiles` to the gateway
+`/sync/pull` parallel queries in
+[api-gateway/src/routes/sync.ts](api-gateway/src/routes/sync.ts).
+Wire `onCompanyFlaggedFilesApplied` callback + IPC fanout
+(`COMPANY_FLAGGED_FILES_REMOTE_APPLIED`) in
+[sync-pull.service.ts](src/main/services/sync-pull.service.ts) +
+[sync-bootstrap.ts](src/main/services/sync-bootstrap.ts). Apply order:
+AFTER `org_companies` (parent FK).
+**Why:** MC.3 (gateway-side parsed_text in mobile chat) shipped fully
+on the push side — desktop writes extracted_text, outbox carries it to
+Neon, gateway includes it in chat context. The pull-side primitive
+only matters once a second desktop or teammate enters the picture.
+Until then, the same single desktop is both the writer AND the reader,
+so it has the data locally.
+**Pros:** Closes the loop for multi-device — teammate-flagged files
+appear on your desktop within one pull tick.
+**Cons:** ~half day; zero user-visible value at single-desktop / single-
+user beta scale.
+**Effort:** S (~half day, mostly mechanical — same TableSpec shape as
+chat_sessions in commit `6a8e702`).
+**Tests:** extend `src/tests/sync-remote-apply-additional-tables.test.ts`
+with insert / LWW skip / LWW update / FK-respect cases. Extend
+`api-gateway/test/sync-pull.test.ts` with response-shape + cross-user
+assertions (mirrors the chat tests from commit `6a8e702`).
+**Priority:** P3.
+**Depends on / blocked by:** First multi-desktop or multi-user signal.
 
 ### T39 — Memo sync pull-side primitives (multi-desktop V2)
 **What:** Mirror the T14 work for memos — add
@@ -790,6 +933,18 @@ Layer 3; versions Layer 4. The TableSpec helper makes this mechanical.
 ---
 
 ## P3 — Companies
+
+### Mobile companies list: watch for logo flicker on scroll/cold load
+**What:** If the companies list shows visible flicker as new rows scroll into view (or on cold app load), swap `CompanyLogo` from RN's built-in `Image` to `expo-image` (built-in disk cache + transition animations) or prefetch all visible Clearbit URLs in the list query's `onSuccess`.
+**Why:** Speculative — flagged during the 2026-05-25 plan-eng-review of the mobile-logos PR. RN's `Image` only memory-caches per process, so cold app launches re-fetch every favicon from Clearbit's CDN. At single-firm scale (<500 companies) this should be fine; we picked the simplest path and left optimization for the moment it becomes user-visible.
+**Pros:** Removes any list-scroll flicker that does show up; expo-image is a small-surface drop-in.
+**Cons:** Extra dependency (`expo-image`) + native rebuild; or extra bookkeeping in the list query if we prefetch manually. Probably never needed for a single firm.
+**Context:** `CompanyLogo` lives at [mobile/components/CompanyLogo.tsx](mobile/components/CompanyLogo.tsx); the list query is at [mobile/app/(tabs)/companies.tsx](mobile/app/(tabs)/companies.tsx). The user-facing symptom would be a brief slate placeholder → logo flash as each row scrolls in.
+**Effort:** S
+**Priority:** P3 (latent — open only if observed)
+**Depends on:** None.
+
+---
 
 ### Companies table: server-side pagination
 **What:** Replace the full-fetch architecture in Companies.tsx with server-side pagination (cursor- or offset-based) + virtual scrolling in the table.

@@ -7,6 +7,7 @@ import { useChatPanelStore } from '../../stores/chat-panel.store'
 import { useChatStore } from '../../stores/chat.store'
 import { useChatStreaming } from '../../hooks/useChatStreaming'
 import { deriveChatContext, type ChatContextKind } from '../../../shared/utils/chat-context'
+import { stripContextIdPrefix } from '@cyggie/shared'
 import { PanelThread } from './PanelThread'
 import { PanelComposer } from './PanelComposer'
 import { usePanelOutlet } from './PanelOutletContext'
@@ -208,8 +209,8 @@ export function ChatPanelRoot() {
       return
     }
     try {
-      const companyId = panelSession.contextKind === 'company' ? panelSession.contextId.replace(/^company:/, '') : null
-      const contactId = panelSession.contextKind === 'contact' ? panelSession.contextId.replace(/^contact:/, '') : null
+      const companyId = panelSession.contextKind === 'company' ? stripContextIdPrefix('company', panelSession.contextId) : null
+      const contactId = panelSession.contextKind === 'contact' ? stripContextIdPrefix('contact', panelSession.contextId) : null
       await api.invoke<Note>(IPC_CHANNELS.CHAT_SAVE_AS_NOTE, {
         transcriptMarkdown: transcript,
         companyId,
@@ -327,8 +328,8 @@ export function deriveCurrentKind(opts: {
   }
   if (panelSession) {
     switch (panelSession.contextKind) {
-      case 'company': return { kind: 'company', companyId: panelSession.contextId.replace(/^company:/, '') }
-      case 'contact': return { kind: 'contact', contactId: panelSession.contextId.replace(/^contact:/, '') }
+      case 'company': return { kind: 'company', companyId: stripContextIdPrefix('company', panelSession.contextId) }
+      case 'contact': return { kind: 'contact', contactId: stripContextIdPrefix('contact', panelSession.contextId) }
       case 'meeting': return { kind: 'meeting', meetingId: panelSession.contextId }
       case 'global':
       default:        return { kind: 'global' }
