@@ -43,6 +43,7 @@ import { useCalendarStore } from '../../lib/calendar/store'
 import { Avatar } from '../../components/Avatar'
 import { ErrorBanner } from '../../components/ErrorBanner'
 import { MeetingRow } from '../../components/MeetingRow'
+import { ImpromptuRecordingsSection } from '../../components/ImpromptuRecordingsSection'
 import { NowRail } from '../../components/NowRail'
 import { formatErrorMessage } from '../../lib/banner/banner-state'
 import { RecordFab } from '../../components/RecordFab'
@@ -841,91 +842,9 @@ function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void })
   )
 }
 
-// T16 — "My Recordings" section. Lists impromptu (no-cal-event) meetings
-// from the last 7 days at the top of the Past segment so they're findable
-// after the user closes the app post-recording. Rendered inside the past
-// FlatList's ListHeaderComponent so it scrolls naturally with the rest.
-//
-// States:
-//   • isLoading && !meetings  → skeleton row (single ActivityIndicator)
-//   • error                    → inline error banner (not the whole list)
-//   • meetings.length === 0    → section hidden (return null)
-//   • meetings.length > 0      → header + rows (adapt MeetingDetail to
-//                                CalendarEvent shape for the existing
-//                                MeetingRow component; no new row type)
-function ImpromptuRecordingsSection({
-  meetings,
-  isLoading,
-  error,
-  onPress,
-}: {
-  meetings: MeetingDetail[] | null
-  isLoading: boolean
-  error: Error | null
-  onPress: (id: string) => void
-}) {
-  if (isLoading && !meetings) {
-    return (
-      <View style={styles.section}>
-        <SectionHeader label="My Recordings" />
-        <View style={styles.impromptuSkeleton}>
-          <ActivityIndicator color={colors.crimson} size="small" />
-        </View>
-      </View>
-    )
-  }
-
-  if (error) {
-    const msg =
-      error instanceof ApiError
-        ? `${error.code}: ${error.message}`
-        : error.message
-    return (
-      <View style={styles.section}>
-        <SectionHeader label="My Recordings" />
-        <Text style={styles.impromptuError}>Couldn't load recordings — {msg}</Text>
-      </View>
-    )
-  }
-
-  if (!meetings || meetings.length === 0) {
-    return null
-  }
-
-  return (
-    <View style={styles.section}>
-      <SectionHeader label="My Recordings" />
-      {meetings.map((m) => (
-        <MeetingRow
-          key={m.id}
-          event={impromptuMeetingToCalendarEvent(m)}
-          variant="past"
-          onPress={() => onPress(m.id)}
-        />
-      ))}
-    </View>
-  )
-}
-
-// Adapter: MeetingDetail → CalendarEvent shape so the existing MeetingRow
-// renders impromptu rows without a new variant or row component. Calendar
-// attendees are empty (impromptu meetings have no calendar invite); start/
-// end derive from `date` + `durationSeconds` so the duration cell renders.
-function impromptuMeetingToCalendarEvent(m: MeetingDetail): CalendarEvent {
-  const startMs = new Date(m.date).getTime()
-  const durMs = (m.durationSeconds ?? 0) * 1000
-  return {
-    id: m.id,
-    calendarEventId: '',
-    title: m.title,
-    start: m.date,
-    end: new Date(startMs + durMs).toISOString(),
-    attendees: [],
-    isAllDay: false,
-    recordingStatus: m.status,
-    meetingId: m.id,
-  }
-}
+// T16 — "My Recordings" section now lives in its own component file so it
+// can be rendered and asserted on under Jest + RNTL (MC.runner). See
+// [components/ImpromptuRecordingsSection.tsx](../../components/ImpromptuRecordingsSection.tsx).
 
 function formatDateHeader(d: Date): string {
   return d.toLocaleDateString(undefined, {
@@ -1097,19 +1016,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-
-  // T16 — "My Recordings" section states.
-  impromptuSkeleton: {
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  impromptuError: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    color: colors.text3,
-    fontSize: type.bodyTight,
   },
 
   tooltip: {
