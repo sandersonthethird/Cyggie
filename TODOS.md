@@ -566,7 +566,21 @@ restored from MMKV draft + synced via outbox.
 **Cons:** Maestro tests are slow + flaky; ~1 day to write + stabilize.
 **Depends on:** Mobile UI shipped (Stage 2).
 
-### T8 — Lamport-forgery protection (forge-able locks)
+### T8 — Lamport-forgery protection (forge-able locks) ✅ shipped
+**STATUS:** ✅ shipped. Gateway-side ceiling check lives at
+[api-gateway/src/sync/validate-lamport.ts](api-gateway/src/sync/validate-lamport.ts)
+with `MAX_LAMPORT_SKEW_MS = 5 * 60 * 1000` (5-minute skew window).
+Both clients seed lamport from `Date.now()` (desktop
+[packages/db/src/sync/sync-clock.ts](packages/db/src/sync/sync-clock.ts)
++ mobile [mobile/lib/sync/clock.ts](mobile/lib/sync/clock.ts)), so any
+incoming lamport > `Date.now() + 5min` is rejected as forged. Wired
+into `/sync/push` at
+[api-gateway/src/routes/sync.ts:125](api-gateway/src/routes/sync.ts#L125)
+and `PATCH /meetings/:id` at
+[api-gateway/src/routes/meetings.ts:625](api-gateway/src/routes/meetings.ts#L625);
+both reject 400 with stable error codes on `unparseable` /
+`too_far_future`. **Original scope below preserved for archaeology.**
+
 **What:** Both `/sync/push` (Phase 1.5a, shipped) and `PATCH /meetings/:id`
 (this PR) use **client-sourced** lamport with Last-Write-Wins compare.
 A malicious client could send a huge `lamport` value (e.g. `BigInt.MAX`)
@@ -587,7 +601,13 @@ single-firm beta but real for any multi-tenant or hostile-client model.
 breaking the desktop outbox if not careful.
 **Depends on:** Decision on which fix. Recommend ceiling for V1.
 
-### T9 — Mobile calendar tab: show multi-day events (today + next 14)
+### T9 — Mobile calendar tab: show multi-day events (today + next 14) ✅ shipped
+**STATUS:** ✅ shipped. `groupByDay()` + `formatDayLabel()` live at
+[mobile/lib/api/calendar.ts:181-200](mobile/lib/api/calendar.ts#L181-L200);
+multi-section list renders via `CalendarDaySection` interface at
+[mobile/app/(tabs)/calendar.tsx:29-30](mobile/app/(tabs)/calendar.tsx#L29-L30).
+Mirrors desktop's `groupCalendarEventsByDate` pattern.
+
 **What:** The Calendar tab today shows only today's events. Gateway
 already returns the next 14 days; mobile filters it down to one day.
 Extend to show today (bucketed Earlier/Now/Next/Later as today) +
@@ -604,7 +624,13 @@ today buckets intact.
 **Effort:** ~80 lines + tests, ~45min.
 **Depends on:** Nothing.
 
-### T10 — Gateway Zod: accept ISO datetime with timezone offset
+### T10 — Gateway Zod: accept ISO datetime with timezone offset ✅ shipped
+**STATUS:** ✅ shipped. `startTime` + optional `endTime` both accept
+offset form at
+[api-gateway/src/routes/meetings.ts:443-445](api-gateway/src/routes/meetings.ts#L443-L445)
+via `z.string().datetime({ offset: true })`. Comment at line 440 ties
+back to T10.
+
 **What:** `POST /meetings/from-calendar-event` uses `z.string().datetime()`
 which only accepts `Z` (UTC) suffix. Mobile currently works around it
 by `new Date(event.start).toISOString()` before sending — but any other
@@ -619,7 +645,15 @@ sends UTC.
 **Effort:** 1-line schema change + 1 new test case in
 `api-gateway/test/meetings-from-calendar-event.test.ts`.
 
-### T11 — Meeting detail: hide empty stats for `scheduled` rows
+### T11 — Meeting detail: hide empty stats for `scheduled` rows ✅ shipped
+**STATUS:** ✅ shipped. `StatsCard` in
+[mobile/app/meetings/[id].tsx:399-441](mobile/app/meetings/[id].tsx#L399-L441)
+branches on `hasTranscript`: pre-transcript renders Status always +
+Duration only when a scheduled slot is known
+(`slotMin = (scheduledEndAt - date) / 60_000`, gated by
+`slotMin !== null`); post-transcript renders the full Duration / Status
+/ Speakers triplet with Speakers gated by `meeting.speakerCount > 0`.
+
 **What:** StatsCard renders Duration / Status / Speakers always.
 For `status='scheduled'` rows (no recording yet), Duration is `—` and
 Speakers is `—`. Two of three cells are empty placeholders.
@@ -628,7 +662,15 @@ cells. Or replace Duration with the calendar slot length once T12
 (below) lands.
 **Why:** UX polish — surfaced by the cathedral-build E2E review.
 
-### T12 — Persist scheduled end time on meetings table
+### T12 — Persist scheduled end time on meetings table ✅ shipped
+**STATUS:** ✅ shipped. Postgres migration `0015_meetings_scheduled_end_at.sql`
+added the column; SQLite parity migrated. Schema field at
+[packages/db/src/schema/meetings.ts:64](packages/db/src/schema/meetings.ts#L64)
+(`scheduledEndAt: timestamp('scheduled_end_at', { withTimezone: true })`,
+nullable). Endpoint accepts optional `endTime` at
+[api-gateway/src/routes/meetings.ts:445](api-gateway/src/routes/meetings.ts#L445).
+Powers the "60 min scheduled" pre-transcript Duration cell in T11.
+
 **What:** `POST /meetings/from-calendar-event` accepts startTime but
 not endTime. The detail screen can't render a meaningful "Duration"
 for scheduled rows because we never stored the slot length.
@@ -729,7 +771,14 @@ since impromptu recordings are rare in the typical "calendar-anchored"
 workflow.
 **Depends on / blocked by:** Nothing.
 
-### T13 — Mobile: gracefully surface non-401 errors from handleEventPress
+### T13 — Mobile: gracefully surface non-401 errors from handleEventPress ✅ shipped
+**STATUS:** ✅ shipped. Inline `ErrorBanner` (auto-dismisses after 4s)
+implemented in
+[mobile/app/(tabs)/calendar.tsx:73-78](mobile/app/(tabs)/calendar.tsx#L73-L78)
++ render at line 390; set via `setBannerMsg` in `handleEventPress`
+catch block at lines 304-306. Chose a banner over a toast system to
+avoid pulling a third-party dependency.
+
 **What:** `mobile/app/(tabs)/calendar.tsx`'s tap handler currently
 `console.error`s non-reauth errors but doesn't show anything to the
 user. A 5xx during prepareMeetingFromCalendarEvent looks like a no-op
