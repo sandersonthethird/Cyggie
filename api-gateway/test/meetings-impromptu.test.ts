@@ -1,0 +1,246 @@
+import { afterAll, describe, expect, test } from 'vitest'
+import { config as loadDotenv } from 'dotenv'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { createId } from '@paralleldrive/cuid2'
+import { inArray } from 'drizzle-orm'
+import { schema } from '@cyggie/db'
+
+// GET /meetings/impromptu — T16. Returns recent impromptu (no-cal-event)
+// meetings for the calling user. Mobile calendar tab renders these in a
+// "My Recordings" section so impromptu rows can be found after closing
+// the app post-recording.
+//
+// Coverage:
+//   • returns only calendar_event_id IS NULL rows
+//   • respects the `days` window (older rows excluded)
+//   • cross-user isolation
+//   • LIMIT 20 enforced
+//   • days outside [1, 30] → 400 (Zod validation)
+
+loadDotenv({
+  path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env.local'),
+})
+
+process.env['NODE_ENV'] = 'test'
+
+const { buildApp } = await import('../src/app')
+const { loadEnv } = await import('../src/env')
+const { getDb } = await import('../src/db')
+const { signAccessToken } = await import('../src/auth/jwt')
+
+const env = loadEnv()
+const app = await buildApp(env)
+await app.ready()
+const db = getDb(env.GATEWAY_DATABASE_URL)
+
+const TEST_PREFIX = `test-impromptu-${Date.now().toString(36)}-`
+const createdUserIds: string[] = []
+const createdMeetingIds: string[] = []
+
+afterAll(async () => {
+  if (createdMeetingIds.length > 0) {
+    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
+  }
+  if (createdUserIds.length > 0) {
+    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
+  }
+  await app.close()
+})
+
+async function setupUser(): Promise<{ userId: string; jwt: string }> {
+  const userId = TEST_PREFIX + createId().slice(0, 8)
+  await db.insert(schema.users).values({
+    id: userId,
+    googleSub: 'sub-' + userId,
+    email: `${userId}@example.com`,
+  })
+  createdUserIds.push(userId)
+  const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
+    sub: userId,
+    sid: TEST_PREFIX + 'sess-' + userId,
+    device: 'test-device',
+    scope: ['user'],
+    firm_id: TEST_PREFIX + 'firm',
+    role: 'member',
+  })
+  return { userId, jwt }
+}
+
+async function insertMeeting(args: {
+  userId: string
+  calendarEventId: string | null
+  title: string
+  date: Date
+}): Promise<string> {
+  const id = createId()
+  await db.insert(schema.meetings).values({
+    id,
+    userId: args.userId,
+    calendarEventId: args.calendarEventId,
+    title: args.title,
+    date: args.date,
+    status: 'transcribed',
+    createdByUserId: args.userId,
+  })
+  createdMeetingIds.push(id)
+  return id
+}
+
+describe('GET /meetings/impromptu', () => {
+  test('returns only calendar_event_id IS NULL rows', async () => {
+    const { userId, jwt } = await setupUser()
+    const now = new Date()
+    // 1 impromptu + 1 calendar-anchored. Both within window.
+    const impromptuId = await insertMeeting({
+      userId,
+      calendarEventId: null,
+      title: 'Impromptu chat',
+      date: new Date(now.getTime() - 60 * 60 * 1000), // 1h ago
+    })
+    await insertMeeting({
+      userId,
+      calendarEventId: 'gcal-' + createId(),
+      title: 'Scheduled standup',
+      date: new Date(now.getTime() - 30 * 60 * 1000), // 30min ago
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { meetings: Array<{ id: string; title: string }> }
+    expect(body.meetings).toHaveLength(1)
+    expect(body.meetings[0]?.id).toBe(impromptuId)
+    expect(body.meetings[0]?.title).toBe('Impromptu chat')
+  })
+
+  test('respects the days window — rows outside excluded', async () => {
+    const { userId, jwt } = await setupUser()
+    const now = new Date()
+    // Inside default 7d window
+    const recentId = await insertMeeting({
+      userId,
+      calendarEventId: null,
+      title: 'Yesterday recording',
+      date: new Date(now.getTime() - 24 * 60 * 60 * 1000),
+    })
+    // 14 days ago — outside default 7d window
+    await insertMeeting({
+      userId,
+      calendarEventId: null,
+      title: 'Old recording',
+      date: new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000),
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu', // default days=7
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { meetings: Array<{ id: string }> }
+    expect(body.meetings).toHaveLength(1)
+    expect(body.meetings[0]?.id).toBe(recentId)
+
+    // Bumping days=30 should bring the older one back too.
+    const res30 = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu?days=30',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const body30 = res30.json() as { meetings: Array<{ id: string }> }
+    expect(body30.meetings).toHaveLength(2)
+  })
+
+  test('cross-user isolation — user A does not see user B impromptu', async () => {
+    const a = await setupUser()
+    const b = await setupUser()
+    const now = new Date()
+
+    await insertMeeting({
+      userId: a.userId,
+      calendarEventId: null,
+      title: 'A private recording',
+      date: new Date(now.getTime() - 60 * 60 * 1000),
+    })
+    await insertMeeting({
+      userId: b.userId,
+      calendarEventId: null,
+      title: 'B private recording',
+      date: new Date(now.getTime() - 30 * 60 * 1000),
+    })
+
+    const resA = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu',
+      headers: { authorization: `Bearer ${a.jwt}` },
+    })
+    const bodyA = resA.json() as { meetings: Array<{ title: string }> }
+    expect(bodyA.meetings.map((m) => m.title)).toEqual(['A private recording'])
+
+    const resB = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu',
+      headers: { authorization: `Bearer ${b.jwt}` },
+    })
+    const bodyB = resB.json() as { meetings: Array<{ title: string }> }
+    expect(bodyB.meetings.map((m) => m.title)).toEqual(['B private recording'])
+  })
+
+  test('LIMIT 20 enforced — insert 25, get 20 most recent', async () => {
+    const { userId, jwt } = await setupUser()
+    const now = new Date()
+    // Insert 25 impromptu rows spaced 1 hour apart, newest first.
+    for (let i = 0; i < 25; i++) {
+      await insertMeeting({
+        userId,
+        calendarEventId: null,
+        title: `Recording ${i}`,
+        date: new Date(now.getTime() - (i + 1) * 60 * 60 * 1000),
+      })
+    }
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu?days=30',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { meetings: Array<{ title: string }> }
+    expect(body.meetings).toHaveLength(20)
+    // Ordered by date DESC, so we should see Recording 0..19 (newest 20).
+    expect(body.meetings[0]?.title).toBe('Recording 0')
+    expect(body.meetings[19]?.title).toBe('Recording 19')
+  })
+
+  test('days outside [1, 30] → 400', async () => {
+    const { jwt } = await setupUser()
+
+    const tooHigh = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu?days=31',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(tooHigh.statusCode).toBe(400)
+
+    const tooLow = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu?days=0',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(tooLow.statusCode).toBe(400)
+
+    const notANumber = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu?days=banana',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(notANumber.statusCode).toBe(400)
+  })
+})

@@ -13,6 +13,7 @@ export interface TranscriptSegment {
 export interface MeetingLinkedCompany {
   id: string
   name: string
+  primaryDomain: string | null
 }
 
 export interface MeetingLinkedContact {
@@ -81,6 +82,29 @@ export async function fetchMeeting(
   return api.get<MeetingDetail>(`/meetings/${encodeURIComponent(id)}`, {
     signal: opts.signal,
   })
+}
+
+/**
+ * T16 — Recent impromptu (no-cal-event) meetings for the current user.
+ * Calendar tab's Past segment renders these in a "My Recordings" section.
+ *
+ * Gateway: `GET /meetings/impromptu?days=N` — server filters
+ * `calendar_event_id IS NULL AND date >= now() - INTERVAL N DAY`,
+ * orders DESC, caps at 20 rows. Server returns the full `MeetingDetail`
+ * shape so taps can navigate into detail without a second round-trip.
+ *
+ * `days` must be in [1, 30]; default 7 matches the user-facing "last 7
+ * days" copy. Out-of-range values yield a 400 from the gateway.
+ */
+export async function fetchImpromptuMeetings(
+  opts: { days?: number; signal?: AbortSignal } = {},
+): Promise<MeetingDetail[]> {
+  const days = opts.days ?? 7
+  const res = await api.get<{ meetings: MeetingDetail[] }>(
+    `/meetings/impromptu?days=${days}`,
+    { signal: opts.signal },
+  )
+  return res.meetings
 }
 
 /**

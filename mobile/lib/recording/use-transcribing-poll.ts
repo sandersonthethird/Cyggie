@@ -41,7 +41,7 @@
 // =============================================================================
 
 import { useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { fetchMeeting } from '../api/meetings'
 import { useAuthStore } from '../auth/store'
@@ -55,6 +55,7 @@ export function useTranscribingPoll(): void {
   const markDone = useRecordingStore((s) => s.markDone)
   const markError = useRecordingStore((s) => s.markError)
   const userId = useAuthStore((s) => s.userId)
+  const queryClient = useQueryClient()
 
   const { data, error } = useQuery({
     queryKey: ['meeting', meetingId, 'transcribing-poll'],
@@ -87,6 +88,11 @@ export function useTranscribingPoll(): void {
         // status='empty' so the user can discard the silent recording.
         void discardPendingUploadFileByMeetingId(meetingId, userId).then(() => {
           markDone()
+          // T16 — newly-finalized impromptu (or scheduled) row should appear
+          // in the calendar Past tab's "My Recordings" section without a
+          // 60s wait. Invalidate the impromptu query so a refetch fires on
+          // the next mount/focus.
+          queryClient.invalidateQueries({ queryKey: ['calendar', 'impromptu'] })
           // replace() so the user can't hit Back into the recording screen
           // and see stale "Transcribing…" copy.
           router.replace(`/meetings/${meetingId}`)

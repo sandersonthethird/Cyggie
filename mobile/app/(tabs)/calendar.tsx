@@ -33,7 +33,11 @@ import {
   type CalendarEvent,
   type CalendarPage,
 } from '../../lib/api/calendar'
-import { prepareMeetingFromCalendarEvent } from '../../lib/api/meetings'
+import {
+  fetchImpromptuMeetings,
+  prepareMeetingFromCalendarEvent,
+  type MeetingDetail,
+} from '../../lib/api/meetings'
 import { useAuthStore } from '../../lib/auth/store'
 import { useCalendarStore } from '../../lib/calendar/store'
 import { Avatar } from '../../components/Avatar'
@@ -111,6 +115,19 @@ export default function CalendarTab() {
   // truncation (>250 events). 5 consecutive empty pages stops loading.
   const upcomingInf = useCalendarInfiniteQuery({ direction: 'future', now: nowAnchor })
   const pastInf = useCalendarInfiniteQuery({ direction: 'past', now: nowAnchor })
+
+  // T16 — recent impromptu (no-cal-event) meetings. Only fetched when the
+  // user is on the Past segment; otherwise we waste a request. staleTime
+  // 60s + refetchOnWindowFocus matches the desktop pull-tick cadence so
+  // a meeting recorded on the desktop within the last minute appears on
+  // mobile within ~1s of foregrounding the app.
+  const impromptuQuery = useQuery({
+    queryKey: ['calendar', 'impromptu', '7d'],
+    queryFn: ({ signal }) => fetchImpromptuMeetings({ days: 7, signal }),
+    enabled: segment === 'past',
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+  })
 
   // dismissedIds is consumed only as a useMemo dep below — isDismissed is a
   // stable function reference, so without subscribing to the Set the filter
@@ -510,6 +527,7 @@ export default function CalendarTab() {
                   : old,
             )
             void pastInf.refetch()
+            void impromptuQuery.refetch()
           }}
           onRetry={() => pastInf.refetch()}
           onEventPress={handleEventPress}
@@ -519,6 +537,10 @@ export default function CalendarTab() {
           now={now}
           bannerMsg={bannerMsg}
           onDismissBanner={() => setBannerMsg(null)}
+          impromptuMeetings={impromptuQuery.data ?? null}
+          impromptuLoading={impromptuQuery.isLoading}
+          impromptuError={impromptuQuery.error}
+          onImpromptuPress={(id) => router.push(`/meetings/${id}`)}
         />
       )}
 
@@ -568,6 +590,10 @@ function InfiniteCalendarList({
   now,
   bannerMsg,
   onDismissBanner,
+  impromptuMeetings,
+  impromptuLoading,
+  impromptuError,
+  onImpromptuPress,
 }: {
   sections: CalendarDaySection[]
   variant: 'later' | 'past'
@@ -586,6 +612,13 @@ function InfiniteCalendarList({
   now: Date
   bannerMsg: string | null
   onDismissBanner: () => void
+  // T16 — impromptu (no-cal-event) meetings rendered above the date-grouped
+  // past events. Only passed when variant === 'past'; safe defaults
+  // ('My Recordings' hidden) for the 'later' variant.
+  impromptuMeetings?: MeetingDetail[] | null
+  impromptuLoading?: boolean
+  impromptuError?: Error | null
+  onImpromptuPress?: (id: string) => void
 }) {
   const data = useMemo(() => flattenSections(sections), [sections])
 
@@ -633,7 +666,17 @@ function InfiniteCalendarList({
         />
       }
       ListHeaderComponent={
-        <ErrorBanner message={bannerMsg} onDismiss={onDismissBanner} />
+        <>
+          <ErrorBanner message={bannerMsg} onDismiss={onDismissBanner} />
+          {variant === 'past' && (
+            <ImpromptuRecordingsSection
+              meetings={impromptuMeetings ?? null}
+              isLoading={!!impromptuLoading}
+              error={impromptuError ?? null}
+              onPress={onImpromptuPress ?? (() => {})}
+            />
+          )}
+        </>
       }
       ListEmptyComponent={isEmpty ? <EmptyState segment={emptySegment} /> : null}
       ListFooterComponent={
@@ -796,6 +839,92 @@ function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void })
       </Pressable>
     </View>
   )
+}
+
+// T16 — "My Recordings" section. Lists impromptu (no-cal-event) meetings
+// from the last 7 days at the top of the Past segment so they're findable
+// after the user closes the app post-recording. Rendered inside the past
+// FlatList's ListHeaderComponent so it scrolls naturally with the rest.
+//
+// States:
+//   • isLoading && !meetings  → skeleton row (single ActivityIndicator)
+//   • error                    → inline error banner (not the whole list)
+//   • meetings.length === 0    → section hidden (return null)
+//   • meetings.length > 0      → header + rows (adapt MeetingDetail to
+//                                CalendarEvent shape for the existing
+//                                MeetingRow component; no new row type)
+function ImpromptuRecordingsSection({
+  meetings,
+  isLoading,
+  error,
+  onPress,
+}: {
+  meetings: MeetingDetail[] | null
+  isLoading: boolean
+  error: Error | null
+  onPress: (id: string) => void
+}) {
+  if (isLoading && !meetings) {
+    return (
+      <View style={styles.section}>
+        <SectionHeader label="My Recordings" />
+        <View style={styles.impromptuSkeleton}>
+          <ActivityIndicator color={colors.crimson} size="small" />
+        </View>
+      </View>
+    )
+  }
+
+  if (error) {
+    const msg =
+      error instanceof ApiError
+        ? `${error.code}: ${error.message}`
+        : error.message
+    return (
+      <View style={styles.section}>
+        <SectionHeader label="My Recordings" />
+        <Text style={styles.impromptuError}>Couldn't load recordings — {msg}</Text>
+      </View>
+    )
+  }
+
+  if (!meetings || meetings.length === 0) {
+    return null
+  }
+
+  return (
+    <View style={styles.section}>
+      <SectionHeader label="My Recordings" />
+      {meetings.map((m) => (
+        <MeetingRow
+          key={m.id}
+          event={impromptuMeetingToCalendarEvent(m)}
+          variant="past"
+          onPress={() => onPress(m.id)}
+        />
+      ))}
+    </View>
+  )
+}
+
+// Adapter: MeetingDetail → CalendarEvent shape so the existing MeetingRow
+// renders impromptu rows without a new variant or row component. Calendar
+// attendees are empty (impromptu meetings have no calendar invite); start/
+// end derive from `date` + `durationSeconds` so the duration cell renders.
+function impromptuMeetingToCalendarEvent(m: MeetingDetail): CalendarEvent {
+  const startMs = new Date(m.date).getTime()
+  const durMs = (m.durationSeconds ?? 0) * 1000
+  return {
+    id: m.id,
+    calendarEventId: '',
+    title: m.title,
+    start: m.date,
+    end: new Date(startMs + durMs).toISOString(),
+    attendees: [],
+    isAllDay: false,
+    recordingStatus: m.status,
+    meetingId: m.id,
+  }
 }
 
 function formatDateHeader(d: Date): string {
@@ -968,6 +1097,19 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  // T16 — "My Recordings" section states.
+  impromptuSkeleton: {
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  impromptuError: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    color: colors.text3,
+    fontSize: type.bodyTight,
   },
 
   tooltip: {

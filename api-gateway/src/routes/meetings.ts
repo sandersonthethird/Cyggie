@@ -43,6 +43,7 @@ const TranscriptSegmentSchema = z.object({
 const LinkedCompanySchema = z.object({
   id: z.string(),
   name: z.string(),
+  primaryDomain: z.string().nullable(),
 })
 
 const LinkedContactSchema = z.object({
@@ -167,6 +168,7 @@ async function buildMeetingDetail(
     .select({
       id: schema.orgCompanies.id,
       name: schema.orgCompanies.canonicalName,
+      primaryDomain: schema.orgCompanies.primaryDomain,
     })
     .from(schema.meetingCompanyLinks)
     .innerJoin(
@@ -383,6 +385,55 @@ export async function registerMeetingRoutes(
   env: GatewayEnv,
 ): Promise<void> {
   const fastifyTyped = app.withTypeProvider<ZodTypeProvider>()
+
+  // ───────────────────────────────────────────────────────────────────────
+  // GET /meetings/impromptu — T16. Recent impromptu (no-cal-event) meetings.
+  //
+  // Mobile calendar tab's Past segment renders these in a "My Recordings"
+  // section so users can find impromptu recordings they made on this or
+  // any other device. Without this route, impromptu rows are reachable only
+  // via the post-recording auto-navigate — closing the app loses the path.
+  //
+  // MUST be registered BEFORE GET /meetings/:id below, otherwise Fastify
+  // matches /meetings/impromptu as :id='impromptu' → 404.
+  //
+  // Cap = 20 rows; user-scoped via requireFirm(); window defaults to 7 days,
+  // clamped to [1, 30] to prevent abuse.
+  // ───────────────────────────────────────────────────────────────────────
+  const IMPROMPTU_LIMIT = 20
+  fastifyTyped.route({
+    method: 'GET',
+    url: '/meetings/impromptu',
+    schema: {
+      querystring: z.object({
+        days: z.coerce.number().int().min(1).max(30).default(7),
+      }),
+      response: { 200: z.object({ meetings: z.array(MeetingDetailSchema) }) },
+    },
+    handler: async (req) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { days } = req.query
+
+      const rows = await db
+        .select()
+        .from(schema.meetings)
+        .where(
+          and(
+            eq(schema.meetings.userId, user.sub),
+            sql`${schema.meetings.calendarEventId} IS NULL`,
+            sql`${schema.meetings.date} >= now() - (${days} || ' days')::interval`,
+          ),
+        )
+        .orderBy(sql`${schema.meetings.date} DESC`)
+        .limit(IMPROMPTU_LIMIT)
+
+      const meetings = await Promise.all(
+        rows.map((r) => buildMeetingDetail(db, r)),
+      )
+      return { meetings }
+    },
+  })
 
   // ───────────────────────────────────────────────────────────────────────
   // GET /meetings/:id — full detail incl. linked companies + people.
