@@ -1,6 +1,5 @@
 import { useCallback } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
-import { Ionicons } from '@expo/vector-icons'
 
 import {
   type CompanyListItem,
@@ -8,7 +7,8 @@ import {
   fetchCompanies,
 } from '../lib/api/companies'
 import { EntityPicker } from './EntityPicker'
-import { colors, radii, spacing, type } from '../theme'
+import { CompanyLogo } from './CompanyLogo'
+import { colors, type } from '../theme'
 
 // Company-typed wrapper around EntityPicker. Used by meeting detail's
 // "Link Company" affordance.
@@ -76,9 +76,12 @@ function CompanyRow({ company }: { company: CompanyListItem }): React.JSX.Elemen
     .join(' · ')
   return (
     <>
-      <View style={styles.avatar}>
-        <Ionicons name="business-outline" size={18} color={colors.text3} />
-      </View>
+      <CompanyLogo
+        domain={company.primaryDomain}
+        name={company.name}
+        size={32}
+        shape="rounded"
+      />
       <View style={styles.text}>
         <Text style={styles.name} numberOfLines={1}>
           {company.name}
@@ -94,14 +97,6 @@ function CompanyRow({ company }: { company: CompanyListItem }): React.JSX.Elemen
 }
 
 const styles = StyleSheet.create({
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: radii.md,
-    backgroundColor: colors.surface3,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   text: { flex: 1 },
   name: { color: colors.text, fontSize: type.body + 1, fontWeight: '500' },
   meta: { color: colors.text3, fontSize: type.meta, marginTop: 2 },

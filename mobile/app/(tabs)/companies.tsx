@@ -16,6 +16,7 @@ import { router } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import { fetchCompanies, type CompanyListItem } from '../../lib/api/companies'
 import { useAuthStore } from '../../lib/auth/store'
+import { CompanyLogo } from '../../components/CompanyLogo'
 import { colors, radii, spacing, type } from '../../theme'
 
 // Companies tab — M2 read-only surface.
@@ -136,9 +137,12 @@ function CompanyRow({ company }: { company: CompanyListItem }) {
       accessibilityLabel={`${company.name} — ${lastTouch}`}
     >
       <View style={styles.rowLeading}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initialsForCompany(company.name)}</Text>
-        </View>
+        <CompanyLogo
+          domain={company.primaryDomain}
+          name={company.name}
+          size={40}
+          shape="rounded"
+        />
       </View>
       <View style={styles.rowBody}>
         <Text style={styles.rowName} numberOfLines={1}>
@@ -224,13 +228,6 @@ function formatLastTouch(iso: string | null): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function initialsForCompany(name: string): string {
-  const words = name.trim().split(/\s+/).slice(0, 2)
-  if (words.length === 0) return '?'
-  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase()
-  return (words[0]![0]! + words[1]![0]!).toUpperCase()
-}
-
 function humanizeStage(raw: string): string {
   return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
@@ -294,20 +291,6 @@ const styles = StyleSheet.create({
   },
   rowPressed: { backgroundColor: colors.surface3 },
   rowLeading: { width: 40 },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: radii.pill,
-    backgroundColor: colors.surface3,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: colors.text2,
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
   rowBody: { flex: 1, minWidth: 0 },
   rowName: {
     color: colors.text,

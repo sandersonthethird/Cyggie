@@ -49,6 +49,10 @@ export interface ChatSessionListItem {
   // [] for sessions where the user hasn't picked anything, and for all
   // non-crm contextKinds (which ignore this field).
   selectedCompanyIds: string[]
+  // Per-chat Anthropic prompt-caching toggle. True (default) = context
+  // block is cached on the gateway side. False = no cache_control, no
+  // 1.25× cache-write premium — useful for one-shot chats.
+  cacheEnabled: boolean
 }
 
 // Phase 2: hydrated chip DTO returned in ChatSessionDetail. Gateway joins
@@ -60,6 +64,7 @@ export interface CompanyChip {
   name: string
   industry: string | null
   stage: string | null
+  primaryDomain: string | null
 }
 
 export interface ChatMessage {
@@ -140,6 +145,8 @@ export interface UpdateChatSessionInput {
   isArchived?: boolean
   // Phase 2: replaces the full selected-companies list (not a delta).
   selectedCompanyIds?: string[]
+  // Per-chat prompt-caching toggle.
+  cacheEnabled?: boolean
 }
 
 export interface UpdateChatSessionResult {

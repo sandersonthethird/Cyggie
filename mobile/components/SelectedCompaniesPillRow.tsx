@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 
 import type { CompanyChip } from '../lib/api/chat'
+import { CompanyLogo } from './CompanyLogo'
 import { colors, radii, spacing, type } from '../theme'
 
 // =============================================================================
@@ -44,6 +45,13 @@ export function SelectedCompaniesPillRow({
       >
         {companies.map((c) => (
           <View key={c.id} style={styles.chip}>
+            <CompanyLogo
+              domain={c.primaryDomain}
+              name={c.name}
+              size={18}
+              shape="rounded"
+              style={styles.chipLogo}
+            />
             <Text style={styles.chipText} numberOfLines={1}>
               {c.name}
             </Text>
@@ -104,7 +112,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    paddingLeft: spacing.md,
+    paddingLeft: 6,
     paddingRight: 4,
     paddingVertical: 4,
     borderRadius: radii.pill,
@@ -112,6 +120,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     maxWidth: 220,
+  },
+  chipLogo: {
+    marginRight: 2,
   },
   chipText: {
     color: colors.text,

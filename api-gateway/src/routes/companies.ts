@@ -47,6 +47,9 @@ const CompanyListItemSchema = z.object({
   status: z.string(),
   city: z.string().nullable(),
   state: z.string().nullable(),
+  // primaryDomain is exposed on list rows so mobile can render company logos
+  // (Clearbit URL derived from the domain) without a second round-trip.
+  primaryDomain: z.string().nullable(),
   lastTouchAt: z.string().nullable(),
   meetingCount: z.number(),
 })
@@ -144,6 +147,7 @@ export async function registerCompanyRoutes(
           status: schema.orgCompanies.status,
           city: schema.orgCompanies.city,
           state: schema.orgCompanies.state,
+          primaryDomain: schema.orgCompanies.primaryDomain,
           lastTouchAt: lastTouchSubquery.lastTouchAt,
           meetingCount: lastTouchSubquery.meetingCount,
         })
@@ -171,6 +175,7 @@ export async function registerCompanyRoutes(
           status: r.status,
           city: r.city,
           state: r.state,
+          primaryDomain: r.primaryDomain,
           lastTouchAt: r.lastTouchAt ? new Date(r.lastTouchAt).toISOString() : null,
           meetingCount: r.meetingCount ?? 0,
         })),
@@ -364,6 +369,7 @@ export async function registerCompanyRoutes(
           status: e.status,
           city: e.city,
           state: e.state,
+          primaryDomain: e.primaryDomain,
           lastTouchAt: null,
           meetingCount: 0,
         })
@@ -408,6 +414,7 @@ export async function registerCompanyRoutes(
         status: 'active',
         city: null,
         state: null,
+        primaryDomain: primaryDomain ?? null,
         lastTouchAt: null,
         meetingCount: 0,
       })

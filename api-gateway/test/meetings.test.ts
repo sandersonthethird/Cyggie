@@ -263,7 +263,9 @@ describe('GET /meetings/:id', () => {
     expect((body.transcriptSegments[0] as unknown as Record<string, unknown>).words).toBeUndefined()
 
     // Linked entities.
-    expect(body.linkedCompanies).toEqual([{ id: companyId, name: 'Acme Corp ' + TEST_PREFIX }])
+    expect(body.linkedCompanies).toEqual([
+      { id: companyId, name: 'Acme Corp ' + TEST_PREFIX, primaryDomain: null },
+    ])
     expect(body.linkedContacts).toEqual([
       {
         id: contactId,

@@ -34,6 +34,7 @@ export interface ChatSessionRow {
   isActive: boolean
   isPinned: boolean
   isArchived: boolean
+  cacheEnabled: boolean
   lastMessageAt: string
 }
 
@@ -58,5 +59,15 @@ export function useChatActions() {
     await api.invoke(IPC_CHANNELS.CHAT_SESSION_RENAME, { sessionId, title })
   }, [])
 
-  return { pin, unpin, archive, delete: deleteSession, rename }
+  const setCacheEnabled = useCallback(
+    async (sessionId: string, enabled: boolean) => {
+      await api.invoke(IPC_CHANNELS.CHAT_SESSION_SET_CACHE_ENABLED, {
+        sessionId,
+        enabled,
+      })
+    },
+    [],
+  )
+
+  return { pin, unpin, archive, delete: deleteSession, rename, setCacheEnabled }
 }

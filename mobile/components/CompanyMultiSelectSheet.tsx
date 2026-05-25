@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 
 import { type CompanyListItem, fetchCompanies } from '../lib/api/companies'
+import { CompanyLogo } from './CompanyLogo'
 import { colors, radii, spacing, type } from '../theme'
 
 // =============================================================================
@@ -296,6 +297,13 @@ function CompanyRow({
       <View style={[styles.checkbox, selected && styles.checkboxOn]}>
         {selected && <Ionicons name="checkmark" size={14} color={colors.surface} />}
       </View>
+      <CompanyLogo
+        domain={company.primaryDomain}
+        name={company.name}
+        size={28}
+        shape="rounded"
+        style={styles.rowLogo}
+      />
       <View style={styles.rowText}>
         <Text style={styles.rowTitle} numberOfLines={1}>
           {company.name}
@@ -387,6 +395,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.crimson,
     borderColor: colors.crimson,
   },
+  rowLogo: { marginRight: spacing.sm },
   rowText: { flex: 1 },
   rowTitle: { color: colors.text, fontSize: type.body + 1, fontWeight: '600' },
   rowMeta: { color: colors.text3, fontSize: type.meta, marginTop: 2 },

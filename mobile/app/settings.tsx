@@ -3,8 +3,10 @@ import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import Constants from 'expo-constants'
+import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../lib/auth/store'
 import { useCalendarStore } from '../lib/calendar/store'
+import { fetchMe } from '../lib/api/auth'
 import { colors, radii, spacing, type } from '../theme'
 
 // M6-light: account + diagnostics in one place. Today's reachability is via
@@ -13,9 +15,18 @@ import { colors, radii, spacing, type } from '../theme'
 
 export default function SettingsScreen() {
   const userId = useAuthStore((s) => s.userId)
+  const authStatus = useAuthStore((s) => s.status)
   const signOut = useAuthStore((s) => s.signOut)
   const dismissedCount = useCalendarStore((s) => s.dismissedIds.size)
   const undismissAll = useCalendarStore((s) => s.undismissAll)
+
+  const meQuery = useQuery({
+    queryKey: ['auth', 'me'],
+    queryFn: ({ signal }) => fetchMe({ signal }),
+    enabled: authStatus === 'signed_in',
+    staleTime: 5 * 60_000,
+  })
+  const email = meQuery.data?.email ?? null
 
   const appVersion = Constants.expoConfig?.version ?? 'unknown'
   const buildNumber = Constants.expoConfig?.ios?.buildNumber ?? '—'
@@ -30,11 +41,15 @@ export default function SettingsScreen() {
         text: 'Sign out',
         style: 'destructive',
         onPress: () => {
-          // signOut wipes auth state; the route guard in app/index.tsx
-          // re-renders and redirects to /(auth)/sign-in. We just need to
-          // pop back to "/" so the guard runs.
-          void signOut()
-          router.replace('/')
+          // Must await signOut before navigating: the store flips to
+          // signed_out only after clearAllAuthStorage resolves. If we
+          // navigate first, the index dispatcher still sees status=
+          // signed_in and routes back to /(tabs)/calendar — the bug
+          // that left the sign-out button looking like a no-op.
+          void (async () => {
+            await signOut()
+            router.replace('/(auth)/sign-in')
+          })()
         },
       },
     ])
@@ -62,7 +77,7 @@ export default function SettingsScreen() {
       <SafeAreaView edges={['bottom']} style={styles.bodyArea}>
         <ScrollView contentContainerStyle={styles.scroll}>
           <Section title="Account">
-            <Row label="Signed in as" value={truncateUserId(userId)} />
+            <Row label="Signed in as" value={accountValue(email, userId, meQuery.isLoading)} />
             <RowAction
               icon="log-out-outline"
               label="Sign out"
@@ -110,6 +125,12 @@ function truncateUserId(userId: string | null): string {
   if (!userId) return '—'
   if (userId.length <= 12) return userId
   return `${userId.slice(0, 6)}…${userId.slice(-4)}`
+}
+
+function accountValue(email: string | null, userId: string | null, isLoading: boolean): string {
+  if (email) return email
+  if (isLoading) return '…'
+  return truncateUserId(userId)
 }
 
 interface SectionProps {

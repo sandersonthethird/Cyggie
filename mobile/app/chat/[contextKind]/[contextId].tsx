@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -55,6 +55,10 @@ export default function ChatScreen() {
   const contextId = params.contextId ?? ''
   const contextLabel = (Array.isArray(params.label) ? params.label[0] : params.label) ?? null
 
+  // Stack-pushed screen with no tab bar — pad the bottom by the home-indicator
+  // inset so the composer doesn't bleed off the screen on devices with one.
+  const insets = useSafeAreaInsets()
+
   // Shares cache with ChatComposer via identical query key.
   const sessionQuery = useQuery({
     queryKey: ['chat', 'session-by-context', contextKind, contextId],
@@ -83,7 +87,7 @@ export default function ChatScreen() {
 
   if (!contextKind || !contextId) {
     return (
-      <View style={styles.root}>
+      <View style={[styles.root, { paddingBottom: insets.bottom }]}>
         <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
           <View style={styles.topbar}>
             <Pressable
@@ -105,7 +109,7 @@ export default function ChatScreen() {
   }
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { paddingBottom: insets.bottom }]}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.topbar}>
           <Pressable
@@ -264,6 +268,30 @@ function SessionActionsSheet({
     },
   })
 
+  const toggleCacheMut = useMutation({
+    mutationFn: () =>
+      updateChatSession(session.id, { cacheEnabled: !session.cacheEnabled }),
+    onSuccess: (result) => {
+      if (result.ok && result.session) {
+        qc.setQueryData(
+          ['chat', 'session-detail', session.id],
+          (prev: { session: ChatSessionListItem; messages: ChatMessage[] } | undefined) =>
+            prev ? { ...prev, session: result.session! } : prev,
+        )
+        qc.invalidateQueries({ queryKey: ['chat', 'sessions-list'] })
+        onClose()
+      } else if (!result.ok) {
+        Alert.alert(
+          'Update failed',
+          'Someone else just changed this chat. Pull to refresh and try again.',
+        )
+      }
+    },
+    onError: () => {
+      Alert.alert('Action failed', 'Please try again.')
+    },
+  })
+
   const archiveMut = useMutation({
     mutationFn: () => updateChatSession(session.id, { isArchived: true }),
     onSuccess: (result) => {
@@ -301,7 +329,11 @@ function SessionActionsSheet({
     )
   }
 
-  const busy = togglePinMut.isPending || archiveMut.isPending || startNew.isPending
+  const busy =
+    togglePinMut.isPending ||
+    archiveMut.isPending ||
+    startNew.isPending ||
+    toggleCacheMut.isPending
 
   return (
     <Modal visible={open} animationType="fade" transparent onRequestClose={onClose}>
@@ -339,6 +371,17 @@ function SessionActionsSheet({
             disabled={busy}
             onPress={() => togglePinMut.mutate()}
             pending={togglePinMut.isPending}
+          />
+          <ActionRow
+            icon={session.cacheEnabled ? 'flash' : 'flash-outline'}
+            label={
+              session.cacheEnabled
+                ? 'Prompt caching: On'
+                : 'Prompt caching: Off'
+            }
+            disabled={busy}
+            onPress={() => toggleCacheMut.mutate()}
+            pending={toggleCacheMut.isPending}
           />
           <ActionRow
             icon="archive-outline"

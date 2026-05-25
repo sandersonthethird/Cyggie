@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ActivityIndicator,
   Pressable,
@@ -22,6 +22,7 @@ import {
   type SearchResponse,
 } from '../lib/api/search'
 import { useAuthStore } from '../lib/auth/store'
+import { CompanyLogo } from '../components/CompanyLogo'
 import { colors, radii, spacing, type } from '../theme'
 
 // Universal search overlay.
@@ -222,7 +223,14 @@ function CompanyRow({ hit }: { hit: CompanyHit }) {
     .join(' · ')
   return (
     <ResultRow
-      icon="business-outline"
+      leading={
+        <CompanyLogo
+          domain={hit.primaryDomain}
+          name={hit.name}
+          size={32}
+          shape="rounded"
+        />
+      }
       title={hit.name}
       subtitle={sub || null}
       onPress={() => router.push(`/companies/${hit.id}`)}
@@ -270,11 +278,13 @@ function NoteRow({ hit }: { hit: NoteHit }) {
 
 function ResultRow({
   icon,
+  leading,
   title,
   subtitle,
   onPress,
 }: {
-  icon: keyof typeof Ionicons.glyphMap
+  icon?: keyof typeof Ionicons.glyphMap
+  leading?: ReactNode
   title: string
   subtitle: string | null
   onPress: () => void
@@ -284,9 +294,13 @@ function ResultRow({
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
     >
-      <View style={styles.rowIconWrap}>
-        <Ionicons name={icon} size={16} color={colors.text2} />
-      </View>
+      {leading ? (
+        <View style={styles.rowLeadingWrap}>{leading}</View>
+      ) : icon ? (
+        <View style={styles.rowIconWrap}>
+          <Ionicons name={icon} size={16} color={colors.text2} />
+        </View>
+      ) : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.rowTitle} numberOfLines={1}>
           {title}
@@ -426,6 +440,12 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: radii.pill,
     backgroundColor: colors.surface3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowLeadingWrap: {
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },

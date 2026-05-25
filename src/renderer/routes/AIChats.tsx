@@ -339,6 +339,22 @@ export default function AIChats() {
     [actions, sessions]
   )
 
+  const handleToggleCache = useCallback(
+    async (id: string, enabled: boolean) => {
+      const prev = sessions
+      setSessions((cur) =>
+        cur.map((s) => (s.id === id ? { ...s, cacheEnabled: enabled } : s)),
+      )
+      try {
+        await actions.setCacheEnabled(id, enabled)
+      } catch (err) {
+        console.warn('[AIChats] toggle cache failed', err)
+        setSessions(prev)
+      }
+    },
+    [actions, sessions],
+  )
+
   const handleRowClick = useCallback(
     async (id: string) => {
       const session = sessions.find((s) => s.id === id)
@@ -516,6 +532,7 @@ export default function AIChats() {
                           onDelete={() => handleDelete(row.id)}
                           onRename={(t) => handleRename(row.id, t)}
                           onOpenFullScreen={() => handleOpenFullScreen(row.id)}
+                          onToggleCache={(enabled) => handleToggleCache(row.id, enabled)}
                         />
                       </div>
                     ))}

@@ -10,6 +10,7 @@ export interface ContactListItem {
   contactType: string | null
   primaryCompanyId: string | null
   primaryCompanyName: string | null
+  primaryCompanyDomain: string | null
   city: string | null
   state: string | null
   lastMeetingAt: string | null

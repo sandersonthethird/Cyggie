@@ -7,6 +7,7 @@ export interface CompanyHit {
   name: string
   industry: string | null
   pipelineStage: string | null
+  primaryDomain: string | null
 }
 
 export interface ContactHit {
@@ -15,6 +16,7 @@ export interface ContactHit {
   title: string | null
   email: string | null
   primaryCompanyName: string | null
+  primaryCompanyDomain: string | null
 }
 
 export interface MeetingHit {

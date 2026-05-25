@@ -21,8 +21,8 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import Markdown from 'react-native-markdown-display'
 
+import { RichMarkdown, chatMarkdownStyles } from '../lib/markdown'
 import {
   type ChatContextKind,
   type ChatMessage,
@@ -514,7 +514,7 @@ function MessageBubble({
         ) : isUser ? (
           <Text style={[styles.bubbleText, styles.bubbleTextUser]}>{message.content}</Text>
         ) : (
-          <Markdown style={chatMarkdownStyles}>{message.content}</Markdown>
+          <RichMarkdown style={chatMarkdownStyles}>{message.content}</RichMarkdown>
         )}
       </View>
     </View>
@@ -622,29 +622,3 @@ const styles = StyleSheet.create({
   sendBtnPressed: { opacity: 0.7 },
 })
 
-const chatMarkdownStyles = StyleSheet.create({
-  body: { color: colors.text, fontSize: type.body + 1, lineHeight: 22 },
-  heading1: { color: colors.text, fontSize: type.h2, fontWeight: '700', marginTop: 8 },
-  heading2: { color: colors.text, fontSize: type.h2 - 2, fontWeight: '700', marginTop: 8 },
-  heading3: { color: colors.text, fontSize: type.body + 2, fontWeight: '600', marginTop: 6 },
-  paragraph: { marginTop: 4, marginBottom: 4 },
-  bullet_list: { marginTop: 2, marginBottom: 2 },
-  ordered_list: { marginTop: 2, marginBottom: 2 },
-  list_item: { marginVertical: 2 },
-  code_inline: {
-    backgroundColor: colors.surface3,
-    color: colors.text,
-    paddingHorizontal: 4,
-    borderRadius: 4,
-    fontSize: type.body,
-  },
-  fence: {
-    backgroundColor: colors.surface3,
-    color: colors.text,
-    padding: spacing.sm,
-    borderRadius: radii.sm,
-    fontSize: type.bodyTight,
-  },
-  link: { color: colors.crimson },
-  strong: { fontWeight: '700', color: colors.text },
-})

@@ -68,6 +68,7 @@ async function insertTestCompany(opts: {
   name: string
   industry?: string
   pipelineStage?: string
+  primaryDomain?: string | null
 }): Promise<string> {
   const id = TEST_PREFIX + 'co-' + createId().slice(0, 8)
   await db.insert(schema.orgCompanies).values({
@@ -77,6 +78,7 @@ async function insertTestCompany(opts: {
     normalizedName: opts.name.toLowerCase(),
     industry: opts.industry ?? null,
     pipelineStage: opts.pipelineStage ?? null,
+    primaryDomain: opts.primaryDomain ?? null,
     status: 'active',
   })
   createdCompanyIds.push(id)
@@ -144,8 +146,14 @@ describe('GET /companies', () => {
     const userId = await insertTestUser()
 
     // Three companies; two have meetings (so they get a last-touch), one doesn't.
+    // recentCoId gets a primaryDomain so the list response can be checked
+    // for the field — the others stay null to confirm we don't crash on null.
     const oldCoId = await insertTestCompany({ userId, name: 'AlphaCo ' + TEST_PREFIX })
-    const recentCoId = await insertTestCompany({ userId, name: 'BetaCo ' + TEST_PREFIX })
+    const recentCoId = await insertTestCompany({
+      userId,
+      name: 'BetaCo ' + TEST_PREFIX,
+      primaryDomain: 'beta.example',
+    })
     const untouchedCoId = await insertTestCompany({ userId, name: 'GammaCo ' + TEST_PREFIX })
 
     await insertTestMeeting({

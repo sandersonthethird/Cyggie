@@ -28,6 +28,7 @@ import {
   deleteChatSession,
   pinChatSession,
   renameChatSession,
+  setChatSessionCacheEnabled,
   unpinChatSession,
 } from '@cyggie/db/sqlite/repositories'
 import { getCurrentUserId } from '../security/current-user'
@@ -141,6 +142,16 @@ export function registerChatSessionHandlers(): void {
       if (!sessionId) throw new Error('sessionId is required')
       const userId = getCurrentUserId()
       archiveChatSession(sessionId, userId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_SESSION_SET_CACHE_ENABLED,
+    (_event, data: { sessionId: string; enabled: boolean }) => {
+      if (!data?.sessionId) throw new Error('sessionId is required')
+      if (typeof data.enabled !== 'boolean') throw new Error('enabled must be boolean')
+      const userId = getCurrentUserId()
+      setChatSessionCacheEnabled(data.sessionId, data.enabled, userId)
     }
   )
 

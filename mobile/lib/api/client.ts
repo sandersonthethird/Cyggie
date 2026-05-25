@@ -128,17 +128,26 @@ export async function apiFetch<TResponse = unknown, TBody = unknown>(
     if (body.reauth_required) {
       // Gateway is explicit: refresh won't help. Surface a typed error and
       // let per-screen handlers decide what to do. Critically, do NOT
-      // signOut() here: the gateway emits `reauth_required` for Google-side
-      // problems too (e.g. /calendar/events when the user's Google OAuth
-      // token is revoked or missing the required scope), and wiping the
-      // Cyggie session in that case produced an infinite sign-in loop —
-      // the Cyggie JWT was fine; only the Google credentials were broken.
+      // signOut() here and do NOT set reauthRequired=true: every
+      // reauth_required=true response that reaches this branch is a
+      // Google-side issue (calendar/Gmail can't reach Google's API —
+      // NO_GOOGLE_TOKENS / REAUTH_REQUIRED / NO_ACCESS_TOKEN /
+      // GOOGLE_AUTH_FAILED). The Cyggie JWT is fine; only the Google
+      // credentials are broken. The gateway's auth-refresh route also
+      // emits reauth_required=true (INVALID_REFRESH / DEVICE_MISMATCH /
+      // REFRESH_EXPIRED / USER_NOT_FOUND), but those are consumed inside
+      // ensureFreshAccessToken (which signOut()s and returns null) and
+      // never surface here. So leaving reauthRequired=false keeps the
+      // ~8 screens' "redirect on reauthRequired" handler from wiping the
+      // user's Cyggie session for a Google-only problem (the original
+      // OAuth-loop bug). Screens that want to surface "reconnect Google"
+      // can check the error code instead.
       throw new ApiError({
         status: 401,
         code: body.error?.code ?? 'REAUTH_REQUIRED',
         message: body.error?.message ?? 'Reauth required',
         details: body.error?.details,
-        reauthRequired: true,
+        reauthRequired: false,
       })
     }
     // Try a silent refresh, then retry once.

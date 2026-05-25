@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -55,6 +56,15 @@ export const chatSessions = pgTable(
       .$type<string[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
+    // User-controllable Anthropic prompt-caching toggle for this chat session.
+    // When true (default), the gateway tags the context-block segment of the
+    // system prompt with `cache_control: ephemeral` so multi-turn chats read
+    // from cache on turn 2+ at ~0.1× input cost. When false, the cache marker
+    // is omitted — useful for one-shot questions where the 1.25× cache-write
+    // premium wouldn't pay back. Surfaced via the per-chat settings sheet on
+    // both mobile + desktop. Default TRUE preserves pre-toggle behavior for
+    // existing sessions.
+    cacheEnabled: boolean('cache_enabled').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

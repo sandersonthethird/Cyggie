@@ -200,6 +200,7 @@ function freshDb(): Database.Database {
       is_active INTEGER NOT NULL DEFAULT 1,
       is_pinned INTEGER NOT NULL DEFAULT 0,
       is_archived INTEGER NOT NULL DEFAULT 0,
+      cache_enabled INTEGER NOT NULL DEFAULT 1,
       last_message_at TEXT NOT NULL DEFAULT (datetime('now')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -594,6 +595,7 @@ function makeSessionRow(
     isActive: 1,
     isPinned: 0,
     isArchived: 0,
+    cacheEnabled: 1,
     lastMessageAt: '2026-05-24T10:00:00.000Z',
     createdByUserId: USER_ID,
     updatedByUserId: USER_ID,
@@ -657,6 +659,26 @@ describe('applyRemoteChatSessions', () => {
     }
     expect(row.is_pinned).toBe(1)
     expect(row.is_archived).toBe(0)
+  })
+
+  it('propagates cacheEnabled changes from the gateway', () => {
+    // Initial pull with cacheEnabled=true.
+    applyRemoteChatSessions(db, DEVICE_ID, USER_ID, [
+      makeSessionRow({ id: 'sess-1', lamport: '5', cacheEnabled: true }),
+    ])
+    let row = db
+      .prepare('SELECT cache_enabled FROM chat_sessions WHERE id = ?')
+      .get('sess-1') as { cache_enabled: number }
+    expect(row.cache_enabled).toBe(1)
+
+    // Subsequent pull flips it off (e.g. user toggled on mobile).
+    applyRemoteChatSessions(db, DEVICE_ID, USER_ID, [
+      makeSessionRow({ id: 'sess-1', lamport: '6', cacheEnabled: false }),
+    ])
+    row = db
+      .prepare('SELECT cache_enabled FROM chat_sessions WHERE id = ?')
+      .get('sess-1') as { cache_enabled: number }
+    expect(row.cache_enabled).toBe(0)
   })
 })
 

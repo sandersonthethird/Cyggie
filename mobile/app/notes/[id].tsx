@@ -15,6 +15,7 @@ import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import { fetchNote, type NoteDetail } from '../../lib/api/notes'
 import { useAuthStore } from '../../lib/auth/store'
+import { RichMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
 // Note detail — single screen because notes don't have enough cardinality to
@@ -108,7 +109,7 @@ export default function NoteDetailScreen() {
               {note.content.trim().length === 0 ? (
                 <Text style={styles.emptyInline}>This note is empty.</Text>
               ) : (
-                <Text style={styles.content}>{note.content}</Text>
+                <RichMarkdown>{note.content}</RichMarkdown>
               )}
             </View>
 
@@ -291,11 +292,6 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-  },
-  content: {
-    color: colors.text2,
-    fontSize: type.body + 2,
-    lineHeight: 22,
   },
   emptyInline: {
     color: colors.text3,

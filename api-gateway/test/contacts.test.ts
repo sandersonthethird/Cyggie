@@ -64,6 +64,7 @@ async function insertTestUser(): Promise<string> {
 async function insertTestCompany(opts: {
   userId: string
   name: string
+  primaryDomain?: string | null
 }): Promise<string> {
   const id = TEST_PREFIX + 'co-' + createId().slice(0, 8)
   await db.insert(schema.orgCompanies).values({
@@ -71,6 +72,7 @@ async function insertTestCompany(opts: {
     userId: opts.userId,
     canonicalName: opts.name,
     normalizedName: opts.name.toLowerCase(),
+    primaryDomain: opts.primaryDomain ?? null,
     status: 'active',
   })
   createdCompanyIds.push(id)
@@ -145,6 +147,7 @@ describe('GET /contacts', () => {
     const companyId = await insertTestCompany({
       userId,
       name: 'Hosting Co ' + TEST_PREFIX,
+      primaryDomain: 'hosting.example',
     })
 
     const oldId = await insertTestContact({
@@ -178,6 +181,7 @@ describe('GET /contacts', () => {
         fullName: string
         lastMeetingAt: string | null
         primaryCompanyName: string | null
+        primaryCompanyDomain: string | null
       }>
     }
 
@@ -192,11 +196,17 @@ describe('GET /contacts', () => {
     expect(positions.recent).toBeLessThan(positions.old)
     expect(positions.old).toBeLessThan(positions.untouched)
 
-    // Company name joined in.
+    // Company name + domain joined in via LEFT JOIN. The untouched contact
+    // has no primary_company_id, so a misconfigured INNER JOIN would drop
+    // it from the result entirely — that's the regression this guards.
     expect(ours.find((c) => c.id === recentId)?.primaryCompanyName).toBe(
       'Hosting Co ' + TEST_PREFIX,
     )
+    expect(ours.find((c) => c.id === recentId)?.primaryCompanyDomain).toBe(
+      'hosting.example',
+    )
     expect(ours.find((c) => c.id === untouchedId)?.primaryCompanyName).toBeNull()
+    expect(ours.find((c) => c.id === untouchedId)?.primaryCompanyDomain).toBeNull()
   })
 
   test('user isolation: caller cannot see another user contacts', async () => {
@@ -265,6 +275,7 @@ describe('GET /contacts/:id', () => {
     const companyId = await insertTestCompany({
       userId,
       name: 'Detail Co ' + TEST_PREFIX,
+      primaryDomain: 'detail.example',
     })
     const contactId = await insertTestContact({
       userId,
@@ -305,6 +316,7 @@ describe('GET /contacts/:id', () => {
       contactType: string | null
       primaryCompanyId: string | null
       primaryCompanyName: string | null
+      primaryCompanyDomain: string | null
       lastMeetingAt: string | null
       lastTouchAt: string | null
       recentMeetings: Array<{ id: string; title: string; date: string }>
@@ -317,6 +329,7 @@ describe('GET /contacts/:id', () => {
     expect(body.contactType).toBe('founder')
     expect(body.primaryCompanyId).toBe(companyId)
     expect(body.primaryCompanyName).toBe('Detail Co ' + TEST_PREFIX)
+    expect(body.primaryCompanyDomain).toBe('detail.example')
     expect(body.lastMeetingAt).toBe('2026-05-10T10:00:00.000Z')
     // lastTouchAt is the max of the live meeting subquery + denormalized
     // lastEmailAt. No emails here, so it equals the latest meeting date.

@@ -10,7 +10,6 @@ import {
   Text,
   View,
 } from 'react-native'
-import Markdown from 'react-native-markdown-display'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -43,6 +42,7 @@ import type { ContactListItem } from '../../lib/api/contacts'
 import type { CompanyListItem } from '../../lib/api/companies'
 import { ContactPicker } from '../../components/ContactPicker'
 import { CompanyPicker } from '../../components/CompanyPicker'
+import { CompanyLogo } from '../../components/CompanyLogo'
 import { attendeeLabel } from '../../lib/attendee'
 import { EnhanceModal } from '../../components/EnhanceModal'
 import { useAuthStore } from '../../lib/auth/store'
@@ -60,6 +60,7 @@ import {
   type PendingUpload,
 } from '../../lib/recording/pending-upload'
 import { retryPendingUpload } from '../../lib/recording/session'
+import { RichMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
 // Meeting detail — third entity in the read-only CRM triangle.
@@ -1013,7 +1014,12 @@ function CompanyPill({
         onLongPress ? `${company.name} (long-press to unlink)` : company.name
       }
     >
-      <Ionicons name="business-outline" size={12} color={colors.crimson} />
+      <CompanyLogo
+        domain={company.primaryDomain}
+        name={company.name}
+        size={16}
+        shape="rounded"
+      />
       <Text style={styles.companyPillText} numberOfLines={1}>
         {company.name}
       </Text>
@@ -1190,7 +1196,7 @@ function SummarySection({
               </Text>
             )}
           >
-            <Markdown style={summaryMarkdownStyles}>{display.markdown}</Markdown>
+            <RichMarkdown>{display.markdown}</RichMarkdown>
           </ErrorBoundary>
         </View>
       </View>
@@ -1753,52 +1759,3 @@ const styles = StyleSheet.create({
 // Avoid shadowing `type` from theme.
 // (Style key `segmentText` above refers to RN style; theme.type is the import.)
 
-// Markdown theme for SummarySection. react-native-markdown-display takes
-// a style record keyed by markdown-it element names (heading1, paragraph,
-// code_inline, etc.) — we override only the typography to match the rest
-// of the meeting-detail surface. Everything else falls back to library
-// defaults.
-const summaryMarkdownStyles = StyleSheet.create({
-  body: { color: colors.text, fontSize: type.body + 1, lineHeight: 22 },
-  heading1: {
-    color: colors.text,
-    fontSize: type.h2,
-    fontWeight: '700',
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  heading2: {
-    color: colors.text,
-    fontSize: type.h2 - 2,
-    fontWeight: '700',
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  heading3: {
-    color: colors.text,
-    fontSize: type.body + 2,
-    fontWeight: '600',
-    marginTop: spacing.sm,
-    marginBottom: 4,
-  },
-  paragraph: { marginTop: 6, marginBottom: 6 },
-  bullet_list: { marginTop: 4, marginBottom: 4 },
-  ordered_list: { marginTop: 4, marginBottom: 4 },
-  list_item: { marginVertical: 2 },
-  code_inline: {
-    backgroundColor: colors.surface3,
-    color: colors.text,
-    paddingHorizontal: 4,
-    borderRadius: 4,
-    fontSize: type.body,
-  },
-  fence: {
-    backgroundColor: colors.surface3,
-    color: colors.text,
-    padding: spacing.sm,
-    borderRadius: radii.sm,
-    fontSize: type.bodyTight,
-  },
-  link: { color: colors.crimson },
-  strong: { fontWeight: '700', color: colors.text },
-})

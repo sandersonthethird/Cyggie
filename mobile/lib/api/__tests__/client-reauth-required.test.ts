@@ -59,15 +59,33 @@ function makeReauthRequired401(): Response {
   )
 }
 
-describe('apiFetch 401 with reauth_required=true', () => {
-  it('throws ApiError with reauthRequired=true', async () => {
+describe('apiFetch 401 with reauth_required=true (Google-side reauth)', () => {
+  it('throws ApiError preserving the gateway error code', async () => {
     fetchSpy.mockResolvedValueOnce(makeReauthRequired401())
 
     await expect(apiFetch('/calendar/events')).rejects.toMatchObject({
       status: 401,
       code: 'REAUTH_REQUIRED',
-      reauthRequired: true,
     } satisfies Partial<ApiError>)
+  })
+
+  it('throws with reauthRequired=false so screen-level handlers do NOT redirect to sign-in', async () => {
+    // Every reauth_required=true response that reaches apiFetch's 401
+    // branch is a Google-side issue (the Cyggie JWT is fine; the user's
+    // server-side Google OAuth tokens are broken). The 8 screens with
+    // a `useEffect(() => signOut+redirect, [query.error])` pattern keyed
+    // on reauthRequired would wipe the Cyggie session otherwise, producing
+    // the OAuth-loop bug (sign in → calendar 401 → signOut → bounce).
+    fetchSpy.mockResolvedValueOnce(makeReauthRequired401())
+
+    let caught: ApiError | undefined
+    try {
+      await apiFetch('/calendar/events')
+    } catch (err) {
+      caught = err as ApiError
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect(caught?.reauthRequired).toBe(false)
   })
 
   it('does NOT call useAuthStore.signOut() — the Cyggie JWT may still be valid', async () => {

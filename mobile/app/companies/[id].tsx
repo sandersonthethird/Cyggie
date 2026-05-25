@@ -24,6 +24,8 @@ import {
 import { fetchNotes, type NoteListItem } from '../../lib/api/notes'
 import { fetchMemosForCompany, type MemoListItem } from '../../lib/api/memos'
 import { useAuthStore } from '../../lib/auth/store'
+import { CompanyLogo } from '../../components/CompanyLogo'
+import { RichMarkdown, stripMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
 // Company detail — WIREFRAME 6.
@@ -154,9 +156,13 @@ function Hero({ company }: { company: CompanyDetail }) {
     .join(' · ')
   return (
     <View style={styles.hero}>
-      <View style={styles.heroAvatar}>
-        <Text style={styles.heroAvatarText}>{initials(company.name)}</Text>
-      </View>
+      <CompanyLogo
+        domain={company.primaryDomain}
+        name={company.name}
+        size={72}
+        shape="pill"
+        style={styles.heroAvatar}
+      />
       <Text style={styles.heroName} numberOfLines={2}>
         {company.name}
       </Text>
@@ -325,7 +331,7 @@ function OverviewSection({ company }: { company: CompanyDetail }) {
     <View style={styles.section}>
       {company.description && (
         <View style={styles.descBlock}>
-          <Text style={styles.descText}>{company.description}</Text>
+          <RichMarkdown>{company.description}</RichMarkdown>
         </View>
       )}
       {rows.length === 0 && !company.description ? (
@@ -462,7 +468,7 @@ function CompanyNoteRow({ note }: { note: NoteListItem }) {
         </Text>
         {showPreview ? (
           <Text style={styles.meetingMeta} numberOfLines={2}>
-            {note.contentPreview}
+            {stripMarkdown(note.contentPreview)}
           </Text>
         ) : (
           <Text style={styles.meetingMeta}>{formatNoteRelative(note.updatedAt)}</Text>
@@ -477,7 +483,8 @@ function firstLineOfNote(s: string): string {
   const trimmed = s.trim()
   if (trimmed.length === 0) return '(empty note)'
   const nl = trimmed.indexOf('\n')
-  return nl === -1 ? trimmed : trimmed.slice(0, nl)
+  const firstLine = nl === -1 ? trimmed : trimmed.slice(0, nl)
+  return stripMarkdown(firstLine) || '(empty note)'
 }
 
 function formatNoteRelative(iso: string): string {
@@ -760,19 +767,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   heroAvatar: {
-    width: 72,
-    height: 72,
-    borderRadius: radii.pill,
-    backgroundColor: colors.crimsonMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginBottom: spacing.md,
-  },
-  heroAvatarText: {
-    color: colors.crimson,
-    fontSize: 24,
-    fontWeight: '700',
-    letterSpacing: 0.5,
   },
   heroName: {
     color: colors.text,
@@ -885,12 +880,6 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.md,
   },
-  descText: {
-    color: colors.text2,
-    fontSize: type.body + 1,
-    lineHeight: 21,
-  },
-
   kvCard: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,

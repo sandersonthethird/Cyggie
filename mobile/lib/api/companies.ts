@@ -11,6 +11,7 @@ export interface CompanyListItem {
   status: string
   city: string | null
   state: string | null
+  primaryDomain: string | null
   lastTouchAt: string | null
   meetingCount: number
 }
@@ -31,7 +32,6 @@ export interface CompanyPersonRef {
 
 export interface CompanyDetail extends CompanyListItem {
   description: string | null
-  primaryDomain: string | null
   websiteUrl: string | null
   linkedinCompanyUrl: string | null
   employeeCountRange: string | null

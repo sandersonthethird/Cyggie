@@ -39,6 +39,10 @@ const ContactListItemSchema = z.object({
   contactType: z.string().nullable(),
   primaryCompanyId: z.string().nullable(),
   primaryCompanyName: z.string().nullable(),
+  // Domain of the primary company (joined from org_companies). Mobile uses
+  // this to render the company's logo next to the affiliation. Null when
+  // the contact has no primary company OR the company has no primaryDomain.
+  primaryCompanyDomain: z.string().nullable(),
   city: z.string().nullable(),
   state: z.string().nullable(),
   lastMeetingAt: z.string().nullable(),
@@ -126,6 +130,7 @@ export async function registerContactRoutes(
           contactType: schema.contacts.contactType,
           primaryCompanyId: schema.contacts.primaryCompanyId,
           primaryCompanyName: schema.orgCompanies.canonicalName,
+          primaryCompanyDomain: schema.orgCompanies.primaryDomain,
           city: schema.contacts.city,
           state: schema.contacts.state,
           lastMeetingAt: schema.contacts.lastMeetingAt,
@@ -157,6 +162,7 @@ export async function registerContactRoutes(
           contactType: r.contactType,
           primaryCompanyId: r.primaryCompanyId,
           primaryCompanyName: r.primaryCompanyName,
+          primaryCompanyDomain: r.primaryCompanyDomain,
           city: r.city,
           state: r.state,
           lastMeetingAt: r.lastMeetingAt
@@ -212,6 +218,7 @@ export async function registerContactRoutes(
           lastEmailAt: schema.contacts.lastEmailAt,
           // joined company
           primaryCompanyName: schema.orgCompanies.canonicalName,
+          primaryCompanyDomain: schema.orgCompanies.primaryDomain,
         })
         .from(schema.contacts)
         .leftJoin(
@@ -360,6 +367,7 @@ export async function registerContactRoutes(
         contactType: row.contactType,
         primaryCompanyId: row.primaryCompanyId,
         primaryCompanyName: row.primaryCompanyName,
+        primaryCompanyDomain: row.primaryCompanyDomain,
         city: row.city,
         state: row.state,
         linkedinUrl: row.linkedinUrl,
@@ -443,6 +451,7 @@ export async function registerContactRoutes(
             contactType: e.contactType,
             primaryCompanyId: e.primaryCompanyId,
             primaryCompanyName: null,
+            primaryCompanyDomain: null,
             city: e.city,
             state: e.state,
             lastMeetingAt: e.lastMeetingAt ? new Date(e.lastMeetingAt).toISOString() : null,
@@ -498,6 +507,7 @@ export async function registerContactRoutes(
         contactType: null,
         primaryCompanyId: null,
         primaryCompanyName: null,
+        primaryCompanyDomain: null,
         city: null,
         state: null,
         lastMeetingAt: null,

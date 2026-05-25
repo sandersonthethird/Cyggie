@@ -76,7 +76,7 @@ export default function SignInScreen() {
     <SafeAreaView style={styles.root}>
       <View style={styles.content}>
         <Text style={styles.title}>Cyggie</Text>
-        <Text style={styles.subtitle}>The CRM that records itself.</Text>
+        <Text style={styles.subtitle}>The CRM that runs itself.</Text>
 
         <View style={styles.spacer} />
 

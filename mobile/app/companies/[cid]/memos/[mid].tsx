@@ -7,7 +7,6 @@ import {
   Text,
   View,
 } from 'react-native'
-import Markdown from 'react-native-markdown-display'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery } from '@tanstack/react-query'
@@ -16,19 +15,18 @@ import { ApiError } from '../../../../lib/api/client'
 import { ErrorBoundary } from '../../../../components/ErrorBoundary'
 import { fetchMemo, type MemoDetail } from '../../../../lib/api/memos'
 import { useAuthStore } from '../../../../lib/auth/store'
+import { RichMarkdown } from '../../../../lib/markdown'
 import { colors, radii, spacing, type } from '../../../../theme'
 
 // Memo detail (read-only). Pushed onto the stack from the Memos tab on
 // company detail. Renders the latest version's contentMarkdown via the
-// same markdown-display library + ErrorBoundary fallback used by the
-// meeting Summary tab.
+// shared <RichMarkdown> wrapper (mobile/lib/markdown.tsx) — same library
+// the meeting Summary tab uses.
 //
 // Three render states (CEO Issue 2A):
 //   • loading     → spinner
 //   • empty       → "This memo is still being drafted on desktop"
-//   • markdown    → <Markdown> with the same memoMarkdownStyles theme
-//                   meeting Summary uses (copied; T34 tracks the eventual
-//                   shared extraction)
+//   • markdown    → <RichMarkdown> (handles tappable links + autolink)
 
 export default function MemoDetailScreen() {
   const params = useLocalSearchParams<{ cid: string; mid: string }>()
@@ -143,7 +141,7 @@ function renderBody(
             </Text>
           )}
         >
-          <Markdown style={memoMarkdownStyles}>{memo.contentMarkdown ?? ''}</Markdown>
+          <RichMarkdown>{memo.contentMarkdown}</RichMarkdown>
         </ErrorBoundary>
       </View>
     </View>
@@ -238,51 +236,4 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.lg,
   },
-})
-
-// Mirror of summaryMarkdownStyles in meetings/[id].tsx. T34 tracks the
-// eventual shared extraction once a third surface needs the same theme.
-const memoMarkdownStyles = StyleSheet.create({
-  body: { color: colors.text, fontSize: type.body + 1, lineHeight: 22 },
-  heading1: {
-    color: colors.text,
-    fontSize: type.h2,
-    fontWeight: '700',
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  heading2: {
-    color: colors.text,
-    fontSize: type.h2 - 2,
-    fontWeight: '700',
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  heading3: {
-    color: colors.text,
-    fontSize: type.body + 2,
-    fontWeight: '600',
-    marginTop: spacing.sm,
-    marginBottom: 4,
-  },
-  paragraph: { marginTop: 6, marginBottom: 6 },
-  bullet_list: { marginTop: 4, marginBottom: 4 },
-  ordered_list: { marginTop: 4, marginBottom: 4 },
-  list_item: { marginVertical: 2 },
-  code_inline: {
-    backgroundColor: colors.surface3,
-    color: colors.text,
-    paddingHorizontal: 4,
-    borderRadius: 4,
-    fontSize: type.body,
-  },
-  fence: {
-    backgroundColor: colors.surface3,
-    color: colors.text,
-    padding: spacing.sm,
-    borderRadius: radii.sm,
-    fontSize: type.bodyTight,
-  },
-  link: { color: colors.crimson },
-  strong: { fontWeight: '700', color: colors.text },
 })

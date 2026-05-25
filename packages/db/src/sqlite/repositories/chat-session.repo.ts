@@ -18,6 +18,8 @@ export interface ChatSession {
   isActive: boolean
   isPinned: boolean
   isArchived: boolean
+  // Anthropic prompt-caching toggle. See migration 103.
+  cacheEnabled: boolean
   lastMessageAt: string
   createdAt: string
   updatedAt: string
@@ -54,6 +56,7 @@ interface SessionRow {
   is_active: number
   is_pinned: number
   is_archived: number
+  cache_enabled: number
   last_message_at: string
   created_at: string
   updated_at: string
@@ -80,6 +83,7 @@ function mapSession(row: SessionRow): ChatSession {
     isActive: row.is_active === 1,
     isPinned: row.is_pinned === 1,
     isArchived: row.is_archived === 1,
+    cacheEnabled: row.cache_enabled === 1,
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -140,7 +144,7 @@ export function getOrCreateActive(
   const existing = db
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
-              message_count, is_active, is_pinned, is_archived,
+              message_count, is_active, is_pinned, is_archived, cache_enabled,
               last_message_at, created_at, updated_at
        FROM chat_sessions
        WHERE context_id = ? AND is_active = 1
@@ -157,17 +161,17 @@ export function getOrCreateActive(
     db.prepare(
       `INSERT INTO chat_sessions (
         id, context_id, context_kind, context_label,
-        is_active, is_pinned, is_archived, message_count,
+        is_active, is_pinned, is_archived, cache_enabled, message_count,
         last_message_at, created_at, updated_at,
         created_by_user_id, updated_by_user_id
-      ) VALUES (?, ?, ?, ?, 1, 0, 0, 0, datetime('now'), datetime('now'), datetime('now'), ?, ?)`
+      ) VALUES (?, ?, ?, ?, 1, 0, 0, 1, 0, datetime('now'), datetime('now'), datetime('now'), ?, ?)`
     ).run(id, contextId, contextKind, label, userId, userId)
   } catch (err) {
     // UNIQUE INDEX race: another caller created the active session first.
     const racer = db
       .prepare(
         `SELECT id, context_id, context_kind, context_label, title, preview_text,
-                message_count, is_active, is_pinned, is_archived,
+                message_count, is_active, is_pinned, is_archived, cache_enabled,
                 last_message_at, created_at, updated_at
          FROM chat_sessions
          WHERE context_id = ? AND is_active = 1
@@ -183,7 +187,7 @@ export function getOrCreateActive(
   const created = db
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
-              message_count, is_active, is_pinned, is_archived,
+              message_count, is_active, is_pinned, is_archived, cache_enabled,
               last_message_at, created_at, updated_at
        FROM chat_sessions WHERE id = ?`
     )
@@ -315,7 +319,7 @@ export function listRecent(opts: {
     const rows = db
       .prepare(
         `SELECT id, context_id, context_kind, context_label, title, preview_text,
-                message_count, is_active, is_pinned, is_archived,
+                message_count, is_active, is_pinned, is_archived, cache_enabled,
                 last_message_at, created_at, updated_at
          FROM chat_sessions
          WHERE is_archived = 0 AND is_pinned = 1
@@ -330,7 +334,7 @@ export function listRecent(opts: {
     const rows = db
       .prepare(
         `SELECT id, context_id, context_kind, context_label, title, preview_text,
-                message_count, is_active, is_pinned, is_archived,
+                message_count, is_active, is_pinned, is_archived, cache_enabled,
                 last_message_at, created_at, updated_at
          FROM chat_sessions
          WHERE is_archived = 0 AND context_id = ?
@@ -344,7 +348,7 @@ export function listRecent(opts: {
   const rows = db
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
-              message_count, is_active, is_pinned, is_archived,
+              message_count, is_active, is_pinned, is_archived, cache_enabled,
               last_message_at, created_at, updated_at
        FROM chat_sessions
        WHERE is_archived = 0
@@ -360,7 +364,7 @@ export function getSession(sessionId: string): ChatSession | null {
   const row = db
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
-              message_count, is_active, is_pinned, is_archived,
+              message_count, is_active, is_pinned, is_archived, cache_enabled,
               last_message_at, created_at, updated_at
        FROM chat_sessions WHERE id = ?`
     )
@@ -374,7 +378,7 @@ export function getActiveForContext(contextId: string): ChatSession | null {
   const row = db
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
-              message_count, is_active, is_pinned, is_archived,
+              message_count, is_active, is_pinned, is_archived, cache_enabled,
               last_message_at, created_at, updated_at
        FROM chat_sessions
        WHERE context_id = ? AND is_active = 1
@@ -532,6 +536,21 @@ export function unpin(sessionId: string, userId: string | null = null): void {
      WHERE id = ?`
   ).run(userId, sessionId)
   logAudit(userId, 'chat_session', sessionId, 'update', { pinned: false })
+}
+
+export function setCacheEnabled(
+  sessionId: string,
+  enabled: boolean,
+  userId: string | null = null,
+): void {
+  if (!sessionId) throw new Error('sessionId is required')
+  const db = getDatabase()
+  db.prepare(
+    `UPDATE chat_sessions
+       SET cache_enabled = ?, updated_at = datetime('now'), updated_by_user_id = ?
+     WHERE id = ?`,
+  ).run(enabled ? 1 : 0, userId, sessionId)
+  logAudit(userId, 'chat_session', sessionId, 'update', { cacheEnabled: enabled })
 }
 
 export function archive(sessionId: string, userId: string | null = null): void {

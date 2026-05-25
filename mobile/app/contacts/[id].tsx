@@ -21,6 +21,8 @@ import {
   type ContactMeetingRef,
 } from '../../lib/api/contacts'
 import { useAuthStore } from '../../lib/auth/store'
+import { CompanyLogo } from '../../components/CompanyLogo'
+import { RichMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
 // Contact detail — mirrors the structure of company/[id].tsx (hero + stats
@@ -152,8 +154,16 @@ function Hero({ contact }: { contact: ContactDetail }) {
               : undefined
           }
           disabled={!contact.primaryCompanyId}
-          style={({ pressed }) => [pressed && styles.pressed]}
+          style={({ pressed }) => [styles.heroAffiliation, pressed && styles.pressed]}
         >
+          {contact.primaryCompanyName && (
+            <CompanyLogo
+              domain={contact.primaryCompanyDomain}
+              name={contact.primaryCompanyName}
+              size={20}
+              shape="rounded"
+            />
+          )}
           <Text style={styles.heroSubtitle}>
             {contact.title ? `${contact.title}` : ''}
             {contact.title && contact.primaryCompanyName ? ' · ' : ''}
@@ -323,13 +333,13 @@ function OverviewSection({ contact }: { contact: ContactDetail }) {
       {contact.keyTakeaways && (
         <View style={styles.descBlock}>
           <Text style={styles.descHeading}>Key takeaways</Text>
-          <Text style={styles.descText}>{contact.keyTakeaways}</Text>
+          <RichMarkdown>{contact.keyTakeaways}</RichMarkdown>
         </View>
       )}
       {contact.notes && (
         <View style={styles.descBlock}>
           <Text style={styles.descHeading}>Notes</Text>
-          <Text style={styles.descText}>{contact.notes}</Text>
+          <RichMarkdown>{contact.notes}</RichMarkdown>
         </View>
       )}
       {rows.length === 0 && !contact.keyTakeaways && !contact.notes ? (
@@ -565,10 +575,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: -0.4,
   },
+  heroAffiliation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
   heroSubtitle: {
     color: colors.text3,
     fontSize: type.bodyTight,
-    marginTop: 4,
     textAlign: 'center',
   },
   heroLink: { color: colors.crimson, fontWeight: '600' },
@@ -684,12 +699,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 6,
   },
-  descText: {
-    color: colors.text2,
-    fontSize: type.body + 1,
-    lineHeight: 21,
-  },
-
   kvCard: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,

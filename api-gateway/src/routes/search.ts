@@ -26,6 +26,7 @@ const CompanyHitSchema = z.object({
   name: z.string(),
   industry: z.string().nullable(),
   pipelineStage: z.string().nullable(),
+  primaryDomain: z.string().nullable(),
 })
 
 const ContactHitSchema = z.object({
@@ -34,6 +35,7 @@ const ContactHitSchema = z.object({
   title: z.string().nullable(),
   email: z.string().nullable(),
   primaryCompanyName: z.string().nullable(),
+  primaryCompanyDomain: z.string().nullable(),
 })
 
 const MeetingHitSchema = z.object({
@@ -112,6 +114,7 @@ export async function registerSearchRoutes(
               name: schema.orgCompanies.canonicalName,
               industry: schema.orgCompanies.industry,
               pipelineStage: schema.orgCompanies.pipelineStage,
+              primaryDomain: schema.orgCompanies.primaryDomain,
             })
             .from(schema.orgCompanies)
             .where(where)
@@ -142,6 +145,7 @@ export async function registerSearchRoutes(
               title: schema.contacts.title,
               email: schema.contacts.email,
               primaryCompanyName: schema.orgCompanies.canonicalName,
+              primaryCompanyDomain: schema.orgCompanies.primaryDomain,
             })
             .from(schema.contacts)
             .leftJoin(

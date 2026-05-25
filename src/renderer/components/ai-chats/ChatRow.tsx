@@ -15,6 +15,8 @@ interface ChatRowProps {
   onRename: (title: string) => Promise<void>
   /** Optional: open this chat in the dedicated /ai-chats/:id route. */
   onOpenFullScreen?: () => void
+  /** Optional: flip the per-chat Anthropic prompt-caching toggle. */
+  onToggleCache?: (enabled: boolean) => void
 }
 
 export default function ChatRow({
@@ -27,6 +29,7 @@ export default function ChatRow({
   onDelete,
   onRename,
   onOpenFullScreen,
+  onToggleCache,
 }: ChatRowProps) {
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(row.title ?? '')
@@ -145,6 +148,18 @@ export default function ChatRow({
               >
                 {row.isPinned ? 'Unpin' : 'Pin'}
               </button>
+              {onToggleCache && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setMenuOpen(false)
+                    onToggleCache(!row.cacheEnabled)
+                  }}
+                  title="Anthropic prompt caching. Faster + cheaper for multi-turn chats; costs 25% more for one-shot questions."
+                >
+                  {row.cacheEnabled ? 'Prompt caching: On' : 'Prompt caching: Off'}
+                </button>
+              )}
               {onOpenFullScreen && (
                 <button
                   onClick={(e) => {
