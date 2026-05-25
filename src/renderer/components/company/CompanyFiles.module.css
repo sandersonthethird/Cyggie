@@ -224,3 +224,52 @@
 .flagToggle.flagged {
   color: var(--cy-acc-amber, #d97706);
 }
+
+/* Phase 3 — extraction-status chip + ↻ refresh button per flagged file. */
+.fileFlagsRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.extractionChip {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.extractionChip.pending,
+.extractionChip.extracting {
+  background: var(--color-bg-secondary, #f5f5f5);
+  color: var(--color-text-tertiary, #888);
+}
+
+.extractionChip.failed {
+  background: #fee2e2;
+  color: #b91c1c;
+  cursor: help;
+}
+
+.refreshFlagBtn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 2px 5px;
+  line-height: 1;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.refreshFlagBtn:hover {
+  color: var(--color-text);
+  background: var(--color-bg-secondary);
+}
+
+.refreshFlagBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

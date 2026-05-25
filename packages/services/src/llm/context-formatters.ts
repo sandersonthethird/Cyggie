@@ -209,18 +209,34 @@ export interface FlaggedFileRef {
   fileId: string
   fileName: string
   mimeType: string | null
+  // Phase 3 — pre-extracted text + status. When status === 'done' and
+  // extractedText is non-null, the formatter uses it directly (zero
+  // live-parse work). Older callers that only pass {fileId, fileName,
+  // mimeType} still work — they fall through to the readLocalFile path.
+  extractedText?: string | null
+  extractionStatus?: 'pending' | 'extracting' | 'done' | 'failed'
 }
 
 /**
  * Renders user-flagged files (the curated subset of files attached to an
- * entity). `readLocalFile` is async because PDFs / spreadsheets / Drive
- * native exports may need parsing. Files that fail to read or are below
- * MIN_FLAGGED_FILE_CHARS are silently skipped — they don't count toward
- * the cap.
+ * entity). Two read paths:
  *
- * The `mimeType` field on each file routes the read:
- *   - `application/vnd.google-apps.*` → Drive export path (reads from Drive API)
- *   - anything else / null            → local-file path (reads from disk)
+ *   1. Phase 3 fast path — if `extractedText` is populated (status === 'done'),
+ *      use it as-is. No async I/O, no PDF parsing, no Drive API call.
+ *      Mobile chat uses this exclusively because gateway reads from the
+ *      synced extracted_text column.
+ *
+ *   2. Legacy / transitional path — if `extractedText` is absent or status
+ *      isn't 'done' yet, fall back to `readLocalFile` (async, may parse
+ *      PDFs / Drive exports). Covers the backfill window where older rows
+ *      haven't been extracted by the worker yet, and old callers that
+ *      didn't pass the detailed shape.
+ *
+ * Files whose extraction failed (status='failed') or fell below
+ * MIN_FLAGGED_FILE_CHARS are silently skipped — they don't count toward
+ * the cap. The `mimeType` field on each file routes the fallback read:
+ *   - `application/vnd.google-apps.*` → Drive export path
+ *   - anything else / null            → local-file path
  */
 export async function formatFlaggedFilesSection(
   files: FlaggedFileRef[],
@@ -230,7 +246,17 @@ export async function formatFlaggedFilesSection(
   let total = 0
   for (const f of files) {
     if (total >= caps.total) break
-    const content = await readLocalFile(f.fileId, f.mimeType ?? undefined)
+    let content: string | null = null
+    if (f.extractionStatus === 'done' && f.extractedText) {
+      content = f.extractedText
+    } else if (f.extractionStatus === 'failed') {
+      continue // worker tried; no usable text. Skip silently.
+    } else {
+      // Either: legacy caller didn't pass status (old shape), or status
+      // is 'pending'/'extracting' (worker hasn't finished). Live-parse
+      // as the safety net.
+      content = await readLocalFile(f.fileId, f.mimeType ?? undefined)
+    }
     if (!content || content.trim().length < MIN_FLAGGED_FILE_CHARS) continue
     const excerpt = content.length > caps.perItem
       ? content.substring(0, caps.perItem) + '...'

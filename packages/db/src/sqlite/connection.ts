@@ -101,6 +101,8 @@ import { runMeetingsSummaryTextMigration } from './migrations/099-meetings-summa
 import { runSyncStateSafeBatchSizeMigration } from './migrations/100-sync-state-safe-batch-size'
 import { runMemoSyncLamportMigration } from './migrations/101-memo-sync-lamport'
 import { runChatSessionSelectedCompaniesMigration } from './migrations/102-chat-session-selected-companies'
+import { runChatSessionCacheEnabledMigration } from './migrations/103-chat-session-cache-enabled'
+import { runFlaggedFilesExtractionMigration } from './migrations/104-flagged-files-extraction'
 
 let db: Database.Database | null = null
 
@@ -240,6 +242,8 @@ export function getDatabase(): Database.Database {
     runSyncStateSafeBatchSizeMigration(db)
     runMemoSyncLamportMigration(db)
     runChatSessionSelectedCompaniesMigration(db)
+    runChatSessionCacheEnabledMigration(db)
+    runFlaggedFilesExtractionMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or

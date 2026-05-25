@@ -18,29 +18,48 @@ vi.mock('electron', () => ({
   app: { getPath: vi.fn().mockReturnValue('/tmp') },
 }))
 
-// Mock the flagged-files repo
+// Mock the flagged-files repo (Phase 3 refactor: split toggleFileFlag into
+// flagFile/unflagFile/refreshFlaggedFile/updateFlaggedFileExtraction; added
+// detailed-row and pending-queue accessors). The barrel's withSync wrappers
+// read every exported name, so stub each one even if this test doesn't
+// exercise it.
 let flagged: Array<{ companyId: string; fileId: string; fileName: string; mimeType: string | null }> = []
 vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
   isFlaggedAnywhere: (fileId: string) => flagged.some((f) => f.fileId === fileId),
   isFlaggedForCompany: (companyId: string, fileId: string) =>
     flagged.some((f) => f.companyId === companyId && f.fileId === fileId),
-  toggleFileFlag: (companyId: string, fileId: string, fileName: string, mimeType?: string | null) => {
-    const idx = flagged.findIndex((f) => f.companyId === companyId && f.fileId === fileId)
-    if (idx >= 0) {
-      flagged.splice(idx, 1)
-      return false
+  flagFile: (args: { companyId: string; fileId: string; fileName: string; mimeType?: string | null }) => {
+    if (flagged.some((f) => f.companyId === args.companyId && f.fileId === args.fileId)) {
+      return null
     }
-    flagged.push({ companyId, fileId, fileName, mimeType: mimeType ?? null })
-    return true
+    flagged.push({
+      companyId: args.companyId,
+      fileId: args.fileId,
+      fileName: args.fileName,
+      mimeType: args.mimeType ?? null,
+    })
+    return { id: 'flag-' + flagged.length }
   },
+  unflagFile: (args: { companyId: string; fileId: string }) => {
+    const idx = flagged.findIndex(
+      (f) => f.companyId === args.companyId && f.fileId === args.fileId,
+    )
+    if (idx >= 0) flagged.splice(idx, 1)
+  },
+  refreshFlaggedFile: vi.fn(),
+  updateFlaggedFileExtraction: vi.fn(),
   getFlaggedFiles: (companyId: string) =>
     flagged.filter((f) => f.companyId === companyId).map((f) => ({
       fileId: f.fileId,
       fileName: f.fileName,
       mimeType: f.mimeType,
     })),
+  getFlaggedFilesDetailed: vi.fn(() => []),
   getFlaggedFileIds: (companyId: string) =>
     flagged.filter((f) => f.companyId === companyId).map((f) => f.fileId),
+  getFlaggedFileById: vi.fn(),
+  getFlaggedFileByPair: vi.fn(),
+  getPendingExtractionRows: vi.fn(() => []),
 }))
 
 // Mock the file-manager readLocalFile
@@ -92,21 +111,218 @@ vi.mock('../main/services/company-enrichment', () => ({
   enrichCompaniesForMeeting: vi.fn(),
   getCompanySuggestionsForMeeting: vi.fn(),
 }))
-vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({}))
+// Phase 3 — the IPC barrel pulls in meeting.repo at module-eval time
+// because index.ts calls withSync(rawMeeting.createMeeting, ...). Vitest
+// errors on missing-export access, so stub every name the barrel reads.
+// (List derived from `grep rawMeeting\.` in repositories/index.ts.)
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
+  cleanupExpiredScheduledMeetings: vi.fn(),
+  cleanupStaleRecordings: vi.fn(),
+  computeAutoGroupEventFlag: vi.fn(),
+  createMeeting: vi.fn(),
+  deleteMeeting: vi.fn(),
+  findMeetingByCalendarEventId: vi.fn(),
+  getMeeting: vi.fn(),
+  getMeetingSpeakerContactMap: vi.fn(),
+  linkMeetingSpeakerContact: vi.fn(),
+  listMeetings: vi.fn(),
+  shouldSyncAttendees: vi.fn(),
+  unlinkMeetingSpeakerContact: vi.fn(),
+  updateMeeting: vi.fn(),
+}))
+// Phase 3 — stubbing every name the barrel reads (see `grep
+// rawOrgCompany\.` in repositories/index.ts). vitest errors on
+// missing-export access at module-eval; the test doesn't actually
+// exercise these calls.
 vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  linkMeetingCompany: vi.fn(),
-  getCompany: vi.fn(),
+  applyCompanyDedupDecisions: vi.fn(),
+  clearCompanyPrimaryContact: vi.fn(),
+  countStubCompanies: vi.fn(),
+  createCompany: vi.fn(),
+  deleteCompany: vi.fn(),
+  deleteCompanyEmailLinks: vi.fn(),
+  findCompanyIdByDomain: vi.fn(),
   findCompanyIdByNameOrDomain: vi.fn(),
-  unlinkMeetingCompany: vi.fn(),
+  fixConcatenatedCompanyNames: vi.fn(),
+  getCoInvestorOverlaps: vi.fn(),
+  getCompaniesByNormalizedNames: vi.fn(),
+  getCompany: vi.fn(),
+  getCompanyCanonicalNameByDomain: vi.fn(),
+  getCompanyEmailById: vi.fn(),
+  getCompanyInvestorsByType: vi.fn(),
+  getCompanyMergePreview: vi.fn(),
+  getEntityTypeByNameOrDomain: vi.fn(),
   getOrCreateCompanyByName: vi.fn(),
+  linkContactToCompany: vi.fn(),
+  linkMeetingCompany: vi.fn(),
+  linkMeetingsForContactCompany: vi.fn(),
+  listCompanies: vi.fn(),
+  listCompanyContacts: vi.fn(),
+  listCompanyEmails: vi.fn(),
+  listCompanyFiles: vi.fn(),
+  listCompanyMeetingSummaryPaths: vi.fn(),
+  listCompanyMeetings: vi.fn(),
+  listCompanyTimeline: vi.fn(),
   listMeetingCompanies: vi.fn(),
+  listPipelineCompanies: vi.fn(),
+  listSuspectedDuplicateCompanies: vi.fn(),
+  mergeCompanies: vi.fn(),
+  parseInvestorsJson: vi.fn(),
+  repairContactCompanyMismatches: vi.fn(),
+  setCompanyInvestors: vi.fn(),
+  setCompanyPrimaryContact: vi.fn(),
+  unlinkContactFromCompany: vi.fn(),
+  unlinkMeetingCompany: vi.fn(),
+  updateCompany: vi.fn(),
+  upsertCompanyClassification: vi.fn(),
 }))
 vi.mock('@cyggie/db/sqlite/repositories/company.repo', () => ({
   upsert: vi.fn(),
   getByDomain: vi.fn(),
 }))
 vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
+  addContactEmail: vi.fn(),
+  applyContactDedupDecisions: vi.fn(),
+  autoLinkContactsByDomain: vi.fn(),
+  createContact: vi.fn(),
+  deleteContact: vi.fn(),
+  enrichContact: vi.fn(),
+  enrichContactsByIds: vi.fn(),
+  enrichExistingContacts: vi.fn(),
+  getContact: vi.fn(),
+  getContactsByIds: vi.fn(),
+  hasContactEmailHistory: vi.fn(),
+  listContactEmails: vi.fn(),
+  listContactTimeline: vi.fn(),
+  listContacts: vi.fn(),
+  listContactsForEmailOnboarding: vi.fn(),
+  listContactsLight: vi.fn(),
+  listPastEmployeeContacts: vi.fn(),
+  listSuspectedDuplicateContacts: vi.fn(),
+  mergeContacts: vi.fn(),
+  removeContactEmail: vi.fn(),
+  resolveContactsByEmails: vi.fn(),
+  resolveContactsByNormalizedNames: vi.fn(),
+  setContactPrimaryCompany: vi.fn(),
   syncContactsFromAttendees: vi.fn(),
+  syncContactsFromMeetings: vi.fn(),
+  updateContact: vi.fn(),
+  updateContactEmail: vi.fn(),
+}))
+vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () => ({
+  createFolder: vi.fn(),
+  createNote: vi.fn(),
+  deleteFolder: vi.fn(),
+  deleteNote: vi.fn(),
+  getFolderCounts: vi.fn(),
+  getNote: vi.fn(),
+  listFolders: vi.fn(),
+  listImportSources: vi.fn(),
+  listNotes: vi.fn(),
+  renameFolder: vi.fn(),
+  searchNotes: vi.fn(),
+  tagNote: vi.fn(),
+  updateNote: vi.fn(),
+}))
+vi.mock('@cyggie/db/sqlite/repositories/chat-session.repo', () => ({
+  appendMessage: vi.fn(),
+  archive: vi.fn(),
+  createNew: vi.fn(),
+  deleteSession: vi.fn(),
+  getActiveForContext: vi.fn(),
+  getMessageCount: vi.fn(),
+  getSession: vi.fn(),
+  listRecent: vi.fn(),
+  loadMessages: vi.fn(),
+  pin: vi.fn(),
+  rename: vi.fn(),
+  search: vi.fn(),
+  setCacheEnabled: vi.fn(),
+  setTitleIfMissing: vi.fn(),
+  unpin: vi.fn(),
+}))
+// Phase 3 — file.ipc + meeting.ipc now call flagFile/isFlaggedAnywhere
+// from the BARREL (not the raw repo). The barrel wraps the raw fns with
+// withSync, which throws in tests because configureSyncGlobals isn't
+// called. Mock the barrel directly for the surfaces these handlers use;
+// route flagFile/unflagFile through the same in-memory `flagged` array
+// the raw-repo mock uses, so behavior matches.
+vi.mock('@cyggie/db/sqlite/repositories', () => ({
+  isFlaggedAnywhere: (fileId: string) => flagged.some((f) => f.fileId === fileId),
+  isFlaggedForCompany: (companyId: string, fileId: string) =>
+    flagged.some((f) => f.companyId === companyId && f.fileId === fileId),
+  flagFile: (args: {
+    companyId: string
+    fileId: string
+    fileName: string
+    mimeType?: string | null
+  }) => {
+    if (
+      flagged.some((f) => f.companyId === args.companyId && f.fileId === args.fileId)
+    ) {
+      return null
+    }
+    flagged.push({
+      companyId: args.companyId,
+      fileId: args.fileId,
+      fileName: args.fileName,
+      mimeType: args.mimeType ?? null,
+    })
+    return { id: 'flag-' + flagged.length }
+  },
+  unflagFile: (args: { companyId: string; fileId: string }) => {
+    const idx = flagged.findIndex(
+      (f) => f.companyId === args.companyId && f.fileId === args.fileId,
+    )
+    if (idx >= 0) flagged.splice(idx, 1)
+  },
+  refreshFlaggedFile: vi.fn(),
+  updateFlaggedFileExtraction: vi.fn(),
+  getFlaggedFiles: (companyId: string) =>
+    flagged.filter((f) => f.companyId === companyId).map((f) => ({
+      fileId: f.fileId,
+      fileName: f.fileName,
+      mimeType: f.mimeType,
+    })),
+  getFlaggedFilesDetailed: vi.fn(() => []),
+  getFlaggedFileIds: (companyId: string) =>
+    flagged.filter((f) => f.companyId === companyId).map((f) => f.fileId),
+  getFlaggedFileById: vi.fn(),
+  getFlaggedFileByPair: vi.fn(),
+  getPendingExtractionRows: vi.fn(() => []),
+  // Pass-throughs needed by meeting.ipc imports.
+  syncContactsFromAttendees: vi.fn(),
+  computeAutoGroupEventFlag: vi.fn(),
+  shouldSyncAttendees: vi.fn(),
+  linkMeetingCompany: vi.fn(),
+  getCompany: vi.fn(),
+  findCompanyIdByNameOrDomain: vi.fn(),
+  unlinkMeetingCompany: vi.fn(),
+  getOrCreateCompanyByName: vi.fn(),
+  listMeetingCompanies: vi.fn(),
+  getDatabase: vi.fn(),
+}))
+
+// Phase 3 — file.ipc + meeting.ipc kick the extraction worker after
+// flagging. Worker is in-memory; stub the notify function so the test
+// doesn't need the real boot wiring.
+vi.mock('../main/services/flagged-file-extraction-worker', () => ({
+  notifyPending: vi.fn(),
+  startExtractionWorker: vi.fn(),
+}))
+
+vi.mock('@cyggie/db/sqlite/repositories/investment-memo.repo', () => ({
+  buildInitialMemoContent: vi.fn(),
+  createMemo: vi.fn(),
+  getLatestMemoForCompany: vi.fn(),
+  getMemo: vi.fn(),
+  getMemoLatestVersion: vi.fn(),
+  getMemoVersion: vi.fn(),
+  listMemoVersions: vi.fn(),
+  listMemoVersionsSummary: vi.fn(),
+  recordMemoExport: vi.fn(),
+  saveMemoVersion: vi.fn(),
+  updateMemoStatus: vi.fn(),
 }))
 vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
 vi.mock('../main/security/current-user', () => ({

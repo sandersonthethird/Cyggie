@@ -53,6 +53,7 @@ import * as rawOrgCompany from './org-company.repo'
 import * as rawNotes from './notes.repo'
 import * as rawChatSession from './chat-session.repo'
 import * as rawMemo from './investment-memo.repo'
+import * as rawFlaggedFiles from './company-file-flags.repo'
 import type { InvestmentMemoWithLatest } from '@shared/types/company'
 import { getDatabase } from '../connection'
 
@@ -461,6 +462,16 @@ export const archiveChatSession = withSync(rawChatSession.archive, {
     rawChatSession.getSession(args[0]) as unknown as Record<string, unknown> | null,
 })
 
+export const setChatSessionCacheEnabled = withSync(
+  rawChatSession.setCacheEnabled,
+  {
+    table: 'chat_sessions',
+    op: 'update',
+    extractRow: ({ args }) =>
+      rawChatSession.getSession(args[0]) as unknown as Record<string, unknown> | null,
+  },
+)
+
 export const deleteChatSession = withSync(rawChatSession.deleteSession, {
   table: 'chat_sessions',
   op: 'delete',
@@ -564,6 +575,73 @@ export const getMemoVersion = rawMemo.getMemoVersion
 // recordMemoExport writes investment_memo_exports — NOT in OWNED_TABLES
 // (exports are local artifacts; mobile doesn't read them). Pass-through.
 export const recordMemoExport = rawMemo.recordMemoExport
+
+// ── company_flagged_files (Phase 3) ─────────────────────────────────────────
+//
+// Pre-Phase-3, the raw repo's `toggleFileFlag` wrote directly without
+// `withSync`, so flags never reached Neon — mobile chat couldn't see them.
+// Phase 3 splits the toggle into explicit `flagFile` / `unflagFile` /
+// `refreshFlaggedFile` / `updateFlaggedFileExtraction` verbs and wraps each.
+// `extractedText` is declared as a largeColumn on the OwnedTableSpec, so
+// status-only updates (pending → extracting) don't drag the file body across
+// the wire each time (T38 trim-on-update).
+//
+// The extraction worker (src/main/services/flagged-file-extraction-worker.ts)
+// calls `updateFlaggedFileExtraction` for each state transition; flag UI
+// calls `flagFile` / `unflagFile` / `refreshFlaggedFile`.
+
+export const flagFile = withSync(rawFlaggedFiles.flagFile, {
+  table: 'company_flagged_files',
+  op: 'insert',
+})
+
+export const unflagFile = withSync(rawFlaggedFiles.unflagFile, {
+  table: 'company_flagged_files',
+  op: 'delete',
+  captureBeforeDelete: (_db, [args]) =>
+    rawFlaggedFiles.getFlaggedFileByPair(args.companyId, args.fileId) as unknown as
+      | Record<string, unknown>
+      | null,
+})
+
+export const refreshFlaggedFile = withSync(rawFlaggedFiles.refreshFlaggedFile, {
+  table: 'company_flagged_files',
+  op: 'update',
+  captureBeforeUpdate: (_db, [args]) =>
+    rawFlaggedFiles.getFlaggedFileByPair(args.companyId, args.fileId) as unknown as
+      | Record<string, unknown>
+      | null,
+})
+
+export const updateFlaggedFileExtraction = withSync(
+  rawFlaggedFiles.updateFlaggedFileExtraction,
+  {
+    table: 'company_flagged_files',
+    op: 'update',
+    captureBeforeUpdate: (_db, [id]) =>
+      rawFlaggedFiles.getFlaggedFileById(id) as unknown as
+        | Record<string, unknown>
+        | null,
+  },
+)
+
+// Pass-throughs (reads + helpers used by chat-context formatter, capability flow).
+export const getFlaggedFiles = rawFlaggedFiles.getFlaggedFiles
+export const getFlaggedFilesDetailed = rawFlaggedFiles.getFlaggedFilesDetailed
+export const getFlaggedFileIds = rawFlaggedFiles.getFlaggedFileIds
+export const isFlaggedAnywhere = rawFlaggedFiles.isFlaggedAnywhere
+export const isFlaggedForCompany = rawFlaggedFiles.isFlaggedForCompany
+export const getFlaggedFileById = rawFlaggedFiles.getFlaggedFileById
+export const getFlaggedFileByPair = rawFlaggedFiles.getFlaggedFileByPair
+export const getPendingExtractionRows = rawFlaggedFiles.getPendingExtractionRows
+export type {
+  FlaggedFile,
+  FlaggedFileRow,
+  FlagFileArgs,
+  UnflagFileArgs,
+  RefreshFlaggedFileArgs,
+  UpdateFlaggedFileExtractionPatch,
+} from './company-file-flags.repo'
 
 // Re-export the database accessor so the rare caller that needs it can
 // continue to import from the barrel rather than reaching into connection.ts.

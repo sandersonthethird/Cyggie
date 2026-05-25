@@ -2,10 +2,11 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { readLocalFile } from '../storage/file-manager'
 import {
+  flagFile,
   isFlaggedAnywhere,
-  isFlaggedForCompany,
-  toggleFileFlag,
-} from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
+} from '@cyggie/db/sqlite/repositories'
+import { getCurrentUserId } from '../security/current-user'
+import { notifyPending } from '../services/flagged-file-extraction-worker'
 
 // file.ipc.ts — capability-scoped file reads.
 //
@@ -62,10 +63,20 @@ export function registerFileHandlers(): void {
 
       // Capability check: the file must be flagged for SOME company, OR the
       // caller must provide a companyId so we can auto-flag it on the spot.
+      // Phase 3: flagFile is idempotent (no-op if already flagged), so no
+      // pre-check needed. Insertion sets extraction_status='pending';
+      // worker picks it up and the next chat query reads the cached text.
       if (companyId) {
-        if (!isFlaggedForCompany(companyId, id)) {
-          toggleFileFlag(companyId, id, fileName ?? id, mimeType ?? null)
-        }
+        const userId = getCurrentUserId()
+        const inserted = flagFile({
+          companyId,
+          fileId: id,
+          fileName: fileName ?? id,
+          mimeType: mimeType ?? null,
+          userId,
+          flaggedByUserId: userId,
+        })
+        if (inserted) notifyPending()
       } else if (!isFlaggedAnywhere(id)) {
         return { content: null, error: 'File is not flagged and no companyId provided to auto-flag' }
       }

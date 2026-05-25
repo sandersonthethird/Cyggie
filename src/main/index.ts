@@ -27,6 +27,7 @@ import {
 import { backfillProviderKeysOnLaunch } from './services/gateway-credentials'
 import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.service'
 import { backfillMemosForSyncOnLaunch } from './services/memo-sync-backfill.service'
+import { startExtractionWorker } from './services/flagged-file-extraction-worker'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
 
@@ -299,6 +300,13 @@ app.whenReady().then(() => {
   // tab on company detail sees them after the next /sync/push drain.
   // Idempotent: lamport='0' is the only candidate set.
   backfillMemosForSyncOnLaunch(startupUserId)
+
+  // Phase 3 — kick the flagged-file extraction worker. Drains any
+  // 'pending' or stuck-'extracting' rows (post-crash recovery), and
+  // handles the migration-104 backfill (pre-Phase-3 rows enqueued by
+  // the SQLite migration). The worker is durable via extraction_status;
+  // notifyPending() wakes it after each flag/refresh IPC.
+  startExtractionWorker()
 
   // System audio loopback is handled by electron-audio-loopback's IPC
   // handlers (enable-loopback-audio / disable-loopback-audio) registered

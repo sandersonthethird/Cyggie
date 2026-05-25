@@ -26,7 +26,7 @@ import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
 import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
 import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
 import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
-import { getFlaggedFiles } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
+import { getFlaggedFilesDetailed } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
 
 const _contactNotesRepo = makeEntityNotesRepo('contact_id')
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
@@ -155,10 +155,11 @@ export async function assembleCompanyContext(companyId: string): Promise<Company
     parts.push('')
   }
 
-  // Flagged files (mime-aware: dispatches to local readers OR Drive export
-  // depending on the stored mimeType; legacy rows with NULL mimeType take
-  // the local-file path via extension detection inside readLocalFile).
-  const flaggedFiles = getFlaggedFiles(companyId)
+  // Flagged files — Phase 3: detailed rows include extracted_text + status,
+  // so the formatter reads pre-extracted text (zero PDF/Drive work per
+  // query). Transitional fallback to live readLocalFile lives inside the
+  // formatter for rows where the worker hasn't completed yet.
+  const flaggedFiles = getFlaggedFilesDetailed(companyId)
   const filesMd = await formatFlaggedFilesSection(flaggedFiles, COMPANY_FILE_CAPS)
   const hasFlaggedFiles = filesMd.length > 0
   if (hasFlaggedFiles) {

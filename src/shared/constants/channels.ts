@@ -222,6 +222,7 @@ export const IPC_CHANNELS = {
   CHAT_SESSION_PIN: 'chat-session:pin',
   CHAT_SESSION_UNPIN: 'chat-session:unpin',
   CHAT_SESSION_ARCHIVE: 'chat-session:archive',
+  CHAT_SESSION_SET_CACHE_ENABLED: 'chat-session:set-cache-enabled',
   CHAT_SESSION_DELETE: 'chat-session:delete',
   CHAT_SESSION_APPEND_MODAL_TURN: 'chat-session:append-modal-turn',
 
@@ -232,6 +233,12 @@ export const IPC_CHANNELS = {
   // Company file flags (for chat context)
   COMPANY_FILE_FLAG_GET: 'company:file-flag-get',
   COMPANY_FILE_FLAG_TOGGLE: 'company:file-flag-toggle',
+  // Phase 3 — list rows with extraction state + flagged-by attribution for the
+  // renderer's status chip + ↻ refresh button + "flagged by X" subtitle.
+  COMPANY_FILE_FLAG_LIST_DETAILED: 'company:file-flag-list-detailed',
+  // Phase 3 — explicit re-extract gesture. Clears extracted_text + bumps
+  // flagged_by_user_id to the current user; worker re-processes.
+  COMPANY_FILE_FLAG_REFRESH: 'company:file-flag-refresh',
 
   // Investment memo
   INVESTMENT_MEMO_GET_OR_CREATE: 'investment-memo:get-or-create',

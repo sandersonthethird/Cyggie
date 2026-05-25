@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { createInsertSchema, createUpdateSchema } from 'drizzle-zod'
-import { orgCompanies, orgCompanyAliases } from '../schema/companies'
+import { companyFlaggedFiles, orgCompanies, orgCompanyAliases } from '../schema/companies'
 import { contacts, contactEmails } from '../schema/contacts'
 import {
   meetings,
@@ -155,6 +155,11 @@ export const WRITE_VALIDATORS: Record<string, ValidatorBundle> = {
   speakers: bundleFor(speakers, 'speakers'),
   pipeline_stages: bundleFor(pipelineStages, 'pipeline_stages'),
   org_companies: bundleFor(orgCompanies, 'org_companies'),
+  // Phase 3 — flagged-file extraction. drizzle-zod derives both insert
+  // and update validators from the Postgres schema, so the new columns
+  // (extracted_text, drive_version, flagged_by_user_id, extraction_*,
+  // extracted_at, lamport) auto-validate without further wiring.
+  company_flagged_files: bundleFor(companyFlaggedFiles, 'company_flagged_files'),
   org_company_aliases: bundleFor(orgCompanyAliases, 'org_company_aliases'),
   contacts: bundleFor(contacts, 'contacts'),
   contact_emails: bundleFor(contactEmails, 'contact_emails'),

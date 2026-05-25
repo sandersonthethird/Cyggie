@@ -17,10 +17,10 @@ import { syncContactsFromAttendees } from '@cyggie/db/sqlite/repositories'
 import { computeAutoGroupEventFlag, shouldSyncAttendees } from '@cyggie/db/sqlite/repositories'
 import { GROUP_EVENT_ATTENDEE_THRESHOLD } from '@cyggie/shared'
 import {
+  flagFile,
   isFlaggedAnywhere,
-  isFlaggedForCompany,
-  toggleFileFlag,
-} from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
+} from '@cyggie/db/sqlite/repositories'
+import { notifyPending as notifyExtractionWorker } from '../services/flagged-file-extraction-worker'
 import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName, listMeetingCompanies } from '@cyggie/db/sqlite/repositories'
 import { upsert as upsertCompanyCache, getByDomain as getCompanyCacheByDomain } from '@cyggie/db/sqlite/repositories/company.repo'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
@@ -625,9 +625,19 @@ export function registerMeetingHandlers(): void {
       }
       const { id, companyId, fileName, mimeType } = args
       if (companyId) {
-        if (!isFlaggedForCompany(companyId, id)) {
-          toggleFileFlag(companyId, id, fileName ?? id, mimeType ?? null)
-        }
+        // Phase 3: flagFile is idempotent (no-op when already flagged);
+        // when it inserts a new row, kick the worker so the file's text
+        // is extracted in time for the next chat query.
+        const userId = getCurrentUserId()
+        const inserted = flagFile({
+          companyId,
+          fileId: id,
+          fileName: fileName ?? id,
+          mimeType: mimeType ?? null,
+          userId,
+          flaggedByUserId: userId,
+        })
+        if (inserted) notifyExtractionWorker()
       } else if (!isFlaggedAnywhere(id)) {
         throw new Error('File is not flagged and no companyId provided to auto-flag')
       }

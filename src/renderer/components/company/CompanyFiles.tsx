@@ -22,6 +22,15 @@ type ToggleResult =
       message: string
     }
 
+// Phase 3 — extraction state per flagged row (returned by COMPANY_FILE_FLAG_LIST_DETAILED).
+interface FlaggedFileDetail {
+  id: string
+  fileId: string
+  fileName: string
+  extractionStatus: 'pending' | 'extracting' | 'done' | 'failed'
+  extractionError: string | null
+}
+
 const FLAGGABLE_EXTENSIONS = new Set(['pdf', 'txt', 'md', 'csv', 'docx', 'xlsx'])
 const GOOGLE_NATIVE_MIMES = new Set([
   'application/vnd.google-apps.document',
@@ -59,6 +68,10 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
   const [refreshKey, setRefreshKey] = useState(0)
   const [pathStack, setPathStack] = useState<{ name: string; path: string }[]>([])
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set())
+  // Phase 3 — keyed by fileId so the row render can pick up status chip
+  // + refresh button state. Only populated for files that are flagged
+  // (rows whose extraction worker is in-flight or has settled).
+  const [flagDetails, setFlagDetails] = useState<Map<string, FlaggedFileDetail>>(new Map())
   const [flagError, setFlagError] = useState<string | null>(null)
   const [needsDriveReauth, setNeedsDriveReauth] = useState(false)
   const [reauthBusy, setReauthBusy] = useState(false)
@@ -125,15 +138,42 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
 
   useEffect(() => {
     let cancelled = false
-    api
-      .invoke<string[]>(IPC_CHANNELS.COMPANY_FILE_FLAG_GET, companyId)
-      .then((ids) => {
-        if (cancelled) return
-        setFlaggedIds(new Set(ids ?? []))
-      })
-      .catch(console.error)
+    let pollTimer: number | null = null
+
+    async function fetchFlagState() {
+      // Two parallel IPCs: cheap id list (used by the legacy isFlagged
+      // check) + detailed list with extraction state (for chip + refresh
+      // button). Done together so the renderer sees a consistent snapshot.
+      const [idsResult, detailedResult] = await Promise.all([
+        api.invoke<string[]>(IPC_CHANNELS.COMPANY_FILE_FLAG_GET, companyId),
+        api.invoke<FlaggedFileDetail[]>(
+          IPC_CHANNELS.COMPANY_FILE_FLAG_LIST_DETAILED,
+          companyId,
+        ),
+      ])
+      if (cancelled) return
+      setFlaggedIds(new Set(idsResult ?? []))
+      const map = new Map<string, FlaggedFileDetail>()
+      for (const d of detailedResult ?? []) map.set(d.fileId, d)
+      setFlagDetails(map)
+
+      // While any row is mid-extraction, poll every 2s so the chip
+      // settles to 'done' / 'failed' without waiting for a flag-change
+      // IPC. Single timer per cycle, cleared on unmount or next fetch.
+      const hasInflight = (detailedResult ?? []).some(
+        (d) => d.extractionStatus === 'pending' || d.extractionStatus === 'extracting',
+      )
+      if (hasInflight && !cancelled) {
+        pollTimer = window.setTimeout(() => {
+          void fetchFlagState()
+        }, 2000)
+      }
+    }
+
+    void fetchFlagState().catch(console.error)
     return () => {
       cancelled = true
+      if (pollTimer !== null) window.clearTimeout(pollTimer)
     }
   }, [companyId, refreshKey])
 
@@ -205,6 +245,35 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
       })
     } catch (err) {
       showFlagError(err instanceof Error ? err.message : 'Could not update flag')
+    }
+  }
+
+  // Phase 3 — explicit refresh gesture per flagged file. Bypasses any
+  // local file/Drive cache (worker calls readLocalFile fresh) and bumps
+  // flagged_by_user_id to current user. Optimistically transitions the
+  // local chip to 'pending' so the user gets immediate feedback.
+  async function handleRefreshFlag(file: CompanyDriveFileRef, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!file.id) return
+    setFlagDetails((prev) => {
+      const next = new Map(prev)
+      const existing = next.get(file.id)
+      if (existing) {
+        next.set(file.id, { ...existing, extractionStatus: 'pending', extractionError: null })
+      }
+      return next
+    })
+    try {
+      const result = await api.invoke<{ ok: boolean; message?: string }>(
+        IPC_CHANNELS.COMPANY_FILE_FLAG_REFRESH,
+        { companyId, fileId: file.id },
+      )
+      if (!result?.ok) {
+        showFlagError(result?.message ?? 'Could not refresh file')
+      }
+      // Polling effect (in the flag-state fetch) will settle the chip.
+    } catch (err) {
+      showFlagError(err instanceof Error ? err.message : 'Could not refresh file')
     }
   }
 
@@ -356,15 +425,59 @@ export function CompanyFiles({ companyId, className }: CompanyFilesProps) {
                 </div>
               </div>
               {flaggable && (
-                <button
-                  type="button"
-                  className={`${styles.flagToggle} ${flagged ? styles.flagged : ''}`}
-                  onClick={(e) => toggleFlag(file, e)}
-                  title={flagged ? 'Remove from chat context' : 'Include in chat context'}
-                  aria-pressed={flagged}
-                >
-                  {flagged ? '★' : '☆'}
-                </button>
+                <div className={styles.fileFlagsRow}>
+                  {/* Phase 3 — extraction status chip + ↻ refresh button.
+                      Only render for flagged rows. Status 'done' hides the
+                      chip (silent success). */}
+                  {flagged && file.id && (() => {
+                    const detail = flagDetails.get(file.id)
+                    if (!detail) return null
+                    const status = detail.extractionStatus
+                    const label =
+                      status === 'pending'
+                        ? 'queued…'
+                        : status === 'extracting'
+                          ? 'extracting…'
+                          : status === 'failed'
+                            ? 'failed'
+                            : null
+                    return (
+                      <>
+                        {label && (
+                          <span
+                            className={`${styles.extractionChip} ${styles[status]}`}
+                            title={
+                              status === 'failed'
+                                ? detail.extractionError ?? 'Extraction failed'
+                                : undefined
+                            }
+                          >
+                            {label}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className={styles.refreshFlagBtn}
+                          onClick={(e) => handleRefreshFlag(file, e)}
+                          disabled={status === 'pending' || status === 'extracting'}
+                          title="Re-extract file text"
+                          aria-label="Refresh file text"
+                        >
+                          ↻
+                        </button>
+                      </>
+                    )
+                  })()}
+                  <button
+                    type="button"
+                    className={`${styles.flagToggle} ${flagged ? styles.flagged : ''}`}
+                    onClick={(e) => toggleFlag(file, e)}
+                    title={flagged ? 'Remove from chat context' : 'Include in chat context'}
+                    aria-pressed={flagged}
+                  >
+                    {flagged ? '★' : '☆'}
+                  </button>
+                </div>
               )}
             </div>
           </div>

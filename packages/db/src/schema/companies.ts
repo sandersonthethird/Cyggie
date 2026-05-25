@@ -264,6 +264,21 @@ export const companyFlaggedFiles = pgTable(
     fileName: text('file_name').notNull(),
     mimeType: text('mime_type'),
     flaggedAt: timestamp('flagged_at', { withTimezone: true }).notNull(),
+    // Phase 3 — pre-extracted text + extraction queue state. Desktop's
+    // background worker fills extractedText at flag time so gateway-side
+    // chat context builders can read the text without doing the parse on
+    // every chat send. drizzle-zod auto-derives the sync validator from
+    // these columns.
+    extractedText: text('extracted_text'),
+    extractedTextChars: integer('extracted_text_chars'),
+    driveVersion: text('drive_version'),
+    flaggedByUserId: text('flagged_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    extractionStatus: text('extraction_status').notNull().default('pending'),
+    extractionError: text('extraction_error'),
+    extractedAt: timestamp('extracted_at', { withTimezone: true }),
+    lamport: text('lamport').notNull().default('0'),
   },
   (t) => [
     uniqueIndex('company_flagged_files_company_file_idx').on(t.companyId, t.fileId),

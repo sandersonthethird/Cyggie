@@ -100,6 +100,17 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
   // matching the notes pattern — hasUserId: true makes the gateway stamp
   // user_id from JWT.sub before validating the payload.
   { table: 'investment_memos', primaryKey: ['id'], hasUserId: true },
+  // Phase 3 — flagged-file extraction. SQLite migration 104 added user_id
+  // (nullable, backfilled by the desktop extraction worker on first run).
+  // extractedText is the only large column: typical PDF/Drive payload is
+  // 10-100K chars; status-only updates (pending → extracting → done)
+  // shouldn't re-send the text body, so T38 trim-on-update fires here.
+  {
+    table: 'company_flagged_files',
+    primaryKey: ['id'],
+    hasUserId: true,
+    largeColumns: ['extractedText'],
+  },
 
   // ── Layer 4 ────────────────────────────────────────────────────────────
   // contact_emails uses composite (contact_id, email).
