@@ -1,19 +1,25 @@
 /* ── PipelineStepper ────────────────────────────────────────────────────
- * Horizontal stage progression bar.
+ * Horizontal stage progression bar with angled labels (7 stages).
  *
- *   ┌─────────────────────────────────────────────────────────────┐
- *   │  ●────●────◉────○────○        12 days in stage             │
- *   │  Sourced  Screening  Diligence  Partner  Term Sheet        │
- *   └─────────────────────────────────────────────────────────────┘
+ *   ┌──────────────────────────────────────────────────────────────────┐
+ *   │  ●────●────◉────○────○────○      ○        12 days in stage      │
+ *   │   ╲    ╲    ╲    ╲    ╲    ╲      ╲                              │
+ *   │   Sourced Screening Diligence Term Portfolio  Pass               │
+ *   │             Partner       Sheet                                   │
+ *   └──────────────────────────────────────────────────────────────────┘
  *
  * ◉ = current (ring halo)   ● = completed   ○ = future
+ * Labels rotate −30° to fit 7 stages in a narrow right-rail without
+ * bleeding into each other. Portfolio and Pass are alternative terminal
+ * states — no segment connects them; the wider gap between their columns
+ * signals the fork visually.
  * ────────────────────────────────────────────────────────────────────── */
 
 .wrapper {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 0;
+  padding: 12px 0 32px 0;
 }
 
 .row {
@@ -23,10 +29,14 @@
 }
 
 /* 2-row grid: row 1 holds dots (odd cols) + segments (even cols);
- * row 2 holds stage labels centered under their dot columns. */
+ * row 2 holds stage labels centered under their dot columns.
+ * min-width: 0 is the canonical fix for flex:1 children refusing to shrink
+ * (default min-width: auto is content-based). Without it, the sibling
+ * .passedDaysLabel gets pushed off the row and clipped. */
 .grid {
   display: grid;
   flex: 1;
+  min-width: 0;
   row-gap: 6px;
   align-items: center;
 }
@@ -91,11 +101,13 @@
   font-size: 10px;
   font-weight: 500;
   color: var(--cy-text-4, var(--color-text-tertiary));
-  text-align: center;
+  text-align: left;
   cursor: pointer;
   transition: color 0.1s;
   white-space: nowrap;
   justify-self: center;
+  transform: rotate(-30deg) translate(-2px, 4px);
+  transform-origin: top left;
 }
 
 .stageLabel:hover {

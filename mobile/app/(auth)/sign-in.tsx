@@ -7,11 +7,13 @@ import {
   View,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { StatusBar } from 'expo-status-bar'
+import { AntDesign } from '@expo/vector-icons'
 import { router } from 'expo-router'
 import { pollForRecoveredSession, startSignIn, type SignInResult } from '../../lib/auth/oauth'
 import { getOrCreateDeviceId } from '../../lib/auth/device'
 import { useAuthStore } from '../../lib/auth/store'
-import { colors, radii, spacing, type } from '../../theme'
+import { colors } from '../../theme'
 
 export default function SignInScreen() {
   const [pending, setPending] = useState(false)
@@ -74,99 +76,146 @@ export default function SignInScreen() {
 
   return (
     <SafeAreaView style={styles.root}>
+      <StatusBar style="light" />
       <View style={styles.content}>
-        <Text style={styles.title}>Cyggie</Text>
-        <Text style={styles.subtitle}>The CRM that runs itself.</Text>
+        <View style={styles.spacerTop} />
 
-        <View style={styles.spacer} />
+        <View style={styles.hero}>
+          <Text
+            style={styles.wordmark}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
+          >
+            Cyggie<Text style={styles.wordmarkPeriod}>.</Text>
+          </Text>
+          <Text style={styles.tagline}>Stop updating your CRM.</Text>
+        </View>
 
-        <Pressable
-          onPress={onPress}
-          disabled={pending}
-          style={({ pressed }) => [
-            styles.button,
-            pressed && styles.buttonPressed,
-            pending && styles.buttonDisabled,
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Continue with Google"
-        >
-          {pending ? (
-            <ActivityIndicator color={colors.surface} />
-          ) : (
-            <Text style={styles.buttonText}>Continue with Google</Text>
+        <View style={styles.spacerBottom} />
+
+        <View style={styles.actions}>
+          <Pressable
+            onPress={onPress}
+            disabled={pending}
+            style={({ pressed }) => [
+              styles.button,
+              pressed && styles.buttonPressed,
+              pending && styles.buttonDisabled,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Continue with Google"
+          >
+            {pending ? (
+              <ActivityIndicator color={colors.textOnDark} />
+            ) : (
+              <>
+                <AntDesign name="google" size={18} color={colors.textOnDark} style={styles.buttonIcon} />
+                <Text style={styles.buttonText}>Continue with Google</Text>
+              </>
+            )}
+          </Pressable>
+
+          {recovering && (
+            <Text style={styles.recovering} accessibilityLiveRegion="polite">
+              Finishing sign-in…
+            </Text>
           )}
-        </Pressable>
 
-        {recovering && (
-          <Text style={styles.recovering} accessibilityLiveRegion="polite">
-            Finishing sign-in…
-          </Text>
-        )}
+          {error && (
+            <Text style={styles.error} accessibilityLiveRegion="polite">
+              {error}
+            </Text>
+          )}
 
-        {error && (
-          <Text style={styles.error} accessibilityLiveRegion="polite">
-            {error}
+          <Text style={styles.legal}>
+            By continuing, you agree to our{' '}
+            <Text style={styles.legalLink}>Terms</Text>
+            {' & '}
+            <Text style={styles.legalLink}>Privacy</Text>
+            .
           </Text>
-        )}
+        </View>
       </View>
     </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.surface },
+  root: { flex: 1, backgroundColor: colors.darkSurface },
   content: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
+    paddingHorizontal: 28,
+    paddingBottom: 32,
   },
-  title: {
-    color: colors.text,
-    fontSize: 48,
-    fontWeight: '700',
-    letterSpacing: -1.2,
+  spacerTop: { flex: 1 },
+  spacerBottom: { flex: 2 },
+  hero: {
+    alignItems: 'flex-start',
   },
-  subtitle: {
-    color: colors.text3,
-    fontSize: type.body + 2,
-    marginTop: spacing.sm,
-    textAlign: 'center',
+  wordmark: {
+    color: colors.textOnDark,
+    fontSize: 68,
+    fontWeight: '800',
+    letterSpacing: -3,
+    includeFontPadding: false,
   },
-  spacer: { height: 60 },
+  wordmarkPeriod: {
+    color: colors.rec,
+  },
+  tagline: {
+    color: colors.textOnDark3,
+    fontSize: 17,
+    fontWeight: '500',
+    marginTop: 16,
+  },
+  actions: {
+    alignItems: 'stretch',
+  },
   button: {
     backgroundColor: colors.crimson,
-    borderRadius: radii.lg,
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.xxl,
-    width: '100%',
+    borderRadius: 14,
+    height: 54,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 56,
-    shadowColor: colors.crimson,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowColor: colors.rec,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    elevation: 8,
   },
   buttonPressed: { opacity: 0.85 },
   buttonDisabled: { opacity: 0.5 },
+  buttonIcon: { marginRight: 10 },
   buttonText: {
-    color: colors.surface,
-    fontSize: type.body + 2,
+    color: colors.textOnDark,
+    fontSize: 15.5,
     fontWeight: '600',
   },
-  error: {
-    color: colors.crimson,
-    fontSize: type.bodyTight,
-    marginTop: spacing.lg,
+  recovering: {
+    color: colors.textOnDark3,
+    fontSize: 13.5,
+    marginTop: 16,
     textAlign: 'center',
   },
-  recovering: {
-    color: colors.text3,
-    fontSize: type.bodyTight,
-    marginTop: spacing.lg,
+  error: {
+    color: colors.rec,
+    fontSize: 13.5,
+    marginTop: 16,
     textAlign: 'center',
+  },
+  legal: {
+    color: colors.textOnDark4,
+    fontSize: 11.5,
+    lineHeight: 18,
+    letterSpacing: 0.1,
+    textAlign: 'center',
+    marginTop: 18,
+  },
+  legalLink: {
+    color: colors.textOnDark2,
+    textDecorationLine: 'underline',
+    textDecorationColor: colors.textOnDarkBorder,
   },
 })

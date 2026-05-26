@@ -49,6 +49,22 @@ const CalendarEventSchema = z.object({
    * Absent when no meeting exists yet (mobile then auto-creates on tap).
    */
   meetingId: z.string().optional(),
+  /**
+   * Primary linked company for this event's meeting, when one exists.
+   * Mobile renders the company's Clearbit logo on the calendar card so the
+   * row reads as "Acme partner check-in" at a glance. We only pick one
+   * company even when a meeting has many linked — the calendar card has
+   * room for one logo. Absent when there's no meeting yet, no linked
+   * company, or the join failed (graceful degradation: card just shows
+   * the time/title as before).
+   */
+  company: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      primaryDomain: z.string().nullable(),
+    })
+    .optional(),
 })
 
 export async function registerCalendarRoutes(
@@ -186,6 +202,7 @@ export async function registerCalendarRoutes(
       // refactor of the meetings table cannot break the calendar list,
       // which is the core feature of this route.
       const calEventIds = events.map((e) => e.calendarEventId).filter((id) => id.length > 0)
+      type EventCompany = { id: string; name: string; primaryDomain: string | null }
       if (calEventIds.length > 0) {
         try {
           const recordings = await db
@@ -205,11 +222,84 @@ export async function registerCalendarRoutes(
           for (const r of recordings) {
             if (r.calendarEventId) byCalEventId.set(r.calendarEventId, { id: r.id, status: r.status })
           }
+
+          // Bulk-fetch one linked company per meeting so the card can render
+          // the Clearbit logo. Wrapped in its own try so a failure here can't
+          // break the recording-status pill we just attached.
+          const companyByMeetingId = new Map<string, EventCompany>()
+          const meetingIds = Array.from(byCalEventId.values()).map((m) => m.id)
+          if (meetingIds.length > 0) {
+            try {
+              const links = await db
+                .select({
+                  meetingId: schema.meetingCompanyLinks.meetingId,
+                  confidence: schema.meetingCompanyLinks.confidence,
+                  companyId: schema.orgCompanies.id,
+                  name: schema.orgCompanies.canonicalName,
+                  primaryDomain: schema.orgCompanies.primaryDomain,
+                })
+                .from(schema.meetingCompanyLinks)
+                .innerJoin(
+                  schema.orgCompanies,
+                  eq(schema.meetingCompanyLinks.companyId, schema.orgCompanies.id),
+                )
+                .where(inArray(schema.meetingCompanyLinks.meetingId, meetingIds))
+              // Pick the highest-confidence link per meeting; ties broken
+              // by company id for stable rendering across requests.
+              for (const link of links) {
+                const existing = companyByMeetingId.get(link.meetingId)
+                const candidate: EventCompany = {
+                  id: link.companyId,
+                  name: link.name,
+                  primaryDomain: link.primaryDomain,
+                }
+                if (!existing) {
+                  companyByMeetingId.set(link.meetingId, candidate)
+                  continue
+                }
+                // Need the existing confidence to compare — re-find it.
+                // Cheap; this map only has one entry per meeting and we're
+                // already iterating a small linked-rows list.
+                const existingLink = links.find(
+                  (l) => l.meetingId === link.meetingId && l.companyId === existing.id,
+                )
+                const existingConf = existingLink?.confidence ?? 0
+                if (
+                  link.confidence > existingConf ||
+                  (link.confidence === existingConf && link.companyId < existing.id)
+                ) {
+                  companyByMeetingId.set(link.meetingId, candidate)
+                }
+              }
+            } catch (err) {
+              req.log.warn(
+                { err: err instanceof Error ? err.message : String(err) },
+                'meeting_company_links join failed; calendar cards omit logos',
+              )
+            }
+          }
+
           for (const ev of events) {
             const m = byCalEventId.get(ev.calendarEventId)
             if (m) {
-              ;(ev as { recordingStatus?: string; meetingId?: string }).recordingStatus = m.status
-              ;(ev as { recordingStatus?: string; meetingId?: string }).meetingId = m.id
+              ;(ev as {
+                recordingStatus?: string
+                meetingId?: string
+                company?: EventCompany
+              }).recordingStatus = m.status
+              ;(ev as {
+                recordingStatus?: string
+                meetingId?: string
+                company?: EventCompany
+              }).meetingId = m.id
+              const c = companyByMeetingId.get(m.id)
+              if (c) {
+                ;(ev as {
+                  recordingStatus?: string
+                  meetingId?: string
+                  company?: EventCompany
+                }).company = c
+              }
             }
           }
         } catch (err) {

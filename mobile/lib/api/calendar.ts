@@ -33,6 +33,16 @@ export interface CalendarEvent {
    * Absent when no meeting exists yet (mobile then auto-creates on tap).
    */
   meetingId?: string
+  /**
+   * Primary linked company for this event's meeting, when one exists.
+   * Mobile renders the Clearbit logo on the calendar card. Absent when no
+   * company is linked or the meeting hasn't been created yet.
+   */
+  company?: {
+    id: string
+    name: string
+    primaryDomain: string | null
+  }
 }
 
 interface CalendarEventsResponse {

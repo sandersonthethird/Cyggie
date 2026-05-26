@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   type ListRenderItem,
   Pressable,
@@ -34,13 +35,13 @@ import {
   type CalendarPage,
 } from '../../lib/api/calendar'
 import {
+  deleteMeeting,
   fetchImpromptuMeetings,
   prepareMeetingFromCalendarEvent,
   type MeetingDetail,
 } from '../../lib/api/meetings'
 import { useAuthStore } from '../../lib/auth/store'
 import { useCalendarStore } from '../../lib/calendar/store'
-import { Avatar } from '../../components/Avatar'
 import { ErrorBanner } from '../../components/ErrorBanner'
 import { MeetingRow } from '../../components/MeetingRow'
 import { ImpromptuRecordingsSection } from '../../components/ImpromptuRecordingsSection'
@@ -68,7 +69,6 @@ const ONBOARDING_TOOLTIP_KEY = 'onboarding.notes-tooltip-seen'
 // is pure presentation.
 
 export default function CalendarTab() {
-  const userId = useAuthStore((s) => s.userId)
   const signOut = useAuthStore((s) => s.signOut)
   const queryClient = useQueryClient()
   const tapBusyRef = useRef(false)
@@ -329,6 +329,56 @@ export default function CalendarTab() {
     [dismissTooltip, queryClient, signOut],
   )
 
+  // Swipe-to-delete handler — confirms via a native Alert (destructive
+  // action requires explicit tap) then DELETEs through the gateway. On
+  // success we invalidate both the past-events query and the impromptu
+  // query so the row disappears immediately. Failure routes through the
+  // same inline banner the tap handler uses.
+  const handleEventDelete = useCallback(
+    (event: CalendarEvent) => {
+      // Calendar-only events with no meeting row can't be hard-deleted —
+      // they live in Google Calendar, not our DB. Defensive guard; the
+      // calling site already filters on meetingId.
+      const meetingId = event.meetingId
+      if (!meetingId) return
+      Alert.alert(
+        'Delete meeting?',
+        `"${event.title}" and its transcript will be permanently removed. This can't be undone.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                try {
+                  await deleteMeeting(meetingId)
+                  // Refresh both the past-events query (calendar-anchored
+                  // meetings) and the impromptu query ("My Recordings")
+                  // so the row drops out regardless of which list it
+                  // came from.
+                  void queryClient.invalidateQueries({ queryKey: ['calendar', 'past'] })
+                  void queryClient.invalidateQueries({ queryKey: ['calendar', 'today'] })
+                  void queryClient.invalidateQueries({ queryKey: ['calendar', 'impromptu', '7d'] })
+                } catch (err) {
+                  if (err instanceof ApiError && err.reauthRequired) {
+                    await signOut()
+                    router.replace('/(auth)/sign-in')
+                    return
+                  }
+                  const msg = formatErrorMessage(err)
+                  if (msg) setBannerMsg(msg)
+                  console.error('[calendar] delete failed', err)
+                }
+              })()
+            },
+          },
+        ],
+      )
+    },
+    [queryClient, signOut],
+  )
+
   const title = segmentTitle(segment)
   const subtitle = segmentSubtitle(segment, dateLabel, todays.length, upcomingCount, pastCount)
   const segmentEmpty =
@@ -357,9 +407,9 @@ export default function CalendarTab() {
               accessibilityRole="button"
               accessibilityLabel="Settings"
               onPress={() => router.push('/settings')}
-              hitSlop={8}
+              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
             >
-              <Avatar initials={initialsFromUserId(userId)} size={32} />
+              <Ionicons name="settings-outline" size={16} color={colors.text2} />
             </Pressable>
           </View>
         </View>
@@ -533,6 +583,7 @@ export default function CalendarTab() {
           onRetry={() => pastInf.refetch()}
           onEventPress={handleEventPress}
           onEventDismiss={dismiss}
+          onEventDelete={handleEventDelete}
           isEmpty={pastCount === 0 && !pastInf.isLoading}
           emptySegment="past"
           now={now}
@@ -542,6 +593,7 @@ export default function CalendarTab() {
           impromptuLoading={impromptuQuery.isLoading}
           impromptuError={impromptuQuery.error}
           onImpromptuPress={(id) => router.push(`/meetings/${id}`)}
+          onImpromptuDelete={handleEventDelete}
         />
       )}
 
@@ -586,6 +638,7 @@ function InfiniteCalendarList({
   onRetry,
   onEventPress,
   onEventDismiss,
+  onEventDelete,
   isEmpty,
   emptySegment,
   now,
@@ -595,6 +648,7 @@ function InfiniteCalendarList({
   impromptuLoading,
   impromptuError,
   onImpromptuPress,
+  onImpromptuDelete,
 }: {
   sections: CalendarDaySection[]
   variant: 'later' | 'past'
@@ -608,6 +662,13 @@ function InfiniteCalendarList({
   onRetry: () => void
   onEventPress: (ev: CalendarEvent) => void
   onEventDismiss: (id: string) => void
+  /**
+   * Optional swipe-to-delete handler. When set on the Past variant the
+   * right-swipe action becomes "Delete" instead of "Hide" — the parent
+   * is responsible for confirming the destructive intent. Omit on
+   * variants where hard-deletes don't make sense (Upcoming).
+   */
+  onEventDelete?: (ev: CalendarEvent) => void
   isEmpty: boolean
   emptySegment: Segment
   now: Date
@@ -620,6 +681,12 @@ function InfiniteCalendarList({
   impromptuLoading?: boolean
   impromptuError?: Error | null
   onImpromptuPress?: (id: string) => void
+  /**
+   * Delete handler for the "My Recordings" rows (impromptu meetings).
+   * Signature mirrors onEventDelete since the impromptu section reuses
+   * the MeetingRow component via the impromptu→CalendarEvent adapter.
+   */
+  onImpromptuDelete?: (ev: CalendarEvent) => void
 }) {
   const data = useMemo(() => flattenSections(sections), [sections])
 
@@ -628,16 +695,23 @@ function InfiniteCalendarList({
       if (item.type === 'header') {
         return <SectionHeader label={formatDayLabel(item.date, now).toUpperCase()} />
       }
+      // Prefer onDelete over onDismiss when both are wired AND the row
+      // has a deletable meeting row backing it. Calendar-only events
+      // (no meetingId) can't be hard-deleted, so they fall back to
+      // hide via onDismiss.
+      const canDelete = Boolean(onEventDelete && item.event.meetingId)
       return (
         <MeetingRow
           event={item.event}
           variant={variant}
           onPress={() => onEventPress(item.event)}
-          onDismiss={() => onEventDismiss(item.event.id)}
+          {...(canDelete
+            ? { onDelete: () => onEventDelete!(item.event) }
+            : { onDismiss: () => onEventDismiss(item.event.id) })}
         />
       )
     },
-    [now, onEventDismiss, onEventPress, variant],
+    [now, onEventDelete, onEventDismiss, onEventPress, variant],
   )
 
   if (isLoading) {
@@ -675,6 +749,7 @@ function InfiniteCalendarList({
               isLoading={!!impromptuLoading}
               error={impromptuError ?? null}
               onPress={onImpromptuPress ?? (() => {})}
+              {...(onImpromptuDelete ? { onDelete: onImpromptuDelete } : {})}
             />
           )}
         </>
@@ -858,13 +933,6 @@ function formatNowLabel(d: Date): string {
   return d
     .toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
     .replace(/\s?(AM|PM)$/i, '')
-}
-
-function initialsFromUserId(userId: string | null): string {
-  if (!userId) return '?'
-  // userId is a cuid2 — first two alphas as a stable placeholder until
-  // /auth/me's displayName lands. M2 swaps this for real initials.
-  return userId.slice(0, 2).toUpperCase()
 }
 
 const styles = StyleSheet.create({

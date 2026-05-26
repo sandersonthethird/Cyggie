@@ -39,6 +39,14 @@ export const colors = {
   chipViolet: '#7C3AED',
   chipSky: '#0369A1',
   chipSkyMuted: '#E0F2FE',
+  // Dark surface + text-on-dark scale (V3 dark sign-in). Same value as `text`
+  // but exposed separately so dark-surface intent is explicit at call sites.
+  darkSurface: '#0F172A',
+  textOnDark: '#FFFFFF',
+  textOnDark2: 'rgba(255,255,255,0.7)',
+  textOnDark3: 'rgba(255,255,255,0.55)',
+  textOnDark4: 'rgba(255,255,255,0.45)',
+  textOnDarkBorder: 'rgba(255,255,255,0.2)',
 } as const
 
 export const spacing = {

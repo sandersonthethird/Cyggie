@@ -3,9 +3,68 @@ import { Image, StyleSheet, View, type ViewStyle } from 'react-native'
 import { Avatar } from './Avatar'
 import { colors, radii } from '../theme'
 
-// Pure helper extracted so it can be unit-tested without rendering RN. The
-// component does no other branching beyond what this returns. Exported for
-// tests; production callers should use <CompanyLogo /> below.
+// Logo lookup stages. We try services in this order and downgrade on
+// failure — mirrors what desktop does (see
+// src/renderer/routes/SearchResults.tsx). Exported so unit tests can lock
+// the stage-machine without rendering RN.
+export type LogoStage = 'clearbit' | 'favicon' | 'avatar'
+
+export interface LogoResolution {
+  /** What to render right now: a remote image, or the initials avatar. */
+  kind: 'image' | 'avatar'
+  /** Image source URL (only set when kind === 'image'). */
+  uri?: string
+  /** Initials to show (only set when kind === 'avatar'). */
+  initials?: string
+}
+
+/**
+ * Resolve the current stage to a renderable. Pure helper, unit-testable.
+ *
+ * Desktop pattern: Clearbit first, Google s2 favicon as fallback, then
+ * nothing. Mobile replaces the "nothing" tail with a crimson initials
+ * chip because list rows benefit from a visual anchor even when no logo
+ * exists.
+ *
+ * Why s2 in the chain: Clearbit 404s for companies it has no record of
+ * (e.g. early-stage startups), but Google's favicon service almost
+ * always returns *something* — a real favicon if the site has one, or
+ * the generic globe glyph otherwise. The globe glyph is the same
+ * tradeoff the desktop accepts.
+ */
+export function resolveLogo(
+  domain: string | null | undefined,
+  name: string,
+  stage: LogoStage,
+): LogoResolution {
+  if (!domain || stage === 'avatar') {
+    return { kind: 'avatar', initials: initialsForCompany(name) }
+  }
+  const encoded = encodeURIComponent(domain)
+  if (stage === 'clearbit') {
+    return { kind: 'image', uri: `https://logo.clearbit.com/${encoded}` }
+  }
+  // favicon
+  return {
+    kind: 'image',
+    // sz=128 — RN image cache stores at requested size, so we ask for one
+    // size suitable for the hero (72px) and rounded rows (28px both look
+    // crisp downscaled from 128).
+    uri: `https://www.google.com/s2/favicons?sz=128&domain=${encoded}`,
+  }
+}
+
+/**
+ * Next stage to advance to when the current source errors. avatar is the
+ * terminal state — once there, we don't move (the Avatar can't error).
+ */
+export function nextStage(stage: LogoStage): LogoStage {
+  if (stage === 'clearbit') return 'favicon'
+  return 'avatar'
+}
+
+// Legacy 3-arg shape kept so existing call sites and unit tests continue
+// to work. New code should prefer `resolveLogo` directly.
 export type LogoState =
   | { kind: 'avatar'; initials: string }
   | { kind: 'image'; uri: string }
@@ -15,12 +74,32 @@ export function computeLogoState(
   name: string,
   hasError: boolean,
 ): LogoState {
-  if (!domain || hasError) {
-    return { kind: 'avatar', initials: initialsForCompany(name) }
+  const resolution = resolveLogo(domain, name, hasError ? 'avatar' : 'clearbit')
+  if (resolution.kind === 'avatar') {
+    return { kind: 'avatar', initials: resolution.initials ?? initialsForCompany(name) }
   }
-  return {
-    kind: 'image',
-    uri: `https://logo.clearbit.com/${encodeURIComponent(domain)}`,
+  return { kind: 'image', uri: resolution.uri! }
+}
+
+// Derive a usable Clearbit / favicon lookup domain from either primaryDomain
+// (already bare) or a websiteUrl ("https://www.acme.com/about" → "acme.com").
+// Returns null when neither is usable. Callers pass the result as `domain` to
+// <CompanyLogo /> so companies enriched with only a website URL still get a
+// real logo instead of the initials fallback.
+export function deriveLogoDomain(
+  primaryDomain: string | null | undefined,
+  websiteUrl: string | null | undefined,
+): string | null {
+  const direct = primaryDomain?.trim()
+  if (direct) return direct.replace(/^www\./i, '')
+  const site = websiteUrl?.trim()
+  if (!site) return null
+  try {
+    const url = new URL(/^https?:\/\//i.test(site) ? site : `https://${site}`)
+    const host = url.hostname.replace(/^www\./i, '')
+    return host.length > 0 ? host : null
+  } catch {
+    return null
   }
 }
 
@@ -32,33 +111,29 @@ export function initialsForCompany(name: string): string {
   return (words[0]![0]! + words[1]![0]!).toUpperCase()
 }
 
-// CompanyLogo — renders the company's Clearbit logo, falling back to the
-// initials Avatar when the domain is missing or Clearbit returns an error.
+// CompanyLogo — renders the company's logo via a Clearbit → Google favicon
+// → initials chain, mirroring the desktop fallback. The state machine:
 //
-// State machine:
+//   stage = 'clearbit'
+//     │
+//     ▼
+//   <Image src="logo.clearbit.com/<domain>" />
+//     │       ─ onError ─►  stage = 'favicon'
+//     │
+//     ▼
+//   <Image src="google.com/s2/favicons?domain=<domain>" />
+//     │       ─ onError ─►  stage = 'avatar'
+//     │
+//     ▼
+//   <Avatar initials=… crimson />  (terminal — no further fallback)
 //
-//   props.domain
-//        │
-//   ┌────┴────┐
-//   ▼         ▼
-//  null/    string
-//  empty       │
-//   │          ▼
-//   │       <Image src="logo.clearbit.com/<domain>" />
-//   │          │
-//   │       onError? ──no──► (image rendered)
-//   │          │yes
-//   │          ▼
-//   └───────► <Avatar initials={initials(name)} />
-//
-// We intentionally use Clearbit at every size — desktop uses Google s2 for
-// small favicons, but s2 returns HTTP 200 + a generic globe icon for unknown
-// domains, which means onError never fires and the row shows a globe instead
-// of falling back to initials. Clearbit 404s on unknown domains, giving us a
-// clean error signal we can swap on.
+// We don't use Clearbit-only anymore because it 404s for early-stage
+// companies where the user (and Google) DO know the domain. The favicon
+// fallback gives us at least a real per-site icon (or Google's globe
+// glyph) before we land on initials.
 
 export interface CompanyLogoProps {
-  /** Primary domain for the company (e.g. "acme.com"). Falsy → initials. */
+  /** Domain for the company (e.g. "acme.com"). Falsy → initials. */
   domain: string | null | undefined
   /** Used for the initials fallback. */
   name: string
@@ -76,24 +151,33 @@ export function CompanyLogo({
   shape = 'rounded',
   style,
 }: CompanyLogoProps) {
-  const [hasError, setHasError] = useState(false)
-
-  // Reset error state when the target domain changes (e.g. row recycled in a
-  // FlatList) so a previously-failed row doesn't permanently show initials
-  // when the underlying company changes.
+  // Start at clearbit unless there's no domain at all (then jump straight
+  // to the initials avatar). Reset whenever the target domain changes so
+  // a row recycled in a FlatList doesn't carry over a previous error.
+  const [stage, setStage] = useState<LogoStage>(domain ? 'clearbit' : 'avatar')
   useEffect(() => {
-    setHasError(false)
+    setStage(domain ? 'clearbit' : 'avatar')
   }, [domain])
 
   const borderRadius = shape === 'pill' ? radii.pill : Math.max(4, Math.round(size * 0.18))
-  const state = computeLogoState(domain, name, hasError)
+  const resolution = resolveLogo(domain, name, stage)
 
-  if (state.kind === 'avatar') {
+  if (resolution.kind === 'avatar') {
     const avatarStyle: ViewStyle = {
       ...(shape === 'pill' ? null : { borderRadius }),
       ...style,
     }
-    return <Avatar initials={state.initials} size={size} style={avatarStyle} />
+    // Crimson identity for the initials fallback so a company without a
+    // resolvable logo still reads as "company" (not the slate Avatar used
+    // for user/contact chips).
+    return (
+      <Avatar
+        initials={resolution.initials ?? '?'}
+        size={size}
+        color={colors.crimson}
+        style={avatarStyle}
+      />
+    )
   }
 
   return (
@@ -110,10 +194,10 @@ export function CompanyLogo({
       ]}
     >
       <Image
-        source={{ uri: state.uri }}
+        source={{ uri: resolution.uri! }}
         style={{ width: size, height: size, borderRadius }}
         resizeMode="contain"
-        onError={() => setHasError(true)}
+        onError={() => setStage((s) => nextStage(s))}
         accessibilityIgnoresInvertColors
       />
     </View>

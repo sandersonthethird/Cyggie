@@ -300,15 +300,29 @@ export default function MeetingDetailScreen() {
 
 function Hero({ meeting }: { meeting: MeetingDetail }) {
   const joinLinkExpired = useJoinLinkExpired(meeting.scheduledEndAt)
+  // First linked company drives the Hero avatar so the meeting visually
+  // identifies with the most relevant org. Falls back to the original
+  // crimson icon (flash / calendar) for meetings with no company attached.
+  const primaryCompany = meeting.linkedCompanies[0]
   return (
     <View style={styles.hero}>
-      <View style={styles.heroAvatar}>
-        <Ionicons
-          name={meeting.wasImpromptu ? 'flash' : 'calendar'}
-          size={28}
-          color={colors.crimson}
+      {primaryCompany ? (
+        <CompanyLogo
+          domain={primaryCompany.primaryDomain}
+          name={primaryCompany.name}
+          size={60}
+          shape="pill"
+          style={styles.heroLogo}
         />
-      </View>
+      ) : (
+        <View style={styles.heroAvatar}>
+          <Ionicons
+            name={meeting.wasImpromptu ? 'flash' : 'calendar'}
+            size={28}
+            color={colors.crimson}
+          />
+        </View>
+      )}
       <Text style={styles.heroName} numberOfLines={3}>
         {meeting.title}
       </Text>
@@ -1345,6 +1359,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.crimsonMuted,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
+  heroLogo: {
     marginBottom: spacing.md,
   },
   heroName: {

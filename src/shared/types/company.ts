@@ -104,6 +104,11 @@ export interface CompanySummary {
   raiseSize: number | null
   round: CompanyRound | null
   pipelineStage: CompanyPipelineStage | null
+  /** Stage the deal was in immediately before being moved to Pass. NULL for
+   *  active deals and legacy passed rows (PipelineStepper falls back to
+   *  all-gray rendering when null). Set only on transition into Pass; cleared
+   *  on re-open. Migration 105 (SQLite) / 0021 (Neon). */
+  passedFromStage: CompanyPipelineStage | null
   createdAt: string
   updatedAt: string
   // Firmographic / Business Profile

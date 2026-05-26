@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import { computeLogoState, initialsForCompany } from '../CompanyLogo'
+import {
+  computeLogoState,
+  deriveLogoDomain,
+  initialsForCompany,
+  nextStage,
+  resolveLogo,
+} from '../CompanyLogo'
 
 // Pure-logic tests for CompanyLogo's decision tree. UI rendering belongs in
 // a future mobile-side runner with full RN bridge mocks; here we just lock
@@ -69,5 +75,72 @@ describe('computeLogoState', () => {
   test('hasError=true falls back to avatar even when domain is set', () => {
     const state = computeLogoState('acme.com', 'Acme Corp', true)
     expect(state).toEqual({ kind: 'avatar', initials: 'AC' })
+  })
+})
+
+describe('resolveLogo', () => {
+  test("stage=clearbit → Clearbit URL", () => {
+    const r = resolveLogo('acme.com', 'Acme', 'clearbit')
+    expect(r.kind).toBe('image')
+    expect(r.uri).toBe('https://logo.clearbit.com/acme.com')
+  })
+
+  test("stage=favicon → Google s2 favicon URL", () => {
+    const r = resolveLogo('acme.com', 'Acme', 'favicon')
+    expect(r.kind).toBe('image')
+    expect(r.uri).toMatch(/^https:\/\/www\.google\.com\/s2\/favicons\?sz=128&domain=acme\.com$/)
+  })
+
+  test("stage=avatar → initials", () => {
+    const r = resolveLogo('acme.com', 'Acme Corp', 'avatar')
+    expect(r).toEqual({ kind: 'avatar', initials: 'AC' })
+  })
+
+  test('null domain at any stage → avatar', () => {
+    expect(resolveLogo(null, 'Acme', 'clearbit').kind).toBe('avatar')
+    expect(resolveLogo(null, 'Acme', 'favicon').kind).toBe('avatar')
+  })
+
+  test('domain is URL-encoded so non-ASCII chars do not break the URL', () => {
+    const r = resolveLogo('föo bar.com', 'Foo', 'favicon')
+    expect(r.uri).toContain(encodeURIComponent('föo bar.com'))
+  })
+})
+
+describe('nextStage', () => {
+  test('clearbit → favicon → avatar (terminal)', () => {
+    expect(nextStage('clearbit')).toBe('favicon')
+    expect(nextStage('favicon')).toBe('avatar')
+    expect(nextStage('avatar')).toBe('avatar')
+  })
+})
+
+describe('deriveLogoDomain', () => {
+  test('primaryDomain wins over websiteUrl', () => {
+    expect(deriveLogoDomain('acme.com', 'https://stripe.com')).toBe('acme.com')
+  })
+
+  test('strips leading www. from primaryDomain', () => {
+    expect(deriveLogoDomain('www.acme.com', null)).toBe('acme.com')
+  })
+
+  test('extracts host from full websiteUrl when domain missing', () => {
+    expect(deriveLogoDomain(null, 'https://www.acme.com/about')).toBe('acme.com')
+  })
+
+  test('handles website without protocol', () => {
+    expect(deriveLogoDomain(null, 'acme.com')).toBe('acme.com')
+  })
+
+  test('null + null → null (no logo possible)', () => {
+    expect(deriveLogoDomain(null, null)).toBeNull()
+  })
+
+  test('whitespace-only inputs → null', () => {
+    expect(deriveLogoDomain('   ', '   ')).toBeNull()
+  })
+
+  test('malformed websiteUrl → null', () => {
+    expect(deriveLogoDomain(null, 'http://')).toBeNull()
   })
 })

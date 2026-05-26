@@ -24,7 +24,7 @@ import {
 import { fetchNotes, type NoteListItem } from '../../lib/api/notes'
 import { fetchMemosForCompany, type MemoListItem } from '../../lib/api/memos'
 import { useAuthStore } from '../../lib/auth/store'
-import { CompanyLogo } from '../../components/CompanyLogo'
+import { CompanyLogo, deriveLogoDomain } from '../../components/CompanyLogo'
 import { RichMarkdown, stripMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -157,7 +157,7 @@ function Hero({ company }: { company: CompanyDetail }) {
   return (
     <View style={styles.hero}>
       <CompanyLogo
-        domain={company.primaryDomain}
+        domain={deriveLogoDomain(company.primaryDomain, company.websiteUrl)}
         name={company.name}
         size={72}
         shape="pill"
@@ -280,8 +280,8 @@ function SegmentControl({
             <Text
               style={[styles.segmentText, active && styles.segmentTextActive]}
               numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.85}
+              ellipsizeMode="clip"
+              allowFontScaling={false}
             >
               {it.label}
             </Text>
@@ -844,12 +844,13 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     backgroundColor: colors.surface3,
     borderRadius: radii.md,
-    padding: 3,
+    padding: 2,
   },
   segmentBtn: {
     flex: 1,
+    minWidth: 0,
     paddingVertical: 8,
-    paddingHorizontal: 2,
+    paddingHorizontal: 1,
     alignItems: 'center',
     borderRadius: radii.sm + 2,
   },
@@ -863,8 +864,9 @@ const styles = StyleSheet.create({
   },
   segmentText: {
     color: colors.text3,
-    fontSize: type.bodyTight,
+    fontSize: type.meta,
     fontWeight: '600',
+    letterSpacing: -0.2,
   },
   segmentTextActive: { color: colors.text },
 

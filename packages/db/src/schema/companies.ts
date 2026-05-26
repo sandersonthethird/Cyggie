@@ -50,6 +50,9 @@ export const orgCompanies = pgTable(
     // Stage / classification (migration 020)
     stage: varchar('stage', { length: 64 }),
     pipelineStage: varchar('pipeline_stage', { length: 64 }),
+    // Pre-Pass stage capture (migration 0021 / SQLite 105). Holds the stage the
+    // deal was in immediately before being moved to Pass; cleared on re-open.
+    passedFromStage: varchar('passed_from_stage', { length: 64 }),
     priority: varchar('priority', { length: 32 }),
     status: varchar('status', { length: 32 }).notNull().default('active'),
     entityType: varchar('entity_type', { length: 32 }).notNull().default('unknown'),

@@ -12,6 +12,7 @@ const config: ExpoConfig = {
   orientation: 'portrait',
   scheme: 'cyggie',
   userInterfaceStyle: 'automatic',
+  icon: './assets/icon.png',
   newArchEnabled: true,
   runtimeVersion: {
     policy: 'appVersion',
@@ -22,6 +23,10 @@ const config: ExpoConfig = {
   ios: {
     bundleIdentifier: 'com.cyggie.mobile',
     supportsTablet: false,
+    // iOS rejects icons with alpha, so icon.png is pre-flattened onto the
+    // brand navy (#0F172A — theme.ts colors.text). Splash uses a transparent
+    // swan over white.
+    icon: './assets/icon.png',
     // M3 — recording entitlements + permission strings.
     //
     // UIBackgroundModes:audio lets a recording survive backgrounding (user
@@ -40,6 +45,15 @@ const config: ExpoConfig = {
     'expo-router',
     'expo-secure-store',
     'expo-web-browser',
+    [
+      'expo-splash-screen',
+      {
+        image: './assets/splash-icon.png',
+        backgroundColor: '#ffffff',
+        resizeMode: 'contain',
+        imageWidth: 200,
+      },
+    ],
     // Required by @expo/vector-icons (Ionicons fonts) — autolinking only
     // picks up direct deps, hence the explicit install + plugin entry.
     'expo-font',

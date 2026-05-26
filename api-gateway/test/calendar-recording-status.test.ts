@@ -73,10 +73,19 @@ const db = getDb(env.GATEWAY_DATABASE_URL)
 const TEST_PREFIX = `test-cal-rec-${Date.now().toString(36)}-`
 const createdUserIds: string[] = []
 const createdMeetingIds: string[] = []
+const createdCompanyIds: string[] = []
 
 afterAll(async () => {
   if (createdMeetingIds.length > 0) {
+    await db
+      .delete(schema.meetingCompanyLinks)
+      .where(inArray(schema.meetingCompanyLinks.meetingId, createdMeetingIds))
     await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
+  }
+  if (createdCompanyIds.length > 0) {
+    await db
+      .delete(schema.orgCompanies)
+      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
   }
   if (createdUserIds.length > 0) {
     await db
@@ -140,6 +149,36 @@ async function insertMeeting(opts: {
   })
   createdMeetingIds.push(id)
   return id
+}
+
+async function insertCompany(opts: {
+  userId: string
+  name: string
+  primaryDomain: string | null
+}): Promise<string> {
+  const id = TEST_PREFIX + 'co-' + createId().slice(0, 8)
+  await db.insert(schema.orgCompanies).values({
+    id,
+    userId: opts.userId,
+    canonicalName: opts.name,
+    normalizedName: opts.name.toLowerCase(),
+    primaryDomain: opts.primaryDomain,
+  })
+  createdCompanyIds.push(id)
+  return id
+}
+
+async function linkCompanyToMeeting(opts: {
+  meetingId: string
+  companyId: string
+  confidence?: number
+}): Promise<void> {
+  await db.insert(schema.meetingCompanyLinks).values({
+    meetingId: opts.meetingId,
+    companyId: opts.companyId,
+    confidence: opts.confidence ?? 1.0,
+    linkedBy: 'manual',
+  })
 }
 
 describe('GET /calendar/events — recordingStatus augmentation', () => {
@@ -212,6 +251,60 @@ describe('GET /calendar/events — recordingStatus augmentation', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json() as { events: Array<{ calendarEventId: string; recordingStatus?: string }> }
     expect(body.events[0]?.recordingStatus).toBeUndefined()
+  })
+
+  test('attaches the highest-confidence linked company to events with a recording', async () => {
+    const { userId, token } = await setupUser()
+    const calEventA = `cal-evt-co-A-${createId().slice(0, 6)}`
+    const calEventB = `cal-evt-co-B-${createId().slice(0, 6)}`
+    const calEventC = `cal-evt-co-C-${createId().slice(0, 6)}`
+
+    const meetingA = await insertMeeting({ userId, calendarEventId: calEventA, status: 'transcribed' })
+    const meetingB = await insertMeeting({ userId, calendarEventId: calEventB, status: 'transcribed' })
+    // calEventC has no meeting → no company expected.
+
+    const acmeId = await insertCompany({ userId, name: 'Acme Corp', primaryDomain: 'acme.com' })
+    const ctrlId = await insertCompany({ userId, name: 'Control Co', primaryDomain: null })
+    const stripeId = await insertCompany({ userId, name: 'Stripe', primaryDomain: 'stripe.com' })
+
+    // meetingA has Acme as its single linked company.
+    await linkCompanyToMeeting({ meetingId: meetingA, companyId: acmeId, confidence: 0.9 })
+    // meetingB has two links — Stripe at higher confidence than Control.
+    await linkCompanyToMeeting({ meetingId: meetingB, companyId: ctrlId, confidence: 0.4 })
+    await linkCompanyToMeeting({ meetingId: meetingB, companyId: stripeId, confidence: 0.95 })
+
+    const startISO = new Date(Date.now() + 60_000).toISOString()
+    const endISO = new Date(Date.now() + 30 * 60_000).toISOString()
+    mockedGoogleEvents = [
+      { id: calEventA, summary: 'A', start: { dateTime: startISO }, end: { dateTime: endISO } },
+      { id: calEventB, summary: 'B', start: { dateTime: startISO }, end: { dateTime: endISO } },
+      { id: calEventC, summary: 'C', start: { dateTime: startISO }, end: { dateTime: endISO } },
+    ]
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/calendar/events',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      events: Array<{
+        calendarEventId: string
+        company?: { id: string; name: string; primaryDomain: string | null }
+      }>
+    }
+    const byId = new Map(body.events.map((e) => [e.calendarEventId, e]))
+    expect(byId.get(calEventA)?.company).toEqual({
+      id: acmeId,
+      name: 'Acme Corp',
+      primaryDomain: 'acme.com',
+    })
+    expect(byId.get(calEventB)?.company).toEqual({
+      id: stripeId,
+      name: 'Stripe',
+      primaryDomain: 'stripe.com',
+    })
+    expect(byId.get(calEventC)?.company).toBeUndefined()
   })
 
   test('graceful degradation: meetings-query failure does NOT break the calendar list', async () => {

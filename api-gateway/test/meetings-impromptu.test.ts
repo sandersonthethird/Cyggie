@@ -72,6 +72,7 @@ async function insertMeeting(args: {
   calendarEventId: string | null
   title: string
   date: Date
+  status?: string
 }): Promise<string> {
   const id = createId()
   await db.insert(schema.meetings).values({
@@ -80,7 +81,7 @@ async function insertMeeting(args: {
     calendarEventId: args.calendarEventId,
     title: args.title,
     date: args.date,
-    status: 'transcribed',
+    status: args.status ?? 'transcribed',
     createdByUserId: args.userId,
   })
   createdMeetingIds.push(id)
@@ -217,6 +218,50 @@ describe('GET /meetings/impromptu', () => {
     // Ordered by date DESC, so we should see Recording 0..19 (newest 20).
     expect(body.meetings[0]?.title).toBe('Recording 0')
     expect(body.meetings[19]?.title).toBe('Recording 19')
+  })
+
+  test("excludes status='error' and status='empty' rows — failed recordings don't clutter My Recordings", async () => {
+    const { userId, jwt } = await setupUser()
+    const now = new Date()
+    // Mix of statuses, all impromptu, all in window.
+    const transcribedId = await insertMeeting({
+      userId,
+      calendarEventId: null,
+      title: 'Successful recording',
+      date: new Date(now.getTime() - 60 * 60 * 1000),
+      status: 'transcribed',
+    })
+    await insertMeeting({
+      userId,
+      calendarEventId: null,
+      title: 'Failed recording',
+      date: new Date(now.getTime() - 30 * 60 * 1000),
+      status: 'error',
+    })
+    await insertMeeting({
+      userId,
+      calendarEventId: null,
+      title: 'Silent recording',
+      date: new Date(now.getTime() - 15 * 60 * 1000),
+      status: 'empty',
+    })
+    const transcribingId = await insertMeeting({
+      userId,
+      calendarEventId: null,
+      title: 'In-flight recording',
+      date: new Date(now.getTime() - 5 * 60 * 1000),
+      status: 'transcribing',
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/meetings/impromptu',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { meetings: Array<{ id: string; status: string }> }
+    const ids = body.meetings.map((m) => m.id).sort()
+    expect(ids).toEqual([transcribedId, transcribingId].sort())
   })
 
   test('days outside [1, 30] → 400', async () => {

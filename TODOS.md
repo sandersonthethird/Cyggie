@@ -343,6 +343,35 @@ The full per-migration audit is in [packages/db/MIGRATION_AUDIT.md](packages/db/
 
 ---
 
+### PipelineStepper — visual-regression / layout-collision coverage
+
+**What:** Add a Playwright (or other visual-regression) check that confirms
+the 7-dot PipelineStepper renders without label collisions or off-edge
+clipping across the right-rail's expected width range (e.g., 280px, 320px,
+400px, 480px). The Vitest RTL suite at
+[src/renderer/components/common/__tests__/PipelineStepper.test.tsx](src/renderer/components/common/__tests__/PipelineStepper.test.tsx)
+covers state semantics + click behavior but NOT layout — angled labels at
+−30° lean away cleanly at normal widths, but a future stage-label rename or
+a panel-width regression could silently break the visual.
+
+**Why:** Three silent-failure modes were flagged in the 2026-05-25 eng review
+of the 7-dot upgrade (label collision, first-label off the left edge, dot
+overlap at narrow widths). None are catchable by RTL because jsdom doesn't
+do real layout. The current mitigation is manual QA at multiple panel
+widths during verification.
+
+**Context:** Came out of the 7-dot PipelineStepper PR (commits TBD). Plan
+file: `~/.claude/plans/can-you-fix-the-groovy-candy.md`. The component
+itself lives at
+[src/renderer/components/common/PipelineStepper.tsx](src/renderer/components/common/PipelineStepper.tsx)
+with sibling CSS module.
+
+**Depends on:** Playwright (or chosen tool) being added to the test
+toolchain. There's no existing visual-regression infra in this repo, so
+this is "build the tooling, then add the check" — not a 1-line follow-up.
+
+---
+
 ### M5-thin follow-ups (deferred from the pre-build M5-thin slice)
 
 The M5-thin slice (commit TBD on `main`, 2026-05-22) shipped a working

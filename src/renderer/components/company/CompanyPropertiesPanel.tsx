@@ -37,7 +37,7 @@ import {
 import { useTakeaways } from '../../hooks/useTakeaways'
 import { KeyTakeawaysCard } from '../common/KeyTakeawaysCard'
 import { ScorecardStrip, type ScorecardMetric } from '../common/ScorecardStrip'
-import { PipelineStepper, COMPANY_PIPELINE_STAGES } from '../common/PipelineStepper'
+import { PipelineStepper, COMPANY_PIPELINE_STAGES_FULL } from '../common/PipelineStepper'
 import { AddTaskModal as AddTaskModalCommon } from '../common/AddTaskModal'
 import { CompanyHeaderCard } from './CompanyHeaderCard'
 import { CompanyFieldSections } from './CompanyFieldSections'
@@ -551,17 +551,26 @@ export function CompanyPropertiesPanel({
   }, [company.id])
 
   function save(field: string, value: unknown) {
-    const prev = (company as unknown as Record<string, unknown>)[field]
+    return saveFields({ [field]: value })
+  }
+
+  function saveFields(updates: Record<string, unknown>) {
+    const prevRecord = company as unknown as Record<string, unknown>
+    const prevValues: Record<string, unknown> = {}
+    for (const key of Object.keys(updates)) {
+      prevValues[key] = prevRecord[key]
+    }
     const prevPrimaryDomain = company.primaryDomain
+    const settingPrimaryDomain = 'primaryDomain' in updates
     return withOptimisticUpdate(
-      () => onUpdate({ [field]: value }),
+      () => onUpdate(updates),
       () => window.api.invoke<CompanyDetail | null>(
-        IPC_CHANNELS.COMPANY_UPDATE, company.id, { [field]: value }
+        IPC_CHANNELS.COMPANY_UPDATE, company.id, updates,
       ),
-      () => onUpdate({ [field]: prev }),
+      () => onUpdate(prevValues),
       (result) => {
         // Surface backend-derived fields (e.g. primary_domain auto-set from website_url).
-        if (result && field !== 'primaryDomain' && result.primaryDomain !== prevPrimaryDomain) {
+        if (result && !settingPrimaryDomain && result.primaryDomain !== prevPrimaryDomain) {
           onUpdate({ primaryDomain: result.primaryDomain })
         }
       },
@@ -573,7 +582,16 @@ export function CompanyPropertiesPanel({
     const prevEntityType = company.entityType
     const newStage = field === 'pipelineStage' ? (value as string | null) : prevStage
     const newEntityType = field === 'entityType' ? (value as string) : prevEntityType
-    save(field, value).then(() => {
+    // Pre-Pass stage capture: on transition into 'pass', persist the stage the
+    // deal was just in so PipelineStepper can render "got to X, then passed."
+    // On re-open out of 'pass', clear it. Single multi-field write keeps the
+    // outbox emitting one row (one sync push instead of two).
+    const writePromise = field === 'pipelineStage' && value === 'pass' && prevStage !== 'pass'
+      ? saveFields({ pipelineStage: 'pass', passedFromStage: prevStage })
+      : field === 'pipelineStage' && prevStage === 'pass' && value !== 'pass'
+      ? saveFields({ pipelineStage: value, passedFromStage: null })
+      : save(field, value)
+    writePromise.then(() => {
       if (shouldPromptDecisionLog(prevStage, newStage, prevEntityType, newEntityType ?? 'unknown')) {
         setDecisionTriggerType(defaultDecisionType(newStage, newEntityType ?? 'unknown'))
         setShowDecisionModal(true)
@@ -966,8 +984,9 @@ export function CompanyPropertiesPanel({
         <PropertiesCard
           topBand={
             <PipelineStepper
-              stages={COMPANY_PIPELINE_STAGES}
+              stages={COMPANY_PIPELINE_STAGES_FULL}
               currentValue={company.pipelineStage}
+              passedFromStage={company.passedFromStage}
               daysInStage={daysInStage}
               onStageClick={(value) => saveWithDecisionPrompt('pipelineStage', value)}
             />

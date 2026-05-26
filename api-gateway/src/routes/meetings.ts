@@ -415,6 +415,11 @@ export async function registerMeetingRoutes(
       const db = getDb(env.GATEWAY_DATABASE_URL)
       const { days } = req.query
 
+      // Exclude failed/empty recordings from the "My Recordings" section.
+      // These are recoverable from search if the user really wants them,
+      // but they clutter the Past tab with timestamp-titled stubs that
+      // never produced a real transcript. status='transcribing' stays in
+      // (the user just hit Record — they should see the row updating).
       const rows = await db
         .select()
         .from(schema.meetings)
@@ -422,6 +427,7 @@ export async function registerMeetingRoutes(
           and(
             eq(schema.meetings.userId, user.sub),
             sql`${schema.meetings.calendarEventId} IS NULL`,
+            sql`${schema.meetings.status} NOT IN ('error', 'empty')`,
             sql`${schema.meetings.date} >= now() - (${days} || ' days')::interval`,
           ),
         )

@@ -28,6 +28,12 @@ export interface ImpromptuRecordingsSectionProps {
   isLoading: boolean
   error: Error | null
   onPress: (id: string) => void
+  /**
+   * Swipe-to-delete handler. Receives the CalendarEvent-shaped adapter
+   * row (so callers can pull meetingId/title for the confirm prompt).
+   * Omit to disable the swipe gesture entirely on this section.
+   */
+  onDelete?: (event: CalendarEvent) => void
 }
 
 export function ImpromptuRecordingsSection({
@@ -35,6 +41,7 @@ export function ImpromptuRecordingsSection({
   isLoading,
   error,
   onPress,
+  onDelete,
 }: ImpromptuRecordingsSectionProps) {
   if (isLoading && !meetings) {
     return (
@@ -69,14 +76,18 @@ export function ImpromptuRecordingsSection({
   return (
     <View style={styles.section} testID="impromptu-section">
       <Header />
-      {meetings.map((m) => (
-        <MeetingRow
-          key={m.id}
-          event={impromptuMeetingToCalendarEvent(m)}
-          variant="past"
-          onPress={() => onPress(m.id)}
-        />
-      ))}
+      {meetings.map((m) => {
+        const event = impromptuMeetingToCalendarEvent(m)
+        return (
+          <MeetingRow
+            key={m.id}
+            event={event}
+            variant="past"
+            onPress={() => onPress(m.id)}
+            {...(onDelete ? { onDelete: () => onDelete(event) } : {})}
+          />
+        )
+      })}
     </View>
   )
 }

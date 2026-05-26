@@ -16,6 +16,11 @@ interface PipelineStepperProps {
   currentValue: string | null
   /** Days the company has been in the current stage */
   daysInStage: number
+  /** Stage the deal was in immediately before being moved to Pass. When set
+   *  alongside currentValue='pass', dots up-to-and-including this stage render
+   *  red-completed and the Pass dot gets the halo — "got to Diligence, then
+   *  passed." When null, falls back to legacy all-gray rendering. */
+  passedFromStage?: string | null
   /** Called when user clicks a stage dot/label */
   onStageClick?: (value: string | null) => void
 }
@@ -24,21 +29,25 @@ interface PipelineStepperProps {
  * Horizontal pipeline stage progression bar.
  *
  *   Active:  ● completed   ◉ current (ring halo)   ○ future
- *   Passed:  all dots gray, label "Passed · Nd ago", click on a dot
- *            opens a confirm dialog before re-opening the deal.
+ *   Passed (with passedFromStage): dots 0..passedFromStage filled red, halo
+ *            on Pass; click any dot opens a confirm dialog before re-opening.
+ *   Passed (legacy, passedFromStage=null): all dots gray under passedTrack
+ *            opacity; click any dot opens the same confirm dialog.
  */
 export function PipelineStepper({
   stages,
   currentValue,
   daysInStage,
+  passedFromStage,
   onStageClick,
 }: PipelineStepperProps) {
   const [pendingReopen, setPendingReopen] = useState<{ value: string | null; label: string } | null>(null)
   const isPassed = currentValue === 'pass'
-  // In the Pass branch, slice off Portfolio so we render only the 5 active stages.
-  // findIndex returns -1, so every dot falls through to dotFuture (gray) automatically.
-  const renderedStages = isPassed ? stages.filter((s) => s.value !== 'portfolio') : stages
-  const currentIndex = renderedStages.findIndex((s) => s.value === currentValue)
+  const passedIdx = isPassed && passedFromStage != null
+    ? stages.findIndex((s) => s.value === passedFromStage)
+    : -1
+  const hasPassedHistory = isPassed && passedIdx >= 0
+  const currentIndex = stages.findIndex((s) => s.value === currentValue)
 
   function handleClick(stage: PipelineStage) {
     if (isPassed) {
@@ -53,22 +62,52 @@ export function PipelineStepper({
     setPendingReopen(null)
   }
 
+  // Pass dot sits as an alternative terminal next to Portfolio — widen the
+  // column before it so the visual gap signals the fork. No segment is
+  // rendered into the Pass dot below.
+  const colTemplate = stages
+    .map((s, i) => (i === 0 ? 'auto' : (s.value === 'pass' ? '2fr auto' : '1fr auto')))
+    .join(' ')
+
+  // Legacy passed-without-history rows keep the muted opacity wrapper. When
+  // we have history, the dot fill itself tells the story, so no muting.
+  const wrapperClass = isPassed && !hasPassedHistory
+    ? `${styles.wrapper} ${styles.passedTrack}`
+    : styles.wrapper
+
   return (
-    <div className={`${styles.wrapper} ${isPassed ? styles.passedTrack : ''}`}>
+    <div className={wrapperClass}>
       <div className={styles.row}>
-        <div
-          className={styles.grid}
-          style={{ gridTemplateColumns: `${'auto 1fr '.repeat(renderedStages.length - 1)}auto` }}
-        >
-          {renderedStages.map((stage, i) => {
-            const isCompleted = !isPassed && i < currentIndex
-            const isCurrent = !isPassed && i === currentIndex
+        <div className={styles.grid} style={{ gridTemplateColumns: colTemplate }}>
+          {stages.map((stage, i) => {
+            const isPassDot = stage.value === 'pass'
+            // Dot fill computation:
+            //   - active stages: dots before currentIndex are completed,
+            //     currentIndex gets the halo, everything after is future
+            //   - passed with history: dots up-to-and-including passedIdx are
+            //     completed, the Pass dot gets the halo, everything else future
+            //   - passed without history: every dot falls through to future
+            //     (the passedTrack opacity wrapper handles the visual)
+            const isCompleted = hasPassedHistory
+              ? (!isPassDot && i <= passedIdx)
+              : (!isPassed && i < currentIndex)
+            const isCurrent = hasPassedHistory
+              ? isPassDot
+              : (!isPassed && i === currentIndex)
+
+            // Segment between dot i-1 and dot i. Skip the segment leading INTO
+            // the Pass dot — Portfolio and Pass are alternative terminal
+            // states, not sequential, so the gap reads as a fork.
+            const showSegment = i > 0 && !isPassDot
+            const segmentCompleted = hasPassedHistory
+              ? i <= passedIdx
+              : (!isPassed && i <= currentIndex)
 
             return (
               <Fragment key={stage.value ?? '__null'}>
-                {i > 0 && (
+                {showSegment && (
                   <div
-                    className={`${styles.segment} ${!isPassed && i <= currentIndex ? styles.segmentCompleted : ''}`}
+                    className={`${styles.segment} ${segmentCompleted ? styles.segmentCompleted : ''}`}
                     style={{ gridRow: 1, gridColumn: 2 * i }}
                   />
                 )}
@@ -128,11 +167,6 @@ export const COMPANY_PIPELINE_STAGES_FULL: PipelineStage[] = [
   { value: 'portfolio',     label: 'Portfolio'  },
   { value: 'pass',          label: 'Pass'       },
 ]
-
-/** Stages rendered by the stepper in normal (non-Pass) state. Excludes terminal Pass. */
-export const COMPANY_PIPELINE_STAGES: PipelineStage[] = COMPANY_PIPELINE_STAGES_FULL.filter(
-  (s) => s.value !== 'pass',
-)
 
 /** Selectable stage values for dropdowns / filters / table. Excludes Sourced (=null). */
 export const COMPANY_STAGE_OPTIONS: { value: CompanyPipelineStage; label: string }[] =

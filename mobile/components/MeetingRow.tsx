@@ -10,6 +10,7 @@ import {
   type SharedValue,
 } from 'react-native-reanimated'
 import type { CalendarEvent } from '../lib/api/calendar'
+import { CompanyLogo } from './CompanyLogo'
 import { MeetingStatusPill } from './MeetingStatusPill'
 import { colors, radii, spacing, type } from '../theme'
 
@@ -47,9 +48,18 @@ export interface MeetingRowProps {
    * Omit to disable the gesture entirely (no Swipeable wrapper).
    */
   onDismiss?: () => void
+  /**
+   * When provided, the swipe action becomes "Delete" instead of "Hide" —
+   * destructive red with a trash icon. The parent is responsible for
+   * confirming (e.g. via Alert.alert) before calling onDelete; this
+   * component fires it directly on tap. Takes precedence over onDismiss
+   * when both are set. No auto-commit on long swipe (destructive
+   * gestures should always require an explicit tap).
+   */
+  onDelete?: () => void
 }
 
-export function MeetingRow({ event, variant, onPress, onDismiss }: MeetingRowProps) {
+export function MeetingRow({ event, variant, onPress, onDismiss, onDelete }: MeetingRowProps) {
   const start = event.isAllDay ? null : new Date(event.start)
   const end = event.isAllDay ? null : new Date(event.end)
   const durationMin =
@@ -83,6 +93,16 @@ export function MeetingRow({ event, variant, onPress, onDismiss }: MeetingRowPro
           </>
         )}
       </View>
+
+      {event.company && (
+        <CompanyLogo
+          domain={event.company.primaryDomain}
+          name={event.company.name}
+          size={28}
+          shape="rounded"
+          style={styles.companyLogo}
+        />
+      )}
 
       <View style={styles.body}>
         <Text
@@ -129,29 +149,64 @@ export function MeetingRow({ event, variant, onPress, onDismiss }: MeetingRowPro
     </Pressable>
   )
 
-  if (!onDismiss) return inner
+  if (!onDismiss && !onDelete) return inner
 
   // Swipe interactions:
-  //   • Short swipe (past rightThreshold) → reveals Hide button, tap to confirm.
-  //   • Long swipe (past FULL_DISMISS_THRESHOLD) → auto-dismiss without tap.
-  // overshootRight=true lets the user pull beyond the Hide button's
-  // resting width to trigger the auto-dismiss path.
+  //   • Hide variant (onDismiss only): short swipe reveals "Hide", long
+  //     swipe past FULL_DISMISS_THRESHOLD auto-commits without tap.
+  //   • Delete variant (onDelete set): short swipe reveals "Delete" — no
+  //     auto-commit on long swipe; destructive actions always require a
+  //     tap. Delete takes precedence when both props are set.
+  const isDelete = Boolean(onDelete)
   return (
     <ReanimatedSwipeable
       ref={swipeRef}
       friction={2}
       rightThreshold={40}
-      overshootRight
-      renderRightActions={(_progress, translation, swipeable) => (
-        <HideRightAction
-          translation={translation}
-          swipeable={swipeable}
-          onDismiss={onDismiss}
-        />
-      )}
+      overshootRight={!isDelete}
+      renderRightActions={(_progress, translation, swipeable) =>
+        isDelete ? (
+          <DeleteRightAction swipeable={swipeable} onDelete={onDelete!} />
+        ) : (
+          <HideRightAction
+            translation={translation}
+            swipeable={swipeable}
+            onDismiss={onDismiss!}
+          />
+        )
+      }
     >
       {inner}
     </ReanimatedSwipeable>
+  )
+}
+
+function DeleteRightAction({
+  swipeable,
+  onDelete,
+}: {
+  swipeable: SwipeableMethods
+  onDelete: () => void
+}) {
+  // Guards against double-fires from rapid taps (the parent will Alert,
+  // and we don't want two confirmation dialogs stacked).
+  const firedRef = useRef(false)
+  const commit = () => {
+    if (firedRef.current) return
+    firedRef.current = true
+    swipeable.close()
+    onDelete()
+  }
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Delete meeting"
+      onPress={commit}
+      style={({ pressed }) => [styles.deleteAction, pressed && styles.pressed]}
+    >
+      <Ionicons name="trash-outline" size={18} color={colors.surface} />
+      <Text style={styles.hideActionText}>Delete</Text>
+    </Pressable>
   )
 }
 
@@ -274,6 +329,10 @@ const styles = StyleSheet.create({
   },
   textDim: { color: colors.text4 },
 
+  companyLogo: {
+    marginTop: 2,
+  },
+
   body: {
     flex: 1,
     minWidth: 0,
@@ -342,6 +401,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     backgroundColor: colors.crimson,
+  },
+  // Brighter recording-red signals destructive intent more clearly than
+  // crimson; matches iOS Mail's "Trash" action color register.
+  deleteAction: {
+    width: 92,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: colors.rec,
   },
   hideActionText: {
     color: colors.surface,
