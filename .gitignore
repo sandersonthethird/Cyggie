@@ -2,6 +2,14 @@ node_modules/
 out/
 dist/
 *.log
+
+# This repo is a pnpm workspace (see pnpm-workspace.yaml). Root npm/yarn
+# lockfiles break EAS Build's package-manager detection — it picks npm,
+# runs `npm ci` at root which doesn't install workspace deps (no
+# `workspaces` field), and Expo/RN cloud builds fail with "expo package
+# not found." Keep these locked out.
+/package-lock.json
+/yarn.lock
 .DS_Store
 .env
 .env.local
