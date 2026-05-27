@@ -78,12 +78,31 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         deviceLabel: device_label ?? null,
         redirectTarget: redirect_target ?? 'mobile',
       })
-      const authUrl = buildAuthUrl({ client: oauth, state, codeChallenge })
+      // If the caller is already signed in (Bearer in header — opportunistically
+      // populated by plugins/auth), look up their email and pass to Google as
+      // login_hint so the consent screen pre-selects their existing account.
+      // Used by mobile's calendar "Reconnect Google" flow. Endpoint stays
+      // publicly callable — sign-in.tsx calls it unauthenticated.
+      let loginHint: string | undefined
+      if (req.user) {
+        const db = getDb(env.GATEWAY_DATABASE_URL)
+        const row = await db.query.users.findFirst({
+          where: eq(schema.users.id, req.user.sub),
+          columns: { email: true },
+        })
+        loginHint = row?.email
+      }
+      const authUrl = buildAuthUrl({ client: oauth, state, codeChallenge, loginHint })
       // Log the full state (not a prefix) so we can grep the matching callback
       // log line during incident response. State isn't a secret — Google
       // echoes it back through the user-agent URL bar.
       req.log.info(
-        { device_id, redirect_target: redirect_target ?? 'mobile', state },
+        {
+          device_id,
+          redirect_target: redirect_target ?? 'mobile',
+          state,
+          login_hint: loginHint ? 'present' : 'absent',
+        },
         'oauth start',
       )
       return { authUrl, state }

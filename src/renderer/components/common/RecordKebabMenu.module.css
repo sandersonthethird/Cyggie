@@ -86,3 +86,19 @@
   background: var(--cy-divider, var(--color-border));
   margin: 4px 8px;
 }
+
+.itemLabel {
+  flex: 1;
+}
+
+.itemWithSubmenu .submenuChevron {
+  margin-left: auto;
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  font-size: 14px;
+  line-height: 1;
+}
+
+.backRow {
+  color: var(--cy-text-3, var(--color-text-tertiary));
+  font-size: 12px;
+}

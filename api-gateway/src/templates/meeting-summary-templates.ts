@@ -20,7 +20,30 @@
 //     so the wire format is stable (mobile picker IDs map to these).
 //   • Dropped `outputFormat` + `sortOrder` (always markdown; order is
 //     the array order).
+//
+// IMPORTANT: the template strings reference `{{attendees}}` (calendar truth
+// + meeting owner), NOT `{{speakers}}` (transcript diarization). The
+// enhance handler builds the attendees string from `meeting.attendees` +
+// `meeting.self_name`; substitutePlaceholders below knows about both
+// placeholders. See AUTHORITATIVE_ATTENDEES_INSTRUCTION below for the
+// trailer text appended when calendar truth is available.
 // =============================================================================
+
+/**
+ * Trailer text appended to the prompt when the meeting has a known
+ * calendar attendee list. Tells the model not to hallucinate attendees
+ * from transcript mentions.
+ *
+ * MUST stay identical to AUTHORITATIVE_ATTENDEES_INSTRUCTION in
+ * packages/services/src/llm/templates.ts (desktop). Same drift-risk
+ * caveat as the TEMPLATES const above; T25 fixes both.
+ */
+export const AUTHORITATIVE_ATTENDEES_INSTRUCTION =
+  `Attendees source: The "Attendees" list above comes from the calendar invite for ` +
+  `this meeting and is the authoritative list of who attended. Do NOT list anyone ` +
+  `as an attendee, participant, or person on the call in your summary unless they ` +
+  `appear in that list. People mentioned in the transcript who were not on the ` +
+  `call should be referenced as "mentioned" or "discussed" — never as attendees.`
 
 export type TemplateId =
   | 'vc_pitch'
@@ -49,7 +72,7 @@ export const TEMPLATES: readonly MeetingSummaryTemplate[] = [
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}
@@ -76,7 +99,7 @@ Keep each section brief with concise bullet points. Omit any section that has no
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}
@@ -102,7 +125,7 @@ Keep each section brief with concise bullet points. Omit any section that has no
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}
@@ -126,7 +149,7 @@ Keep each section brief with concise bullet points. Omit any section that has no
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}
@@ -151,7 +174,7 @@ Keep each section brief with concise bullet points. Omit any section that has no
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}
@@ -175,34 +198,50 @@ export function findTemplate(id: string): MeetingSummaryTemplate | undefined {
 
 // Substitute the standard placeholder set. Mirrors desktop's buildPrompt
 // (packages/services/src/llm/templates.ts) for the placeholders the 5
-// V1 templates actually reference. Skipped placeholders (companies,
-// attendees, user_identity, instructions) — desktop fills these on its
-// side; gateway only handles the subset the static templates need.
+// V1 templates reference: meeting_title, date, duration, attendees,
+// speakers, transcript, notes.
+//
+// The {{attendees}} placeholder is calendar-truth (selfName + attendees
+// from the meeting row) — caller builds this string. {{speakers}} is the
+// raw diarization output, kept available for backward compat / future
+// templates but not used by the default 5 (which all migrated to
+// {{attendees}} in migration 106 to stop the LLM from hallucinating
+// attendees from transcript mentions).
 //
 // If a template doesn't reference {{notes}} but the meeting has notes,
 // they're appended to the transcript so Claude can see them — same
 // fallback desktop uses.
+//
+// When hasCalendarTruth is true, the authoritative-source instruction
+// is appended to the transcript so the model knows the attendees list
+// is the canonical signal.
 export function substitutePlaceholders(
   template: MeetingSummaryTemplate,
   ctx: {
     meetingTitle: string
     date: string
     duration: string
+    attendees: string
     speakers: string
     transcript: string
     notes: string
+    hasCalendarTruth: boolean
   },
 ): string {
   const referencesNotes = template.userPromptTemplate.includes('{{notes}}')
-  const effectiveTranscript =
-    !referencesNotes && ctx.notes.trim().length > 0
-      ? `${ctx.transcript}\n\n---\nUser Notes:\n${ctx.notes}`
-      : ctx.transcript
+  let effectiveTranscript = ctx.transcript
+  if (!referencesNotes && ctx.notes.trim().length > 0) {
+    effectiveTranscript = `${effectiveTranscript}\n\n---\nUser Notes:\n${ctx.notes}`
+  }
+  if (ctx.hasCalendarTruth) {
+    effectiveTranscript = `${effectiveTranscript}\n\n---\n${AUTHORITATIVE_ATTENDEES_INSTRUCTION}`
+  }
 
   return template.userPromptTemplate
     .replace(/\{\{meeting_title\}\}/g, ctx.meetingTitle)
     .replace(/\{\{date\}\}/g, ctx.date)
     .replace(/\{\{duration\}\}/g, ctx.duration)
+    .replace(/\{\{attendees\}\}/g, ctx.attendees)
     .replace(/\{\{speakers\}\}/g, ctx.speakers)
     .replace(/\{\{notes\}\}/g, ctx.notes)
     .replace(/\{\{transcript\}\}/g, effectiveTranscript)

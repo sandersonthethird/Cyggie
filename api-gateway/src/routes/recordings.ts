@@ -18,6 +18,7 @@ import { eq, and, gte, sum, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
+import { deriveSelfNameFromUser } from '../llm/self-name'
 import type { GatewayEnv } from '../env'
 import {
   submitTranscribeJob,
@@ -48,6 +49,12 @@ export async function registerRecordingRoutes(
       // Quota gate (per-user, calendar-month). One sum query; cheap. Race-y at
       // the boundary (two concurrent uploads at 99.5% each both pass) but for
       // V1 monthly minutes drift by a few percent is acceptable.
+      //
+      // Filter on `date` (the recorded-at column), not `created_at`. Re-uploading
+      // or backfilling old audio should count against the month it was recorded,
+      // not the month it was uploaded — otherwise a backlog flush burns the
+      // current month's budget for audio Deepgram already transcribed (or for
+      // audio that's months old and unrelated to current usage).
       const monthStart = startOfCurrentMonth()
       const [usageRow] = await db
         .select({ total: sum(schema.meetings.durationSeconds) })
@@ -55,7 +62,7 @@ export async function registerRecordingRoutes(
         .where(
           and(
             eq(schema.meetings.userId, user.sub),
-            gte(schema.meetings.createdAt, monthStart),
+            gte(schema.meetings.date, monthStart),
           ),
         )
       const usedSeconds = Number(usageRow?.total ?? 0)
@@ -157,6 +164,7 @@ export async function registerRecordingRoutes(
         // path; we update the racer's row to point recordingPath at it and
         // reassign `meetingId` so the response + Deepgram submit reference
         // the correct row.
+        const selfName = await deriveSelfNameFromUser(db, user.sub)
         try {
           await db.insert(schema.meetings).values({
             id: meetingId,
@@ -165,6 +173,7 @@ export async function registerRecordingRoutes(
             date: recordedAt,
             calendarEventId,
             recordingPath: audioPath,
+            selfName,
             status: 'recording',
             wasImpromptu: true,
             createdByUserId: user.sub,

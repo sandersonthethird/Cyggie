@@ -87,7 +87,12 @@ export async function generateSummary(
     speakers,
     notes: meeting.notes || undefined,
     companies: meeting.companies || undefined,
-    attendees: meeting.attendees || undefined,
+    // Pass meeting.attendees through directly (null preserved, distinct
+    // from undefined) so buildPrompt's null vs [] vs has-items branching
+    // can distinguish "no calendar event" from "calendar event with no
+    // other attendees".
+    attendees: meeting.attendees,
+    selfName: meeting.selfName,
     userIdentity
   })
 

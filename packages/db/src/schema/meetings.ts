@@ -93,8 +93,15 @@ export const meetings = pgTable(
     // surface as null on mobile ("No summary yet" empty state).
     summary: text('summary'),
     // Calendar attendees. attendees = display names/emails; attendeeEmails = parsed emails.
+    // attendees EXCLUDES the meeting owner (filtered out via Google Calendar's `self` flag at
+    // fetch time in google-calendar.ts:19). The owner's calendar-side display name is stored
+    // separately in self_name so the enhance handler can prepend it without doing a users
+    // table lookup — and so the "self" identity travels with the meeting row, not the
+    // requesting user. The latter matters once firm-shared meetings ship (T24 area): a
+    // user enhancing a colleague's meeting should NOT have their own name spliced in.
     attendees: jsonb('attendees'),
     attendeeEmails: jsonb('attendee_emails'),
+    selfName: text('self_name'),
     // Legacy: pre-migration 078 chat history. Kept for backward compat; new chat lives in
     // chat_sessions / chat_session_messages. Marked deprecated — do not write from new code.
     chatMessages: jsonb('chat_messages'),

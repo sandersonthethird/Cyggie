@@ -59,6 +59,7 @@ import {
 } from '@cyggie/db/sqlite/repositories'
 import { indexMeeting } from '@cyggie/db/sqlite/repositories/search.repo'
 import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
+import { getUser } from '@cyggie/db/sqlite/repositories/user.repo'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import { getCredential } from '@main/security/credentials'
 import { getCurrentUserId } from '@main/security/current-user'
@@ -80,6 +81,26 @@ const DEBUG_TRANSCRIPTION =
   process.env['NODE_ENV'] === 'development' && process.env['GORP_DEBUG_TRANSCRIPTION'] === '1'
 
 // ─── Pure helpers (previously module-private in recording.ipc.ts) ────────────
+
+/**
+ * Derives the meeting owner's display name from the local users table.
+ * Used when starting a recording outside any calendar event (impromptu
+ * Record-FAB or other manual paths) so the resulting meeting row still
+ * has a non-null `self_name`. Mirrors the fallback chain in migration
+ * 107's backfill: displayName → "first last" → email → null.
+ */
+function deriveSelfNameFromUserId(userId: string | null): string | null {
+  if (!userId) return null
+  const user = getUser(userId)
+  if (!user) return null
+  const display = user.displayName?.trim()
+  if (display) return display
+  const full = [user.firstName, user.lastName].filter(Boolean).join(' ').trim()
+  if (full) return full
+  const email = user.email?.trim()
+  if (email) return email
+  return null
+}
 
 function buildDeepgramKeyterms(meetingTitle: string | undefined, attendees: string[]): string[] {
   const terms = new Set<string>()
@@ -401,6 +422,7 @@ export class RecordingSession {
             attendees: this.calendarAttendees.length > 0 ? this.calendarAttendees : null,
             attendeeEmails:
               this.calendarAttendeeEmails.length > 0 ? this.calendarAttendeeEmails : null,
+            selfName: this.calendarSelfName ?? deriveSelfNameFromUserId(userId),
             companies: isGroupEvent
               ? null
               : this.calendarAttendeeEmails.length > 0
@@ -661,22 +683,34 @@ export class RecordingSession {
         const actualSpeakerIds = assembler.getFinalizedSpeakerIds()
         const speakerCount = actualSpeakerIds.size
 
-        const allNames: string[] = []
-        if (snapshot.calendarSelfName || snapshot.calendarAttendees.length > 0) {
-          allNames.push(snapshot.calendarSelfName || 'You')
-          allNames.push(...snapshot.calendarAttendees)
-        }
-
+        // Build the speakerMap that labels each Deepgram speaker index with
+        // a human-readable name.
+        //
+        // Multichannel mode: channel 0 is the local mic, so speaker 0 is
+        // reliably the recorder (selfName). Channel 1 carries the system
+        // audio with everyone else; positional mapping of attendees to
+        // speaker indices 1+ holds only when there's exactly one other
+        // speaker, but at minimum self is always correct.
+        //
+        // Diarization (single-channel) mode: no audio-derived signal of
+        // who is who. Positional guessing here produced confidently-wrong
+        // labels (e.g. "Sandy" attributed to a colleague "Andy" because
+        // Andy happened to be first in the attendee list). Fall back to
+        // neutral "Speaker N" labels and let the user relabel post-hoc.
         const speakerMap: Record<number, string> = {}
         const detectedMode = assembler.getChannelMode()
         if (detectedMode === 'multichannel') {
+          const allNames: string[] = []
+          if (snapshot.calendarSelfName || snapshot.calendarAttendees.length > 0) {
+            allNames.push(snapshot.calendarSelfName || 'You')
+            allNames.push(...snapshot.calendarAttendees)
+          }
           for (const id of actualSpeakerIds) {
             speakerMap[id] = allNames[id] || `Speaker ${id + 1}`
           }
         } else {
-          const sortedIds = [...actualSpeakerIds].sort((a, b) => a - b)
-          for (let i = 0; i < sortedIds.length; i++) {
-            speakerMap[sortedIds[i]] = allNames[i] || `Speaker ${sortedIds[i] + 1}`
+          for (const id of actualSpeakerIds) {
+            speakerMap[id] = `Speaker ${id + 1}`
           }
         }
 

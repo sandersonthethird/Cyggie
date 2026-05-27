@@ -22,6 +22,12 @@ export interface MeetingRow {
   speaker_map: string
   attendees: string | null
   attendee_emails: string | null
+  // Owner's calendar-side display name (migration 107). Populated from
+  // CalendarEvent.selfName at meeting creation; used by the LLM summarizer
+  // to render "Attendees: <selfName> (meeting owner), <others>" without
+  // having to look up the requesting user (which would conflate self with
+  // user.sub — wrong once firm-shared meetings ship).
+  self_name: string | null
   companies: string | null
   dismissed_companies: string | null
   chat_messages: string | null

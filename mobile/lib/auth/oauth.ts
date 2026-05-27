@@ -54,15 +54,21 @@ export type SignInResult = SharedSignInResult
 
 const CALLBACK_SCHEME = 'cyggie://auth-callback'
 
-export async function startSignIn(): Promise<SignInResult> {
+export async function startSignIn(opts: { authToken?: string } = {}): Promise<SignInResult> {
   const deviceId = await getOrCreateDeviceId()
 
-  // 1. Ask the gateway for an auth URL.
+  // 1. Ask the gateway for an auth URL. When `authToken` is set, the gateway
+  // looks up the caller's email and injects login_hint into the consent URL
+  // (used by reauthorizeGoogle from the calendar Reconnect flow).
   let authUrl: string
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (opts.authToken) {
+      headers['Authorization'] = `Bearer ${opts.authToken}`
+    }
     const res = await fetch(`${GATEWAY_URL}/auth/google/start`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ device_id: deviceId, device_label: defaultDeviceLabel() }),
     })
     if (!res.ok) {
@@ -132,6 +138,51 @@ export async function startSignIn(): Promise<SignInResult> {
 
 // Re-export the canonical parser so existing call sites keep working.
 export const parseCallbackUrl = sharedParseCallbackUrl
+
+export interface ReauthorizeOptions {
+  /**
+   * When provided, sent as `Authorization: Bearer` on the POST to
+   * /auth/google/start. The gateway uses it to look up the caller's email
+   * and inject `login_hint` into the Google consent URL, steering the user
+   * back to their existing Google account. Used by mobile's calendar
+   * "Reconnect Google" flow; sign-in.tsx calls this unauthenticated (no
+   * authToken) for fresh sign-ins.
+   */
+  authToken?: string
+  /**
+   * Fires when the helper transitions into the post-cancel recovery polling
+   * phase (the ASWebAuthenticationSession iOS dismiss-after-success
+   * workaround). Callers use this to show a "Finishing sign-in…" message
+   * to reassure the user something is still happening.
+   */
+  onRecovering?: () => void
+}
+
+/**
+ * Full Google OAuth round-trip with iOS dismiss-after-success recovery.
+ * Shared by sign-in.tsx (initial auth) and calendar's "Reconnect Google"
+ * flow (Google credentials expired, Cyggie session still valid).
+ *
+ * Does NOT persist tokens. Returns SignInResult; callers are responsible
+ * for calling useAuthStore.signIn() — or refusing to, on a userId mismatch
+ * (the calendar reauth case enforces this so a user who consents with a
+ * different Google account doesn't silently swap their Cyggie identity).
+ */
+export async function reauthorizeGoogle(
+  opts: ReauthorizeOptions = {},
+): Promise<SignInResult> {
+  const result = await startSignIn({ authToken: opts.authToken })
+  if (result.kind !== 'cancel') {
+    return result
+  }
+  // ASWebAuthenticationSession on iOS occasionally returns cancel/dismiss
+  // after the gateway already minted a session (see oauth.ts header). Give
+  // the recovery endpoint ~15s to find a freshly-minted session for this
+  // device before surrendering to the cancel.
+  opts.onRecovering?.()
+  const deviceId = await getOrCreateDeviceId()
+  return pollForRecoveredSession(deviceId)
+}
 
 /**
  * Recover a session whose cyggie:// deep link never reached the app.

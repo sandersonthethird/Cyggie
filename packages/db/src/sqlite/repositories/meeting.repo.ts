@@ -30,6 +30,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     speakerContactMap: {},
     attendees: row.attendees ? JSON.parse(row.attendees) : null,
     attendeeEmails: row.attendee_emails ? JSON.parse(row.attendee_emails) : null,
+    selfName: row.self_name ?? null,
     companies: row.companies ? JSON.parse(row.companies) : null,
     dismissedCompanies: row.dismissed_companies ? JSON.parse(row.dismissed_companies) : null,
     chatMessages: row.chat_messages ? JSON.parse(row.chat_messages) : null,
@@ -263,6 +264,7 @@ export function createMeeting(data: {
   calendarEventId?: string | null
   attendees?: string[] | null
   attendeeEmails?: string[] | null
+  selfName?: string | null
   companies?: string[] | null
   status?: MeetingStatus
   isGroupEvent?: boolean
@@ -273,10 +275,10 @@ export function createMeeting(data: {
   db.prepare(
     `INSERT INTO meetings (
       id, title, date, meeting_platform, meeting_url, calendar_event_id,
-      attendees, attendee_emails, companies, status, is_group_event,
+      attendees, attendee_emails, self_name, companies, status, is_group_event,
       created_by_user_id, updated_by_user_id
     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     data.title,
@@ -286,6 +288,7 @@ export function createMeeting(data: {
     data.calendarEventId ?? null,
     data.attendees ? JSON.stringify(data.attendees) : null,
     data.attendeeEmails ? JSON.stringify(data.attendeeEmails) : null,
+    data.selfName ?? null,
     data.companies ? JSON.stringify(data.companies) : null,
     data.status ?? 'recording',
     data.isGroupEvent ? 1 : 0,
@@ -373,7 +376,7 @@ export function listMeetings(filter?: MeetingListFilter): Meeting[] {
         m.transcript_path, m.summary_path, m.notes,
         m.transcript_drive_id, m.summary_drive_id,
         m.template_id, m.speaker_count, m.speaker_map,
-        m.attendees, m.attendee_emails,
+        m.attendees, m.attendee_emails, m.self_name,
         m.companies, m.dismissed_companies,
         m.recording_path, m.status,
         m.created_at, m.updated_at,
@@ -416,6 +419,7 @@ export function updateMeeting(
     speakerMap: Record<number, string>
     attendees: string[] | null
     attendeeEmails: string[] | null
+    selfName: string | null
     companies: string[] | null
     dismissedCompanies: string[] | null
     chatMessages: ChatMessage[] | null
@@ -486,6 +490,10 @@ export function updateMeeting(
   if (data.attendeeEmails !== undefined) {
     sets.push('attendee_emails = ?')
     params.push(data.attendeeEmails ? JSON.stringify(data.attendeeEmails) : null)
+  }
+  if (data.selfName !== undefined) {
+    sets.push('self_name = ?')
+    params.push(data.selfName)
   }
   if (data.companies !== undefined) {
     sets.push('companies = ?')

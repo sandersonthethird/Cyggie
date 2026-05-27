@@ -82,6 +82,7 @@ function markNotified(event: CalendarEvent): void {
         meetingUrl: event.meetingUrl,
         attendees: event.attendees,
         attendeeEmails: event.attendeeEmails,
+        selfName: event.selfName,
       },
       getCurrentUserId(),
     )

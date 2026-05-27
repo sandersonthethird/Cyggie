@@ -10,6 +10,7 @@ import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
 import Anthropic from '@anthropic-ai/sdk'
 import { resolveAnthropicKey, toGatewayErrorIfAnthropic } from '../llm/resolve-key'
+import { deriveSelfNameFromUser } from '../llm/self-name'
 import {
   flattenSegments,
   hasTranscriptContent,
@@ -548,6 +549,7 @@ export async function registerMeetingRoutes(
 
       // 2. Insert. Catch 23505 (race against concurrent insert) → re-find.
       const newId = createId()
+      const selfName = await deriveSelfNameFromUser(db, user.sub)
       try {
         await db.insert(schema.meetings).values({
           id: newId,
@@ -561,6 +563,7 @@ export async function registerMeetingRoutes(
           meetingUrl: body.meetingUrl ?? null,
           attendees: body.attendees ?? null,
           attendeeEmails: body.attendeeEmails ?? null,
+          selfName,
           wasImpromptu: false,
           createdByUserId: user.sub,
           // lamport defaults to '0' per schema
@@ -909,7 +912,43 @@ export async function registerMeetingRoutes(
       // doesn't render literally.
       const speakerMap = (meeting.speakerMap as Record<string, string> | null) ?? null
       const speakerNames = speakerMap ? Object.values(speakerMap) : []
-      const speakers = speakerNames.length > 0 ? speakerNames.join(', ') : 'Unknown participants'
+      const speakersFallback =
+        speakerNames.length > 0 ? speakerNames.join(', ') : 'Unknown participants'
+
+      // Build the {{attendees}} value the same way the desktop
+      // summarizer does (packages/services/src/llm/templates.ts —
+      // buildAttendeesValue). Two surfaces, identical semantics:
+      //
+      //   • attendees null   → speakers fallback, no authority claim
+      //   • attendees [] + selfName → "<selfName> (meeting owner)"
+      //   • attendees [] + !selfName → "(no attendees recorded)"
+      //   • attendees has items → [selfName, ...attendees] (selfName
+      //                           omitted if null — firm-shared-meetings
+      //                           guard)
+      //
+      // T25 (workspace package) is the cleanup that lets these share
+      // one implementation.
+      const calendarAttendees = (meeting.attendees as string[] | null) ?? null
+      const selfName = meeting.selfName?.trim() || null
+      let attendeesStr: string
+      let hasCalendarTruth: boolean
+      if (calendarAttendees == null) {
+        attendeesStr = speakersFallback
+        hasCalendarTruth = false
+      } else {
+        const cleaned = calendarAttendees
+          .map((a) => a?.trim())
+          .filter((a): a is string => !!a)
+        const ownerLabel = selfName ? `${selfName} (meeting owner)` : null
+        if (cleaned.length === 0) {
+          attendeesStr = ownerLabel ?? '(no attendees recorded)'
+        } else {
+          attendeesStr = ownerLabel
+            ? [ownerLabel, ...cleaned].join(', ')
+            : cleaned.join(', ')
+        }
+        hasCalendarTruth = true
+      }
 
       const durationMin = meeting.durationSeconds
         ? `${Math.round(meeting.durationSeconds / 60)} minutes`
@@ -923,9 +962,11 @@ export async function registerMeetingRoutes(
         meetingTitle: meeting.title ?? '(untitled)',
         date: new Date(meeting.date).toLocaleDateString(),
         duration: durationMin,
-        speakers,
+        attendees: attendeesStr,
+        speakers: speakersFallback,
         transcript: transcriptFlat,
         notes: meeting.notes ?? '',
+        hasCalendarTruth,
       })
 
       // Resolve key just before the Anthropic call — keeps the

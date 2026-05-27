@@ -2175,3 +2175,61 @@ new IPC channel; user can opt in to sharing.
 **Effort:** S
 **Priority:** P3
 **Depends on:** Mobile new-contact form on the Contacts tab.
+
+---
+
+## Speaker attribution follow-ups (post tap-to-relabel)
+
+### SP.1 — Tighten proper-noun corrector against near-collisions
+**What:** Raise `SINGLE_WORD_THRESHOLD` in `src/main/utils/proper-noun-corrector.ts:21` from 0.92 → 0.96, or add an edit-distance guard that skips corrections where the candidate is within 1 character of another known CRM name.
+**Why:** Cause 2 of the original "Cyggie thinks I'm Andy" bug. Even with the recording-side fix and the tap-to-relabel UX shipped, the proper-noun corrector still silently rewrites "Sandy" → "Andy" in transcript text whenever "Andy" exists in CRM (`JW("sandy","andy") = 0.933`, above the 0.92 threshold).
+**Pros:** Eliminates the silent transcript rewrite. Downstream summaries/chat stop attributing "Sandy" lines to "Andy".
+**Cons:** May reduce some legitimate corrections of misspellings on shorter names.
+**Context:** Discovered during the relabel UX work. Proper-noun corrector uses Jaro-Winkler; sandy/andy is a JW=0.933 collision. The threshold was originally tuned without accounting for adjacent-name collisions.
+**Effort:** S
+**Priority:** P2
+**Depends on:** Nothing.
+
+### SP.2 — Auto-link to CRM contact on attendee selection by email match
+**What:** When a user picks an attendee from the speaker picker, look up `meeting.attendeeEmails[i]` (index-correlated with `meeting.attendees`) against `contacts.email` and `contact_emails.email`. If a match is found, also call `MEETING_TAG_SPEAKER_CONTACT` to link the speaker to that contact, not just rename.
+**Why:** Removes a manual step — today, picking an attendee renames only. If a CRM contact for that attendee exists, the user has to scroll the picker's Contacts section and pick again to get the link.
+**Pros:** One-tap rename + link in the common case where the attendee is already a known contact.
+**Cons:** One extra IPC roundtrip; risk of surprising the user if the email match isn't obvious.
+**Context:** New `useCombinedSpeakerPicker` hook returns `{ kind: 'attendee' | 'contact', ... }`. Dispatch in `handleSpeakerPickerSelect` would need to check email before deciding which IPC to call.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Tap-to-relabel UX (shipped).
+
+### SP.3 — Loudness-based recorder identification in diarization mode
+**What:** When `channelMode === 'diarization'` in `packages/services/src/recording/RecordingSession.ts` (single-channel recordings, typically in-person meetings), compute per-speaker RMS audio energy across the captured PCM and label the loudest speaker cluster as the local recorder (low confidence; user can override via the speaker picker).
+**Why:** Reduces manual relabeling in in-person meetings where multichannel isn't available. Today the recording-side fix falls back to "Speaker N" labels in diarization mode — correct but mute. Loudness is a reasonable heuristic since the recorder is closest to the mic.
+**Pros:** Recovers some auto-attribution in the mode where we currently can't identify anyone.
+**Cons:** Requires holding raw PCM through the Deepgram pipeline + timestamp correlation per speaker. Heuristic will be wrong sometimes (recorder talks less than guest); the relabel UX is the safety net.
+**Context:** Earlier conversation discussed this; deferred until the relabel UX shipped first so users have a way to fix wrong guesses.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Tap-to-relabel UX (shipped).
+
+## P2 — Mobile reliability / auth
+
+### Reconnect Google on Gmail / notes / meeting-detail screens
+
+**What:** Replicate the calendar tab's `REAUTH_REQUIRED → "Reconnect Google"` UX on every other mobile screen that surfaces this error code.
+**Why:** Calendar shipped a real escape hatch (this PR — `CalendarReauthState` + `reauthorizeGoogle()` helper in `mobile/lib/auth/oauth.ts`). The api client comment at [mobile/lib/api/client.ts:140-144](mobile/lib/api/client.ts#L140-L144) mentions "~8 screens" that surface REAUTH_REQUIRED. The other ~7 still dead-end at "Try again."
+**Pros:** Consistent UX across the app. The helper is already extracted, so each site is ~5 lines + an RNTL test using the same mock pattern as `mobile/components/__ui-tests__/CalendarReauthState.test.tsx`.
+**Cons:** Need to audit which screens surface the error today (grep for `ApiError` from Google-backed endpoints — Gmail, notes, meeting-detail, contacts when populated from Gmail, etc.). Each gets its own UI test.
+**Context:** `needsGoogleReauth(error)` + `<CalendarReauthState onComplete={…} />` are the building blocks. For non-calendar screens we may want to rename the component to `<GoogleReauthState>` to avoid implying it's calendar-specific.
+**Effort:** S per screen × N screens
+**Priority:** P2
+**Depends on:** Nothing — helper already exists.
+
+### Gateway-side enforcement of userId match on /auth/google/callback
+
+**What:** Defense-in-depth — gateway refuses to mint a session if the resolved Google userId doesn't match the userId that initiated the OAuth flow.
+**Why:** This PR adds a mobile-side userId mismatch check in `CalendarReauthState` so a user who re-consents with a different Google account doesn't silently swap identity. The gateway should enforce the same invariant so a hand-rolled or older client benefits from the protection too.
+**Pros:** Single point of enforcement that all current and future clients (mobile, desktop, future web) inherit. Closes the gap where two different clients could end up swapping users via the same callback infrastructure.
+**Cons:** Requires the gateway to track which user initiated each `state` token (currently the `oauth_pending` row has no user_id column). New migration + write path on `/auth/google/start` + check path on `/auth/google/callback`.
+**Context:** `/auth/google/start` already accepts an optional auth header after this PR (used to inject `login_hint`). Extending it to *record* the initiating userId against the `oauth_pending` row is the natural next step; the callback already has the resolved userId post-token-exchange.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Nothing — purely additive.

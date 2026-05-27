@@ -18,12 +18,18 @@ import { useFindInPage } from '../hooks/useFindInPage'
 import FindBar from '../components/common/FindBar'
 import ConfirmDialog from '../components/common/ConfirmDialog'
 import { useNotice } from '../components/common/NoticeModal'
+import { RecordKebabMenu, type KebabMenuItem } from '../components/common/RecordKebabMenu'
 import { useChatStore } from '../stores/chat.store'
 import type { ContextOption } from '../../shared/types/chat'
 import type { Meeting, CompanySuggestion } from '../../shared/types/meeting'
 import type { CompanyEntityType, CompanySummary } from '../../shared/types/company'
 import type { ContactSummary } from '../../shared/types/contact'
 import { usePicker } from '../hooks/usePicker'
+import {
+  dispatchSpeakerCandidate,
+  useCombinedSpeakerPicker,
+  type SpeakerCandidate,
+} from '../hooks/useCombinedSpeakerPicker'
 import { EntityPicker } from '../components/common/EntityPicker'
 import type { MeetingTemplate } from '../../shared/types/template'
 import type { DriveShareResponse } from '../../shared/types/drive'
@@ -201,52 +207,6 @@ type UnifiedEnrichProposal =
   | { kind: 'company'; proposal: CompanySummaryUpdateProposal }
   | { kind: 'contact'; proposal: ContactSummaryUpdateProposal }
 
-// Group-event toggle (migration 098). Calls MEETING_SET_GROUP_EVENT IPC.
-// When un-flagging a previously-flagged meeting, the main process runs a
-// one-shot deferred sync — tombstoned emails won't recreate.
-function GroupEventToggle({
-  meetingId,
-  isGroupEvent,
-  onToggled,
-}: {
-  meetingId: string
-  isGroupEvent: boolean
-  onToggled: (updated: Meeting) => void
-}) {
-  const [busy, setBusy] = useState(false)
-  const handleClick = async () => {
-    if (busy) return
-    setBusy(true)
-    try {
-      const updated = await api.invoke<Meeting | null>(
-        IPC_CHANNELS.MEETING_SET_GROUP_EVENT,
-        meetingId,
-        !isGroupEvent,
-      )
-      if (updated) onToggled(updated)
-    } catch (err) {
-      console.error('[GroupEventToggle] failed:', err)
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <button
-      type="button"
-      className={`${styles.groupEventToggle} ${isGroupEvent ? styles.groupEventToggleOn : ''}`}
-      onClick={handleClick}
-      disabled={busy}
-      title={
-        isGroupEvent
-          ? 'Group event — attendees not added to CRM. Click to un-flag.'
-          : 'Mark as group event — skip adding attendees to CRM.'
-      }
-    >
-      {isGroupEvent ? '◉ Group event' : '○ Group event'}
-    </button>
-  )
-}
-
 export default function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -265,16 +225,21 @@ export default function MeetingDetail() {
   const [isSavingTitle, setIsSavingTitle] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
   const [editingSpeaker, setEditingSpeaker] = useState<number | null>(null)
-  const [speakerDraft, setSpeakerDraft] = useState('')
+  // When the rename UI was triggered by double-clicking an inline transcript
+  // label, this holds the segment index where the picker should render. Null
+  // means the edit was triggered from the sidebar chip.
+  const [editingSegmentIdx, setEditingSegmentIdx] = useState<number | null>(null)
   const [localSpeakerMap, setLocalSpeakerMap] = useState<Record<number, string>>({})
   const [speakerContactMap, setSpeakerContactMap] = useState<Record<number, string>>({})
-  const [linkingPicker, setLinkingPicker] = useState<number | null>(null)
   const [showCompanyPicker, setShowCompanyPicker] = useState(false)
   const [showContactPicker, setShowContactPicker] = useState(false)
   const [isSavingSpeakers, setIsSavingSpeakers] = useState(false)
-  const speakerInputRef = useRef<HTMLInputElement>(null)
-  const speakerContactPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST)
   const contactAddPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST)
+  // Speaker rename + link picker. One instance per page — both the sidebar
+  // chip and the inline transcript segment dispatch into the same edit
+  // session (only one of (sidebar | inline) is active at a time via
+  // editingSpeaker + editingSegmentIdx).
+  const speakerPicker = useCombinedSpeakerPicker(data?.meeting.attendees ?? [])
   const companyLinkPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
   const swapCompanyPicker = usePicker<CompanySummary>(IPC_CHANNELS.COMPANY_LIST, 20, { view: 'all' })
   const [editingCompanyKey, setEditingCompanyKey] = useState<string | null>(null)
@@ -439,8 +404,6 @@ export default function MeetingDetail() {
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const stuckToBottomRef = useRef(true)
   const [findOpen, setFindOpen] = useState(false)
-  const [shareMenuOpen, setShareMenuOpen] = useState(false)
-  const shareRef = useRef<HTMLDivElement>(null)
   const [showNotes, setShowNotes] = useState(true)
   const [summaryExists, setSummaryExists] = useState(false)
   const [companySuggestions, setCompanySuggestions] = useState<CompanySuggestion[]>([])
@@ -457,18 +420,6 @@ export default function MeetingDetail() {
   const [isApplyingContactUpdates, setIsApplyingContactUpdates] = useState(false)
   const [contactEnrichError, setContactEnrichError] = useState<string | null>(null)
   const [enrichSuccessMsg, setEnrichSuccessMsg] = useState<string | null>(null)
-
-  // Close share menu on click outside
-  useEffect(() => {
-    if (!shareMenuOpen) return
-    const handleClick = (e: MouseEvent) => {
-      if (shareRef.current && !shareRef.current.contains(e.target as Node)) {
-        setShareMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [shareMenuOpen])
 
   // Close speed menu on click outside
   useEffect(() => {
@@ -1487,46 +1438,43 @@ export default function MeetingDetail() {
     }
   }, [handleTitleSave])
 
-  const handleSpeakerClick = useCallback((index: number) => {
+  // Open the picker for a given speaker. segmentIdx is set when the trigger
+  // was a double-click on an inline transcript segment (so the picker
+  // renders at that segment); null = the sidebar chip.
+  const handleOpenSpeakerPicker = useCallback((index: number, segmentIdx: number | null) => {
+    // Linked-to-contact speakers can't be renamed in place — user must
+    // unlink first via the × button (same constraint as the old flow).
+    if (speakerContactMap[index]) return
     setEditingSpeaker(index)
-    setSpeakerDraft(localSpeakerMap[index] || '')
-    setTimeout(() => speakerInputRef.current?.focus(), 0)
-  }, [localSpeakerMap])
+    setEditingSegmentIdx(segmentIdx)
+  }, [speakerContactMap])
 
-  const handleSpeakerSave = useCallback(async () => {
-    if (editingSpeaker === null || !id) return
-    const trimmed = speakerDraft.trim()
-    if (!trimmed || trimmed === localSpeakerMap[editingSpeaker]) {
-      setEditingSpeaker(null)
-      return
-    }
-
-    const updated = { ...localSpeakerMap, [editingSpeaker]: trimmed }
-    setLocalSpeakerMap(updated)
+  const handleClosePicker = useCallback(() => {
     setEditingSpeaker(null)
-    setIsSavingSpeakers(true)
+    setEditingSegmentIdx(null)
+  }, [])
 
+  // Rename-only path (selecting an attendee or pressing Enter on free-text).
+  // Optimistic update + reload on failure.
+  const renameSpeakerTo = useCallback(async (index: number, newName: string) => {
+    const trimmed = newName.trim()
+    if (!trimmed || trimmed === localSpeakerMap[index]) return
+    const prevMap = localSpeakerMap
+    const updated = { ...localSpeakerMap, [index]: trimmed }
+    setLocalSpeakerMap(updated)
+    setIsSavingSpeakers(true)
     try {
       await api.invoke(IPC_CHANNELS.MEETING_RENAME_SPEAKERS, id, updated)
       await loadMeeting()
     } catch (err) {
       console.error('Failed to rename speaker:', err)
-      setLocalSpeakerMap(localSpeakerMap)
+      setLocalSpeakerMap(prevMap)
     } finally {
       setIsSavingSpeakers(false)
     }
-  }, [editingSpeaker, speakerDraft, localSpeakerMap, id, loadMeeting])
-
-  const handleSpeakerKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSpeakerSave()
-    } else if (e.key === 'Escape') {
-      setEditingSpeaker(null)
-    }
-  }, [handleSpeakerSave])
+  }, [localSpeakerMap, id, loadMeeting])
 
   const handleLinkSpeakerContact = useCallback(async (index: number, contact: ContactSummary) => {
-    setLinkingPicker(null)
     const prevMap = localSpeakerMap
     const prevLinks = speakerContactMap
     setLocalSpeakerMap({ ...localSpeakerMap, [index]: contact.fullName })
@@ -1539,6 +1487,66 @@ export default function MeetingDetail() {
       setSpeakerContactMap(prevLinks)
     }
   }, [localSpeakerMap, speakerContactMap, id])
+
+  // Single entry point from the picker. Delegates to the pure
+  // `dispatchSpeakerCandidate` helper so the kind → IPC branching can be
+  // unit-tested without rendering the full meeting page.
+  const handleSpeakerPickerSelect = useCallback(async (index: number, candidate: SpeakerCandidate) => {
+    // Ignore selects while a save is in flight to avoid the optimistic-
+    // overwrite race noted in the plan's failure-mode table.
+    if (isSavingSpeakers) return
+    handleClosePicker()
+    await dispatchSpeakerCandidate(index, candidate, {
+      rename: renameSpeakerTo,
+      link: handleLinkSpeakerContact,
+    })
+  }, [isSavingSpeakers, handleClosePicker, handleLinkSpeakerContact, renameSpeakerTo])
+
+  // Inline render helper — used in two places (sidebar chip + inline
+  // transcript segment) so the picker wiring lives in one spot. Section
+  // headers are emitted from the `isSectionLead` flag the hook attaches
+  // to each candidate, which keeps the renderItem prop pure (no
+  // mutable closure state that would leak across EntityPicker re-renders).
+  const renderSpeakerPicker = useCallback((speakerIndex: number) => {
+    return (
+      <EntityPicker<SpeakerCandidate>
+        picker={speakerPicker}
+        placeholder="Type a name…"
+        renderItem={(c) => {
+          const header = c.isSectionLead ? (
+            <span className={styles.speakerPickerSectionHeader}>
+              {c.kind === 'attendee' ? 'Attendees' : 'Contacts'}
+            </span>
+          ) : null
+          if (c.kind === 'attendee') {
+            return (
+              <>
+                {header}
+                <span>{c.name}</span>
+              </>
+            )
+          }
+          return (
+            <>
+              {header}
+              <span>{c.contact.fullName}</span>
+              {c.contact.primaryCompanyName && (
+                <span className={styles.speakerPickerSub}>{c.contact.primaryCompanyName}</span>
+              )}
+            </>
+          )
+        }}
+        onSelect={(c) => handleSpeakerPickerSelect(speakerIndex, c)}
+        onCreate={(q) => handleSpeakerPickerSelect(speakerIndex, {
+          id: `freetext:${q}`,
+          kind: 'attendee',
+          name: q,
+          isSectionLead: false,
+        })}
+        onClose={handleClosePicker}
+      />
+    )
+  }, [speakerPicker, handleSpeakerPickerSelect, handleClosePicker])
 
   const handleUnlinkSpeaker = useCallback(async (index: number) => {
     const prevMap = localSpeakerMap
@@ -1644,7 +1652,6 @@ export default function MeetingDetail() {
 
   const handleCopyDriveLink = useCallback(async () => {
     if (!id) return
-    setShareMenuOpen(false)
     try {
       const result = await api.invoke<DriveShareResponse>(
         IPC_CHANNELS.DRIVE_GET_SHARE_LINK,
@@ -1663,7 +1670,6 @@ export default function MeetingDetail() {
   }, [id, notice])
 
   const handleCopyText = useCallback(async () => {
-    setShareMenuOpen(false)
     const text = activeTab === 'transcript' ? data?.transcript : summaryDraft
     if (!text) {
       notice.show({ variant: 'error', title: 'No content to copy' })
@@ -1682,7 +1688,6 @@ export default function MeetingDetail() {
   const handleWebShare = useCallback(async () => {
     if (!id || isCreatingShareRef.current) return
     isCreatingShareRef.current = true
-    setShareMenuOpen(false)
     try {
       await flushNotes()
       const result = await api.invoke<WebShareResponse>(
@@ -1702,6 +1707,35 @@ export default function MeetingDetail() {
       isCreatingShareRef.current = false
     }
   }, [id, flushNotes, notice])
+
+  const handleToggleExcludeFromCrm = useCallback(async () => {
+    if (!data?.meeting) return
+    const meetingId = data.meeting.id
+    const next = !data.meeting.isGroupEvent
+    try {
+      const updated = await api.invoke<Meeting | null>(
+        IPC_CHANNELS.MEETING_SET_GROUP_EVENT,
+        meetingId,
+        next,
+      )
+      if (!updated) {
+        notice.show({
+          variant: 'error',
+          title: "Couldn't update CRM exclusion",
+          message: 'The meeting may have been deleted.',
+        })
+        return
+      }
+      setData((prev) => (prev ? { ...prev, meeting: updated } : prev))
+    } catch (err) {
+      console.error('[MeetingDetail] toggle exclude-from-CRM failed:', err)
+      notice.show({
+        variant: 'error',
+        title: "Couldn't update CRM exclusion",
+        message: 'Please try again.',
+      })
+    }
+  }, [data, notice])
 
   // Register this meeting as the chat page context so the global floating chat
   // shows entity-scoped options (meeting + linked companies/contacts) while on this page.
@@ -1860,30 +1894,28 @@ export default function MeetingDetail() {
                   Continue Recording
                 </button>
               )}
-              <div ref={shareRef} className={styles.shareWrapper}>
-                <button
-                  className={styles.shareBtn}
-                  onClick={() => setShareMenuOpen(!shareMenuOpen)}
-                >
-                  Share
-                </button>
-                {shareMenuOpen && (
-                  <div className={styles.shareMenu}>
-                    <button className={styles.shareMenuItem} onClick={handleCopyDriveLink}>
-                      Copy Drive link
-                    </button>
-                    <button className={styles.shareMenuItem} onClick={handleCopyText}>
-                      Copy text
-                    </button>
-                    <button className={styles.shareMenuItem} onClick={handleWebShare}>
-                      Share to web
-                    </button>
-                  </div>
-                )}
-              </div>
-              <button className={styles.deleteBtn} onClick={handleDelete}>
-                Delete
-              </button>
+              <RecordKebabMenu
+                groups={[
+                  [
+                    {
+                      label: 'Exclude from CRM',
+                      icon: meeting.isGroupEvent ? '✓' : undefined,
+                      onClick: handleToggleExcludeFromCrm,
+                    },
+                    {
+                      label: 'Share',
+                      submenu: [
+                        { label: 'Copy Drive link', onClick: handleCopyDriveLink },
+                        { label: 'Copy text', onClick: handleCopyText },
+                        { label: 'Share to web', onClick: handleWebShare },
+                      ] satisfies KebabMenuItem[],
+                    },
+                  ],
+                  [
+                    { label: 'Delete', destructive: true, onClick: handleDelete },
+                  ],
+                ]}
+              />
             </div>
           </div>
           <div className={styles.meta}>
@@ -1899,11 +1931,6 @@ export default function MeetingDetail() {
                 </span>
               )
             })()}
-            <GroupEventToggle
-              meetingId={meeting.id}
-              isGroupEvent={meeting.isGroupEvent}
-              onToggled={(updated) => setData(prev => prev ? { ...prev, meeting: updated } : prev)}
-            />
             <div className={styles.speakers}>
               <div className={styles.attendeeAvatars}>
                 {(meeting.attendees ?? []).slice(0, 4).map((attendee, i) => {
@@ -2336,6 +2363,60 @@ export default function MeetingDetail() {
         )}
         {activeTab === 'transcript' && (
           <div className={styles.transcriptTab}>
+            {/* Speaker chip panel — available on every meeting (was
+                previously hidden on past meetings). Clicking a chip opens
+                the SpeakerPicker, which merges calendar attendees + CRM
+                contacts in one dropdown. The × button on linked chips is
+                kept so users can detach a CRM contact link. */}
+            {speakerEntries.length > 0 && (
+              <div className={styles.speakers}>
+                {speakerEntries.map(([idx, name]) => {
+                  const index = Number(idx)
+                  const linkedContactId = speakerContactMap[index]
+                  const isSidebarEditing =
+                    editingSpeaker === index && editingSegmentIdx === null
+
+                  if (isSidebarEditing) {
+                    return (
+                      <div key={idx} className={styles.speakerChipGroup}>
+                        {renderSpeakerPicker(index)}
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div key={idx} className={styles.speakerChipGroup}>
+                      {linkedContactId ? (
+                        <>
+                          <button
+                            className={`${styles.speakerChip} ${styles.speakerChipLinked}`}
+                            onClick={() => navigate(`/contact/${linkedContactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })}
+                            title="View contact"
+                          >
+                            {name} →
+                          </button>
+                          <button
+                            className={styles.speakerUnlinkBtn}
+                            onClick={() => handleUnlinkSpeaker(index)}
+                            title="Unlink contact"
+                          >
+                            ×
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className={styles.speakerChip}
+                          onClick={() => handleOpenSpeakerPicker(index, null)}
+                          title="Click to rename or link a contact"
+                        >
+                          {name}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
             {transcript && (
               <div className={styles.markdown}>
                 <SafeMarkdown findHighlight={{ matches: findMatches, activeIndex: activeMatchIndex }}>
@@ -2349,112 +2430,34 @@ export default function MeetingDetail() {
                 className={styles.liveTranscript}
                 onScroll={handleTranscriptScroll}
               >
-                {speakerEntries.length > 0 && (
-                  <div className={styles.speakers}>
-                    {speakerEntries.map(([idx, name]) => {
-                      const index = Number(idx)
-                      const linkedContactId = speakerContactMap[index]
-
-                      if (editingSpeaker === index && !linkedContactId) {
-                        return (
-                          <div key={idx} className={styles.speakerChipGroup}>
-                            <input
-                              ref={speakerInputRef}
-                              className={styles.speakerInput}
-                              value={speakerDraft}
-                              onChange={(e) => setSpeakerDraft(e.target.value)}
-                              onBlur={handleSpeakerSave}
-                              onKeyDown={handleSpeakerKeyDown}
-                              disabled={isSavingSpeakers}
-                            />
-                            <button
-                              className={styles.speakerLinkBtn}
-                              onClick={() => { setEditingSpeaker(null); setLinkingPicker(index); speakerContactPicker.search('', 0) }}
-                              title="Tag to contact"
-                            >
-                              🔗
-                            </button>
-                          </div>
-                        )
-                      }
-
-                      return (
-                        <div key={idx} className={styles.speakerChipGroup}>
-                          {linkedContactId ? (
-                            <button
-                              className={`${styles.speakerChip} ${styles.speakerChipLinked}`}
-                              onClick={() => navigate(`/contact/${linkedContactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })}
-                              title="View contact"
-                            >
-                              {name} →
-                            </button>
-                          ) : (
-                            <button
-                              className={styles.speakerChip}
-                              onClick={() => handleSpeakerClick(index)}
-                              title="Click to rename"
-                            >
-                              {name}
-                            </button>
-                          )}
-
-                          {linkedContactId ? (
-                            <button
-                              className={styles.speakerUnlinkBtn}
-                              onClick={() => handleUnlinkSpeaker(index)}
-                              title="Unlink contact"
-                            >
-                              ×
-                            </button>
-                          ) : (
-                            <button
-                              className={styles.speakerLinkBtn}
-                              onClick={() => { setLinkingPicker(index); speakerContactPicker.search('', 0) }}
-                              title="Tag to contact"
-                            >
-                              🔗
-                            </button>
-                          )}
-
-                          {linkingPicker === index && (
-                            <EntityPicker<ContactSummary>
-                              picker={speakerContactPicker}
-                              placeholder="Search contact…"
-                              renderItem={(c) => (
-                                <>
-                                  <span>{c.fullName}</span>
-                                  {c.primaryCompanyName && (
-                                    <span className={styles.speakerPickerSub}>{c.primaryCompanyName}</span>
-                                  )}
-                                </>
-                              )}
-                              onSelect={(c) => handleLinkSpeakerContact(index, c)}
-                              onClose={() => setLinkingPicker(null)}
-                            />
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
                 {liveTranscript.length === 0 && !interimSegment && !transcript && (
                   <p className={styles.noContent}>Waiting for speech...</p>
                 )}
                 {liveTranscript.map((segment, i) => {
                   const speakerName = localSpeakerMap[segment.speaker] ?? `Speaker ${segment.speaker + 1}`
                   const contactId = speakerContactMap[segment.speaker]
+                  const isEditingThisSegment = editingSegmentIdx === i
                   return (
                     <div key={i} className={styles.liveSegment}>
-                      {contactId ? (
+                      {isEditingThisSegment ? (
+                        renderSpeakerPicker(segment.speaker)
+                      ) : contactId ? (
                         <button
                           className={`${styles.liveSpeaker} ${styles.liveSpeakerLinked}`}
                           onClick={() => navigate(`/contact/${contactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })}
-                          title="View contact"
+                          title="Click to view contact"
                         >
                           {speakerName}
                         </button>
                       ) : (
-                        <span className={styles.liveSpeaker}>{speakerName}</span>
+                        <span
+                          className={styles.liveSpeaker}
+                          onDoubleClick={() => handleOpenSpeakerPicker(segment.speaker, i)}
+                          title="Double-click to rename"
+                          style={{ cursor: 'pointer' }}
+                        >
+                          {speakerName}
+                        </span>
                       )}
                       <span>{segment.text}</span>
                     </div>

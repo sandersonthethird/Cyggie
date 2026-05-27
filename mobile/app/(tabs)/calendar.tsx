@@ -41,6 +41,7 @@ import {
   type MeetingDetail,
 } from '../../lib/api/meetings'
 import { useAuthStore } from '../../lib/auth/store'
+import { CalendarReauthState, needsGoogleReauth } from '../../components/CalendarReauthState'
 import { useCalendarStore } from '../../lib/calendar/store'
 import { ErrorBanner } from '../../components/ErrorBanner'
 import { MeetingRow } from '../../components/MeetingRow'
@@ -897,6 +898,9 @@ function EmptyState({ segment }: { segment: Segment }) {
 }
 
 function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  if (needsGoogleReauth(error)) {
+    return <CalendarReauthState onComplete={onRetry} />
+  }
   const message =
     error instanceof ApiError
       ? `${error.code}: ${error.message}`

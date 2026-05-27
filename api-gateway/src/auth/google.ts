@@ -47,11 +47,18 @@ export function createOAuthClient(opts: {
 /**
  * Build the consent URL the user agent visits. PKCE-enabled — the code_challenge
  * is sent now, the verifier is held server-side until the callback exchange.
+ *
+ * `loginHint`: when set, passed to Google as `login_hint` so the consent screen
+ * pre-selects that Google account. Used by the mobile calendar "Reconnect Google"
+ * flow to steer the user back to the account they're already signed in as. Not
+ * a security boundary — Google may ignore it, and the user can still pick a
+ * different account; the post-callback userId check is the real defense.
  */
 export function buildAuthUrl(opts: {
   client: OAuth2Client
   state: string
   codeChallenge: string
+  loginHint?: string
 }): string {
   return opts.client.generateAuthUrl({
     access_type: 'offline', // returns refresh_token
@@ -62,6 +69,7 @@ export function buildAuthUrl(opts: {
     // @ts-expect-error — google-auth-library's CodeChallengeMethod is an enum but
     // the string 'S256' is the correct value per RFC 7636. Matches desktop's usage.
     code_challenge_method: 'S256',
+    ...(opts.loginHint ? { login_hint: opts.loginHint } : {}),
     // V1 narrows to Calendar-only consent (decision 2026-05-18 per
     // ~/.claude/plans/claude-code-prompt-jolly-eagle.md "Cloud-direct vs desktop-
     // mediated"). The desktop OAuth client retains its own broader Gmail + Drive

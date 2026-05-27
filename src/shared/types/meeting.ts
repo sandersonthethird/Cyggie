@@ -71,8 +71,18 @@ export interface Meeting {
   speakerCount: number
   speakerMap: Record<number, string>
   speakerContactMap: Record<number, string>  // speakerIndex → contactId; populated by getMeeting, empty in listMeetings
-  attendees: string[] | null  // Calendar attendees (names/emails)
+  attendees: string[] | null  // Calendar attendees (names/emails), EXCLUDES self
   attendeeEmails: string[] | null
+  /**
+   * Meeting owner's calendar-side display name. Populated at creation
+   * from CalendarEvent.selfName (Google Calendar API marks one attendee
+   * as `self`). Null for impromptu / non-calendar recordings or when the
+   * users-table backfill couldn't resolve a name. The summarizer renders
+   * this as "Attendees: <selfName> (meeting owner), ..." so the owner
+   * appears alongside `attendees` without needing a runtime users lookup.
+   * Migration 107.
+   */
+  selfName: string | null
   companies: string[] | null
   dismissedCompanies: string[] | null
   chatMessages: ChatMessage[] | null

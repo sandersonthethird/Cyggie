@@ -60,6 +60,7 @@ function reconcilePastEvents(events: CalendarEvent[]): void {
           meetingUrl: ev.meetingUrl,
           attendees: ev.attendees,
           attendeeEmails: ev.attendeeEmails,
+          selfName: ev.selfName,
         },
         userId,
       )

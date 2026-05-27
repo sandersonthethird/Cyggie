@@ -104,6 +104,8 @@ import { runChatSessionSelectedCompaniesMigration } from './migrations/102-chat-
 import { runChatSessionCacheEnabledMigration } from './migrations/103-chat-session-cache-enabled'
 import { runFlaggedFilesExtractionMigration } from './migrations/104-flagged-files-extraction'
 import { runOrgCompaniesPassedFromStageMigration } from './migrations/105-org-companies-passed-from-stage'
+import { runDefaultTemplatesAttendeesPlaceholderMigration } from './migrations/106-default-templates-attendees-placeholder'
+import { runMeetingsSelfNameMigration } from './migrations/107-meetings-self-name'
 
 let db: Database.Database | null = null
 
@@ -246,6 +248,8 @@ export function getDatabase(): Database.Database {
     runChatSessionCacheEnabledMigration(db)
     runFlaggedFilesExtractionMigration(db)
     runOrgCompaniesPassedFromStageMigration(db)
+    runDefaultTemplatesAttendeesPlaceholderMigration(db)
+    runMeetingsSelfNameMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or

@@ -571,7 +571,7 @@ function GroupEventBanner() {
       <Ionicons name="information-circle-outline" size={18} color={colors.text2} />
       <View style={styles.groupEventBannerText}>
         <Text style={styles.groupEventBannerTitle}>
-          Group event — attendees not added to CRM
+          Excluded from CRM — attendees not added as contacts
         </Text>
         <Text style={styles.groupEventBannerSubtitle}>Toggle from desktop</Text>
       </View>

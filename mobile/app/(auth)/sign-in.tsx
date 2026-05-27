@@ -10,8 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import { AntDesign } from '@expo/vector-icons'
 import { router } from 'expo-router'
-import { pollForRecoveredSession, startSignIn, type SignInResult } from '../../lib/auth/oauth'
-import { getOrCreateDeviceId } from '../../lib/auth/device'
+import { reauthorizeGoogle, type SignInResult } from '../../lib/auth/oauth'
 import { useAuthStore } from '../../lib/auth/store'
 import { colors } from '../../theme'
 
@@ -26,22 +25,19 @@ export default function SignInScreen() {
     setPending(true)
     console.log('[auth] sign-in: onPress start')
     try {
-      let result: SignInResult = await startSignIn()
-      console.log('[auth] sign-in: startSignIn returned kind=' + result.kind)
-      // ASWebAuthenticationSession occasionally returns cancel/dismiss after
-      // the gateway already minted a session (see oauth.ts header). Give the
-      // recovery endpoint ~15s to find a freshly-minted session for this
-      // device before we surrender to the cancel.
-      if (result.kind === 'cancel') {
-        setRecovering(true)
-        try {
-          const deviceId = await getOrCreateDeviceId()
-          result = await pollForRecoveredSession(deviceId)
-          console.log('[auth] sign-in: recovery returned kind=' + result.kind)
-        } finally {
-          setRecovering(false)
-        }
+      // reauthorizeGoogle wraps startSignIn + iOS dismiss-after-success
+      // recovery polling. Fresh sign-in → no authToken; gateway returns
+      // an authUrl without login_hint. The onRecovering callback flips the
+      // "Finishing sign-in…" UI on once the recovery poll starts.
+      let result: SignInResult
+      try {
+        result = await reauthorizeGoogle({
+          onRecovering: () => setRecovering(true),
+        })
+      } finally {
+        setRecovering(false)
       }
+      console.log('[auth] sign-in: reauthorizeGoogle returned kind=' + result.kind)
       if (result.kind === 'cancel') {
         console.log('[auth] sign-in: returning at cancel (no recovery hit)')
         return

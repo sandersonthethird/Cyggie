@@ -12,7 +12,7 @@ export const DEFAULT_TEMPLATES: MeetingTemplateSeed[] = [
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}
@@ -41,7 +41,7 @@ Keep each section brief with concise bullet points. Omit any section that has no
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}
@@ -69,7 +69,7 @@ Keep each section brief with concise bullet points. Omit any section that has no
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}
@@ -95,7 +95,7 @@ Keep each section brief with concise bullet points. Omit any section that has no
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}
@@ -122,7 +122,7 @@ Keep each section brief with concise bullet points. Omit any section that has no
 Meeting: {{meeting_title}}
 Date: {{date}}
 Duration: {{duration}}
-Participants: {{speakers}}
+Attendees: {{attendees}}
 
 ## Transcript:
 {{transcript}}

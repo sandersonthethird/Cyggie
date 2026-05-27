@@ -27,7 +27,31 @@ import { getDatabase } from '@cyggie/db/sqlite/connection'
 import type { Meeting, MeetingListFilter } from '../../shared/types/meeting'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
 import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
+import { getUser } from '@cyggie/db/sqlite/repositories/user.repo'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
+
+/**
+ * Best-effort derivation of `selfName` from a user's local SQLite record.
+ * Used as the fallback when a meeting isn't created from a calendar event
+ * (manual recording, MEETING_CREATE) or the calendar payload lacked a
+ * `selfName` (e.g. older renderer call sites).
+ *
+ * Mirrors the COALESCE chain in migration 107's backfill so meetings
+ * created post-migration look the same as backfilled rows: displayName →
+ * "first last" → email → null.
+ */
+function deriveSelfNameFromUser(userId: string | null): string | null {
+  if (!userId) return null
+  const user = getUser(userId)
+  if (!user) return null
+  const display = user.displayName?.trim()
+  if (display) return display
+  const full = [user.firstName, user.lastName].filter(Boolean).join(' ').trim()
+  if (full) return full
+  const email = user.email?.trim()
+  if (email) return email
+  return null
+}
 
 const execFileP = promisify(execFile)
 
@@ -148,6 +172,10 @@ export function prepareMeetingFromCalendarEvent(
     meetingUrl: string | null
     attendees: string[]
     attendeeEmails: string[]
+    // Optional: callers with a full CalendarEvent forward this from
+    // google-calendar.ts's `selfName` extraction. Older renderer call
+    // sites that don't have it fall back to the local user record.
+    selfName?: string | null
   },
   userId: string | null,
 ): Meeting {
@@ -170,6 +198,7 @@ export function prepareMeetingFromCalendarEvent(
     meetingUrl: event.meetingUrl,
     attendees: event.attendees.length > 0 ? event.attendees : null,
     attendeeEmails: event.attendeeEmails.length > 0 ? event.attendeeEmails : null,
+    selfName: event.selfName ?? deriveSelfNameFromUser(userId),
     companies: isGroupEvent ? null : (companies.length > 0 ? companies : null),
     status: 'scheduled',
     isGroupEvent,
@@ -447,6 +476,7 @@ export function registerMeetingHandlers(): void {
     const meeting = meetingRepo.createMeeting({
       title: `Note ${new Date().toLocaleDateString()}`,
       date: new Date().toISOString(),
+      selfName: deriveSelfNameFromUser(userId),
       status: 'scheduled'
     }, userId)
     logAudit(userId, 'meeting', meeting.id, 'create', { source: 'manual-note' })
