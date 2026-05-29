@@ -91,6 +91,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 
 import { AgentLimitsSection } from '../components/settings/AgentLimitsSection'
 import { AgentModelTierSection } from '../components/settings/AgentModelTierSection'
+import { TranscriptionProviderSection } from '../components/settings/TranscriptionProviderSection'
 
 interface SettingsState {
   deepgramApiKey: MaskedKey
@@ -118,6 +119,7 @@ interface SettingsState {
   // Optional dedicated Claude key for memo + stress-test agents. Falls back
   // to claudeApiKey at runtime when unset (see memo-producer-agent.ts).
   memoApiKey: MaskedKey
+  assemblyaiApiKey: MaskedKey
 }
 
 /** Coerce an unknown IPC value into MaskedKey. Defensive: handles legacy raw
@@ -206,6 +208,7 @@ export default function Settings() {
     openAiChatModel: 'gpt-4o',
     webShareApiKey: UNCONFIGURED_KEY,
     webShareModel: 'claude-sonnet-4-5-20250929',
+    assemblyaiApiKey: UNCONFIGURED_KEY,
     showLiveTranscript: true,
     defaultMaxSpeakers: '',
     companyDriveRootFolder: '',
@@ -217,7 +220,7 @@ export default function Settings() {
     memoApiKey: UNCONFIGURED_KEY
   })
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false)
-  const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai' | 'exa' | 'webShare' | 'deepgram' | 'memo'>('claude')
+  const [apiKeyModalProvider, setApiKeyModalProvider] = useState<'claude' | 'openai' | 'exa' | 'webShare' | 'deepgram' | 'memo' | 'assemblyai'>('claude')
   const [apiKeyDraft, setApiKeyDraft] = useState('')
   const [showApiKeyDraft, setShowApiKeyDraft] = useState(false)
   const [isSavingKey, setIsSavingKey] = useState(false)
@@ -361,7 +364,8 @@ export default function Settings() {
             exaApiKey: asMaskedKey(all.exaApiKey),
             webShareApiKey: asMaskedKey(all.webShareApiKey),
             webShareModel: str('webShareModel', 'claude-sonnet-4-5-20250929'),
-            memoApiKey: asMaskedKey(all.memoApiKey)
+            memoApiKey: asMaskedKey(all.memoApiKey),
+            assemblyaiApiKey: asMaskedKey(all.assemblyaiApiKey)
           })
           setStaleRelationshipDays(str('dashboardStaleRelationshipDays', '21'))
           setStalledPipelineDays(str('dashboardStalledPipelineDays', '21'))
@@ -1139,6 +1143,25 @@ export default function Settings() {
             setSettings((prev) => ({ ...prev, deepgramApiKey: UNCONFIGURED_KEY }))
           }}
         />
+
+        <ApiKeyRow
+          label="AssemblyAI API Key"
+          configured={settings.assemblyaiApiKey.configured}
+          masked={settings.assemblyaiApiKey.masked}
+          onAddOrChange={() => {
+            setApiKeyDraft('')
+            setTestKeyStatus(null)
+            setShowApiKeyDraft(false)
+            setApiKeyModalProvider('assemblyai')
+            setApiKeyModalOpen(true)
+          }}
+          onRemove={async () => {
+            await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'assemblyaiApiKey', '')
+            setSettings((prev) => ({ ...prev, assemblyaiApiKey: UNCONFIGURED_KEY }))
+          }}
+        />
+
+        <TranscriptionProviderSection />
 
         <div className={styles.inlineFieldRow} style={{ marginTop: 12 }}>
           <span className={styles.inlineFieldLabel}>Live transcript</span>
@@ -1927,6 +1950,7 @@ export default function Settings() {
                 : apiKeyModalProvider === 'exa' ? 'Update Exa API Key'
                 : apiKeyModalProvider === 'webShare' ? 'Update Web Chat API Key'
                 : apiKeyModalProvider === 'memo' ? 'Update Memo & Stress Test API Key'
+                : apiKeyModalProvider === 'assemblyai' ? 'Update AssemblyAI API Key'
                 : 'Update Anthropic API Key'}
             </h2>
             <div className={styles.apiKeyInputRow}>
@@ -1936,7 +1960,7 @@ export default function Settings() {
                 autoFocus
                 value={apiKeyDraft}
                 onChange={(e) => { setApiKeyDraft(e.target.value); setTestKeyStatus(null) }}
-                placeholder={apiKeyModalProvider === 'deepgram' ? 'Paste Deepgram API key…' : apiKeyModalProvider === 'openai' ? 'sk-...' : apiKeyModalProvider === 'exa' ? 'Paste Exa API key…' : 'sk-ant-api03-…' /* claude, webShare, and memo all use Anthropic keys */}
+                placeholder={apiKeyModalProvider === 'deepgram' ? 'Paste Deepgram API key…' : apiKeyModalProvider === 'openai' ? 'sk-...' : apiKeyModalProvider === 'exa' ? 'Paste Exa API key…' : apiKeyModalProvider === 'assemblyai' ? 'Paste AssemblyAI API key…' : 'sk-ant-api03-…' /* claude, webShare, and memo all use Anthropic keys */}
               />
               <button
                 className={styles.apiKeyToggle}
@@ -1951,7 +1975,7 @@ export default function Settings() {
               </div>
             )}
             <div className={styles.apiKeyDialogActions}>
-              {apiKeyModalProvider !== 'exa' && apiKeyModalProvider !== 'webShare' && apiKeyModalProvider !== 'deepgram' && (
+              {apiKeyModalProvider !== 'exa' && apiKeyModalProvider !== 'webShare' && apiKeyModalProvider !== 'deepgram' && apiKeyModalProvider !== 'assemblyai' && (
                 <button
                   className={styles.connectBtn}
                   // memo keys are Anthropic keys stored under a different slot — test against the Claude endpoint.
@@ -1988,6 +2012,11 @@ export default function Settings() {
                   } else if (apiKeyModalProvider === 'webShare') {
                     await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'webShareApiKey', trimmed)
                     setSettings((prev) => ({ ...prev, webShareApiKey: newMasked }))
+                    setApiKeyModalOpen(false)
+                  } else if (apiKeyModalProvider === 'assemblyai') {
+                    // No live test endpoint wired; save as-is.
+                    await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'assemblyaiApiKey', trimmed)
+                    setSettings((prev) => ({ ...prev, assemblyaiApiKey: newMasked }))
                     setApiKeyModalOpen(false)
                   } else {
                     // claude, openai, memo — test against the live API first.

@@ -1,6 +1,12 @@
 import { EventEmitter } from 'events'
 import { createClient, LiveTranscriptionEvents } from '@deepgram/sdk'
-import type { DeepgramConfig, TranscriptResult, DeepgramWord } from './types'
+import type { DeepgramConfig, DeepgramWord } from './types'
+import type {
+  NormalizedTranscriptResult,
+  StreamingTranscriber,
+  TranscriptionProvider,
+  TranscriberErrorCode,
+} from '../transcription/types'
 
 interface FinalizeCloseOptions {
   quietMs?: number
@@ -8,7 +14,13 @@ interface FinalizeCloseOptions {
   closeWaitMs?: number
 }
 
-export class DeepgramStreamingClient extends EventEmitter {
+export class DeepgramStreamingClient extends EventEmitter implements StreamingTranscriber {
+  readonly provider: TranscriptionProvider = 'deepgram'
+
+  private emitError(code: TranscriberErrorCode, message: string, context?: object): void {
+    this.emit('error', { code, message, context, provider: this.provider })
+  }
+
   private connection: ReturnType<ReturnType<typeof createClient>['listen']['live']> | null = null
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
@@ -77,6 +89,28 @@ export class DeepgramStreamingClient extends EventEmitter {
       }
     }
 
+    // Resolve connect() only when the WebSocket is actually open (or
+    // reject on a connection-time error). The factory's bidirectional
+    // fallback policy depends on connect() honestly reflecting whether
+    // we're ready for audio; before this change, connect() resolved
+    // synchronously and errors fired into a void.
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      let settled = false
+      const onOpen = (): void => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      const onErrorOnce = (err: unknown): void => {
+        if (settled) return
+        settled = true
+        const message = err instanceof Error ? err.message : String(err)
+        reject(new Error(`Deepgram connect failed: ${message}`))
+      }
+      this.connection!.once(LiveTranscriptionEvents.Open, onOpen)
+      this.connection!.once(LiveTranscriptionEvents.Error, onErrorOnce)
+    })
+
     this.connection.on(LiveTranscriptionEvents.Open, () => {
       this.reconnectAttempts = 0
       this.startKeepAlive()
@@ -105,7 +139,7 @@ export class DeepgramStreamingClient extends EventEmitter {
         errorMessage = String(error)
       }
       console.error('[Deepgram] WebSocket error:', errorMessage, error)
-      this.emit('error', errorMessage)
+      this.emitError('CONNECT_FAILED', errorMessage, { raw: String(error) })
       if (!this.isClosing) {
         this.attemptReconnect()
       }
@@ -115,6 +149,8 @@ export class DeepgramStreamingClient extends EventEmitter {
       this.stopKeepAlive()
       this.emit('disconnected')
     })
+
+    await readyPromise
   }
 
   sendAudio(chunk: Buffer): void {
@@ -149,7 +185,10 @@ export class DeepgramStreamingClient extends EventEmitter {
     const alternative = result.channel?.alternatives?.[0]
     if (!alternative || !alternative.transcript.trim()) return
 
-    const transcriptResult: TranscriptResult = {
+    // Normalize to the provider-agnostic NormalizedTranscriptResult shape.
+    // The recording session now always sends mono audio, so channelIndex
+    // is always 0 regardless of what Deepgram reports in channel_index.
+    const transcriptResult: NormalizedTranscriptResult = {
       text: alternative.transcript,
       words: (alternative.words || []).map((w) => ({
         word: w.word,
@@ -157,15 +196,15 @@ export class DeepgramStreamingClient extends EventEmitter {
         end: w.end,
         confidence: w.confidence,
         speaker: w.speaker ?? 0,
-        speaker_confidence: w.speaker_confidence ?? 0,
-        punctuated_word: w.punctuated_word || w.word
+        speakerConfidence: w.speaker_confidence ?? 0,
+        punctuatedWord: w.punctuated_word || w.word,
       })),
       isFinal: result.is_final,
       speechFinal: result.speech_final,
       start: result.start,
       duration: result.duration,
-      channelIndex: result.channel_index?.[0] ?? 0,
-      fromFinalize: result.from_finalize
+      channelIndex: 0,
+      fromFinalize: result.from_finalize,
     }
 
     this.emit('transcript', transcriptResult)

@@ -25,6 +25,9 @@ import {
   triggerSyncPull,
 } from './services/sync-bootstrap'
 import { backfillProviderKeysOnLaunch } from './services/gateway-credentials'
+// EVAL-FEATURE: transcription provider evaluation bootstrap.
+import { runTranscriptionEvalMigration } from './transcription-eval/repo/migration'
+import { runEvalBootCleanup } from './transcription-eval/service/boot-cleanup'
 import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.service'
 import { backfillMemosForSyncOnLaunch } from './services/memo-sync-backfill.service'
 import { startExtractionWorker } from './services/flagged-file-extraction-worker'
@@ -270,6 +273,17 @@ app.whenReady().then(() => {
   // v2: AI API keys (v1 missed these; Deepgram WS protocol crash on Record).
   migrateLegacyEncryptedCredentials()
   migrateLegacyEncryptedApiKeys()
+
+  // EVAL-FEATURE: create the transcription_evaluations table (idempotent)
+  // and sweep any rows left in 'pending' state from a previous run that was
+  // killed mid-eval. Rip-out: delete this block + the src/main/transcription-eval
+  // directory.
+  try {
+    runTranscriptionEvalMigration()
+    runEvalBootCleanup()
+  } catch (err) {
+    console.warn('[Startup] EVAL-FEATURE bootstrap failed (non-fatal):', err)
+  }
 
   // Wire the desktop → Neon SyncAgent. Must run AFTER getDatabase() (so
   // migrations 096 + 097 have applied) and AFTER getCurrentUserId() (so

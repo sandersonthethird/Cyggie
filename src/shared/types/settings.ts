@@ -1,6 +1,13 @@
 export type LlmProvider = 'claude' | 'ollama' | 'openai'
 
 /**
+ * Which provider handles live streaming transcription for new recordings.
+ * Locked at recording start — mid-session changes apply on the next
+ * recording. Default 'deepgram' preserves pre-picker behavior.
+ */
+export type LiveTranscriptionProvider = 'deepgram' | 'assemblyai'
+
+/**
  * Renderer-facing shape for encrypted API keys.
  *
  * The renderer never receives plaintext key material. SETTINGS_GET /
@@ -30,6 +37,7 @@ export const ENCRYPTED_KEYS = [
   'exaApiKey',
   'webShareApiKey',
   'memoApiKey',
+  'assemblyaiApiKey',
 ] as const
 export type EncryptedKey = (typeof ENCRYPTED_KEYS)[number]
 
@@ -65,6 +73,19 @@ export interface AppSettings {
    * `claudeApiKey`.
    */
   memoApiKey: MaskedKey
+  /**
+   * Live streaming transcription provider. Default 'deepgram'. Setting is
+   * read at `RecordingSession.start()` time; mid-session changes apply on
+   * the NEXT recording.
+   */
+  liveTranscriptionProvider: LiveTranscriptionProvider
+  /**
+   * Developer-facing: when true, every recording also writes a parallel
+   * AAC audio file (~50 MB/hour) that the eval CLI can re-transcribe via
+   * alternate providers. Off by default since most users don't run evals.
+   */
+  saveAudioForEval: boolean
+  assemblyaiApiKey: MaskedKey
 }
 
 export const UNCONFIGURED_KEY: MaskedKey = { configured: false, masked: '' }
@@ -95,4 +116,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSyncEmails: true,
   exaApiKey: UNCONFIGURED_KEY,
   memoApiKey: UNCONFIGURED_KEY,
+  liveTranscriptionProvider: 'deepgram',
+  saveAudioForEval: false,
+  assemblyaiApiKey: UNCONFIGURED_KEY,
 }

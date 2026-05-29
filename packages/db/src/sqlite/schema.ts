@@ -28,6 +28,7 @@ export interface MeetingRow {
   // having to look up the requesting user (which would conflate self with
   // user.sub — wrong once firm-shared meetings ship).
   self_name: string | null
+  transcript_provider: string | null
   companies: string | null
   dismissed_companies: string | null
   chat_messages: string | null

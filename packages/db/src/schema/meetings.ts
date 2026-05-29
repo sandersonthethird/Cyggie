@@ -102,6 +102,12 @@ export const meetings = pgTable(
     attendees: jsonb('attendees'),
     attendeeEmails: jsonb('attendee_emails'),
     selfName: text('self_name'),
+    /**
+     * Live transcription provider that produced this meeting's transcript:
+     * 'deepgram' or 'assemblyai'. NULL for meetings finalized before the
+     * 2026-05-28 picker landed. Set by RecordingSession on finalize.
+     */
+    transcriptProvider: text('transcript_provider'),
     // Legacy: pre-migration 078 chat history. Kept for backward compat; new chat lives in
     // chat_sessions / chat_session_messages. Marked deprecated — do not write from new code.
     chatMessages: jsonb('chat_messages'),

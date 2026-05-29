@@ -1,5 +1,129 @@
 # TODOS
 
+## Extend the transcription provider picker to the gateway/mobile path
+
+**What:** Make the gateway-side Deepgram batch path honor each user's
+`liveTranscriptionProvider` preference, so a user who has picked AssemblyAI
+gets AssemblyAI transcripts for mobile recordings too. Today the picker
+only affects the desktop live-streaming path; mobile recordings always
+produce Deepgram transcripts regardless of setting.
+
+**Why:** Once Cyggie onboards a second firm (current single-firm beta
+constraint per `~/.claude/projects/-Users-sandersoncass-Apps-Cyggie/memory/project_provider_key_architecture.md`),
+mismatched transcripts between desktop and mobile for the same user become
+a real support headache: "the desktop transcript got the prospect name
+right but the mobile one didn't." Cross-device consistency is table stakes
+for a multi-firm product.
+
+**Context:** Touchpoints:
+- `api-gateway/src/routes/recordings.ts` POST `/recordings/upload` — currently always submits to Deepgram batch. Needs to read the user's `liveTranscriptionProvider` (sync target the setting first; or query SQLite-via-Neon-mirror).
+- `api-gateway/src/recording/transcribe-job.ts` — add an AssemblyAI batch adapter path next to the existing Deepgram one. Reuse `src/main/transcription-eval/adapters/assemblyai.adapter.ts` as a starting point.
+- Per-user key resolution: extend `api-gateway/src/llm/resolve-key.ts` (already supports `deepgram`) to also resolve `assemblyai`. This is the same pattern T24 used for Anthropic; T32 for Deepgram.
+- Push notification routing: the existing APNs push (recordings.ts) doesn't need provider-specific changes.
+- Reconciliation on gateway restart (`reconcileStuckJobs` in transcribe-job.ts): needs to know which provider's polling endpoint to hit per stuck job. Add provider column to `meetings` on the gateway side too.
+
+**Effort:** L (~3-5 days).
+
+**Priority:** P2.
+
+**Depends on / blocked by:** Desktop picker shipping (done 2026-05-28
+on `feat/transcription-eval-cli`) + production validation that AssemblyAI
+streaming holds up across multiple real meetings.
+
+---
+
+## Wire the 5 named transcription error codes to Sentry
+
+**What:** Send the structured `error` events emitted by
+`DeepgramStreamingClient` and `AssemblyAiStreamingClient` to Sentry instead
+of just `console.error`. The 5 named codes:
+`MALFORMED_TURN_PAYLOAD`, `UNKNOWN_MESSAGE_TYPE`, `SERVER_TERMINATED`,
+`FINALIZE_TIMEOUT`, `MISSING_API_KEY`, plus the factory's bidirectional
+fallback warn-level log.
+
+**Why:** Today these land in the dev console and a packaged-build log file
+that nobody reads. In production we want real alerting — "AssemblyAI is
+returning malformed Turns to 30% of sessions" is the kind of incident we
+should learn about within minutes, not when a user complains.
+
+**Context:** Code locations:
+- `src/main/transcription/types.ts` defines `TranscriberErrorCode` — the canonical list.
+- `src/main/deepgram/client.ts:21` — `emitError(code, message, context)`.
+- `src/main/transcription/assemblyai-streaming-client.ts:108` — same `emitError` helper.
+- `src/main/transcription/factory.ts` — emits a `console.warn` when fallback fires; should also push to Sentry.
+
+Implementation:
+- Add a Sentry tag `{ provider, code }` on each error event.
+- Add a breadcrumb chain so Sentry shows the connect → turn → error sequence.
+- Hook from the renderer's `RECORDING_ERROR` channel handler so user-visible errors also push to Sentry from the UI side (already structured by the time it arrives).
+
+**Effort:** S (~2 hrs).
+
+**Priority:** P2.
+
+**Depends on / blocked by:** Cyggie having a Sentry project configured for
+the desktop (gateway already has one per
+`~/.claude/projects/-Users-sandersoncass-Apps-Cyggie/memory/project_provider_key_architecture.md`).
+
+---
+
+## Transcription eval — actually invoke the proper-noun corrector
+
+**What:** `scripts/transcription-eval/run-eval.ts` and
+`src/main/transcription-eval/service/transcribe-eval.service.ts` declare a
+`crmNames?: string[]` parameter on `RunArgs` (transcribe-eval.service.ts:40)
+but never invoke `correctTranscriptMarkdown` on the output. WER /
+side-by-side comparisons currently reflect the RAW provider output, not the
+post-corrected transcript that ships to the user.
+
+**Why:** Misleading apples-vs-oranges: the live pipeline benefits from CRM
+proper-noun correction; the eval doesn't, so we judge providers without the
+benefit Deepgram gets in prod. The comment at
+`packages/services/src/recording/normalize-segments.ts:1-11` is aspirational
+— it claims both pipelines apply the same correction, but only the live
+path actually does.
+
+**Context:** Two callsites need wiring:
+(1) The eval service should accept `crmNames` and call
+`correctTranscriptMarkdown` on each provider's markdown before writing
+segments / text to disk.
+(2) `scripts/transcription-eval/run-eval.ts` should source `crmNames` the
+same way `RecordingSession` does post-2026-05-28
+(`contacts + companies + meeting.selfName + meeting.attendees`, not just
+`contacts + companies` — see the Sandy→Andy fix in
+`~/.claude/plans/snazzy-seeking-crystal.md`).
+
+**Depends on / blocked by:** The Sandy→Andy fix landed 2026-05-28
+(canonical-token guard in proper-noun-corrector.ts + meeting-record source
+in RecordingSession.ts). Wiring the eval now will reflect the corrected
+behavior.
+
+---
+
+## Transcription provider eval — fallback to WER if side-by-side is inconclusive
+
+**What:** Extend `scripts/transcription-eval/run-eval.ts` to accept a
+`--reference-dir=<path>` flag and compute Word Error Rate (Levenshtein on
+tokenized streams, lowercase + punctuation stripped) against
+hand-corrected reference transcripts. Output as an extra column in the
+markdown summary table.
+
+**Why:** The current eval ships side-by-side text diffs only (per the
+2026-05-27 eng-review decision: skip WER for v1 to ship faster). If 5
+minutes of staring at side-by-side transcripts doesn't make a winner
+obvious, fall back to an objective metric.
+
+**Context:** Requires hand-correcting 3–5 representative meetings
+(30–90 min each) into `eval-fixtures/reference/<id>.txt`. The CLI then
+loads them, computes WER against each provider's `transcript_text`, and
+adds a `wer` column. Plan: `~/.claude/plans/can-you-scope-out-wise-locket.md`.
+
+**Depends on / blocked by:** Initial side-by-side eval producing
+inconclusive results. Audio must be saved (already shipped — the AAC
+encoder writes `<recordingsDir>/<id>.m4a` on every recording).
+
+---
+
 ## P1 — Mobile V1 (Phase 0–M7)
 
 Tracker for the Cyggie Mobile V1 + cloud rearchitecture initiative.
@@ -863,6 +987,68 @@ which only matters once a user runs two desktops. Single-desktop today.
 **Context:** Same pattern as commit 27f83fe (T14). Memos in OWNED_TABLES
 Layer 3; versions Layer 4. The TableSpec helper makes this mechanical.
 **Depends on / blocked by:** First multi-desktop user signal.
+
+### T40 — Lazy-load transcripts entirely (post-finalization egress)
+**What:** Drop `transcript_segments` from `/sync/pull` always (not just for
+in-progress meetings); add a new `GET /meetings/:id/transcript` route; have
+desktop renderer and mobile detail screen fetch transcripts on-demand when
+the user opens a meeting.
+**Why:** First-launch sync (`since=0`) and any post-finalization metadata
+edit (notes, attendees, title) currently re-ships the full transcript. For
+a user with 500 finalized meetings, first launch pulls ~30 MB+ of
+transcript data; subsequent edits each re-ship one full transcript. The
+in-progress fix that just shipped (the plan referenced below) closes the
+per-minute recording bleed but leaves the per-event-touch bleed.
+**Pros:** ~95% reduction on meeting-row payload across the board.
+Transcripts only travel the wire when actually viewed (rare for most
+historical meetings). Sidesteps the "row-level granularity is too coarse
+for fat columns" architectural smell.
+**Cons:** Real surface-area change — new route, new fetch hook in renderer
++ mobile, decision about whether desktop SQLite stores transcripts at all
+or always fetches. Touches 6–10 files. Introduces a new failure mode
+(offline transcript view stops working unless we keep a local cache).
+**Context:** Natural follow-up to the in-progress suppression. Defer until
+post-deploy egress measurement shows whether the in-progress fix alone is
+sufficient. If Neon egress drops to <2 GB/month, this may not be needed at
+all. Start by reading `applyRemoteMeetings` (the `transcript_segments`
+column would need to be removed from the upsert), then design the
+on-demand fetch + caching policy. Plan:
+`~/.claude/plans/does-sync-pull-really-need-vectorized-hickey.md`.
+**Depends on / blocked by:** In-progress fix shipped. Post-deploy egress
+data to decide if the work is justified.
+
+### T41 — Origin-device filter on `/sync/pull` meetings query
+**What:** Add `AND COALESCE(origin_device_id, '') != :requestingDeviceId`
+(or equivalent) to the `/sync/pull` meetings query (and other owned
+tables). Requires populating an `origin_device_id` column when writes hit
+Neon. Stops the recording device from re-downloading any of its own
+writes — not just transcript_segments.
+**Why:** The desktop already sends its `deviceId` in pull requests
+([src/main/services/sync-pull.service.ts:228](src/main/services/sync-pull.service.ts#L228)),
+but the gateway query at
+[api-gateway/src/routes/sync.ts:480-487](api-gateway/src/routes/sync.ts#L480-L487)
+ignores it. `applyRemoteMeetings` uses it downstream to skip *applying*
+but only after the bytes are already on the wire. Pure egress waste for
+the writer.
+**Pros:** Eliminates self-download across the board (not just transcripts)
+— applies to notes, contacts, companies, every owned table. Symmetric
+with the existing apply-side skip logic. Architecturally clean.
+**Cons:** Needs an `origin_device_id` column on every owned table (or a
+writers/outbox-origin tracking table) and gateway-side write logic to
+populate it. Migration + schema change. Touches every owned-table sync
+route. For the dominant case (transcript bytes during recording), the
+in-progress fix already addresses it, so the marginal value is harder to
+quantify.
+**Context:** Architecturally pure solution; the in-progress fix is the
+surgical one. Worth doing if non-transcript egress dominates after the
+in-progress fix — e.g., heavy note/contact editing on one device that
+the same device redownloads. Start by checking whether the outbox already
+tracks origin device (it might, given the SyncAgent design); if so, the
+column may be derivable rather than added fresh. Plan:
+`~/.claude/plans/does-sync-pull-really-need-vectorized-hickey.md`.
+**Depends on / blocked by:** In-progress fix shipped, and post-deploy
+egress measurement. Also blocked by understanding whether outbox/origin
+tracking exists in current schema.
 
 ---
 

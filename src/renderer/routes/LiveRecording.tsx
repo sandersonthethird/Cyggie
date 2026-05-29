@@ -38,6 +38,12 @@ export default function LiveRecording() {
   const stuckToBottomRef = useRef(true)
   const [audioFlow, setAudioFlow] = useState<{ state: 'flowing' | 'stalled'; stalledForMs: number } | null>(null)
   const [micState, setMicState] = useState<'ok' | 'muted' | 'ended'>('ok')
+  // Transcribing-indicator state: shows a "transcribing…" chip when the
+  // recording is active but no caption has arrived for >2s. Addresses the
+  // UX gap on AssemblyAI's chunky-Turn pattern (Turns arrive whole every
+  // 2-5s) so the user doesn't think the system is stuck.
+  const lastCaptionAtRef = useRef<number>(Date.now())
+  const [captionQuiet, setCaptionQuiet] = useState(false)
 
   useEffect(() => {
     if (!isRecording) {
@@ -79,6 +85,29 @@ export default function LiveRecording() {
     if (!el || !stuckToBottomRef.current) return
     el.scrollTop = el.scrollHeight
   }, [liveTranscript, interimSegment])
+
+  // Track caption arrival to detect "is this thing on?" quiet stretches.
+  // Any new segment OR interim update bumps lastCaptionAtRef.
+  useEffect(() => {
+    lastCaptionAtRef.current = Date.now()
+    setCaptionQuiet(false)
+  }, [liveTranscript, interimSegment])
+
+  // Poll once a second while recording to flip the chip on after 2s of
+  // quiet. The interval is cheap and the indicator's accuracy at 1s
+  // granularity is more than fine for human perception.
+  useEffect(() => {
+    if (!isRecording || isPaused) {
+      setCaptionQuiet(false)
+      return
+    }
+    lastCaptionAtRef.current = Date.now()
+    const id = setInterval(() => {
+      const sinceLast = Date.now() - lastCaptionAtRef.current
+      setCaptionQuiet(sinceLast > 2000)
+    }, 1000)
+    return () => clearInterval(id)
+  }, [isRecording, isPaused])
 
   const handleStart = useCallback(async () => {
     try {
@@ -154,6 +183,21 @@ export default function LiveRecording() {
             <span className={styles.speakers}>
               {speakerCount} speaker{speakerCount !== 1 ? 's' : ''}
             </span>
+            {captionQuiet && (
+              <span
+                aria-live="polite"
+                style={{
+                  marginLeft: 8,
+                  padding: '2px 8px',
+                  borderRadius: 12,
+                  fontSize: 11,
+                  background: 'var(--color-bg-secondary, #f3f4f6)',
+                  color: 'var(--color-text-secondary, #6b7280)',
+                }}
+              >
+                transcribing…
+              </span>
+            )}
           </div>
         )}
       </div>

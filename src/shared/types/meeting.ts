@@ -83,6 +83,14 @@ export interface Meeting {
    * Migration 107.
    */
   selfName: string | null
+  /**
+   * Which live transcription provider produced this meeting's transcript:
+   * 'deepgram' or 'assemblyai'. NULL for meetings finalized before the
+   * 2026-05-28 picker rollout. Used for debugging and the eventual
+   * post-launch "which provider produced better transcripts in
+   * production?" analysis. Migration 111.
+   */
+  transcriptProvider: 'deepgram' | 'assemblyai' | null
   companies: string[] | null
   dismissedCompanies: string[] | null
   chatMessages: ChatMessage[] | null

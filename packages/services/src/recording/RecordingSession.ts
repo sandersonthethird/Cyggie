@@ -49,6 +49,11 @@ import { AudioCapture } from '@main/audio/capture'
 import { AudioStreamManager } from '@main/audio/stream-manager'
 import { DeepgramStreamingClient } from '@main/deepgram/client'
 import { TranscriptAssembler } from '@main/deepgram/transcript-assembler'
+import { createStreamingTranscriber } from '@main/transcription/factory'
+import type {
+  StreamingTranscriber,
+  TranscriptionProvider,
+} from '@main/transcription/types'
 import { RecordingAutoStop } from '@main/recording/auto-stop'
 import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 import {
@@ -69,11 +74,15 @@ import { getCurrentMeetingEvent, getEventById } from '@main/calendar/google-cale
 import { isCalendarConnected, hasDriveScope } from '@main/calendar/google-auth'
 import { uploadTranscript } from '@main/drive/google-drive'
 import { extractCompaniesFromEmails } from '@main/utils/company-extractor'
-import { correctProperNouns } from '@main/utils/proper-noun-corrector'
+import {
+  buildSpeakerMap,
+  correctTranscriptMarkdown,
+} from '@cyggie/services/recording/normalize-segments'
 import { join } from 'path'
 import { GROUP_EVENT_ATTENDEE_THRESHOLD } from '@cyggie/shared'
 import { DEFAULT_DEEPGRAM_KEYWORDS } from '@shared/constants/deepgram-keywords'
-import type { TranscriptResult } from '@main/deepgram/types'
+import type { NormalizedTranscriptResult } from '@main/transcription/types'
+import type { LiveTranscriptionProvider } from '@shared/types/settings'
 import type { TranscriptSegment } from '@shared/types/recording'
 import type { MeetingPlatform } from '@shared/constants/meeting-apps'
 
@@ -187,6 +196,23 @@ export interface RecordingSessionCallbacks {
   onFinalized(payload: { meetingId: string; durationSeconds: number }): void
   /** Fires from the background finalize IIFE on failure. */
   onFinalizeError(payload: { meetingId: string; error: string }): void
+  /**
+   * Fires when the chosen provider failed to connect and the factory
+   * silently fell back to the other provider. UI should surface a banner
+   * "Using <activeProvider> — <originalProvider> unreachable."
+   */
+  onProviderFallback?: (payload: {
+    originalProvider: TranscriptionProvider
+    activeProvider: TranscriptionProvider
+    reason: string
+  }) => void
+  /**
+   * EVAL-FEATURE: optional tap on raw stereo 16kHz/16-bit PCM audio chunks
+   * as they're emitted by AudioCapture. Used by the transcription-eval
+   * harness to write a parallel AAC file for offline re-transcription.
+   * Safe to omit; recording behavior is unchanged when undefined.
+   */
+  onAudioChunk?: (chunk: Buffer) => void
 }
 
 export interface RecordingSessionStartArgs {
@@ -222,17 +248,26 @@ export class RecordingSession {
   // 16 module-level vars → private instance fields. Same names + types
   // for grep continuity with the prior recording.ipc.ts.
   private audioCapture: AudioCapture | null = null
-  private deepgramClient: DeepgramStreamingClient | null = null
+  /**
+   * Live streaming transcription client. Provider-agnostic — could be a
+   * DeepgramStreamingClient or AssemblyAiStreamingClient depending on the
+   * user's `liveTranscriptionProvider` setting at session start.
+   */
+  private streamingClient: StreamingTranscriber | null = null
+  /**
+   * The provider actually streaming this recording. Differs from the
+   * user's chosen setting only on bidirectional auto-fallback (e.g. user
+   * picked AssemblyAI but it was unreachable so we fell back to Deepgram).
+   * Persisted on finalize as `meetings.transcript_provider` for debugging.
+   */
+  private activeProvider: TranscriptionProvider | null = null
   private transcriptAssembler: TranscriptAssembler | null = null
   private autoStop: RecordingAutoStop | null = null
   private currentMeetingId: string | null = null
   private recordingStartTime: number | null = null
   private isPaused = false
-  private monoMode = false
-  private switchingToMono = false
-  private deepgramApiKey: string | null = null
-  private deepgramMaxSpeakers: number | undefined
-  private deepgramKeytermsCache: string[] = []
+  private streamingMaxSpeakers: number | undefined
+  private streamingKeytermsCache: string[] = []
   private calendarSelfName: string | null = null
   private calendarAttendees: string[] = []
   private calendarAttendeeEmails: string[] = []
@@ -259,9 +294,29 @@ export class RecordingSession {
     const { title, calEventId, appendToMeetingId } = args
     const userId = getCurrentUserId()
 
-    const deepgramKey = getCredential('deepgramApiKey')
-    if (!deepgramKey) {
-      throw new Error('Deepgram API key not configured. Go to Settings to add it.')
+    // Read the live transcription provider preference. Locked at start;
+    // mid-recording picker changes apply to the NEXT recording.
+    const providerRaw = getSetting('liveTranscriptionProvider')
+    const chosenProvider: LiveTranscriptionProvider =
+      providerRaw === 'assemblyai' ? 'assemblyai' : 'deepgram'
+
+    // Chosen provider's key must be configured. The factory will silently
+    // fall back to the OTHER provider if the chosen connect fails AND the
+    // other key is configured (Issue 9A — bidirectional fallback).
+    const chosenKey = getCredential(
+      chosenProvider === 'deepgram' ? 'deepgramApiKey' : 'assemblyaiApiKey',
+    )
+    if (!chosenKey) {
+      // Check whether the other provider has a key — if so, the factory's
+      // no-key fallback path will use it.
+      const otherKey = getCredential(
+        chosenProvider === 'deepgram' ? 'assemblyaiApiKey' : 'deepgramApiKey',
+      )
+      if (!otherKey) {
+        throw new Error(
+          `${chosenProvider === 'deepgram' ? 'Deepgram' : 'AssemblyAI'} API key not configured. Go to Settings to add it.`,
+        )
+      }
     }
 
     // Calendar-derived metadata starts fresh on every start; we never
@@ -459,37 +514,59 @@ export class RecordingSession {
     const meetingForKeywords = this.currentMeetingId
       ? meetingRepo.getMeeting(this.currentMeetingId)
       : null
-    const deepgramKeyterms = buildDeepgramKeyterms(
+    const keyterms = buildDeepgramKeyterms(
       meetingForKeywords?.title,
       meetingForKeywords?.attendees || this.calendarAttendees,
     )
 
-    this.deepgramApiKey = deepgramKey
-    this.deepgramMaxSpeakers = maxSpeakers
-    this.deepgramKeytermsCache = deepgramKeyterms
+    this.streamingMaxSpeakers = maxSpeakers
+    this.streamingKeytermsCache = keyterms
 
-    this.deepgramClient = new DeepgramStreamingClient({
-      apiKey: deepgramKey,
+    // Always send mono. Multichannel mode (stereo with channel 0 = mic,
+    // channel 1 = system audio) produces a doubled transcript on Zoom/Meet
+    // calls: the remote speaker's voice arrives on channel 1 (system
+    // loopback) AND bleeds into channel 0 via the mic. Downmixing to mono
+    // before sending eliminates the duplication; voice-based diarization
+    // handles speaker separation across both providers.
+    const factoryResult = await createStreamingTranscriber({
+      chosenProvider,
+      resolveApiKey: (p) =>
+        p === 'deepgram'
+          ? getCredential('deepgramApiKey')
+          : getCredential('assemblyaiApiKey'),
+      keyterms,
       maxSpeakers,
-      channels: 2,
-      keyterms: deepgramKeyterms,
     })
+    this.streamingClient = factoryResult.client
+    this.activeProvider = factoryResult.client.provider
+
+    if (factoryResult.fallback) {
+      const { originalProvider, reason } = factoryResult.fallback
+      console.warn(
+        `[Recording] Falling back from ${originalProvider} to ${factoryResult.client.provider}: ${reason}`,
+      )
+      this.callbacks.onProviderFallback?.({
+        originalProvider,
+        activeProvider: factoryResult.client.provider,
+        reason,
+      })
+    }
 
     this.audioCapture.on('audio-chunk', (chunk: Buffer) => {
       if (DEBUG_TRANSCRIPTION) {
         console.log('[Recording] Audio chunk received:', chunk.length, 'bytes')
       }
-      if (this.monoMode) {
-        this.deepgramClient?.sendAudio(AudioStreamManager.stereoToMono(chunk))
-      } else {
-        this.deepgramClient?.sendAudio(chunk)
-      }
+      // AudioCapture emits stereo PCM regardless of mode; always downmix
+      // before handing off to the streaming client.
+      this.streamingClient?.sendAudio(AudioStreamManager.stereoToMono(chunk))
+      // EVAL-FEATURE: tap the raw stereo PCM for the AAC eval recorder
+      // when saveAudioForEval is enabled. Gated by recording.ipc.ts.
+      this.callbacks.onAudioChunk?.(chunk)
     })
 
-    this.wireDeepgramEvents(this.deepgramClient)
+    this.wireStreamingEvents(this.streamingClient)
 
-    console.log('[Recording] Starting Deepgram connection...')
-    await this.deepgramClient.connect()
+    console.log(`[Recording] Streaming via ${this.activeProvider}`)
     console.log('[Recording] Starting audio capture...')
     this.audioCapture.start()
 
@@ -519,44 +596,11 @@ export class RecordingSession {
     if (this.transcriptAssembler && !hasSystemAudio) {
       this.transcriptAssembler.setSystemAudioUnavailable()
     }
-    // Reconnect Deepgram in mono mode for better diarization on a single mic channel.
-    if (
-      !hasSystemAudio &&
-      this.currentMeetingId &&
-      this.deepgramClient &&
-      this.deepgramApiKey &&
-      !this.switchingToMono &&
-      !this.monoMode
-    ) {
-      this.switchingToMono = true
-      console.log('[Recording] Switching Deepgram to mono mode for diarization')
-
-      const oldClient = this.deepgramClient
-      oldClient.close().catch((err) => {
-        console.warn('[Recording] Error closing stereo Deepgram client:', err)
-      })
-
-      const newClient = new DeepgramStreamingClient({
-        apiKey: this.deepgramApiKey,
-        maxSpeakers: this.deepgramMaxSpeakers,
-        channels: 1,
-        keyterms: this.deepgramKeytermsCache,
-      })
-      this.wireDeepgramEvents(newClient)
-      this.deepgramClient = newClient
-      this.monoMode = true
-
-      newClient
-        .connect()
-        .then(() => console.log('[Recording] Deepgram reconnected in mono mode'))
-        .catch((err) => {
-          console.error('[Recording] Failed to reconnect Deepgram in mono mode:', err)
-          this.callbacks.onError('Failed to reconnect transcription in mono mode.')
-        })
-        .finally(() => {
-          this.switchingToMono = false
-        })
-    }
+    // Previously this handler reconnected Deepgram with channels=1 when
+    // system audio dropped, to switch from multichannel-diarization to
+    // single-channel diarization. We now always send mono to Deepgram from
+    // session start (see the comment at the DeepgramStreamingClient
+    // construction above), so no reconnect is needed.
   }
 
   pause(): void {
@@ -597,7 +641,8 @@ export class RecordingSession {
     // to discard the reference and create a new RecordingSession for the
     // next recording.)
     const snapshot = {
-      deepgramClient: this.deepgramClient,
+      streamingClient: this.streamingClient,
+      activeProvider: this.activeProvider,
       transcriptAssembler: this.transcriptAssembler,
       calendarSelfName: this.calendarSelfName,
       calendarAttendees: this.calendarAttendees.slice(),
@@ -607,17 +652,15 @@ export class RecordingSession {
     this.autoStop?.stop()
 
     this.audioCapture = null
-    this.deepgramClient = null
+    this.streamingClient = null
+    this.activeProvider = null
     this.transcriptAssembler = null
     this.autoStop = null
     this.currentMeetingId = null
     this.recordingStartTime = null
     this.isPaused = false
-    this.monoMode = false
-    this.switchingToMono = false
-    this.deepgramApiKey = null
-    this.deepgramMaxSpeakers = undefined
-    this.deepgramKeytermsCache = []
+    this.streamingMaxSpeakers = undefined
+    this.streamingKeytermsCache = []
     this.calendarSelfName = null
     this.calendarAttendees = []
     this.calendarAttendeeEmails = []
@@ -633,7 +676,8 @@ export class RecordingSession {
 
   private async runBackgroundFinalize(
     snapshot: {
-      deepgramClient: DeepgramStreamingClient | null
+      streamingClient: StreamingTranscriber | null
+      activeProvider: TranscriptionProvider | null
       transcriptAssembler: TranscriptAssembler | null
       calendarSelfName: string | null
       calendarAttendees: string[]
@@ -645,17 +689,20 @@ export class RecordingSession {
     try {
       try {
         await timeStepAsync(
-          'deepgram-close',
+          'streaming-close',
           () =>
-            snapshot.deepgramClient?.finalizeAndClose({
+            snapshot.streamingClient?.finalizeAndClose({
               quietMs: 900,
               maxWaitMs: 9000,
               closeWaitMs: 3500,
             }) ?? Promise.resolve(),
         )
       } catch (err) {
-        console.warn('[Recording] Deepgram finalize close failed, forcing close:', err)
-        await snapshot.deepgramClient?.close()
+        console.warn(
+          `[Recording] ${snapshot.activeProvider ?? 'streaming'} finalize close failed, forcing close:`,
+          err,
+        )
+        await snapshot.streamingClient?.close()
       }
 
       const meeting = meetingRepo.getMeeting(meetingId)
@@ -683,36 +730,11 @@ export class RecordingSession {
         const actualSpeakerIds = assembler.getFinalizedSpeakerIds()
         const speakerCount = actualSpeakerIds.size
 
-        // Build the speakerMap that labels each Deepgram speaker index with
-        // a human-readable name.
-        //
-        // Multichannel mode: channel 0 is the local mic, so speaker 0 is
-        // reliably the recorder (selfName). Channel 1 carries the system
-        // audio with everyone else; positional mapping of attendees to
-        // speaker indices 1+ holds only when there's exactly one other
-        // speaker, but at minimum self is always correct.
-        //
-        // Diarization (single-channel) mode: no audio-derived signal of
-        // who is who. Positional guessing here produced confidently-wrong
-        // labels (e.g. "Sandy" attributed to a colleague "Andy" because
-        // Andy happened to be first in the attendee list). Fall back to
-        // neutral "Speaker N" labels and let the user relabel post-hoc.
-        const speakerMap: Record<number, string> = {}
-        const detectedMode = assembler.getChannelMode()
-        if (detectedMode === 'multichannel') {
-          const allNames: string[] = []
-          if (snapshot.calendarSelfName || snapshot.calendarAttendees.length > 0) {
-            allNames.push(snapshot.calendarSelfName || 'You')
-            allNames.push(...snapshot.calendarAttendees)
-          }
-          for (const id of actualSpeakerIds) {
-            speakerMap[id] = allNames[id] || `Speaker ${id + 1}`
-          }
-        } else {
-          for (const id of actualSpeakerIds) {
-            speakerMap[id] = `Speaker ${id + 1}`
-          }
-        }
+        const speakerMap = buildSpeakerMap(actualSpeakerIds, {
+          channelMode: assembler.getChannelMode(),
+          calendarSelfName: snapshot.calendarSelfName,
+          calendarAttendees: snapshot.calendarAttendees,
+        })
 
         const rawTranscriptMd = assembler.toMarkdown(speakerMap)
 
@@ -725,16 +747,19 @@ export class RecordingSession {
             const companyNames = listCompanies({ view: 'all' })
               .map((c) => c.canonicalName)
               .filter(Boolean) as string[]
-            const crmNames = [...contactNames, ...companyNames]
-            if (crmNames.length === 0) return rawTranscriptMd
-            const lines = rawTranscriptMd.split('\n')
-            return lines
-              .map((line) =>
-                line.startsWith('**') && line.includes('** [')
-                  ? line
-                  : correctProperNouns(line, crmNames),
-              )
-              .join('\n')
+            // Self + attendee names join the canonical list so the corrector's
+            // exact-canonical-token guard protects them from being fuzzy-rewritten
+            // into a similar CRM contact name (the Sandy→Andy bug). Sourced from
+            // the meeting record (not the snapshot) so ad-hoc recordings without
+            // a calendar event still get protection — meeting.selfName falls
+            // back through deriveSelfNameFromUserId at create time.
+            const crmNames = [
+              ...contactNames,
+              ...companyNames,
+              ...(meeting?.selfName ? [meeting.selfName] : []),
+              ...(meeting?.attendees ?? []),
+            ]
+            return correctTranscriptMarkdown(rawTranscriptMd, crmNames)
           })
         } catch (err) {
           console.warn('[Recording] Proper noun correction failed, using raw transcript:', err)
@@ -756,6 +781,12 @@ export class RecordingSession {
               speakerCount,
               speakerMap,
               status: 'transcribed',
+              // Records which provider produced this transcript so we can
+              // answer "is this row's quality the AssemblyAI or Deepgram
+              // version?" months later without guessing from the user's
+              // current setting. NULL on the rare path where the provider
+              // wasn't yet known (defensive — shouldn't happen).
+              transcriptProvider: snapshot.activeProvider,
             },
             userId,
           ),
@@ -797,10 +828,10 @@ export class RecordingSession {
     }
   }
 
-  private wireDeepgramEvents(client: DeepgramStreamingClient): void {
-    client.on('transcript', (result: TranscriptResult) => {
+  private wireStreamingEvents(client: StreamingTranscriber): void {
+    client.on('transcript', (result: NormalizedTranscriptResult) => {
       if (DEBUG_TRANSCRIPTION) {
-        console.log('[Recording] Deepgram transcript received:', {
+        console.log(`[Recording] ${client.provider} transcript received:`, {
           text: result.text,
           isFinal: result.isFinal,
           speechFinal: result.speechFinal,
@@ -837,12 +868,20 @@ export class RecordingSession {
     })
 
     client.on('error', (error: unknown) => {
-      console.error('[Recording] Deepgram error:', error)
-      this.callbacks.onError(String(error))
+      // Streaming clients emit a structured payload:
+      //   { code: TranscriberErrorCode, message: string, context?, provider }
+      // Surface the human-readable message to the renderer; the structured
+      // payload lives in the console log for debugging + future Sentry wiring.
+      console.error(`[Recording] ${client.provider} error:`, error)
+      const message =
+        error && typeof error === 'object' && 'message' in error
+          ? String((error as { message: unknown }).message)
+          : String(error)
+      this.callbacks.onError(message)
     })
 
     client.on('connected', () => {
-      console.log('[Recording] Deepgram connected successfully')
+      console.log(`[Recording] ${client.provider} connected successfully`)
       this.callbacks.onStatus({
         isRecording: true,
         isPaused: false,

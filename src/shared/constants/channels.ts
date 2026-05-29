@@ -25,6 +25,14 @@ export const IPC_CHANNELS = {
   // fails. Mirrors VIDEO_FINALIZED / VIDEO_FINALIZE_ERROR.
   RECORDING_FINALIZED: 'recording:finalized',
   RECORDING_FINALIZE_ERROR: 'recording:finalize-error',
+  /**
+   * Fires when the live transcription factory silently fell back from the
+   * user's chosen provider to the other one (the chosen provider failed to
+   * connect within the timeout AND the other provider's key was
+   * configured). UI surfaces a banner: "Using <activeProvider> —
+   * <originalProvider> unreachable."
+   */
+  RECORDING_PROVIDER_FALLBACK: 'recording:provider-fallback',
   RECORDING_AUDIO_FLOW_STATUS: 'recording:audio-flow-status',
   RECORDING_MIC_STATUS: 'recording:mic-status',
   // PCM frames sent from renderer → main on every audio chunk; consumed by

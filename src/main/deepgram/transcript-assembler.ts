@@ -1,7 +1,19 @@
-import type { TranscriptResult, DeepgramWord } from './types'
+import type { NormalizedTranscriptResult, NormalizedWord } from '../transcription/types'
 import type { TranscriptSegment, TranscriptWord } from '../../shared/types/recording'
 
-type ChannelMode = 'detecting' | 'multichannel' | 'diarization'
+/**
+ * Channel mode is always 'diarization' now. The recording path downmixes
+ * stereo capture to mono before sending to the streaming client, so neither
+ * provider sees per-channel audio. The 'detecting' and 'multichannel'
+ * states + the auto-detection state machine were removed 2026-05-28 when
+ * the live picker rolled out — multichannel mode caused the Zoom-bleed
+ * doubling bug and we always send mono now.
+ *
+ * `getChannelMode()` is preserved (returns 'diarization' always) so existing
+ * status-broadcast callers in RecordingSession don't need to change.
+ */
+type ChannelMode = 'diarization'
+
 const DEBUG_TRANSCRIPTION =
   process.env['NODE_ENV'] === 'development' && process.env['GORP_DEBUG_TRANSCRIPTION'] === '1'
 const SPEAKER_SWITCH_MIN_WORDS = 2
@@ -9,32 +21,30 @@ const SPEAKER_SWITCH_MIN_DURATION_SECONDS = 0.5
 const SPEAKER_SWITCH_MIN_CONFIDENCE = 0.15
 const SPEAKER_SWITCH_CASCADE_LIMIT = 3
 
+/**
+ * Default speaker confidence when the provider doesn't supply one (e.g.
+ * AssemblyAI Universal-Streaming, which doesn't emit per-word confidence).
+ * Treating absent as 1.0 means correctSpeakerBoundaries Pass 1 and Pass 2
+ * become no-ops for that provider — we trust the provider's speaker labels
+ * rather than trying to second-guess them with a confidence heuristic that
+ * doesn't apply.
+ */
+const DEFAULT_SPEAKER_CONFIDENCE = 1.0
+
 export class TranscriptAssembler {
   private finalizedSegments: TranscriptSegment[] = []
   private currentInterim: TranscriptSegment | null = null
   private knownSpeakers = new Set<number>()
   private timeOffset = 0
-  private activeChannels = new Set<number>()
   private expectedSpeakerCount: number | null = null
   private consecutiveSuppressedSwitches = 0
   private suppressedSwitchTargetSpeaker: number | null = null
   private totalSuppressedSwitches = 0
 
-  /**
-   * Auto-detection state machine for channel mode:
-   * - 'detecting': Waiting to determine if system audio has speech.
-   *   Uses Deepgram's raw diarization IDs (no remapping).
-   * - 'multichannel': System audio confirmed active. Channel 0 = speaker 0
-   *   (local user), channel 1 speakers offset by +1.
-   * - 'diarization': No system audio speech. Uses Deepgram's diarization
-   *   to separate speakers on the mic channel.
-   */
-  private channelMode: ChannelMode = 'detecting'
-  private channel0FinalCount = 0
-  private static readonly DETECTION_THRESHOLD = 5
+  private readonly channelMode: ChannelMode = 'diarization'
 
   constructor() {
-    // no-op — detection is automatic
+    // no-op
   }
 
   setExpectedSpeakerCount(expectedCount?: number): void {
@@ -46,14 +56,12 @@ export class TranscriptAssembler {
   }
 
   /**
-   * Called when the renderer confirms system audio capture failed entirely.
-   * Immediately commits to diarization mode without waiting for the detection threshold.
+   * Legacy no-op. Used to commit the assembler to diarization mode early
+   * before the auto-detection threshold was reached. Now always-diarization,
+   * so callers can safely keep calling this without effect.
    */
   setSystemAudioUnavailable(): void {
-    if (this.channelMode === 'detecting') {
-      this.channelMode = 'diarization'
-      console.log('[TranscriptAssembler] System audio unavailable, using diarization mode')
-    }
+    // intentional no-op (always-diarization mode)
   }
 
   getChannelMode(): ChannelMode {
@@ -74,65 +82,35 @@ export class TranscriptAssembler {
     }
   }
 
-  addResult(result: TranscriptResult): void {
+  addResult(result: NormalizedTranscriptResult): void {
     if (!result.text.trim()) return
 
-    // Diagnostic: log speaker confidence values for tuning
     if (DEBUG_TRANSCRIPTION && result.isFinal && result.words.length > 0) {
-      const confValues = result.words.map((w) => w.speaker_confidence?.toFixed(2) ?? 'N/A')
+      const confValues = result.words.map((w) => w.speakerConfidence?.toFixed(2) ?? 'N/A')
       const speakers = result.words.map((w) => w.speaker)
       console.log(
-        `[TranscriptAssembler] ch=${result.channelIndex} mode=${this.channelMode} speakers=[${[...new Set(speakers)]}] ` +
-          `confidence=[${confValues.join(',')}] text="${result.text.substring(0, 60)}..."`
+        `[TranscriptAssembler] speakers=[${[...new Set(speakers)]}] ` +
+          `confidence=[${confValues.join(',')}] text="${result.text.substring(0, 60)}..."`,
       )
     }
 
-    this.activeChannels.add(result.channelIndex)
-
-    // --- Auto-detect channel mode ---
-    if (this.channelMode === 'detecting' && result.isFinal) {
-      if (result.channelIndex === 1) {
-        // System audio has speech → switch to multichannel
-        this.switchToMultichannel()
-      } else if (result.channelIndex === 0) {
-        this.channel0FinalCount++
-        if (this.channel0FinalCount >= TranscriptAssembler.DETECTION_THRESHOLD) {
-          this.channelMode = 'diarization'
-          console.log(
-            `[TranscriptAssembler] Auto-detected diarization mode ` +
-              `(${this.channel0FinalCount} ch0 results, no ch1 speech)`
-          )
-        }
-      }
-    }
-
-    const useMultichannel = this.channelMode === 'multichannel'
-    const words = useMultichannel
-      ? this.remapSpeakers(result.words, result.channelIndex)
-      : result.words
-
-    const segments = this.groupWordsBySpeaker(words)
+    const segments = this.groupWordsBySpeaker(result.words)
     if (segments.length === 0) {
-      const fallback = this.buildTextOnlySegment(result, useMultichannel)
+      const fallback = this.buildTextOnlySegment(result)
       if (fallback) {
         segments.push(fallback)
       }
     }
-    const stabilizedSegments = this.stabilizeSpeakerSwitches(segments, useMultichannel)
-    const normalizedSegments = this.normalizeToExpectedSpeakerCount(stabilizedSegments, useMultichannel)
+    const stabilizedSegments = this.stabilizeSpeakerSwitches(segments)
+    const normalizedSegments = this.normalizeToExpectedSpeakerCount(stabilizedSegments)
 
     if (result.isFinal) {
       for (const seg of normalizedSegments) {
-        if (useMultichannel) {
-          this.insertChronologically(seg)
-        } else {
-          this.finalizedSegments.push(seg)
-        }
+        this.finalizedSegments.push(seg)
         this.knownSpeakers.add(seg.speaker)
       }
       this.currentInterim = null
     } else {
-      // Only update interim display
       this.currentInterim = normalizedSegments[normalizedSegments.length - 1] || null
       for (const seg of normalizedSegments) {
         this.knownSpeakers.add(seg.speaker)
@@ -140,126 +118,34 @@ export class TranscriptAssembler {
     }
   }
 
-  /**
-   * Switch from detecting → multichannel mode.
-   * All existing finalized segments came from channel 0 (since channel 1
-   * hadn't produced speech yet), so reassign them all to speaker 0.
-   */
-  private switchToMultichannel(): void {
-    this.channelMode = 'multichannel'
-    console.log('[TranscriptAssembler] Auto-detected multichannel mode (system audio speech detected)')
-
-    // Reprocess existing segments: all from ch0 → speaker 0
-    for (const seg of this.finalizedSegments) {
-      seg.speaker = 0
-      for (const w of seg.words) {
-        w.speaker = 0
-        w.speakerConfidence = 1.0
-      }
-    }
-
-    // Collapse adjacent same-speaker segments (now all speaker 0)
-    const collapsed: TranscriptSegment[] = []
-    for (const seg of this.finalizedSegments) {
-      const prev = collapsed[collapsed.length - 1]
-      if (prev && prev.speaker === seg.speaker) {
-        prev.text += ' ' + seg.text
-        prev.endTime = seg.endTime
-        prev.words.push(...seg.words)
-      } else {
-        collapsed.push(seg)
-      }
-    }
-    this.finalizedSegments = collapsed
-
-    // Rebuild knownSpeakers
-    this.knownSpeakers.clear()
-    for (const seg of this.finalizedSegments) {
-      this.knownSpeakers.add(seg.speaker)
-    }
-  }
-
-  /**
-   * Remap speaker IDs based on audio channel.
-   * Channel 0 (mic) = always speaker 0 (local user).
-   * Channel 1 (system) = Deepgram's speaker IDs offset by +1.
-   */
-  private remapSpeakers(words: DeepgramWord[], channelIndex: number): DeepgramWord[] {
-    return words.map((w) => {
-      if (channelIndex === 0) {
-        return { ...w, speaker: 0, speaker_confidence: 1.0 }
-      } else {
-        return { ...w, speaker: (w.speaker ?? 0) + 1 }
-      }
-    })
-  }
-
-  /**
-   * Insert a segment into finalizedSegments in chronological order.
-   * Multichannel results from channels 0 and 1 may arrive interleaved.
-   * Merges with adjacent same-speaker segments when close in time.
-   */
-  private insertChronologically(seg: TranscriptSegment): void {
-    // Fast path: segment is after the last one (most common)
-    if (this.finalizedSegments.length === 0) {
-      this.finalizedSegments.push(seg)
-      return
-    }
-
-    const last = this.finalizedSegments[this.finalizedSegments.length - 1]
-    if (seg.startTime >= last.startTime) {
-      // Merge with previous if same speaker and close in time
-      if (last.speaker === seg.speaker && seg.startTime - last.endTime < 2.0) {
-        last.text += ' ' + seg.text
-        last.endTime = seg.endTime
-        last.words.push(...seg.words)
-        return
-      }
-      this.finalizedSegments.push(seg)
-      return
-    }
-
-    // Slow path: binary search for insertion point
-    let lo = 0
-    let hi = this.finalizedSegments.length
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1
-      if (this.finalizedSegments[mid].startTime < seg.startTime) {
-        lo = mid + 1
-      } else {
-        hi = mid
-      }
-    }
-    this.finalizedSegments.splice(lo, 0, seg)
-  }
-
-  private groupWordsBySpeaker(words: DeepgramWord[]): TranscriptSegment[] {
+  private groupWordsBySpeaker(words: NormalizedWord[]): TranscriptSegment[] {
     const segments: TranscriptSegment[] = []
     let current: TranscriptSegment | null = null
 
     for (const word of words) {
+      const speakerConfidence = word.speakerConfidence ?? DEFAULT_SPEAKER_CONFIDENCE
       const tw: TranscriptWord = {
         word: word.word,
         start: word.start + this.timeOffset,
         end: word.end + this.timeOffset,
         confidence: word.confidence,
         speaker: word.speaker,
-        speakerConfidence: word.speaker_confidence,
-        punctuatedWord: word.punctuated_word
+        speakerConfidence,
+        punctuatedWord: word.punctuatedWord,
       }
 
       if (!current || current.speaker !== word.speaker) {
         if (current) segments.push(current)
         current = {
           speaker: word.speaker,
-          text: word.punctuated_word,
+          text: word.punctuatedWord,
           startTime: word.start + this.timeOffset,
           endTime: word.end + this.timeOffset,
           isFinal: true,
-          words: [tw]
+          words: [tw],
         }
       } else {
-        current.text += ' ' + word.punctuated_word
+        current.text += ' ' + word.punctuatedWord
         current.endTime = word.end + this.timeOffset
         current.words.push(tw)
       }
@@ -269,11 +155,8 @@ export class TranscriptAssembler {
     return segments
   }
 
-  private stabilizeSpeakerSwitches(
-    segments: TranscriptSegment[],
-    useMultichannel: boolean
-  ): TranscriptSegment[] {
-    if (segments.length === 0 || useMultichannel) return segments
+  private stabilizeSpeakerSwitches(segments: TranscriptSegment[]): TranscriptSegment[] {
+    if (segments.length === 0) return segments
 
     const previousSpeaker = this.currentInterim?.speaker
       ?? this.finalizedSegments[this.finalizedSegments.length - 1]?.speaker
@@ -349,10 +232,7 @@ export class TranscriptAssembler {
     return hasEnoughSpeech && avgSpeakerConfidence >= SPEAKER_SWITCH_MIN_CONFIDENCE
   }
 
-  private normalizeToExpectedSpeakerCount(
-    segments: TranscriptSegment[],
-    useMultichannel: boolean
-  ): TranscriptSegment[] {
+  private normalizeToExpectedSpeakerCount(segments: TranscriptSegment[]): TranscriptSegment[] {
     const expectedCount = this.expectedSpeakerCount
     if (!expectedCount || expectedCount <= 0 || segments.length === 0) return segments
 
@@ -369,7 +249,7 @@ export class TranscriptAssembler {
 
       const safeFallback = typeof fallbackSpeaker === 'number'
         ? Math.max(0, Math.min(fallbackSpeaker, expectedCount - 1))
-        : (useMultichannel ? Math.max(0, expectedCount - 1) : 0)
+        : 0
 
       if (DEBUG_TRANSCRIPTION) {
         console.log(
@@ -416,25 +296,18 @@ export class TranscriptAssembler {
     return merged
   }
 
-  private inferFallbackSpeaker(useMultichannel: boolean, channelIndex: number): number {
-    if (useMultichannel) {
-      return channelIndex === 0 ? 0 : 1
-    }
-
+  private inferFallbackSpeaker(): number {
     if (this.currentInterim) return this.currentInterim.speaker
     const lastFinalized = this.finalizedSegments[this.finalizedSegments.length - 1]
     if (lastFinalized) return lastFinalized.speaker
     return 0
   }
 
-  private buildTextOnlySegment(
-    result: TranscriptResult,
-    useMultichannel: boolean
-  ): TranscriptSegment | null {
+  private buildTextOnlySegment(result: NormalizedTranscriptResult): TranscriptSegment | null {
     const cleanedText = result.text.trim()
     if (!cleanedText) return null
 
-    const speaker = this.inferFallbackSpeaker(useMultichannel, result.channelIndex)
+    const speaker = this.inferFallbackSpeaker()
     const startTime = result.start + this.timeOffset
     const duration = Math.max(result.duration, 0.05)
     const endTime = startTime + duration
@@ -544,6 +417,13 @@ export class TranscriptAssembler {
    * Pass 1: If trailing words of segment A have low confidence and segment B
    *   has a different speaker, move those words to segment B.
    * Pass 2: Merge micro-segments (< 3 words, low avg confidence) into adjacent segments.
+   *
+   * No-op for providers that don't supply per-word speaker confidence
+   * (notably AssemblyAI Universal-Streaming). Default-1.0 confidence from
+   * those providers means the < 0.4 threshold is never crossed → nothing
+   * moves → algorithm is effectively skipped, which is the right answer:
+   * trust the provider's speaker labels rather than second-guess them with
+   * a heuristic that doesn't apply.
    */
   correctSpeakerBoundaries(): void {
     if (this.finalizedSegments.length < 2) return
@@ -607,43 +487,56 @@ export class TranscriptAssembler {
   }
 
   /**
-   * Merge phantom speaker segments into adjacent real speakers.
-   * Deepgram's max_speakers is only a hint — it still creates extra speakers.
-   * When we know the real participant count from the calendar, reassign all
-   * segments from phantom speakers (index >= expectedCount) to the previous
-   * real speaker.
+   * Collapse adjacent segments that already share the same speaker.
+   *
+   * Historically this method ALSO merged "phantom" speaker segments
+   * (Deepgram speaker index >= expectedCount) into the previous segment,
+   * rewriting their speaker to match. The 2026-05-27 transcription-eval
+   * surfaced what the original comment already warned about: that merge
+   * systematically glues the user's brief interjections onto whoever was
+   * just speaking ("my text got appended to the other person's text").
+   * The rationale was already documented for the multichannel branch but
+   * was never extended to single-channel — and after the
+   * 2026-05-27 always-mono Deepgram fix, single-channel is now every call.
+   *
+   * The phantom-merge is therefore disabled. Phantom speakers stay at
+   * (or near) their original indices and surface via buildSpeakerMap as
+   * "Speaker N+1" etc., which the user can relabel in MeetingDetail
+   * post-hoc. Cosmetic downside (a 2-person meeting may show 3-4 speakers)
+   * is preferred over content-correctness downside (wrong attribution).
+   *
+   * expectedCount is used as a sanity cap: any speaker index strictly
+   * greater than expectedCount is clamped to exactly expectedCount, so
+   * over-diarization can't sprawl into "Speaker 3, 4, 5, 6, ..." labels.
+   * All phantoms unify into a single "Speaker N+1" bucket where N is the
+   * known-participant count.
    */
   consolidateSpeakers(expectedCount: number): void {
-    if (expectedCount <= 0 || this.finalizedSegments.length === 0) return
+    if (this.finalizedSegments.length === 0) return
 
-    const merged: TranscriptSegment[] = []
-
-    for (const seg of this.finalizedSegments) {
-      if (seg.speaker >= expectedCount) {
-        if (merged.length > 0) {
-          // Merge into the previous segment
-          const prev = merged[merged.length - 1]
-          prev.text += ' ' + seg.text
-          prev.endTime = seg.endTime
-          prev.words.push(
-            ...seg.words.map((w) => ({ ...w, speaker: prev.speaker }))
-          )
-        } else {
-          // No previous segment yet — assign to speaker 0
-          merged.push({
-            ...seg,
-            speaker: 0,
-            words: seg.words.map((w) => ({ ...w, speaker: 0 }))
-          })
+    // Sanity cap: clamp any over-diarized speaker index to exactly
+    // expectedCount. The canonical phantom bucket sits at index
+    // expectedCount (one above the highest known participant) and
+    // surfaces via buildSpeakerMap as "Speaker N+1". This intentionally
+    // does NOT merge phantoms into the previous real segment — that
+    // merge was the root cause of the "my text got appended to the
+    // other person's text" bug.
+    if (expectedCount > 0) {
+      for (const seg of this.finalizedSegments) {
+        if (seg.speaker > expectedCount) {
+          seg.speaker = expectedCount
+          for (const w of seg.words) w.speaker = expectedCount
         }
-      } else {
-        merged.push(seg)
       }
     }
 
-    // Collapse adjacent segments that now share the same speaker
+    // Collapse adjacent segments that already share the same speaker. This
+    // is purely cosmetic: Deepgram occasionally emits two consecutive
+    // segments for the same speaker (e.g. on a pause), and joining them
+    // makes the transcript read more naturally. After the cap above,
+    // multiple consecutive phantom segments also unify into one block.
     const collapsed: TranscriptSegment[] = []
-    for (const seg of merged) {
+    for (const seg of this.finalizedSegments) {
       const prev = collapsed[collapsed.length - 1]
       if (prev && prev.speaker === seg.speaker) {
         prev.text += ' ' + seg.text
@@ -656,7 +549,6 @@ export class TranscriptAssembler {
 
     this.finalizedSegments = collapsed
 
-    // Rebuild knownSpeakers from consolidated segments
     this.knownSpeakers.clear()
     for (const seg of this.finalizedSegments) {
       this.knownSpeakers.add(seg.speaker)

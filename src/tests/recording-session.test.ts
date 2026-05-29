@@ -23,11 +23,11 @@ vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', async (importOriginal) =>
   const actual = (await importOriginal()) as Record<string, unknown>
   return {
     ...actual,
-    getMeeting: () => null,
+    getMeeting: vi.fn(() => null),
     updateMeeting: vi.fn(),
     createMeeting: vi.fn(),
-    findMeetingByCalendarEventId: () => null,
-    shouldSyncAttendees: () => false,
+    findMeetingByCalendarEventId: vi.fn(() => null),
+    shouldSyncAttendees: vi.fn(() => false),
   }
 })
 vi.mock('@cyggie/db/sqlite/repositories/contact.repo', async (importOriginal) => {
@@ -41,6 +41,11 @@ vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', async (importOriginal
 vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({ getSetting: () => null }))
 vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
 vi.mock('@cyggie/db/sqlite/repositories/search.repo', () => ({ indexMeeting: vi.fn() }))
+// user.repo is hit by deriveSelfNameFromUserId in the ad-hoc create path —
+// stub it so the lifecycle-driving spy test doesn't touch the real SQLite DB.
+vi.mock('@cyggie/db/sqlite/repositories/user.repo', () => ({
+  getUser: () => ({ displayName: 'Test User', firstName: 'Test', lastName: 'User', email: 'test@example.com' }),
+}))
 
 // Electron not used by the class itself, but transitive imports pull it in.
 vi.mock('electron', () => ({
@@ -75,19 +80,31 @@ vi.mock('@main/drive/google-drive', () => ({
 vi.mock('@main/storage/file-manager', () => ({ writeTranscript: () => 'fake.md' }))
 vi.mock('@main/storage/paths', () => ({ getTranscriptsDir: () => '/tmp' }))
 vi.mock('@main/utils/proper-noun-corrector', () => ({
-  correctProperNouns: (line: string) => line,
+  correctProperNouns: vi.fn((line: string, _names: string[]) => line),
 }))
+// Spy on the markdown-level wrapper so the proper-noun wire-through can be
+// asserted at a stable boundary (called once per finalize with the full
+// crmNames array — independent of how many body lines the transcript has).
+vi.mock('@cyggie/services/recording/normalize-segments', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return {
+    ...actual,
+    correctTranscriptMarkdown: vi.fn((md: string, _names: string[]) => md),
+  }
+})
 vi.mock('@main/utils/company-extractor', () => ({ extractCompaniesFromEmails: () => [] }))
 
 // Deepgram + audio mocks — instantiated by start(), so we mock the
 // constructors to expose minimal stubs.
 vi.mock('@main/deepgram/client', () => ({
   DeepgramStreamingClient: vi.fn().mockImplementation(() => ({
+    provider: 'deepgram',
     connect: vi.fn().mockResolvedValue(undefined),
     sendAudio: vi.fn(),
     finalizeAndClose: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     on: vi.fn(),
+    off: vi.fn(),
   })),
 }))
 vi.mock('@main/deepgram/transcript-assembler', () => ({
@@ -213,3 +230,42 @@ describe('RecordingSession — start error paths', () => {
 // end-to-end by recording-stop-defer's "after STOP returns, calling STOP
 // again throws" assertion, which exercises the full DB+deepgram pipeline.
 // We don't duplicate that here.
+
+describe('RecordingSession — proper-noun correction wire-through', () => {
+  it('passes meeting.selfName + meeting.attendees into the corrector (ad-hoc path)', async () => {
+    // Calendar is mocked to return null at the top of the file, so this
+    // exercises the ad-hoc create path — snapshot.calendarSelfName is null
+    // throughout. The protection comes from meeting.selfName (populated at
+    // create time via deriveSelfNameFromUserId fallback) and meeting.attendees
+    // (read back from the DB inside runBackgroundFinalize). Asserting the
+    // captured crmNames here locks in Part 2 of the Sandy/Andy fix.
+    const meetingRepo = await import('@cyggie/db/sqlite/repositories/meeting.repo')
+    const { correctTranscriptMarkdown } = await import(
+      '@cyggie/services/recording/normalize-segments'
+    )
+
+    const fakeMeeting = {
+      id: 'meeting-spy-1',
+      title: 'Test Meeting',
+      date: new Date().toISOString(),
+      selfName: 'Sandy Cass',
+      attendees: ['Andy Doe'],
+    } as unknown as ReturnType<typeof meetingRepo.getMeeting>
+
+    vi.mocked(meetingRepo.createMeeting).mockReturnValue(fakeMeeting!)
+    vi.mocked(meetingRepo.getMeeting).mockReturnValue(fakeMeeting)
+    vi.mocked(correctTranscriptMarkdown).mockClear()
+
+    const cb = makeCallbacks()
+    const session = new RecordingSession(cb)
+    await session.start({ title: 'Test Meeting' })
+
+    const stopResult = session.stop()
+    await stopResult.finalizePromise
+
+    expect(correctTranscriptMarkdown).toHaveBeenCalled()
+    const capturedNames = vi.mocked(correctTranscriptMarkdown).mock.calls[0]?.[1] ?? []
+    expect(capturedNames).toContain('Sandy Cass')
+    expect(capturedNames).toContain('Andy Doe')
+  })
+})

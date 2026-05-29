@@ -31,6 +31,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     attendees: row.attendees ? JSON.parse(row.attendees) : null,
     attendeeEmails: row.attendee_emails ? JSON.parse(row.attendee_emails) : null,
     selfName: row.self_name ?? null,
+    transcriptProvider: (row.transcript_provider ?? null) as 'deepgram' | 'assemblyai' | null,
     companies: row.companies ? JSON.parse(row.companies) : null,
     dismissedCompanies: row.dismissed_companies ? JSON.parse(row.dismissed_companies) : null,
     chatMessages: row.chat_messages ? JSON.parse(row.chat_messages) : null,
@@ -420,6 +421,12 @@ export function updateMeeting(
     attendees: string[] | null
     attendeeEmails: string[] | null
     selfName: string | null
+    /**
+     * Live transcription provider that produced this meeting's transcript
+     * ('deepgram' or 'assemblyai'). Set by RecordingSession on finalize.
+     * NULL for meetings recorded before the 2026-05-28 picker rollout.
+     */
+    transcriptProvider: 'deepgram' | 'assemblyai' | null
     companies: string[] | null
     dismissedCompanies: string[] | null
     chatMessages: ChatMessage[] | null
@@ -494,6 +501,10 @@ export function updateMeeting(
   if (data.selfName !== undefined) {
     sets.push('self_name = ?')
     params.push(data.selfName)
+  }
+  if (data.transcriptProvider !== undefined) {
+    sets.push('transcript_provider = ?')
+    params.push(data.transcriptProvider)
   }
   if (data.companies !== undefined) {
     sets.push('companies = ?')

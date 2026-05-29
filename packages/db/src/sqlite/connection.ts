@@ -106,6 +106,10 @@ import { runFlaggedFilesExtractionMigration } from './migrations/104-flagged-fil
 import { runOrgCompaniesPassedFromStageMigration } from './migrations/105-org-companies-passed-from-stage'
 import { runDefaultTemplatesAttendeesPlaceholderMigration } from './migrations/106-default-templates-attendees-placeholder'
 import { runMeetingsSelfNameMigration } from './migrations/107-meetings-self-name'
+import { runContactsAddressMigration } from './migrations/108-contacts-address'
+import { runContactKeyTakeawaysUserNoteMigration } from './migrations/109-contact-key-takeaways-user-note'
+import { runCompanyKeyTakeawaysUserNoteMigration } from './migrations/110-company-key-takeaways-user-note'
+import { runMeetingsTranscriptProviderMigration } from './migrations/111-meetings-transcript-provider'
 
 let db: Database.Database | null = null
 
@@ -250,6 +254,10 @@ export function getDatabase(): Database.Database {
     runOrgCompaniesPassedFromStageMigration(db)
     runDefaultTemplatesAttendeesPlaceholderMigration(db)
     runMeetingsSelfNameMigration(db)
+    runContactsAddressMigration(db)
+    runContactKeyTakeawaysUserNoteMigration(db)
+    runCompanyKeyTakeawaysUserNoteMigration(db)
+    runMeetingsTranscriptProviderMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or

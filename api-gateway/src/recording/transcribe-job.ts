@@ -33,49 +33,16 @@ import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { initApnsClient } from '../push/apns'
 import { addPending, removePending } from '@cyggie/services/recording/pending-finalizations'
+import {
+  mapDeepgramUtterancesToSegments,
+  buildGenericSpeakerMap,
+  type DeepgramBatchResult,
+} from '@cyggie/services/recording/deepgram-mapping'
 import type { GatewayEnv } from '../env'
 import { readFile } from 'node:fs/promises'
 import { timingSafeEqual } from 'node:crypto'
 import { Sentry } from '../sentry'
 import { resolveDeepgramKey } from '../llm/resolve-key'
-
-// ─── Deepgram batch types (subset we actually use) ───────────────────────────
-
-interface DeepgramWord {
-  word: string
-  start: number
-  end: number
-  confidence: number
-  speaker?: number
-  punctuated_word?: string
-}
-
-interface DeepgramUtterance {
-  start: number
-  end: number
-  confidence: number
-  channel: number
-  transcript: string
-  words: DeepgramWord[]
-  speaker?: number
-}
-
-interface DeepgramBatchResult {
-  metadata?: {
-    request_id?: string
-    duration?: number
-    channels?: number
-  }
-  results: {
-    channels: Array<{
-      alternatives: Array<{
-        transcript: string
-        words: DeepgramWord[]
-      }>
-    }>
-    utterances?: DeepgramUtterance[]
-  }
-}
 
 // Drizzle return type for getMeetingByRequestId / getMeetingForFinalize.
 // Inlined locally rather than imported to keep this module self-contained.
@@ -442,8 +409,8 @@ async function persistTranscriptAndPush(
     return
   }
 
-  const segments = extractSegments(payload)
-  const speakerMap = buildSpeakerMap(payload)
+  const segments = mapDeepgramUtterancesToSegments(payload)
+  const speakerMap = buildGenericSpeakerMap(payload)
   const durationSeconds = Math.floor(payload.metadata?.duration ?? 0)
 
   // Branch on segment count. Deepgram returns a valid 2xx with an empty
@@ -554,62 +521,6 @@ async function markMeetingError(
     .update(schema.meetings)
     .set({ status: 'error', lamport: nextLamport, updatedAt: new Date() })
     .where(eq(schema.meetings.id, meetingId))
-}
-
-function extractSegments(payload: DeepgramBatchResult): Array<{
-  speaker: number
-  text: string
-  startTime: number
-  endTime: number
-  isFinal: true
-}> {
-  // Normalize Deepgram's utterance shape into the canonical segment shape
-  // the read path expects. Deepgram returns
-  //   { speaker, transcript, start, end, words, ... }
-  // but normalizeSegments() in api-gateway/src/routes/meetings.ts expects
-  //   { speaker, text, startTime, endTime }
-  // and silently drops anything that doesn't match. Without this mapping
-  // the meeting flips to status='transcribed' but the detail screen shows
-  // "No transcript for this meeting." Found during the cathedral-build
-  // E2E run on 2026-05-21.
-  const utterances = payload.results.utterances ?? []
-  const out: Array<{
-    speaker: number
-    text: string
-    startTime: number
-    endTime: number
-    isFinal: true
-  }> = []
-  for (const u of utterances) {
-    if (
-      typeof u.speaker !== 'number' ||
-      typeof u.transcript !== 'string' ||
-      typeof u.start !== 'number' ||
-      typeof u.end !== 'number'
-    ) {
-      continue
-    }
-    out.push({
-      speaker: u.speaker,
-      text: u.transcript,
-      startTime: u.start,
-      endTime: u.end,
-      isFinal: true,
-    })
-  }
-  return out
-}
-
-function buildSpeakerMap(payload: DeepgramBatchResult): Record<number, string> {
-  // No calendar attendees on the mobile path → label generically. The user
-  // can rename speakers from the meeting-detail UI (M5 territory).
-  const speakerIds = new Set<number>()
-  for (const utt of payload.results.utterances ?? []) {
-    if (typeof utt.speaker === 'number') speakerIds.add(utt.speaker)
-  }
-  const map: Record<number, string> = {}
-  for (const id of speakerIds) map[id] = `Speaker ${id + 1}`
-  return map
 }
 
 function secretsMatch(provided: string, expected: string): boolean {

@@ -10,6 +10,7 @@
 // =============================================================================
 
 import { ipcMain, BrowserWindow, shell } from 'electron'
+import { join } from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import {
   RecordingSession,
@@ -20,12 +21,68 @@ import { getCurrentUserProfile } from '../security/current-user'
 import { updateTrayMenu } from '../tray'
 import { addPending, removePending, getPending } from './_finalizations'
 import { broadcast } from './_broadcast'
+import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
+import { getRecordingsDir } from '../storage/paths'
+import {
+  startAacEncoder,
+  appendAacChunk,
+  stopAacEncoder,
+} from '../transcription-eval/audio/aac-encoder'
+
+/**
+ * Single gate point for the parallel AAC encoder used by the offline eval
+ * CLI. Centralizes all four wiring sites (audio-chunk tap, encoder start,
+ * encoder stop, error logging) so the `saveAudioForEval` toggle can be
+ * honored in one place — much harder to half-wire than scattering
+ * conditionals at each site.
+ *
+ * When enabled=false, the returned object is a complete no-op: no audio
+ * tap is registered, no ffmpeg process is spawned, stop is a no-op. The
+ * recording flow is identical to today's behavior with the encoder
+ * disabled — zero overhead, zero disk usage.
+ */
+interface AacWiring {
+  /** Pass into RecordingSession callbacks; undefined when disabled. */
+  onAudioChunk?: (chunk: Buffer) => void
+  /** Call after RecordingSession.start() resolves with the meetingId. */
+  start: (meetingId: string) => void
+  /** Call from the RECORDING_STOP handler; idempotent + non-blocking. */
+  stop: () => void
+}
+
+function wireAacEncoder(enabled: boolean): AacWiring {
+  if (!enabled) {
+    return { start: () => {}, stop: () => {} }
+  }
+  return {
+    onAudioChunk: (chunk) => appendAacChunk(chunk),
+    start: (meetingId) => {
+      try {
+        const audioPath = join(getRecordingsDir(), `${meetingId}.m4a`)
+        startAacEncoder(audioPath)
+      } catch (err) {
+        console.warn('[Recording] AAC encoder failed to start:', err)
+      }
+    },
+    stop: () => {
+      void stopAacEncoder().catch((err) => {
+        console.warn('[Recording] AAC encoder failed to close cleanly:', err)
+      })
+    },
+  }
+}
 
 // Re-export so the existing src/tests/recording-start.test.ts (which
 // imports from '../main/ipc/recording.ipc') keeps working without churn.
 export { resolveRecordingCalendarEventId }
 
 let activeSession: RecordingSession | null = null
+/**
+ * Holds the AAC encoder's stop function for the currently-active session
+ * so the RECORDING_STOP handler can fire it without re-reading the
+ * saveAudioForEval setting. Reset to null when the session ends.
+ */
+let activeAacStop: (() => void) | null = null
 
 function getMainWindow(): BrowserWindow | null {
   const windows = BrowserWindow.getAllWindows()
@@ -102,6 +159,11 @@ export function registerRecordingHandlers(): void {
         }
       }
 
+      // Single-gate AAC wiring. When saveAudioForEval is false (default),
+      // the returned wiring is a no-op everywhere — no callback registered,
+      // no ffmpeg process, no stop work.
+      const aac = wireAacEncoder(getSetting('saveAudioForEval') === 'true')
+
       const session = new RecordingSession({
         onTranscriptUpdate: (segment) =>
           sendToRenderer(IPC_CHANNELS.RECORDING_TRANSCRIPT_UPDATE, segment),
@@ -110,23 +172,31 @@ export function registerRecordingHandlers(): void {
         onAutoStop: () => sendToRenderer(IPC_CHANNELS.RECORDING_AUTO_STOP, null),
         onFinalized: (payload) => broadcast(IPC_CHANNELS.RECORDING_FINALIZED, payload),
         onFinalizeError: (payload) => broadcast(IPC_CHANNELS.RECORDING_FINALIZE_ERROR, payload),
+        onProviderFallback: (payload) =>
+          sendToRenderer(IPC_CHANNELS.RECORDING_PROVIDER_FALLBACK, payload),
+        onAudioChunk: aac.onAudioChunk,
       })
       activeSession = session
+      // Stash the stop function on the session ref so the RECORDING_STOP
+      // handler doesn't need to re-read the setting.
+      activeAacStop = aac.stop
 
       try {
         const result = await session.start({ title, calEventId, appendToMeetingId })
         // The "already recording this calendar event" recovery path
         // returns alreadyRecording=true from inside start() without
-        // actually wiring deepgram; drop our session reference so the
-        // next genuine start can proceed.
+        // actually wiring the streaming client; drop our session reference
+        // so the next genuine start can proceed.
         if (result.alreadyRecording) {
           activeSession = null
+          activeAacStop = null
           return {
             meetingId: result.meetingId,
             meetingPlatform: result.meetingPlatform,
             alreadyRecording: true,
           }
         }
+        aac.start(result.meetingId)
         if (result.meetingUrl) {
           void openMeetingUrlInBrowser(result.meetingUrl)
         }
@@ -161,9 +231,15 @@ export function registerRecordingHandlers(): void {
       throw new Error('Not recording')
     }
     const session = activeSession
+    const aacStop = activeAacStop
     activeSession = null
+    activeAacStop = null
 
     const { meetingId, durationSeconds, finalizePromise } = session.stop()
+
+    // Fire-and-forget AAC encoder close (no-op when saveAudioForEval was
+    // false at session start).
+    aacStop?.()
 
     const win = getMainWindow()
     if (win) updateTrayMenu(win, false)
