@@ -117,6 +117,9 @@ export const orgCompanies = pgTable(
     sourceEntityId: text('source_entity_id'),
     // AI takeaways (migration 070)
     keyTakeaways: text('key_takeaways'),
+    // User-authored note pinned to the top of the Key Takeaways card (migration 109).
+    // Survives AI regeneration; passed to the LLM as known truth.
+    keyTakeawaysUserNote: text('key_takeaways_user_note'),
     // Per-field source tracking (migration 050)
     fieldSources: jsonb('field_sources'),
     // Audit + sync

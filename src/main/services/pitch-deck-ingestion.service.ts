@@ -62,6 +62,39 @@ export class PitchDeckError extends Error {
 const MIN_TEXT_LENGTH = 100     // below this → likely image-only PDF
 const URL_TIMEOUT_MS  = 15_000  // 15s BrowserWindow load timeout
 
+// Hostnames whose pages render a wrapper UI even when the underlying document
+// is behind an email/password gate. Without bypassing the gate, scraping these
+// returns boilerplate about the platform itself rather than the deck content,
+// which leads the LLM to fabricate a meaningless "analysis" of the platform.
+const GATED_DOCUMENT_HOSTNAME_SUFFIXES = [
+  'docsend.com',
+  'pitch.com',
+  'drive.google.com',
+  'docs.google.com',
+  'dropbox.com',
+  'paper.dropbox.com',
+  'notion.so',
+  'notion.site',
+]
+
+// Phrases commonly rendered on gate / login pages of the platforms above.
+// Matched case-insensitively against extracted page text.
+const GATE_TEXT_MARKERS = [
+  'please enter your email',
+  'enter your email to view',
+  'enter your email address',
+  'enter your work email',
+  'verify your email',
+  'sign in to view',
+  'sign in to continue',
+  'log in to view',
+  'request access',
+  'you need access',
+]
+
+const AUTH_GATE_SELECTOR =
+  'input[type="email"], input[name="email"], input[placeholder*="email" i]'
+
 const VALID_ROUNDS: CompanyRound[] = [
   'pre_seed', 'seed', 'seed_extension', 'series_a', 'series_b',
 ]
@@ -346,10 +379,21 @@ export async function extractFromUrl(
   const sourceLabel = urlDomain
   console.log('[PitchDeck] ingestion started', { source: 'url', urlDomain })
 
-  const text = await loadUrlContent(url, opts)
+  const text = await loadUrlContent(url, opts, urlDomain)
 
   if (text.trim().length < MIN_TEXT_LENGTH) {
     throw new PitchDeckError('url_auth_failed', 'Page loaded but appears empty — check the URL and email address')
+  }
+
+  // Layer 2: the page returned enough text to pass the length check, but the
+  // text is the gating platform's wrapper UI (e.g. DocSend's "enter your email"
+  // page). Reject before the LLM call to avoid generating a meaningless
+  // "analysis" of the platform rather than the document.
+  if (looksLikeGatedPlatformContent(urlDomain, text)) {
+    throw new PitchDeckError(
+      'url_auth_failed',
+      'This document is behind a sign-in gate — download the deck as a PDF and upload it instead'
+    )
   }
 
   const startMs = Date.now()
@@ -374,7 +418,8 @@ export async function extractFromUrl(
  */
 async function loadUrlContent(
   url: string,
-  opts: { email?: string; password?: string }
+  opts: { email?: string; password?: string },
+  urlDomain: string
 ): Promise<string> {
   const win = new BrowserWindow({
     show: false,
@@ -419,8 +464,20 @@ async function loadUrlContent(
     // Brief settle wait for JS-rendered content (DocSend renders after load)
     await new Promise<void>((resolve) => setTimeout(resolve, 2000))
 
-    // Fill auth gate if credentials provided
-    if (opts.email || opts.password) {
+    // Layer 1: detect an auth gate before deciding whether to extract text or
+    // bail. Runs unconditionally (not only after an auth attempt) so a paste
+    // of a gated URL with no credentials fails fast with a useful message
+    // instead of feeding the platform's wrapper UI to the LLM.
+    const credentialsProvided = !!(opts.email || opts.password)
+
+    if (await isAuthGatePresent(win)) {
+      if (!credentialsProvided) {
+        throw new PitchDeckError(
+          'url_auth_failed',
+          `${urlDomain} requires sign-in to view this document — provide the access email/password or download the deck as a PDF and upload it instead`
+        )
+      }
+
       // Extra settle: let the email gate form itself finish rendering
       await new Promise<void>((resolve) => setTimeout(resolve, 1000))
 
@@ -435,13 +492,7 @@ async function loadUrlContent(
       await tryFillAuthForm(win, opts.email ?? null, opts.password ?? null)
       await waitForLoad
 
-      // Check if the email gate is still present after auth — if so, the form
-      // fill failed (wrong email, JS error, form not found) and we can give a
-      // more actionable error than the generic "page loaded but appears empty".
-      const gateStillPresent: boolean = await win.webContents.executeJavaScript(
-        '!!document.querySelector(\'input[type="email"], input[name="email"], input[placeholder*="email" i]\')'
-      )
-      if (gateStillPresent) {
+      if (await isAuthGatePresent(win)) {
         throw new PitchDeckError(
           'url_auth_failed',
           'Email gate was not bypassed — try downloading the deck as a PDF instead'
@@ -458,6 +509,33 @@ async function loadUrlContent(
     if (timeoutHandle) clearTimeout(timeoutHandle)
     try { win.destroy() } catch { /* already destroyed */ }
   }
+}
+
+/**
+ * Returns true if the page currently renders an email/password gate input.
+ * Used both before attempting auth (to decide whether credentials are needed)
+ * and after, to verify the form-fill succeeded.
+ */
+async function isAuthGatePresent(win: BrowserWindow): Promise<boolean> {
+  return win.webContents.executeJavaScript(
+    `!!document.querySelector(${JSON.stringify(AUTH_GATE_SELECTOR)})`
+  )
+}
+
+/**
+ * Heuristic: the URL hostname is a known gating platform AND the extracted
+ * text contains marker phrases typical of that platform's sign-in / access
+ * wrapper UI. Exported for unit tests.
+ */
+export function looksLikeGatedPlatformContent(hostname: string, text: string): boolean {
+  const host = hostname.toLowerCase()
+  const onGatedHost = GATED_DOCUMENT_HOSTNAME_SUFFIXES.some(
+    (suffix) => host === suffix || host.endsWith('.' + suffix)
+  )
+  if (!onGatedHost) return false
+
+  const lower = text.toLowerCase()
+  return GATE_TEXT_MARKERS.some((marker) => lower.includes(marker))
 }
 
 /**

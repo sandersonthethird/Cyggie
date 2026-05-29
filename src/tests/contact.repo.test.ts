@@ -21,7 +21,7 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
-const { listContacts, listContactsLight, resolveContactsByEmails, getContact, updateContact } = await import('@cyggie/db/sqlite/repositories/contact.repo')
+const { listContacts, listContactsLight, resolveContactsByEmails, resolveContactsByLowercasedNames, getContact, updateContact, getContactEmailRow } = await import('@cyggie/db/sqlite/repositories/contact.repo')
 
 function buildDb(): Database.Database {
   const db = new Database(':memory:')
@@ -281,6 +281,90 @@ describe('resolveContactsByEmails — returns { id, fullName }', () => {
   })
 })
 
+describe('resolveContactsByLowercasedNames — fallback for attendees without email', () => {
+  beforeEach(() => {
+    testDb = new Database(':memory:')
+    testDb.exec(`
+      CREATE TABLE contacts (
+        id TEXT PRIMARY KEY,
+        full_name TEXT NOT NULL,
+        email TEXT
+      );
+      INSERT INTO contacts (id, full_name, email) VALUES
+        ('c1', 'Sandy Cass', NULL),
+        ('c2', 'Alice Smith', 'alice@example.com'),
+        ('c3', 'Bob Jones', NULL),
+        ('c4', 'Bob Jones', NULL);
+    `)
+  })
+
+  it('resolves unique name to { id, fullName } keyed by lowercased trimmed name', () => {
+    const result = resolveContactsByLowercasedNames(['Sandy Cass'])
+    expect(result['sandy cass']).toEqual({ id: 'c1', fullName: 'Sandy Cass' })
+  })
+
+  it('skips ambiguous names (multiple contacts share the name)', () => {
+    const result = resolveContactsByLowercasedNames(['Bob Jones'])
+    expect(result['bob jones']).toBeUndefined()
+  })
+
+  it('handles surrounding whitespace and mixed case', () => {
+    const result = resolveContactsByLowercasedNames(['  SANDY CASS  '])
+    expect(result['sandy cass']).toEqual({ id: 'c1', fullName: 'Sandy Cass' })
+  })
+
+  it('returns empty for empty input', () => {
+    expect(resolveContactsByLowercasedNames([])).toEqual({})
+  })
+
+  it('ignores blank entries', () => {
+    const result = resolveContactsByLowercasedNames(['', '   ', 'Sandy Cass'])
+    expect(result['sandy cass']).toEqual({ id: 'c1', fullName: 'Sandy Cass' })
+    expect(Object.keys(result)).toHaveLength(1)
+  })
+})
+
+describe('getContactEmailRow — outbox payload shape for sync wrappers', () => {
+  beforeEach(() => {
+    testDb = new Database(':memory:')
+    testDb.exec(`
+      CREATE TABLE contact_emails (
+        contact_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        is_primary INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (contact_id, email)
+      );
+      INSERT INTO contact_emails (contact_id, email, is_primary, created_at) VALUES
+        ('c1', 'eric@caphub.com', 1, '2026-05-27T12:00:00Z'),
+        ('c1', 'eric.alt@caphub.com', 0, '2026-05-27T12:05:00Z');
+    `)
+  })
+
+  it('returns snake_case row with the composite PK + is_primary + created_at', () => {
+    const row = getContactEmailRow('c1', 'eric@caphub.com')
+    expect(row).toEqual({
+      contact_id: 'c1',
+      email: 'eric@caphub.com',
+      is_primary: 1,
+      created_at: '2026-05-27T12:00:00Z',
+    })
+  })
+
+  it('normalizes email casing before lookup', () => {
+    const row = getContactEmailRow('c1', 'Eric@CapHub.COM')
+    expect(row?.email).toBe('eric@caphub.com')
+  })
+
+  it('returns null when contact_id + email does not match', () => {
+    expect(getContactEmailRow('c1', 'missing@caphub.com')).toBeNull()
+  })
+
+  it('returns null when email is invalid (normalize fails)', () => {
+    expect(getContactEmailRow('c1', 'not-an-email')).toBeNull()
+  })
+})
+
 describe('getContact / updateContact — keyTakeaways field', () => {
   beforeEach(() => {
     const db = new Database(':memory:')
@@ -309,6 +393,9 @@ describe('getContact / updateContact — keyTakeaways field', () => {
         investor_stage TEXT,
         city TEXT,
         state TEXT,
+        street TEXT,
+        postal_code TEXT,
+        country TEXT,
         notes TEXT,
         phone TEXT,
         twitter_handle TEXT,
@@ -336,6 +423,7 @@ describe('getContact / updateContact — keyTakeaways field', () => {
         linkedin_skills TEXT,
         linkedin_enriched_at TEXT,
         key_takeaways TEXT,
+        key_takeaways_user_note TEXT,
         updated_by_user_id TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -379,5 +467,41 @@ describe('getContact / updateContact — keyTakeaways field', () => {
     updateContact('c1', { keyTakeaways: null })
     const contact = getContact('c1')
     expect(contact!.keyTakeaways).toBeNull()
+  })
+
+  // ─── keyTakeawaysUserNote — user-authored note pinned to top of card ───
+
+  it('returns keyTakeawaysUserNote: null when no value is set', () => {
+    const contact = getContact('c1')
+    expect(contact!.keyTakeawaysUserNote).toBeNull()
+  })
+
+  it('updateContact persists keyTakeawaysUserNote and getContact returns it', () => {
+    updateContact('c1', { keyTakeawaysUserNote: 'My note\nSecond bullet' })
+    const contact = getContact('c1')
+    expect(contact!.keyTakeawaysUserNote).toBe('My note\nSecond bullet')
+  })
+
+  it('updateContact can clear keyTakeawaysUserNote to null', () => {
+    updateContact('c1', { keyTakeawaysUserNote: 'temp' })
+    updateContact('c1', { keyTakeawaysUserNote: null })
+    const contact = getContact('c1')
+    expect(contact!.keyTakeawaysUserNote).toBeNull()
+  })
+
+  it('updating keyTakeawaysUserNote does NOT clobber keyTakeaways (independent fields)', () => {
+    updateContact('c1', { keyTakeaways: '• AI bullet' })
+    updateContact('c1', { keyTakeawaysUserNote: 'My personal note' })
+    const contact = getContact('c1')
+    expect(contact!.keyTakeaways).toBe('• AI bullet')
+    expect(contact!.keyTakeawaysUserNote).toBe('My personal note')
+  })
+
+  it('updating keyTakeaways does NOT clobber keyTakeawaysUserNote (Generate must preserve it)', () => {
+    updateContact('c1', { keyTakeawaysUserNote: 'My personal note' })
+    updateContact('c1', { keyTakeaways: '• Fresh AI bullet' })
+    const contact = getContact('c1')
+    expect(contact!.keyTakeawaysUserNote).toBe('My personal note')
+    expect(contact!.keyTakeaways).toBe('• Fresh AI bullet')
   })
 })

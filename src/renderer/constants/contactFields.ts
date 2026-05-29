@@ -21,8 +21,11 @@ export const CONTACT_HARDCODED_FIELDS: HardcodedFieldDef[] = [
   { key: 'phone',               label: 'Phone',            defaultSection: 'contact_info', icon: 'phone' },
   { key: 'linkedinUrl',         label: 'LinkedIn',         defaultSection: 'contact_info', icon: 'link' },
   { key: 'twitterHandle',       label: 'Twitter/X',        defaultSection: 'contact_info', icon: 'link' },
+  { key: 'street',              label: 'Street',           defaultSection: 'contact_info', icon: 'pin' },
   { key: 'city',                label: 'City',             defaultSection: 'contact_info', icon: 'pin' },
   { key: 'state',               label: 'State',            defaultSection: 'contact_info', icon: 'pin' },
+  { key: 'postalCode',          label: 'Postal Code',      defaultSection: 'contact_info', icon: 'pin' },
+  { key: 'country',             label: 'Country',          defaultSection: 'contact_info', icon: 'pin' },
   { key: 'timezone',            label: 'Timezone',         defaultSection: 'contact_info', icon: 'pin' },
   // Professional
   { key: 'previousCompanies',   label: 'Prior Company',    defaultSection: 'professional', icon: 'briefcase' },

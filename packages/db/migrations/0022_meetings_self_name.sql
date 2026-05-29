@@ -21,14 +21,19 @@
 
 ALTER TABLE "meetings" ADD COLUMN IF NOT EXISTS "self_name" TEXT;
 
--- Backfill from users.display_name → first_name+last_name → email.
--- Rows whose owner has none of these (or whose user_id is orphaned)
--- stay NULL — the enhance handler's null-selfName branch handles them
--- cleanly (calendar attendees rendered without an owner prefix).
+-- Backfill from users.display_name → email. (Note: the Postgres users
+-- table doesn't carry first_name/last_name — those columns live only on
+-- desktop SQLite per migration 033. The SQLite-side migration 107 uses
+-- a longer fallback chain that includes them; here we use only the two
+-- columns Neon's users actually has.)
+--
+-- Rows whose owner has neither display_name nor email (or whose user_id
+-- is orphaned) stay NULL — the enhance handler's null-selfName branch
+-- handles them cleanly (calendar attendees rendered without an owner
+-- prefix).
 UPDATE "meetings" m
 SET "self_name" = COALESCE(
     NULLIF(u."display_name", ''),
-    NULLIF(TRIM(COALESCE(u."first_name", '') || ' ' || COALESCE(u."last_name", '')), ''),
     NULLIF(u."email", '')
   )
 FROM "users" u

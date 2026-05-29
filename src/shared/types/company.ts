@@ -170,6 +170,9 @@ export interface CompanySummary {
   fieldSources: string | null
   // AI-generated key takeaways (bullet-point summary)
   keyTakeaways: string | null
+  // User-authored note pinned to the top of the Key Takeaways card.
+  // Survives AI regeneration; fed to the LLM as known truth.
+  keyTakeawaysUserNote: string | null
 }
 
 export interface CompanyDetail extends CompanySummary {

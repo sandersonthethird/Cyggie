@@ -7,6 +7,7 @@ import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
+import { validateClientLamport } from '../sync/validate-lamport'
 
 /** Normalized name for dedup (matches desktop's contact.repo.ts pattern):
  *  lowercase + accents stripped + whitespace collapsed. */
@@ -45,6 +46,9 @@ const ContactListItemSchema = z.object({
   primaryCompanyDomain: z.string().nullable(),
   city: z.string().nullable(),
   state: z.string().nullable(),
+  street: z.string().nullable(),
+  postalCode: z.string().nullable(),
+  country: z.string().nullable(),
   lastMeetingAt: z.string().nullable(),
 })
 
@@ -63,6 +67,7 @@ const ContactDetailSchema = ContactListItemSchema.extend({
   typicalCheckSizeMax: z.number().nullable(),
   notes: z.string().nullable(),
   keyTakeaways: z.string().nullable(),
+  keyTakeawaysUserNote: z.string().nullable(),
   lastEmailAt: z.string().nullable(),
   // Most recent of (live max meeting date via speaker_contact_links) and
   // (denormalized last_email_at). Mirrors the way company detail computes
@@ -133,6 +138,9 @@ export async function registerContactRoutes(
           primaryCompanyDomain: schema.orgCompanies.primaryDomain,
           city: schema.contacts.city,
           state: schema.contacts.state,
+          street: schema.contacts.street,
+          postalCode: schema.contacts.postalCode,
+          country: schema.contacts.country,
           lastMeetingAt: schema.contacts.lastMeetingAt,
         })
         .from(schema.contacts)
@@ -165,6 +173,9 @@ export async function registerContactRoutes(
           primaryCompanyDomain: r.primaryCompanyDomain,
           city: r.city,
           state: r.state,
+          street: r.street,
+          postalCode: r.postalCode,
+          country: r.country,
           lastMeetingAt: r.lastMeetingAt
             ? new Date(r.lastMeetingAt).toISOString()
             : null,
@@ -204,6 +215,9 @@ export async function registerContactRoutes(
           primaryCompanyId: schema.contacts.primaryCompanyId,
           city: schema.contacts.city,
           state: schema.contacts.state,
+          street: schema.contacts.street,
+          postalCode: schema.contacts.postalCode,
+          country: schema.contacts.country,
           linkedinUrl: schema.contacts.linkedinUrl,
           twitterHandle: schema.contacts.twitterHandle,
           linkedinHeadline: schema.contacts.linkedinHeadline,
@@ -214,6 +228,7 @@ export async function registerContactRoutes(
           typicalCheckSizeMax: schema.contacts.typicalCheckSizeMax,
           notes: schema.contacts.notes,
           keyTakeaways: schema.contacts.keyTakeaways,
+          keyTakeawaysUserNote: schema.contacts.keyTakeawaysUserNote,
           lastMeetingAt: schema.contacts.lastMeetingAt,
           lastEmailAt: schema.contacts.lastEmailAt,
           // joined company
@@ -370,6 +385,9 @@ export async function registerContactRoutes(
         primaryCompanyDomain: row.primaryCompanyDomain,
         city: row.city,
         state: row.state,
+        street: row.street,
+        postalCode: row.postalCode,
+        country: row.country,
         linkedinUrl: row.linkedinUrl,
         twitterHandle: row.twitterHandle,
         linkedinHeadline: row.linkedinHeadline,
@@ -380,6 +398,7 @@ export async function registerContactRoutes(
         typicalCheckSizeMax: row.typicalCheckSizeMax,
         notes: row.notes,
         keyTakeaways: row.keyTakeaways,
+        keyTakeawaysUserNote: row.keyTakeawaysUserNote,
         lastMeetingAt: row.lastMeetingAt
           ? new Date(row.lastMeetingAt).toISOString()
           : null,
@@ -454,6 +473,9 @@ export async function registerContactRoutes(
             primaryCompanyDomain: null,
             city: e.city,
             state: e.state,
+            street: e.street,
+            postalCode: e.postalCode,
+            country: e.country,
             lastMeetingAt: e.lastMeetingAt ? new Date(e.lastMeetingAt).toISOString() : null,
           })
         }
@@ -510,8 +532,138 @@ export async function registerContactRoutes(
         primaryCompanyDomain: null,
         city: null,
         state: null,
+        street: null,
+        postalCode: null,
+        country: null,
         lastMeetingAt: null,
       })
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // PATCH /contacts/:id — partial update from mobile.
+  //
+  // Currently surfaces only `keyTakeawaysUserNote` since that's the first
+  // mobile-editable contact field. Follows the established Lamport LWW
+  // pattern from PATCH /chat/sessions/:id + PATCH /meetings/:id:
+  //   1. validateClientLamport — reject unparseable / far-future lamports.
+  //   2. Find the row scoped to (id, userId). 404 if missing.
+  //   3. If incoming lamport <= stored, return 409 with the current state
+  //      so the client can reconcile.
+  //   4. Otherwise UPDATE + RETURNING. Bump updated_at + updated_by.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'PATCH',
+    url: '/contacts/:id',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(64) }),
+      body: z.object({
+        keyTakeawaysUserNote: z.string().max(2000).nullable().optional(),
+        lamport: z.string().min(1).max(40),
+      }),
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id } = req.params
+      const body = req.body
+
+      const lamportCheck = validateClientLamport(body.lamport)
+      if (!lamportCheck.valid) {
+        req.log.warn(
+          {
+            contactId: id,
+            userId: user.sub,
+            incoming: body.lamport,
+            reason: lamportCheck.reason,
+            metric: 'contacts.patch.lamport_rejected',
+          },
+          'patch rejected: lamport out of range',
+        )
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'LAMPORT_OUT_OF_RANGE',
+          message:
+            lamportCheck.reason === 'unparseable'
+              ? 'lamport is not a valid integer'
+              : 'lamport is too far in the future',
+        })
+      }
+
+      const existing = await db.query.contacts.findFirst({
+        where: and(
+          eq(schema.contacts.id, id),
+          eq(schema.contacts.userId, user.sub),
+        ),
+      })
+      if (!existing) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'CONTACT_NOT_FOUND',
+          message: 'Contact not found.',
+        })
+      }
+
+      const incoming = lamportCheck.bigint
+      const stored = BigInt(existing.lamport ?? '0')
+      if (incoming <= stored) {
+        req.log.info(
+          {
+            contactId: id,
+            userId: user.sub,
+            incoming: body.lamport,
+            stored: existing.lamport,
+            metric: 'contacts.patch.conflict_409',
+          },
+          'patch rejected: lamport not strictly greater than stored',
+        )
+        return reply.code(409).send({
+          id: existing.id,
+          keyTakeawaysUserNote: existing.keyTakeawaysUserNote,
+          lamport: existing.lamport,
+        })
+      }
+
+      const updates: Partial<typeof schema.contacts.$inferInsert> = {
+        lamport: body.lamport,
+        updatedAt: new Date(),
+        updatedByUserId: user.sub,
+      }
+      let hasField = false
+      if (body.keyTakeawaysUserNote !== undefined) {
+        const v = body.keyTakeawaysUserNote
+        updates.keyTakeawaysUserNote = v ? v.trim().slice(0, 2000) || null : null
+        hasField = true
+      }
+      if (!hasField) {
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'CONTACT_PATCH_EMPTY',
+          message: 'PATCH must include at least one of: keyTakeawaysUserNote.',
+        })
+      }
+
+      const [updated] = await db
+        .update(schema.contacts)
+        .set(updates)
+        .where(eq(schema.contacts.id, id))
+        .returning()
+
+      req.log.info(
+        {
+          contactId: id,
+          userId: user.sub,
+          metric: 'contacts.patch.success',
+          changed: Object.keys(updates),
+        },
+        'contact patched',
+      )
+
+      return {
+        id: updated.id,
+        keyTakeawaysUserNote: updated.keyTakeawaysUserNote,
+        lamport: updated.lamport,
+      }
     },
   })
 }

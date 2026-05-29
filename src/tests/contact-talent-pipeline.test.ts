@@ -53,6 +53,7 @@ function buildDb(): Database.Database {
       fund_size REAL, typical_check_size_min REAL, typical_check_size_max REAL,
       investment_stage_focus TEXT, investment_sector_focus TEXT, investment_sector_focus_notes TEXT,
       proud_portfolio_companies TEXT, field_sources TEXT, key_takeaways TEXT,
+      key_takeaways_user_note TEXT,
       work_history TEXT, education_history TEXT, linkedin_headline TEXT,
       linkedin_skills TEXT, linkedin_enriched_at TEXT,
       talent_pipeline TEXT,

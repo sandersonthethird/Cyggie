@@ -80,6 +80,18 @@ const PushResponseSchema = z.object({
   conflicts: z.array(z.object({ outboxId: z.number().int(), reason: z.string() })),
 })
 
+// In-progress meetings — see packages/db/src/schema/meetings.ts:115 for the
+// full status state machine. We suppress transcript_segments on /sync/pull
+// for these states so the recording desktop doesn't re-download its own
+// growing transcript each pull tick (and other devices don't pay the egress
+// either, since no UI shows a mid-flight transcript on a non-recording
+// device). Once status flips to a terminal value, the transcript ships once.
+//
+// Fail-open: any status not in this set ships its transcript. So if a new
+// in-progress-like state is introduced later (e.g. 'paused'), the egress
+// benefit is reduced until the new value is added here, but no data is lost.
+const MEETING_IN_PROGRESS_STATUSES = new Set<string>(['recording', 'transcribing'])
+
 export async function registerSyncRoutes(
   app: FastifyInstance,
   env: GatewayEnv,
@@ -585,6 +597,17 @@ export async function registerSyncRoutes(
           )
           .orderBy(sql`CAST(${schema.chatSessionMessages.lamport} AS numeric) ASC`),
       ])
+
+      // Suppress transcript_segments for in-progress meetings so the recording
+      // desktop doesn't re-download its own growing transcript every 60s. The
+      // apply-side COALESCE in upsertMeetingRow (sync-remote-apply.ts) treats
+      // null as "preserve local" so a cross-device metadata bump on an
+      // in-progress meeting can't clobber the desktop's live transcript.
+      for (const m of meetings as Array<{ status: string; transcriptSegments: unknown }>) {
+        if (MEETING_IN_PROGRESS_STATUSES.has(m.status)) {
+          m.transcriptSegments = null
+        }
+      }
 
       const allRows = [
         ...meetings,

@@ -430,4 +430,110 @@ describe('GET /sync/pull', () => {
     // Cleanup.
     await db.delete(schema.chatSessions).where(eq(schema.chatSessions.id, bobSessionId))
   })
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // In-progress transcript suppression (G1–G4)
+  //
+  // Suppresses `transcript_segments` for meetings in non-terminal states so
+  // the recording desktop doesn't re-download its own growing transcript
+  // every 60s. See MEETING_IN_PROGRESS_STATUSES in sync.ts. The apply-side
+  // COALESCE in sync-remote-apply.ts treats a null transcript_segments on
+  // the wire as "preserve local".
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async function insertMeetingWithTranscript(
+    userId: string,
+    lamport: string,
+    status: string,
+    segments: Array<{ speaker: number; text: string; startTime: number; endTime: number }>,
+  ): Promise<string> {
+    const id = TEST_PREFIX + 'mtg-' + createId().slice(0, 8)
+    await db.insert(schema.meetings).values({
+      id,
+      userId,
+      title: `M-${status}-${lamport}`,
+      date: new Date('2026-05-20T10:00:00Z'),
+      status,
+      transcriptSegments: segments,
+      lamport,
+      createdByUserId: userId,
+    })
+    createdMeetingIds.push(id)
+    return id
+  }
+
+  const sampleSegments = [
+    { speaker: 0, text: 'hello world', startTime: 0, endTime: 1.5 },
+    { speaker: 1, text: 'hi there', startTime: 1.5, endTime: 3.0 },
+  ]
+
+  test("G1: status='recording' → transcript_segments suppressed to null", async () => {
+    const { userId, jwt } = await setupUser()
+    const id = await insertMeetingWithTranscript(userId, '40', 'recording', sampleSegments)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      meetings: Array<{ id: string; status: string; transcriptSegments: unknown }>
+    }
+    const row = body.meetings.find((m) => m.id === id)
+    expect(row).toBeDefined()
+    expect(row?.status).toBe('recording')
+    expect(row?.transcriptSegments).toBeNull()
+  })
+
+  test("G2: status='transcribing' → transcript_segments suppressed to null", async () => {
+    const { userId, jwt } = await setupUser()
+    const id = await insertMeetingWithTranscript(userId, '41', 'transcribing', sampleSegments)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const body = res.json() as {
+      meetings: Array<{ id: string; status: string; transcriptSegments: unknown }>
+    }
+    const row = body.meetings.find((m) => m.id === id)
+    expect(row?.status).toBe('transcribing')
+    expect(row?.transcriptSegments).toBeNull()
+  })
+
+  test("G3: status='transcribed' → transcript_segments passes through unchanged (regression guard)", async () => {
+    const { userId, jwt } = await setupUser()
+    const id = await insertMeetingWithTranscript(userId, '42', 'transcribed', sampleSegments)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const body = res.json() as {
+      meetings: Array<{ id: string; status: string; transcriptSegments: unknown }>
+    }
+    const row = body.meetings.find((m) => m.id === id)
+    expect(row?.status).toBe('transcribed')
+    expect(row?.transcriptSegments).toEqual(sampleSegments)
+  })
+
+  test("G4: status='error' → transcript_segments passes through (treated as terminal)", async () => {
+    const { userId, jwt } = await setupUser()
+    const id = await insertMeetingWithTranscript(userId, '43', 'error', sampleSegments)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const body = res.json() as {
+      meetings: Array<{ id: string; status: string; transcriptSegments: unknown }>
+    }
+    const row = body.meetings.find((m) => m.id === id)
+    expect(row?.status).toBe('error')
+    expect(row?.transcriptSegments).toEqual(sampleSegments)
+  })
 })

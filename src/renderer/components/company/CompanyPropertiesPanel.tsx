@@ -35,6 +35,7 @@ import {
   INDUSTRY_OPTIONS,
 } from './companyColumns'
 import { useTakeaways } from '../../hooks/useTakeaways'
+import { useUserNote } from '../../hooks/useUserNote'
 import { KeyTakeawaysCard } from '../common/KeyTakeawaysCard'
 import { ScorecardStrip, type ScorecardMetric } from '../common/ScorecardStrip'
 import { PipelineStepper, COMPANY_PIPELINE_STAGES_FULL } from '../common/PipelineStepper'
@@ -259,6 +260,14 @@ export function CompanyPropertiesPanel({
       const lastTouch = company.lastTouchpoint
       return lastTouch != null && lastTouch > generatedAt
     },
+  })
+
+  // User-authored note pinned to top of Key Takeaways. Independent of AI state.
+  const userNote = useUserNote({
+    entityType: 'company',
+    entityId: company.id,
+    savedUserNote: company.keyTakeawaysUserNote ?? null,
+    onUpdate: (updates) => onUpdate(updates),
   })
 
   // Scorecard metrics
@@ -914,6 +923,7 @@ export function CompanyPropertiesPanel({
       {/* ═══ Card 2: Key Takeaways ═══ */}
       <KeyTakeawaysCard
         kt={kt}
+        userNote={userNote}
         footerText={kt.generatedAt
           ? `Generated ${formatRelativeTime(kt.generatedAt)} from ${company.meetingCount || 0} meetings + ${company.emailCount || 0} emails`
           : undefined

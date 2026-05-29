@@ -1254,7 +1254,15 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        template_id = excluded.template_id,
        speaker_count = excluded.speaker_count,
        speaker_map = excluded.speaker_map,
-       transcript_segments = excluded.transcript_segments,
+       -- COALESCE so null on the wire = "preserve local". The gateway
+       -- suppresses transcript_segments for in-progress meetings on
+       -- /sync/pull (see api-gateway/src/routes/sync.ts
+       -- MEETING_IN_PROGRESS_STATUSES). Without this guard, a cross-device
+       -- metadata bump (calendar sync, stale-sweeper, mobile PATCH on
+       -- title/attendees) while a meeting is mid-recording would ship a
+       -- pull row with lamport > local_lamport AND transcript_segments=null,
+       -- silently clobbering the desktop's live transcript.
+       transcript_segments = COALESCE(excluded.transcript_segments, meetings.transcript_segments),
        notes = excluded.notes,
        summary = excluded.summary,
        attendees = excluded.attendees,

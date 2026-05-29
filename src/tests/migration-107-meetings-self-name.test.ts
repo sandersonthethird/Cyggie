@@ -22,7 +22,7 @@ function makeDbWithMeetingsAndUsers(): Database.Database {
     );
     CREATE TABLE meetings (
       id TEXT PRIMARY KEY,
-      user_id TEXT,
+      created_by_user_id TEXT,
       title TEXT NOT NULL
     );
   `)
@@ -39,7 +39,7 @@ function insertUser(
 }
 
 function insertMeeting(db: Database.Database, id: string, userId: string | null): void {
-  db.prepare(`INSERT INTO meetings (id, user_id, title) VALUES (?, ?, 'm')`).run(id, userId)
+  db.prepare(`INSERT INTO meetings (id, created_by_user_id, title) VALUES (?, ?, 'm')`).run(id, userId)
 }
 
 function getSelfName(db: Database.Database, meetingId: string): string | null {

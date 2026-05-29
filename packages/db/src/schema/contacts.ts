@@ -63,8 +63,11 @@ export const contacts = pgTable(
     twitterHandle: text('twitter_handle'),
     otherSocials: jsonb('other_socials'),
     // Geography
+    street: text('street'),
     city: text('city'),
     state: text('state'),
+    postalCode: text('postal_code'),
+    country: text('country'),
     timezone: text('timezone'),
     // Personal
     pronouns: text('pronouns'),
@@ -97,6 +100,9 @@ export const contacts = pgTable(
     talentPipeline: varchar('talent_pipeline', { length: 32 }),
     // AI key takeaways (migration 069)
     keyTakeaways: text('key_takeaways'),
+    // User-authored note pinned to the top of the Key Takeaways card (migration 108).
+    // Survives AI regeneration; passed to the LLM as known truth.
+    keyTakeawaysUserNote: text('key_takeaways_user_note'),
     // Source-of-truth tracking per field (migration 048). Map of fieldName → source.
     fieldSources: jsonb('field_sources'),
     // Free-form

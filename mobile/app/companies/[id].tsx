@@ -12,11 +12,12 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
   fetchCompany,
+  updateCompany,
   type CompanyDetail,
   type CompanyMeetingRef,
   type CompanyPersonRef,
@@ -25,6 +26,7 @@ import { fetchNotes, type NoteListItem } from '../../lib/api/notes'
 import { fetchMemosForCompany, type MemoListItem } from '../../lib/api/memos'
 import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo, deriveLogoDomain } from '../../components/CompanyLogo'
+import { UserNoteEditor } from '../../components/UserNoteEditor'
 import { RichMarkdown, stripMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -327,6 +329,15 @@ function OverviewSection({ company }: { company: CompanyDetail }) {
     [company],
   )
 
+  const queryClient = useQueryClient()
+  const saveUserNote = async (next: string | null): Promise<void> => {
+    await updateCompany(company.id, { keyTakeawaysUserNote: next }, Date.now().toString())
+    queryClient.setQueryData<CompanyDetail>(
+      ['companies', 'detail', company.id],
+      (prev) => prev ? { ...prev, keyTakeawaysUserNote: next } : prev,
+    )
+  }
+
   return (
     <View style={styles.section}>
       {company.description && (
@@ -334,6 +345,20 @@ function OverviewSection({ company }: { company: CompanyDetail }) {
           <RichMarkdown>{company.description}</RichMarkdown>
         </View>
       )}
+      {/* Key Takeaways — user-editable note + AI bullets (read-only on mobile;
+          Generate runs on desktop only). */}
+      <View style={styles.descBlock}>
+        <Text style={styles.descHeading}>Key takeaways</Text>
+        <UserNoteEditor
+          value={company.keyTakeawaysUserNote}
+          onSave={saveUserNote}
+        />
+        {company.keyTakeaways && (
+          <View style={{ marginTop: spacing.sm }}>
+            <RichMarkdown>{company.keyTakeaways}</RichMarkdown>
+          </View>
+        )}
+      </View>
       {rows.length === 0 && !company.description ? (
         <Text style={styles.emptyInline}>No company details yet.</Text>
       ) : (
@@ -881,6 +906,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.md,
     marginBottom: spacing.md,
+  },
+  descHeading: {
+    color: colors.text4,
+    fontSize: type.label,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
   },
   kvCard: {
     backgroundColor: colors.surface,

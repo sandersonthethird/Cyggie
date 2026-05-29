@@ -78,6 +78,9 @@ interface ContactRow {
   investor_stage?: string | null
   city?: string | null
   state?: string | null
+  street?: string | null
+  postal_code?: string | null
+  country?: string | null
   notes?: string | null
   // New fields from migration 038
   phone?: string | null
@@ -107,6 +110,7 @@ interface ContactRow {
   linkedin_enriched_at?: string | null
   talent_pipeline?: string | null
   key_takeaways?: string | null
+  key_takeaways_user_note?: string | null
 }
 
 export interface ContactEmailOnboardingCandidate {
@@ -1078,6 +1082,9 @@ export function createContact(data: {
   phone?: string | null
   city?: string | null
   state?: string | null
+  street?: string | null
+  postalCode?: string | null
+  country?: string | null
 }, userId: string | null = null): ContactSummary {
   const db = getDatabase()
   const providedFirstName = (data.firstName || '').trim()
@@ -1156,9 +1163,10 @@ export function createContact(data: {
     db.prepare(`
       INSERT INTO contacts (
         id, full_name, first_name, last_name, normalized_name, email, primary_company_id,
-        title, contact_type, linkedin_url, phone, city, state, created_by_user_id, updated_by_user_id, created_at, updated_at
+        title, contact_type, linkedin_url, phone, city, state, street, postal_code, country,
+        created_by_user_id, updated_by_user_id, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     `).run(
       contactId,
       fullName,
@@ -1173,6 +1181,9 @@ export function createContact(data: {
       data.phone?.trim() || null,
       data.city?.trim() || null,
       data.state?.trim() || null,
+      data.street?.trim() || null,
+      data.postalCode?.trim() || null,
+      data.country?.trim() || null,
       userId,
       userId
     )
@@ -1255,6 +1266,9 @@ const CONTACT_UPDATABLE_FIELDS = {
   investorStage: 'investor_stage',
   city: 'city',
   state: 'state',
+  street: 'street',
+  postalCode: 'postal_code',
+  country: 'country',
   notes: 'notes',
   phone: 'phone',
   twitterHandle: 'twitter_handle',
@@ -1283,6 +1297,7 @@ const CONTACT_UPDATABLE_FIELDS = {
   linkedinEnrichedAt: 'linkedin_enriched_at',
   talentPipeline: 'talent_pipeline',
   keyTakeaways: 'key_takeaways',
+  keyTakeawaysUserNote: 'key_takeaways_user_note',
 } as const
 
 type ContactUpdatableKey = keyof typeof CONTACT_UPDATABLE_FIELDS
@@ -1396,6 +1411,36 @@ export function updateContact(
   const detail = getContact(contactId)
   if (!detail) throw new Error('Failed to load updated contact')
   return detail
+}
+
+/**
+ * Returns the `contact_emails` row for `(contactId, email)` in snake_case
+ * column form ready for the outbox payload. Returns null when the row is
+ * absent (e.g. after a delete, or when `emailInput` doesn't normalize). The
+ * sync barrel's `extractRow` callbacks for add/update use this to build
+ * outbox payloads whose key shape matches the table — `addContactEmail`'s
+ * raw return is a `ContactDetail` (contact-shaped, not contact_emails-shaped),
+ * so the wrapper can't use it directly without `encodeRowId` blowing up on
+ * the missing PK column `contact_id`.
+ */
+export function getContactEmailRow(
+  contactId: string,
+  emailInput: string
+): { contact_id: string; email: string; is_primary: number; created_at: string } | null {
+  const email = normalizeEmail(emailInput)
+  if (!email) return null
+  const db = getDatabase()
+  const row = db
+    .prepare(
+      `SELECT contact_id, email, is_primary, created_at
+         FROM contact_emails
+         WHERE contact_id = ? AND lower(email) = ?
+         LIMIT 1`,
+    )
+    .get(contactId, email) as
+    | { contact_id: string; email: string; is_primary: number; created_at: string }
+    | undefined
+  return row ?? null
 }
 
 export function addContactEmail(
@@ -1748,6 +1793,9 @@ export function getContact(contactId: string): ContactDetail | null {
         c.investor_stage,
         c.city,
         c.state,
+        c.street,
+        c.postal_code,
+        c.country,
         c.notes,
         c.phone,
         c.twitter_handle,
@@ -1775,6 +1823,7 @@ export function getContact(contactId: string): ContactDetail | null {
         c.linkedin_skills,
         c.linkedin_enriched_at,
         c.key_takeaways,
+        c.key_takeaways_user_note,
         c.created_at,
         c.updated_at,
         oc.canonical_name AS primary_company_name,
@@ -1866,6 +1915,9 @@ export function getContact(contactId: string): ContactDetail | null {
     investorStage: row.investor_stage ?? null,
     city: row.city ?? null,
     state: row.state ?? null,
+    street: row.street ?? null,
+    postalCode: row.postal_code ?? null,
+    country: row.country ?? null,
     notes: row.notes ?? null,
     phone: row.phone ?? null,
     twitterHandle: row.twitter_handle ?? null,
@@ -1893,6 +1945,7 @@ export function getContact(contactId: string): ContactDetail | null {
     linkedinSkills: row.linkedin_skills ?? null,
     linkedinEnrichedAt: row.linkedin_enriched_at ?? null,
     keyTakeaways: row.key_takeaways ?? null,
+    keyTakeawaysUserNote: row.key_takeaways_user_note ?? null,
     noteCount: (() => {
       try {
         const countRow = db.prepare('SELECT COUNT(*) as count FROM notes WHERE contact_id = ?').get(contactId) as { count: number } | undefined
@@ -2726,6 +2779,43 @@ export function getContactsByIds(ids: string[]): Record<string, ContactRow> {
       )
       .all(...chunk) as ContactRow[]
     for (const r of rows) result[r.id] = r
+  }
+  return result
+}
+
+/**
+ * Given a list of display names, return `lower(trim(full_name)) → { id, fullName }`
+ * for any that match exactly one contact. Ambiguous (multi-match) names are skipped
+ * so we never link an attendee chip to the wrong contact. Mirrors the key shape used
+ * by `resolveContactsByEmails` so callers can merge the two maps and look up by either.
+ */
+export function resolveContactsByLowercasedNames(
+  names: string[]
+): Record<string, { id: string; fullName: string }> {
+  if (!names || names.length === 0) return {}
+  const db = getDatabase()
+  const result: Record<string, { id: string; fullName: string }> = {}
+  const CHUNK = 500
+  const cleaned = names
+    .map((n) => n.trim().toLowerCase())
+    .filter((n) => n.length > 0)
+  if (cleaned.length === 0) return {}
+  for (let i = 0; i < cleaned.length; i += CHUNK) {
+    const chunk = cleaned.slice(i, i + CHUNK)
+    const placeholders = chunk.map(() => '?').join(', ')
+    const rows = db
+      .prepare(`
+        SELECT lower(trim(full_name)) AS key, id, full_name,
+               COUNT(*) OVER (PARTITION BY lower(trim(full_name))) AS match_count
+        FROM contacts
+        WHERE lower(trim(full_name)) IN (${placeholders})
+      `)
+      .all(...chunk) as { key: string; id: string; full_name: string | null; match_count: number }[]
+    for (const row of rows) {
+      if (row.match_count === 1) {
+        result[row.key] = { id: row.id, fullName: row.full_name ?? '' }
+      }
+    }
   }
   return result
 }

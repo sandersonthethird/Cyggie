@@ -106,6 +106,9 @@ export function registerContactHandlers(): void {
         phone?: string | null
         city?: string | null
         state?: string | null
+        street?: string | null
+        postalCode?: string | null
+        country?: string | null
       }
     ) => {
       if (!data?.fullName?.trim()) throw new Error('fullName is required')
@@ -203,9 +206,12 @@ export function registerContactHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.CONTACT_RESOLVE_EMAILS,
-    (_event, emails: string[]) => {
-      if (!Array.isArray(emails)) return {}
-      return contactRepo.resolveContactsByEmails(emails)
+    (_event, emails: string[], names?: string[]) => {
+      const byEmail = Array.isArray(emails) ? contactRepo.resolveContactsByEmails(emails) : {}
+      const byName = Array.isArray(names) ? contactRepo.resolveContactsByLowercasedNames(names) : {}
+      // Email keys (contain "@") never collide with name keys; merge both into one map
+      // so the renderer can fall back to name lookup for contacts created without an email.
+      return { ...byName, ...byEmail }
     }
   )
 

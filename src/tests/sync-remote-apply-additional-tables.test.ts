@@ -169,6 +169,7 @@ function freshDb(): Database.Database {
       linkedin_enriched_at TEXT,
       talent_pipeline TEXT,
       key_takeaways TEXT,
+      key_takeaways_user_note TEXT,
       field_sources TEXT,
       notes TEXT,
       last_meeting_at TEXT,

@@ -92,6 +92,7 @@ interface CompanyRow {
   next_followup_date: string | null
   field_sources: string | null
   key_takeaways: string | null
+  key_takeaways_user_note: string | null
   // Portfolio fields from migration 045
   portfolio_fund: string | null
   investment_size: string | null
@@ -403,6 +404,7 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     nextFollowupDate: row.next_followup_date ?? null,
     fieldSources: row.field_sources ?? null,
     keyTakeaways: row.key_takeaways ?? null,
+    keyTakeawaysUserNote: row.key_takeaways_user_note ?? null,
     portfolioFund: (row.portfolio_fund as CompanySummary['portfolioFund']) || null,
     investmentSize: row.investment_size ?? null,
     ownershipPct: row.ownership_pct ?? null,
@@ -662,6 +664,7 @@ function baseCompanySelectLight(whereClause = ''): string {
       c.portfolio_fund,
       NULL AS field_sources,
       NULL AS key_takeaways,
+      NULL AS key_takeaways_user_note,
       c.investment_size,
       c.ownership_pct,
       c.followon_investment_size,
@@ -977,7 +980,7 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         themes: [],
         sourceEntityName: nullStr, coInvestorsList: [], priorInvestorsList: [], subsequentInvestorsList: [], coInvestedIn: [],
         coInvestorOverlaps: {},
-        fieldSources: nullStr, keyTakeaways: nullStr
+        fieldSources: nullStr, keyTakeaways: nullStr, keyTakeawaysUserNote: nullStr
       } satisfies CompanyDetail
     }
   }
@@ -1007,6 +1010,14 @@ export function getCompany(companyId: string): CompanyDetail | null {
       .prepare('SELECT key_takeaways FROM org_companies WHERE id = ?')
       .get(companyId) as { key_takeaways: string | null } | undefined
     if (ktRow) row.key_takeaways = ktRow.key_takeaways ?? null
+  } catch {
+    // Column doesn't exist yet (migration pending) — leave as null
+  }
+  try {
+    const ktUnRow = db
+      .prepare('SELECT key_takeaways_user_note FROM org_companies WHERE id = ?')
+      .get(companyId) as { key_takeaways_user_note: string | null } | undefined
+    if (ktUnRow) row.key_takeaways_user_note = ktUnRow.key_takeaways_user_note ?? null
   } catch {
     // Column doesn't exist yet (migration pending) — leave as null
   }
@@ -1302,6 +1313,7 @@ const COMPANY_UPDATABLE_FIELDS = {
   passedFromStage: 'passed_from_stage',
   fieldSources: 'field_sources',
   keyTakeaways: 'key_takeaways',
+  keyTakeawaysUserNote: 'key_takeaways_user_note',
   portfolioFund: 'portfolio_fund',
   investmentSize: 'investment_size',
   ownershipPct: 'ownership_pct',
@@ -1666,7 +1678,7 @@ const MERGEABLE_COLUMNS = [
   'date_of_initial_investment', 'initial_round_size',
   'last_company_valuation', 'followon_check', 'followon_date',
   'followon_check2', 'followon_date2',
-  'key_takeaways', 'field_sources',
+  'key_takeaways', 'key_takeaways_user_note', 'field_sources',
   'lead_investor_company_id'
 ] as const
 
@@ -1729,6 +1741,7 @@ const MERGEABLE_COLUMN_LABELS: Record<string, string> = {
   followon_check2: 'Follow-on check #2',
   followon_date2: 'Follow-on date #2',
   key_takeaways: 'Key takeaways',
+  key_takeaways_user_note: 'Key takeaways — your note',
   field_sources: 'Field sources (JSON)',
   lead_investor_company_id: 'Lead investor (linked)'
 }
@@ -2211,7 +2224,7 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
     'description', 'city', 'state', 'stage', 'employee_count_range',
     'linkedin_company_url', 'twitter_handle', 'crunchbase_url', 'sector',
     'target_customer', 'business_model', 'product_stage', 'revenue_model',
-    'lead_investor', 'co_investors', 'round', 'key_takeaways'
+    'lead_investor', 'co_investors', 'round', 'key_takeaways', 'key_takeaways_user_note'
   ]
   const NUMERIC_RICHNESS_COLUMNS = ['founding_year', 'post_money_valuation', 'raise_size']
   const existingColumns = new Set(

@@ -367,4 +367,140 @@ describe('applyRemoteMeetings', () => {
       .get('mtg-sum') as { summary: string | null }
     expect(row.summary).toBe(updatedMarkdown)
   })
+
+  // ─────────────────────────────────────────────────────────────────────
+  // transcript_segments null-clobber guard (A1–A4)
+  //
+  // Gateway suppresses transcript_segments on /sync/pull for in-progress
+  // meetings (see MEETING_IN_PROGRESS_STATUSES in api-gateway/src/routes/
+  // sync.ts). If a cross-device write bumps lamport on an in-progress
+  // meeting (calendar sync, stale-sweeper, mobile PATCH on title/attendees),
+  // the next pull on the recording desktop would ship transcript_segments=
+  // null with lamport > local_lamport. Without COALESCE in upsertMeetingRow,
+  // this silently clobbers the desktop's live transcript.
+  // ─────────────────────────────────────────────────────────────────────
+
+  const sampleSegments = [
+    { speaker: 0, text: 'hello', startTime: 0, endTime: 1 },
+    { speaker: 1, text: 'world', startTime: 1, endTime: 2 },
+  ]
+
+  it('A1: does_not_clobber_local_transcript_when_remote_transcript_segments_null', () => {
+    // Seed local row with a transcript already in place (the live recording).
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-a1',
+        lamport: '10',
+        status: 'recording',
+        transcriptSegments: sampleSegments,
+      }),
+    ])
+    const beforeRow = db
+      .prepare('SELECT transcript_segments FROM meetings WHERE id = ?')
+      .get('mtg-a1') as { transcript_segments: string | null }
+    expect(JSON.parse(beforeRow.transcript_segments ?? 'null')).toEqual(sampleSegments)
+
+    // Cross-device race: gateway-side metadata bump (e.g. calendar sync)
+    // arrives via /sync/pull. Status still 'recording', lamport higher,
+    // transcript_segments suppressed to null.
+    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-a1',
+        lamport: '20',
+        status: 'recording',
+        transcriptSegments: null,
+        title: 'Updated by calendar sync',
+      }),
+    ])
+    expect(result.appliedIds).toEqual(['mtg-a1'])
+
+    const afterRow = db
+      .prepare('SELECT transcript_segments, title, lamport FROM meetings WHERE id = ?')
+      .get('mtg-a1') as { transcript_segments: string | null; title: string; lamport: string }
+    // Title + lamport updated — proves the upsert ran.
+    expect(afterRow.title).toBe('Updated by calendar sync')
+    expect(afterRow.lamport).toBe('20')
+    // CRITICAL: transcript preserved despite null on the wire.
+    expect(JSON.parse(afterRow.transcript_segments ?? 'null')).toEqual(sampleSegments)
+  })
+
+  it('A2: local transcript null, incoming non-null → local updated', () => {
+    // Seed local with no transcript (a meeting that has never been transcribed).
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-a2',
+        lamport: '10',
+        status: 'scheduled',
+        transcriptSegments: null,
+      }),
+    ])
+
+    // Terminal-state delivery — gateway now ships the transcript.
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-a2',
+        lamport: '20',
+        status: 'transcribed',
+        transcriptSegments: sampleSegments,
+      }),
+    ])
+
+    const row = db
+      .prepare('SELECT transcript_segments FROM meetings WHERE id = ?')
+      .get('mtg-a2') as { transcript_segments: string | null }
+    expect(JSON.parse(row.transcript_segments ?? 'null')).toEqual(sampleSegments)
+  })
+
+  it('A3: local transcript non-null, incoming different non-null → local replaced', () => {
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-a3',
+        lamport: '10',
+        status: 'transcribed',
+        transcriptSegments: sampleSegments,
+      }),
+    ])
+
+    const replacement = [
+      { speaker: 0, text: 'replaced', startTime: 0, endTime: 5 },
+    ]
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-a3',
+        lamport: '20',
+        status: 'transcribed',
+        transcriptSegments: replacement,
+      }),
+    ])
+
+    const row = db
+      .prepare('SELECT transcript_segments FROM meetings WHERE id = ?')
+      .get('mtg-a3') as { transcript_segments: string | null }
+    expect(JSON.parse(row.transcript_segments ?? 'null')).toEqual(replacement)
+  })
+
+  it('A4: local null, incoming null → local stays null', () => {
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-a4',
+        lamport: '10',
+        status: 'scheduled',
+        transcriptSegments: null,
+      }),
+    ])
+
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-a4',
+        lamport: '20',
+        status: 'recording',
+        transcriptSegments: null,
+      }),
+    ])
+
+    const row = db
+      .prepare('SELECT transcript_segments FROM meetings WHERE id = ?')
+      .get('mtg-a4') as { transcript_segments: string | null }
+    expect(row.transcript_segments).toBeNull()
+  })
 })

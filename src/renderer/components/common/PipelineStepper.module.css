@@ -22,10 +22,14 @@
   padding: 12px 0 32px 0;
 }
 
+/* The grid + caption stack vertically. Side-by-side would force the days
+ * caption into the horizontal zone occupied by the rightmost angled labels
+ * (Portfolio + Pass), where it overlaps them. */
 .row {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 24px;
 }
 
 /* 2-row grid: row 1 holds dots (odd cols) + segments (even cols);
@@ -89,12 +93,13 @@
   border-color: var(--cy-border-2, var(--color-border));
 }
 
-/* Days counter */
+/* Days counter — right-aligned below the stepper (parent .row is column). */
 .daysLabel {
   font-size: 11px;
   color: var(--cy-text-3, var(--color-text-tertiary));
   white-space: nowrap;
   flex-shrink: 0;
+  align-self: flex-end;
 }
 
 .stageLabel {
@@ -131,6 +136,7 @@
   color: var(--cy-text-3, var(--color-text-tertiary));
   white-space: nowrap;
   flex-shrink: 0;
+  align-self: flex-end;
 }
 
 /* ── Re-open confirm dialog ──────────────────────────────────────── */

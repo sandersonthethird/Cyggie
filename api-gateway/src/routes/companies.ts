@@ -7,6 +7,7 @@ import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
+import { validateClientLamport } from '../sync/validate-lamport'
 
 /** Normalized canonical name — lowercase + accents stripped + whitespace
  *  collapsed. Matches desktop's org-company.repo.ts normalization so the
@@ -66,6 +67,10 @@ const CompanyDetailSchema = CompanyListItemSchema.extend({
   round: z.string().nullable(),
   raiseSize: z.number().nullable(),
   totalFundingRaised: z.number().nullable(),
+  // Key Takeaways card surfaced to mobile (read-only AI bullets + writable
+  // user note). Desktop generates the AI bullets; mobile only edits the note.
+  keyTakeaways: z.string().nullable(),
+  keyTakeawaysUserNote: z.string().nullable(),
   recentMeetings: z.array(
     z.object({
       id: z.string(),
@@ -294,6 +299,8 @@ export async function registerCompanyRoutes(
         round: company.round,
         raiseSize: company.raiseSize,
         totalFundingRaised: company.totalFundingRaised,
+        keyTakeaways: company.keyTakeaways,
+        keyTakeawaysUserNote: company.keyTakeawaysUserNote,
         recentMeetings: recentMeetings.map((m) => ({
           id: m.id,
           title: m.title,
@@ -418,6 +425,128 @@ export async function registerCompanyRoutes(
         lastTouchAt: null,
         meetingCount: 0,
       })
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // PATCH /companies/:id — partial update from mobile.
+  //
+  // Currently surfaces only `keyTakeawaysUserNote` since that's the first
+  // mobile-editable company field. Same Lamport LWW pattern as
+  // PATCH /contacts/:id + PATCH /chat/sessions/:id.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'PATCH',
+    url: '/companies/:id',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(64) }),
+      body: z.object({
+        keyTakeawaysUserNote: z.string().max(2000).nullable().optional(),
+        lamport: z.string().min(1).max(40),
+      }),
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id } = req.params
+      const body = req.body
+
+      const lamportCheck = validateClientLamport(body.lamport)
+      if (!lamportCheck.valid) {
+        req.log.warn(
+          {
+            companyId: id,
+            userId: user.sub,
+            incoming: body.lamport,
+            reason: lamportCheck.reason,
+            metric: 'companies.patch.lamport_rejected',
+          },
+          'patch rejected: lamport out of range',
+        )
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'LAMPORT_OUT_OF_RANGE',
+          message:
+            lamportCheck.reason === 'unparseable'
+              ? 'lamport is not a valid integer'
+              : 'lamport is too far in the future',
+        })
+      }
+
+      const existing = await db.query.orgCompanies.findFirst({
+        where: and(
+          eq(schema.orgCompanies.id, id),
+          eq(schema.orgCompanies.userId, user.sub),
+        ),
+      })
+      if (!existing) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'COMPANY_NOT_FOUND',
+          message: 'Company not found.',
+        })
+      }
+
+      const incoming = lamportCheck.bigint
+      const stored = BigInt(existing.lamport ?? '0')
+      if (incoming <= stored) {
+        req.log.info(
+          {
+            companyId: id,
+            userId: user.sub,
+            incoming: body.lamport,
+            stored: existing.lamport,
+            metric: 'companies.patch.conflict_409',
+          },
+          'patch rejected: lamport not strictly greater than stored',
+        )
+        return reply.code(409).send({
+          id: existing.id,
+          keyTakeawaysUserNote: existing.keyTakeawaysUserNote,
+          lamport: existing.lamport,
+        })
+      }
+
+      const updates: Partial<typeof schema.orgCompanies.$inferInsert> = {
+        lamport: body.lamport,
+        updatedAt: new Date(),
+        updatedByUserId: user.sub,
+      }
+      let hasField = false
+      if (body.keyTakeawaysUserNote !== undefined) {
+        const v = body.keyTakeawaysUserNote
+        updates.keyTakeawaysUserNote = v ? v.trim().slice(0, 2000) || null : null
+        hasField = true
+      }
+      if (!hasField) {
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'COMPANY_PATCH_EMPTY',
+          message: 'PATCH must include at least one of: keyTakeawaysUserNote.',
+        })
+      }
+
+      const [updated] = await db
+        .update(schema.orgCompanies)
+        .set(updates)
+        .where(eq(schema.orgCompanies.id, id))
+        .returning()
+
+      req.log.info(
+        {
+          companyId: id,
+          userId: user.sub,
+          metric: 'companies.patch.success',
+          changed: Object.keys(updates),
+        },
+        'company patched',
+      )
+
+      return {
+        id: updated.id,
+        keyTakeawaysUserNote: updated.keyTakeawaysUserNote,
+        lamport: updated.lamport,
+      }
     },
   })
 }

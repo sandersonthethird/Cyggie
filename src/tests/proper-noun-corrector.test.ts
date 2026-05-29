@@ -86,4 +86,45 @@ describe('correctProperNouns', () => {
     const result = correctProperNouns(text, ['Tobias'])
     expect(result).toBe('Tobias discussed the deal with the team.')
   })
+
+  // ── Sandy/Andy regression suite (2026-05-28) ─────────────────────────────
+  // Reported bug: user "Sandy Cass" had every transcript rewrite "Sandy" to
+  // "Andy" because a colleague named "Andy" is in the CRM and JW("sandy",
+  // "andy") ≈ 0.933 > 0.92 threshold. Fix: canonical-token guard — a token
+  // that is itself a known canonical name (lowercased, ≥ MIN_TOKEN_LENGTH)
+  // is never fuzzy-replaced into a different canonical.
+
+  it('does not rewrite a name that is itself a canonical token (Sandy/Andy)', () => {
+    // "Sandy" appears in canonical names via "Sandy Cass" → token set
+    // includes "sandy". The "Andy" canonical fuzzy-matches "Sandy" at
+    // 0.933 but the guard short-circuits before the JW check.
+    const text = 'Sandy joined the call.'
+    const result = correctProperNouns(text, ['Andy', 'Sandy Cass'])
+    expect(result).toContain('Sandy')
+    expect(result).not.toContain('Andy')
+  })
+
+  it('symmetric protection — Andy unchanged when both are canonical tokens', () => {
+    const text = 'Andy spoke first.'
+    const result = correctProperNouns(text, ['Sandy Cass', 'Andy'])
+    expect(result).toContain('Andy')
+    expect(result).not.toContain('Sandy')
+  })
+
+  it('guard does not over-block — Mikee still corrects to Mike', () => {
+    // "mikee" is NOT in the canonical-token set ("mike" is), so fuzzy
+    // fallback runs and corrects to the canonical form.
+    const text = 'Mikee called.'
+    const result = correctProperNouns(text, ['Mike'])
+    expect(result).toBe('Mike called.')
+  })
+
+  it('reverse direction — Andy never gets fuzzy-promoted to Sandy', () => {
+    // Both "Sandy" and "Andy" are canonical; "andy" is in the token set;
+    // the "Sandy" canonical's fuzzy pass cannot claim "Andy".
+    const text = 'Andy joined.'
+    const result = correctProperNouns(text, ['Sandy', 'Andy'])
+    expect(result).toContain('Andy')
+    expect(result).not.toContain('Sandy')
+  })
 })

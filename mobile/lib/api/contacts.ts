@@ -13,6 +13,9 @@ export interface ContactListItem {
   primaryCompanyDomain: string | null
   city: string | null
   state: string | null
+  street: string | null
+  postalCode: string | null
+  country: string | null
   lastMeetingAt: string | null
 }
 
@@ -37,6 +40,7 @@ export interface ContactDetail extends ContactListItem {
   typicalCheckSizeMax: number | null
   notes: string | null
   keyTakeaways: string | null
+  keyTakeawaysUserNote: string | null
   lastEmailAt: string | null
   lastTouchAt: string | null
   recentMeetings: ContactMeetingRef[]
@@ -110,3 +114,32 @@ export async function createContact(
     details: body,
   })
 }
+
+export interface UpdateContactPatch {
+  /** User-authored note pinned to the top of the contact Key Takeaways card.
+   *  Null clears the note. Server trims + caps at 2000 chars. */
+  keyTakeawaysUserNote?: string | null
+}
+
+export interface UpdateContactResult {
+  id: string
+  keyTakeawaysUserNote: string | null
+  lamport: string
+}
+
+/**
+ * PATCH /contacts/:id — partial update with Lamport LWW. Caller supplies
+ * a lamport string (typically `Date.now().toString()`). Currently only
+ * `keyTakeawaysUserNote` is updatable from mobile.
+ */
+export async function updateContact(
+  id: string,
+  patch: UpdateContactPatch,
+  lamport: string,
+): Promise<UpdateContactResult> {
+  return api.patch<UpdateContactResult>(
+    `/contacts/${encodeURIComponent(id)}`,
+    { ...patch, lamport },
+  )
+}
+

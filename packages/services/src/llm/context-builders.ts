@@ -55,6 +55,9 @@ export interface CompanyContextSignals {
   hasEmails: boolean
   hasNotes: boolean
   hasFlaggedFiles: boolean
+  /** User-authored note from the Key Takeaways card. Surfaced so the
+   *  takeaways service can prepend it to the LLM prompt as known truth. */
+  userNote: string | null
 }
 
 // Caps preserved verbatim from the legacy queryCompany code in
@@ -173,6 +176,7 @@ export async function assembleCompanyContext(companyId: string): Promise<Company
     hasEmails,
     hasNotes,
     hasFlaggedFiles,
+    userNote: company.keyTakeawaysUserNote ?? null,
   }
 }
 
@@ -219,6 +223,9 @@ export interface ContactContextSignals {
   hasMeetings: boolean
   hasEmails: boolean
   hasNotes: boolean
+  /** User-authored note from the Key Takeaways card. Surfaced so the
+   *  takeaways service can prepend it to the LLM prompt as known truth. */
+  userNote: string | null
 }
 
 // Caps preserved verbatim from contact-context-builder.ts:8-14.
@@ -295,6 +302,7 @@ export function assembleContactContext(contactId: string): ContactContextSignals
     hasMeetings,
     hasEmails,
     hasNotes,
+    userNote: contact.keyTakeawaysUserNote ?? null,
   }
 }
 

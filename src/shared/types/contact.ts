@@ -80,6 +80,9 @@ export interface ContactDetail extends ContactSummary {
   investorStage: string | null
   city: string | null
   state: string | null
+  street: string | null
+  postalCode: string | null
+  country: string | null
   notes: string | null
   phone: string | null
   twitterHandle: string | null
@@ -109,6 +112,7 @@ export interface ContactDetail extends ContactSummary {
   linkedinSkills: string | null       // JSON: string[]
   linkedinEnrichedAt: string | null
   keyTakeaways: string | null
+  keyTakeawaysUserNote: string | null
 }
 
 export type { Note as ContactNote } from './note'

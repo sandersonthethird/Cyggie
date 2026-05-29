@@ -1,5 +1,6 @@
 import { assembleContactContext } from './context-builders'
 import { getProvider } from './provider-factory'
+import { USER_NOTE_SYSTEM_RULE, userNoteContextBlock } from './user-note-prompt'
 
 const SYSTEM_PROMPT = `You are a CRM assistant that summarizes key context about a person for a venture capital team.
 
@@ -14,7 +15,8 @@ Rules:
 - Do NOT invent facts — only state what is in the provided context
 - Do NOT include generic observations (e.g. "Has had meetings with you", "Interested in startups")
 - Output ONLY the bullet points, one per line, each starting with "• "
-- No preamble, no section headers, no markdown beyond the bullet character`
+- No preamble, no section headers, no markdown beyond the bullet character
+- ${USER_NOTE_SYSTEM_RULE}`
 
 const MAX_OUTPUT_CHARS = 1000
 
@@ -37,14 +39,14 @@ export async function generateKeyTakeaways(
   ktAbortController = new AbortController()
   const signal = ktAbortController.signal
 
-  const { markdown, hasMeetings, hasEmails, hasNotes } = assembleContactContext(contactId)
+  const { markdown, hasMeetings, hasEmails, hasNotes, userNote } = assembleContactContext(contactId)
 
   if (!hasMeetings && !hasEmails && !hasNotes) {
     ktAbortController = null
     throw new Error('Not enough context — add notes or sync emails first')
   }
 
-  const userPrompt = `Here is the available information about this contact:\n\n${markdown}`
+  const userPrompt = `Here is the available information about this contact:\n\n${markdown}${userNoteContextBlock(userNote)}`
 
   const provider = getProvider()
   let result: string

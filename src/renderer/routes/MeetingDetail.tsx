@@ -721,11 +721,17 @@ export default function MeetingDetail() {
       })
       .catch(() => {})
 
-    // Resolve attendee emails to contact IDs for clickable chips
-    if (result.meeting.attendeeEmails && result.meeting.attendeeEmails.length > 0) {
+    // Resolve attendee emails AND names to contact IDs for clickable chips.
+    // Names are needed because contacts added via the picker's "create new" path
+    // have no email — without name-based resolution their chips are unclickable
+    // after the meeting reloads.
+    const attendeeEmails = result.meeting.attendeeEmails ?? []
+    const attendeeNames = result.meeting.attendees ?? []
+    if (attendeeEmails.length > 0 || attendeeNames.length > 0) {
       api.invoke<Record<string, { id: string; fullName: string }>>(
         IPC_CHANNELS.CONTACT_RESOLVE_EMAILS,
-        result.meeting.attendeeEmails
+        attendeeEmails,
+        attendeeNames
       )
         .then((map) => { if (loadIdRef.current === id) setAttendeeContactMap(map) })
         .catch(() => {})
@@ -1613,7 +1619,7 @@ export default function MeetingDetail() {
     setShowContactPicker(false)
     try {
       const created = await api.invoke<{ id: string }>(IPC_CHANNELS.CONTACT_CREATE, { fullName: name })
-      setAttendeeContactMap((prev) => ({ ...prev, [name.toLowerCase()]: { id: created.id, fullName: name } }))
+      setAttendeeContactMap((prev) => ({ ...prev, [name.trim().toLowerCase()]: { id: created.id, fullName: name } }))
       await addAttendee(name, '')
     } catch (err) {
       console.error('[MeetingDetail] Failed to create contact:', err)
@@ -1623,12 +1629,16 @@ export default function MeetingDetail() {
   const handleUnlinkCompany = useCallback(async (e: React.MouseEvent, company: CompanySuggestion) => {
     e.stopPropagation()
     try {
-      if (company.id) {
-        await api.invoke(IPC_CHANNELS.MEETING_UNLINK_COMPANY, id, company.id)
-      } else {
-        // Name-only suggestion: dismiss from denormalized cache
-        await api.invoke(IPC_CHANNELS.MEETING_UNLINK_COMPANY, id, null, company.name)
-      }
+      // Always send the chip's display name + domain so the handler can dismiss
+      // by every key the rebuilt suggestion might use (handles the case where
+      // the org_company's primary_domain differs from the email domain).
+      await api.invoke(
+        IPC_CHANNELS.MEETING_UNLINK_COMPANY,
+        id,
+        company.id ?? null,
+        company.name,
+        company.domain || undefined,
+      )
       await loadMeeting()
     } catch (err) {
       console.error('[MeetingDetail] Failed to unlink company:', err)
@@ -1935,7 +1945,7 @@ export default function MeetingDetail() {
               <div className={styles.attendeeAvatars}>
                 {(meeting.attendees ?? []).slice(0, 4).map((attendee, i) => {
                   const email = meeting.attendeeEmails?.[i]?.trim().toLowerCase() || ''
-                  const resolved = attendeeContactMap[email] || attendeeContactMap[attendee.toLowerCase()]
+                  const resolved = attendeeContactMap[email] || attendeeContactMap[attendee.trim().toLowerCase()]
                   const contactId = resolved?.id
                   const displayName = resolved?.fullName ?? attendee
                   const initials = getInitials(displayName)

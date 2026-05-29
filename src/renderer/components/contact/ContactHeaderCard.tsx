@@ -67,6 +67,12 @@ interface ContactHeaderCardProps {
   setCityDraft: (v: string) => void
   stateDraft: string
   setStateDraft: (v: string) => void
+  streetDraft: string
+  setStreetDraft: (v: string) => void
+  postalCodeDraft: string
+  setPostalCodeDraft: (v: string) => void
+  countryDraft: string
+  setCountryDraft: (v: string) => void
   companyDraft: string
   setCompanyDraft: (v: string) => void
 
@@ -121,6 +127,9 @@ export function ContactHeaderCard({
   phoneDraft, setPhoneDraft,
   cityDraft, setCityDraft,
   stateDraft, setStateDraft,
+  streetDraft, setStreetDraft,
+  postalCodeDraft, setPostalCodeDraft,
+  countryDraft, setCountryDraft,
   companyDraft, setCompanyDraft,
 
   companyAutocomplete, setCompanyAutocomplete,
@@ -319,6 +328,16 @@ export function ContactHeaderCard({
             <div className={styles.metaRow}>
               <span className={styles.metaIcon}>📍</span>
               <input
+                className={styles.metaInput}
+                value={streetDraft}
+                onChange={(e) => setStreetDraft(e.target.value)}
+                placeholder="Street"
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              />
+            </div>
+            <div className={styles.metaRow}>
+              <span className={styles.metaIcon}>📍</span>
+              <input
                 className={`${styles.metaInput} ${styles.metaInputHalf}`}
                 value={cityDraft}
                 onChange={(e) => setCityDraft(e.target.value)}
@@ -330,6 +349,23 @@ export function ContactHeaderCard({
                 value={stateDraft}
                 onChange={(e) => setStateDraft(e.target.value)}
                 placeholder="State"
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              />
+            </div>
+            <div className={styles.metaRow}>
+              <span className={styles.metaIcon}>📍</span>
+              <input
+                className={`${styles.metaInput} ${styles.metaInputHalf}`}
+                value={postalCodeDraft}
+                onChange={(e) => setPostalCodeDraft(e.target.value)}
+                placeholder="Postal Code"
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              />
+              <input
+                className={`${styles.metaInput} ${styles.metaInputHalf}`}
+                value={countryDraft}
+                onChange={(e) => setCountryDraft(e.target.value)}
+                placeholder="Country"
                 onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
               />
             </div>
@@ -372,12 +408,27 @@ export function ContactHeaderCard({
                 {copiedMeta === 'phone' && <span className={styles.copiedToast}>Copied!</span>}
               </div>
             )}
-            {(contact.city || contact.state) && (
-              <div className={styles.metaRow}>
-                <span className={styles.metaIcon}>📍</span>
-                <span className={styles.metaValue}>{[contact.city, contact.state].filter(Boolean).join(', ')}</span>
-              </div>
-            )}
+            {(() => {
+              const cityStatePostal = [
+                [contact.city, contact.state].filter(Boolean).join(', '),
+                contact.postalCode,
+              ].filter(Boolean).join(' ')
+              const lines = [contact.street, cityStatePostal, contact.country].filter(Boolean)
+              if (lines.length === 0) return null
+              return (
+                <div className={styles.metaRow}>
+                  <span className={styles.metaIcon}>📍</span>
+                  <span className={styles.metaValue}>
+                    {lines.map((line, i) => (
+                      <React.Fragment key={i}>
+                        {i > 0 && <br />}
+                        {line}
+                      </React.Fragment>
+                    ))}
+                  </span>
+                </div>
+              )
+            })()}
             <div className={styles.headerActionRow}>
               {(contact.emails[0] || contact.email) && (
                 <button

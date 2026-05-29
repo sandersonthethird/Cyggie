@@ -58,6 +58,7 @@ function buildDb(): Database.Database {
       work_history TEXT,
       notes TEXT,
       key_takeaways TEXT,
+      key_takeaways_user_note TEXT,
       updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE meetings (

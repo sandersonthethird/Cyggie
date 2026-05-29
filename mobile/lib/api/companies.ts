@@ -41,6 +41,10 @@ export interface CompanyDetail extends CompanyListItem {
   round: string | null
   raiseSize: number | null
   totalFundingRaised: number | null
+  /** AI-generated bullets — read-only on mobile (Generate is desktop-only). */
+  keyTakeaways: string | null
+  /** User-authored note pinned to the top of the Key Takeaways card. */
+  keyTakeawaysUserNote: string | null
   recentMeetings: CompanyMeetingRef[]
   people: CompanyPersonRef[]
 }
@@ -112,3 +116,32 @@ export async function createCompany(
     details: body,
   })
 }
+
+export interface UpdateCompanyPatch {
+  /** User-authored note pinned to the top of the company Key Takeaways card.
+   *  Null clears the note. Server trims + caps at 2000 chars. */
+  keyTakeawaysUserNote?: string | null
+}
+
+export interface UpdateCompanyResult {
+  id: string
+  keyTakeawaysUserNote: string | null
+  lamport: string
+}
+
+/**
+ * PATCH /companies/:id — partial update with Lamport LWW. Caller supplies
+ * a lamport string (typically `Date.now().toString()`). Currently only
+ * `keyTakeawaysUserNote` is updatable from mobile.
+ */
+export async function updateCompany(
+  id: string,
+  patch: UpdateCompanyPatch,
+  lamport: string,
+): Promise<UpdateCompanyResult> {
+  return api.patch<UpdateCompanyResult>(
+    `/companies/${encodeURIComponent(id)}`,
+    { ...patch, lamport },
+  )
+}
+

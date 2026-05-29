@@ -150,22 +150,48 @@ export const updateContact = withSync(rawContact.updateContact, {
   op: 'update',
 })
 
-// contact_emails is a composite-PK table (contact_id, email). addContactEmail
-// inserts; the wrapper looks up the table spec from OWNED_TABLES_BY_NAME and
-// encodes both columns into outbox.row_id.
+// contact_emails is a composite-PK table (contact_id, email). The raw repo
+// functions all return a `ContactDetail` (contact-shaped), so we must
+// `extractRow` a `contact_emails`-shaped row by re-reading from the table
+// — otherwise `encodeRowId` throws "missing primary key column 'contact_id'".
+//
+// updateContactEmail caveat: this is a delete-old + insert-new at the PK
+// level (because `email` is part of the PK), but we only emit ONE outbox
+// row for the new key. The OLD `(contact_id, oldEmail)` row will stay
+// orphaned on the gateway side until a follow-up properly emits the cascade
+// delete from inside the raw repo. Single-firm beta acceptable; fix when
+// updateContactEmail UI sees real use.
 export const addContactEmail = withSync(rawContact.addContactEmail, {
   table: 'contact_emails',
   op: 'insert',
+  extractRow: ({ args }) =>
+    rawContact.getContactEmailRow(args[0] as string, args[1] as string) as
+      | Record<string, unknown>
+      | null,
 })
 
 export const updateContactEmail = withSync(rawContact.updateContactEmail, {
   table: 'contact_emails',
   op: 'update',
+  extractRow: ({ args }) =>
+    rawContact.getContactEmailRow(args[0] as string, args[2] as string) as
+      | Record<string, unknown>
+      | null,
 })
 
 export const removeContactEmail = withSync(rawContact.removeContactEmail, {
   table: 'contact_emails',
   op: 'delete',
+  // The row no longer exists post-delete; gateway only needs the PK columns
+  // to build its `DELETE … WHERE contact_id = ? AND email = ?`. Email is
+  // lowercased to match the SQLite-side normalization done by the raw fn.
+  extractRow: ({ args }) => {
+    const contactId = args[0] as string
+    const emailInput = args[1] as string
+    const email = emailInput.trim().toLowerCase()
+    if (!contactId || !email) return null
+    return { contact_id: contactId, email }
+  },
 })
 
 export const setContactPrimaryCompany = withSync(
@@ -204,6 +230,7 @@ export const enrichContact = rawContact.enrichContact
 export const enrichContactsByIds = rawContact.enrichContactsByIds
 export const listPastEmployeeContacts = rawContact.listPastEmployeeContacts
 export const resolveContactsByEmails = rawContact.resolveContactsByEmails
+export const resolveContactsByLowercasedNames = rawContact.resolveContactsByLowercasedNames
 export const getContactsByIds = rawContact.getContactsByIds
 export const resolveContactsByNormalizedNames = rawContact.resolveContactsByNormalizedNames
 export const mergeContacts = rawContact.mergeContacts

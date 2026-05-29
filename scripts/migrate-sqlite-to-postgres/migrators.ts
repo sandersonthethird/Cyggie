@@ -319,7 +319,7 @@ function contacts(userId: string): Migrator {
         id, user_id, full_name, first_name, last_name, normalized_name,
         email, phone, primary_company_id, title, contact_type,
         linkedin_url, crm_contact_id, crm_provider, twitter_handle, other_socials,
-        city, state, timezone, pronouns, birthday,
+        city, state, street, postal_code, country, timezone, pronouns, birthday,
         university, previous_companies, work_history, education_history,
         tags, relationship_strength, last_met_event, warm_intro_path,
         investor_stage, fund_size, typical_check_size_min, typical_check_size_max,
@@ -330,7 +330,7 @@ function contacts(userId: string): Migrator {
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
         $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,
-        $46,$47,$48)
+        $46,$47,$48,$49,$50,$51)
       ON CONFLICT (id) DO NOTHING`,
     transform: (r) => [
       r.id,
@@ -351,6 +351,9 @@ function contacts(userId: string): Migrator {
       jsonbParam(r.other_socials, 'contacts.other_socials'),
       nullableText(r.city),
       nullableText(r.state),
+      nullableText(r.street),
+      nullableText(r.postal_code),
+      nullableText(r.country),
       nullableText(r.timezone),
       nullableText(r.pronouns),
       nullableText(r.birthday),

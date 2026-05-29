@@ -846,55 +846,75 @@ export function registerMeetingHandlers(): void {
   )
 
   // Unlink a company from a meeting. Accepts either:
-  //   (meetingId, companyId)          — unlinks from meeting_company_links + denormalized cache
-  //   (meetingId, null, companyName)  — removes a name-only suggestion from the denormalized cache
+  //   (meetingId, companyId, displayName?, displayDomain?)
+  //   (meetingId, null, displayName, displayDomain?)  — dismiss a name-only suggestion
+  //
+  // displayName / displayDomain are what the user actually saw in the chip
+  // (derived from attendee email domains in `getCompanySuggestionsFromEmails`).
+  // We dismiss by every key the rebuilt suggestion might use — display name,
+  // display domain, canonical name, and primary domain — because the suggestion
+  // on reload is keyed off the email's domain, which may not match the
+  // org_companies.primary_domain (e.g. babson.com vs babson.edu). Without this,
+  // clicking X dismisses by primary_domain but the email-derived suggestion
+  // resurrects with a different domain.
   ipcMain.handle(
     IPC_CHANNELS.MEETING_UNLINK_COMPANY,
-    (_event, meetingId: string, companyId: string | null, companyName?: string) => {
+    (
+      _event,
+      meetingId: string,
+      companyId: string | null,
+      displayName?: string,
+      displayDomain?: string,
+    ) => {
       if (!meetingId) throw new Error('meetingId is required')
       const userId = getCurrentUserId()
 
       const meeting = meetingRepo.getMeeting(meetingId)
       if (!meeting) throw new Error('Meeting not found')
 
+      const newKeys: string[] = []
+      const addKey = (k: string | null | undefined) => {
+        const v = k?.trim().toLowerCase()
+        if (v && !newKeys.includes(v)) newKeys.push(v)
+      }
+
+      let canonicalForList: string | null = null
+
       if (companyId) {
-        // Linked company: unlink from meeting_company_links + update cache
         const company = getCompany(companyId)
         if (!company) throw new Error('Company not found')
 
         unlinkMeetingCompany(meetingId, companyId)
-
-        const updatedCompanies = removeCompanyFromList(meeting.companies, company.canonicalName)
-        // Dismiss by domain (stable), fall back to name if no domain
-        const dismissKey = (company.primaryDomain || company.canonicalName).toLowerCase()
-        const dismissed = meeting.dismissedCompanies ?? []
-        const updatedDismissed = dismissed.includes(dismissKey)
-          ? dismissed
-          : [...dismissed, dismissKey]
-
-        meetingRepo.updateMeeting(meetingId, {
-          companies: updatedCompanies,
-          dismissedCompanies: updatedDismissed,
-        }, userId)
-
+        canonicalForList = company.canonicalName
+        addKey(company.primaryDomain)
+        addKey(company.canonicalName)
         logAudit(userId, 'meeting', meetingId, 'unlink_company', { companyId })
-      } else if (companyName) {
-        // Name-only suggestion: dismiss by name (no domain available)
-        const updatedCompanies = removeCompanyFromList(meeting.companies, companyName)
-        const dismissKey = companyName.toLowerCase()
-        const dismissed = meeting.dismissedCompanies ?? []
-        const updatedDismissed = dismissed.includes(dismissKey)
-          ? dismissed
-          : [...dismissed, dismissKey]
+      } else if (!displayName) {
+        throw new Error('Either companyId or displayName is required')
+      }
 
-        meetingRepo.updateMeeting(meetingId, {
-          companies: updatedCompanies,
-          dismissedCompanies: updatedDismissed,
-        }, userId)
+      addKey(displayDomain)
+      addKey(displayName)
 
-        logAudit(userId, 'meeting', meetingId, 'dismiss_company_suggestion', { companyName })
-      } else {
-        throw new Error('Either companyId or companyName is required')
+      const targetForCache = canonicalForList ?? displayName ?? ''
+      const updatedCompanies = targetForCache
+        ? removeCompanyFromList(meeting.companies, targetForCache)
+        : (meeting.companies ?? [])
+
+      const existing = meeting.dismissedCompanies ?? []
+      const merged = [...existing]
+      for (const k of newKeys) if (!merged.includes(k)) merged.push(k)
+
+      meetingRepo.updateMeeting(meetingId, {
+        companies: updatedCompanies,
+        dismissedCompanies: merged.length ? merged : null,
+      }, userId)
+
+      if (!companyId) {
+        logAudit(userId, 'meeting', meetingId, 'dismiss_company_suggestion', {
+          displayName,
+          displayDomain,
+        })
       }
 
       return meetingRepo.getMeeting(meetingId)

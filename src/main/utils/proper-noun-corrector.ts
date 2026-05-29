@@ -44,6 +44,20 @@ export function correctProperNouns(text: string, canonicalNames: string[]): stri
         return bw - aw || b.length - a.length
       })
 
+    // Pre-compute the set of canonical-name tokens (lowercased, ≥ MIN_TOKEN_LENGTH).
+    // Used by the single-word pass to short-circuit fuzzy replacement when the
+    // candidate token is itself a known canonical name. Without this, the user's
+    // own name "Sandy" gets rewritten to a similar CRM contact "Andy"
+    // (jaroWinkler("sandy","andy") ≈ 0.933, above the 0.92 threshold). The
+    // multi-word pass intentionally skips this guard so misspellings like
+    // "Redd Swan Ventures" → "Red Swan Ventures" still correct.
+    const canonTokenSet = new Set<string>()
+    for (const canonical of names) {
+      for (const token of canonical.split(/\s+/)) {
+        if (token.length >= MIN_TOKEN_LENGTH) canonTokenSet.add(token.toLowerCase())
+      }
+    }
+
     let result = text
 
     for (const canonical of names) {
@@ -58,6 +72,9 @@ export function correctProperNouns(text: string, canonicalNames: string[]): stri
         result = result.replace(/\b[A-Za-z]{4,}\b/g, (token, offset, str) => {
           // Skip tokens that are part of an email address (local part or domain)
           if (str[offset + token.length] === '@' || (offset > 0 && str[offset - 1] === '@')) return token
+          // Skip tokens that are themselves a known canonical name — exact match
+          // wins over fuzzy promotion to a different similar canonical.
+          if (canonTokenSet.has(token.toLowerCase())) return token
           const score = jaroWinkler(token.toLowerCase(), canonLower)
           return score >= SINGLE_WORD_THRESHOLD ? canonical : token
         })

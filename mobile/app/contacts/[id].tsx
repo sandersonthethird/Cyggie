@@ -12,16 +12,18 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
   fetchContact,
+  updateContact,
   type ContactDetail,
   type ContactMeetingRef,
 } from '../../lib/api/contacts'
 import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo } from '../../components/CompanyLogo'
+import { UserNoteEditor } from '../../components/UserNoteEditor'
 import { RichMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -288,6 +290,7 @@ function OverviewSection({ contact }: { contact: ContactDetail }) {
     const base = [
       { label: 'Title', value: contact.title },
       { label: 'Company', value: contact.primaryCompanyName },
+      { label: 'Street', value: contact.street },
       {
         label: 'Location',
         value:
@@ -295,6 +298,8 @@ function OverviewSection({ contact }: { contact: ContactDetail }) {
             ? `${contact.city}, ${contact.state}`
             : contact.city ?? contact.state,
       },
+      { label: 'Postal Code', value: contact.postalCode },
+      { label: 'Country', value: contact.country },
       { label: 'Email', value: contact.email },
       { label: 'Phone', value: contact.phone },
       {
@@ -328,21 +333,37 @@ function OverviewSection({ contact }: { contact: ContactDetail }) {
     return base.filter((r): r is { label: string; value: string } => Boolean(r.value))
   }, [contact])
 
+  const queryClient = useQueryClient()
+  const saveUserNote = async (next: string | null): Promise<void> => {
+    await updateContact(contact.id, { keyTakeawaysUserNote: next }, Date.now().toString())
+    queryClient.setQueryData<ContactDetail>(
+      ['contacts', 'detail', contact.id],
+      (prev) => prev ? { ...prev, keyTakeawaysUserNote: next } : prev,
+    )
+  }
+
   return (
     <View style={styles.section}>
-      {contact.keyTakeaways && (
-        <View style={styles.descBlock}>
-          <Text style={styles.descHeading}>Key takeaways</Text>
-          <RichMarkdown>{contact.keyTakeaways}</RichMarkdown>
-        </View>
-      )}
+      {/* Key Takeaways block — user note (editable) + AI bullets (read-only on mobile). */}
+      <View style={styles.descBlock}>
+        <Text style={styles.descHeading}>Key takeaways</Text>
+        <UserNoteEditor
+          value={contact.keyTakeawaysUserNote}
+          onSave={saveUserNote}
+        />
+        {contact.keyTakeaways && (
+          <View style={{ marginTop: spacing.sm }}>
+            <RichMarkdown>{contact.keyTakeaways}</RichMarkdown>
+          </View>
+        )}
+      </View>
       {contact.notes && (
         <View style={styles.descBlock}>
           <Text style={styles.descHeading}>Notes</Text>
           <RichMarkdown>{contact.notes}</RichMarkdown>
         </View>
       )}
-      {rows.length === 0 && !contact.keyTakeaways && !contact.notes ? (
+      {rows.length === 0 && !contact.notes ? (
         <Text style={styles.emptyInline}>No contact details yet.</Text>
       ) : (
         <View style={styles.kvCard}>

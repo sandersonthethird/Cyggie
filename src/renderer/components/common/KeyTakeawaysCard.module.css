@@ -108,6 +108,29 @@
   color: var(--cy-text, #1a1e24);
 }
 
+/* Click-to-edit bullet — applied to all bullets so the affordance is uniform. */
+.bulletClickable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  transition: background 0.1s;
+}
+
+.bulletClickable:hover {
+  background: rgba(185, 28, 28, 0.06);
+}
+
+/* Empty-state placeholder bullet for the user-note region. */
+.userNoteEmpty {
+  font-style: italic;
+  color: var(--cy-text-3, #6b7280);
+}
+
+.userNoteEmpty .bulletDot {
+  opacity: 0.4;
+}
+
 .bulletDot {
   width: 4px;
   height: 4px;

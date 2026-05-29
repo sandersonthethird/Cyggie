@@ -42,7 +42,7 @@ afterEach(() => {
 
 describe('reauthorizeGoogle', () => {
   test('t8: forwards Authorization: Bearer ${authToken} on /auth/google/start', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/auth/google/start')) {
         return new Response(
@@ -70,7 +70,7 @@ describe('reauthorizeGoogle', () => {
   })
 
   test('t8b: no authToken → no Authorization header (sign-in.tsx case)', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/auth/google/start')) {
         return new Response(
@@ -97,7 +97,7 @@ describe('reauthorizeGoogle', () => {
 
   test('t9: on cancel, fires onRecovering callback and polls /claim-by-device', async () => {
     const onRecovering = vi.fn()
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/auth/google/start')) {
         return new Response(

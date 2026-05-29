@@ -6,6 +6,7 @@ import { useFieldVisibility } from '../../hooks/useFieldVisibility'
 import { useSectionOrder } from '../../hooks/useSectionOrder'
 import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import { useTakeaways } from '../../hooks/useTakeaways'
+import { useUserNote } from '../../hooks/useUserNote'
 import { useTimedError } from '../../hooks/useTimedError'
 import { KeyTakeawaysCard } from '../common/KeyTakeawaysCard'
 import { useNavigate } from 'react-router-dom'
@@ -176,6 +177,9 @@ export function ContactPropertiesPanel({
   const [phoneDraft, setPhoneDraft] = useState(contact.phone || '')
   const [cityDraft, setCityDraft] = useState(contact.city || '')
   const [stateDraft, setStateDraft] = useState(contact.state || '')
+  const [streetDraft, setStreetDraft] = useState(contact.street || '')
+  const [postalCodeDraft, setPostalCodeDraft] = useState(contact.postalCode || '')
+  const [countryDraft, setCountryDraft] = useState(contact.country || '')
   const [customFields, setCustomFields] = useState<CustomFieldWithValue[]>([])
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [mergePickerOpen, setMergePickerOpen] = useState(false)
@@ -251,6 +255,14 @@ export function ContactPropertiesPanel({
     onUpdate: (updates) => onUpdate(updates),
     hasNewDataSince: (generatedAt) =>
       contact.meetings.some((m) => m.date > generatedAt),
+  })
+
+  // User-authored note pinned to top of Key Takeaways. Independent of AI state.
+  const userNote = useUserNote({
+    entityType: 'contact',
+    entityId: contact.id,
+    savedUserNote: contact.keyTakeawaysUserNote ?? null,
+    onUpdate: (updates) => onUpdate(updates),
   })
 
   const [copiedMeta, setCopiedMeta] = useState<string | null>(null)
@@ -483,6 +495,9 @@ export function ContactPropertiesPanel({
       setPhoneDraft(contact.phone || '')
       setCityDraft(contact.city || '')
       setStateDraft(contact.state || '')
+      setStreetDraft(contact.street || '')
+      setPostalCodeDraft(contact.postalCode || '')
+      setCountryDraft(contact.country || '')
       setTimeout(() => firstNameInputRef.current?.focus(), 0)
     }
     // Meta field drafts (email, linkedin, phone, city, state) are intentionally
@@ -703,6 +718,21 @@ export function ContactPropertiesPanel({
       if (trimmedState !== (contact.state || '')) {
         await save('state', trimmedState || null)
       }
+
+      const trimmedStreet = streetDraft.trim()
+      if (trimmedStreet !== (contact.street || '')) {
+        await save('street', trimmedStreet || null)
+      }
+
+      const trimmedPostalCode = postalCodeDraft.trim()
+      if (trimmedPostalCode !== (contact.postalCode || '')) {
+        await save('postalCode', trimmedPostalCode || null)
+      }
+
+      const trimmedCountry = countryDraft.trim()
+      if (trimmedCountry !== (contact.country || '')) {
+        await save('country', trimmedCountry || null)
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save'
       metaSaveError.show(msg)
@@ -762,6 +792,9 @@ export function ContactPropertiesPanel({
     setPhoneDraft(contact.phone || '')
     setCityDraft(contact.city || '')
     setStateDraft(contact.state || '')
+    setStreetDraft(contact.street || '')
+    setPostalCodeDraft(contact.postalCode || '')
+    setCountryDraft(contact.country || '')
     setSessionNewFields(null)
     setIsEditing(false)
   }
@@ -1022,8 +1055,9 @@ export function ContactPropertiesPanel({
   // Count of explicitly-hidden fields + empty hardcoded fields (Change 6)
   const hiddenFieldCount = !isEditing && !showAllFields ? (
     hiddenFields.length +
-    ([contact.phone, contact.twitterHandle, contact.city, contact.state,
-      contact.timezone, contact.previousCompanies, contact.university, contact.tags, contact.pronouns]
+    ([contact.phone, contact.twitterHandle, contact.street, contact.city, contact.state,
+      contact.postalCode, contact.country, contact.timezone, contact.previousCompanies,
+      contact.university, contact.tags, contact.pronouns]
       .filter(v => !v).length) +
     customFields.filter(f => !f.value && f.section !== 'summary').length
   ) : 0
@@ -1077,6 +1111,12 @@ export function ContactPropertiesPanel({
         setCityDraft={setCityDraft}
         stateDraft={stateDraft}
         setStateDraft={setStateDraft}
+        streetDraft={streetDraft}
+        setStreetDraft={setStreetDraft}
+        postalCodeDraft={postalCodeDraft}
+        setPostalCodeDraft={setPostalCodeDraft}
+        countryDraft={countryDraft}
+        setCountryDraft={setCountryDraft}
         companyDraft={companyDraft}
         setCompanyDraft={setCompanyDraft}
         companyAutocomplete={companyAutocomplete}
@@ -1109,6 +1149,7 @@ export function ContactPropertiesPanel({
       {/* Key Takeaways card — shared component (collapsible, useTakeaways hook) */}
       <KeyTakeawaysCard
         kt={kt}
+        userNote={userNote}
         collapsed={isCollapsed('key_takeaways')}
         onToggleCollapsed={() => toggleSection('key_takeaways')}
       />
