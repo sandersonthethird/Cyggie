@@ -108,6 +108,16 @@ export const meetings = pgTable(
      * 2026-05-28 picker landed. Set by RecordingSession on finalize.
      */
     transcriptProvider: text('transcript_provider'),
+    /**
+     * Deepgram speaker index that belongs to the recording user. Drives the
+     * me/them bubble view: at render time, segments with this index align
+     * right ("me"), everything else aligns left ("them"). NULL on
+     * pre-migration rows — render-time resolver falls back to a name match
+     * against `speakerMap` + `selfName`, then to most-talkative.
+     * "Swap Me/Them" updates this field; transcript segments are never
+     * mutated.
+     */
+    meSpeakerIndex: integer('me_speaker_index'),
     // Legacy: pre-migration 078 chat history. Kept for backward compat; new chat lives in
     // chat_sessions / chat_session_messages. Marked deprecated — do not write from new code.
     chatMessages: jsonb('chat_messages'),

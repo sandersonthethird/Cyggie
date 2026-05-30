@@ -110,6 +110,7 @@ import { runContactsAddressMigration } from './migrations/108-contacts-address'
 import { runContactKeyTakeawaysUserNoteMigration } from './migrations/109-contact-key-takeaways-user-note'
 import { runCompanyKeyTakeawaysUserNoteMigration } from './migrations/110-company-key-takeaways-user-note'
 import { runMeetingsTranscriptProviderMigration } from './migrations/111-meetings-transcript-provider'
+import { runMeetingsMeSpeakerIndexMigration } from './migrations/112-meetings-me-speaker-index'
 
 let db: Database.Database | null = null
 
@@ -258,6 +259,7 @@ export function getDatabase(): Database.Database {
     runContactKeyTakeawaysUserNoteMigration(db)
     runCompanyKeyTakeawaysUserNoteMigration(db)
     runMeetingsTranscriptProviderMigration(db)
+    runMeetingsMeSpeakerIndexMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or
