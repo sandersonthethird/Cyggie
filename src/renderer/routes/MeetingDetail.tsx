@@ -49,6 +49,8 @@ import type { SetCustomFieldValueInput } from '../../shared/types/custom-fields'
 import type { Task, ProposedTask, TaskCreateData } from '../../shared/types/task'
 import { createPortal } from 'react-dom'
 import { SafeMarkdown } from '../components/SafeMarkdown'
+import { TranscriptBubbles } from '../components/transcript/TranscriptBubbles'
+import { resolveMeIndexForRender } from '../transcript/to-me-them-view'
 import styles from './MeetingDetail.module.css'
 import { api } from '../api'
 import { ipcCache } from '../api/ipcCache'
@@ -224,6 +226,13 @@ export default function MeetingDetail() {
   const [titleDraft, setTitleDraft] = useState('')
   const [isSavingTitle, setIsSavingTitle] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
+  // Transcript view mode toggle: 'bubbles' is the iMessage-style me/them
+  // chat layout (Part 3 of the cheeky-treasure plan); 'markdown' is the
+  // legacy speaker-header markdown render. Defaults to bubbles when the
+  // meeting has structured segments; old text-only transcripts (no
+  // segments) fall through to markdown automatically.
+  const [transcriptViewMode, setTranscriptViewMode] = useState<'bubbles' | 'markdown'>('bubbles')
+  const [isSwappingMeSpeaker, setIsSwappingMeSpeaker] = useState(false)
   const [editingSpeaker, setEditingSpeaker] = useState<number | null>(null)
   // When the rename UI was triggered by double-clicking an inline transcript
   // label, this holds the segment index where the picker should render. Null
@@ -2427,13 +2436,89 @@ export default function MeetingDetail() {
                 })}
               </div>
             )}
-            {transcript && (
-              <div className={styles.markdown}>
-                <SafeMarkdown findHighlight={{ matches: findMatches, activeIndex: activeMatchIndex }}>
-                  {transcript ?? ''}
-                </SafeMarkdown>
-              </div>
-            )}
+            {(() => {
+              const segs = data?.meeting.transcriptSegments
+              const hasSegments = Array.isArray(segs) && segs.length > 0
+              const showBubbles = hasSegments && transcriptViewMode === 'bubbles'
+              const showMarkdown = !!transcript && (!hasSegments || transcriptViewMode === 'markdown')
+
+              const handleSwapMeThem = async (): Promise<void> => {
+                if (!id || !hasSegments) return
+                const currentMe = data?.meeting.meSpeakerIndex ?? null
+                const currentResolved = resolveMeIndexForRender({
+                  segments: segs!,
+                  speakerMap: localSpeakerMap,
+                  meSpeakerIndex: currentMe,
+                  calendarSelfName: data?.meeting.selfName ?? null,
+                })
+                // Pick the most-frequent OTHER speaker as the flip target.
+                const totals = new Map<number, number>()
+                for (const s of segs!) {
+                  if (s.speaker === currentResolved) continue
+                  totals.set(s.speaker, (totals.get(s.speaker) ?? 0) + Math.max(0, s.endTime - s.startTime))
+                }
+                let nextIdx: number | null = null
+                let bestSec = -1
+                for (const [idx, sec] of totals) {
+                  if (sec > bestSec || (sec === bestSec && (nextIdx === null || idx < nextIdx))) {
+                    bestSec = sec
+                    nextIdx = idx
+                  }
+                }
+                if (nextIdx === null) return
+                setIsSwappingMeSpeaker(true)
+                try {
+                  await api.invoke(IPC_CHANNELS.MEETING_SET_ME_SPEAKER, id, nextIdx)
+                  await loadMeeting()
+                } finally {
+                  setIsSwappingMeSpeaker(false)
+                }
+              }
+
+              return (
+                <>
+                  {hasSegments && (transcript || showBubbles) && (
+                    <div className={styles.transcriptViewHeader}>
+                      <button
+                        className={styles.transcriptViewToggle}
+                        onClick={() =>
+                          setTranscriptViewMode((m) => (m === 'bubbles' ? 'markdown' : 'bubbles'))
+                        }
+                        title="Toggle between chat bubbles and the legacy markdown view"
+                      >
+                        {transcriptViewMode === 'bubbles' ? 'View as markdown' : 'View as bubbles'}
+                      </button>
+                      {showBubbles && (
+                        <button
+                          className={styles.transcriptViewToggle}
+                          onClick={handleSwapMeThem}
+                          disabled={isSwappingMeSpeaker}
+                          title='Flip which side is "me" — useful if the resolver guessed wrong'
+                        >
+                          {isSwappingMeSpeaker ? 'Swapping…' : 'Swap Me/Them'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {showBubbles ? (
+                    <div className={styles.bubbleContainer}>
+                      <TranscriptBubbles
+                        segments={segs!}
+                        speakerMap={localSpeakerMap}
+                        meSpeakerIndex={data?.meeting.meSpeakerIndex ?? null}
+                        calendarSelfName={data?.meeting.selfName ?? null}
+                      />
+                    </div>
+                  ) : showMarkdown ? (
+                    <div className={styles.markdown}>
+                      <SafeMarkdown findHighlight={{ matches: findMatches, activeIndex: activeMatchIndex }}>
+                        {transcript ?? ''}
+                      </SafeMarkdown>
+                    </div>
+                  ) : null}
+                </>
+              )
+            })()}
             {isThisMeetingRecording && (
               <div
                 ref={transcriptScrollRef}

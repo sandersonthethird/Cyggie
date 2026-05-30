@@ -796,6 +796,42 @@
   padding: 8px 14px;
 }
 
+.transcriptViewHeader {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 6px 0 10px;
+}
+
+.transcriptViewToggle {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--cv-border, #d4d4d4);
+  background: var(--cv-surface-elevated, #ffffff);
+  color: var(--cv-text, #1f1f1f);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.transcriptViewToggle:hover:not(:disabled) {
+  background: var(--cv-surface-hover, #f0f0f0);
+}
+
+.transcriptViewToggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.bubbleContainer {
+  min-height: 320px;
+  height: clamp(320px, 60vh, 800px);
+  border-radius: var(--cv-radius);
+  overflow: hidden;
+  border: 1px solid var(--cv-border, #e0e0e0);
+}
+
 .markdown {
   cursor: pointer;
   padding: 12px;
