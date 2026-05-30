@@ -398,6 +398,26 @@ export function registerMeetingHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC_CHANNELS.MEETING_SET_ME_SPEAKER,
+    (_event, id: string, nextValue: number | null) => {
+      const userId = getCurrentUserId()
+      const meeting = meetingRepo.getMeeting(id)
+      if (!meeting) throw new Error('Meeting not found')
+
+      // Caller computes the new value; the IPC handler just persists.
+      // Keeping the resolver logic in the renderer (where it composes
+      // with the transcript view) avoids a second main-side imports
+      // path for me-them-resolver and keeps this handler a thin
+      // write-through.
+      const value =
+        nextValue == null || !Number.isFinite(nextValue) ? null : Math.trunc(nextValue)
+      meetingRepo.updateMeeting(id, { meSpeakerIndex: value }, userId)
+      logAudit(userId, 'meeting', id, 'update', { meSpeakerIndex: value })
+      return meetingRepo.getMeeting(id)
+    },
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.MEETING_RENAME_TITLE,
     (_event, id: string, newTitle: string) => {
       const userId = getCurrentUserId()
