@@ -55,6 +55,73 @@ function deriveSelfNameFromUser(userId: string | null): string | null {
 
 const execFileP = promisify(execFile)
 
+/**
+ * Rewrites the speaker-header lines in a transcript markdown file so they
+ * match `newSpeakerMap`. Shared by MEETING_RENAME_SPEAKERS (free-text
+ * rename) and MEETING_TAG_SPEAKER_CONTACT (link/unlink a CRM contact) —
+ * both mutate `meeting.speakerMap` and both must propagate the change into
+ * the saved markdown body, otherwise the chip shows the new name but the
+ * transcript text still shows the old one.
+ *
+ * The file may be out of sync with the DB speakerMap (e.g. from a prior
+ * file collision), so we scan the file for actual names and fall back to
+ * the default "Speaker N" label or an orphan match.
+ */
+function rewriteTranscriptSpeakers(
+  transcriptPath: string | null | undefined,
+  oldSpeakerMap: Record<number, string>,
+  newSpeakerMap: Record<number, string>,
+): void {
+  if (!transcriptPath) return
+  let content = readTranscript(transcriptPath)
+  if (!content) return
+
+  const fileNames = new Set<string>()
+  const headerPattern = /^\*\*(.+?)\*\* \[/gm
+  let match
+  while ((match = headerPattern.exec(content)) !== null) {
+    fileNames.add(match[1])
+  }
+
+  const newNameValues = new Set(Object.values(newSpeakerMap))
+  let changed = false
+
+  for (const [index, newName] of Object.entries(newSpeakerMap)) {
+    const idx = Number(index)
+    // Skip when the file already has the new name — that's the "in sync"
+    // condition. (Don't gate on `dbName === newName`: if a prior write
+    // updated the DB but never reached the file, the divergence has to
+    // heal here on the next link/rename.)
+    if (fileNames.has(newName)) continue
+
+    const dbName = oldSpeakerMap[idx]
+    let fileOldName: string | undefined
+    if (dbName && fileNames.has(dbName)) {
+      fileOldName = dbName
+    } else if (fileNames.has(`Speaker ${idx + 1}`)) {
+      fileOldName = `Speaker ${idx + 1}`
+    } else {
+      for (const fname of fileNames) {
+        if (!newNameValues.has(fname)) {
+          fileOldName = fname
+          break
+        }
+      }
+    }
+
+    if (fileOldName && fileOldName !== newName) {
+      const escaped = fileOldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const pattern = new RegExp(`^\\*\\*${escaped}\\*\\*`, 'gm')
+      content = content.replace(pattern, `**${newName}**`)
+      fileNames.delete(fileOldName)
+      fileNames.add(newName)
+      changed = true
+    }
+  }
+
+  if (changed) updateTranscriptContent(transcriptPath, content)
+}
+
 const TWITTER_HOSTS = new Set([
   'twitter.com', 'www.twitter.com', 'mobile.twitter.com',
   'x.com', 'www.x.com', 'mobile.x.com'
@@ -125,7 +192,7 @@ export function removeSpeakerTag(
   const newContactMap = { ...contactMap }
   delete newContactMap[index]
   return {
-    speakerMap: { ...speakerMap, [index]: `Speaker ${index}` },
+    speakerMap: { ...speakerMap, [index]: `Speaker ${index + 1}` },
     contactMap: newContactMap
   }
 }
@@ -331,66 +398,8 @@ export function registerMeetingHandlers(): void {
 
       const oldSpeakerMap = meeting.speakerMap
 
-      // Update speaker map in DB
       meetingRepo.updateMeeting(id, { speakerMap: newSpeakerMap }, userId)
-
-      // Rewrite transcript file with updated speaker names.
-      // The file content may be out of sync with the DB speakerMap (e.g. from
-      // a prior file collision), so we scan the file for actual names rather
-      // than relying solely on the DB values.
-      if (meeting.transcriptPath) {
-        let content = readTranscript(meeting.transcriptPath)
-        if (content) {
-          // Collect all unique speaker names currently in the file
-          const fileNames = new Set<string>()
-          const headerPattern = /^\*\*(.+?)\*\* \[/gm
-          let match
-          while ((match = headerPattern.exec(content)) !== null) {
-            fileNames.add(match[1])
-          }
-
-          // Build set of all new names for quick lookup
-          const newNameValues = new Set(Object.values(newSpeakerMap))
-
-          for (const [index, newName] of Object.entries(newSpeakerMap)) {
-            const idx = Number(index)
-            const dbName = oldSpeakerMap[idx]
-
-            // Skip if DB name hasn't changed
-            if (dbName === newName) continue
-
-            // Try to find the actual name in the file for this index:
-            // 1. The DB name (ideal case — DB and file are in sync)
-            // 2. The default "Speaker N" name
-            let fileOldName: string | undefined
-            if (dbName && fileNames.has(dbName)) {
-              fileOldName = dbName
-            } else if (fileNames.has(`Speaker ${idx + 1}`)) {
-              fileOldName = `Speaker ${idx + 1}`
-            } else {
-              // DB and file are out of sync — find the orphan name in the file
-              // that isn't claimed by any entry in the new speaker map
-              for (const fname of fileNames) {
-                if (!newNameValues.has(fname)) {
-                  fileOldName = fname
-                  break
-                }
-              }
-            }
-
-            if (fileOldName && fileOldName !== newName) {
-              const escaped = fileOldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-              const pattern = new RegExp(`^\\*\\*${escaped}\\*\\*`, 'gm')
-              content = content.replace(pattern, `**${newName}**`)
-              // Remove from fileNames so it won't be matched again
-              fileNames.delete(fileOldName)
-              fileNames.add(newName)
-            }
-          }
-
-          updateTranscriptContent(meeting.transcriptPath, content)
-        }
-      }
+      rewriteTranscriptSpeakers(meeting.transcriptPath, oldSpeakerMap, newSpeakerMap)
 
       logAudit(userId, 'meeting', id, 'update', { speakerMap: newSpeakerMap })
       return meetingRepo.getMeeting(id)
@@ -799,6 +808,7 @@ export function registerMeetingHandlers(): void {
         if (!updated) throw new Error('Failed to update meeting')
 
         meetingRepo.linkMeetingSpeakerContact(meetingId, speakerIndex, contactId)
+        rewriteTranscriptSpeakers(meeting.transcriptPath, meeting.speakerMap, updatedSpeakerMap)
 
         // Auto-tag companion note (first-link-wins, non-fatal). Uses the
         // wrapped tagNote so the contact_id propagates to mobile.
@@ -815,13 +825,17 @@ export function registerMeetingHandlers(): void {
 
         logAudit(userId, 'meeting', meetingId, 'tag_speaker_contact', { speakerIndex, contactId })
       } else {
-        // UNLINK: reset speaker name + delete join row.
-        const defaultName = `Speaker ${speakerIndex}`
+        // UNLINK: reset speaker name + delete join row. The default label
+        // is 1-indexed to match buildSpeakerMap and the renderer fallback,
+        // and so the transcript-body rewrite finds the existing "Speaker N"
+        // header (which is also 1-indexed).
+        const defaultName = `Speaker ${speakerIndex + 1}`
         const updatedSpeakerMap = { ...meeting.speakerMap, [speakerIndex]: defaultName }
         const updated = meetingRepo.updateMeeting(meetingId, { speakerMap: updatedSpeakerMap }, userId)
         if (!updated) throw new Error('Failed to update meeting')
 
         meetingRepo.unlinkMeetingSpeakerContact(meetingId, speakerIndex)
+        rewriteTranscriptSpeakers(meeting.transcriptPath, meeting.speakerMap, updatedSpeakerMap)
 
         logAudit(userId, 'meeting', meetingId, 'untag_speaker_contact', { speakerIndex })
       }

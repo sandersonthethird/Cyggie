@@ -41,6 +41,7 @@ import { Spinner } from '../common/Spinner'
 import styles from './ContactPropertiesPanel.module.css'
 import { api } from '../../api'
 import { withOptimisticUpdate } from '../../utils/withOptimisticUpdate'
+import { planEmailSaves } from '../../utils/contactEmails'
 
 // All pref base keys managed as per-contact layout overrides (contacts have no sub-type tier)
 const LAYOUT_PREF_BASE_KEYS = [
@@ -173,6 +174,7 @@ export function ContactPropertiesPanel({
   const [firstNameDraft, setFirstNameDraft] = useState(contact.firstName ?? '')
   const [lastNameDraft, setLastNameDraft] = useState(contact.lastName ?? '')
   const [emailDraft, setEmailDraft] = useState(contact.emails[0] || contact.email || '')
+  const [emailDraft2, setEmailDraft2] = useState(contact.emails[1] || '')
   const [linkedinDraft, setLinkedinDraft] = useState(contact.linkedinUrl || '')
   const [phoneDraft, setPhoneDraft] = useState(contact.phone || '')
   const [cityDraft, setCityDraft] = useState(contact.city || '')
@@ -491,6 +493,7 @@ export function ContactPropertiesPanel({
       setCompanyDraft(contact.primaryCompany?.canonicalName ?? '')
       setPriorCompanyDrafts(parsePriorCompanies(contact.previousCompanies))
       setEmailDraft(contact.emails[0] || contact.email || '')
+      setEmailDraft2(contact.emails[1] || '')
       setLinkedinDraft(contact.linkedinUrl || '')
       setPhoneDraft(contact.phone || '')
       setCityDraft(contact.city || '')
@@ -687,16 +690,19 @@ export function ContactPropertiesPanel({
 
     // Save meta fields from draft state
     try {
-      const trimmedEmail = emailDraft.trim()
-      const existingEmail = contact.emails[0] || contact.email || ''
-      if (trimmedEmail && trimmedEmail !== existingEmail) {
-        if (existingEmail) {
-          await saveEmail(existingEmail, trimmedEmail)
-        } else {
-          await addEmail(trimmedEmail)
-        }
-      } else if (!trimmedEmail && existingEmail) {
-        await removeEmail(existingEmail)
+      const emailPlan = planEmailSaves(
+        contact.emails[0] || contact.email || '',
+        contact.emails[1] || '',
+        emailDraft,
+        emailDraft2,
+      )
+      if (emailPlan.kind === 'invalid') {
+        throw new Error(emailPlan.message)
+      }
+      for (const action of emailPlan.actions) {
+        if (action.type === 'add') await addEmail(action.email)
+        else if (action.type === 'save') await saveEmail(action.oldEmail, action.newEmail)
+        else await removeEmail(action.email)
       }
 
       const trimmedLinkedin = linkedinDraft.trim()
@@ -788,6 +794,7 @@ export function ContactPropertiesPanel({
     setLastNameDraft(contact.lastName ?? '')
     setCompanyDraft(contact.primaryCompany?.canonicalName ?? '')
     setEmailDraft(contact.emails[0] || contact.email || '')
+    setEmailDraft2(contact.emails[1] || '')
     setLinkedinDraft(contact.linkedinUrl || '')
     setPhoneDraft(contact.phone || '')
     setCityDraft(contact.city || '')
@@ -1103,6 +1110,8 @@ export function ContactPropertiesPanel({
         setLastNameDraft={setLastNameDraft}
         emailDraft={emailDraft}
         setEmailDraft={setEmailDraft}
+        emailDraft2={emailDraft2}
+        setEmailDraft2={setEmailDraft2}
         linkedinDraft={linkedinDraft}
         setLinkedinDraft={setLinkedinDraft}
         phoneDraft={phoneDraft}

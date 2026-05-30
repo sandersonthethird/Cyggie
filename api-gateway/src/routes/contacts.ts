@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { and, desc, eq, ilike, or, sql } from 'drizzle-orm'
+import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
@@ -122,6 +122,13 @@ export async function registerContactRoutes(
           or(
             ilike(schema.contacts.fullName, `%${q}%`),
             ilike(schema.contacts.email, `%${q}%`),
+            inArray(
+              schema.contacts.id,
+              db
+                .select({ id: schema.contactEmails.contactId })
+                .from(schema.contactEmails)
+                .where(ilike(schema.contactEmails.email, `%${q}%`)),
+            ),
           )!,
         )
       }

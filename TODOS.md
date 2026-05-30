@@ -32,13 +32,14 @@ streaming holds up across multiple real meetings.
 
 ---
 
-## Wire the 5 named transcription error codes to Sentry
+## Wire the named transcription error codes to Sentry
 
 **What:** Send the structured `error` events emitted by
 `DeepgramStreamingClient` and `AssemblyAiStreamingClient` to Sentry instead
-of just `console.error`. The 5 named codes:
+of just `console.error`. Named codes:
 `MALFORMED_TURN_PAYLOAD`, `UNKNOWN_MESSAGE_TYPE`, `SERVER_TERMINATED`,
-`FINALIZE_TIMEOUT`, `MISSING_API_KEY`, plus the factory's bidirectional
+`FINALIZE_TIMEOUT`, `MISSING_API_KEY`, `AEC_DIVERGENCE`,
+`MULTICHANNEL_REJECTED`, plus the factory's bidirectional
 fallback warn-level log.
 
 **Why:** Today these land in the dev console and a packaged-build log file
@@ -121,6 +122,124 @@ adds a `wer` column. Plan: `~/.claude/plans/can-you-scope-out-wise-locket.md`.
 **Depends on / blocked by:** Initial side-by-side eval producing
 inconclusive results. Audio must be saved (already shipped — the AAC
 encoder writes `<recordingsDir>/<id>.m4a` on every recording).
+
+---
+
+## Per-word confidence-gated CRM rewriting
+
+**What:** Replace the threshold-based proper-noun corrector at
+`src/main/utils/proper-noun-corrector.ts` with a confidence-gated approach:
+only rewrite a word to a CRM canonical name if the underlying Deepgram
+per-word confidence is below some threshold (e.g. 0.8). If the model is
+confident the word is what it transcribed, trust the model — don't
+fuzzy-promote it to a similar CRM name.
+
+**Why:** Threshold tuning (0.92 → 0.97 per the 2026-05-29 fix) is a moving
+target. As CRM grows, more contact/company names will phonetically collide
+with common English words ("more"/"Smore", "bunch"/"Buncha"). A confidence
+gate is structurally better: it scopes correction to where the model
+itself was uncertain. The current threshold-tuning approach will eventually
+either over-correct (false positives) or under-correct (misses real
+misspellings) — we can't optimize both at once with a single number.
+
+**Context:**
+- Correction currently runs on assembled markdown
+  (`correctTranscriptMarkdown` at `packages/services/src/recording/normalize-segments.ts:68`),
+  which has thrown away per-word confidence. To plumb confidence through,
+  correction needs to move earlier — either onto `TranscriptSegment[]`
+  where word-level `confidence` is still attached, or as a parallel pass
+  that reads segments and rewrites the markdown using segment-level word
+  metadata.
+- AssemblyAI Universal-Streaming does NOT emit per-word confidence. For
+  AssemblyAI sessions, fall back to threshold-based correction (current
+  behavior at the 0.97 threshold) or skip correction entirely; document
+  the choice.
+- Deepgram per-word confidence is already in the normalized word schema
+  (`src/main/deepgram/types.ts:38` — `NormalizedWord.confidence`), so the
+  plumbing is short.
+
+**Effort:** M (~2 days).
+
+**Priority:** P2.
+
+**Depends on / blocked by:** 2026-05-29 threshold fix (0.92 → 0.97)
+shipping first to confirm whether threshold-only tuning is enough. If
+Sandy still hits false-positive rewrites at 0.97, escalate to this.
+
+---
+
+## WebRTC AEC3 native module for stereo capture
+
+**What:** Replace the in-worklet NLMS adaptive filter shipped with the
+"separate transcription for you and others" feature (2026-05-29) with
+WebRTC's AEC3 algorithm via a native Node module. AEC3 is what Chrome and
+Meet use; it delivers ~30 dB suppression vs NLMS's ~10–20 dB.
+
+**Why:** Conditional on the 2026-05-29 NLMS shipping and leaving audible
+residual bleed. NLMS is good enough as a starting bet (no native deps, runs
+in worklet, handles the easy case), but spectral nulls, codec artifacts,
+and rapid speech onsets will leave residue that AEC3 catches.
+
+**Context:**
+- Plan: `~/.claude/plans/we-need-to-improve-cheeky-treasure.md` documents
+  the NLMS-first decision and notes WebRTC AEC3 as the escalation path.
+- Candidate npm packages: `webrtc-audio-processing` (pulls in WebRTC's
+  `apm`), `node-aec` (alpha quality — vet carefully). May need to compile
+  a WASM build of WebRTC's `AEC3` directly to avoid native-rebuild pain.
+- Integration point: same place NLMS sits today —
+  `src/renderer/hooks/useAudioCapture.ts` AudioWorklet. Native module
+  needs to be callable from the worklet thread, which is tricky (no Node
+  bindings in worklets); may need to move AEC to the main process post-IPC.
+- Electron rebuild: native modules require `electron-rebuild` per
+  platform; adds to packaging complexity.
+
+**Effort:** L (~3-5 days: vet module, integrate with Electron, possibly
+move AEC out of worklet into main process, validate vs NLMS baseline).
+
+**Priority:** P3.
+
+**Depends on / blocked by:** Multichannel + NLMS shipping first. Eval
+metrics showing NLMS residual bleed > acceptable threshold on Sandy's
+real meetings.
+
+---
+
+## AssemblyAI stereo / per-channel transcription parity
+
+**What:** Provide a per-channel (mic + system separate) transcription
+mode on AssemblyAI to match the Deepgram multichannel path shipped
+2026-05-29. Today the "separate transcription for you and others" toggle
+is disabled when `provider === 'assemblyai'`.
+
+**Why:** Provider parity. Users on AssemblyAI today get worse speaker
+attribution than Deepgram users because they can't enable the toggle. As
+AssemblyAI usage grows, this becomes a feature gap.
+
+**Context:**
+- AssemblyAI Universal-Streaming v3 does not have a `multichannel` flag
+  the way Deepgram does. Two implementation paths:
+  1. **Two parallel websockets** — one per channel. Doubles AssemblyAI
+     spend per session. Most direct path. Needs timeline merge/dedup
+     similar to the Deepgram cross-channel dedup at
+     `src/main/deepgram/transcript-assembler.ts`.
+  2. **Wait for AssemblyAI to ship multichannel** — unknown ETA; check
+     their roadmap.
+- `resolveStreamConfig` helper (shipping 2026-05-29) is the integration
+  point — extend it to return per-provider config that includes either
+  `channels: 1` (current behavior) or `parallelStreams: true` (new
+  AssemblyAI path).
+- Once shipped, remove the AssemblyAI-disabled guard on the settings
+  toggle.
+
+**Effort:** M-L (~3-5 days for two-websocket path, including timeline
+merge).
+
+**Priority:** P3.
+
+**Depends on / blocked by:** Deepgram multichannel + dedup + NLMS shipping
+and proving the pattern works in real meetings. AssemblyAI usage volume
+high enough to justify the work (single-firm beta currently has Deepgram
+as default).
 
 ---
 
@@ -2419,3 +2538,91 @@ new IPC channel; user can opt in to sharing.
 **Effort:** M
 **Priority:** P2
 **Depends on:** Nothing — purely additive.
+
+---
+
+## Add email editing UI to the mobile contact detail page
+
+**What:** Build an edit affordance on `mobile/app/contacts/[id].tsx` that lets
+mobile users add/change/remove emails on a contact, including the new
+"Email 2" alternate slot. Today the mobile detail page only renders the
+primary email and there is no contact-edit form on mobile at all.
+
+**Why:** Desktop now ships Email 2 (secondary email address) so a contact can
+be associated with two addresses and calendar attendee sync dedups them to a
+single avatar. A contact synced to mobile already carries both emails in the
+returned `ContactDetail.emails: string[]`, but mobile users can't add or
+maintain Email 2 themselves. The asymmetry is visible to anyone managing
+contacts on phone — they'll be able to *see* a secondary email someone added
+on desktop but unable to add or correct one from mobile.
+
+**Pros:** Closes the mobile/desktop edit parity gap. Surface area is small
+because the backend (`contact_emails` table, IPC handlers on desktop) is
+already done — what's missing is a gateway endpoint and a mobile UI surface.
+
+**Cons:** Mobile contact-edit form does not exist yet — this is a new UI
+surface rather than an extension of an existing one. Likely an afternoon
+of work plus design pass.
+
+**Context:** Touchpoints:
+- `mobile/lib/api/contacts.ts` `updateContact` currently only handles
+  `keyTakeawaysUserNote`. Needs new mutations for add/update/remove email.
+- `api-gateway/src/routes/contacts.ts` needs PUT/PATCH endpoints that
+  mirror the desktop IPC handlers (`CONTACT_ADD_EMAIL` /
+  `CONTACT_UPDATE_EMAIL` / `CONTACT_REMOVE_EMAIL`) and write through to
+  the same Postgres `contact_emails` table.
+- Sync: writes from gateway need to land in desktop SQLite via the
+  existing outbox/pull cycle.
+
+**Effort:** M (gateway endpoints + mobile form + sync verification).
+**Priority:** P3.
+**Depends on:** Desktop Email 2 shipping (2026-05-29 on
+`feat/transcription-eval-cli`).
+
+---
+
+## Expand the on-demand company-extraction eval to notes/emails/multi-meeting paths
+
+**What:** Extend the `npm run eval:company-extraction` harness (introduced
+alongside the VC-pitch LLM extractor fix) to cover the three other
+enrichment paths that share `buildCompanyEnrichmentProposal`:
+note-based enrichment (`getCompanyEnrichmentProposalsFromNotes`),
+email-based enrichment (`getCompanyEnrichmentProposalsFromEmails`), and
+multi-meeting enrichment (`getCompanyEnrichmentProposalsFromMeetings`).
+Add 2–3 captured fixtures per path with annotated expected proposals.
+
+**Why:** The 2026-05-29 fix that swapped regex extraction for the LLM
+extractor on the VC-pitch path also strengthened the shared system prompt
+inside `buildCompanyEnrichmentProposal`. That prompt change silently
+affects the other three enrichment callers — but the new eval suite only
+exercises the VC-pitch path. Without per-path eval fixtures, a future
+prompt iteration can quietly regress, say, note-based enrichment without
+anyone noticing until a user complains.
+
+**Context:** Touchpoints:
+- `packages/services/src/company-summary-sync.service.ts` — the four
+  call sites: `getVcSummaryCompanyUpdateProposals`,
+  `getCompanyEnrichmentProposalsFromNotes` (line 886),
+  `getCompanyEnrichmentProposalsFromEmails` (line 923),
+  `getCompanyEnrichmentProposalsFromMeetings` (line 833).
+- `src/tests/evals/company-extraction-eval.ts` — the on-demand harness
+  to extend; currently fixtures-of-summaries only. Each new path's
+  fixtures need a different shape (notes are short-form, emails come
+  with subject + snippet, multi-meeting concatenates dated blocks).
+- `npm run eval:company-extraction` in `package.json` — extend to take
+  a `--path=vc|notes|emails|meetings|all` flag or split into four scripts.
+- The shared prompt to guard: `buildCompanyEnrichmentProposal` line ~605
+  (the strict "do not infer from comps" guidance).
+
+**Pros:** Closes the cross-path regression gap. Gives a single command
+that, before any future prompt change, can answer "does this still work
+across all four flows?"
+
+**Cons:** Fixture maintenance (need real, anonymized notes / emails /
+multi-meeting summaries — more work to source than VC pitches). On-demand
+only, so it has to be remembered.
+
+**Effort:** S–M (mostly fixture sourcing; the harness already exists).
+**Priority:** P3.
+**Depends on:** VC-pitch eval harness landing first (2026-05-29 on this
+PR).

@@ -128,18 +128,6 @@ export async function generateSummary(
   // Update search index
   updateSummaryIndex(meetingId, summary)
 
-  let companyUpdateProposals: SummaryGenerateResult['companyUpdateProposals'] = []
-  if (template.category === 'vc_pitch') {
-    try {
-      companyUpdateProposals = getVcSummaryCompanyUpdateProposals(meetingId, summary, {
-        attendees: meeting.attendees,
-        attendeeEmails: meeting.attendeeEmails
-      })
-    } catch (err) {
-      console.error('[Company AutoFill] Failed to parse VC summary fields:', err)
-    }
-  }
-
   // Hoist emailToContactId — built once, reused for cross-save notes and contact proposals
   // resolveContactsByEmails returns { id, fullName } objects; extract just ids for downstream use
   const emailToContactId: Record<string, string> = (meeting.attendeeEmails?.length ?? 0) > 0
@@ -183,20 +171,33 @@ export async function generateSummary(
     console.error('[Tasks] Failed to extract tasks from summary:', err)
   }
 
-  // Extract contact field proposals from summary (parallel with task extraction, non-blocking)
-  let contactUpdateProposals: SummaryGenerateResult['contactUpdateProposals'] = []
-  try {
-    contactUpdateProposals = await getContactSummaryUpdateProposals(
-      summary,
-      emailToContactId,
-      provider,
-      meetingId
-    )
-    if (contactUpdateProposals.length > 0) {
-      console.log(`[Contact AutoFill] ${contactUpdateProposals.length} proposals for meeting ${meetingId}`)
-    }
-  } catch (err) {
-    console.error('[Contact AutoFill] Failed to extract contact fields:', err)
+  // Extract company + contact field proposals in parallel — both are independent LLM calls.
+  const [companyUpdateProposals, contactUpdateProposals]: [
+    SummaryGenerateResult['companyUpdateProposals'],
+    SummaryGenerateResult['contactUpdateProposals']
+  ] = await Promise.all([
+    template.category === 'vc_pitch'
+      ? getVcSummaryCompanyUpdateProposals(
+          meetingId,
+          summary,
+          { attendees: meeting.attendees, attendeeEmails: meeting.attendeeEmails },
+          provider
+        ).catch((err) => {
+          console.error('[Company AutoFill] Failed to extract VC summary fields:', err)
+          return []
+        })
+      : Promise.resolve([]),
+    getContactSummaryUpdateProposals(summary, emailToContactId, provider, meetingId).catch((err) => {
+      console.error('[Contact AutoFill] Failed to extract contact fields:', err)
+      return []
+    })
+  ])
+
+  if (companyUpdateProposals.length > 0) {
+    console.log(`[Company AutoFill] ${companyUpdateProposals.length} proposals for meeting ${meetingId}`)
+  }
+  if (contactUpdateProposals.length > 0) {
+    console.log(`[Contact AutoFill] ${contactUpdateProposals.length} proposals for meeting ${meetingId}`)
   }
 
   // Upload summary to Drive (fire-and-forget)

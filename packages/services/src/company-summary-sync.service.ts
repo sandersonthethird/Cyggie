@@ -29,16 +29,6 @@ export interface MeetingContext {
   attendeeEmails: string[] | null
 }
 
-export interface ParsedVcSummaryFields {
-  description: string | null
-  round: CompanyRound | null
-  raiseSize: number | null
-  postMoneyValuation: number | null
-  city: string | null
-  state: string | null
-  pipelineStage: CompanyPipelineStage | null
-}
-
 const SECTION_HEADER_HINTS = [
   'executive summary',
   'company overview',
@@ -54,8 +44,6 @@ const SECTION_HEADER_HINTS = [
   'follow ups',
   'action items'
 ]
-
-const MONEY_FRAGMENT_RE = /\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:billion|bn|b|million|mm|m|thousand|k)?/i
 
 const normalizeWhitespace = _normalizeWhitespace
 const isDifferentText = _isDifferentText
@@ -140,209 +128,6 @@ function extractSection(summary: string, labels: string[]): string | null {
   return normalizeWhitespace(collected.join(' '))
 }
 
-function firstMeaningfulLine(summary: string): string | null {
-  const lines = summary.split(/\r?\n/)
-  for (const line of lines) {
-    const cleaned = normalizeWhitespace(stripMarkdown(line))
-    if (!cleaned) continue
-    if (isLikelySectionHeader(line)) continue
-    if (/^(n\/a|none|not provided)$/i.test(cleaned)) continue
-    if (cleaned.length < 12) continue
-    return cleaned
-  }
-  return null
-}
-
-const EXEC_SUBLABEL_STOP_RE =
-  /\b(?:founders?|team|status|stage|sector|round|recommendation|ask|thesis|concerns?|strengths?|location|city|website|product|market|traction|revenue|arr|mrr|valuation|raise|check\s+size|memo)\s*:/i
-
-/**
- * Looks for an explicit "Description: <value>" sub-label in an executive summary
- * string that has already been processed by extractSection() (markdown stripped,
- * lines space-joined, bounded to ~700 chars).
- *
- * Two-strategy extraction:
- *
- *   executive string
- *         │
- *         ▼
- *   Strategy 1: sentence-split on [.!?]
- *   ┌──────────────────────────────────────────────────┐
- *   │  for each sentence:                              │
- *   │    starts with "Description:"? ──YES──▶ extract  │
- *   │                                   clip at STOP   │
- *   │                                   return value   │
- *   │    else: continue loop                           │
- *   └───────────────────┬──────────────────────────────┘
- *                       │ loop exhausted (null)
- *                       ▼
- *   Strategy 2: substring search (handles no-period sub-labels)
- *   ┌──────────────────────────────────────────────────┐
- *   │  /\bdescription\s*:\s*(.+)/i.exec(executive)     │
- *   │    match? ──YES──▶ clip at STOP ──▶ return value │
- *   │    no match ──▶ return null                      │
- *   └──────────────────────────────────────────────────┘
- *
- * Returns null if no "Description:" sub-label is found.
- */
-function extractDescriptionSubLabel(executive: string): string | null {
-  // Strategy 1: sentence-split (works when sub-labels end with periods)
-  const sentences = executive.split(/(?<=[.!?])\s+/)
-  for (const sentence of sentences) {
-    if (!/^description\s*:/i.test(sentence)) continue
-    const value = normalizeWhitespace(sentence.replace(/^description\s*:\s*/i, ''))
-    if (!value) continue
-    const stopMatch = EXEC_SUBLABEL_STOP_RE.exec(value)
-    return stopMatch ? normalizeWhitespace(value.slice(0, stopMatch.index)) : value
-  }
-
-  // Strategy 2: substring search (handles no-period sub-labels or Description not first)
-  const match = /\bdescription\s*:\s*(.+)/i.exec(executive)
-  if (match) {
-    const value = normalizeWhitespace(match[1])
-    if (!value) return null
-    const stopMatch = EXEC_SUBLABEL_STOP_RE.exec(value)
-    return stopMatch ? normalizeWhitespace(value.slice(0, stopMatch.index)) : value
-  }
-
-  return null
-}
-
-export function extractDescription(summary: string): string | null {
-  const executive = extractSection(summary, ['executive summary'])
-  const overview = extractSection(summary, ['company overview'])
-  const source = executive || overview || firstMeaningfulLine(summary)
-  if (!source) return null
-
-  // Prefer explicit "Description:" sub-label when an executive summary exists
-  const subLabel = executive ? extractDescriptionSubLabel(executive) : null
-
-  const cleaned = subLabel ?? normalizeWhitespace(
-    source.replace(/^((company overview)|(executive summary))\s*[:\-–—]\s*/i, '')
-  )
-  if (!cleaned || cleaned.length < 16) return null
-  if (/what the company does, stage, and sector/i.test(cleaned)) return null
-
-  const firstSentence = cleaned.split(/(?<=[.!?])\s+/)[0] || cleaned
-  const best = firstSentence.length >= 24 ? firstSentence : cleaned
-  return best.length > 320 ? `${best.slice(0, 317)}...` : best
-}
-
-function parseRound(text: string): CompanyRound | null {
-  const lower = text.toLowerCase()
-  if (/\bpre[\s-]?seed\b/.test(lower)) return 'pre_seed'
-  if (/\bseed\s*(extension|\+|plus)\b/.test(lower)) return 'seed_extension'
-  if (/\bseries[\s-]?b\b/.test(lower)) return 'series_b'
-  if (/\bseries[\s-]?a\b/.test(lower)) return 'series_a'
-  if (/\bseed\b/.test(lower)) return 'seed'
-  return null
-}
-
-function parseMoneyToMillions(raw: string): number | null {
-  const compact = normalizeWhitespace(raw).toLowerCase()
-  const match = compact.match(/\$?\s*([\d,]+(?:\.\d+)?)\s*(billion|bn|b|million|mm|m|thousand|k)?/)
-  if (!match) return null
-
-  const numeric = Number(match[1].replace(/,/g, ''))
-  if (!Number.isFinite(numeric) || numeric <= 0) return null
-
-  const unit = (match[2] || '').toLowerCase()
-  let millions = numeric
-
-  if (unit === 'billion' || unit === 'bn' || unit === 'b') {
-    millions = numeric * 1000
-  } else if (unit === 'million' || unit === 'mm' || unit === 'm') {
-    millions = numeric
-  } else if (unit === 'thousand' || unit === 'k') {
-    millions = numeric / 1000
-  } else {
-    millions = numeric >= 1000 ? numeric / 1_000_000 : numeric
-  }
-
-  if (!Number.isFinite(millions) || millions <= 0 || millions > 200000) return null
-  return Math.round(millions * 100) / 100
-}
-
-function findMoneyByLineKeys(text: string, keys: string[]): number | null {
-  const lines = text.split(/\r?\n/)
-  for (const line of lines) {
-    const lower = line.toLowerCase()
-    if (!keys.some((key) => lower.includes(key))) continue
-    const moneyMatch = line.match(MONEY_FRAGMENT_RE)
-    if (!moneyMatch?.[0]) continue
-    const parsed = parseMoneyToMillions(moneyMatch[0])
-    if (parsed != null) return parsed
-  }
-  return null
-}
-
-function extractRaiseSize(text: string): number | null {
-  const byLine = findMoneyByLineKeys(text, [
-    'raising',
-    'seeking',
-    'ask',
-    'funding amount',
-    'funding ask',
-    'target raise',
-    'round size'
-  ])
-  if (byLine != null) return byLine
-
-  const pattern = /(?:raising|seeking|looking to raise|funding ask|ask is|ask:|targeting)\D{0,40}(\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:billion|bn|b|million|mm|m|thousand|k)?)/i
-  const match = text.match(pattern)
-  if (!match?.[1]) return null
-  return parseMoneyToMillions(match[1])
-}
-
-function extractPostMoneyValuation(text: string): number | null {
-  const explicitPostMoney = findMoneyByLineKeys(text, [
-    'post-money',
-    'post money',
-    'postmoney'
-  ])
-  if (explicitPostMoney != null) return explicitPostMoney
-
-  const lines = text.split(/\r?\n/)
-  for (const line of lines) {
-    const lower = line.toLowerCase()
-    if (!lower.includes('valuation')) continue
-    if (lower.includes('pre-money') || lower.includes('pre money')) continue
-    const moneyMatch = line.match(MONEY_FRAGMENT_RE)
-    if (!moneyMatch?.[0]) continue
-    const parsed = parseMoneyToMillions(moneyMatch[0])
-    if (parsed != null) return parsed
-  }
-
-  const pattern = /(?:post[-\s]?money(?: valuation)?|valued at|valuation(?: of)?)\D{0,40}(\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:billion|bn|b|million|mm|m|thousand|k)?)/i
-  const match = text.match(pattern)
-  if (!match?.[1]) return null
-  return parseMoneyToMillions(match[1])
-}
-
-function extractLocation(text: string): { city: string | null; state: string | null } {
-  const lines = text.split(/\r?\n/)
-  for (const line of lines) {
-    const match = line.match(
-      /(?:based in|headquartered in|hq(?:'s)?(?: in)?|located in)\s+([A-Za-z][A-Za-z .'-]{1,60}),\s*([A-Za-z]{2})\b/i
-    )
-    if (!match) continue
-    return {
-      city: normalizeWhitespace(match[1]),
-      state: match[2].toUpperCase()
-    }
-  }
-  return { city: null, state: null }
-}
-
-function inferPipelineStage(text: string): CompanyPipelineStage | null {
-  const lower = text.toLowerCase()
-  if (/(not moving forward|passing|we should pass|decline this)/.test(lower)) return 'pass'
-  if (/(term sheet|legal docs|closing docs|documentation)/.test(lower)) return 'documentation'
-  if (/(move to diligence|begin diligence|next step[s]?:.*diligence|due diligence)/.test(lower)) return 'diligence'
-  if (/(investment committee|ic review|partner decision|decision pending)/.test(lower)) return 'decision'
-  return null
-}
-
 function extractFounderName(summary: string): string | null {
   const teamSection = extractSection(summary, ['team', 'founders', 'team / founders', 'team & founders'])
   if (!teamSection) return null
@@ -380,9 +165,9 @@ function matchFounderToAttendee(
   for (let i = 0; i < attendees.length; i += 1) {
     const email = attendeeEmails[i]?.trim().toLowerCase()
     if (!email) continue
-    const contactId = emailToContactId[email]
-    if (!contactId) continue
-    candidates.push({ name: attendees[i], contactId })
+    const entry = emailToContactId[email]
+    if (!entry) continue
+    candidates.push({ name: attendees[i], contactId: entry.id })
   }
 
   if (candidates.length === 0) return null
@@ -420,24 +205,6 @@ function matchFounderToAttendee(
   }
 }
 
-function parseVcPitchSummary(summary: string): ParsedVcSummaryFields {
-  const executive = extractSection(summary, ['executive summary']) || ''
-  const overview = extractSection(summary, ['company overview']) || ''
-  const ask = extractSection(summary, ['the ask', 'ask']) || ''
-  const combined = [executive, overview, ask, summary].filter(Boolean).join('\n')
-  const location = extractLocation(combined)
-
-  return {
-    description: extractDescription(summary),
-    round: parseRound(combined),
-    raiseSize: extractRaiseSize(combined),
-    postMoneyValuation: extractPostMoneyValuation(combined),
-    city: location.city,
-    state: location.state,
-    pipelineStage: inferPipelineStage(combined)
-  }
-}
-
 function isFirstMeetingForCompany(companyId: string, meetingId: string): boolean {
   const meetings = companyRepo.listCompanyMeetings(companyId)
   return meetings.length === 1 && meetings[0]?.id === meetingId
@@ -450,74 +217,6 @@ function selectTargetCompanies(companies: CompanySummary[], summary: string): Co
     lowerSummary.includes(company.canonicalName.toLowerCase())
   )
   return explicitMatches.length === 1 ? explicitMatches : []
-}
-
-// Per-round plausibility caps (in millions USD). Deliberately generous to minimize false
-// positives — only rejects clearly impossible values (e.g. $2000M for a pre-seed company).
-// Values that exceed the cap for their round are silently nulled before building a proposal.
-const ROUND_FINANCIAL_LIMITS: Partial<Record<CompanyRound, { maxRaise: number; maxPostMoney: number }>> = {
-  pre_seed:       { maxRaise: 15,   maxPostMoney: 112   },
-  seed:           { maxRaise: 45,   maxPostMoney: 375   },
-  seed_extension: { maxRaise: 75,   maxPostMoney: 750   },
-  series_a:       { maxRaise: 150,  maxPostMoney: 2250  },
-  series_b:       { maxRaise: 750,  maxPostMoney: 15000 },
-}
-
-export function buildProposalForCompany(
-  company: CompanySummary,
-  parsed: ParsedVcSummaryFields
-): CompanySummaryUpdateProposal | null {
-  const updates: CompanySummaryUpdatePayload = {}
-  const changes: CompanySummaryUpdateChange[] = []
-
-  // Use the round extracted from this meeting, or fall back to the company's stored round
-  const effectiveRound = parsed.round ?? company.round ?? null
-  const limits = effectiveRound ? ROUND_FINANCIAL_LIMITS[effectiveRound] : null
-  const checkedRaiseSize = limits && parsed.raiseSize != null && parsed.raiseSize > limits.maxRaise
-    ? null : parsed.raiseSize
-  const checkedPostMoney = limits && parsed.postMoneyValuation != null && parsed.postMoneyValuation > limits.maxPostMoney
-    ? null : parsed.postMoneyValuation
-
-  if (isDifferentText(parsed.description, company.description)) {
-    updates.description = parsed.description
-    changes.push({ field: 'description', from: company.description, to: parsed.description })
-  }
-  if (parsed.round && parsed.round !== company.round) {
-    updates.round = parsed.round
-    changes.push({ field: 'round', from: company.round, to: parsed.round })
-  }
-  if (isDifferentNumber(checkedRaiseSize, company.raiseSize)) {
-    updates.raiseSize = checkedRaiseSize
-    changes.push({ field: 'raiseSize', from: company.raiseSize, to: checkedRaiseSize })
-  }
-  if (isDifferentNumber(checkedPostMoney, company.postMoneyValuation)) {
-    updates.postMoneyValuation = checkedPostMoney
-    changes.push({
-      field: 'postMoneyValuation',
-      from: company.postMoneyValuation,
-      to: checkedPostMoney
-    })
-  }
-  if (isDifferentText(parsed.city, company.city)) {
-    updates.city = parsed.city
-    changes.push({ field: 'city', from: company.city, to: parsed.city })
-  }
-  if (isDifferentText(parsed.state, company.state)) {
-    updates.state = parsed.state
-    changes.push({ field: 'state', from: company.state, to: parsed.state })
-  }
-  if (parsed.pipelineStage && parsed.pipelineStage !== company.pipelineStage) {
-    updates.pipelineStage = parsed.pipelineStage
-    changes.push({ field: 'pipelineStage', from: company.pipelineStage, to: parsed.pipelineStage })
-  }
-
-  if (changes.length === 0) return null
-  return {
-    companyId: company.id,
-    companyName: company.canonicalName,
-    updates,
-    changes
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +293,7 @@ function matchCompanySelectOption(raw: string, options: string[]): string | null
  *   string  → written to company.fieldSources for meeting-based attribution
  *   null    → skip fieldSources update (notes/email enrichment)
  */
-async function buildCompanyEnrichmentProposal(
+export async function buildCompanyEnrichmentProposal(
   company: CompanyDetail,
   textBlocks: string,
   sourceLabel: string,
@@ -606,7 +305,12 @@ async function buildCompanyEnrichmentProposal(
     'You are a company data extractor. Extract structured company information from ' +
     'the provided content. Return ONLY valid JSON — no prose, no markdown fences. ' +
     'For conflicting information, use the most recent value (content is in chronological order, last is most recent). ' +
-    'Set fields to null if not mentioned in the content.'
+    'Set fields to null if not mentioned in the content.\n\n' +
+    'Return null unless the value is explicitly stated for the company being described. Specifically:\n' +
+    '- round: only return the round currently being raised. Do not infer from comparable companies, prior rounds, or future plans. If the content describes a "seed" round, do not return "series_a" because a comp or competitor is at Series A.\n' +
+    '- postMoneyValuation: only return a value if "post-money valuation" is explicitly stated for this company. Do not infer from market size, TAM, comparable company valuations, or pre-money figures.\n' +
+    '- raiseSize: only return if the content explicitly states what this company is raising. Do not infer from comp deals or industry averages.\n\n' +
+    'When in doubt, return null. False positives are worse than missing values.'
 
   const builtinFields = [
     '  "description": one-sentence company description (string or null)',
@@ -963,11 +667,12 @@ export async function getCompanyEnrichmentProposalsFromEmails(
   }
 }
 
-export function getVcSummaryCompanyUpdateProposals(
+export async function getVcSummaryCompanyUpdateProposals(
   meetingId: string,
   summary: string,
-  meetingContext?: MeetingContext
-): CompanySummaryUpdateProposal[] {
+  meetingContext: MeetingContext | undefined,
+  provider: LLMProvider
+): Promise<CompanySummaryUpdateProposal[]> {
   const trimmedSummary = summary.trim()
   if (!meetingId || !trimmedSummary) return []
 
@@ -987,26 +692,29 @@ export function getVcSummaryCompanyUpdateProposals(
     return []
   }
 
-  const parsed = parseVcPitchSummary(trimmedSummary)
   const founderName = extractFounderName(trimmedSummary)
-
-  const hasExtractedData = Boolean(
-    parsed.description
-    || parsed.round
-    || parsed.raiseSize != null
-    || parsed.postMoneyValuation != null
-    || parsed.city
-    || parsed.state
-    || parsed.pipelineStage
-    || founderName
+  const customDefs = listFieldDefinitions('company').filter(
+    d => !d.isBuiltin &&
+         d.fieldType !== 'contact_ref' &&
+         d.fieldType !== 'company_ref'
   )
 
-  if (!hasExtractedData) return []
+  const proposals = await Promise.all(
+    targets.map(async (target) => {
+      const company = companyRepo.getCompany(target.id)
+      if (!company) return null
 
-  return targets
-    .map((company) => {
-      const proposal = buildProposalForCompany(company, parsed)
-      // Attach founder update if meeting context is available
+      let llmProposal: CompanySummaryUpdateProposal | null = null
+      try {
+        const result = await buildCompanyEnrichmentProposal(
+          company, trimmedSummary, 'Meeting summary', customDefs, provider, meetingId
+        )
+        if (result.ok) llmProposal = result.proposal
+        else console.log('[Company AutoFill] LLM extraction skipped:', { meetingId, companyId: company.id, reason: result.reason })
+      } catch (err) {
+        console.error('[Company AutoFill] LLM extraction threw:', err)
+      }
+
       let founderUpdate: ContactTypeUpdateProposal | null = null
       if (meetingContext) {
         try {
@@ -1016,14 +724,22 @@ export function getVcSummaryCompanyUpdateProposals(
         }
       }
 
-      if (!proposal && !founderUpdate) return null
-      return {
+      const hasLlmChanges = !!llmProposal && (
+        llmProposal.changes.length > 0 ||
+        (llmProposal.customFieldUpdates?.length ?? 0) > 0
+      )
+      if (!hasLlmChanges && !founderUpdate) return null
+      const proposal: CompanySummaryUpdateProposal = {
         companyId: company.id,
         companyName: company.canonicalName,
-        updates: proposal?.updates || {},
-        changes: proposal?.changes || [],
+        updates: llmProposal?.updates ?? {},
+        changes: llmProposal?.changes ?? [],
         founderUpdate
-      } satisfies CompanySummaryUpdateProposal
+      }
+      if (llmProposal?.customFieldUpdates) proposal.customFieldUpdates = llmProposal.customFieldUpdates
+      return proposal
     })
-    .filter((proposal): proposal is CompanySummaryUpdateProposal => proposal !== null)
+  )
+
+  return proposals.filter((p): p is CompanySummaryUpdateProposal => p !== null)
 }

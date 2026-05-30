@@ -48,7 +48,7 @@ describe('mergeSpeakerTag', () => {
 describe('removeSpeakerTag', () => {
   it('resets speaker name to default and removes contact link', () => {
     const result = removeSpeakerTag({ 0: 'Andy Dunn' }, { 0: 'contact-123' }, 0)
-    expect(result.speakerMap[0]).toBe('Speaker 0')
+    expect(result.speakerMap[0]).toBe('Speaker 1')
     expect(result.contactMap[0]).toBeUndefined()
   })
 
@@ -63,8 +63,8 @@ describe('removeSpeakerTag', () => {
   })
 
   it('is idempotent on an index with no contact link', () => {
-    const result = removeSpeakerTag({ 0: 'Speaker 0' }, {}, 0)
-    expect(result.speakerMap[0]).toBe('Speaker 0')
+    const result = removeSpeakerTag({ 0: 'Speaker 1' }, {}, 0)
+    expect(result.speakerMap[0]).toBe('Speaker 1')
     expect(result.contactMap[0]).toBeUndefined()
   })
 
@@ -76,9 +76,9 @@ describe('removeSpeakerTag', () => {
     expect(contactMap[0]).toBe('c-0')
   })
 
-  it('uses the correct 0-indexed default name', () => {
+  it('uses the correct 1-indexed default name', () => {
     const result = removeSpeakerTag({ 3: 'Someone' }, { 3: 'c-3' }, 3)
-    expect(result.speakerMap[3]).toBe('Speaker 3')
+    expect(result.speakerMap[3]).toBe('Speaker 4')
   })
 })
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { EditorContent } from '@tiptap/react'
 import { useTiptapMarkdown } from '../hooks/useTiptapMarkdown'
 import { parseTimestamp, parseToDate } from '../utils/format'
+import { dedupResolvedAttendees } from '../utils/attendees'
 import { TiptapBubbleMenu } from '../components/common/TiptapBubbleMenu'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
@@ -9,7 +10,7 @@ import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
 import { TABLE_EXTENSIONS } from '../lib/tiptap-extensions'
 import { FindHighlight } from '../lib/find-highlight-extension'
-import { Clock } from 'lucide-react'
+import { Clock, Pencil } from 'lucide-react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useRecordingStore } from '../stores/recording.store'
@@ -1457,12 +1458,9 @@ export default function MeetingDetail() {
   // was a double-click on an inline transcript segment (so the picker
   // renders at that segment); null = the sidebar chip.
   const handleOpenSpeakerPicker = useCallback((index: number, segmentIdx: number | null) => {
-    // Linked-to-contact speakers can't be renamed in place — user must
-    // unlink first via the × button (same constraint as the old flow).
-    if (speakerContactMap[index]) return
     setEditingSpeaker(index)
     setEditingSegmentIdx(segmentIdx)
-  }, [speakerContactMap])
+  }, [])
 
   const handleClosePicker = useCallback(() => {
     setEditingSpeaker(null)
@@ -1496,12 +1494,13 @@ export default function MeetingDetail() {
     setSpeakerContactMap({ ...speakerContactMap, [index]: contact.id })
     try {
       await api.invoke(IPC_CHANNELS.MEETING_TAG_SPEAKER_CONTACT, id, index, contact.id, contact.fullName)
+      await loadMeeting()
     } catch (err) {
       console.error('[MeetingDetail] Failed to tag speaker contact:', err)
       setLocalSpeakerMap(prevMap)
       setSpeakerContactMap(prevLinks)
     }
-  }, [localSpeakerMap, speakerContactMap, id])
+  }, [localSpeakerMap, speakerContactMap, id, loadMeeting])
 
   // Single entry point from the picker. Delegates to the pure
   // `dispatchSpeakerCandidate` helper so the kind → IPC branching can be
@@ -1563,23 +1562,7 @@ export default function MeetingDetail() {
     )
   }, [speakerPicker, handleSpeakerPickerSelect, handleClosePicker])
 
-  const handleUnlinkSpeaker = useCallback(async (index: number) => {
-    const prevMap = localSpeakerMap
-    const prevLinks = speakerContactMap
-    const updatedLinks = { ...speakerContactMap }
-    delete updatedLinks[index]
-    setLocalSpeakerMap({ ...localSpeakerMap, [index]: `Speaker ${index}` })
-    setSpeakerContactMap(updatedLinks)
-    try {
-      await api.invoke(IPC_CHANNELS.MEETING_TAG_SPEAKER_CONTACT, id, index, null, null)
-    } catch (err) {
-      console.error('[MeetingDetail] Failed to unlink speaker contact:', err)
-      setLocalSpeakerMap(prevMap)
-      setSpeakerContactMap(prevLinks)
-    }
-  }, [localSpeakerMap, speakerContactMap, id])
-
-  const handleLinkExistingCompany = useCallback(async (company: CompanySummary) => {
+const handleLinkExistingCompany = useCallback(async (company: CompanySummary) => {
     setShowCompanyPicker(false)
     try {
       await api.invoke(IPC_CHANNELS.MEETING_LINK_EXISTING_COMPANY, id, company.id)
@@ -1952,51 +1935,61 @@ export default function MeetingDetail() {
             })()}
             <div className={styles.speakers}>
               <div className={styles.attendeeAvatars}>
-                {(meeting.attendees ?? []).slice(0, 4).map((attendee, i) => {
-                  const email = meeting.attendeeEmails?.[i]?.trim().toLowerCase() || ''
-                  const resolved = attendeeContactMap[email] || attendeeContactMap[attendee.trim().toLowerCase()]
-                  const contactId = resolved?.id
-                  const displayName = resolved?.fullName ?? attendee
-                  const initials = getInitials(displayName)
-                  return (
-                    <button
-                      key={`${attendee}-${i}`}
-                      className={styles.attendeeAvatar}
-                      title={displayName}
-                      onClick={async () => {
-                        if (contactId) {
-                          navigate(`/contact/${contactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
-                          return
-                        }
-                        if (!email) return
-                        try {
-                          const created = await api.invoke<{ id: string }>(
-                            IPC_CHANNELS.CONTACT_CREATE,
-                            { fullName: attendee, email }
-                          )
-                          setAttendeeContactMap((prev) => ({ ...prev, [email]: { id: created.id, fullName: attendee } }))
-                          navigate(`/contact/${created.id}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
-                        } catch (err) {
-                          console.error('[MeetingDetail] Failed to create contact:', err)
-                        }
-                      }}
-                    >
-                      {initials}
-                      <span
-                        className={styles.attendeeRemoveBtn}
-                        onClick={(e) => { e.stopPropagation(); removeAttendee(i) }}
-                        title="Remove"
-                      >
-                        ×
-                      </span>
-                    </button>
+                {(() => {
+                  const deduped = dedupResolvedAttendees(
+                    meeting.attendees ?? [],
+                    meeting.attendeeEmails,
+                    attendeeContactMap,
                   )
-                })}
-                {(meeting.attendees?.length ?? 0) > 4 && (
-                  <span className={styles.attendeeAvatarOverflow}>
-                    +{(meeting.attendees?.length ?? 0) - 4}
-                  </span>
-                )}
+                  const visible = deduped.slice(0, 4)
+                  const overflow = deduped.length - visible.length
+                  return (
+                    <>
+                      {visible.map((r) => {
+                        const displayName = r.fullName ?? r.name
+                        const initials = getInitials(displayName)
+                        return (
+                          <button
+                            key={`${r.name}-${r.index}`}
+                            className={styles.attendeeAvatar}
+                            title={displayName}
+                            onClick={async () => {
+                              if (r.contactId) {
+                                navigate(`/contact/${r.contactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
+                                return
+                              }
+                              if (!r.email) return
+                              try {
+                                const created = await api.invoke<{ id: string }>(
+                                  IPC_CHANNELS.CONTACT_CREATE,
+                                  { fullName: r.name, email: r.email }
+                                )
+                                setAttendeeContactMap((prev) => ({ ...prev, [r.email]: { id: created.id, fullName: r.name } }))
+                                navigate(`/contact/${created.id}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })
+                              } catch (err) {
+                                console.error('[MeetingDetail] Failed to create contact:', err)
+                              }
+                            }}
+                          >
+                            {initials}
+                            <span
+                              className={styles.attendeeRemoveBtn}
+                              onClick={(e) => { e.stopPropagation(); removeAttendee(r.index) }}
+                              title="Remove"
+                            >
+                              ×
+                            </span>
+                          </button>
+                        )
+                      })}
+                      {overflow > 0 && (
+                        <span className={styles.attendeeAvatarOverflow}>
+                          +{overflow}
+                        </span>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
               {!showContactPicker ? (
                 <button
@@ -2412,14 +2405,15 @@ export default function MeetingDetail() {
                             onClick={() => navigate(`/contact/${linkedContactId}`, { state: { backLabel: data?.meeting.title ?? 'Meeting' } })}
                             title="View contact"
                           >
-                            {name} →
+                            {name}
                           </button>
                           <button
                             className={styles.speakerUnlinkBtn}
-                            onClick={() => handleUnlinkSpeaker(index)}
-                            title="Unlink contact"
+                            onClick={() => handleOpenSpeakerPicker(index, null)}
+                            title="Edit speaker"
+                            aria-label="Edit speaker"
                           >
-                            ×
+                            <Pencil size={10} />
                           </button>
                         </>
                       ) : (
@@ -2451,7 +2445,7 @@ export default function MeetingDetail() {
                   meSpeakerIndex: currentMe,
                   calendarSelfName: data?.meeting.selfName ?? null,
                 })
-                // Pick the most-frequent OTHER speaker as the flip target.
+                // Pick the most-frequent OTHER speaker for the flip target.
                 const totals = new Map<number, number>()
                 for (const s of segs!) {
                   if (s.speaker === currentResolved) continue
@@ -2493,7 +2487,7 @@ export default function MeetingDetail() {
                           className={styles.transcriptViewToggle}
                           onClick={handleSwapMeThem}
                           disabled={isSwappingMeSpeaker}
-                          title='Flip which side is "me" — useful if the resolver guessed wrong'
+                          title="Flip which side is &quot;me&quot; — useful if the resolver guessed wrong"
                         >
                           {isSwappingMeSpeaker ? 'Swapping…' : 'Swap Me/Them'}
                         </button>

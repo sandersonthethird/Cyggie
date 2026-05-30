@@ -1,49 +1,60 @@
 /**
- * Regression tests for extractDescription() in company-summary-sync.service.ts.
+ * Tests for getVcSummaryCompanyUpdateProposals() in company-summary-sync.service.ts.
  *
- * extractDescription() is a pure text-parsing function but lives in a module
- * that imports repos and file-manager. All module dependencies are mocked so the
- * function can be tested without a database.
- *
- * Guards the subLabel ?? [existing logic] fallback path introduced when
- * extractDescriptionSubLabel() was added.
+ * The function previously used regex extraction that hallucinated round/post-money
+ * values. It now delegates to buildCompanyEnrichmentProposal() which calls an LLM.
+ * These tests verify the plumbing with a stub LLMProvider; real-LLM behaviour
+ * (prompt quality, hallucination suppression) is covered by the on-demand
+ * eval at src/tests/evals/company-extraction.eval.ts.
  */
 
 import { describe, it, expect, vi } from 'vitest'
 
-// ─── Mock: database connection ────────────────────────────────────────────────
+// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn()
 }))
 
-// ─── Mock: repos ──────────────────────────────────────────────────────────────
+const listMeetingCompaniesMock = vi.fn()
+const getCompanyMock = vi.fn()
+const listCompanyMeetingsMock = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({}))
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
+  listMeetingCompanies: (...args: unknown[]) => listMeetingCompaniesMock(...args),
+  getCompany: (...args: unknown[]) => getCompanyMock(...args),
+  listCompanyMeetings: (...args: unknown[]) => listCompanyMeetingsMock(...args)
+}))
+
 vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({}))
 vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: vi.fn(),
-  resolveContactsByEmails: vi.fn()
+  resolveContactsByEmails: vi.fn(() => ({}))
 }))
 vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () => ({
-  listFieldDefinitions: vi.fn(),
-  getFieldValuesForEntity: vi.fn()
+  listFieldDefinitions: () => [],
+  getFieldValuesForEntity: () => []
 }))
-
-// ─── Mock: file-manager ───────────────────────────────────────────────────────
+vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
+  makeEntityNotesRepo: () => ({ list: () => [] })
+}))
 
 vi.mock('../main/storage/file-manager', () => ({
   readSummary: vi.fn()
 }))
+vi.mock('../main/drive/google-drive', () => ({
+  downloadSummaryFromDrive: vi.fn()
+}))
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// ─── Import after mocks ───────────────────────────────────────────────────────
 
-import { extractDescription, buildProposalForCompany } from '@cyggie/services/company-summary-sync.service'
-import type { CompanySummary } from '../shared/types/company'
-import type { ParsedVcSummaryFields } from '@cyggie/services/company-summary-sync.service'
+import { getVcSummaryCompanyUpdateProposals } from '@cyggie/services/company-summary-sync.service'
+import type { LLMProvider } from '@cyggie/services/llm/provider'
+import type { CompanyDetail, CompanySummary } from '../shared/types/company'
 
-// Minimal company stub — only fields checked inside buildProposalForCompany
-function makeCompany(overrides: Partial<CompanySummary> = {}): CompanySummary {
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function makeCompanySummary(overrides: Partial<CompanySummary> = {}): CompanySummary {
   return {
     id: 'co-1',
     canonicalName: 'Acme',
@@ -57,7 +68,7 @@ function makeCompany(overrides: Partial<CompanySummary> = {}): CompanySummary {
     status: 'active',
     crmProvider: null,
     crmCompanyId: null,
-    entityType: 'startup',
+    entityType: 'prospect',
     includeInCompaniesView: true,
     classificationSource: 'manual',
     classificationConfidence: null,
@@ -83,75 +94,144 @@ function makeCompany(overrides: Partial<CompanySummary> = {}): CompanySummary {
     industry: null,
     targetCustomer: null,
     businessModel: null,
-    ...overrides,
+    ...overrides
   } as CompanySummary
 }
 
-// Minimal parsed fields stub
-function makeParsed(overrides: Partial<ParsedVcSummaryFields> = {}): ParsedVcSummaryFields {
+function makeCompanyDetail(overrides: Partial<CompanyDetail> = {}): CompanyDetail {
   return {
-    description: null,
-    round: null,
-    raiseSize: null,
-    postMoneyValuation: null,
-    city: null,
-    state: null,
-    pipelineStage: null,
-    ...overrides,
-  }
+    ...makeCompanySummary(),
+    notes: null,
+    fieldSources: null,
+    ...overrides
+  } as CompanyDetail
 }
 
-describe('buildProposalForCompany — financial sanity check', () => {
-  it('rejects a $2000M raise for a pre_seed company', () => {
-    const company = makeCompany({ round: 'pre_seed' })
-    const parsed = makeParsed({ raiseSize: 2000, postMoneyValuation: 2000 })
-    const proposal = buildProposalForCompany(company, parsed)
-    // Both values exceed pre_seed limits — no financial changes should be proposed
-    const fields = proposal?.changes.map((c) => c.field) ?? []
-    expect(fields).not.toContain('raiseSize')
+function makeProvider(response: string | (() => Promise<string>)): LLMProvider {
+  const generateSummary = vi.fn().mockImplementation(
+    typeof response === 'string' ? async () => response : response
+  )
+  return { generateSummary } as unknown as LLMProvider
+}
+
+const SAMPLE_SUMMARY =
+  '## Executive Summary\n\nAcme builds AI tools, raising a $5M seed. ' +
+  'Comparable company FooCo recently closed a Series A at $30M post-money valuation.\n'
+
+// Make isFirstMeetingForCompany() return true: company has exactly one meeting
+// matching the meetingId we pass to getVcSummaryCompanyUpdateProposals.
+function setUpSingleProspect(meetingId: string, company: CompanySummary): CompanyDetail {
+  listMeetingCompaniesMock.mockReturnValue([company])
+  listCompanyMeetingsMock.mockReturnValue([{ id: meetingId }])
+  const detail = makeCompanyDetail({ ...company } as Partial<CompanyDetail>)
+  getCompanyMock.mockReturnValue(detail)
+  return detail
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe('getVcSummaryCompanyUpdateProposals — LLM-driven extraction', () => {
+  it('only proposes grounded fields when LLM returns null for non-grounded ones', async () => {
+    const meetingId = 'm-1'
+    setUpSingleProspect(meetingId, makeCompanySummary())
+
+    // LLM returns null for everything the summary doesn't explicitly state for
+    // Acme, even though "Series A" and "$30M post-money" appear in comp context.
+    const provider = makeProvider(JSON.stringify({
+      description: 'Acme builds AI tools.',
+      round: null,
+      raiseSize: 5,
+      postMoneyValuation: null,
+      city: null,
+      state: null,
+      pipelineStage: null,
+      industry: null
+    }))
+
+    const proposals = await getVcSummaryCompanyUpdateProposals(
+      meetingId, SAMPLE_SUMMARY, undefined, provider
+    )
+
+    expect(proposals).toHaveLength(1)
+    const fields = proposals[0]!.changes.map((c) => c.field)
+    expect(fields).toContain('description')
+    expect(fields).toContain('raiseSize')
+    expect(fields).not.toContain('round')
     expect(fields).not.toContain('postMoneyValuation')
   })
 
-  it('accepts a $2M raise for a pre_seed company', () => {
-    const company = makeCompany({ round: 'pre_seed' })
-    const parsed = makeParsed({ raiseSize: 2, postMoneyValuation: 10 })
-    const proposal = buildProposalForCompany(company, parsed)
-    const fields = proposal?.changes.map((c) => c.field) ?? []
-    expect(fields).toContain('raiseSize')
-    expect(fields).toContain('postMoneyValuation')
+  it('does not propose changes when LLM returns all null', async () => {
+    const meetingId = 'm-2'
+    setUpSingleProspect(meetingId, makeCompanySummary())
+
+    const provider = makeProvider(JSON.stringify({
+      description: null,
+      round: null,
+      raiseSize: null,
+      postMoneyValuation: null,
+      city: null,
+      state: null,
+      pipelineStage: null,
+      industry: null
+    }))
+
+    const proposals = await getVcSummaryCompanyUpdateProposals(
+      meetingId, SAMPLE_SUMMARY, undefined, provider
+    )
+
+    expect(proposals).toEqual([])
   })
 
-  it('passes through any raise when round is null', () => {
-    const company = makeCompany({ round: null })
-    const parsed = makeParsed({ raiseSize: 2000, postMoneyValuation: 2000 })
-    const proposal = buildProposalForCompany(company, parsed)
-    const fields = proposal?.changes.map((c) => c.field) ?? []
-    expect(fields).toContain('raiseSize')
-    expect(fields).toContain('postMoneyValuation')
+  it('returns empty array when LLM call throws', async () => {
+    const meetingId = 'm-3'
+    setUpSingleProspect(meetingId, makeCompanySummary())
+
+    const provider = makeProvider(async () => { throw new Error('boom') })
+    const proposals = await getVcSummaryCompanyUpdateProposals(
+      meetingId, SAMPLE_SUMMARY, undefined, provider
+    )
+    expect(proposals).toEqual([])
   })
 
-  it('uses the company stored round when no new round is extracted', () => {
-    // Company has pre_seed stored, meeting didn't extract a new round
-    const company = makeCompany({ round: 'pre_seed' })
-    const parsed = makeParsed({ round: null, raiseSize: 2000 })
-    const proposal = buildProposalForCompany(company, parsed)
-    const fields = proposal?.changes.map((c) => c.field) ?? []
-    // Should be blocked by the stored pre_seed limit
-    expect(fields).not.toContain('raiseSize')
+  it('returns empty array when LLM returns invalid JSON', async () => {
+    const meetingId = 'm-4'
+    setUpSingleProspect(meetingId, makeCompanySummary())
+
+    const provider = makeProvider('not valid json at all')
+    const proposals = await getVcSummaryCompanyUpdateProposals(
+      meetingId, SAMPLE_SUMMARY, undefined, provider
+    )
+    expect(proposals).toEqual([])
   })
-})
 
-describe('extractDescription — fallback behavior', () => {
-  it('returns the first sentence of Executive Summary when no Description sub-label exists', () => {
-    const note = `
-## Executive Summary
+  it('returns empty array when no prospect company is linked to the meeting', async () => {
+    listMeetingCompaniesMock.mockReturnValue([])
+    const provider = makeProvider('{}')
+    const proposals = await getVcSummaryCompanyUpdateProposals(
+      'm-5', SAMPLE_SUMMARY, undefined, provider
+    )
+    expect(proposals).toEqual([])
+    expect(provider.generateSummary).not.toHaveBeenCalled()
+  })
 
-Acme builds AI-powered tools for enterprise sales teams. Founded by Jane Smith, raising $3M. We recommend passing.
+  it('skips non-prospect entities (e.g. existing portfolio companies)', async () => {
+    const meetingId = 'm-6'
+    listMeetingCompaniesMock.mockReturnValue([
+      makeCompanySummary({ entityType: 'startup' })
+    ])
+    const provider = makeProvider('{}')
+    const proposals = await getVcSummaryCompanyUpdateProposals(
+      meetingId, SAMPLE_SUMMARY, undefined, provider
+    )
+    expect(proposals).toEqual([])
+  })
 
-## Investment Thesis
-
-- Strong team
-`
-    expect(extractDescription(note)).toBe('Acme builds AI-powered tools for enterprise sales teams.')
+  it('skips when summary is empty', async () => {
+    const provider = makeProvider('{}')
+    const proposals = await getVcSummaryCompanyUpdateProposals(
+      'm-7', '   ', undefined, provider
+    )
+    expect(proposals).toEqual([])
+    expect(provider.generateSummary).not.toHaveBeenCalled()
   })
 })

@@ -3,6 +3,7 @@ import { Users } from 'lucide-react'
 import type { Meeting } from '../../../shared/types/meeting'
 import { StagePill } from '../crm/StagePill'
 import { formatMeetingDuration, formatMeetingTime } from '../../utils/format'
+import { dedupAttendeesByName } from '../../utils/attendees'
 import { isLive as checkIsLive } from '../../hooks/useMeetings'
 import styles from './MeetingRow.module.css'
 
@@ -82,9 +83,10 @@ export function MeetingRow({ meeting, selected, onClick }: MeetingRowProps) {
   const live = checkIsLive(meeting, now)
   const isPast = new Date(meeting.date).getTime() + (meeting.durationSeconds ?? 0) * 1000 < now.getTime()
 
-  const attendees = meeting.attendees?.length
+  const rawAttendees = meeting.attendees?.length
     ? meeting.attendees
     : Object.values(meeting.speakerMap)
+  const attendees = dedupAttendeesByName(rawAttendees, meeting.attendeeEmails ?? undefined).map((r) => r.name)
   const participantCount = attendees.length
   const visibleAvatars = attendees.slice(0, 3)
   const overflowCount = Math.max(0, attendees.length - 3)

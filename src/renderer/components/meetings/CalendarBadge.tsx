@@ -1,5 +1,6 @@
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import { getSingleCompanyDomain } from '../../../shared/utils/company-domain'
+import { dedupAttendeesByName } from '../../utils/attendees'
 import styles from './CalendarBadge.module.css'
 
 interface CalendarBadgeProps {
@@ -29,7 +30,9 @@ export default function CalendarBadge({ event, onRecord, onPrepare, onDismiss }:
     new Date(event.startTime).getTime() <= Date.now() &&
     new Date(event.endTime).getTime() >= Date.now()
 
-  const attendeeNames = event.attendees.join(', ')
+  const attendeeNames = dedupAttendeesByName(event.attendees, event.attendeeEmails)
+    .map((r) => r.name)
+    .join(', ')
   const companyDomain = getSingleCompanyDomain(event.attendeeEmails)
 
   return (

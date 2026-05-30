@@ -84,7 +84,7 @@ vi.mock('@cyggie/db/sqlite/repositories/search.repo', () => ({
 // ─── Mock: company-summary-sync ───────────────────────────────────────────────
 
 vi.mock('@cyggie/services/company-summary-sync.service', () => ({
-  getVcSummaryCompanyUpdateProposals: () => [],
+  getVcSummaryCompanyUpdateProposals: async () => [],
 }))
 
 // ─── Mock: org-company.repo ───────────────────────────────────────────────────

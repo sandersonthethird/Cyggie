@@ -2,6 +2,7 @@ import { Fragment, useRef, useState } from 'react'
 import type { Meeting } from '../../../shared/types/meeting'
 import { getSingleCompanyDomain } from '../../../shared/utils/company-domain'
 import { formatMeetingDuration, formatMeetingTime } from '../../utils/format'
+import { dedupAttendeesByName } from '../../utils/attendees'
 import { useOutsideClick } from '../../hooks/useOutsideClick'
 import { FTS_MARK_START, FTS_MARK_END } from '../../../shared/constants/search-markers'
 import styles from './MeetingCard.module.css'
@@ -46,9 +47,10 @@ export default function MeetingCard({ meeting, snippet, onClick, onDelete, onCop
 
   useOutsideClick(menuRef, () => setMenuOpen(false), menuOpen)
 
-  const attendees = meeting.attendees && meeting.attendees.length > 0
+  const rawAttendees = meeting.attendees && meeting.attendees.length > 0
     ? meeting.attendees
     : Object.values(meeting.speakerMap)
+  const attendees = dedupAttendeesByName(rawAttendees, meeting.attendeeEmails ?? undefined).map((r) => r.name)
   const speakerNames = attendees.join(', ')
   const companyDomain = getSingleCompanyDomain(meeting.attendeeEmails)
   const gmailEmail = !companyDomain
