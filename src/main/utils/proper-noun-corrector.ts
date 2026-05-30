@@ -18,7 +18,7 @@
 
 import { jaroWinkler } from './jaroWinkler'
 
-const SINGLE_WORD_THRESHOLD = 0.92
+const SINGLE_WORD_THRESHOLD = 0.97
 const MULTI_WORD_THRESHOLD = 0.90
 const MIN_TOKEN_LENGTH = 4 // don't try to correct very short words
 

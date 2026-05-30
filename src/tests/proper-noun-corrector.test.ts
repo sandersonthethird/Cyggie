@@ -12,8 +12,8 @@ describe('correctProperNouns', () => {
   })
 
   it('corrects a single-word misspelling above threshold', () => {
-    // "Tobius" is a close misspelling of "Tobias"
-    const text = 'Tobius confirmed the term sheet.'
+    // "Tobiass" → "Tobias" at JW ≈ 0.971, just above the 0.97 threshold.
+    const text = 'Tobiass confirmed the term sheet.'
     const result = correctProperNouns(text, ['Tobias'])
     expect(result).toBe('Tobias confirmed the term sheet.')
   })
@@ -53,10 +53,13 @@ describe('correctProperNouns', () => {
   })
 
   it('handles multiple corrections in the same text', () => {
-    const text = 'Tobius and Martyn discussed the Incisive deal.'
-    const result = correctProperNouns(text, ['Tobias', 'Martin', 'Incisive Ventures'])
+    // Use misspellings whose JW ≥ 0.97 (threshold raised 2026-05-30).
+    // - "Tobiass" → "Tobias" (JW ≈ 0.971)
+    // - "Anthropi" → "Anthropic" (JW ≈ 0.978)
+    const text = 'Tobiass spoke with Anthropi about the deal.'
+    const result = correctProperNouns(text, ['Tobias', 'Anthropic'])
     expect(result).toContain('Tobias')
-    expect(result).toContain('Martin')
+    expect(result).toContain('Anthropic')
   })
 
   it('does not corrupt text on error — returns original', () => {
@@ -80,24 +83,26 @@ describe('correctProperNouns', () => {
   })
 
   it('still corrects non-email words that fuzzy-match a CRM name', () => {
-    // "Tobius" in normal text should still be corrected to "Tobias"
-    // (regression: email guard must not block non-email tokens)
-    const text = 'Tobius discussed the deal with the team.'
+    // "Tobiass" → "Tobias" at JW ≈ 0.971 (above 0.97 threshold).
+    // Regression: email guard must not block non-email tokens.
+    const text = 'Tobiass discussed the deal with the team.'
     const result = correctProperNouns(text, ['Tobias'])
     expect(result).toBe('Tobias discussed the deal with the team.')
   })
 
   // ── Sandy/Andy regression suite (2026-05-28) ─────────────────────────────
-  // Reported bug: user "Sandy Cass" had every transcript rewrite "Sandy" to
-  // "Andy" because a colleague named "Andy" is in the CRM and JW("sandy",
-  // "andy") ≈ 0.933 > 0.92 threshold. Fix: canonical-token guard — a token
-  // that is itself a known canonical name (lowercased, ≥ MIN_TOKEN_LENGTH)
-  // is never fuzzy-replaced into a different canonical.
+  // Originally reported: user "Sandy Cass" had every transcript rewrite
+  // "Sandy" to "Andy" because a colleague named "Andy" is in the CRM and
+  // JW("sandy","andy") ≈ 0.933 > 0.92 (the old threshold). Fix: canonical-
+  // token guard — a token that is itself a known canonical name (lowercased,
+  // ≥ MIN_TOKEN_LENGTH) is never fuzzy-replaced into a different canonical.
+  //
+  // After the 2026-05-30 threshold raise (0.92 → 0.97), JW("sandy","andy")
+  // ≈ 0.933 no longer triggers regardless of the guard, so the bug is
+  // defended in depth: threshold + canonical guard. These tests still pass
+  // and protect against future threshold relaxations.
 
   it('does not rewrite a name that is itself a canonical token (Sandy/Andy)', () => {
-    // "Sandy" appears in canonical names via "Sandy Cass" → token set
-    // includes "sandy". The "Andy" canonical fuzzy-matches "Sandy" at
-    // 0.933 but the guard short-circuits before the JW check.
     const text = 'Sandy joined the call.'
     const result = correctProperNouns(text, ['Andy', 'Sandy Cass'])
     expect(result).toContain('Sandy')
@@ -111,20 +116,57 @@ describe('correctProperNouns', () => {
     expect(result).not.toContain('Sandy')
   })
 
-  it('guard does not over-block — Mikee still corrects to Mike', () => {
-    // "mikee" is NOT in the canonical-token set ("mike" is), so fuzzy
-    // fallback runs and corrects to the canonical form.
-    const text = 'Mikee called.'
-    const result = correctProperNouns(text, ['Mike'])
-    expect(result).toBe('Mike called.')
+  it('guard does not over-block — Anthropi still corrects to Anthropic', () => {
+    // "anthropi" is NOT in the canonical-token set (only the 9-char
+    // "anthropic" is), so fuzzy fallback runs. JW("anthropi","anthropic")
+    // ≈ 0.978, above the 0.97 threshold.
+    const text = 'Anthropi released a new model.'
+    const result = correctProperNouns(text, ['Anthropic'])
+    expect(result).toBe('Anthropic released a new model.')
   })
 
   it('reverse direction — Andy never gets fuzzy-promoted to Sandy', () => {
-    // Both "Sandy" and "Andy" are canonical; "andy" is in the token set;
-    // the "Sandy" canonical's fuzzy pass cannot claim "Andy".
     const text = 'Andy joined.'
     const result = correctProperNouns(text, ['Sandy', 'Andy'])
     expect(result).toContain('Andy')
     expect(result).not.toContain('Sandy')
+  })
+
+  // ── 2026-05-30 threshold raise (0.92 → 0.97) ────────────────────────────
+  // Reported: CRM company/contact names like "Smore" and "Buncha" caused the
+  // corrector to rewrite common English words ("more" → "Smore",
+  // "bunch" → "Buncha"). Raising the single-word threshold to 0.97 prevents
+  // both. The trade-off: we lose some legitimate fuzzy corrections (e.g.
+  // "Anthrop" → "Anthropic" at JW ≈ 0.956 no longer fires). Acceptable.
+
+  it('does not rewrite "more" to "Smore" (Smore in CRM)', () => {
+    // JW("more","smore") ≈ 0.933 — below new 0.97 threshold.
+    const text = 'There were more deals than expected.'
+    const result = correctProperNouns(text, ['Smore'])
+    expect(result).toBe(text)
+  })
+
+  it('does not rewrite "bunch" to "Buncha" (Buncha in CRM)', () => {
+    // JW("bunch","buncha") ≈ 0.967 — below new 0.97 threshold.
+    const text = 'We saw a bunch of inbound leads.'
+    const result = correctProperNouns(text, ['Buncha'])
+    expect(result).toBe(text)
+  })
+
+  it('boundary: "Anthrop" no longer corrects to "Anthropic" at the new threshold', () => {
+    // JW("anthrop","anthropic") ≈ 0.956 — below new 0.97 threshold.
+    // Documents the trade-off: some legitimate close-misspellings stop
+    // correcting. If real users hit this regularly, escalate to TODOS
+    // "Per-word confidence-gated CRM rewriting".
+    const text = 'Anthrop is an AI lab.'
+    const result = correctProperNouns(text, ['Anthropic'])
+    expect(result).toBe(text)
+  })
+
+  it('still corrects very-close misspellings: "Anthropics" → "Anthropic"', () => {
+    // JW("anthropics","anthropic") ≈ 0.980 — well above 0.97.
+    const text = 'Anthropics is our favorite lab.'
+    const result = correctProperNouns(text, ['Anthropic'])
+    expect(result).toBe('Anthropic is our favorite lab.')
   })
 })
