@@ -23,17 +23,19 @@ export interface SpeakerMapContext {
 /**
  * Map Deepgram speaker indices → display names.
  *
- *   Multichannel mode (stereo recording): channel 0 = mic → speaker 0 is
- *   reliably the recorder (selfName). Channel 1 carries system audio with
- *   everyone else; positional mapping of attendees to indices 1+ holds
- *   only when there's exactly one other speaker, but at minimum self is
- *   always correct.
+ *   Multichannel mode (stereo recording): the assembler now collapses
+ *   per-channel diarization to a single speaker per channel, so speaker
+ *   0 = mic = self and speaker 1 = system loopback = remote. Anyone
+ *   beyond index 1 is an over-diarization artifact rather than a real
+ *   participant. Names are sourced positionally from the calendar list.
  *
  *   Diarization (single-channel) mode: no audio-derived signal of who's
  *   who. Positional guessing here produced confidently-wrong labels
  *   (e.g. "Sandy" attributed to colleague "Andy" because Andy happened to
  *   come first in the attendee list). Fall back to neutral "Speaker N"
- *   labels and let the user relabel post-hoc.
+ *   labels; the me/them bubble view's findMeSpeakerByName + most-talkative
+ *   resolver picks the user-side speaker at render time, and the user can
+ *   click Swap Me/Them if it picks wrong.
  */
 export function buildSpeakerMap(
   speakerIds: Iterable<number>,

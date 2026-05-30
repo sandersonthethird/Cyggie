@@ -710,11 +710,11 @@ export class RecordingSession {
     if (this.transcriptAssembler && !hasSystemAudio) {
       this.transcriptAssembler.setSystemAudioUnavailable()
     }
-    // Previously this handler reconnected Deepgram with channels=1 when
-    // system audio dropped, to switch from multichannel-diarization to
-    // single-channel diarization. We now always send mono to Deepgram from
-    // session start (see the comment at the DeepgramStreamingClient
-    // construction above), so no reconnect is needed.
+    // No reconnect on a mid-session loss of system audio: stereo Deepgram
+    // sessions tolerate channel 1 going silent (the dedup pass simply has
+    // no candidates), and mono sessions never used channel 1 to begin with.
+    // The earlier dual-reconnect dance was specific to a no-longer-existing
+    // detect-then-switch state machine.
   }
 
   pause(): void {
