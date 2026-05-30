@@ -39,6 +39,15 @@ export const IPC_CHANNELS = {
   // the Deepgram pipeline in recording.ipc.ts. Silent no-op via the preload
   // allowlist breaks transcription entirely.
   RECORDING_AUDIO_DATA: 'recording:audio-data',
+  // Worklet → renderer → main: the per-recording NLMS adaptive echo
+  // canceller hit its divergence threshold and switched to passthrough.
+  // RecordingSession surfaces a persistent banner; recording continues
+  // at mono-equivalent quality for the rest of the session.
+  RECORDING_AEC_DEGRADED: 'recording:aec-degraded',
+  // Worklet → renderer → main: short-time per-channel loudness samples
+  // (~10 Hz). Stored on the RecordingSession and consumed by the
+  // me/them resolver at finalize.
+  RECORDING_LOUDNESS_SAMPLE: 'recording:loudness-sample',
 
   // Audio loopback — handlers registered by electron-audio-loopback's
   // initAudioLoopback() in main/index.ts; channel names are fixed by the

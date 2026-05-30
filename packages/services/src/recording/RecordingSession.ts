@@ -1,4 +1,27 @@
 // =============================================================================
+// Transcription mode history (2026-05-30, Part 2e of the cheeky-treasure
+// plan). The audio path has oscillated between stereo and mono twice; the
+// rationale lives here so future maintainers don't repeat it:
+//
+//   cb72914 (initial)  — Always sent stereo with multichannel diarization.
+//                        Broke on Zoom: remote speaker bled into the mic AND
+//                        arrived on system loopback, so Deepgram transcribed
+//                        both copies → doubled transcripts.
+//   2026-05-27 revert  — Always downmix to mono before Deepgram. Fixed the
+//                        doubling but lost structural "me vs them"
+//                        attribution; speaker diarization had to guess
+//                        which side was the user.
+//   this commit        — Stereo is back, default-OFF behind a user setting
+//                        (separateMicAndSystemTranscription) and gated to
+//                        Deepgram-on-macOS by resolveStreamConfig. The two
+//                        safety mechanisms missing from the first attempt
+//                        are added:
+//                          • NLMS adaptive echo canceller in the worklet
+//                            (src/renderer/audio/nlms.ts)
+//                          • Cross-channel dedup pass on finalized
+//                            utterances in transcript-assembler.ts
+//                        Mono path is unchanged for every existing user.
+// =============================================================================
 // RecordingSession — extracted recording state machine.
 //
 // Owns the audio→transcript→finalize pipeline that previously lived as 16
@@ -85,6 +108,11 @@ import type { NormalizedTranscriptResult } from '@main/transcription/types'
 import type { LiveTranscriptionProvider } from '@shared/types/settings'
 import type { TranscriptSegment } from '@shared/types/recording'
 import type { MeetingPlatform } from '@shared/constants/meeting-apps'
+import { resolveStreamConfig } from '@shared/transcription/streamConfig'
+import {
+  resolveMeSpeakerIndex,
+  type LoudnessSample,
+} from '@shared/transcript/me-them-resolver'
 
 const DEBUG_TRANSCRIPTION =
   process.env['NODE_ENV'] === 'development' && process.env['GORP_DEBUG_TRANSCRIPTION'] === '1'
@@ -274,6 +302,24 @@ export class RecordingSession {
   private calendarEndTime: string | null = null
   /** Marks the instance as terminal — no further start()/stop() allowed. */
   private terminated = false
+  /**
+   * Channel count locked at start via `resolveStreamConfig`. 1 for every
+   * AssemblyAI session and mono Deepgram sessions; 2 only when the user
+   * enabled separateMicAndSystemTranscription on macOS+Deepgram.
+   */
+  private streamChannels: 1 | 2 = 1
+  /**
+   * Per-recording loudness time series collected from the worklet's tap
+   * (~10 Hz cadence). Passed to the me/them resolver at finalize so it
+   * can score each speaker by mic-vs-system dominance.
+   */
+  private loudnessTimeSeries: LoudnessSample[] = []
+  /**
+   * True after the worklet emitted at least one aec-degraded message
+   * this session. Persistent — the NLMS filter does not recover within
+   * a recording. UI banner stays up for the rest of the call.
+   */
+  private aecDegraded = false
 
   constructor(private readonly callbacks: RecordingSessionCallbacks) {}
 
@@ -522,12 +568,25 @@ export class RecordingSession {
     this.streamingMaxSpeakers = maxSpeakers
     this.streamingKeytermsCache = keyterms
 
-    // Always send mono. Multichannel mode (stereo with channel 0 = mic,
-    // channel 1 = system audio) produces a doubled transcript on Zoom/Meet
-    // calls: the remote speaker's voice arrives on channel 1 (system
-    // loopback) AND bleeds into channel 0 via the mic. Downmixing to mono
-    // before sending eliminates the duplication; voice-based diarization
-    // handles speaker separation across both providers.
+    // Decide whether to stream as mono or stereo for this session.
+    // Default-OFF unless the user explicitly enabled
+    // separateMicAndSystemTranscription AND the runtime guards (provider,
+    // platform) pass. See the transcription-mode history at top of file.
+    const streamConfig = resolveStreamConfig({
+      separateMicAndSystemTranscription:
+        getSetting('separateMicAndSystemTranscription') === '1',
+      provider: chosenProvider,
+      platform: process.platform,
+    })
+    this.streamChannels = streamConfig.channels
+    this.loudnessTimeSeries = []
+    this.aecDegraded = false
+    if (streamConfig.channels === 2) {
+      console.log(
+        '[Recording] Multichannel mode active (NLMS AEC + cross-channel dedup enabled)',
+      )
+    }
+
     const factoryResult = await createStreamingTranscriber({
       chosenProvider,
       resolveApiKey: (p) =>
@@ -536,6 +595,7 @@ export class RecordingSession {
           : getCredential('assemblyaiApiKey'),
       keyterms,
       maxSpeakers,
+      channels: streamConfig.channels,
     })
     this.streamingClient = factoryResult.client
     this.activeProvider = factoryResult.client.provider
@@ -556,13 +616,42 @@ export class RecordingSession {
       if (DEBUG_TRANSCRIPTION) {
         console.log('[Recording] Audio chunk received:', chunk.length, 'bytes')
       }
-      // AudioCapture emits stereo PCM regardless of mode; always downmix
-      // before handing off to the streaming client.
-      this.streamingClient?.sendAudio(AudioStreamManager.stereoToMono(chunk))
-      // EVAL-FEATURE: tap the raw stereo PCM for the AAC eval recorder
+      // Defensive: the renderer-side IPC encoding produces 4-byte stereo
+      // frames (2 channels × int16). A misaligned chunk would mis-pair
+      // the mic/system samples for the rest of the session; drop the
+      // mangled frame and continue rather than corrupting the stream.
+      if (chunk.length % 4 !== 0) {
+        console.warn('[Recording] Dropping malformed stereo frame:', chunk.length, 'bytes')
+        return
+      }
+      // Stereo path: forward as-is, Deepgram demuxes via multichannel.
+      // Mono path: downmix before the streaming client never sees ch 1.
+      const forwarded =
+        this.streamChannels === 2 ? chunk : AudioStreamManager.stereoToMono(chunk)
+      this.streamingClient?.sendAudio(forwarded)
+      // EVAL-FEATURE: tap the raw stereo PCM (pre-downmix, pre-AEC for
+      // mono path; post-AEC for stereo path) for the AAC eval recorder
       // when saveAudioForEval is enabled. Gated by recording.ipc.ts.
       this.callbacks.onAudioChunk?.(chunk)
     })
+
+    // Multichannel sessions may degrade from stereo → mono mid-connect
+    // if Deepgram rejects the multichannel param. Catch the event so we
+    // stop interleaving stereo PCM (the wire format must match what the
+    // server is now expecting after the downgrade).
+    if (this.streamingClient && 'on' in this.streamingClient) {
+      this.streamingClient.on('multichannel-rejected', (payload: unknown) => {
+        const reason =
+          payload && typeof payload === 'object' && 'reason' in payload
+            ? String((payload as { reason: unknown }).reason)
+            : 'unknown'
+        console.warn(
+          '[Recording] Deepgram rejected multichannel; downgrading to mono for the rest of this session:',
+          reason,
+        )
+        this.streamChannels = 1
+      })
+    }
 
     this.wireStreamingEvents(this.streamingClient)
 
@@ -589,6 +678,31 @@ export class RecordingSession {
       console.log('[Recording] Audio data from renderer:', chunk.length, 'bytes')
     }
     this.audioCapture?.feedAudioFromRenderer(chunk)
+  }
+
+  /**
+   * Renderer forwarded the worklet's aec-degraded signal: the NLMS
+   * adaptive filter exceeded its divergence budget and switched to
+   * passthrough for the rest of the session. The flag is persistent
+   * here so the UI banner stays up; multichannel transcription
+   * continues, but the bleed-doubling protection is gone for this
+   * recording.
+   */
+  onAecDegraded(): void {
+    if (this.aecDegraded) return
+    this.aecDegraded = true
+    console.warn(
+      '[Recording] AEC degraded — NLMS filter diverged; cross-channel dedup is the only doubling safeguard for the rest of this session',
+    )
+  }
+
+  /**
+   * Renderer forwarded a per-channel loudness sample from the worklet
+   * tap (~10 Hz). Stored as the session's loudness time series and
+   * passed to the me/them resolver at finalize.
+   */
+  onLoudnessSample(sample: LoudnessSample): void {
+    this.loudnessTimeSeries.push(sample)
   }
 
   onSystemAudioStatus(hasSystemAudio: boolean): void {
@@ -646,6 +760,8 @@ export class RecordingSession {
       transcriptAssembler: this.transcriptAssembler,
       calendarSelfName: this.calendarSelfName,
       calendarAttendees: this.calendarAttendees.slice(),
+      loudnessTimeSeries: this.loudnessTimeSeries.slice(),
+      streamChannels: this.streamChannels,
     }
 
     this.audioCapture?.stop()
@@ -665,6 +781,9 @@ export class RecordingSession {
     this.calendarAttendees = []
     this.calendarAttendeeEmails = []
     this.calendarEndTime = null
+    this.loudnessTimeSeries = []
+    this.streamChannels = 1
+    this.aecDegraded = false
     this.terminated = true
 
     const finalizePromise = this.runBackgroundFinalize(snapshot, meetingId, userId, duration)
@@ -681,6 +800,8 @@ export class RecordingSession {
       transcriptAssembler: TranscriptAssembler | null
       calendarSelfName: string | null
       calendarAttendees: string[]
+      loudnessTimeSeries: LoudnessSample[]
+      streamChannels: 1 | 2
     },
     meetingId: string,
     userId: string,
@@ -771,6 +892,20 @@ export class RecordingSession {
         )
         const fullText = assembler.getFullText()
 
+        // Resolve which Deepgram speaker index is the recording user.
+        // Multichannel sessions trivially return 0 (mic = channel 0);
+        // mono sessions use the loudness-tap time series if any was
+        // captured, otherwise fall back to most-talkative. Stored as a
+        // single integer column so the render-time bubble view doesn't
+        // need to re-derive on every page load.
+        const finalizedSegments = assembler.getFinalizedSegments()
+        const meSpeakerIndex = resolveMeSpeakerIndex({
+          segments: finalizedSegments,
+          loudness:
+            snapshot.loudnessTimeSeries.length > 0 ? snapshot.loudnessTimeSeries : null,
+          channelMode: snapshot.streamChannels === 2 ? 'multichannel' : 'mono',
+        })
+
         timeStep('db-update', () =>
           meetingRepo.updateMeeting(
             meetingId,
@@ -787,6 +922,7 @@ export class RecordingSession {
               // current setting. NULL on the rare path where the provider
               // wasn't yet known (defensive — shouldn't happen).
               transcriptProvider: snapshot.activeProvider,
+              meSpeakerIndex,
             },
             userId,
           ),

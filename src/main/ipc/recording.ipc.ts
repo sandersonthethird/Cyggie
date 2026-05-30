@@ -218,6 +218,29 @@ export function registerRecordingHandlers(): void {
     activeSession?.feedAudio(Buffer.from(data))
   })
 
+  ipcMain.on(IPC_CHANNELS.RECORDING_AEC_DEGRADED, () => {
+    activeSession?.onAecDegraded()
+  })
+
+  ipcMain.on(IPC_CHANNELS.RECORDING_LOUDNESS_SAMPLE, (_event, sample: unknown) => {
+    if (!sample || typeof sample !== 'object') return
+    const s = sample as { tStart?: number; tEnd?: number; micDb?: number; sysDb?: number }
+    if (
+      typeof s.tStart !== 'number' ||
+      typeof s.tEnd !== 'number' ||
+      typeof s.micDb !== 'number' ||
+      typeof s.sysDb !== 'number'
+    ) {
+      return
+    }
+    activeSession?.onLoudnessSample({
+      tStart: s.tStart,
+      tEnd: s.tEnd,
+      micDb: s.micDb,
+      sysDb: s.sysDb,
+    })
+  })
+
   ipcMain.handle(IPC_CHANNELS.RECORDING_PAUSE, () => {
     activeSession?.pause()
   })

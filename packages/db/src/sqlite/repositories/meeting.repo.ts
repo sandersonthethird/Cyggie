@@ -32,6 +32,12 @@ function rowToMeeting(row: MeetingRow): Meeting {
     attendeeEmails: row.attendee_emails ? JSON.parse(row.attendee_emails) : null,
     selfName: row.self_name ?? null,
     transcriptProvider: (row.transcript_provider ?? null) as 'deepgram' | 'assemblyai' | null,
+    meSpeakerIndex:
+      typeof row.me_speaker_index === 'number'
+        ? row.me_speaker_index
+        : row.me_speaker_index == null
+          ? null
+          : Number(row.me_speaker_index),
     companies: row.companies ? JSON.parse(row.companies) : null,
     dismissedCompanies: row.dismissed_companies ? JSON.parse(row.dismissed_companies) : null,
     chatMessages: row.chat_messages ? JSON.parse(row.chat_messages) : null,
@@ -427,6 +433,14 @@ export function updateMeeting(
      * NULL for meetings recorded before the 2026-05-28 picker rollout.
      */
     transcriptProvider: 'deepgram' | 'assemblyai' | null
+    /**
+     * Deepgram speaker index that belongs to the recording user. Drives
+     * the me/them bubble view: render-time wrapper aligns segments with
+     * this index on the right ("me"), everything else on the left
+     * ("them"). Set by RecordingSession on finalize via
+     * `resolveMeSpeakerIndex`. Updated by the Swap Me/Them button.
+     */
+    meSpeakerIndex: number | null
     companies: string[] | null
     dismissedCompanies: string[] | null
     chatMessages: ChatMessage[] | null
@@ -505,6 +519,10 @@ export function updateMeeting(
   if (data.transcriptProvider !== undefined) {
     sets.push('transcript_provider = ?')
     params.push(data.transcriptProvider)
+  }
+  if (data.meSpeakerIndex !== undefined) {
+    sets.push('me_speaker_index = ?')
+    params.push(data.meSpeakerIndex)
   }
   if (data.companies !== undefined) {
     sets.push('companies = ?')

@@ -29,6 +29,7 @@ export interface MeetingRow {
   // user.sub — wrong once firm-shared meetings ship).
   self_name: string | null
   transcript_provider: string | null
+  me_speaker_index: number | null
   companies: string | null
   dismissed_companies: string | null
   chat_messages: string | null

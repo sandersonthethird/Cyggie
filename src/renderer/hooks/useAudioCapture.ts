@@ -1,8 +1,18 @@
 import { useRef, useCallback, useState } from 'react'
 import { api } from '../api'
+import { IPC_CHANNELS } from '../../shared/constants/channels'
 
 const TARGET_SAMPLE_RATE = 16000
 const AUDIO_WORKLET_NAME = 'gorp-pcm-resample-processor'
+// Loudness samples emitted every ~100 ms.
+const LOUDNESS_WINDOW_MS = 100
+// NLMS tuning — keep in sync with src/renderer/audio/nlms.ts which the
+// worklet JS port below mirrors.
+const NLMS_TAPS = 1024
+const NLMS_MU = 0.08
+const NLMS_CLIP_THRESHOLD = 4.0
+const NLMS_DIVERGENCE_CLIP_BUDGET = 32
+
 const PROCESSED_MIC_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
   noiseSuppression: true,
@@ -48,70 +58,203 @@ function downsampleInterleaved(
 }
 
 function buildWorkletModuleSource(): string {
+  // The worklet JS body is a self-contained string — AudioWorklets run
+  // in an isolated global with no module imports. The NLMS + loudness
+  // algorithms below MUST stay byte-equivalent to the typed reference
+  // implementations in:
+  //   - src/renderer/audio/nlms.ts (unit-tested)
+  //   - src/renderer/audio/loudness-tap.ts (unit-tested)
+  // Any change here that diverges from those modules is a bug; review
+  // both files together. Drift risk is mitigated by keeping the algos
+  // tiny and side-effect-free.
   return `
+function createNlmsFilter(taps, mu, clipThreshold, clipBudget, sampleRate) {
+  const w = new Float32Array(taps)
+  const ref = new Float32Array(taps)
+  let refHead = 0
+  let state = 'adapting'
+  const divWindow = Math.max(sampleRate, 1000)
+  let clipsInWindow = 0
+  const clipDecayPerSample = 1 / divWindow
+
+  function process(micSample, refSample) {
+    ref[refHead] = refSample
+    refHead = (refHead + 1) % taps
+    if (state === 'diverged') return micSample
+
+    let yHat = 0
+    let normSq = 0
+    let idx = refHead
+    for (let i = 0; i < taps; i++) {
+      idx = idx === 0 ? taps - 1 : idx - 1
+      const r = ref[idx]
+      yHat += w[i] * r
+      normSq += r * r
+    }
+    const error = micSample - yHat
+    const muOverNorm = (mu * error) / (normSq + 1e-6)
+    let maxCoef = 0
+    idx = refHead
+    for (let i = 0; i < taps; i++) {
+      idx = idx === 0 ? taps - 1 : idx - 1
+      w[i] += muOverNorm * ref[idx]
+      const a = w[i] < 0 ? -w[i] : w[i]
+      if (a > maxCoef) maxCoef = a
+    }
+
+    clipsInWindow = Math.max(0, clipsInWindow - clipDecayPerSample)
+    if (maxCoef >= clipThreshold) clipsInWindow += 1
+    if (clipsInWindow >= clipBudget) {
+      state = 'diverged'
+      return micSample
+    }
+    return error
+  }
+
+  function reset() {
+    w.fill(0)
+    ref.fill(0)
+    refHead = 0
+    clipsInWindow = 0
+    state = 'adapting'
+  }
+  function isDiverged() { return state === 'diverged' }
+  return { process, reset, isDiverged }
+}
+
 class GorpPcmResampleProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super()
     const opts = options && options.processorOptions ? options.processorOptions : {}
     this.targetSampleRate = opts.targetSampleRate || 16000
+    this.useAec = opts.useAec === true
     this.ratio = sampleRate / this.targetSampleRate
     this.nextInputIndex = 0
     this.prevMic = 0
     this.prevSys = 0
-  }
+    // NLMS filter operates on the native-rate mic channel BEFORE
+    // resampling. Sized to the worklet's actual input sample rate.
+    this.nlms = this.useAec
+      ? createNlmsFilter(${NLMS_TAPS}, ${NLMS_MU}, ${NLMS_CLIP_THRESHOLD}, ${NLMS_DIVERGENCE_CLIP_BUDGET}, sampleRate)
+      : null
+    this.aecDegradedEmitted = false
 
-  toInt16(sample) {
-    const clamped = Math.max(-1, Math.min(1, sample))
-    return clamped < 0 ? Math.round(clamped * 0x8000) : Math.round(clamped * 0x7fff)
+    // Loudness accumulator. The renderer flushes via timer ticks; the
+    // worklet just appends sum-of-squares + counts per channel.
+    this.lWindowSamples = Math.max(1, Math.floor(sampleRate * (${LOUDNESS_WINDOW_MS} / 1000)))
+    this.lMicSumSq = 0
+    this.lSysSumSq = 0
+    this.lMicCount = 0
+    this.lSysCount = 0
+    this.lWindowStartFrame = 0
+    this.currentFrame = 0
+
+    this.port.onmessage = (e) => {
+      const data = e && e.data
+      if (!data || typeof data !== 'object') return
+      if (data.type === 'reset-aec' && this.nlms) {
+        this.nlms.reset()
+        this.aecDegradedEmitted = false
+      }
+    }
   }
 
   process(inputs, outputs) {
     const input = inputs[0]
     if (!input || input.length === 0 || !input[0] || input[0].length === 0) {
-      if (outputs[0]) {
-        for (let i = 0; i < outputs[0].length; i++) outputs[0][i].fill(0)
-      }
+      if (outputs[0]) for (let i = 0; i < outputs[0].length; i++) outputs[0][i].fill(0)
       return true
     }
 
     const mic = input[0]
-    const sys = input.length > 1 ? input[1] : null
+    const sysIn = input.length > 1 ? input[1] : null
     const frameCount = mic.length
-    const interleaved = []
+    // Working copy of the mic channel — NLMS writes the cleaned signal
+    // here so resampling sees the post-AEC values.
+    let micWork = mic
+    if (this.useAec && this.nlms && sysIn) {
+      const cleaned = new Float32Array(frameCount)
+      for (let i = 0; i < frameCount; i++) {
+        cleaned[i] = this.nlms.process(mic[i], sysIn[i])
+      }
+      micWork = cleaned
+      if (!this.aecDegradedEmitted && this.nlms.isDiverged()) {
+        this.aecDegradedEmitted = true
+        this.port.postMessage({ type: 'aec-degraded' })
+      }
+    }
 
+    // Loudness accounting at native sample rate. micWork captures any
+    // AEC effect; sysIn is the raw reference.
+    let micSumSq = 0
+    for (let i = 0; i < frameCount; i++) micSumSq += micWork[i] * micWork[i]
+    this.lMicSumSq += micSumSq
+    this.lMicCount += frameCount
+    if (sysIn) {
+      let sysSumSq = 0
+      for (let i = 0; i < frameCount; i++) sysSumSq += sysIn[i] * sysIn[i]
+      this.lSysSumSq += sysSumSq
+      this.lSysCount += frameCount
+    }
+    this.currentFrame += frameCount
+    if (this.currentFrame - this.lWindowStartFrame >= this.lWindowSamples) {
+      const micDb = this.lMicCount > 0 && this.lMicSumSq > 0
+        ? 20 * Math.log10(Math.sqrt(this.lMicSumSq / this.lMicCount))
+        : -Infinity
+      const sysDb = this.lSysCount > 0 && this.lSysSumSq > 0
+        ? 20 * Math.log10(Math.sqrt(this.lSysSumSq / this.lSysCount))
+        : -Infinity
+      this.port.postMessage({
+        type: 'loudness-sample',
+        tStart: this.lWindowStartFrame / sampleRate,
+        tEnd: this.currentFrame / sampleRate,
+        micDb,
+        sysDb,
+      })
+      this.lMicSumSq = 0
+      this.lSysSumSq = 0
+      this.lMicCount = 0
+      this.lSysCount = 0
+      this.lWindowStartFrame = this.currentFrame
+    }
+
+    // Existing resample + interleave path.
+    const interleaved = []
     while (this.nextInputIndex < frameCount) {
       const srcIndex = this.nextInputIndex
       const base = Math.floor(srcIndex)
       const frac = srcIndex - base
       const next = Math.min(base + 1, frameCount - 1)
 
-      const micA = base >= 0 ? mic[base] : this.prevMic
-      const micB = next >= 0 ? mic[next] : this.prevMic
+      const micA = base >= 0 ? micWork[base] : this.prevMic
+      const micB = next >= 0 ? micWork[next] : this.prevMic
       const micSample = micA + (micB - micA) * frac
 
       let sysSample = 0
-      if (sys) {
-        const sysA = base >= 0 ? sys[base] : this.prevSys
-        const sysB = next >= 0 ? sys[next] : this.prevSys
+      if (sysIn) {
+        const sysA = base >= 0 ? sysIn[base] : this.prevSys
+        const sysB = next >= 0 ? sysIn[next] : this.prevSys
         sysSample = sysA + (sysB - sysA) * frac
       }
 
-      interleaved.push(this.toInt16(micSample), this.toInt16(sysSample))
+      const clampMic = Math.max(-1, Math.min(1, micSample))
+      const clampSys = Math.max(-1, Math.min(1, sysSample))
+      interleaved.push(
+        clampMic < 0 ? Math.round(clampMic * 0x8000) : Math.round(clampMic * 0x7fff),
+        clampSys < 0 ? Math.round(clampSys * 0x8000) : Math.round(clampSys * 0x7fff),
+      )
       this.nextInputIndex += this.ratio
     }
-
     this.nextInputIndex -= frameCount
-    this.prevMic = mic[frameCount - 1]
-    this.prevSys = sys ? sys[frameCount - 1] : 0
+    this.prevMic = micWork[frameCount - 1]
+    this.prevSys = sysIn ? sysIn[frameCount - 1] : 0
 
     if (interleaved.length > 0) {
       const out = new Int16Array(interleaved)
-      this.port.postMessage(out.buffer, [out.buffer])
+      this.port.postMessage({ type: 'pcm', buffer: out.buffer }, [out.buffer])
     }
 
-    if (outputs[0]) {
-      for (let i = 0; i < outputs[0].length; i++) outputs[0][i].fill(0)
-    }
+    if (outputs[0]) for (let i = 0; i < outputs[0].length; i++) outputs[0][i].fill(0)
     return true
   }
 }
@@ -128,7 +271,17 @@ registerProcessor('${AUDIO_WORKLET_NAME}', GorpPcmResampleProcessor)
  * System audio capture uses electron-audio-loopback which leverages
  * CoreAudioTap on macOS 14.2+. Falls back to mic-only if system
  * audio is unavailable.
+ *
+ * `start(opts)` accepts a `useAec` flag (when true, the worklet runs an
+ * NLMS adaptive echo canceller on the mic using the system loopback as
+ * reference) and a `channels` count that influences nothing in this
+ * hook directly — channel resolution is the caller's responsibility
+ * (RecordingSession passes it through resolveStreamConfig).
  */
+export interface AudioCaptureStartOptions {
+  useAec?: boolean
+}
+
 export function useAudioCapture() {
   const micStreamRef = useRef<MediaStream | null>(null)
   const systemStreamRef = useRef<MediaStream | null>(null)
@@ -142,7 +295,8 @@ export function useAudioCapture() {
   const micReacquireInFlightRef = useRef(false)
   const [hasSystemAudio, setHasSystemAudio] = useState<boolean | null>(null)
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (opts: AudioCaptureStartOptions = {}) => {
+    const useAec = opts.useAec === true
     setHasSystemAudio(null)
     currentMicConstraintsRef.current = PROCESSED_MIC_CONSTRAINTS
     micReacquireInFlightRef.current = false
@@ -163,11 +317,19 @@ export function useAudioCapture() {
     const context = new AudioContext()
     contextRef.current = context
 
-    // Auto-resume if the context suspends due to an output device change
-    // (e.g. headphones plugged in / unplugged mid-recording)
+    // Auto-resume + AEC reset on suspend/resume cycles (e.g. headphone
+    // plug/unplug). When the context flips state we postMessage the
+    // worklet so the adaptive filter zeros its coefficients — the
+    // acoustic path almost certainly changed.
     context.onstatechange = () => {
       if (context.state === 'suspended') {
-        context.resume()
+        context.resume().catch(() => {})
+      } else if (context.state === 'running' && processorRef.current && 'port' in processorRef.current) {
+        try {
+          ;(processorRef.current as AudioWorkletNode).port.postMessage({ type: 'reset-aec' })
+        } catch {
+          // Worklet may have torn down; ignore.
+        }
       }
     }
 
@@ -374,13 +536,36 @@ export function useAudioCapture() {
           channelCount: 2,
           channelCountMode: 'explicit',
           channelInterpretation: 'speakers',
-          processorOptions: { targetSampleRate: TARGET_SAMPLE_RATE }
+          processorOptions: { targetSampleRate: TARGET_SAMPLE_RATE, useAec },
         })
 
-        workletNode.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-          if (pausedRef.current) return
-          if (event.data instanceof ArrayBuffer) {
-            api.send('recording:audio-data', event.data)
+        workletNode.port.onmessage = (event: MessageEvent<unknown>) => {
+          // The worklet now sends typed messages. Legacy raw-ArrayBuffer
+          // payloads are preserved for the ScriptProcessor fallback path
+          // only — every worklet message arrives as {type, ...}.
+          const data = event.data
+          if (data instanceof ArrayBuffer) {
+            if (!pausedRef.current) api.send(IPC_CHANNELS.RECORDING_AUDIO_DATA, data)
+            return
+          }
+          if (!data || typeof data !== 'object' || !('type' in data)) return
+          const msg = data as { type: string; [k: string]: unknown }
+          if (msg.type === 'pcm') {
+            if (!pausedRef.current && msg.buffer instanceof ArrayBuffer) {
+              api.send(IPC_CHANNELS.RECORDING_AUDIO_DATA, msg.buffer)
+            }
+          } else if (msg.type === 'aec-degraded') {
+            console.warn('[AudioCapture] NLMS diverged; AEC switching to passthrough for rest of session')
+            api.send(IPC_CHANNELS.RECORDING_AEC_DEGRADED)
+          } else if (msg.type === 'loudness-sample') {
+            if (!pausedRef.current) {
+              api.send(IPC_CHANNELS.RECORDING_LOUDNESS_SAMPLE, {
+                tStart: msg.tStart,
+                tEnd: msg.tEnd,
+                micDb: msg.micDb,
+                sysDb: msg.sysDb,
+              })
+            }
           }
         }
 
@@ -393,6 +578,9 @@ export function useAudioCapture() {
     }
 
     if (!processorRef.current) {
+      // Fallback: ScriptProcessorNode path. Skips NLMS + loudness tap
+      // entirely — they're worklet-only by design. Multichannel + me/them
+      // resolver downgrades to most-talkative in this branch.
       const ratio = context.sampleRate / TARGET_SAMPLE_RATE
       const processor = context.createScriptProcessor(4096, 2, 1)
       processor.onaudioprocess = (event) => {
@@ -402,7 +590,7 @@ export function useAudioCapture() {
           ? event.inputBuffer.getChannelData(1)
           : null
         const pcmBuffer = downsampleInterleaved(ch0, ch1, ratio)
-        api.send('recording:audio-data', pcmBuffer)
+        api.send(IPC_CHANNELS.RECORDING_AUDIO_DATA, pcmBuffer)
       }
 
       processorRef.current = processor

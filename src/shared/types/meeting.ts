@@ -91,6 +91,14 @@ export interface Meeting {
    * production?" analysis. Migration 111.
    */
   transcriptProvider: 'deepgram' | 'assemblyai' | null
+  /**
+   * Deepgram speaker index that belongs to the recording user. Drives
+   * the me/them bubble view: render-time wrapper aligns segments with
+   * this index on the right ("me"), all other indices on the left
+   * ("them"). NULL for meetings finalized before migration 112 / before
+   * the recording was successfully resolved. Migration 112.
+   */
+  meSpeakerIndex: number | null
   companies: string[] | null
   dismissedCompanies: string[] | null
   chatMessages: ChatMessage[] | null
