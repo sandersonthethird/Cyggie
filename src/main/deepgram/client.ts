@@ -29,6 +29,7 @@ export class DeepgramStreamingClient extends EventEmitter implements StreamingTr
   private isClosing = false
   private lastTranscriptAt = 0
   private warnedAboutKeytermModel = false
+  private warnedAboutMissingChannelIndex = false
   private config: Required<Omit<DeepgramConfig, 'maxSpeakers'>> & Pick<DeepgramConfig, 'maxSpeakers'>
     & { keyterms: string[] }
 
@@ -81,8 +82,39 @@ export class DeepgramStreamingClient extends EventEmitter implements StreamingTr
     try {
       this.connection = client.listen.live(this.buildLiveOptions(true))
     } catch (err) {
-      if (this.config.keyterms.length > 0) {
-        console.warn('[Deepgram] Failed to initialize with keyterms, retrying without keyterms:', err)
+      // Defensive retry ladder for synchronous live() failures. Order:
+      //   1) drop keyterms (some plans/models reject the `keyterm` param)
+      //   2) drop multichannel (force channels=1; the caller must downmix)
+      // Both layers log structured warnings; multichannel rejection also
+      // emits a 'multichannel-rejected' event so RecordingSession can
+      // banner the UI and stop sending stereo PCM.
+      const couldRetryKeyterms = this.config.keyterms.length > 0
+      const couldRetryMultichannel = this.config.channels > 1
+      if (couldRetryKeyterms) {
+        console.warn('[Deepgram] Failed to initialize with keyterms; retrying without keyterms:', err)
+        try {
+          this.connection = client.listen.live(this.buildLiveOptions(false))
+        } catch (err2) {
+          if (couldRetryMultichannel) {
+            console.warn(
+              '[Deepgram] live() rejected after keyterm drop; retrying with channels=1:',
+              err2,
+            )
+            this.config.channels = 1
+            this.emit('multichannel-rejected', {
+              reason: err2 instanceof Error ? err2.message : String(err2),
+            })
+            this.connection = client.listen.live(this.buildLiveOptions(false))
+          } else {
+            throw err2
+          }
+        }
+      } else if (couldRetryMultichannel) {
+        console.warn('[Deepgram] live() rejected with multichannel; retrying with channels=1:', err)
+        this.config.channels = 1
+        this.emit('multichannel-rejected', {
+          reason: err instanceof Error ? err.message : String(err),
+        })
         this.connection = client.listen.live(this.buildLiveOptions(false))
       } else {
         throw err
@@ -185,9 +217,25 @@ export class DeepgramStreamingClient extends EventEmitter implements StreamingTr
     const alternative = result.channel?.alternatives?.[0]
     if (!alternative || !alternative.transcript.trim()) return
 
-    // Normalize to the provider-agnostic NormalizedTranscriptResult shape.
-    // The recording session now always sends mono audio, so channelIndex
-    // is always 0 regardless of what Deepgram reports in channel_index.
+    // Deepgram emits `channel_index: [thisChannel, totalChannels]` on
+    // every Results message. In multichannel mode the assembler relies
+    // on the per-event channel attribution to run cross-channel dedup
+    // (transcript-assembler.ts), so it MUST come from the SDK rather
+    // than being hard-coded to 0.
+    let channelIndex = 0
+    if (Array.isArray(result.channel_index) && result.channel_index.length > 0) {
+      channelIndex = result.channel_index[0]
+    } else if (this.config.channels > 1 && !this.warnedAboutMissingChannelIndex) {
+      // Once-per-session structured warn: a multichannel session that
+      // started receiving channel_index-less events would corrupt dedup.
+      this.warnedAboutMissingChannelIndex = true
+      console.warn(
+        '[Deepgram] Multichannel session received Results message without channel_index;',
+        'falling back to channelIndex=0. Dedup pass will be skipped for these events.',
+        { configuredChannels: this.config.channels },
+      )
+    }
+
     const transcriptResult: NormalizedTranscriptResult = {
       text: alternative.transcript,
       words: (alternative.words || []).map((w) => ({
@@ -203,7 +251,7 @@ export class DeepgramStreamingClient extends EventEmitter implements StreamingTr
       speechFinal: result.speech_final,
       start: result.start,
       duration: result.duration,
-      channelIndex: 0,
+      channelIndex,
       fromFinalize: result.from_finalize,
     }
 

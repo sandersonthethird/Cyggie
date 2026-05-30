@@ -59,6 +59,11 @@ export interface FactoryOptions {
   /** Vocabulary biasing terms forwarded to whichever client is built. */
   keyterms?: string[]
   maxSpeakers?: number
+  /**
+   * Channel count from `resolveStreamConfig`. Only meaningful for
+   * Deepgram (`channels: 2` → multichannel mode). AssemblyAI ignores.
+   */
+  channels?: number
 }
 
 function buildClient(
@@ -70,7 +75,7 @@ function buildClient(
       apiKey: config.apiKey,
       keyterms: config.keyterms,
       maxSpeakers: config.maxSpeakers,
-      channels: 1,
+      channels: config.channels ?? 1,
     })
   }
   if (provider === 'assemblyai') {
@@ -122,7 +127,7 @@ async function connectWithTimeout(
 export async function createStreamingTranscriber(
   options: FactoryOptions,
 ): Promise<FactoryResult> {
-  const { chosenProvider, resolveApiKey, keyterms, maxSpeakers } = options
+  const { chosenProvider, resolveApiKey, keyterms, maxSpeakers, channels } = options
 
   const chosenKey = resolveApiKey(chosenProvider)
   if (!chosenKey) {
@@ -139,6 +144,7 @@ export async function createStreamingTranscriber(
       apiKey: fallbackKey,
       keyterms,
       maxSpeakers,
+      channels,
     })
     await connectWithTimeout(fallbackClient, FALLBACK_TIMEOUT_MS)
     return {
@@ -154,6 +160,7 @@ export async function createStreamingTranscriber(
     apiKey: chosenKey,
     keyterms,
     maxSpeakers,
+    channels,
   })
   try {
     await connectWithTimeout(chosenClient, FALLBACK_TIMEOUT_MS)
@@ -169,6 +176,7 @@ export async function createStreamingTranscriber(
       apiKey: otherKey,
       keyterms,
       maxSpeakers,
+      channels,
     })
     try {
       await connectWithTimeout(fallbackClient, FALLBACK_TIMEOUT_MS)

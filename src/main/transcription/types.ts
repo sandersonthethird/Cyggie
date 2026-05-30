@@ -90,6 +90,13 @@ export interface StreamingTranscriberConfig {
   keyterms?: string[]
   /** Expected speaker count from calendar attendees + self. */
   maxSpeakers?: number
+  /**
+   * Audio channel count. 1 = mono (default; AssemblyAI always),
+   * 2 = stereo (Deepgram multichannel — mic on ch 0, system loopback
+   * on ch 1). Set via `resolveStreamConfig` in the recording session.
+   * AssemblyAI ignores this; v3 streaming has no multichannel mode.
+   */
+  channels?: number
 }
 
 /**
