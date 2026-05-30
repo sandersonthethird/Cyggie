@@ -304,6 +304,11 @@ export const IPC_CHANNELS = {
 
   // Speaker rename
   MEETING_RENAME_SPEAKERS: 'meeting:rename-speakers',
+  // "Swap Me/Them" — flips meetings.me_speaker_index between the
+  // current value and the second-most-frequent speaker index. Single
+  // row write; transcript segments are NOT mutated. Returns the
+  // updated Meeting row.
+  MEETING_SET_ME_SPEAKER: 'meeting:set-me-speaker',
 
   // Title rename
   MEETING_RENAME_TITLE: 'meeting:rename-title',
