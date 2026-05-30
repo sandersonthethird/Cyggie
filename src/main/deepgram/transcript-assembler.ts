@@ -138,6 +138,22 @@ export class TranscriptAssembler {
 
     if (result.channelIndex > 0) this.channelMode = 'multichannel'
 
+    // Multichannel speaker tagging: in stereo Deepgram sessions each
+    // channel runs its own independent diarization, so word.speaker=0
+    // on channel 0 and word.speaker=0 on channel 1 mean two DIFFERENT
+    // people. Collapse to the channel index so the me/them bubble view
+    // ("speaker === meSpeakerIndex → me, anything else → them") gets
+    // the right partition. Within-channel sub-diarization is dropped
+    // intentionally; the me/them model only needs the 2-party split.
+    if (this.channelMode === 'multichannel') {
+      for (const seg of stabilizedSegments) {
+        if (seg.speaker !== result.channelIndex) {
+          seg.speaker = result.channelIndex
+          for (const w of seg.words) w.speaker = result.channelIndex
+        }
+      }
+    }
+
     if (result.isFinal) {
       this.pruneRecentBuffers(result.start + this.timeOffset)
       for (const seg of stabilizedSegments) {
