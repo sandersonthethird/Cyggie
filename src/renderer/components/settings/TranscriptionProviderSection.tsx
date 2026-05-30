@@ -23,11 +23,20 @@ type Provider = 'deepgram' | 'assemblyai'
 
 const PROVIDER_KEY = 'liveTranscriptionProvider'
 const SAVE_AUDIO_KEY = 'saveAudioForEval'
+const SEPARATE_STREAMS_KEY = 'separateMicAndSystemTranscription'
+
+const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.includes('Mac')
 
 export function TranscriptionProviderSection() {
   const [provider, setProvider] = useState<Provider>('deepgram')
   const [saveAudio, setSaveAudio] = useState(false)
+  const [separateStreams, setSeparateStreams] = useState(false)
   const [showDevDetails, setShowDevDetails] = useState(false)
+
+  // Toggle is only meaningful with Deepgram on macOS. UI guard plus the
+  // structural backstop in `resolveStreamConfig` — both flips force mono.
+  const separateStreamsDisabled = provider !== 'deepgram' || !IS_MAC
+  const effectiveSeparateStreams = separateStreams && !separateStreamsDisabled
 
   useEffect(() => {
     let cancelled = false
@@ -37,6 +46,7 @@ export function TranscriptionProviderSection() {
       const raw = all[PROVIDER_KEY]
       setProvider(raw === 'assemblyai' ? 'assemblyai' : 'deepgram')
       setSaveAudio(all[SAVE_AUDIO_KEY] === 'true')
+      setSeparateStreams(all[SEPARATE_STREAMS_KEY] === 'true')
     }
     void load()
     return () => {
@@ -52,6 +62,11 @@ export function TranscriptionProviderSection() {
   async function commitSaveAudio(value: boolean) {
     setSaveAudio(value)
     await api.invoke(IPC_CHANNELS.SETTINGS_SET, SAVE_AUDIO_KEY, value ? 'true' : 'false')
+  }
+
+  async function commitSeparateStreams(value: boolean) {
+    setSeparateStreams(value)
+    await api.invoke(IPC_CHANNELS.SETTINGS_SET, SEPARATE_STREAMS_KEY, value ? 'true' : 'false')
   }
 
   return (
@@ -85,6 +100,35 @@ export function TranscriptionProviderSection() {
         <p style={{ marginLeft: 192, marginTop: 2, fontSize: 11, color: 'var(--color-text-secondary, #6b7280)' }}>
           Changes apply to the next recording. The other provider is used as
           a silent fallback if the chosen one fails to connect.
+        </p>
+      </div>
+
+      <div>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            opacity: separateStreamsDisabled ? 0.5 : 1,
+          }}
+        >
+          <span style={{ minWidth: 180, fontSize: 13 }}>Speaker attribution</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={effectiveSeparateStreams}
+              disabled={separateStreamsDisabled}
+              onChange={(e) => commitSeparateStreams(e.target.checked)}
+            />
+            Separate transcription for you and others
+          </span>
+        </label>
+        <p style={{ marginLeft: 192, marginTop: 2, fontSize: 11, color: 'var(--color-text-secondary, #6b7280)' }}>
+          {separateStreamsDisabled
+            ? !IS_MAC
+              ? 'Available on macOS only.'
+              : 'Available with Deepgram only.'
+            : 'Sends your mic and the meeting audio as two streams. Improves speaker attribution. Takes effect on next recording.'}
         </p>
       </div>
 

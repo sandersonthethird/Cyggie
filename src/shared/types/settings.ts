@@ -86,6 +86,16 @@ export interface AppSettings {
    */
   saveAudioForEval: boolean
   assemblyaiApiKey: MaskedKey
+  /**
+   * When true, the mic and meeting-system-audio are sent as two separate
+   * streams to Deepgram (multichannel) with per-channel AEC + cross-channel
+   * dedup. Improves "me vs them" speaker attribution. Available only on
+   * macOS (CoreAudioTap loopback required) and only with Deepgram
+   * (AssemblyAI streaming v3 has no equivalent). UI guards both. Setting
+   * is read at recording start; mid-session changes apply on the next
+   * recording. Default false until validated on real meetings.
+   */
+  separateMicAndSystemTranscription: boolean
 }
 
 export const UNCONFIGURED_KEY: MaskedKey = { configured: false, masked: '' }
@@ -119,4 +129,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   liveTranscriptionProvider: 'deepgram',
   saveAudioForEval: false,
   assemblyaiApiKey: UNCONFIGURED_KEY,
+  separateMicAndSystemTranscription: false,
 }
