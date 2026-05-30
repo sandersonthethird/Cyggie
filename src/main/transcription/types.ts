@@ -65,11 +65,15 @@ export interface NormalizedTranscriptResult {
   /** Event duration in seconds. */
   duration: number
   /**
-   * Always 0 — the recording path now downmixes to mono before sending,
-   * so neither provider sees multi-channel input. Preserved for shape
-   * compatibility with downstream code that may still reference it.
+   * Source channel index. In single-channel (mono) recordings — every
+   * AssemblyAI session, and Deepgram sessions where the user has not
+   * enabled `separateMicAndSystemTranscription` — this is always 0.
+   * In Deepgram multichannel sessions (`channels=2`), the mic stream
+   * emits 0 and the system loopback stream emits 1. Used by the
+   * transcript-assembler's cross-channel dedup pass to drop bleed
+   * doublings between the two streams.
    */
-  channelIndex: 0
+  channelIndex: number
   /** Set by the client's finalizeAndClose flow. */
   fromFinalize?: boolean
 }

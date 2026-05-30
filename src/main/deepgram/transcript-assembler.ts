@@ -1,18 +1,43 @@
 import type { NormalizedTranscriptResult, NormalizedWord } from '../transcription/types'
 import type { TranscriptSegment, TranscriptWord } from '../../shared/types/recording'
+import { jaroWinkler } from '../utils/jaroWinkler'
 
 /**
- * Channel mode is always 'diarization' now. The recording path downmixes
- * stereo capture to mono before sending to the streaming client, so neither
- * provider sees per-channel audio. The 'detecting' and 'multichannel'
- * states + the auto-detection state machine were removed 2026-05-28 when
- * the live picker rolled out — multichannel mode caused the Zoom-bleed
- * doubling bug and we always send mono now.
+ * Channel mode reflects the live capture topology, not a state machine:
+ *   - 'diarization' — single mono stream; Deepgram/AssemblyAI infer
+ *     speakers from the audio itself. The default for every AssemblyAI
+ *     session and Deepgram sessions where the user has not enabled
+ *     `separateMicAndSystemTranscription`.
+ *   - 'multichannel' — Deepgram only, two streams (mic = channel 0,
+ *     system loopback = channel 1). Mic always maps to "me"; the
+ *     transcript-assembler runs a cross-channel dedup pass to drop
+ *     bleed doublings (the same remote utterance picked up on both
+ *     channels via speaker reflection into the mic).
  *
- * `getChannelMode()` is preserved (returns 'diarization' always) so existing
- * status-broadcast callers in RecordingSession don't need to change.
+ * The 2026-05-28 always-mono regression — and its earlier 2026-05-27
+ * revert of the original multichannel attempt — happened because the
+ * first multichannel landing shipped without bleed-aware dedup. The
+ * current iteration re-enables multichannel behind a default-off setting
+ * and pairs it with NLMS AEC in the worklet + cross-channel dedup here.
+ *
+ * `getChannelMode()` returns whichever mode the assembler is operating in;
+ * default is 'diarization' until a channelIndex > 0 finalized result is
+ * seen, at which point we lock to 'multichannel'.
  */
-type ChannelMode = 'diarization'
+export type ChannelMode = 'diarization' | 'multichannel'
+
+// Cross-channel dedup tunables (Part 2f of the cheeky-treasure plan).
+const DEDUP_WINDOW_SECONDS = 2.0
+const DEDUP_TIME_IOU_MIN = 0.5
+const DEDUP_TEXT_SIMILARITY_MIN = 0.95
+const DEDUP_TEXT_PREFIX_CHARS = 100
+const DEDUP_CONFIDENCE_FLOOR = 0.001
+
+interface RecentEntry {
+  seg: TranscriptSegment
+  conf: number
+  channelIndex: number
+}
 
 const DEBUG_TRANSCRIPTION =
   process.env['NODE_ENV'] === 'development' && process.env['GORP_DEBUG_TRANSCRIPTION'] === '1'
@@ -36,32 +61,38 @@ export class TranscriptAssembler {
   private currentInterim: TranscriptSegment | null = null
   private knownSpeakers = new Set<number>()
   private timeOffset = 0
-  private expectedSpeakerCount: number | null = null
   private consecutiveSuppressedSwitches = 0
   private suppressedSwitchTargetSpeaker: number | null = null
   private totalSuppressedSwitches = 0
+  private dedupDroppedCount = 0
 
-  private readonly channelMode: ChannelMode = 'diarization'
+  private channelMode: ChannelMode = 'diarization'
+  // Per-channel rolling buffer of recent finalized utterances, used by
+  // the cross-channel dedup pass to spot bleed doublings.
+  private readonly recentByChannel = new Map<number, RecentEntry[]>()
 
   constructor() {
     // no-op
   }
 
-  setExpectedSpeakerCount(expectedCount?: number): void {
-    if (typeof expectedCount !== 'number' || !Number.isFinite(expectedCount) || expectedCount <= 0) {
-      this.expectedSpeakerCount = null
-      return
-    }
-    this.expectedSpeakerCount = Math.max(1, Math.floor(expectedCount))
+  /**
+   * Legacy no-op kept so existing RecordingSession callers don't need to
+   * change. With the me/them redesign there is no expected-speaker-count
+   * gate — out-of-range Deepgram speaker indices are simply rendered as
+   * "them" by the bubble view, and the phantom-bucket clamp that used to
+   * unify them at finalize has been removed.
+   */
+  setExpectedSpeakerCount(_expectedCount?: number): void {
+    // intentional no-op
   }
 
   /**
-   * Legacy no-op. Used to commit the assembler to diarization mode early
-   * before the auto-detection threshold was reached. Now always-diarization,
-   * so callers can safely keep calling this without effect.
+   * Legacy no-op. The old auto-detection state machine used this to
+   * commit the assembler to diarization mode early. Channel mode is now
+   * driven by per-result channelIndex; no commit needed.
    */
   setSystemAudioUnavailable(): void {
-    // intentional no-op (always-diarization mode)
+    // intentional no-op
   }
 
   getChannelMode(): ChannelMode {
@@ -73,12 +104,14 @@ export class TranscriptAssembler {
     speakerCount: number
     totalSegments: number
     totalSuppressedSwitches: number
+    dedupDroppedCount: number
   } {
     return {
       channelMode: this.channelMode,
       speakerCount: this.knownSpeakers.size,
       totalSegments: this.finalizedSegments.length,
-      totalSuppressedSwitches: this.totalSuppressedSwitches
+      totalSuppressedSwitches: this.totalSuppressedSwitches,
+      dedupDroppedCount: this.dedupDroppedCount,
     }
   }
 
@@ -102,19 +135,87 @@ export class TranscriptAssembler {
       }
     }
     const stabilizedSegments = this.stabilizeSpeakerSwitches(segments)
-    const normalizedSegments = this.normalizeToExpectedSpeakerCount(stabilizedSegments)
+
+    if (result.channelIndex > 0) this.channelMode = 'multichannel'
 
     if (result.isFinal) {
-      for (const seg of normalizedSegments) {
+      this.pruneRecentBuffers(result.start + this.timeOffset)
+      for (const seg of stabilizedSegments) {
+        if (this.tryDropAsDuplicate(seg, result.channelIndex)) {
+          continue
+        }
         this.finalizedSegments.push(seg)
         this.knownSpeakers.add(seg.speaker)
+        this.rememberRecent(seg, result.channelIndex)
       }
       this.currentInterim = null
     } else {
-      this.currentInterim = normalizedSegments[normalizedSegments.length - 1] || null
-      for (const seg of normalizedSegments) {
+      this.currentInterim = stabilizedSegments[stabilizedSegments.length - 1] || null
+      for (const seg of stabilizedSegments) {
         this.knownSpeakers.add(seg.speaker)
       }
+    }
+  }
+
+  /**
+   * Cross-channel dedup: when running multichannel and the same remote
+   * utterance was picked up on both the mic (via speaker bleed) and the
+   * system loopback, Deepgram emits two near-identical finalized
+   * utterances. Drop the lower-confidence copy.
+   *
+   * Match rule: `isDuplicateOf` — time IoU >= 0.5, jaroWinkler >= 0.95
+   * on the first 100 chars (lowercased, punctuation stripped). Tiebreak
+   * on equal confidence keeps the system channel (1) over the mic (0)
+   * because the system channel is the higher-SNR copy of the remote.
+   *
+   * Returns true if the incoming segment should be dropped. When the
+   * incoming segment wins over a previously-finalized duplicate, the
+   * old copy is excised from finalizedSegments and the buffer here.
+   */
+  private tryDropAsDuplicate(seg: TranscriptSegment, channelIndex: number): boolean {
+    if (this.recentByChannel.size === 0) return false
+    const newConf = avgWordConfidence(seg)
+
+    for (const [otherChannel, entries] of this.recentByChannel) {
+      if (otherChannel === channelIndex) continue
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const candidate = entries[i]
+        if (!isDuplicateOf(seg, candidate.seg)) continue
+
+        const newFloor = Math.max(newConf, DEDUP_CONFIDENCE_FLOOR)
+        const oldFloor = Math.max(candidate.conf, DEDUP_CONFIDENCE_FLOOR)
+        const keepOld =
+          oldFloor > newFloor ||
+          (oldFloor === newFloor && otherChannel > channelIndex)
+
+        // Either side wins — count one drop either way.
+        this.dedupDroppedCount++
+
+        if (keepOld) {
+          return true
+        }
+        // New copy wins: excise the old one from finalized output + buffer.
+        entries.splice(i, 1)
+        const idx = this.finalizedSegments.indexOf(candidate.seg)
+        if (idx >= 0) this.finalizedSegments.splice(idx, 1)
+        return false
+      }
+    }
+    return false
+  }
+
+  private rememberRecent(seg: TranscriptSegment, channelIndex: number): void {
+    const list = this.recentByChannel.get(channelIndex) ?? []
+    list.push({ seg, conf: avgWordConfidence(seg), channelIndex })
+    this.recentByChannel.set(channelIndex, list)
+  }
+
+  private pruneRecentBuffers(nowSeconds: number): void {
+    const cutoff = nowSeconds - DEDUP_WINDOW_SECONDS
+    for (const list of this.recentByChannel.values()) {
+      let i = 0
+      while (i < list.length && list[i].seg.endTime < cutoff) i++
+      if (i > 0) list.splice(0, i)
     }
   }
 
@@ -230,39 +331,6 @@ export class TranscriptAssembler {
       wordCount >= SPEAKER_SWITCH_MIN_WORDS || durationSeconds >= SPEAKER_SWITCH_MIN_DURATION_SECONDS
 
     return hasEnoughSpeech && avgSpeakerConfidence >= SPEAKER_SWITCH_MIN_CONFIDENCE
-  }
-
-  private normalizeToExpectedSpeakerCount(segments: TranscriptSegment[]): TranscriptSegment[] {
-    const expectedCount = this.expectedSpeakerCount
-    if (!expectedCount || expectedCount <= 0 || segments.length === 0) return segments
-
-    let fallbackSpeaker = this.currentInterim?.speaker
-      ?? this.finalizedSegments[this.finalizedSegments.length - 1]?.speaker
-    const normalized: TranscriptSegment[] = []
-
-    for (const seg of segments) {
-      if (seg.speaker >= 0 && seg.speaker < expectedCount) {
-        normalized.push(seg)
-        fallbackSpeaker = seg.speaker
-        continue
-      }
-
-      const safeFallback = typeof fallbackSpeaker === 'number'
-        ? Math.max(0, Math.min(fallbackSpeaker, expectedCount - 1))
-        : 0
-
-      if (DEBUG_TRANSCRIPTION) {
-        console.log(
-          '[TranscriptAssembler] Remapping out-of-range speaker',
-          `speaker=${seg.speaker} -> ${safeFallback} expectedCount=${expectedCount}`
-        )
-      }
-
-      normalized.push(this.reassignSegmentSpeaker(seg, safeFallback))
-      fallbackSpeaker = safeFallback
-    }
-
-    return this.mergeAdjacentSegments(normalized)
   }
 
   private reassignSegmentSpeaker(seg: TranscriptSegment, speaker: number): TranscriptSegment {
@@ -487,54 +555,25 @@ export class TranscriptAssembler {
   }
 
   /**
-   * Collapse adjacent segments that already share the same speaker.
+   * Collapse adjacent segments that already share the same speaker. Purely
+   * cosmetic: Deepgram occasionally emits two consecutive segments for the
+   * same speaker (e.g. on a pause) and joining them makes the transcript
+   * read more naturally.
    *
-   * Historically this method ALSO merged "phantom" speaker segments
-   * (Deepgram speaker index >= expectedCount) into the previous segment,
-   * rewriting their speaker to match. The 2026-05-27 transcription-eval
-   * surfaced what the original comment already warned about: that merge
-   * systematically glues the user's brief interjections onto whoever was
-   * just speaking ("my text got appended to the other person's text").
-   * The rationale was already documented for the multichannel branch but
-   * was never extended to single-channel — and after the
-   * 2026-05-27 always-mono Deepgram fix, single-channel is now every call.
+   * Historically this method ALSO clamped any over-diarized speaker index
+   * (`speaker > expectedCount`) to a single phantom bucket — a partial fix
+   * for the "3 speaker chips in a 2-attendee meeting" complaint. That
+   * clamp is gone as of the me/them redesign (Part 3 of the
+   * cheeky-treasure plan): the render-time bubble view collapses every
+   * non-me speaker into "them" regardless of Deepgram index, so phantom
+   * indices no longer sprawl into the UI.
    *
-   * The phantom-merge is therefore disabled. Phantom speakers stay at
-   * (or near) their original indices and surface via buildSpeakerMap as
-   * "Speaker N+1" etc., which the user can relabel in MeetingDetail
-   * post-hoc. Cosmetic downside (a 2-person meeting may show 3-4 speakers)
-   * is preferred over content-correctness downside (wrong attribution).
-   *
-   * expectedCount is used as a sanity cap: any speaker index strictly
-   * greater than expectedCount is clamped to exactly expectedCount, so
-   * over-diarization can't sprawl into "Speaker 3, 4, 5, 6, ..." labels.
-   * All phantoms unify into a single "Speaker N+1" bucket where N is the
-   * known-participant count.
+   * `expectedCount` is accepted but ignored; kept in the signature so
+   * RecordingSession's existing call site doesn't need to change.
    */
-  consolidateSpeakers(expectedCount: number): void {
+  consolidateSpeakers(_expectedCount: number): void {
     if (this.finalizedSegments.length === 0) return
 
-    // Sanity cap: clamp any over-diarized speaker index to exactly
-    // expectedCount. The canonical phantom bucket sits at index
-    // expectedCount (one above the highest known participant) and
-    // surfaces via buildSpeakerMap as "Speaker N+1". This intentionally
-    // does NOT merge phantoms into the previous real segment — that
-    // merge was the root cause of the "my text got appended to the
-    // other person's text" bug.
-    if (expectedCount > 0) {
-      for (const seg of this.finalizedSegments) {
-        if (seg.speaker > expectedCount) {
-          seg.speaker = expectedCount
-          for (const w of seg.words) w.speaker = expectedCount
-        }
-      }
-    }
-
-    // Collapse adjacent segments that already share the same speaker. This
-    // is purely cosmetic: Deepgram occasionally emits two consecutive
-    // segments for the same speaker (e.g. on a pause), and joining them
-    // makes the transcript read more naturally. After the cap above,
-    // multiple consecutive phantom segments also unify into one block.
     const collapsed: TranscriptSegment[] = []
     for (const seg of this.finalizedSegments) {
       const prev = collapsed[collapsed.length - 1]
@@ -585,13 +624,46 @@ export class TranscriptAssembler {
     this.finalizedSegments = []
     this.currentInterim = null
     this.knownSpeakers.clear()
-    this.activeChannels.clear()
     this.timeOffset = 0
-    this.channelMode = 'detecting'
-    this.channel0FinalCount = 0
-    this.expectedSpeakerCount = null
+    this.channelMode = 'diarization'
     this.consecutiveSuppressedSwitches = 0
     this.suppressedSwitchTargetSpeaker = null
     this.totalSuppressedSwitches = 0
+    this.dedupDroppedCount = 0
+    this.recentByChannel.clear()
   }
+}
+
+// Module-level helpers (pure) ────────────────────────────────────────────────
+
+function avgWordConfidence(seg: TranscriptSegment): number {
+  const words = seg.words ?? []
+  if (words.length === 0) return 0
+  let sum = 0
+  for (const w of words) sum += Number.isFinite(w.confidence) ? w.confidence : 0
+  return sum / words.length
+}
+
+function normalizeForDedup(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, DEDUP_TEXT_PREFIX_CHARS)
+}
+
+function timeIoU(a: TranscriptSegment, b: TranscriptSegment): number {
+  const overlap = Math.max(0, Math.min(a.endTime, b.endTime) - Math.max(a.startTime, b.startTime))
+  if (overlap <= 0) return 0
+  const union = Math.max(a.endTime, b.endTime) - Math.min(a.startTime, b.startTime)
+  return union > 0 ? overlap / union : 0
+}
+
+export function isDuplicateOf(a: TranscriptSegment, b: TranscriptSegment): boolean {
+  if (timeIoU(a, b) < DEDUP_TIME_IOU_MIN) return false
+  const aText = normalizeForDedup(a.text)
+  const bText = normalizeForDedup(b.text)
+  if (aText.length === 0 || bText.length === 0) return false
+  return jaroWinkler(aText, bText) >= DEDUP_TEXT_SIMILARITY_MIN
 }
