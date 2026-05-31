@@ -125,11 +125,6 @@
 }
 
 /* ── Passed state ─────────────────────────────────────────────────── */
-.passedTrack {
-  opacity: 0.65;
-  position: relative;
-}
-
 .passedDaysLabel {
   font-size: 11px;
   font-style: italic;

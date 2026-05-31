@@ -151,5 +151,50 @@ describe('useLastView', () => {
 
       expect(localStorage.getItem(KEY)).toBeNull()
     })
+
+    it('strips the transient "new" param before saving (modal toggle, not view state)', () => {
+      renderHook(() =>
+        useLastView(KEY, PATH, makeParams('new=1&type=portfolio'), ['name'], navigate, setVisibleKeys, saveColumnConfig)
+      )
+
+      const saved = JSON.parse(localStorage.getItem(KEY)!)
+      expect(saved.urlParams).toBe('type=portfolio')
+    })
+
+    it('does not save when only transient params are present', () => {
+      renderHook(() =>
+        useLastView(KEY, PATH, makeParams('new=1'), ['name'], navigate, setVisibleKeys, saveColumnConfig)
+      )
+
+      expect(localStorage.getItem(KEY)).toBeNull()
+    })
+  })
+
+  describe('restore strips transient params from stale saves', () => {
+    it('strips "new" param from a pre-fix saved view so the add-modal does not re-open', () => {
+      localStorage.setItem(KEY, JSON.stringify({
+        urlParams: 'new=1&type=portfolio',
+        columns: ['name'],
+      }))
+
+      renderHook(() =>
+        useLastView(KEY, PATH, makeParams(''), [], navigate, setVisibleKeys, saveColumnConfig)
+      )
+
+      expect(navigate).toHaveBeenCalledWith('/test?type=portfolio', { replace: true })
+    })
+
+    it('skips restore entirely when the only saved param was "new"', () => {
+      localStorage.setItem(KEY, JSON.stringify({
+        urlParams: 'new=1',
+        columns: ['name'],
+      }))
+
+      renderHook(() =>
+        useLastView(KEY, PATH, makeParams(''), [], navigate, setVisibleKeys, saveColumnConfig)
+      )
+
+      expect(navigate).not.toHaveBeenCalled()
+    })
   })
 })

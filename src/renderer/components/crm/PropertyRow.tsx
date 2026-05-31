@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AddOptionInlineInput } from './AddOptionInlineInput'
+import { OptionListPopover } from './OptionListPopover'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { formatCurrency, formatDate } from '../../utils/format'
 import { useDebounce } from '../../hooks/useDebounce'
-import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import { EntitySearch } from './EntitySearch'
 import { chipStyle } from '../../utils/colorChip'
 import styles from './PropertyRow.module.css'
@@ -97,7 +96,6 @@ export function PropertyRow({
   icon
 }: PropertyRowProps) {
   const [editing, setEditing] = useState(false)
-  const [addingOption, setAddingOption] = useState(false)
   const isActive = editing || editMode
   const [editValue, setEditValue] = useState<string | number | boolean | null>(value)
   const [displayValue, setDisplayValue] = useState<string | number | boolean | null>(value)
@@ -135,39 +133,22 @@ export function PropertyRow({
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Multiselect dropdown state
+  // Multiselect / single-select dropdown state — popover open + accumulated multi selection.
+  // OptionListPopover owns its own keyboard nav, outside-click, type-jump
+  // accumulator, and "+ Add option" inline-input swap. PropertyRow only
+  // tracks: (a) whether the popover is open, (b) the draft multi-selection
+  // accumulator (committed on close), and (c) the anchor for positioning.
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [draftSelected, setDraftSelected] = useState<string[]>([])
-  const [search, setSearch] = useState('')
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  const searchRef = useRef<HTMLInputElement>(null)
+  const valueRef = useRef<HTMLSpanElement>(null)
 
-  // Lifted out of renderEditor() so the keyboard hook can see them at the top
-  // of the component (hooks can't live inside conditional render branches).
-  const multiselectParsed = useMemo(
-    () => (type === 'multiselect' ? safeParseOptions(options) : []),
-    [type, options]
+  const parsedOptionsForPopover = useMemo(
+    () => safeParseOptions(options).map(o => ({
+      value: optionValue(o),
+      label: optionLabel(o),
+    })),
+    [options]
   )
-  const multiselectFiltered = useMemo(
-    () => (search
-      ? multiselectParsed.filter((o) => optionLabel(o).toLowerCase().includes(search.toLowerCase()))
-      : multiselectParsed),
-    [multiselectParsed, search]
-  )
-
-  // Hook owns ↑/↓; site keeps Space (toggle), Enter/Escape (close+save).
-  // listRef intentionally not used — the dropdown mixes a search input + Clear-all
-  // button with the option rows, so children[activeIndex] wouldn't map cleanly.
-  // Pre-refactor PropertyRow had no scroll-into-view either.
-  const {
-    activeIndex: focusedIndex,
-    setActiveIndex: setFocusedIndex,
-    onKeyDown: hookKeyDown,
-  } = useListboxNavigation(multiselectFiltered, {
-    initialIndex: -1,
-    wrap: true,
-    onSelect: () => {},
-  })
 
   const debouncedEdit = useDebounce(editValue, 300)
 
@@ -199,38 +180,24 @@ export function PropertyRow({
     handleSave(debouncedEdit, true)  // keep editing open while user types
   }, [debouncedEdit]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Close multiselect dropdown when edit mode is deactivated
+  // Close popover when edit mode is deactivated externally
   useEffect(() => {
     if (!editMode && !editing && dropdownOpen) {
       closeAndSave()
     }
   }, [editMode, editing]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Click-outside listener for multiselect dropdown
-  useEffect(() => {
-    if (!dropdownOpen) return
-    function onMouseDown(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        closeAndSave()
-      }
-    }
-    document.addEventListener('mousedown', onMouseDown)
-    return () => document.removeEventListener('mousedown', onMouseDown)
-  }, [dropdownOpen, draftSelected]) // eslint-disable-line react-hooks/exhaustive-deps
+  // OptionListPopover owns its own outside-click handling — no document listener needed here.
 
   function openDropdown(initialValue?: string | number | boolean | null) {
     const src = initialValue !== undefined ? initialValue : editValue
     const current = String(src ?? '').split(',').map(s => s.trim()).filter(Boolean)
     setDraftSelected(current)
-    setFocusedIndex(-1)
-    setSearch('')
     setDropdownOpen(true)
-    setTimeout(() => (searchRef.current ?? dropdownRef.current)?.focus(), 0)
   }
 
   function closeAndSave() {
     setDropdownOpen(false)
-    setSearch('')
     const joined = draftSelected.join(',') || null
     setEditValue(joined ?? '')
     handleSave(joined)
@@ -241,8 +208,10 @@ export function PropertyRow({
     setEditing(true)
     setEditValue(displayValue)
     setError(null)
-    if (type === 'multiselect') {
-      // Open dropdown immediately on click, seeding from displayValue (editValue not yet updated)
+    if (type === 'multiselect' || type === 'select') {
+      // Open OptionListPopover immediately, seeding from displayValue
+      // (editValue not yet updated synchronously). Single-select gets its
+      // popover via the same path; the old <select> opened natively on click.
       setTimeout(() => openDropdown(displayValue), 0)
     } else {
       setTimeout(() => (inputRef.current as HTMLElement | null)?.focus(), 0)
@@ -327,97 +296,30 @@ export function PropertyRow({
         )
 
       case 'select': {
-        const parsedOpts = safeParseOptions(options)
-        const optValues = parsedOpts.map(optionValue)
-
-        if (addingOption) {
-          return (
-            <AddOptionInlineInput
-              className={styles.input}
-              onConfirm={async (opt) => {
-                setAddingOption(false)
-                try {
-                  await onAddOption?.(opt)
-                  handleSave(opt)
-                } catch (e) {
-                  console.error('[PropertyRow] addOption failed:', e)
-                }
-              }}
-              onCancel={() => setAddingOption(false)}
-            />
-          )
-        }
-
+        // Render the current value as a chip trigger; the OptionListPopover
+        // floats below via a portal (anchored to valueRef in the outer return).
+        const strVal = String(editValue ?? '')
+        const opt = parsedOptionsForPopover.find(o => o.value === strVal)
+        const label = opt?.label ?? strVal
         return (
-          <select
-            ref={inputRef as React.RefObject<HTMLSelectElement>}
-            className={styles.select}
-            value={String(editValue ?? '')}
-            onChange={(e) => {
-              if (e.target.value === '__add_option__') {
-                setAddingOption(true)
-                return
-              }
-              setEditValue(e.target.value)
-              handleSave(e.target.value || null)
-            }}
-            onBlur={() => setEditing(false)}
+          <span
+            className={strVal ? styles.chip : styles.empty}
+            style={strVal ? chipStyle(strVal) : undefined}
+            onClick={() => !dropdownOpen && openDropdown(displayValue)}
           >
-            <option value="">—</option>
-            {parsedOpts.map((opt) => (
-              <option key={optionValue(opt)} value={optionValue(opt)}>
-                {optionLabel(opt)}
-              </option>
-            ))}
-            {/* Stale value not in options */}
-            {editValue && !optValues.includes(String(editValue)) && (
-              <option value={String(editValue)} style={{ fontStyle: 'italic' }}>
-                {String(editValue)} (unknown)
-              </option>
-            )}
-            {onAddOption && (
-              <option value="__add_option__">+ Add option...</option>
-            )}
-          </select>
+            {strVal ? label : EMPTY_DISPLAY}
+          </span>
         )
       }
 
       case 'multiselect': {
-        const parsedOpts = multiselectParsed
-        const filteredOpts = multiselectFiltered
-
-        if (addingOption) {
-          return (
-            <AddOptionInlineInput
-              className={styles.input}
-              onConfirm={async (opt) => {
-                setAddingOption(false)
-                try {
-                  await onAddOption?.(opt)
-                  const trimmed = opt.trim()
-                  if (trimmed) {
-                    const next = [...draftSelected, trimmed]
-                    setDraftSelected(next)
-                    const joined = next.join(',')
-                    setEditValue(joined)
-                    handleSave(joined)
-                  }
-                } catch (e) {
-                  console.error('[PropertyRow] addOption failed:', e)
-                }
-              }}
-              onCancel={() => setAddingOption(false)}
-            />
-          )
-        }
-
-        // Trigger — shown in both open and closed states
-        // Uses draftSelected when open (buffered), editValue when closed (saved)
+        // Render the chip cluster as the trigger; OptionListPopover floats below
+        // via a portal (anchored to valueRef in the outer return).
+        // While open, show the draft (in-progress) selection; while closed, show saved.
         const triggerChips = dropdownOpen
           ? draftSelected
           : String(editValue ?? '').split(',').map(s => s.trim()).filter(Boolean)
-
-        const trigger = (
+        return (
           <div
             className={styles.multiselectTrigger}
             onClick={() => !readOnly && !dropdownOpen && openDropdown()}
@@ -432,104 +334,6 @@ export function PropertyRow({
               : <span className={styles.empty}>{EMPTY_DISPLAY}</span>
             }
             {!readOnly && <span className={styles.multiselectCaret}>{dropdownOpen ? '▴' : '▾'}</span>}
-          </div>
-        )
-
-        if (!dropdownOpen) return trigger
-
-        return (
-          <div className={styles.multiselectWrapper}>
-            {trigger}
-            <div
-              ref={dropdownRef}
-              className={styles.multiselectDropdown}
-              role="listbox"
-              aria-multiselectable={true}
-              tabIndex={-1}
-              onKeyDown={(e) => {
-                const opts = filteredOpts
-                if (e.key === ' ' && focusedIndex >= 0 && focusedIndex < opts.length) {
-                  e.preventDefault()
-                  const val = optionValue(opts[focusedIndex])
-                  setDraftSelected(prev =>
-                    prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]
-                  )
-                  return
-                }
-                if (e.key === 'Escape' || e.key === 'Enter') {
-                  e.preventDefault()
-                  closeAndSave()
-                  return
-                }
-                hookKeyDown(e)
-              }}
-            >
-              {/* Search input — only when 5+ options */}
-              {parsedOpts.length >= 5 && (
-                <input
-                  ref={searchRef}
-                  className={styles.multiselectSearch}
-                  placeholder="Search..."
-                  value={search}
-                  onChange={e => { setSearch(e.target.value); setFocusedIndex(-1) }}
-                  onKeyDown={e => {
-                    if (e.key === 'Escape') { e.stopPropagation(); closeAndSave() }
-                  }}
-                  aria-label="Search options"
-                />
-              )}
-
-              {/* Clear all */}
-              {draftSelected.length > 0 && (
-                <button
-                  type="button"
-                  className={styles.multiselectClearAll}
-                  onMouseDown={e => { e.preventDefault(); setDraftSelected([]) }}
-                >
-                  Clear all
-                </button>
-              )}
-
-              {/* Options */}
-              {filteredOpts.length === 0 && (
-                <div className={styles.multiselectEmpty}>No options match</div>
-              )}
-              {filteredOpts.map((opt, i) => {
-                const val = optionValue(opt)
-                const isSelected = draftSelected.includes(val)
-                return (
-                  <div
-                    key={val}
-                    className={`${styles.multiselectOption} ${i === focusedIndex ? styles.multiselectOptionFocused : ''}`}
-                    role="option"
-                    aria-selected={isSelected}
-                    onMouseDown={e => {
-                      e.preventDefault()
-                      setDraftSelected(prev =>
-                        prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]
-                      )
-                    }}
-                    onMouseEnter={() => setFocusedIndex(i)}
-                  >
-                    <span className={isSelected ? styles.checkboxChecked : styles.checkboxUnchecked}>
-                      {isSelected ? '☑' : '☐'}
-                    </span>
-                    <span style={isSelected ? chipStyle(val) : undefined}>{optionLabel(opt)}</span>
-                  </div>
-                )
-              })}
-
-              {/* Add option */}
-              {onAddOption && (
-                <button
-                  type="button"
-                  className={styles.addOptionLink}
-                  onMouseDown={e => { e.preventDefault(); setAddingOption(true); setDropdownOpen(false) }}
-                >
-                  + Add option
-                </button>
-              )}
-            </div>
           </div>
         )
       }
@@ -709,16 +513,88 @@ export function PropertyRow({
     return <span>{formatted}</span>
   }
 
+  // ── Shared popover for select / multiselect ──
+  // Anchored to the value cell so the menu appears below the chip cluster.
+  const renderPopover = () => {
+    if (!isActive || !dropdownOpen) return null
+    if (type === 'select') {
+      return (
+        <OptionListPopover
+          anchorEl={valueRef.current}
+          options={parsedOptionsForPopover}
+          value={String(editValue ?? '')}
+          mode="single"
+          onPick={(v) => {
+            setEditValue(v)
+            setDropdownOpen(false)
+            handleSave(v || null)
+          }}
+          onAddOption={onAddOption ? () => { /* popover swaps body internally */ } : undefined}
+          onAddOptionConfirm={async (opt) => {
+            try {
+              await onAddOption?.(opt)
+              setDropdownOpen(false)
+              setEditValue(opt)
+              handleSave(opt)
+            } catch (e) {
+              console.error('[PropertyRow] addOption failed:', e)
+              setDropdownOpen(false)
+            }
+          }}
+          onClose={() => {
+            setDropdownOpen(false)
+            if (!editMode) setEditing(false)
+          }}
+          chipStyle={chipStyle}
+        />
+      )
+    }
+    if (type === 'multiselect') {
+      return (
+        <OptionListPopover
+          anchorEl={valueRef.current}
+          options={parsedOptionsForPopover}
+          value={draftSelected}
+          mode="multi"
+          onMultiChange={setDraftSelected}
+          onCommitMulti={closeAndSave}
+          onAddOption={onAddOption ? () => { /* popover swaps body internally */ } : undefined}
+          onAddOptionConfirm={async (opt) => {
+            try {
+              await onAddOption?.(opt)
+              const trimmed = opt.trim()
+              if (trimmed) {
+                const next = [...draftSelected, trimmed]
+                setDraftSelected(next)
+                const joined = next.join(',')
+                setEditValue(joined)
+                setDropdownOpen(false)
+                handleSave(joined)
+              }
+            } catch (e) {
+              console.error('[PropertyRow] addOption failed:', e)
+              setDropdownOpen(false)
+            }
+          }}
+          onClose={() => { /* commit handled by onCommitMulti */ }}
+          chipStyle={chipStyle}
+        />
+      )
+    }
+    return null
+  }
+
   return (
     <div className={`${styles.row} ${isActive ? styles.editing : ''}`} onClick={!isActive && !readOnly ? startEdit : undefined}>
       <span className={`${styles.label} ${icon ? styles.labelWithIcon : ''}`}>
         {icon && <span className={styles.labelIcon} aria-hidden>{icon}</span>}
         <span className={styles.labelText}>{label}</span>
       </span>
-      <span className={styles.value}>
+      <span ref={valueRef} className={styles.value}>
         {isActive ? renderEditor() : renderDisplay()}
         {isActive && saving && <span className={styles.saving}>…</span>}
         {error && <span className={styles.error} title={error}>!</span>}
+        {renderPopover()}
       </span>
     </div>
   )

@@ -128,10 +128,13 @@
 .footer {
   border-top: 1px solid var(--color-border);
   padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .createFieldBtn {
-  width: 100%;
+  flex: 1;
   padding: 6px 10px;
   background: none;
   border: 1px dashed var(--color-border);
@@ -144,4 +147,20 @@
 
 .createFieldBtn:hover {
   background: var(--color-hover-bg, rgba(0, 0, 0, 0.04));
+}
+
+.doneBtn {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.doneBtn:hover {
+  filter: brightness(1.05);
 }

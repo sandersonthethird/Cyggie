@@ -104,6 +104,16 @@ vi.mock('../renderer/contexts/AudioCaptureContext', () => ({
   useSharedVideoCapture: vi.fn(() => ({})),
 }))
 
+vi.mock('../renderer/contexts/EnhancementContext', () => ({
+  useEnhancement: () => ({
+    state: { inProgress: false, phase: '', streamedSummary: '', pendingResult: null },
+    startEnhancement: vi.fn(),
+    stopEnhancement: vi.fn(),
+    consumePendingResult: vi.fn(() => null),
+  }),
+  EnhancementProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
+
 vi.mock('../renderer/hooks/useFindInPage', () => ({
   useFindInPage: vi.fn(() => ({
     query: '',

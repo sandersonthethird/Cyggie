@@ -7,6 +7,12 @@
  *     └── click out ───┘  └──────── Esc ─────────────────┘
  *     └── Esc ─────────┘
  *
+ *   Dropdown cells (col.type === 'select') use a three-click flow instead of
+ *   needing a double-click. Tables route those clicks through
+ *   `handleSelectCellClick`, which dispatches to focus-or-edit based on
+ *   whether the clicked cell is already focused:
+ *     unfocused → focus; focused (same cell) → start edit (opens popover).
+ *
  *   FOCUSED + Shift:
  *     Shift+click (same col) → set cellRange { colIdx, startRow, endRow }
  *     Shift+Arrow Up/Down    → extend/contract cellRange
@@ -27,7 +33,7 @@
  *                                         opts.suppressEscape skips the Esc clause when caller
  *                                         has competing state (e.g. clipboard "copied" mode).
  */
-import { useState, useCallback, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useState, useCallback, useEffect, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ColumnDef } from '../components/crm/tableUtils'
 
 export interface EditCell {
@@ -69,7 +75,13 @@ export interface CellRange {
 export function useEditCellNav(
   rowCount: number,
   visibleCols: ColumnDef[],
-  scrollToRow?: (idx: number) => void
+  scrollToRow?: (idx: number) => void,
+  /**
+   * Bring the column at `colIdx` into horizontal view. Used during left/right
+   * arrow navigation so the focused cell stays visible. Optional — tables
+   * that don't horizontally scroll can omit it.
+   */
+  scrollToCol?: (colIdx: number) => void,
 ) {
   const [focusedCell, setFocusedCell] = useState<EditCell | null>(null)
   const [editCell, setEditCell] = useState<EditCell | null>(null)
@@ -97,6 +109,25 @@ export function useEditCellNav(
     setFocusedCell({ rowIdx, colIdx })
     setCellRange(null)
   }, [])
+
+  /**
+   * Three-click dropdown dispatch: if the clicked cell is already focused
+   * and the user is not shift-clicking (range select), enter edit mode.
+   * Otherwise focus the cell. Used by table chip-cell onClick handlers so
+   * the focus-or-edit branching lives in one place.
+   */
+  const handleSelectCellClick = useCallback(
+    (rowIdx: number, colIdx: number, shiftKey = false) => {
+      const isFocused =
+        focusedCell?.rowIdx === rowIdx && focusedCell?.colIdx === colIdx
+      if (isFocused && !shiftKey) {
+        handleStartEdit(rowIdx, colIdx)
+      } else {
+        handleFocusCell(rowIdx, colIdx, shiftKey)
+      }
+    },
+    [focusedCell, handleStartEdit, handleFocusCell]
+  )
 
   const handleEndEdit = useCallback((rowIdx: number, colIdx: number, advanceDir: 'down' | 'right' | null) => {
     setEditCell(null)
@@ -176,10 +207,11 @@ export function useEditCellNav(
       if (nextCol) {
         setFocusedCell({ rowIdx: focusedCell.rowIdx, colIdx: nextCol.i })
         setCellRange(null)
+        scrollToCol?.(nextCol.i)
       }
     }
     setEditCell(null)
-  }, [focusedCell, rowCount, visibleCols, scrollToRow])
+  }, [focusedCell, rowCount, visibleCols, scrollToRow, scrollToCol])
 
   /**
    * Dispatches a React keyboard event to the appropriate cell-nav action.
@@ -187,22 +219,21 @@ export function useEditCellNav(
    * (caller should continue to other handlers like clipboard / row-selection).
    *
    * Handles, in order:
-   *   1. Arrow keys (when focused, not editing) → handleArrowNav
-   *   2. Enter (when focused, not editing) → handleStartEdit
-   *   3. Escape (when focused, not editing, !opts.suppressEscape) → clearFocus
-   *   4. Printable single-char key (when focused, not editing, no modifiers,
+   *   1. Enter (when focused, not editing) → handleStartEdit
+   *   2. Escape (when focused, not editing, !opts.suppressEscape) → clearFocus
+   *   3. Printable single-char key (when focused, not editing, no modifiers,
    *      not autorepeat, focused col is editable) → handleStartEdit with initialChar
+   *
+   * Arrow keys are intentionally NOT handled here. They're owned by the
+   * document-level listener set up in the useEffect below, which fires
+   * regardless of which DOM element holds focus — so navigation works whether
+   * the user just clicked a cell (focus on the cell) or arrowed in from
+   * elsewhere (focus on the table wrapper). Routing arrows through both this
+   * React handler AND the doc listener would double-step the focused cell.
    */
   const handleKeyboardEvent = useCallback(
     (e: ReactKeyboardEvent, opts?: { suppressEscape?: boolean }): boolean => {
       if (!focusedCell || editCell) return false
-
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        e.preventDefault()
-        const dir = e.key.replace('Arrow', '').toLowerCase() as 'up' | 'down' | 'left' | 'right'
-        handleArrowNav(dir, e.shiftKey)
-        return true
-      }
 
       if (e.key === 'Enter') {
         e.preventDefault()
@@ -234,8 +265,46 @@ export function useEditCellNav(
 
       return false
     },
-    [focusedCell, editCell, visibleCols, handleArrowNav, handleStartEdit, clearFocus],
+    [focusedCell, editCell, visibleCols, handleStartEdit, clearFocus],
   )
+
+  /**
+   * Document-level arrow-key navigation: when a cell is focused (and not in
+   * edit mode), Arrow Up/Down/Left/Right navigate between cells regardless of
+   * which DOM element currently holds focus. Without this fallback, navigation
+   * depends on focus reliably landing on the table wrapper after every cell
+   * click — which is fragile (focus can shift to the cell, a popover, the
+   * checkbox, etc., and the wrapper's onKeyDown only fires when the wrapper
+   * itself or one of its descendants without a competing handler has focus).
+   *
+   * Skipped when:
+   *   - No cell is focused (nothing to navigate from).
+   *   - A cell is being edited (the editor's input owns its own arrow keys —
+   *     e.g. moving the caret within a text input, scrolling a popover list).
+   *   - The active element is a text input / textarea / select / contentEditable
+   *     (so the user can still type and use arrows inside form fields elsewhere
+   *     on the page — search boxes, comment composers, etc.).
+   */
+  useEffect(() => {
+    if (!focusedCell || editCell) return
+    function onDocKeyDown(e: KeyboardEvent) {
+      if (
+        e.key !== 'ArrowUp' && e.key !== 'ArrowDown' &&
+        e.key !== 'ArrowLeft' && e.key !== 'ArrowRight'
+      ) return
+      const target = e.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+        if (target.isContentEditable) return
+      }
+      e.preventDefault()
+      const dir = e.key.replace('Arrow', '').toLowerCase() as 'up' | 'down' | 'left' | 'right'
+      handleArrowNav(dir, e.shiftKey)
+    }
+    document.addEventListener('keydown', onDocKeyDown)
+    return () => document.removeEventListener('keydown', onDocKeyDown)
+  }, [focusedCell, editCell, handleArrowNav])
 
   return {
     focusedCell,
@@ -246,6 +315,7 @@ export function useEditCellNav(
     setCellRange,
     handleFocusCell,
     handleStartEdit,
+    handleSelectCellClick,
     handleEndEdit,
     handleArrowNav,
     handleKeyboardEvent,

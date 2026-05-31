@@ -45,8 +45,8 @@
 }
 
 .bubble.me {
-  background: var(--color-bubble-me, #c8d8b4);
-  color: var(--color-bubble-me-text, #1f2d18);
+  background: var(--color-bubble-me, #EAF1EC);
+  color: var(--color-bubble-me-text, var(--cv-text, #111827));
   border-bottom-right-radius: 6px;
 }
 

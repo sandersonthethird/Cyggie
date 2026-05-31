@@ -2626,3 +2626,127 @@ only, so it has to be remembered.
 **Priority:** P3.
 **Depends on:** VC-pitch eval harness landing first (2026-05-29 on this
 PR).
+
+---
+
+## Add search-when-5+-options input to the shared `OptionListPopover`
+
+**What:** Render a small search input at the top of `OptionListPopover`
+when `options.length >= 5`. Filter the visible list as the user types.
+Arrow keys navigate filtered results; the type-accumulator shortcut only
+kicks in when the search input is unfocused.
+
+**Why:** Custom-field select columns can grow to dozens of options.
+Without a filter, finding an option in a long list requires scrolling
+past the entire list or relying on first-letter type-jump (which fails
+when many options share a prefix). `PropertyRow.tsx` already does this
+for multiselect; the table popover should match for consistency once
+`OptionListPopover` is the shared primitive.
+
+**Context:** Reference [PropertyRow.tsx:468-480](src/renderer/components/crm/PropertyRow.tsx#L468-L480)
+for the existing implementation. The shared `OptionListPopover`
+introduced by the three-click-dropdown PR is the natural home. Wire so
+that ArrowUp/Down move within the filtered set, Enter picks the
+currently-active filtered item, Esc closes, and the type-accumulator
+(used when no search box is rendered, i.e. <5 options) is bypassed when
+the search input has focus.
+
+**Pros:** Closes a UX gap for large custom-field option lists; one less
+reason to maintain a separate PropertyRow popover indefinitely.
+
+**Cons:** Adds focusable UI inside the popover even when not strictly
+needed; need careful focus management so the picker doesn't fight with
+the cell-level type-accumulator.
+
+**Effort:** S (~½ day; the logic exists in PropertyRow and just needs
+extraction into the shared component).
+**Priority:** P3.
+**Depends on:** Shared `OptionListPopover` landing (the three-click
+dropdown plan: `when-the-user-clicks-cheeky-candy.md`).
+
+---
+
+## Bring multiselect custom-field cells in tables to parity with PropertyRow
+
+**What:** Today, multiselect custom-field cells in the Contacts and
+Companies tables fall through to a plain text input — no chips in
+display, no popover in edit. Give them the same chip-display + popover-
+with-checkboxes UX that `PropertyRow.tsx` already provides for
+multiselect in the right-hand property panels.
+
+**Why:** A user creating a custom multiselect field expects parity with
+the property panel. Today the table silently degrades the experience for
+the same field — chips render correctly in the panel, but the same field
+in the grid is a comma-separated text input. Pre-existing gap surfaced
+during the three-click dropdown review (not introduced by it).
+
+**Context:** Touchpoints:
+- [EditableCell.tsx:306](src/renderer/components/company/EditableCell.tsx#L306)
+  gates the dropdown branch on `col.type === 'select'`; multiselect
+  falls to the text-input branch at line 328.
+- [ContactTable.tsx:784](src/renderer/components/contact/ContactTable.tsx#L784)
+  similarly checks `col.type === 'select'` for the chip cell;
+  multiselect renders no chips.
+- [CompanyTable.tsx](src/renderer/components/company/CompanyTable.tsx)
+  has the same gating.
+- Reference [PropertyRow.tsx:497-520](src/renderer/components/crm/PropertyRow.tsx#L497-L520)
+  for the checkbox option row pattern to lift into the shared popover.
+
+Plan: (a) display layer — split a comma-joined `cellValue` into multiple
+chips, reuse the same `chipStyle()` helper; (b) edit layer — extend the
+shared `OptionListPopover` with a `mode: 'single' | 'multi'` prop that
+renders checkboxes when multi and defers commit until popover close;
+(c) plumb the three-click pattern from the dropdown PR through to
+multiselect cells too.
+
+**Pros:** Closes a real feature gap. Lets the shared `OptionListPopover`
+absorb the multiselect mode once, instead of leaving PropertyRow with
+its own multiselect path.
+
+**Cons:** New display + edit code in EditableCell and both chip-cell
+paths; touches more files; needs design input on chip wrapping when a
+cell holds many selected values (truncate? +N indicator?).
+
+**Effort:** M (~1-2 days; mostly UI design + plumbing, no new IPC).
+**Priority:** P2.
+**Depends on:** Shared `OptionListPopover` landing (the three-click
+dropdown plan: `when-the-user-clicks-cheeky-candy.md`).
+
+---
+
+## Migrate `ChipSelect` onto the shared `OptionListPopover`
+
+**What:** Audit [ChipSelect.tsx](src/renderer/components/crm/ChipSelect.tsx)
+against the shared `OptionListPopover` introduced by the three-click
+dropdown plan. Reconcile any behavioral differences (extend the shared
+primitive or document why ChipSelect needs to stay separate), then
+migrate `ChipSelect` consumers (Pipeline cell + inline property
+contexts) to use the shared popover.
+
+**Why:** After the three-click dropdown PR lands, the codebase will have
+two unified dropdowns (`EditableCell` + `PropertyRow` both on
+`OptionListPopover`) and one orphan (`ChipSelect`). Without this
+migration, drift starts immediately: any keyboard/UX improvement to
+`OptionListPopover` will silently *not* apply to wherever `ChipSelect`
+still lives, and users will notice the inconsistency.
+
+**Context:** Step 1 is the audit — diff `ChipSelect` behavior against
+`OptionListPopover` to identify unique features it provides (inline
+trigger vs portal, colored-chip rendering rules, anything custom). Some
+of those may already be supported by the shared primitive; some may need
+to be added; some may justify keeping `ChipSelect` separate. Document
+the decision in the migration commit. `InvestorChipsCell` is explicitly
+NOT a candidate (chip search + dedup is a meaningfully different data
+model).
+
+**Pros:** Final piece of dropdown unification — one keyboard model, one
+focus style, one "+ Add option" flow across the app.
+
+**Cons:** Audit-first means uncertain scope; ChipSelect may have
+features that require extending the shared primitive, which compounds
+risk.
+
+**Effort:** M (~1-2 days incl. audit + migration + tests).
+**Priority:** P3.
+**Depends on:** Shared `OptionListPopover` landing (the three-click
+dropdown plan: `when-the-user-clicks-cheeky-candy.md`).

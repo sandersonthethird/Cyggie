@@ -71,12 +71,13 @@ describe('getRangePosition', () => {
 describe('useEditCellNav', () => {
   const cols = makeCols(5)
   const scrollToRow = vi.fn()
+  const scrollToCol = vi.fn()
 
   function setup(rowCount = 10) {
-    return renderHook(() => useEditCellNav(rowCount, cols, scrollToRow))
+    return renderHook(() => useEditCellNav(rowCount, cols, scrollToRow, scrollToCol))
   }
 
-  afterEach(() => scrollToRow.mockClear())
+  afterEach(() => { scrollToRow.mockClear(); scrollToCol.mockClear() })
 
   // ── Focus ─────────────────────────────────────────────────────────────────
 
@@ -143,11 +144,32 @@ describe('useEditCellNav', () => {
       expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 2 })
     })
 
+    it('Arrow Right calls scrollToCol with the target column index', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleArrowNav('right'))
+      expect(scrollToCol).toHaveBeenCalledWith(2)
+    })
+
     it('F4: Arrow Left moves to previous editable column', () => {
       const { result } = setup()
       act(() => result.current.handleFocusCell(2, 3))
       act(() => result.current.handleArrowNav('left'))
       expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 2 })
+    })
+
+    it('Arrow Left calls scrollToCol with the target column index', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 3))
+      act(() => result.current.handleArrowNav('left'))
+      expect(scrollToCol).toHaveBeenCalledWith(2)
+    })
+
+    it('Arrow Right at last editable col does NOT call scrollToCol (no movement)', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 4))  // col4 is last editable
+      act(() => result.current.handleArrowNav('right'))
+      expect(scrollToCol).not.toHaveBeenCalled()
     })
 
     it('Arrow Left at first editable column does nothing', () => {
@@ -259,6 +281,154 @@ describe('useEditCellNav', () => {
       act(() => result.current.handleFocusCell(5, 1, true))
       act(() => result.current.handleStartEdit(3, 1))
       expect(result.current.cellRange).toBeNull()
+    })
+  })
+
+  // ── handleSelectCellClick (three-click dropdown dispatch) ─────────────────
+
+  describe('handleSelectCellClick', () => {
+    it('first click on an unfocused cell focuses (does NOT edit)', () => {
+      const { result } = setup()
+      act(() => result.current.handleSelectCellClick(2, 1))
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+      expect(result.current.editCell).toBeNull()
+    })
+
+    it('second click on the already-focused cell starts edit', () => {
+      const { result } = setup()
+      act(() => result.current.handleSelectCellClick(2, 1))
+      act(() => result.current.handleSelectCellClick(2, 1))
+      expect(result.current.editCell).toEqual({ rowIdx: 2, colIdx: 1 })
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+    })
+
+    it('click on a different cell focuses it (does NOT edit) even if a cell was previously focused', () => {
+      const { result } = setup()
+      act(() => result.current.handleSelectCellClick(2, 1))
+      act(() => result.current.handleSelectCellClick(2, 2))
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 2 })
+      expect(result.current.editCell).toBeNull()
+    })
+
+    it('shift-click on the focused cell does NOT start edit (range select instead)', () => {
+      const { result } = setup()
+      act(() => result.current.handleSelectCellClick(2, 1))
+      act(() => result.current.handleSelectCellClick(2, 1, true))
+      // No edit; focusedCell stays
+      expect(result.current.editCell).toBeNull()
+    })
+  })
+
+  // ── Document-level arrow navigation (runs even when wrapper isn't focused) ──
+
+  describe('document-level arrow nav fallback', () => {
+    it('Arrow Down fires on document keydown when a cell is focused', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => {
+        const e = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+        document.body.dispatchEvent(e)
+      })
+      expect(result.current.focusedCell).toEqual({ rowIdx: 3, colIdx: 1 })
+    })
+
+    it('Arrow Right navigates columns from document keydown', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => {
+        const e = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+        document.body.dispatchEvent(e)
+      })
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 2 })
+    })
+
+    it('does NOT fire when no cell is focused', () => {
+      const { result } = setup()
+      act(() => {
+        const e = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+        document.body.dispatchEvent(e)
+      })
+      expect(result.current.focusedCell).toBeNull()
+    })
+
+    it('does NOT fire while a cell is being edited (editor owns the arrow keys)', () => {
+      const { result } = setup()
+      act(() => result.current.handleStartEdit(2, 1))
+      act(() => {
+        const e = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+        document.body.dispatchEvent(e)
+      })
+      // editCell + focusedCell stay at (2, 1) — no navigation
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+      expect(result.current.editCell).toEqual({ rowIdx: 2, colIdx: 1 })
+    })
+
+    it('does NOT fire when an INPUT element has focus (lets the user type)', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      input.focus()
+      act(() => {
+        const e = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+        input.dispatchEvent(e)
+      })
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+      input.remove()
+    })
+
+    it('does NOT fire when a TEXTAREA has focus', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      const textarea = document.createElement('textarea')
+      document.body.appendChild(textarea)
+      textarea.focus()
+      act(() => {
+        const e = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+        textarea.dispatchEvent(e)
+      })
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+      textarea.remove()
+    })
+
+    it('does NOT fire when target is contentEditable', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      const div = document.createElement('div')
+      div.setAttribute('contenteditable', 'true')
+      // jsdom doesn't always reflect isContentEditable from the attribute, so
+      // stub the property explicitly to mirror the production browser behavior.
+      Object.defineProperty(div, 'isContentEditable', { value: true })
+      document.body.appendChild(div)
+      div.focus()
+      act(() => {
+        const e = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+        div.dispatchEvent(e)
+      })
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+      div.remove()
+    })
+
+    it('non-arrow keys pass through (no preventDefault / no nav)', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      let prevented = false
+      const e = new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true })
+      const origPreventDefault = e.preventDefault.bind(e)
+      e.preventDefault = () => { prevented = true; origPreventDefault() }
+      act(() => { document.body.dispatchEvent(e) })
+      expect(prevented).toBe(false)
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+    })
+
+    it('Shift+Arrow extends range from document keydown', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => {
+        const e = new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true, cancelable: true })
+        document.body.dispatchEvent(e)
+      })
+      expect(result.current.cellRange).toEqual({ colIdx: 1, startRow: 2, endRow: 3 })
     })
   })
 

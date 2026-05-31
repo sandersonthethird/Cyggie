@@ -237,16 +237,19 @@ export function CompanyTable({
   }, [bulkEditOpen])
 
   // ── Edit cell nav ──────────────────────────────────────────────────────────
-  // (scrollToRow is defined below after rowVirtualizer — forward-ref via closure)
+  // (scrollToRow / scrollToCol are defined below after rowVirtualizer + DOM
+  // measurement — forward-ref via closure)
   const scrollToRowRef = useRef<(idx: number) => void>(() => {})
+  const scrollToColRef = useRef<(idx: number) => void>(() => {})
 
   const {
     focusedCell, editCell, setEditCell, cellRange,
-    handleFocusCell, handleStartEdit, handleEndEdit, handleKeyboardEvent,
+    handleFocusCell, handleStartEdit, handleSelectCellClick, handleEndEdit, handleKeyboardEvent,
   } = useEditCellNav(
     companies.length,
     visibleCols,
-    (idx) => scrollToRowRef.current(idx)
+    (idx) => scrollToRowRef.current(idx),
+    (idx) => scrollToColRef.current(idx),
   )
 
   const getEditCell = useCallback(() => editCell, [editCell])
@@ -411,6 +414,34 @@ export function CompanyTable({
   }
   // Wire scrollToRowRef so hooks defined above can call scrollToRow
   scrollToRowRef.current = scrollToRow
+
+  /**
+   * Bring the column at colIdx (index into visibleCols) into horizontal view.
+   * See ContactTable.scrollToCol for the rationale — same layout assumptions:
+   * sticky checkbox + sticky name column on the left.
+   */
+  function scrollToCol(colIdx: number) {
+    const wrapper = scrollRef.current
+    if (!wrapper) return
+    if (colIdx <= 0) return  // name col is sticky
+
+    const widthAt = (i: number) =>
+      colWidths[visibleCols[i]?.key ?? ''] ?? visibleCols[i]?.width ?? 0
+
+    let leftEdge = CHECKBOX_WIDTH
+    for (let i = 0; i < colIdx; i++) leftEdge += widthAt(i)
+    const rightEdge = leftEdge + widthAt(colIdx)
+
+    const stickyW = CHECKBOX_WIDTH + widthAt(0)
+    const { scrollLeft, clientWidth } = wrapper
+
+    if (leftEdge < scrollLeft + stickyW) {
+      wrapper.scrollLeft = leftEdge - stickyW
+    } else if (rightEdge > scrollLeft + clientWidth) {
+      wrapper.scrollLeft = rightEdge - clientWidth
+    }
+  }
+  scrollToColRef.current = scrollToCol
 
   const virtualRows = rowVirtualizer.getVirtualItems()
 
@@ -703,7 +734,7 @@ export function CompanyTable({
                       <div
                         key={col.key}
                         className={`${styles.chipCell} ${chipRangeClass} ${chipCopiedClass}`.trim()}
-                        onClick={(e) => handleFocusCell(dataIndex, colIdx, e.shiftKey)}
+                        onClick={(e) => handleSelectCellClick(dataIndex, colIdx, e.shiftKey)}
                         onDoubleClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
                         {cellValue ? (
@@ -785,6 +816,7 @@ export function CompanyTable({
                         rangePosition={focusPos}
                         isEditing={isCellEditing}
                         initialChar={isCellEditing ? editCell?.initialChar : undefined}
+                        scrollContainer={scrollRef.current}
                         onFocus={(shiftKey) => handleFocusCell(dataIndex, colIdx, shiftKey)}
                         onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
                         onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}

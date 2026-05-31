@@ -6,26 +6,38 @@
  *   FOCUSED ──dbl-click/Enter──▶ EDIT ──blur/Enter──▶ SAVING ──success──▶ DISPLAY
  *                                  │   │                 │
  *                                Esc   picks sentinel   error──▶ ERROR (revert + 3s) ──▶ DISPLAY
- *                                  │   │
- *                                  │   ▼
- *                                  │  ADDING_OPTION ──Enter (non-empty)──▶ [addCustomFieldOption + onSave] ──▶ DISPLAY
- *                                  │        │
- *                                  └─ Esc/blur ──▶ FOCUSED (stay focused after cancel)
+ *                                  │
+ *                                  └─ Esc ──▶ FOCUSED (stay focused after cancel)
+ *
+ *   Dropdown cells (col.type === 'select') use a three-click flow:
+ *     DISPLAY ──click──▶ FOCUSED ──click(same cell)──▶ EDIT (popover opens)
+ *                                                       │
+ *                                                       ├─ pick option ─▶ commitEdit(advanceDir=null, value)
+ *                                                       │                  └─ explicit value bypasses
+ *                                                       │                     stale-closure on `draft`
+ *                                                       └─ Esc/outside-click ─▶ FOCUSED
+ *
+ *   Unmount cleanup (virtualized scroll-out):
+ *     A cell that unmounts while in EDIT calls onEndEdit(null) so the parent
+ *     hook clears editCell. Prevents the popover from re-opening on remount
+ *     and stops getBoundingClientRect on a dead anchor.
  *
  * Props:
- *   value         — current display value (string, number, null)
- *   col           — ColumnDef for the field being displayed/edited
- *   isHighlighted — externally driven focus highlight (single-click, arrow nav, range selection)
- *   isEditing     — externally driven edit mode (double-click, Enter, type-to-edit)
- *   initialChar   — if set, seeds draft with this char instead of current value (type-to-edit)
- *   onSave        — async callback: (newValue: string | null) => void
- *   onFocus       — notify parent this cell is focused (single click)
- *   onStartEdit   — notify parent this cell is being edited (double click)
- *   onEndEdit     — notify parent edit ended (keyboard nav)
+ *   value           — current display value (string, number, null)
+ *   col             — ColumnDef for the field being displayed/edited
+ *   rangePosition   — externally driven focus highlight position ('only' = single focused cell)
+ *   isEditing       — externally driven edit mode (double-click, Enter, type-to-edit)
+ *   initialChar     — if set, seeds draft with this char instead of current value (type-to-edit)
+ *   scrollContainer — table scroll container; passed through to OptionListPopover for reposition
+ *   onSave          — async callback: (newValue: string | null) => void
+ *   onFocus         — notify parent this cell is focused (single click)
+ *   onStartEdit     — notify parent this cell is being edited (double click or 2nd click on select)
+ *   onEndEdit       — notify parent edit ended (keyboard nav)
  */
 import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { daysSince, formatLastTouch } from '../../utils/format'
-import { AddOptionInlineInput } from '../crm/AddOptionInlineInput'
+import { chipStyle } from '../../utils/colorChip'
+import { OptionListPopover } from '../crm/OptionListPopover'
 import type { ColumnDef } from './companyColumns'
 import styles from './EditableCell.module.css'
 
@@ -43,6 +55,8 @@ interface EditableCellProps {
   rangePosition: RangePosition
   isEditing: boolean
   initialChar?: string
+  /** Table scroll container; passed to OptionListPopover so it can reposition on scroll. */
+  scrollContainer?: HTMLElement | null
   onFocus: (shiftKey?: boolean) => void
   onStartEdit: () => void
   onEndEdit: (advanceDir?: 'down' | 'right' | null) => void
@@ -132,17 +146,22 @@ function EditableCellInner({
   rangePosition,
   isEditing,
   initialChar,
+  scrollContainer,
   onFocus,
   onStartEdit,
   onEndEdit
 }: EditableCellProps) {
   const [cellState, setCellState] = useState<CellState>('display')
   const [draft, setDraft] = useState('')
-  const [addingOption, setAddingOption] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement>(null)
+  const cellRootRef = useRef<HTMLDivElement>(null)
   const errorTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const savedValueRef = useRef<unknown>(value)
+  // Mirror cellState so the unmount cleanup can read the final value without
+  // adding it as a dep (which would re-fire the cleanup on every state change).
+  const cellStateRef = useRef<CellState>('display')
+  cellStateRef.current = cellState
 
   // Keep savedValueRef in sync with prop (reflects optimistic patches from parent)
   savedValueRef.current = value
@@ -164,8 +183,10 @@ function EditableCellInner({
   // next typed character appends instead of replacing the seed character.
   // For click/Enter-to-edit, select() so typing replaces existing text — the
   // long-standing behavior.
+  //
+  // Skipped for select cells — OptionListPopover owns its own focus.
   useLayoutEffect(() => {
-    if (cellState === 'edit' && inputRef.current) {
+    if (cellState === 'edit' && col.type !== 'select' && inputRef.current) {
       inputRef.current.focus()
       if (inputRef.current instanceof HTMLInputElement) {
         if (initialChar) {
@@ -180,6 +201,20 @@ function EditableCellInner({
     // we transition into edit, and any later prop change shouldn't re-fire focus.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cellState])
+
+  // Unmount cleanup: if a select cell is unmounted while its popover is open
+  // (TanStack Virtual scroll-out, route change, parent rerender that drops
+  // the row), clear editCell in the parent hook so we don't dangle a popover
+  // anchored to a dead DOM node.
+  useEffect(() => {
+    return () => {
+      if (cellStateRef.current === 'edit') {
+        onEndEdit(null)
+      }
+    }
+    // Bind onEndEdit by identity at mount; later changes shouldn't re-fire cleanup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const startEdit = useCallback(() => {
     if (!col.editable) return
@@ -198,10 +233,31 @@ function EditableCellInner({
     onEndEdit(null)
   }, [onEndEdit])
 
-  const commitEdit = useCallback(async (advanceDir: 'down' | 'right' | null) => {
+  /**
+   * Commit the cell's draft (or an explicit value override) to onSave.
+   *
+   * The `valueOverride` parameter exists for the OptionListPopover pick path:
+   * when the user clicks an option, we have the value in hand — we should NOT
+   * rely on setDraft → re-render → next render's commitEdit closure, because
+   * `setDraft` is async and the click handler runs commitEdit immediately on
+   * the same render (with the stale `draft`). Passing the value explicitly
+   * sidesteps the stale-closure bug entirely.
+   *
+   * Keyboard/blur paths (text input) continue to omit the override and read
+   * from `draft` — that's correct because draft was just updated by the
+   * input's controlled onChange handler.
+   */
+  const commitEdit = useCallback(async (
+    advanceDir: 'down' | 'right' | null,
+    valueOverride?: string | null,
+  ) => {
     const original = savedValueRef.current
-    const trimmed = draft.trim()
-    const newVal = trimmed === '' ? null : trimmed
+    const newVal: string | null = valueOverride !== undefined
+      ? (valueOverride === '' ? null : valueOverride)
+      : (() => {
+          const trimmed = draft.trim()
+          return trimmed === '' ? null : trimmed
+        })()
     const origStr = original == null ? null : String(original)
 
     // No change — skip IPC
@@ -230,19 +286,32 @@ function EditableCellInner({
   }, [draft, onSave, onEndEdit])
 
   function handleClick(e: React.MouseEvent) {
-    if (cellState === 'display') {
-      onFocus(e.shiftKey)
+    if (cellState !== 'display') return
+    // Three-click flow for select cells: a click on the already-focused cell
+    // enters edit mode (popover opens). Other cell types stick with the
+    // legacy single-click=focus, double-click=edit pattern.
+    if (
+      col.editable &&
+      col.type === 'select' &&
+      rangePosition === 'only' &&
+      !e.shiftKey
+    ) {
+      startEdit()
+      return
     }
+    onFocus(e.shiftKey)
   }
 
   function handleDoubleClick() {
-    if (cellState === 'display' || (cellState === 'display' && isHighlighted)) {
+    if (cellState === 'display') {
       startEdit()
     }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (cellState !== 'edit') return
+    // Popover owns Enter/Tab/Esc/Arrow for select cells.
+    if (col.type === 'select') return
     if (e.key === 'Escape') {
       e.preventDefault()
       cancelEdit()
@@ -272,8 +341,11 @@ function EditableCellInner({
 
   const cellClassName = [styles.cell, rangeClass].filter(Boolean).join(' ')
 
+  const isSelectEditing = cellState === 'edit' && col.type === 'select'
+
   return (
     <div
+      ref={cellRootRef}
       className={cellClassName}
       onClick={handleClick}
       onDoubleClick={col.editable ? handleDoubleClick : undefined}
@@ -288,44 +360,7 @@ function EditableCellInner({
     >
       {errorMsg && <span className={styles.errorMsg}>{errorMsg}</span>}
 
-      {cellState === 'edit' && col.type === 'select' && addingOption ? (
-        <AddOptionInlineInput
-          className={styles.editInput}
-          onConfirm={async (opt) => {
-            setAddingOption(false)
-            try {
-              await onAddOption?.(opt)
-              await onSave(opt)
-            } catch (e) {
-              console.error('[EditableCell] addOption failed:', e)
-            }
-            cancelEdit()
-          }}
-          onCancel={() => { setAddingOption(false); cancelEdit() }}
-        />
-      ) : cellState === 'edit' && col.type === 'select' ? (
-        <select
-          ref={inputRef as React.RefObject<HTMLSelectElement>}
-          className={styles.editSelect}
-          value={draft}
-          onChange={(e) => {
-            if (e.target.value === '__add_option__') {
-              setAddingOption(true)
-              return
-            }
-            setDraft(e.target.value)
-          }}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-        >
-          {col.options?.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-          {onAddOption && (
-            <option value="__add_option__">+ Add option...</option>
-          )}
-        </select>
-      ) : cellState === 'edit' ? (
+      {cellState === 'edit' && col.type !== 'select' ? (
         <input
           ref={inputRef as React.RefObject<HTMLInputElement>}
           className={styles.editInput}
@@ -336,7 +371,35 @@ function EditableCellInner({
           onKeyDown={handleKeyDown}
         />
       ) : (
+        // Always render the display chip/text for select cells, even while
+        // editing — the popover floats above as a portal, so the chip stays
+        // visible underneath for visual continuity.
         renderDisplay(col, value)
+      )}
+
+      {isSelectEditing && (
+        <OptionListPopover
+          anchorEl={cellRootRef.current}
+          options={col.options ?? []}
+          value={draft}
+          mode="single"
+          onPick={(v) => { void commitEdit(null, v) }}
+          onPickAndAdvance={(v, dir) => { void commitEdit(dir, v) }}
+          onAddOption={onAddOption ? () => { /* popover owns the inline-input swap internally */ } : undefined}
+          onAddOptionConfirm={async (opt) => {
+            try {
+              await onAddOption?.(opt)
+              await commitEdit(null, opt)
+            } catch (e) {
+              console.error('[EditableCell] addOption failed:', e)
+              cancelEdit()
+            }
+          }}
+          onClose={cancelEdit}
+          scrollContainer={scrollContainer}
+          initialChar={initialChar}
+          chipStyle={chipStyle}
+        />
       )}
     </div>
   )
