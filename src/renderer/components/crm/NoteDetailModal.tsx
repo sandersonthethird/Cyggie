@@ -228,6 +228,14 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
                   : 'Error'}
               </div>
             )}
+            {state.status === 'loaded' && state.note.sourceMeetingId && (
+              <button
+                className={styles.meetingLinkBtn}
+                onClick={() => { navigate(`/meeting/${state.note.sourceMeetingId}`); onClose() }}
+              >
+                Open Meeting →
+              </button>
+            )}
             <button className={styles.closeBtn} onClick={handleClose} title="Close">✕</button>
           </div>
 
@@ -273,14 +281,6 @@ export function NoteDetailModal({ noteId, onClose, onDeleted, onUpdated }: NoteD
                 >
                   {isPinned ? '📌 Pinned' : '📋 Pin'}
                 </button>
-                {state.note.sourceMeetingId && (
-                  <button
-                    className={styles.meetingLinkBtn}
-                    onClick={() => { navigate(`/meeting/${state.note.sourceMeetingId}`); onClose() }}
-                  >
-                    Open Meeting →
-                  </button>
-                )}
               </div>
               <div className={styles.footerRight}>
                 <div ref={shareMenuRef} className={styles.shareWrapper}>

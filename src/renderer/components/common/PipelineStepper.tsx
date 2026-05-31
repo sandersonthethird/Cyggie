@@ -1,4 +1,5 @@
 import { Fragment, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { CompanyPipelineStage } from '../../../shared/types/company'
 import styles from './PipelineStepper.module.css'
 
@@ -31,8 +32,8 @@ interface PipelineStepperProps {
  *   Active:  ● completed   ◉ current (ring halo)   ○ future
  *   Passed (with passedFromStage): dots 0..passedFromStage filled red, halo
  *            on Pass; click any dot opens a confirm dialog before re-opening.
- *   Passed (legacy, passedFromStage=null): all dots gray under passedTrack
- *            opacity; click any dot opens the same confirm dialog.
+ *   Passed (legacy, passedFromStage=null): halo on Pass, other dots future;
+ *            click any dot opens the same confirm dialog.
  */
 export function PipelineStepper({
   stages,
@@ -69,11 +70,9 @@ export function PipelineStepper({
     .map((s, i) => (i === 0 ? 'auto' : (s.value === 'pass' ? '2fr auto' : '1fr auto')))
     .join(' ')
 
-  // Legacy passed-without-history rows keep the muted opacity wrapper. When
-  // we have history, the dot fill itself tells the story, so no muting.
-  const wrapperClass = isPassed && !hasPassedHistory
-    ? `${styles.wrapper} ${styles.passedTrack}`
-    : styles.wrapper
+  // The Pass dot fill (red + halo) is the canonical "this deal is passed"
+  // signal — applied uniformly whether or not we have passedFromStage history.
+  const wrapperClass = styles.wrapper
 
   return (
     <div className={wrapperClass}>
@@ -86,14 +85,15 @@ export function PipelineStepper({
             //     currentIndex gets the halo, everything after is future
             //   - passed with history: dots up-to-and-including passedIdx are
             //     completed, the Pass dot gets the halo, everything else future
-            //   - passed without history: every dot falls through to future
-            //     (the passedTrack opacity wrapper handles the visual)
+            //   - passed without history: the Pass dot gets the halo so the
+            //     state is visible; we can't infer which prior dots were
+            //     completed, so they all render as future.
             const isCompleted = hasPassedHistory
               ? (!isPassDot && i <= passedIdx)
               : (!isPassed && i < currentIndex)
-            const isCurrent = hasPassedHistory
+            const isCurrent = isPassed
               ? isPassDot
-              : (!isPassed && i === currentIndex)
+              : i === currentIndex
 
             // Segment between dot i-1 and dot i. Skip the segment leading INTO
             // the Pass dot — Portfolio and Pass are alternative terminal
@@ -139,7 +139,7 @@ export function PipelineStepper({
         </span>
       </div>
 
-      {pendingReopen && (
+      {pendingReopen && createPortal(
         <div className={styles.confirmOverlay} onClick={() => setPendingReopen(null)}>
           <div className={styles.confirmDialog} onClick={(e) => e.stopPropagation()}>
             <div className={styles.confirmTitle}>Re-open this passed deal?</div>
@@ -151,7 +151,8 @@ export function PipelineStepper({
               <button className={styles.confirmOk} onClick={confirmReopen}>Re-open</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

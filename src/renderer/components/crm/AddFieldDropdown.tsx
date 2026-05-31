@@ -210,6 +210,7 @@ export function AddFieldDropdown({
         <button className={styles.createFieldBtn} onClick={onCreateCustomField}>
           + Create custom field
         </button>
+        <button className={styles.doneBtn} onClick={onClose}>Done</button>
       </div>
     </div>
   )

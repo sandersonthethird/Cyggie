@@ -6,6 +6,10 @@
  *
  * Race guard: never saves when params are empty, preventing the save effect
  * from overwriting the real saved view during the initial bare-URL mount.
+ *
+ * Transient params (modal toggles, etc.) are stripped before save and
+ * restore — otherwise opening the "+ New" modal once would cause every
+ * subsequent sidebar nav to re-open it.
  */
 import { useEffect, useRef } from 'react'
 import { normalizeParams } from '../components/crm/ViewsBar'
@@ -13,6 +17,15 @@ import { normalizeParams } from '../components/crm/ViewsBar'
 interface LastViewState {
   urlParams: string
   columns: string[]
+}
+
+/** Query params that represent transient UI (modals, dialogs) — not view state. */
+const TRANSIENT_PARAMS = new Set(['new'])
+
+function stripTransient(params: URLSearchParams): URLSearchParams {
+  const next = new URLSearchParams(params)
+  for (const key of TRANSIENT_PARAMS) next.delete(key)
+  return next
 }
 
 export function useLastView(
@@ -39,7 +52,12 @@ export function useLastView(
       const saved: LastViewState = JSON.parse(raw)
       if (!saved.urlParams) return
 
-      navigate(`${path}?${saved.urlParams}`, { replace: true })
+      // Defensive strip — old saves may contain transient params from before
+      // we filtered them at save time.
+      const cleaned = normalizeParams(stripTransient(new URLSearchParams(saved.urlParams)))
+      if (!cleaned) return
+
+      navigate(`${path}?${cleaned}`, { replace: true })
 
       if (Array.isArray(saved.columns) && saved.columns.length > 0) {
         setVisibleKeys(saved.columns)
@@ -50,7 +68,7 @@ export function useLastView(
 
   // ── Save on every param/column change ──────────────────────────────────────
   useEffect(() => {
-    const normalized = normalizeParams(searchParams)
+    const normalized = normalizeParams(stripTransient(searchParams))
     if (!normalized) return // guard: never overwrite with blank state
 
     try {

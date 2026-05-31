@@ -5,6 +5,7 @@ import {
   computeShowField,
   computeGetFieldSection,
   computeCleanupOnDone,
+  computeEmptyKeysToPrune,
 } from '../renderer/hooks/useFieldVisibility'
 import type { HardcodedFieldDef } from '../renderer/constants/contactFields'
 
@@ -141,6 +142,68 @@ describe('computeCleanupOnDone', () => {
     const original = ['phone', 'city']
     computeCleanupOnDone(original, ['phone'])
     expect(original).toEqual(['phone', 'city'])
+  })
+})
+
+// ── computeEmptyKeysToPrune ───────────────────────────────────────────────────
+//
+// Polarity pin: a key is "prunable" iff it's empty AND it was already in
+// addedFields at session start (sessionAddedFields snapshot). Keys added
+// during the current session get a one-edit grace period.
+
+describe('computeEmptyKeysToPrune', () => {
+  type Case = {
+    name: string
+    emptyKeys: string[]
+    sessionAddedFields: string[]
+    expected: string[]
+  }
+
+  const cases: Case[] = [
+    {
+      name: 'prior-session empty → prunable',
+      emptyKeys: ['phone'],
+      sessionAddedFields: ['phone'],
+      expected: ['phone'],
+    },
+    {
+      name: 'this-session empty → preserved (not prunable)',
+      emptyKeys: ['phone'],
+      sessionAddedFields: [],
+      expected: [],
+    },
+    {
+      name: 'mixed: prunes only the prior-session empties',
+      emptyKeys: ['phone', 'city', 'custom:99'],
+      sessionAddedFields: ['phone', 'custom:99'],
+      expected: ['phone', 'custom:99'],
+    },
+    {
+      name: 'no empties → no prunables',
+      emptyKeys: [],
+      sessionAddedFields: ['phone'],
+      expected: [],
+    },
+    {
+      name: 'first-ever edit session (empty snapshot) → nothing prunable',
+      emptyKeys: ['phone', 'city'],
+      sessionAddedFields: [],
+      expected: [],
+    },
+  ]
+
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(computeEmptyKeysToPrune(c.emptyKeys, c.sessionAddedFields)).toEqual(c.expected)
+    })
+  }
+
+  it('does not mutate inputs', () => {
+    const emptyKeys = ['phone', 'city']
+    const session = ['phone']
+    computeEmptyKeysToPrune(emptyKeys, session)
+    expect(emptyKeys).toEqual(['phone', 'city'])
+    expect(session).toEqual(['phone'])
   })
 })
 

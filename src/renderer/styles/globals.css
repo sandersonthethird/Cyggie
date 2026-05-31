@@ -91,6 +91,14 @@
   --cy-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
 
   --sidebar-width-collapsed: 56px;
+
+  /* ── Layering scale ──
+   * --z-modal:    overlays that own the viewport (NoteDetailModal, ConfirmDialog).
+   * --z-popover:  pickers anchored to a cell or trigger; sit ABOVE modals because
+   *               they're the user's active focus when open.
+   * Components must use these vars, not hardcoded z-index integers. */
+  --z-modal:   9999;
+  --z-popover: 10000;
 }
 
 @media (prefers-color-scheme: dark) {

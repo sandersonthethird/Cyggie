@@ -15,6 +15,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useRecordingStore } from '../stores/recording.store'
 import { useSharedAudioCapture, useSharedVideoCapture } from '../contexts/AudioCaptureContext'
+import { useEnhancement } from '../contexts/EnhancementContext'
 import { useFindInPage } from '../hooks/useFindInPage'
 import FindBar from '../components/common/FindBar'
 import ConfirmDialog from '../components/common/ConfirmDialog'
@@ -51,7 +52,7 @@ import type { Task, ProposedTask, TaskCreateData } from '../../shared/types/task
 import { createPortal } from 'react-dom'
 import { SafeMarkdown } from '../components/SafeMarkdown'
 import { TranscriptBubbles } from '../components/transcript/TranscriptBubbles'
-import { resolveMeIndexForRender } from '../transcript/to-me-them-view'
+import { buildBubbleSearchIndex, resolveMeIndexForRender } from '../transcript/to-me-them-view'
 import styles from './MeetingDetail.module.css'
 import { api } from '../api'
 import { ipcCache } from '../api/ipcCache'
@@ -220,9 +221,18 @@ export default function MeetingDetail() {
   const [activeTab, setActiveTab] = useState<'notes' | 'transcript' | 'recording'>('notes')
   const [templates, setTemplates] = useState<MeetingTemplate[]>([])
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [streamedSummary, setStreamedSummary] = useState('')
-  const [summaryPhase, setSummaryPhase] = useState('')
+  // Enhancement state lives in EnhancementContext so it survives navigation
+  // away from this route (the entire MeetingDetail tree unmounts on
+  // route change). See contexts/EnhancementContext.tsx.
+  const {
+    state: enhancement,
+    startEnhancement,
+    stopEnhancement,
+    consumePendingResult,
+  } = useEnhancement(id)
+  const isGenerating = enhancement.inProgress
+  const streamedSummary = enhancement.streamedSummary
+  const summaryPhase = enhancement.phase
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [isSavingTitle, setIsSavingTitle] = useState(false)
@@ -802,28 +812,6 @@ export default function MeetingDetail() {
     })
   }, [])
 
-  // Listen for streaming summary progress
-  useEffect(() => {
-    if (!isGenerating) return
-    const unsub = api.on(IPC_CHANNELS.SUMMARY_PROGRESS, (chunk: unknown) => {
-      if (chunk === null) {
-        setStreamedSummary('')
-        return
-      }
-      setStreamedSummary((prev) => prev + String(chunk))
-    })
-    return unsub
-  }, [isGenerating])
-
-  // Listen for summary phase changes
-  useEffect(() => {
-    if (!isGenerating) return
-    const unsub = api.on(IPC_CHANNELS.SUMMARY_PHASE, (phase: unknown) => {
-      setSummaryPhase(String(phase))
-    })
-    return unsub
-  }, [isGenerating])
-
   const handleTagCompany = useCallback(async (company: CompanySuggestion, entityType: CompanyEntityType) => {
     if (!id) return
     const suggestionKey = companySuggestionKey(company)
@@ -1026,8 +1014,8 @@ export default function MeetingDetail() {
   }, [videoCapture, audioCapture, recordingMeetingId, loadMeeting])
 
   const handleStopEnhance = useCallback(() => {
-    api.invoke(IPC_CHANNELS.SUMMARY_ABORT)
-  }, [])
+    stopEnhancement()
+  }, [stopEnhancement])
 
   const handleApplyEnrich = useCallback(async () => {
     const proposals = [...enrichProposals]
@@ -1192,104 +1180,83 @@ export default function MeetingDetail() {
     }
   }, [id])
 
+  // Apply a completed enhancement result to this route's local state.
+  // Extracted so it can run both on completion (when MeetingDetail is
+  // mounted) and on a later (re-)mount that picks up a pending result
+  // from EnhancementContext via consumePendingResult.
+  const applyEnhancementResult = useCallback((result: SummaryGenerateResult) => {
+    const summary = result.summary
+    const companyUpdateProposals = result.companyUpdateProposals || []
+    const contactProposals = result.contactUpdateProposals || []
+    setData((prev) =>
+      prev ? { ...prev, summary, meeting: { ...prev.meeting, status: 'summarized' } } : prev
+    )
+    setSummaryDraft(summary)
+    setSummaryExists(true)
+    setShowNotes(false)
+
+    const taskResult = result.taskExtractionResult
+    const proposedTasks = taskResult?.proposed || []
+    if (proposedTasks.length > 0) {
+      setPendingProposedTasks(proposedTasks)
+      const selections: Record<string, boolean> = {}
+      for (const task of proposedTasks) selections[task.key] = true
+      setProposedTaskSelections(selections)
+    }
+
+    const newFieldSelections: Record<string, boolean> = {}
+    for (const p of companyUpdateProposals) {
+      for (const change of p.changes) newFieldSelections[`${p.companyId}:${change.field}`] = true
+      for (const cfu of p.customFieldUpdates ?? []) newFieldSelections[`${p.companyId}:${cfu.label}`] = true
+    }
+    for (const p of contactProposals) {
+      for (const change of p.changes) newFieldSelections[`${p.contactId}:${change.field}`] = true
+      for (const cfu of p.customFieldUpdates ?? []) newFieldSelections[`${p.contactId}:${cfu.label}`] = true
+    }
+    setFieldSelections(newFieldSelections)
+
+    const unified: UnifiedEnrichProposal[] = [
+      ...companyUpdateProposals.map(p => ({ kind: 'company' as const, proposal: p })),
+      ...contactProposals.map(p => ({ kind: 'contact' as const, proposal: p })),
+    ]
+    if (unified.length > 0) {
+      setEnrichProposals(unified)
+      setEnrichDialogOpen(true)
+    } else if (proposedTasks.length > 0) {
+      setTaskProposalDialogOpen(true)
+    }
+
+    if (id) {
+      api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
+        .then(setMeetingTasks)
+        .catch((err2) => console.error('[MeetingDetail] Failed to refresh tasks:', err2))
+    }
+
+    void loadMeeting()
+  }, [id, setSummaryDraft, loadMeeting])
+
+  // Consume any pending enhancement result for this meeting. Runs:
+  //   1. On mount (or when the route's :id changes) — picks up a result
+  //      that completed while the user was on another route.
+  //   2. Whenever the provider notifies that pendingResult has flipped
+  //      to non-null (i.e. completion fires while we're mounted).
+  // Take-once semantics in the context guarantee the dialog opens
+  // exactly once per completed enhancement.
+  useEffect(() => {
+    if (!id) return
+    if (!enhancement.pendingResult) return
+    const result = consumePendingResult()
+    if (result) applyEnhancementResult(result)
+  }, [id, enhancement.pendingResult, consumePendingResult, applyEnhancementResult])
+
   const handleGenerateSummary = useCallback(async () => {
     if (!id || !selectedTemplateId || isGenerating) return
     // Close summary editor if open, then save any pending notes
     setEditingSummary(false)
     await flushNotes()
-    setIsGenerating(true)
-    setStreamedSummary('')
     setActiveTab('notes')
-
-    try {
-      const result = await api.invoke<SummaryGenerateResult | string>(
-        IPC_CHANNELS.SUMMARY_GENERATE,
-        id,
-        selectedTemplateId
-      )
-      const summary = typeof result === 'string' ? result : result.summary
-      const companyUpdateProposals = typeof result === 'string'
-        ? []
-        : (result.companyUpdateProposals || [])
-      const contactProposals = typeof result === 'string'
-        ? []
-        : (result.contactUpdateProposals || [])
-      setData((prev) =>
-        prev ? { ...prev, summary, meeting: { ...prev.meeting, status: 'summarized' } } : prev
-      )
-      setSummaryDraft(summary)
-      setSummaryExists(true)
-      setStreamedSummary('')
-      setShowNotes(false)
-      // Handle task proposals
-      const taskResult = typeof result === 'string' ? undefined : result.taskExtractionResult
-      const proposedTasks = taskResult?.proposed || []
-
-      if (proposedTasks.length > 0) {
-        setPendingProposedTasks(proposedTasks)
-        const selections: Record<string, boolean> = {}
-        for (const task of proposedTasks) {
-          selections[task.key] = true
-        }
-        setProposedTaskSelections(selections)
-      }
-
-      const newFieldSelections: Record<string, boolean> = {}
-      for (const p of companyUpdateProposals) {
-        for (const change of p.changes) newFieldSelections[`${p.companyId}:${change.field}`] = true
-        for (const cfu of p.customFieldUpdates ?? []) newFieldSelections[`${p.companyId}:${cfu.label}`] = true
-      }
-      for (const p of contactProposals) {
-        for (const change of p.changes) newFieldSelections[`${p.contactId}:${change.field}`] = true
-        for (const cfu of p.customFieldUpdates ?? []) newFieldSelections[`${p.contactId}:${cfu.label}`] = true
-      }
-      setFieldSelections(newFieldSelections)
-
-      const unified: UnifiedEnrichProposal[] = [
-        ...companyUpdateProposals.map(p => ({ kind: 'company' as const, proposal: p })),
-        ...contactProposals.map(p => ({ kind: 'contact' as const, proposal: p })),
-      ]
-      if (unified.length > 0) {
-        setEnrichProposals(unified)
-        setEnrichDialogOpen(true)
-      } else if (proposedTasks.length > 0) {
-        setTaskProposalDialogOpen(true)
-      }
-
-      // macOS notification
-      const totalFieldCount = companyUpdateProposals.reduce((n, p) => n + p.changes.length + (p.customFieldUpdates?.length ?? 0), 0)
-                            + contactProposals.reduce((n, p) => n + p.changes.length + (p.customFieldUpdates?.length ?? 0), 0)
-      if (totalFieldCount > 0 && 'Notification' in window && Notification.permission === 'granted') {
-        const notif = new Notification('Meeting summarized', {
-          body: `${totalFieldCount} field${totalFieldCount !== 1 ? 's' : ''} ready to review`
-        })
-        notif.onclick = () => {
-          window.focus()
-          if (id) navigate(`/meeting/${id}`)
-          notif.close()
-        }
-      }
-
-      // Refresh existing tasks
-      if (id) {
-        api.invoke<Task[]>(IPC_CHANNELS.TASK_LIST_FOR_MEETING, id)
-          .then(setMeetingTasks)
-          .catch((err2) => console.error('[MeetingDetail] Failed to refresh tasks:', err2))
-      }
-
-      // Re-sync all meeting state from DB now that summary is persisted
-      await loadMeeting()
-    } catch (err) {
-      const errStr = String(err)
-      if (!errStr.includes('abort') && !errStr.includes('Abort')) {
-        console.error('Summary generation failed:', err)
-      }
-    } finally {
-      setIsGenerating(false)
-      setStreamedSummary('')
-      setSummaryPhase('')
-    }
-  }, [id, selectedTemplateId, isGenerating, flushNotes, loadMeeting])
+    await startEnhancement(selectedTemplateId)
+  }, [id, selectedTemplateId, isGenerating, flushNotes, startEnhancement])
 
   useEffect(() => { generateSummaryRef.current = handleGenerateSummary }, [handleGenerateSummary])
 
@@ -1779,11 +1746,22 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
   //     walk in FindHighlight.decorations(). NEVER use editor.getText() here:
   //     it inserts \n\n between blocks and would offset positions by 2 chars per
   //     block boundary. (See find-highlight-extension.ts header for the contract.)
+  // Bubble view renders per-segment, not from the markdown transcript, so its
+  // searchable text has to be derived from the same joined-segment string the
+  // bubbles index against — otherwise FindBar would count matches in markup
+  // that's never on screen.
+  const transcriptSegmentsForSearch = data?.meeting.transcriptSegments
+  const hasSegmentsForSearch =
+    Array.isArray(transcriptSegmentsForSearch) && transcriptSegmentsForSearch.length > 0
+  const showBubblesForSearch = hasSegmentsForSearch && transcriptViewMode === 'bubbles'
+  const transcriptSearchText = showBubblesForSearch
+    ? buildBubbleSearchIndex(transcriptSegmentsForSearch!).text
+    : (data?.transcript || '')
   const searchableText = activeTab === 'notes'
     ? (isGenerating
         ? preprocessSummaryMarkdown(displaySummary || '')
         : (summaryEditor?.state.doc.textContent ?? ''))
-    : (data?.transcript || '')
+    : transcriptSearchText
 
   const {
     query: findQuery,
@@ -2501,6 +2479,8 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
                         speakerMap={localSpeakerMap}
                         meSpeakerIndex={data?.meeting.meSpeakerIndex ?? null}
                         calendarSelfName={data?.meeting.selfName ?? null}
+                        findMatches={findMatches}
+                        activeMatchIndex={activeMatchIndex}
                       />
                     </div>
                   ) : showMarkdown ? (

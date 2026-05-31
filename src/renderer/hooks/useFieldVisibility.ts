@@ -62,6 +62,46 @@ export function computeCleanupOnDone(addedFields: string[], emptyKeys: string[])
   return addedFields.filter((k) => !emptyKeys.includes(k))
 }
 
+/*
+ *  computeEmptyKeysToPrune — which empty added fields should be pruned on Done?
+ *
+ *  Four sets:
+ *
+ *      addedFields ─────────── all keys currently marked as "added" in prefs
+ *           │
+ *           ├── sessionAddedFields ── snapshot taken when Edit Mode was entered
+ *           │   (PRIOR session adds — pre-existing)
+ *           │
+ *           └── (addedFields − sessionAddedFields)
+ *               (THIS session adds — newly chosen by the user this round)
+ *
+ *      emptyKeys ───────────── subset of addedFields with no value RIGHT NOW
+ *
+ *  We PRUNE empties that are PRIOR-session adds (clutter carried from before).
+ *  We PRESERVE empties that are THIS-session adds (one-edit grace period —
+ *  so a user who clicks + Add and immediately hits Done doesn't lose work).
+ *
+ *      prunable = emptyKeys ∩ sessionAddedFields
+ *
+ *      ┌─────────────────── addedFields ──────────────────┐
+ *      │                                                  │
+ *      │  ┌── sessionAddedFields ──┐   ┌── this session ─┐│
+ *      │  │      (prior)           │   │     (new)       ││
+ *      │  │  ┌──────────────────┐  │   │  ┌──────────┐   ││
+ *      │  │  │  PRUNE on Done   │  │   │  │ PRESERVE │   ││
+ *      │  │  │  (∩ emptyKeys)   │  │   │  │ even if  │   ││
+ *      │  │  └──────────────────┘  │   │  │  empty   │   ││
+ *      │  └────────────────────────┘   │  └──────────┘   ││
+ *      │                               └─────────────────┘│
+ *      └──────────────────────────────────────────────────┘
+ */
+export function computeEmptyKeysToPrune(
+  emptyKeys: string[],
+  sessionAddedFields: string[],
+): string[] {
+  return emptyKeys.filter((k) => sessionAddedFields.includes(k))
+}
+
 export interface UseFieldVisibilityReturn {
   addedFields: string[]
   fieldPlacements: Record<string, string>

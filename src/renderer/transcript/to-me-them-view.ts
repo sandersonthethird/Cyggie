@@ -161,6 +161,31 @@ export function buildTranscriptItems(
 }
 
 /**
+ * Joined text + per-segment offsets used by the bubble view's find-in-page.
+ *
+ * The MeetingDetail find hook indexes a single string; bubbles render
+ * per-segment. This helper produces the shared string (so match offsets are
+ * consistent across the two callers) plus an identity-keyed offset map so
+ * TranscriptBubbles can map a global match position back to a per-segment
+ * range. Segments are sorted by startTime to match buildTranscriptItems.
+ */
+export function buildBubbleSearchIndex(segments: TranscriptSegment[]): {
+  text: string
+  offsetOf: Map<TranscriptSegment, number>
+} {
+  const ordered = [...segments].sort((a, b) => a.startTime - b.startTime)
+  const offsetOf = new Map<TranscriptSegment, number>()
+  const parts: string[] = []
+  let offset = 0
+  for (const seg of ordered) {
+    offsetOf.set(seg, offset)
+    parts.push(seg.text)
+    offset += seg.text.length + 1
+  }
+  return { text: parts.join('\n'), offsetOf }
+}
+
+/**
  * Format a `seconds` value as `mm:ss` (or `h:mm:ss` past one hour) for
  * the centered timestamp markers between bubble runs.
  */

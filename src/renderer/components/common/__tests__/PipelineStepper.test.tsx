@@ -75,7 +75,7 @@ describe('PipelineStepper', () => {
     }
   })
 
-  test('legacy Pass state (no passedFromStage) — all dots gray, wrapper has passedTrack', () => {
+  test('legacy Pass state (no passedFromStage) — halo on Pass, other dots gray, no passedTrack mute', () => {
     const { container } = render(
       <PipelineStepper
         stages={COMPANY_PIPELINE_STAGES_FULL}
@@ -85,13 +85,16 @@ describe('PipelineStepper', () => {
       />,
     )
     const dots = getDots(container)
+    // Without history we can't infer which prior stages were completed, but
+    // the Pass dot itself must carry the halo so the passed state is visible.
+    const halos = dots.map((d) => hasClassContaining(d, 'dotCurrent'))
+    expect(halos).toEqual([false, false, false, false, false, false, true])
     for (const d of dots) {
-      expect(hasClassContaining(d, 'dotCurrent')).toBe(false)
       expect(hasClassContaining(d, 'dotCompleted')).toBe(false)
     }
-    // Wrapper (outermost div) should carry the passedTrack class.
+    // Pass dot fill is the signal now; the old wrapper-wide opacity mute is gone.
     const wrapper = container.firstChild as HTMLElement
-    expect(hasClassContaining(wrapper, 'passedTrack')).toBe(true)
+    expect(hasClassContaining(wrapper, 'passedTrack')).toBe(false)
   })
 
   test('Pass state with passedFromStage="diligence" — fills up to Diligence, halo on Pass, no passedTrack mute', () => {
@@ -146,9 +149,9 @@ describe('PipelineStepper', () => {
     const dots = getDots(container)
     fireEvent.click(dots[5]) // Portfolio
     expect(screen.getByText('Re-open this passed deal?')).toBeInTheDocument()
-    // Dialog body wraps the stage label in <strong>. Scope to the dialog's
-    // <strong> child so we don't collide with the row label.
-    const strong = container.querySelector('strong')
+    // Dialog body wraps the stage label in <strong>. The dialog is portaled
+    // to document.body, so query there rather than the render container.
+    const strong = document.body.querySelector('strong')
     expect(strong?.textContent).toBe('Portfolio')
   })
 

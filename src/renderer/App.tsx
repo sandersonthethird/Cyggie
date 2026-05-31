@@ -24,6 +24,7 @@ import { useRecordingStore } from './stores/recording.store'
 import { usePreferencesStore } from './stores/preferences.store'
 import { AudioCaptureProvider } from './contexts/AudioCaptureContext'
 import { RunsProvider } from './contexts/RunsContext'
+import { EnhancementProvider } from './contexts/EnhancementContext'
 import { NoticeModalProvider } from './components/common/NoticeModal'
 import DevAgentRuns from './routes/DevAgentRuns'
 import { ErrorBoundary } from './components/common/ErrorBoundary'
@@ -153,6 +154,7 @@ export default function App() {
   return (
     <ErrorBoundary fallback={() => <RootErrorFallback />}>
       <NoticeModalProvider>
+      <EnhancementProvider>
       <HashRouter>
         <AudioCaptureProvider>
           <RunsProvider>
@@ -194,6 +196,7 @@ export default function App() {
           </RunsProvider>
         </AudioCaptureProvider>
       </HashRouter>
+      </EnhancementProvider>
       </NoticeModalProvider>
     </ErrorBoundary>
   )

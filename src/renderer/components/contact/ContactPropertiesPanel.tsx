@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type
 import { useCustomFieldSection } from '../../hooks/useCustomFieldSection'
 import { useHeaderChipOrder } from '../../hooks/useHeaderChipOrder'
 import { useHardcodedFieldOrder } from '../../hooks/useHardcodedFieldOrder'
-import { useFieldVisibility } from '../../hooks/useFieldVisibility'
+import { useFieldVisibility, computeEmptyKeysToPrune } from '../../hooks/useFieldVisibility'
 import { useSectionOrder } from '../../hooks/useSectionOrder'
 import { useListboxNavigation } from '../../hooks/useListboxNavigation'
 import { useTakeaways } from '../../hooks/useTakeaways'
@@ -294,6 +294,16 @@ export function ContactPropertiesPanel({
     { entityId: contact.id, profileKey: null, onLayoutChange: markChanged },
   )
 
+  // Enter Edit Mode + snapshot session-start addedFields. Used from both the
+  // Customize header button and openAddFieldDropdown so adding a property
+  // outside Edit Mode auto-engages it without corrupting the snapshot that
+  // handleDone's "newlyAdded" computation reads.
+  function ensureEditing() {
+    if (isEditing) return
+    sessionAddedFields.current = [...fieldVisibility.addedFields]
+    setIsEditing(true)
+  }
+
   const sectionOrder = useSectionOrder(
     'contact',
     CONTACT_SECTIONS.filter(s => s.key !== 'summary').map(s => s.key),
@@ -321,6 +331,7 @@ export function ContactPropertiesPanel({
   // Variant C: per-section "+ Add" support.
   const [addFieldSection, setAddFieldSection] = useState<string | null>(null)
   function openAddFieldDropdown(section: string | null) {
+    ensureEditing()
     setAddFieldSection(section)
     setAddFieldDropdownOpen(true)
   }
@@ -760,7 +771,10 @@ export function ContactPropertiesPanel({
     const newlyAdded = fieldVisibility.addedFields
       .filter(f => !sessionAddedFields.current.includes(f))
       .filter(f => !emptyKeys.includes(f))
-    fieldVisibility.cleanupOnDone(emptyKeys)
+    // 3B grace period: empties added in THIS edit session survive one Done
+    // click — only prior-session empty adds are pruned. See computeEmptyKeysToPrune.
+    const prunable = computeEmptyKeysToPrune(emptyKeys, sessionAddedFields.current)
+    fieldVisibility.cleanupOnDone(prunable)
     if (sessionChanges.current) {
       setSessionNewFields(newlyAdded)
     } else {
@@ -1138,7 +1152,7 @@ export function ContactPropertiesPanel({
         saveCompany={saveCompany}
         firstNameInputRef={firstNameInputRef}
         handleNameKeyDown={handleNameKeyDown}
-        onStartEditing={() => { sessionAddedFields.current = [...fieldVisibility.addedFields]; setIsEditing(true) }}
+        onStartEditing={ensureEditing}
         onEnrichClick={() => setEnrichMethodModalOpen(true)}
         onMergeStart={() => { setMergeQuery(''); setMergePickerOpen(true) }}
         onDeleteClick={() => setConfirmDelete(true)}
