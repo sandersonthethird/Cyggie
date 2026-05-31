@@ -79,6 +79,26 @@ const EnvSchema = z.object({
   // Logging.
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+
+  // ─── External Agents V1 (MCP server) ────────────────────────────────
+  // Emergency disable for the entire MCP surface (per plan feature-flag
+  // section). When false, POST /mcp returns 404 cleanly without binding
+  // any MCP-SDK code paths.
+  CYGGIE_MCP_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  // Dev-only bearer-token bypass for the MCP endpoint. **NOT** for prod.
+  // Slice 9 (OAuth 2.0 server with node-oidc-provider) replaces this
+  // with a real OAuth path. Until then, set this to a random string
+  // (e.g. `openssl rand -base64 32`) in dev / staging only; leave unset
+  // in prod and rely on slice 9's OAuth verification.
+  //
+  // Requests to POST /mcp must present `Authorization: Bearer <token>`
+  // matching this value exactly. If the env var is unset, MCP requires
+  // OAuth (which doesn't exist yet — so /mcp is effectively closed).
+  CYGGIE_MCP_DEV_TOKEN: z.string().min(16).optional(),
 })
 
 export type GatewayEnv = z.infer<typeof EnvSchema>

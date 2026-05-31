@@ -26,6 +26,7 @@ import { registerChatRoutes } from './routes/chat'
 import { registerUserCredentialRoutes } from './routes/user-credentials'
 import { registerTemplateRoutes } from './routes/templates'
 import { registerMemoRoutes } from './routes/memos'
+import { registerMcpRoute } from './mcp/route'
 
 export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   const app = Fastify({
@@ -87,6 +88,7 @@ export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   await registerUserCredentialRoutes(app, env)
   await registerTemplateRoutes(app, env)
   await registerMemoRoutes(app, env)
+  await registerMcpRoute(app, env)
   await registerDebugRoutes(app, env)
 
   return app
