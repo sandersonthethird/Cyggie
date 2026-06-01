@@ -96,6 +96,29 @@ const EnvSchema = z.object({
   // value if unset, which works for local dev but not behind a proxy.
   CYGGIE_PUBLIC_BASE_URL: z.string().url().optional(),
 
+  // ─── Slice 1 — Slack bot scaffold ───────────────────────────────────
+  // Emergency disable for the Slack route (per plan feature-flag
+  // section). When false, POST /slack/events returns 404 cleanly
+  // without binding any Slack code paths.
+  CYGGIE_SLACK_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  // Slack signing secret used to verify the HMAC-SHA256 signature on
+  // every incoming /slack/events request (per plan decision-log #18).
+  // Generated in Settings → Basic Information of the Slack app.
+  // Optional in env so the gateway boots without it; the slack route
+  // fails-closed (every request 401s) until set.
+  SLACK_SIGNING_SECRET: z.string().min(16).optional(),
+
+  // Slack bot OAuth token (xoxb-…). Used to call the Slack Web API:
+  // chat.postMessage for replies, reactions.add for the loading-emoji
+  // UX (slice 5), users.info for lazy Slack→Cyggie mapping (slice 7).
+  // Optional — slice 1 fail-closes when missing, just like the signing
+  // secret.
+  SLACK_BOT_TOKEN: z.string().regex(/^xoxb-/).optional(),
+
   // ─── Slice 10 — cyggie_execute_sql tool ─────────────────────────────
   // Gates the MCP `cyggie_execute_sql` tool. Default false in prod;
   // dev override via .env.local. Even when true, requests must

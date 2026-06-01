@@ -35,6 +35,10 @@ primary_region = "iad"  # us-east — colocates with the Neon project in us-east
     path = "/health"
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
-  cpus = 1
+  # External Agents V1 slice 1 bumped the VM from shared-cpu-1x / 512MB
+  # to shared-cpu-2x / 1GB to give the gateway headroom for the new code
+  # paths (Slack handler + OAuth provider + MCP server agent loops all
+  # added in the same release). Per plan decision-log #20.
+  size = "shared-cpu-2x"
+  memory = "1gb"
+  cpus = 2

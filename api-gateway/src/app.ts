@@ -28,6 +28,7 @@ import { registerTemplateRoutes } from './routes/templates'
 import { registerMemoRoutes } from './routes/memos'
 import { registerMcpRoute } from './mcp/route'
 import { registerOAuthRoutes } from './oauth/routes'
+import { registerSlackRoutes } from './slack/route'
 
 export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   const app = Fastify({
@@ -97,6 +98,7 @@ export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
     `http://${env.HOST === '0.0.0.0' ? '127.0.0.1' : env.HOST}:${env.PORT}`
   await registerOAuthRoutes({ app, env, baseUrl })
   await registerMcpRoute(app, env)
+  await registerSlackRoutes({ app, env })
   await registerDebugRoutes(app, env)
 
   return app
