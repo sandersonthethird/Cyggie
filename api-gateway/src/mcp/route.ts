@@ -13,7 +13,7 @@ import { getDb } from '../db'
 import type { GatewayEnv } from '../env'
 import { Sentry } from '../sentry'
 import { buildMcpServer } from './server'
-import { verifyDevToken } from './dev-auth'
+import { verifyOAuthBearer } from './oauth-auth'
 
 export async function registerMcpRoute(
   app: FastifyInstance,
@@ -50,8 +50,13 @@ export async function registerMcpRoute(
         },
       })
 
-      // Slice 8 auth = dev bearer token. Slice 9 replaces with OAuth.
-      const auth = verifyDevToken(req, env)
+      // Slice 9: OAuth bearer-token validation (replaces slice 8 dev-bypass).
+      // The token must have at least the `cyggie:read` scope — all V1
+      // tools fall under read access; SQL tool (slice 10) will require
+      // `cyggie:sql` separately at the tool-call layer.
+      const auth = await verifyOAuthBearer(req, env, {
+        requiredScopes: ['cyggie:read'],
+      })
       if (!auth.ok) {
         req.log.warn(
           {
@@ -67,7 +72,12 @@ export async function registerMcpRoute(
         // once we hand it the request.
         return reply
           .status(auth.statusCode)
-          .header('WWW-Authenticate', 'Bearer')
+          .header(
+            'WWW-Authenticate',
+            auth.errorCode === 'INSUFFICIENT_SCOPE'
+              ? 'Bearer error="insufficient_scope", scope="cyggie:read"'
+              : 'Bearer error="invalid_token"',
+          )
           .send({
             error: {
               code: auth.errorCode,

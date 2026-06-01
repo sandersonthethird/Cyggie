@@ -2,9 +2,9 @@
 
 This folder implements the Cyggie gateway's [Model Context Protocol](https://modelcontextprotocol.io) server. It exposes Cyggie's CRM data to external agents (Slack bot, Claude Desktop, Cursor, future Zapier webhooks) over a single authenticated HTTP endpoint.
 
-## Status — Slice 8 (External Agents V1)
+## Status — Slice 9 (External Agents V1)
 
-**Auth is dev-bypass only.** Production OAuth lands in Slice 9 (`node-oidc-provider`). **Do not ship this branch to production with `CYGGIE_MCP_DEV_TOKEN` set in env.** Slice 9 deletes `dev-auth.ts` outright.
+**Auth is OAuth 2.0** via `node-oidc-provider` (see [`api-gateway/src/oauth/`](../oauth/)). The slice 8 dev-bypass token has been removed; the MCP route verifies JWT bearer tokens issued by the OAuth server. Token requirements: `aud: 'cyggie-mcp'`, HS256-signed with the gateway's `JWT_SIGNING_SECRET`, scope must include `cyggie:read`.
 
 ## Surface
 
@@ -44,29 +44,36 @@ INTERNAL            Unexpected error; check server logs / Sentry.
 ## Local development
 
 ```bash
-# 1. Set the dev token in .env.local (32+ chars):
-echo 'CYGGIE_MCP_DEV_TOKEN="'"$(openssl rand -base64 32)"'"' >> .env.local
-
-# 2. (Optional) Override which user the dev token impersonates:
-echo 'MCP_DEV_USER_ID="<your-cyggie-user-cuid>"' >> .env.local
-
-# 3. Run the gateway in dev.
+# 1. Run the gateway in dev (OAuth server boots alongside MCP).
 pnpm --filter @cyggie/api-gateway dev
 
-# 4. Smoke-test with MCP Inspector.
+# 2. Register a client via DCR (dynamic client registration).
+curl -X POST http://127.0.0.1:8443/oauth/reg \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "client_name": "MCP Inspector (dev)",
+    "redirect_uris": ["http://localhost:6274/oauth/callback"],
+    "grant_types": ["authorization_code", "refresh_token"]
+  }'
+# → returns { client_id, client_secret, ... }
+
+# 3. Connect MCP Inspector:
 npx @modelcontextprotocol/inspector
 
 #    In Inspector: connect to http://127.0.0.1:8443/mcp
-#    Auth header: Bearer <your-CYGGIE_MCP_DEV_TOKEN>
-#    Then call any tool with realistic args.
+#    Auth: OAuth 2.0 (Inspector will discover the AS via
+#    /.well-known/oauth-authorization-server, pop a browser for consent,
+#    receive a JWT, and use it as the Bearer token automatically).
 ```
+
+For Claude Desktop / Cursor / other MCP clients, point them at `http://127.0.0.1:8443/mcp` and let them discover OAuth from the metadata endpoint.
 
 ## Feature flags
 
 | Env var | Default | Purpose |
 |---|---|---|
 | `CYGGIE_MCP_ENABLED` | `true` | Emergency disable for the entire MCP route. When `false`, `POST /mcp` returns 404. |
-| `CYGGIE_MCP_DEV_TOKEN` | unset | Dev-only static bearer token. Unset = `/mcp` requires OAuth (which doesn't exist until slice 9 = endpoint effectively closed). |
+| `CYGGIE_PUBLIC_BASE_URL` | `http://${HOST}:${PORT}` | Public base URL used by the OAuth server for issuer + redirect URLs. Set in prod (e.g. `https://cyggie-gateway.fly.dev`). |
 | `CYGGIE_MCP_SQL_ENABLED` | `false` | (Slice 10) Gates the `cyggie_execute_sql` tool. Stays `false` in prod until firm_id denormalization (T3). |
 
 ## Architecture
