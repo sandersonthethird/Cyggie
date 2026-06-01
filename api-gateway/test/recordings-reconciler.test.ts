@@ -58,6 +58,15 @@ async function setupStuckMeeting(args: {
     email: `${userId}@example.com`,
   })
   createdUserIds.push(userId)
+  // T32 PR-B: reconcileStuckJobs now requires per-user Deepgram key via
+  // user_credentials (env fallback removed). Without a row the reconciler
+  // silently skips the meeting → status stays 'recording' and assertions
+  // for 'transcribed' / 'error' fail. Seed a placeholder key per user.
+  await db.insert(schema.userCredentials).values({
+    userId,
+    provider: 'deepgram',
+    value: 'test-stub-deepgram-key',
+  })
   await db.insert(schema.meetings).values({
     id: meetingId,
     userId,
