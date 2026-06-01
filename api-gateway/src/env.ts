@@ -95,6 +95,32 @@ const EnvSchema = z.object({
   // https://cyggie-gateway.fly.dev. Falls back to HOST:PORT derived
   // value if unset, which works for local dev but not behind a proxy.
   CYGGIE_PUBLIC_BASE_URL: z.string().url().optional(),
+
+  // ─── Slice 10 — cyggie_execute_sql tool ─────────────────────────────
+  // Gates the MCP `cyggie_execute_sql` tool. Default false in prod;
+  // dev override via .env.local. Even when true, requests must
+  // additionally carry the `cyggie:sql` scope on the OAuth access
+  // token — flag toggles tool availability; scope gates per-caller
+  // authorization.
+  CYGGIE_MCP_SQL_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  // Neon connection string for the dedicated read-only Postgres role.
+  // SEPARATE from GATEWAY_DATABASE_URL — must be a different role with
+  // only SELECT grants on the allowlisted CRM tables (companies,
+  // contacts, meetings, notes, link tables) and NO access to users,
+  // sessions, oauth_*, user_credentials, firms, slack_user_mappings,
+  // mcp_audit. The Postgres role itself is the load-bearing security
+  // boundary; this URL just connects to it. See
+  // api-gateway/src/db/readonly-pool.ts for the GRANT script.
+  //
+  // Optional: must be set when CYGGIE_MCP_SQL_ENABLED=true. If the flag
+  // is on and this URL is missing, the gateway boots successfully but
+  // every cyggie_execute_sql call returns TOOL_DISABLED with a clear
+  // operator message.
+  NEON_READONLY_URL: z.string().url().optional(),
 })
 
 export type GatewayEnv = z.infer<typeof EnvSchema>

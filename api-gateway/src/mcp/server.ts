@@ -23,17 +23,24 @@ import { z } from 'zod'
 import type { getDb } from '../db'
 import { Sentry } from '../sentry'
 import { toolResultToCallToolResult } from './envelope-bridge'
-import type { ToolResult } from '../shared/error-envelope'
 import { cyggieSearch } from './tools/search'
 import { cyggieGetCompany } from './tools/get-company'
 import { cyggieGetContact } from './tools/get-contact'
 import { cyggieRecentMeetings } from './tools/recent-meetings'
 import { cyggieGetMeeting } from './tools/get-meeting'
 import { cyggieGetNotes } from './tools/get-notes'
+import { cyggieExecuteSql } from './tools/execute-sql'
+import type { GatewayEnv } from '../env'
+import { err, ERROR_CODE, type ToolResult } from '../shared/error-envelope'
 
 export interface BuildMcpServerArgs {
+  env: GatewayEnv
   db: ReturnType<typeof getDb>
   userId: string
+  // Scopes from the caller's OAuth access token. Used for per-tool
+  // scope enforcement (e.g. cyggie_execute_sql requires cyggie:sql
+  // even when the connection-level guard only checks cyggie:read).
+  scopes: string[]
   log: FastifyBaseLogger
 }
 
@@ -238,7 +245,82 @@ export function buildMcpServer(ctx: BuildMcpServerArgs): McpServer {
       ),
   )
 
+  // cyggie_execute_sql ─────────────────────────────────────────────────
+  // Highest-privilege tool: requires both the env feature flag
+  // (CYGGIE_MCP_SQL_ENABLED=true) AND the caller's OAuth token
+  // carrying `cyggie:sql` scope. Registered only when both conditions
+  // are met so the tool simply doesn't appear in tools/list otherwise —
+  // safest default for clients that probe the catalog.
+  if (ctx.env.CYGGIE_MCP_SQL_ENABLED) {
+    server.registerTool(
+      'cyggie_execute_sql',
+      {
+        description:
+          'Run a read-only SELECT or WITH query against the Cyggie CRM ' +
+          'database. Use this only when the structured tools cannot ' +
+          'express what the user asked (e.g. "top 10 companies by ' +
+          'funding raised in the last 12 months", "count contacts per ' +
+          'pipeline stage"). Requires the cyggie:sql OAuth scope. ' +
+          'Allowed tables: org_companies, org_company_aliases, ' +
+          'org_company_contacts, company_investors, contacts, ' +
+          'contact_emails, meetings, meeting_company_links, ' +
+          'meeting_speaker_contact_links, notes, themes, note_folders, ' +
+          'company_flagged_files, custom_field_defs, custom_field_values, ' +
+          'deals, tasks. Query must start with SELECT or WITH and ' +
+          'cannot contain `;` (multi-statement). Statement timeout ' +
+          '5s; output capped at 1000 rows.',
+        inputSchema: {
+          query: z
+            .string()
+            .min(1)
+            .max(8_000)
+            .describe('A single SELECT or WITH query (no `;` separators).'),
+        },
+      },
+      async (input) =>
+        runWithScope(
+          'cyggie_execute_sql',
+          'cyggie:sql',
+          () =>
+            cyggieExecuteSql({
+              env: ctx.env,
+              query: input.query,
+              log: ctx.log,
+            }),
+        ),
+    )
+  }
+
   return server
+
+  // Scope-gated runner: returns PERMISSION_DENIED envelope when the
+  // caller's token lacks the required scope. Inline here (rather than
+  // factored out) so it closes over the same ctx + run() that the
+  // other tools use.
+  async function runWithScope(
+    name: string,
+    requiredScope: string,
+    handler: () => Promise<ToolResult>,
+  ): Promise<CallToolResult> {
+    if (!ctx.scopes.includes(requiredScope)) {
+      ctx.log.warn(
+        {
+          metric: 'mcp.tool.errors',
+          tool: name,
+          error_code: 'PERMISSION_DENIED',
+          userId: ctx.userId,
+        },
+        `mcp tool blocked — token lacks ${requiredScope}`,
+      )
+      return toolResultToCallToolResult(
+        err(
+          ERROR_CODE.PERMISSION_DENIED,
+          `Tool requires the ${requiredScope} OAuth scope.`,
+        ),
+      )
+    }
+    return run(name, handler)
+  }
 }
 
 // Wraps a tool handler call with the per-tool observability boilerplate:

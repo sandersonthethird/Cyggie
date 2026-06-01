@@ -30,6 +30,10 @@ loadDotenv({
 })
 process.env['NODE_ENV'] = 'test'
 process.env['CYGGIE_MCP_ENABLED'] = 'true'
+// Slice 10 SQL tool is disabled by default in the test app boot to
+// keep the tool catalog matching the 6 always-on tools. A dedicated
+// describe() below toggles the flag via a separate buildApp.
+process.env['CYGGIE_MCP_SQL_ENABLED'] = 'false'
 
 const { loadEnv } = await import('../src/env')
 const { buildApp } = await import('../src/app')

@@ -20,8 +20,18 @@ This folder implements the Cyggie gateway's [Model Context Protocol](https://mod
 | `cyggie_recent_meetings` | List recent meetings filtered by company OR contact. |
 | `cyggie_get_meeting` | Fetch one meeting by id (notes + summary + transcript). |
 | `cyggie_get_notes` | List notes by attachment or FTS query (requires ≥1 filter). |
+| `cyggie_execute_sql` | (Flag + scope gated.) Read-only SQL against the CRM. Requires `CYGGIE_MCP_SQL_ENABLED=true` AND the caller's OAuth token to carry the `cyggie:sql` scope. See [tools/execute-sql.ts](./tools/execute-sql.ts) for the allowlist + safety design. |
 
 **`cyggie_ask` is intentionally NOT exposed on MCP in V1** (decision-log #21). Interactive MCP clients (Claude Desktop, Cursor) have their own LLM; they should drive the structured tools directly. `cyggie_ask` returns to MCP when the Slack bot splits out to its own Fly app in the multi-firm rollout.
+
+### Enabling `cyggie_execute_sql`
+
+Two-step opt-in (both required):
+
+1. **Provision the read-only Postgres role** in Neon. The full `GRANT` script (which tables, which to REVOKE) is the `ROLE_GRANT_SCRIPT` export at the top of [api-gateway/src/db/readonly-pool.ts](../db/readonly-pool.ts). Run it once as a Neon admin, then copy the resulting connection string into `NEON_READONLY_URL`.
+2. **Set `CYGGIE_MCP_SQL_ENABLED=true`** in env. The gateway will register the tool on next boot. Clients with `cyggie:sql` scope can then call it; clients without the scope see `PERMISSION_DENIED`.
+
+The Postgres role itself is the load-bearing security boundary — the application code can't bypass its `SELECT` grants even if it tried. Application-layer guardrails (pre-flight validation, statement timeout, output cap) are belt-and-suspenders on top of that.
 
 ## Public API contract
 

@@ -88,8 +88,10 @@ export async function registerMcpRoute(
 
       // Per-request server + transport. Stateless mode = no session id.
       const server = buildMcpServer({
+        env,
         db,
         userId: auth.userId,
+        scopes: auth.scopes,
         log: req.log,
       })
       const transport = new StreamableHTTPServerTransport({
