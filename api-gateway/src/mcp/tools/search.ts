@@ -20,6 +20,17 @@ export interface CyggieSearchArgs {
   limit?: number
 }
 
+// Structured search result, separated from markdown formatting so
+// non-MCP callers (the Slack `/cyggie search ...` handler in slice 2)
+// can reuse the SQL without re-deriving the data shape.
+export interface SearchResults {
+  query: string
+  companies: { items: CompanyHit[]; total: number }
+  contacts: { items: ContactHit[]; total: number }
+  meetings: { items: MeetingHit[]; total: number }
+  notes: { items: NoteHit[]; total: number }
+}
+
 const MAX_LIMIT = 20
 
 function buildPreview(content: string): string {
@@ -28,12 +39,22 @@ function buildPreview(content: string): string {
   return flat.slice(0, 157) + '…'
 }
 
-export async function cyggieSearch(args: CyggieSearchArgs): Promise<ToolResult> {
+export async function runCyggieSearch(
+  args: CyggieSearchArgs,
+): Promise<SearchResults> {
   const { db, userId, query } = args
   const limit = Math.min(args.limit ?? 5, MAX_LIMIT)
-
   const trimmed = query.trim()
-  if (!trimmed) return ok('No query provided.')
+
+  if (!trimmed) {
+    return {
+      query: '',
+      companies: { items: [], total: 0 },
+      contacts: { items: [], total: 0 },
+      meetings: { items: [], total: 0 },
+      notes: { items: [], total: 0 },
+    }
+  }
 
   // Run all four lookups in parallel — same pattern as the REST route.
   const [companies, contacts, meetings, notes] = await Promise.all([
@@ -42,6 +63,16 @@ export async function cyggieSearch(args: CyggieSearchArgs): Promise<ToolResult> 
     searchMeetings(db, userId, trimmed, limit),
     searchNotes(db, userId, trimmed, limit),
   ])
+
+  return { query: trimmed, companies, contacts, meetings, notes }
+}
+
+export async function cyggieSearch(args: CyggieSearchArgs): Promise<ToolResult> {
+  const results = await runCyggieSearch(args)
+  const { query, companies, contacts, meetings, notes } = results
+  const trimmed = query
+
+  if (!trimmed) return ok('No query provided.')
 
   const totalHits =
     companies.total + contacts.total + meetings.total + notes.total
@@ -88,7 +119,7 @@ function sectionHeader(label: string, shown: number, total: number): string {
   return `### ${label} (${counter})`
 }
 
-interface CompanyHit {
+export interface CompanyHit {
   id: string
   name: string
   industry: string | null
@@ -101,7 +132,7 @@ function renderCompanyHit(c: CompanyHit): string {
   return `- **${c.name}**${domain}${meta ? ` — ${meta}` : ''} [${cyggieUrl('company', c.id)}]`
 }
 
-interface ContactHit {
+export interface ContactHit {
   id: string
   fullName: string
   title: string | null
@@ -114,7 +145,7 @@ function renderContactHit(c: ContactHit): string {
   return `- **${c.fullName}**${at}${meta ? ` — ${meta}` : ''} [${cyggieUrl('contact', c.id)}]`
 }
 
-interface MeetingHit {
+export interface MeetingHit {
   id: string
   title: string
   date: Date
@@ -126,7 +157,7 @@ function renderMeetingHit(m: MeetingHit): string {
   return `- **${m.title}**${dateBit ? ` — ${dateBit}` : ''} [${cyggieUrl('meeting', m.id)}]`
 }
 
-interface NoteHit {
+export interface NoteHit {
   id: string
   title: string | null
   contentPreview: string

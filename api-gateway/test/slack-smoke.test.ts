@@ -165,10 +165,14 @@ describe('POST /slack/events — protocol surface', () => {
     expect(res.json().challenge).toBe('abc123challenge')
   })
 
-  test('slash command returns hello text inline', async () => {
+  test('bare /cyggie (empty text) returns hello inline', async () => {
+    // Slice 2 introduced a slash-command dispatcher; the bare-command
+    // case (no text) is what slice 1 still owns. Non-search non-empty
+    // text routes to slice 5 placeholder (covered in
+    // slack-search-smoke.test.ts).
     const params = new URLSearchParams({
       command: '/cyggie',
-      text: 'tell me about acme',
+      text: '',
       user_id: 'U0123',
       channel_id: 'C0456',
       team_id: 'T0789',

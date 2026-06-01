@@ -119,6 +119,16 @@ const EnvSchema = z.object({
   // secret.
   SLACK_BOT_TOKEN: z.string().regex(/^xoxb-/).optional(),
 
+  // Interim Slack → Cyggie user binding for slices 2–6 (search + NL Q&A
+  // + thread continuity). Slice 7 replaces this with lazy email-based
+  // mapping via `slack_user_mappings` + Slack's users.info API. Until
+  // then, every Slack request acts as this Cyggie user — fine for the
+  // single-firm beta where there's one operator (Sandy).
+  //
+  // If unset, search / NL queries return a clear "Cyggie not yet
+  // linked" message to the Slack user.
+  CYGGIE_SLACK_DEFAULT_USER_ID: z.string().min(1).optional(),
+
   // ─── Slice 10 — cyggie_execute_sql tool ─────────────────────────────
   // Gates the MCP `cyggie_execute_sql` tool. Default false in prod;
   // dev override via .env.local. Even when true, requests must

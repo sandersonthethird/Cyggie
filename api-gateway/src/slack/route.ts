@@ -19,6 +19,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { GatewayEnv } from '../env'
+import { getDb } from '../db'
 import { Sentry } from '../sentry'
 import {
   checkSlackEventsRateLimit,
@@ -26,6 +27,7 @@ import {
 } from './rate-limit'
 import { verifySlackSignature } from './signing'
 import { makeSlackClient, type SlackClient } from './client'
+import { handleSlackSearch } from './handlers/search'
 
 // Custom Fastify request property: raw body string captured before parse.
 // Augment via module declaration so handlers see it typed.
@@ -228,11 +230,69 @@ export async function registerSlackRoutes(
           },
           'slack slash command received',
         )
-        // Slice 1: every command returns the hello message. Slices 2/5
-        // route based on text → search vs NL question.
+
+        // Slice 2 dispatcher: `search <q>` routes to the search handler;
+        // empty text keeps slice 1's hello; anything else falls through
+        // to slice 5 (NL Q&A) once that lands. Until slice 5 ships,
+        // non-search text gets a "not yet wired" message so the user
+        // isn't left wondering whether the bot heard them.
+        const searchMatch = /^search\s+(.+)$/i.exec(text)
+        if (searchMatch) {
+          const query = searchMatch[1].trim()
+          const userId = env.CYGGIE_SLACK_DEFAULT_USER_ID
+          if (!userId) {
+            req.log.warn(
+              { metric: 'slack.user_unmapped' },
+              'CYGGIE_SLACK_DEFAULT_USER_ID unset — search rejected',
+            )
+            return reply.send({
+              response_type: 'ephemeral',
+              text:
+                'Cyggie is not yet linked to a user. ' +
+                'Ask your admin to set `CYGGIE_SLACK_DEFAULT_USER_ID` ' +
+                'on the gateway (this becomes automatic in slice 7).',
+            })
+          }
+          try {
+            const db = getDb(env.GATEWAY_DATABASE_URL)
+            const mrkdwn = await handleSlackSearch({ db, userId, query })
+            return reply.send({
+              response_type: 'in_channel',
+              text: mrkdwn,
+              mrkdwn: true,
+            })
+          } catch (err) {
+            req.log.error(
+              { err, metric: 'slack.search.error', query },
+              'slack search handler threw',
+            )
+            Sentry.captureException(err, {
+              tags: { surface: 'slack_search' },
+              extra: { query },
+            })
+            return reply.send({
+              response_type: 'ephemeral',
+              text: "Cyggie hit an error running that search. We've logged it.",
+            })
+          }
+        }
+
+        if (!text) {
+          return reply.send({
+            response_type: 'in_channel',
+            text: HELLO_TEXT,
+          })
+        }
+
+        // Non-search non-empty text — slice 5 will route to NL Q&A. For
+        // now, tell the user explicitly so they don't think the bot is
+        // ignoring them.
         return reply.send({
-          response_type: 'in_channel',
-          text: HELLO_TEXT,
+          response_type: 'ephemeral',
+          text:
+            "I can only do `/cyggie search <name>` for now. " +
+            'Natural-language questions (`/cyggie how much did Acme raise?`) ' +
+            'land in the next slice.',
         })
       }
 
