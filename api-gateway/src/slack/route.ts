@@ -28,6 +28,11 @@ import {
 import { verifySlackSignature } from './signing'
 import { makeSlackClient, type SlackClient } from './client'
 import { handleSlackSearch } from './handlers/search'
+import {
+  PLACEHOLDER_TEXT,
+  runSlackAskAsync,
+  type AskTarget,
+} from './handlers/ask'
 
 // Custom Fastify request property: raw body string captured before parse.
 // Augment via module declaration so handlers see it typed.
@@ -284,26 +289,72 @@ export async function registerSlackRoutes(
           })
         }
 
-        // Non-search non-empty text — slice 5 will route to NL Q&A. For
-        // now, tell the user explicitly so they don't think the bot is
-        // ignoring them.
+        // Non-search non-empty text → slice 5 NL Q&A. Ack immediately
+        // with a placeholder; the background task POSTs the real answer
+        // to response_url when the agent loop completes.
+        const userId = env.CYGGIE_SLACK_DEFAULT_USER_ID
+        if (!userId) {
+          req.log.warn(
+            { metric: 'slack.user_unmapped' },
+            'CYGGIE_SLACK_DEFAULT_USER_ID unset — ask rejected',
+          )
+          return reply.send({
+            response_type: 'ephemeral',
+            text:
+              'Cyggie is not yet linked to a user. ' +
+              'Ask your admin to set `CYGGIE_SLACK_DEFAULT_USER_ID` ' +
+              'on the gateway (this becomes automatic in slice 7).',
+          })
+        }
+        const responseUrl = body['response_url']
+        if (typeof responseUrl !== 'string' || !responseUrl) {
+          req.log.error(
+            { metric: 'slack.ask.no_response_url' },
+            'slash command missing response_url — cannot post answer',
+          )
+          return reply.send({
+            response_type: 'ephemeral',
+            text: 'Cyggie cannot reply (missing response URL from Slack).',
+          })
+        }
+        const askTarget: AskTarget = {
+          kind: 'slash',
+          responseUrl,
+        }
+        runSlackAskAsync({
+          question: text,
+          userId,
+          env,
+          db: getDb(env.GATEWAY_DATABASE_URL),
+          log: req.log,
+          target: askTarget,
+          onBehalfOf: {
+            slackUserId: body['user_id'] as string | undefined,
+          },
+        })
         return reply.send({
-          response_type: 'ephemeral',
-          text:
-            "I can only do `/cyggie search <name>` for now. " +
-            'Natural-language questions (`/cyggie how much did Acme raise?`) ' +
-            'land in the next slice.',
+          response_type: 'in_channel',
+          text: PLACEHOLDER_TEXT,
+          mrkdwn: true,
         })
       }
 
       // Event callback — wraps app_mention, message.im, etc.
       if (body['type'] === 'event_callback') {
         const event = body['event'] as
-          | { type?: string; channel?: string; ts?: string; user?: string; bot_id?: string; subtype?: string }
+          | {
+              type?: string
+              channel?: string
+              ts?: string
+              thread_ts?: string
+              user?: string
+              text?: string
+              bot_id?: string
+              subtype?: string
+            }
           | undefined
         const eventType = event?.type
 
-        // Slice 1: only respond to app_mention + DM message.im.
         // Ignore the bot's own messages (Slack echoes them back via
         // message.im sometimes; bot_id / subtype='bot_message' filter
         // those out).
@@ -335,25 +386,66 @@ export async function registerSlackRoutes(
             )
             return
           }
-          // Fire-and-forget. Errors land in Sentry via the catch but
-          // don't block the already-sent 200 ack.
-          client
-            .postMessage({ channel, text: HELLO_TEXT })
-            .then(() => {
-              req.log.info(
-                { metric: 'slack.reply.sent', eventType, channel },
-                'slack reply posted',
-              )
-            })
-            .catch((err) => {
-              req.log.error(
-                { err, metric: 'slack.reply.error', eventType, channel },
-                'slack chat.postMessage failed',
-              )
-              Sentry.captureException(err, {
-                tags: { surface: 'slack_reply', event_type: eventType },
+          // Strip the leading `<@U_BOT> ` mention from app_mention text
+          // so the LLM sees just the question. Slack user IDs are
+          // typically [A-Z0-9] but [\w] gives us a defensive superset
+          // (covers underscores and any future ID shape).
+          const rawText = String(event?.text ?? '')
+          const question = rawText.replace(/^<@[\w]+>\s*/i, '').trim()
+
+          // Empty question (bare @-mention with no text) → slice 1
+          // hello. Checked BEFORE the userId guard because hello is a
+          // heartbeat / sanity check — no Cyggie data is touched, so
+          // there's no reason to gate on the slack→cyggie mapping.
+          if (!question) {
+            client
+              .postMessage({
+                channel,
+                text: HELLO_TEXT,
+                threadTs: event?.thread_ts,
               })
-            })
+              .catch((err) => {
+                req.log.error({ err }, 'slack reply (hello) failed')
+              })
+            return
+          }
+
+          // Real question — but we need a Cyggie user to scope queries.
+          // Slice 7 replaces this stopgap with lazy email mapping via
+          // Slack's users.info API.
+          const userId = env.CYGGIE_SLACK_DEFAULT_USER_ID
+          if (!userId) {
+            client
+              .postMessage({
+                channel,
+                text:
+                  'Cyggie is not yet linked to a user. ' +
+                  'Ask your admin to set `CYGGIE_SLACK_DEFAULT_USER_ID`.',
+                threadTs: event?.thread_ts,
+              })
+              .catch((err) => {
+                req.log.error({ err }, 'slack reply (unmapped) failed')
+              })
+            return
+          }
+
+          // Real question → cyggieAsk via the async background task.
+          runSlackAskAsync({
+            question,
+            userId,
+            env,
+            db: getDb(env.GATEWAY_DATABASE_URL),
+            log: req.log,
+            target: {
+              kind: 'event',
+              channel,
+              threadTs: event?.thread_ts,
+              client,
+            },
+            onBehalfOf: {
+              slackUserId: event?.user,
+            },
+          })
           return
         }
 

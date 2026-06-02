@@ -188,7 +188,12 @@ describe('POST /slack/events — protocol surface', () => {
     expect(reply.text).toBe("Hello! I'm Cyggie.")
   })
 
-  test('app_mention event acks 200 and triggers chat.postMessage', async () => {
+  test('bare @-mention (no text) acks 200 and posts hello via chat.postMessage', async () => {
+    // Slice 5 changed app_mention behavior: when the text contains a
+    // real question, it routes to cyggieAsk (covered in
+    // slack-ask-smoke.test.ts). The slice-1 "still owned" case is bare
+    // @-mention (just `<@U_BOT>` with no question) — that still posts
+    // the static hello.
     postMessageMock.mockClear()
     const body = JSON.stringify({
       type: 'event_callback',
@@ -197,13 +202,11 @@ describe('POST /slack/events — protocol surface', () => {
         user: 'U0123',
         channel: 'C0456',
         ts: '1700000000.000100',
-        text: '<@U_BOT> tell me about acme',
+        text: '<@U_BOT>',
       },
     })
     const res = await postSlack({ body, contentType: 'application/json' })
     expect(res.statusCode).toBe(200)
-    // chat.postMessage runs after the ack (fire-and-forget).
-    // Wait a tick for the microtask queue to flush.
     await new Promise((r) => setTimeout(r, 50))
     expect(postMessageMock).toHaveBeenCalledTimes(1)
     expect(postMessageMock).toHaveBeenCalledWith(
@@ -214,7 +217,10 @@ describe('POST /slack/events — protocol surface', () => {
     )
   })
 
-  test('DM message.im acks 200 and triggers chat.postMessage', async () => {
+  test('DM message.im with text routes to cyggieAsk (slice 5)', async () => {
+    // Slice 5 routes any DM text through cyggieAsk. The full agent loop
+    // path is covered in slack-ask-smoke.test.ts; here we just verify
+    // the 200 ack still fires fast for DMs.
     postMessageMock.mockClear()
     const body = JSON.stringify({
       type: 'event_callback',
@@ -228,11 +234,6 @@ describe('POST /slack/events — protocol surface', () => {
     })
     const res = await postSlack({ body, contentType: 'application/json' })
     expect(res.statusCode).toBe(200)
-    await new Promise((r) => setTimeout(r, 50))
-    expect(postMessageMock).toHaveBeenCalledTimes(1)
-    expect(postMessageMock).toHaveBeenCalledWith(
-      expect.objectContaining({ channel: 'D0456' }),
-    )
   })
 
   test('bot-message echoes are ignored (no infinite loop)', async () => {

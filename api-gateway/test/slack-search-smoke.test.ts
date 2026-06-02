@@ -106,6 +106,9 @@ async function postSlash(text: string) {
     user_id: 'U_TEST',
     channel_id: 'C_TEST',
     team_id: 'T_TEST',
+    // response_url required by slice 5's NL Q&A dispatcher for the
+    // async-reply path; harmless for slices 1+2's synchronous replies.
+    response_url: 'https://hooks.slack.com/commands/T_TEST/12345/abc',
   })
   const body = params.toString()
   const timestamp = String(Math.floor(Date.now() / 1000))
@@ -135,24 +138,23 @@ describe('POST /slack/events — slash command dispatcher (slice 2)', () => {
     expect(reply.text).toBe("Hello! I'm Cyggie.")
   })
 
-  test('/cyggie search (no query) returns usage message', async () => {
+  test('/cyggie search (no query) — bare "search" routes to cyggieAsk (slice 5)', async () => {
+    // Slice 2's dispatcher only matches `search <q>` (with a trailing
+    // word). Bare `search` doesn't match → falls through to slice 5's
+    // NL Q&A path, which returns the thinking-face placeholder.
     const res = await postSlash('search')
     expect(res.statusCode).toBe(200)
     const reply = res.json()
-    expect(reply.text.toLowerCase()).toContain('search')
-    // Slice-2 dispatcher only matches `search <q>` (with a trailing
-    // word). Bare `search` falls through to the slice-5-placeholder
-    // path. Either way the user sees something actionable.
-    expect(reply.response_type).toMatch(/ephemeral|in_channel/)
+    expect(reply.response_type).toBe('in_channel')
+    expect(reply.text).toContain('Looking that up')
   })
 
-  test('/cyggie <random text> returns slice-5-placeholder message', async () => {
+  test('/cyggie <random text> routes to cyggieAsk (slice 5)', async () => {
     const res = await postSlash('how much did Acme raise')
     expect(res.statusCode).toBe(200)
     const reply = res.json()
-    expect(reply.response_type).toBe('ephemeral')
-    expect(reply.text).toContain('search')
-    expect(reply.text).toContain('next slice')
+    expect(reply.response_type).toBe('in_channel')
+    expect(reply.text).toContain('Looking that up')
   })
 
   test('/cyggie search <q> returns formatted mrkdwn with the seeded company', async () => {
