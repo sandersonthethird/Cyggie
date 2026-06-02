@@ -148,9 +148,14 @@ export class AuditBuffer {
       })
       .finally(() => {
         this.flushing = null
-        // Clear the backpressure alert once we drain back below the
-        // threshold — next overflow re-alerts.
-        if (this.backpressureAlerted && this.buffer.length < this.backpressureLimit / 2) {
+        // Re-arm the alert as soon as we drain back below the limit.
+        // Older code used limit/2 as the re-arm threshold; under
+        // sustained high write rates the buffer can oscillate between
+        // ~600 and ~1000 without ever dropping below 500, which would
+        // silence every overflow after the first. Re-arming at the
+        // alert threshold itself means each distinct over-limit
+        // episode emits exactly one alert.
+        if (this.backpressureAlerted && this.buffer.length < this.backpressureLimit) {
           this.backpressureAlerted = false
         }
       })

@@ -183,6 +183,97 @@ describe('AuditBuffer backpressure', () => {
       expect.stringContaining('backpressure'),
     )
   })
+
+  test('alert re-arms after a flush drains below the limit (successive overflows each alert once)', async () => {
+    const db = makeFakeDb()
+    const buf = new AuditBuffer({
+      db: db as never,
+      log: fakeLog as never,
+      flushIntervalMs: 60_000,
+      flushSizeThreshold: 100,
+      backpressureLimit: 3,
+    })
+    // First overflow.
+    await buf.record(makeRow('a'))
+    await buf.record(makeRow('b'))
+    await buf.record(makeRow('c'))
+    await buf.record(makeRow('overflow-1'))
+    expect(
+      fakeLog.error.mock.calls.filter(
+        ([meta]) =>
+          (meta as { metric?: string } | undefined)?.metric ===
+          'audit.buffer.overflow',
+      ),
+    ).toHaveLength(1)
+
+    // Drain back below limit via explicit flush.
+    await buf.flush()
+    expect(buf.size()).toBe(0)
+
+    // Climb past the limit again.
+    await buf.record(makeRow('d'))
+    await buf.record(makeRow('e'))
+    await buf.record(makeRow('f'))
+    await buf.record(makeRow('overflow-2'))
+
+    // The fix re-arms on any drain below the limit (not just below
+    // limit/2), so the second overflow fires its own alert. With the
+    // pre-fix half-threshold logic, this assertion would still pass
+    // because the buffer fully drained — see the next test for the
+    // oscillation case the fix actually addresses.
+    expect(
+      fakeLog.error.mock.calls.filter(
+        ([meta]) =>
+          (meta as { metric?: string } | undefined)?.metric ===
+          'audit.buffer.overflow',
+      ),
+    ).toHaveLength(2)
+  })
+
+  test('alert re-arms even when flush only partially drains (oscillation between just-above and just-below the limit)', async () => {
+    const db = makeFakeDb()
+    const buf = new AuditBuffer({
+      db: db as never,
+      log: fakeLog as never,
+      flushIntervalMs: 60_000,
+      flushSizeThreshold: 100,
+      backpressureLimit: 4,
+    })
+
+    // Climb to over-limit. backpressureLimit is 4 — record() pushes
+    // into the buffer until length >= 4; at that point new rows write
+    // sync and the alert fires once.
+    for (const t of ['a', 'b', 'c', 'd']) {
+      await buf.record(makeRow(t))
+    }
+    await buf.record(makeRow('overflow-1'))
+    expect(buf.size()).toBe(4)
+
+    // Flush drains to 0, then we climb back close to the limit
+    // without going under limit/2 again — the key scenario the fix
+    // protects against. With the pre-fix half-threshold (re-arm only
+    // below 2), this oscillation pattern would silently swallow the
+    // second overflow because the buffer hits 3 → 4+1 → flush →
+    // would-be 3 again, never crossing below 2.
+    await buf.flush()
+    // Simulate the post-flush partial-drain state by re-filling close
+    // to the limit before the next overflow.
+    await buf.record(makeRow('e'))
+    await buf.record(makeRow('f'))
+    await buf.record(makeRow('g'))
+    // One more crosses the limit and would be the second alert.
+    await buf.record(makeRow('h'))
+    await buf.record(makeRow('overflow-2'))
+
+    // Fix asserts: both episodes alert. Pre-fix this would have been 1.
+    expect(
+      fakeLog.error.mock.calls.filter(
+        ([meta]) =>
+          (meta as { metric?: string } | undefined)?.metric ===
+          'audit.buffer.overflow',
+      ),
+    ).toHaveLength(2)
+  })
 })
 
 describe('AuditBuffer write errors', () => {

@@ -64,6 +64,29 @@ vi.mock('../src/llm/resolve-key', async () => {
   }
 })
 
+// Mock the audit buffer so we can spy on recordAuditAsync calls
+// without hitting Neon. Surfaces the audit row shape per-test so we
+// can assert on errorCode + ok for the post-reply failure path.
+const auditCalls: Array<Record<string, unknown>> = []
+vi.mock('../src/audit/buffer', async () => {
+  const actual = await vi.importActual<typeof import('../src/audit/buffer')>(
+    '../src/audit/buffer',
+  )
+  return {
+    ...actual,
+    recordAuditAsync: (row: Record<string, unknown>) => {
+      auditCalls.push(row)
+    },
+    initAuditBuffer: () => ({
+      start: () => {},
+      shutdown: async () => {},
+      record: async () => {},
+      flush: async () => {},
+      size: () => 0,
+    }),
+  }
+})
+
 const { loadEnv } = await import('../src/env')
 const { buildApp } = await import('../src/app')
 const { signSlackRequest } = await import('../src/slack/signing')
@@ -92,6 +115,7 @@ beforeEach(() => {
     }
     return new Response('not mocked', { status: 500 })
   })
+  auditCalls.length = 0
 })
 
 // Helpers ─────────────────────────────────────────────────────────────
@@ -270,6 +294,58 @@ describe('POST /slack/events — slash NL Q&A (slice 5)', () => {
     await new Promise((r) => setTimeout(r, 50))
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
     expect(body.text).toContain('_(Cyggie returned an empty answer)_')
+  })
+
+  test('cyggieAsk success but response_url POST 500 → audit row marks SLACK_POST_FAILED (not generic INTERNAL)', async () => {
+    cyggieAskMock.mockResolvedValueOnce({
+      answer: 'Acme raised $12.5M.',
+      iterationCount: 2,
+      durationMs: 800,
+      usage: { inputTokens: 100, outputTokens: 30, cacheReadTokens: 0 },
+    })
+    fetchMock.mockReset().mockImplementation(async (url: string) => {
+      if (typeof url === 'string' && url.includes('hooks.slack.com')) {
+        return new Response('boom', { status: 500 })
+      }
+      return new Response('not mocked', { status: 500 })
+    })
+
+    await postSlash('how much did Acme raise?')
+    await waitFor(() => auditCalls.length >= 1, 3000)
+
+    // Exactly one audit row, and it distinguishes the failing layer:
+    // the ask succeeded but the post-back to Slack failed.
+    expect(auditCalls).toHaveLength(1)
+    expect(auditCalls[0]).toMatchObject({
+      ok: false,
+      errorCode: 'SLACK_POST_FAILED',
+      surface: 'slack',
+      toolName: 'cyggie_ask',
+    })
+    // outputSize is populated from the mrkdwn we tried to post — proves
+    // the ask actually completed before the post failed.
+    expect(typeof auditCalls[0]['outputSize']).toBe('number')
+    expect(auditCalls[0]['outputSize'] as number).toBeGreaterThan(0)
+  })
+
+  test('cyggieAsk success + response_url POST 200 → audit row ok=true', async () => {
+    cyggieAskMock.mockResolvedValueOnce({
+      answer: 'Jane is the CEO.',
+      iterationCount: 1,
+      durationMs: 200,
+      usage: { inputTokens: 50, outputTokens: 10, cacheReadTokens: 0 },
+    })
+
+    await postSlash('who is the CEO?')
+    await waitFor(() => auditCalls.length >= 1, 3000)
+
+    expect(auditCalls).toHaveLength(1)
+    expect(auditCalls[0]).toMatchObject({
+      ok: true,
+      surface: 'slack',
+      toolName: 'cyggie_ask',
+    })
+    expect(auditCalls[0]['errorCode']).toBeUndefined()
   })
 })
 

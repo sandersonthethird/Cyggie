@@ -198,8 +198,14 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
     }
   }
 
+  // The ask flow has three distinct failure surfaces. We catch each
+  // separately so the audit row records the actual failing layer
+  // instead of conflating "cyggieAsk threw" with "Slack rejected our
+  // post-back" (the latter would otherwise surface as a generic
+  // INTERNAL code, hiding what's actually wrong from the operator).
+  let result: Awaited<ReturnType<typeof cyggieAsk>> | null = null
   try {
-    const result = await cyggieAsk({
+    result = await cyggieAsk({
       question,
       apiKey,
       db,
@@ -208,59 +214,6 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
       caller: 'slack',
       onBehalfOf: args.onBehalfOf,
       conversationContext: conversationContext.length > 0 ? conversationContext : undefined,
-    })
-    const mrkdwn = markdownToMrkdwn(result.answer || '_(Cyggie returned an empty answer)_')
-    await postReply(target, mrkdwn)
-
-    // Persist the new turn pair so follow-ups in this thread have
-    // context. Errors here are non-fatal — the user already saw the
-    // answer; missing the persistence just means the next follow-up
-    // won't have this turn in its history.
-    if (sessionId && result.answer) {
-      try {
-        await appendSlackTurn({
-          db,
-          sessionId,
-          userText: question,
-          assistantText: result.answer,
-        })
-      } catch (persistErr) {
-        log.warn(
-          { err: persistErr, metric: 'slack.session.persist_fail', sessionId },
-          'failed to persist slack turn pair — follow-ups will miss context',
-        )
-        Sentry.captureException(persistErr, {
-          tags: { surface: 'slack_turn_persist' },
-        })
-      }
-    }
-
-    log.info(
-      {
-        metric: 'slack.queries',
-        ok: true,
-        duration_ms: Date.now() - startedAt,
-        iterations: result.iterationCount,
-        sessionId,
-        prior_turns: conversationContext.length,
-      },
-      'slack ask completed',
-    )
-    recordAuditAsync({
-      surface: 'slack',
-      toolName: 'cyggie_ask',
-      onBehalfOfUserId: resolvedMapped ? userId : null,
-      onBehalfOfSlackId: slackUserId ?? null,
-      slackMessageTs: args.slackMessageTs ?? null,
-      ok: true,
-      durationMs: Date.now() - startedAt,
-      inputSummary: truncate(question, 200),
-      outputSize: result.answer.length,
-      extras: {
-        iterations: result.iterationCount,
-        session_id: sessionId,
-        prior_turns: conversationContext.length,
-      },
     })
   } catch (err) {
     const friendly = categorizeForSlack(err)
@@ -293,7 +246,99 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
       durationMs: Date.now() - startedAt,
       inputSummary: truncate(question, 200),
     })
+    return
   }
+
+  const mrkdwn = markdownToMrkdwn(result.answer || '_(Cyggie returned an empty answer)_')
+  try {
+    await postReply(target, mrkdwn)
+  } catch (postErr) {
+    // cyggieAsk succeeded but Slack rejected the post-back (e.g.
+    // response_url 5xx, 429 after SDK retries exhausted, AbortController
+    // timeout). The user never saw the answer; audit must reflect that
+    // distinctly so forensic lookup by slack_message_ts isn't misleading.
+    log.error(
+      {
+        err: postErr,
+        metric: 'slack.ask.post_fail',
+        duration_ms: Date.now() - startedAt,
+        iterations: result.iterationCount,
+      },
+      'cyggieAsk succeeded but post-reply to Slack failed',
+    )
+    Sentry.captureException(postErr, {
+      tags: { surface: 'slack_post_reply', error_code: 'SLACK_POST_FAILED' },
+    })
+    recordAuditAsync({
+      surface: 'slack',
+      toolName: 'cyggie_ask',
+      onBehalfOfUserId: resolvedMapped ? userId : null,
+      onBehalfOfSlackId: slackUserId ?? null,
+      slackMessageTs: args.slackMessageTs ?? null,
+      ok: false,
+      errorCode: 'SLACK_POST_FAILED',
+      durationMs: Date.now() - startedAt,
+      inputSummary: truncate(question, 200),
+      outputSize: mrkdwn.length,
+      extras: {
+        iterations: result.iterationCount,
+        session_id: sessionId,
+        prior_turns: conversationContext.length,
+      },
+    })
+    return
+  }
+
+  // Persist the new turn pair so follow-ups in this thread have
+  // context. Errors here are non-fatal — the user already saw the
+  // answer; missing the persistence just means the next follow-up
+  // won't have this turn in its history. The audit stays ok=true.
+  if (sessionId && result.answer) {
+    try {
+      await appendSlackTurn({
+        db,
+        sessionId,
+        userText: question,
+        assistantText: result.answer,
+      })
+    } catch (persistErr) {
+      log.warn(
+        { err: persistErr, metric: 'slack.session.persist_fail', sessionId },
+        'failed to persist slack turn pair — follow-ups will miss context',
+      )
+      Sentry.captureException(persistErr, {
+        tags: { surface: 'slack_turn_persist' },
+      })
+    }
+  }
+
+  log.info(
+    {
+      metric: 'slack.queries',
+      ok: true,
+      duration_ms: Date.now() - startedAt,
+      iterations: result.iterationCount,
+      sessionId,
+      prior_turns: conversationContext.length,
+    },
+    'slack ask completed',
+  )
+  recordAuditAsync({
+    surface: 'slack',
+    toolName: 'cyggie_ask',
+    onBehalfOfUserId: resolvedMapped ? userId : null,
+    onBehalfOfSlackId: slackUserId ?? null,
+    slackMessageTs: args.slackMessageTs ?? null,
+    ok: true,
+    durationMs: Date.now() - startedAt,
+    inputSummary: truncate(question, 200),
+    outputSize: result.answer.length,
+    extras: {
+      iterations: result.iterationCount,
+      session_id: sessionId,
+      prior_turns: conversationContext.length,
+    },
+  })
 }
 
 function truncate(s: string, max: number): string {
@@ -359,29 +404,47 @@ function categorizeForSlack(err: unknown): FriendlyError {
   }
 }
 
+// 10s is generous — Slack's response_url is normally <500ms. We pick a
+// value short enough that a hung request can't pile up promises across
+// many in-flight asks, but long enough to absorb transient network
+// blips without false-aborting healthy posts.
+const POST_REPLY_TIMEOUT_MS = 10_000
+
 async function postReply(target: AskTarget, text: string): Promise<void> {
   if (target.kind === 'slash') {
     // Slash command — POST to response_url. Replaces our placeholder.
-    const res = await fetch(target.responseUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        replace_original: true,
-        response_type: 'in_channel',
-        text,
-        mrkdwn: true,
-      }),
-    })
-    if (!res.ok) {
-      throw new Error(
-        `Slack response_url POST failed: ${res.status} ${res.statusText}`,
-      )
+    // AbortController bounds the fetch; without it, undici's default
+    // (~5 min) means a degraded response_url could leave a runSlackAsk
+    // promise hanging well past the agent loop's 60s cap.
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), POST_REPLY_TIMEOUT_MS)
+    try {
+      const res = await fetch(target.responseUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          replace_original: true,
+          response_type: 'in_channel',
+          text,
+          mrkdwn: true,
+        }),
+        signal: controller.signal,
+      })
+      if (!res.ok) {
+        throw new Error(
+          `Slack response_url POST failed: ${res.status} ${res.statusText}`,
+        )
+      }
+    } finally {
+      clearTimeout(timeoutId)
     }
     return
   }
   // Event (app_mention / message.im) — post via chat.postMessage. No
   // placeholder to replace because event handlers can't echo a response
-  // body the way slash commands do.
+  // body the way slash commands do. The @slack/web-api SDK enforces
+  // its own request timeout (60s default) and retries 429s with
+  // backoff, so we don't wrap it here.
   await target.client.postMessage({
     channel: target.channel,
     text,

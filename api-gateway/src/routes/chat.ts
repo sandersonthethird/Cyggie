@@ -193,7 +193,16 @@ export async function registerChatRoutes(
       const db = getDb(env.GATEWAY_DATABASE_URL)
       const { contextKind, includeArchived, limit, offset } = req.query
 
-      const where = [eq(schema.chatSessions.userId, user.sub)]
+      const where = [
+        eq(schema.chatSessions.userId, user.sub),
+        // Defense-in-depth per External Agents V1 slice 6 acceptance
+        // criterion: in-product chat list must never surface Slack-
+        // originated sessions (origin='slack'). Without this filter,
+        // a user whose id happens to equal CYGGIE_SLACK_DEFAULT_USER_ID
+        // would see Slack threads mixed into their chat list with
+        // contextIds shaped like `slack:<workspace>:<channel>:<thread>`.
+        eq(schema.chatSessions.origin, 'app'),
+      ]
       if (contextKind) {
         where.push(eq(schema.chatSessions.contextKind, contextKind))
       }
@@ -452,6 +461,11 @@ export async function registerChatRoutes(
       const { contextKind, contextId, contextLabel } = req.body
 
       // Step 1: look for an existing active session for (user, contextId).
+      // origin='app' filter is defense-in-depth — the contextId format
+      // ('slack:...' for Slack rows) already prevents collisions, but
+      // explicit filtering keeps Slack sessions out of the route's
+      // create-or-resume path even if a contextId format change ever
+      // overlaps. Matches the slice 6 acceptance criterion.
       const existing = await db
         .select()
         .from(schema.chatSessions)
@@ -460,6 +474,7 @@ export async function registerChatRoutes(
             eq(schema.chatSessions.userId, user.sub),
             eq(schema.chatSessions.contextId, contextId),
             eq(schema.chatSessions.isActive, 1),
+            eq(schema.chatSessions.origin, 'app'),
           ),
         )
         .limit(1)
@@ -543,6 +558,8 @@ export async function registerChatRoutes(
 
       // Step 3: concurrent-create race — another request inserted in between
       // our SELECT and our INSERT. Re-SELECT and return that row.
+      // origin='app' filter mirrors the Step 1 query so both sides of the
+      // race agree on which rows are eligible.
       const racedRows = await db
         .select()
         .from(schema.chatSessions)
@@ -551,6 +568,7 @@ export async function registerChatRoutes(
             eq(schema.chatSessions.userId, user.sub),
             eq(schema.chatSessions.contextId, contextId),
             eq(schema.chatSessions.isActive, 1),
+            eq(schema.chatSessions.origin, 'app'),
           ),
         )
         .limit(1)
