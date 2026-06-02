@@ -33,6 +33,7 @@ import {
   runSlackAskAsync,
   type AskTarget,
 } from './handlers/ask'
+import { initAuditBuffer } from '../audit/buffer'
 
 // Custom Fastify request property: raw body string captured before parse.
 // Augment via module declaration so handlers see it typed.
@@ -65,6 +66,17 @@ export async function registerSlackRoutes(
 
   // Register the IP-based rate-limiter sweeper (independent from OAuth's).
   registerSlackRateLimiter(app)
+
+  // Slice 7: async fire-and-forget audit buffer. Initialized once per
+  // gateway process; graceful flush on app close. Sharing the gateway
+  // pool keeps connection pressure bounded.
+  const auditBuffer = initAuditBuffer({
+    db: getDb(env.GATEWAY_DATABASE_URL),
+    log: app.log,
+  })
+  app.addHook('onClose', async () => {
+    await auditBuffer.shutdown()
+  })
 
   // Per-plugin content-type parsers capture the raw body string so the
   // signature verify can compute the HMAC over exactly what Slack
@@ -331,6 +343,11 @@ export async function registerSlackRoutes(
           onBehalfOf: {
             slackUserId: body['user_id'] as string | undefined,
           },
+          // Slash commands have no thread/message ts to anchor the
+          // audit row to — the response_url is the only forensic
+          // breadcrumb. trigger_id is closest but Slack documents it
+          // as opaque, so leave null.
+          slackMessageTs: undefined,
         })
         return reply.send({
           response_type: 'in_channel',
@@ -430,6 +447,12 @@ export async function registerSlackRoutes(
           }
 
           // Real question → cyggieAsk via the async background task.
+          // Slice 6: pass threadKey so the handler resolves the
+          // chat_sessions row + loads prior turns. DMs (no thread_ts)
+          // collapse to a per-channel session via the COALESCE-based
+          // unique index.
+          const teamId =
+            (body['team_id'] as string | undefined) ?? 'unknown_workspace'
           runSlackAskAsync({
             question,
             userId,
@@ -442,9 +465,16 @@ export async function registerSlackRoutes(
               threadTs: event?.thread_ts,
               client,
             },
+            threadKey: {
+              workspaceId: teamId,
+              channelId: channel,
+              threadTs: event?.thread_ts ?? null,
+            },
             onBehalfOf: {
               slackUserId: event?.user,
             },
+            // Forensic lookup key per plan slice 7 acceptance criteria.
+            slackMessageTs: event?.ts,
           })
           return
         }

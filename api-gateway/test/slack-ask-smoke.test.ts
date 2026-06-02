@@ -96,6 +96,18 @@ beforeEach(() => {
 
 // Helpers ─────────────────────────────────────────────────────────────
 
+// Poll until predicate or timeout. Used for assertions on async
+// background work (slice 6 thread-session lookup + slice 7 user-mapping
+// lookup add real Neon roundtrips between the route ack and the
+// cyggieAsk spy firing).
+async function waitFor(pred: () => boolean, timeoutMs: number): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (pred()) return
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
+
 async function postSlash(text: string, responseUrl = 'https://hooks.slack.com/commands/T_TEST/12345/abc') {
   const params = new URLSearchParams({
     command: '/cyggie',
@@ -275,7 +287,11 @@ describe('POST /slack/events — app_mention NL Q&A (slice 5)', () => {
     const res = await postAppMention('who is the CEO of Acme?')
     expect(res.statusCode).toBe(200)
 
-    await new Promise((r) => setTimeout(r, 50))
+    // App_mention path runs through slice 6 + 7 background work
+    // (thread-session find-or-create + user-mapping lookup) before
+    // cyggieAsk fires. Both await real Neon roundtrips; the 50ms wait
+    // that worked for the slash path isn't enough here.
+    await waitFor(() => cyggieAskMock.mock.calls.length >= 1, 3000)
     expect(cyggieAskMock).toHaveBeenCalledTimes(1)
     // Note: leading <@U_BOT> mention was stripped before passing to cyggieAsk.
     expect(cyggieAskMock).toHaveBeenCalledWith(

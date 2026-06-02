@@ -23,6 +23,14 @@ import {
 import { resolveAnthropicKey } from '../../llm/resolve-key'
 import { markdownToMrkdwn } from '../markdown-to-mrkdwn'
 import type { SlackClient } from '../client'
+import {
+  appendSlackTurn,
+  findOrCreateSlackSession,
+  loadSlackSessionMessages,
+  type SlackThreadKey,
+} from '../thread-session'
+import { resolveSlackUser } from '../user-mapping'
+import { recordAuditAsync } from '../../audit/buffer'
 
 export const PLACEHOLDER_TEXT = ":thinking_face: Looking that up..."
 
@@ -38,6 +46,15 @@ export interface RunSlackAskArgs {
   log: FastifyBaseLogger
   target: AskTarget
   onBehalfOf?: { slackUserId?: string }
+  // Slice 6: thread key for find-or-create session lookup. If omitted,
+  // the ask runs stateless (no prior-turn context, no persistence).
+  // Slash commands omit this for now — slash queries are one-shots
+  // that don't have a Slack thread to anchor to. App-mention + DM
+  // events pass it for continuity.
+  threadKey?: SlackThreadKey
+  // Slice 7: source Slack message ts for forensic audit lookup
+  // ("the bot answered weirdly at 3pm yesterday").
+  slackMessageTs?: string
 }
 
 // Fire-and-forget background work. Callers do NOT await this — they ack
@@ -68,8 +85,59 @@ export function runSlackAskAsync(args: RunSlackAskArgs): void {
 }
 
 async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
-  const { question, userId, env, db, log, target } = args
+  const { question, env, db, log, target } = args
   const startedAt = Date.now()
+  // Slice 7: attempt to upgrade the env-default user to a properly
+  // mapped Cyggie user via Slack users.info. The env default is the
+  // V1 fallback; mapping enriches audit attribution and (eventually)
+  // per-user scoping. Failures degrade gracefully — mapping is
+  // enrichment, not gating (plan Q7).
+  let userId = args.userId
+  let resolvedMapped = false
+  const slackUserId = args.onBehalfOf?.slackUserId
+  const workspaceId = args.threadKey?.workspaceId
+  if (slackUserId && workspaceId && env.SLACK_BOT_TOKEN) {
+    try {
+      const mapped = await resolveSlackUser({
+        db,
+        workspaceId,
+        slackUserId,
+        slackBotToken: env.SLACK_BOT_TOKEN,
+        log,
+      })
+      if (mapped.kind === 'mapped') {
+        userId = mapped.cyggieUserId
+        resolvedMapped = true
+      } else if (mapped.kind === 'bot_token_revoked') {
+        await postReply(
+          target,
+          'Cyggie bot is misconfigured — please notify the admin.',
+        )
+        recordAuditAsync({
+          surface: 'slack',
+          toolName: 'cyggie_ask',
+          onBehalfOfSlackId: slackUserId,
+          slackMessageTs: args.slackMessageTs ?? null,
+          ok: false,
+          errorCode: 'SLACK_TOKEN_REVOKED',
+          durationMs: Date.now() - startedAt,
+          inputSummary: truncate(question, 200),
+        })
+        return
+      }
+      // 'unmapped' / 'transient_failure' → fall through with the env
+      // default userId. Audit row will note slack id but the cyggie
+      // id is the default (best-effort).
+    } catch (mappingErr) {
+      log.warn(
+        { err: mappingErr, metric: 'slack.user_mapping.fail' },
+        'slack user mapping failed — using fallback userId',
+      )
+      Sentry.captureException(mappingErr, {
+        tags: { surface: 'slack_user_mapping' },
+      })
+    }
+  }
 
   // Resolve the Anthropic key. Per plan decision-log #5: gateway's
   // shared env key for the service-account path. resolveAnthropicKey
@@ -84,7 +152,50 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
       { metric: 'slack.ask.fail', error_code: 'NO_ANTHROPIC_KEY' },
       'cyggieAsk skipped — no API key resolvable',
     )
+    recordAuditAsync({
+      surface: 'slack',
+      toolName: 'cyggie_ask',
+      onBehalfOfUserId: resolvedMapped ? userId : null,
+      onBehalfOfSlackId: slackUserId ?? null,
+      slackMessageTs: args.slackMessageTs ?? null,
+      ok: false,
+      errorCode: 'NO_ANTHROPIC_KEY',
+      durationMs: Date.now() - startedAt,
+      inputSummary: truncate(question, 200),
+    })
     return
+  }
+
+  // Slice 6: resolve the Slack-thread → chat_sessions row up front so
+  // prior turns are loaded as conversationContext. find-or-create
+  // returns a stable session id even under concurrent first-message
+  // races (loser re-reads winner's row). Failure here doesn't block
+  // the answer — we run stateless and log.
+  let sessionId: string | null = null
+  let conversationContext: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  if (args.threadKey) {
+    try {
+      const session = await findOrCreateSlackSession({
+        db,
+        userId,
+        key: args.threadKey,
+      })
+      sessionId = session.id
+      if (!session.isNew) {
+        conversationContext = await loadSlackSessionMessages({
+          db,
+          sessionId: session.id,
+        })
+      }
+    } catch (sessionErr) {
+      log.warn(
+        { err: sessionErr, metric: 'slack.session.fail' },
+        'slack thread session lookup failed — continuing stateless',
+      )
+      Sentry.captureException(sessionErr, {
+        tags: { surface: 'slack_thread_session' },
+      })
+    }
   }
 
   try {
@@ -96,18 +207,61 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
       log,
       caller: 'slack',
       onBehalfOf: args.onBehalfOf,
+      conversationContext: conversationContext.length > 0 ? conversationContext : undefined,
     })
     const mrkdwn = markdownToMrkdwn(result.answer || '_(Cyggie returned an empty answer)_')
     await postReply(target, mrkdwn)
+
+    // Persist the new turn pair so follow-ups in this thread have
+    // context. Errors here are non-fatal — the user already saw the
+    // answer; missing the persistence just means the next follow-up
+    // won't have this turn in its history.
+    if (sessionId && result.answer) {
+      try {
+        await appendSlackTurn({
+          db,
+          sessionId,
+          userText: question,
+          assistantText: result.answer,
+        })
+      } catch (persistErr) {
+        log.warn(
+          { err: persistErr, metric: 'slack.session.persist_fail', sessionId },
+          'failed to persist slack turn pair — follow-ups will miss context',
+        )
+        Sentry.captureException(persistErr, {
+          tags: { surface: 'slack_turn_persist' },
+        })
+      }
+    }
+
     log.info(
       {
         metric: 'slack.queries',
         ok: true,
         duration_ms: Date.now() - startedAt,
         iterations: result.iterationCount,
+        sessionId,
+        prior_turns: conversationContext.length,
       },
       'slack ask completed',
     )
+    recordAuditAsync({
+      surface: 'slack',
+      toolName: 'cyggie_ask',
+      onBehalfOfUserId: resolvedMapped ? userId : null,
+      onBehalfOfSlackId: slackUserId ?? null,
+      slackMessageTs: args.slackMessageTs ?? null,
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      inputSummary: truncate(question, 200),
+      outputSize: result.answer.length,
+      extras: {
+        iterations: result.iterationCount,
+        session_id: sessionId,
+        prior_turns: conversationContext.length,
+      },
+    })
   } catch (err) {
     const friendly = categorizeForSlack(err)
     await postReply(target, friendly.message).catch((postErr) => {
@@ -128,7 +282,23 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
     Sentry.captureException(err, {
       tags: { surface: 'slack_ask', error_code: friendly.code },
     })
+    recordAuditAsync({
+      surface: 'slack',
+      toolName: 'cyggie_ask',
+      onBehalfOfUserId: resolvedMapped ? userId : null,
+      onBehalfOfSlackId: slackUserId ?? null,
+      slackMessageTs: args.slackMessageTs ?? null,
+      ok: false,
+      errorCode: friendly.code,
+      durationMs: Date.now() - startedAt,
+      inputSummary: truncate(question, 200),
+    })
   }
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  return s.slice(0, max - 1) + '…'
 }
 
 interface FriendlyError {
