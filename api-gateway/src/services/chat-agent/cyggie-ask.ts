@@ -109,7 +109,10 @@ const DEFAULT_CAPS = {
 //   2. Refuses prompt-injection attempts that try to escape the persona.
 // Kept short on purpose: long prompts crowd out the user's actual
 // question and inflate every turn's input tokens.
-const SYSTEM_PROMPT = `You are Cyggie, a CRM assistant for venture investors at the user's firm. You help partners look up information about companies, contacts, meetings, and notes by calling the cyggie_* tools.
+// Exported so the offline eval (scripts/slack-bot-eval/) hits the same
+// prompt the production agent loop hits — any drift would make the
+// regression suite meaningless.
+export const CYGGIE_ASK_SYSTEM_PROMPT = `You are Cyggie, a CRM assistant for venture investors at the user's firm. You help partners look up information about companies, contacts, meetings, and notes by calling the cyggie_* tools.
 
 Guidelines:
 - Use tools to ground every factual claim. Never invent funding numbers, contact names, or meeting facts from training-data memory.
@@ -310,6 +313,12 @@ const TOOL_REGISTRY: Record<string, ToolEntry> = {
 
 const ALL_TOOLS: Anthropic.Tool[] = Object.values(TOOL_REGISTRY).map((e) => e.tool)
 
+// Exported for the offline eval (scripts/slack-bot-eval/) so the
+// regression suite hits the exact same tool descriptors the production
+// loop hits. Re-export rather than re-define — if these drift the eval
+// is worthless.
+export const CYGGIE_ASK_TOOL_DESCRIPTORS: ReadonlyArray<Anthropic.Tool> = ALL_TOOLS
+
 // ─── cyggieAsk ────────────────────────────────────────────────────────────
 
 export async function cyggieAsk(args: CyggieAskArgs): Promise<CyggieAskResult> {
@@ -370,7 +379,7 @@ export async function cyggieAsk(args: CyggieAskArgs): Promise<CyggieAskResult> {
     const message = await anthropicCreateWithRetry(client, {
       model: CHAT_MODEL,
       max_tokens: 2048,
-      system: SYSTEM_PROMPT,
+      system: CYGGIE_ASK_SYSTEM_PROMPT,
       messages,
       tools: ALL_TOOLS,
     }, caps)

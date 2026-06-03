@@ -21,7 +21,8 @@
     "import:granola": "node scripts/import-granola.js",
     "import:memos": "node scripts/import-memos-from-google-docs.js",
     "eval:transcription": "tsx --tsconfig tsconfig.node.json scripts/transcription-eval/run-eval.ts",
-    "eval:company-extraction": "tsx --tsconfig tsconfig.node.json scripts/company-extraction-eval/run-eval.ts"
+    "eval:company-extraction": "tsx --tsconfig tsconfig.node.json scripts/company-extraction-eval/run-eval.ts",
+    "eval:slack-bot": "tsx --tsconfig tsconfig.node.json scripts/slack-bot-eval/run-eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

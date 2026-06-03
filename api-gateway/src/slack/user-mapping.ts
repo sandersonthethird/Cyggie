@@ -155,16 +155,33 @@ type SlackProfileResult =
   | { kind: 'bot_token_revoked' }
   | { kind: 'not_found' }
 
+// Cache WebClient instances per bot token. WebClient is documented as
+// safe to share across calls (keeps its own HTTP agent + keepalive),
+// and constructing a new one per lookup forfeits both connection reuse
+// and the SDK's internal request-queue. V1 has a single bot token so
+// the map will only ever hold one entry — but keying by token keeps
+// this correct when slack_installations lands (multi-firm TODO) and
+// each firm has its own xoxb-.
+const webClientCache = new Map<string, WebClient>()
+function getWebClient(token: string): WebClient {
+  let client = webClientCache.get(token)
+  if (!client) {
+    client = new WebClient(token)
+    webClientCache.set(token, client)
+  }
+  return client
+}
+
 async function fetchSlackProfile(args: {
   slackBotToken: string
   slackUserId: string
   log?: FastifyBaseLogger
 }): Promise<SlackProfileResult> {
   const { slackBotToken, slackUserId, log } = args
-  // Direct WebClient construction (not via makeSlackClient) because
+  // Direct WebClient access (not via makeSlackClient) because
   // users.info isn't part of our SlackClient interface — that's
   // intentionally narrow for chat surfaces.
-  const web = new WebClient(slackBotToken)
+  const web = getWebClient(slackBotToken)
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await web.users.info({ user: slackUserId })

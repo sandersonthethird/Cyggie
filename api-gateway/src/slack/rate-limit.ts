@@ -7,60 +7,34 @@
 // Separate from the OAuth /oauth/register limiter
 // (api-gateway/src/oauth/rate-limit.ts) so that abuse on one surface
 // doesn't poison the other's bucket — different attackers, different
-// blast radii.
+// blast radii. The shared factory at shared/sliding-window-limiter.ts
+// supplies the algorithm; this file just owns the Slack-specific
+// constants and re-exports the bound functions under the names the
+// callers expect.
 
 import type { FastifyInstance } from 'fastify'
+import {
+  makeSlidingWindowLimiter,
+  type RateLimitDecision,
+} from '../shared/sliding-window-limiter'
 
-const WINDOW_MS = 60 * 1000 // 1 minute
-const MAX_REQS_PER_IP = 100
+export type { RateLimitDecision }
 
-interface BucketState {
-  timestamps: number[]
-}
-
-const buckets = new Map<string, BucketState>()
-
-export interface RateLimitDecision {
-  allowed: boolean
-  retryAfterSeconds: number
-}
+const limiter = makeSlidingWindowLimiter({
+  windowMs: 60 * 1000, // 1 minute
+  max: 100,
+  cleanupIntervalMs: 5 * 60 * 1000,
+})
 
 export function checkSlackEventsRateLimit(ip: string): RateLimitDecision {
-  const now = Date.now()
-  const bucket = buckets.get(ip) ?? { timestamps: [] }
-  bucket.timestamps = bucket.timestamps.filter((t) => now - t < WINDOW_MS)
-
-  if (bucket.timestamps.length >= MAX_REQS_PER_IP) {
-    const oldest = bucket.timestamps[0]
-    const retryAfterMs = WINDOW_MS - (now - oldest)
-    const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000))
-    buckets.set(ip, bucket)
-    return { allowed: false, retryAfterSeconds }
-  }
-
-  bucket.timestamps.push(now)
-  buckets.set(ip, bucket)
-  return { allowed: true, retryAfterSeconds: 0 }
+  return limiter.check(ip)
 }
 
 export function registerSlackRateLimiter(app: FastifyInstance): void {
-  const interval = setInterval(
-    () => {
-      const now = Date.now()
-      for (const [ip, bucket] of buckets) {
-        const live = bucket.timestamps.filter((t) => now - t < WINDOW_MS)
-        if (live.length === 0) buckets.delete(ip)
-        else bucket.timestamps = live
-      }
-    },
-    5 * 60 * 1000,
-  )
-  app.addHook('onClose', async () => {
-    clearInterval(interval)
-  })
+  limiter.register(app)
 }
 
 // Test helper.
 export function _resetSlackRateLimiterForTests(): void {
-  buckets.clear()
+  limiter._resetForTests()
 }

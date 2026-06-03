@@ -46,6 +46,14 @@ declare module 'fastify' {
 const SLACK_BODY_LIMIT = 10 * 1024 // 10 KB
 const HELLO_TEXT = "Hello! I'm Cyggie."
 
+// Module-scope regex literals so V8 doesn't recompile per Slack event.
+// `SEARCH_RE` matches the `/cyggie search <q>` slash form (case-insensitive).
+// `MENTION_PREFIX_RE` strips the leading `<@U_BOT>` from app_mention text;
+// `[\w]+` is intentionally broader than Slack's documented `[A-Z0-9]` user-id
+// alphabet to absorb any future ID-shape change without re-deploying.
+const SEARCH_RE = /^search\s+(.+)$/i
+const MENTION_PREFIX_RE = /^<@[\w]+>\s*/i
+
 export interface RegisterSlackRoutesArgs {
   app: FastifyInstance
   env: GatewayEnv
@@ -253,7 +261,7 @@ export async function registerSlackRoutes(
         // to slice 5 (NL Q&A) once that lands. Until slice 5 ships,
         // non-search text gets a "not yet wired" message so the user
         // isn't left wondering whether the bot heard them.
-        const searchMatch = /^search\s+(.+)$/i.exec(text)
+        const searchMatch = SEARCH_RE.exec(text)
         if (searchMatch) {
           const query = searchMatch[1].trim()
           const userId = env.CYGGIE_SLACK_DEFAULT_USER_ID
@@ -408,7 +416,7 @@ export async function registerSlackRoutes(
           // typically [A-Z0-9] but [\w] gives us a defensive superset
           // (covers underscores and any future ID shape).
           const rawText = String(event?.text ?? '')
-          const question = rawText.replace(/^<@[\w]+>\s*/i, '').trim()
+          const question = rawText.replace(MENTION_PREFIX_RE, '').trim()
 
           // Empty question (bare @-mention with no text) → slice 1
           // hello. Checked BEFORE the userId guard because hello is a
