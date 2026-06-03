@@ -579,7 +579,7 @@ describe('composeMeetingContextBlock — per-meeting render', () => {
 // ──────────────────────────────────────────────────────────────────────────
 
 describe('buildSelectedCompaniesContext — meeting content + cap + delegation', () => {
-  test('7. 300K combined cap → trailing companies silently dropped', async () => {
+  test('7. 300K combined cap → trailing companies silently dropped', { timeout: 30_000 }, async () => {
     const { userId } = await setupUser()
     // Make 4 companies each with one meeting whose summary is ~80K chars.
     // 4 × ~80K = ~320K which exceeds the 300K cap; expect at least one

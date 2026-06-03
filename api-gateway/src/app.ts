@@ -26,6 +26,9 @@ import { registerChatRoutes } from './routes/chat'
 import { registerUserCredentialRoutes } from './routes/user-credentials'
 import { registerTemplateRoutes } from './routes/templates'
 import { registerMemoRoutes } from './routes/memos'
+import { registerMcpRoute } from './mcp/route'
+import { registerOAuthRoutes } from './oauth/routes'
+import { registerSlackRoutes } from './slack/route'
 
 export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   const app = Fastify({
@@ -87,6 +90,15 @@ export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   await registerUserCredentialRoutes(app, env)
   await registerTemplateRoutes(app, env)
   await registerMemoRoutes(app, env)
+  // OAuth must register BEFORE MCP route — MCP's /mcp route relies on
+  // the OAuth server having mounted /oauth/* + /.well-known/* so that
+  // bearer-token validation has a stable issuer to point clients at.
+  const baseUrl =
+    env.CYGGIE_PUBLIC_BASE_URL ??
+    `http://${env.HOST === '0.0.0.0' ? '127.0.0.1' : env.HOST}:${env.PORT}`
+  await registerOAuthRoutes({ app, env, baseUrl })
+  await registerMcpRoute(app, env)
+  await registerSlackRoutes({ app, env })
   await registerDebugRoutes(app, env)
 
   return app

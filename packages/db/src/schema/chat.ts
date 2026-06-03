@@ -65,6 +65,21 @@ export const chatSessions = pgTable(
     // both mobile + desktop. Default TRUE preserves pre-toggle behavior for
     // existing sessions.
     cacheEnabled: boolean('cache_enabled').notNull().default(true),
+    // ─── Slice 6 (External Agents V1) — Slack thread continuity ───
+    // origin distinguishes Slack-owned rows from the in-product chat's
+    // own. Default 'app' preserves all pre-slice-6 rows' semantics.
+    // All in-product chat-list queries MUST filter origin='app' so
+    // Slack sessions don't pollute the UI.
+    origin: varchar('origin', { length: 16 }).notNull().default('app'),
+    // Three columns instead of one concat string per plan
+    // decision-log #17 — keeps queries indexed + avoids the documented
+    // contextId-as-string anti-pattern from TODOS.md lines 262-310.
+    // DM channels have slack_thread_ts = NULL (each DM is its own
+    // thread); the partial unique index uses COALESCE so NULLs collapse
+    // to '' for uniqueness purposes.
+    slackWorkspaceId: text('slack_workspace_id'),
+    slackChannelId: text('slack_channel_id'),
+    slackThreadTs: text('slack_thread_ts'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -77,6 +92,17 @@ export const chatSessions = pgTable(
     index('chat_sessions_pinned_idx')
       .on(t.isPinned, sql`${t.lastMessageAt} DESC`)
       .where(sql`${t.isArchived} = 0`),
+    // Slice 6: one row per Slack thread. COALESCE(thread_ts, '')
+    // ensures DMs (NULL thread_ts) get a deterministic unique key
+    // per channel.
+    uniqueIndex('chat_sessions_slack_thread_idx')
+      .on(
+        t.slackWorkspaceId,
+        t.slackChannelId,
+        sql`COALESCE(${t.slackThreadTs}, '')`,
+      )
+      .where(sql`${t.origin} = 'slack'`),
+    index('chat_sessions_origin_idx').on(t.origin),
   ],
 )
 

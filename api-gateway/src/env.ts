@@ -79,6 +79,81 @@ const EnvSchema = z.object({
   // Logging.
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+
+  // ─── External Agents V1 (MCP server + OAuth) ────────────────────────
+  // Emergency disable for the entire MCP surface (per plan feature-flag
+  // section). When false, POST /mcp returns 404 cleanly without binding
+  // any MCP-SDK code paths.
+  CYGGIE_MCP_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  // Public base URL of the gateway (no trailing slash). The OAuth server
+  // uses this to construct absolute URLs (issuer, redirect callbacks,
+  // metadata endpoints). In dev: http://127.0.0.1:8443. In prod:
+  // https://cyggie-gateway.fly.dev. Falls back to HOST:PORT derived
+  // value if unset, which works for local dev but not behind a proxy.
+  CYGGIE_PUBLIC_BASE_URL: z.string().url().optional(),
+
+  // ─── Slice 1 — Slack bot scaffold ───────────────────────────────────
+  // Emergency disable for the Slack route (per plan feature-flag
+  // section). When false, POST /slack/events returns 404 cleanly
+  // without binding any Slack code paths.
+  CYGGIE_SLACK_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  // Slack signing secret used to verify the HMAC-SHA256 signature on
+  // every incoming /slack/events request (per plan decision-log #18).
+  // Generated in Settings → Basic Information of the Slack app.
+  // Optional in env so the gateway boots without it; the slack route
+  // fails-closed (every request 401s) until set.
+  SLACK_SIGNING_SECRET: z.string().min(16).optional(),
+
+  // Slack bot OAuth token (xoxb-…). Used to call the Slack Web API:
+  // chat.postMessage for replies, reactions.add for the loading-emoji
+  // UX (slice 5), users.info for lazy Slack→Cyggie mapping (slice 7).
+  // Optional — slice 1 fail-closes when missing, just like the signing
+  // secret.
+  SLACK_BOT_TOKEN: z.string().regex(/^xoxb-/).optional(),
+
+  // Interim Slack → Cyggie user binding for slices 2–6 (search + NL Q&A
+  // + thread continuity). Slice 7 replaces this with lazy email-based
+  // mapping via `slack_user_mappings` + Slack's users.info API. Until
+  // then, every Slack request acts as this Cyggie user — fine for the
+  // single-firm beta where there's one operator (Sandy).
+  //
+  // If unset, search / NL queries return a clear "Cyggie not yet
+  // linked" message to the Slack user.
+  CYGGIE_SLACK_DEFAULT_USER_ID: z.string().min(1).optional(),
+
+  // ─── Slice 10 — cyggie_execute_sql tool ─────────────────────────────
+  // Gates the MCP `cyggie_execute_sql` tool. Default false in prod;
+  // dev override via .env.local. Even when true, requests must
+  // additionally carry the `cyggie:sql` scope on the OAuth access
+  // token — flag toggles tool availability; scope gates per-caller
+  // authorization.
+  CYGGIE_MCP_SQL_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  // Neon connection string for the dedicated read-only Postgres role.
+  // SEPARATE from GATEWAY_DATABASE_URL — must be a different role with
+  // only SELECT grants on the allowlisted CRM tables (companies,
+  // contacts, meetings, notes, link tables) and NO access to users,
+  // sessions, oauth_*, user_credentials, firms, slack_user_mappings,
+  // mcp_audit. The Postgres role itself is the load-bearing security
+  // boundary; this URL just connects to it. See
+  // api-gateway/src/db/readonly-pool.ts for the GRANT script.
+  //
+  // Optional: must be set when CYGGIE_MCP_SQL_ENABLED=true. If the flag
+  // is on and this URL is missing, the gateway boots successfully but
+  // every cyggie_execute_sql call returns TOOL_DISABLED with a clear
+  // operator message.
+  NEON_READONLY_URL: z.string().url().optional(),
 })
 
 export type GatewayEnv = z.infer<typeof EnvSchema>
