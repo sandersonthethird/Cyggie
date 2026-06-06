@@ -26,6 +26,7 @@ import { cyggieGetContact } from '../../mcp/tools/get-contact'
 import { cyggieRecentMeetings } from '../../mcp/tools/recent-meetings'
 import { cyggieGetMeeting } from '../../mcp/tools/get-meeting'
 import { cyggieGetNotes } from '../../mcp/tools/get-notes'
+import { cyggieGetContext } from '../../mcp/tools/get-context'
 import { CHAT_MODEL } from './index'
 
 // ─── Public types ─────────────────────────────────────────────────────────
@@ -116,6 +117,7 @@ export const CYGGIE_ASK_SYSTEM_PROMPT = `You are Cyggie, a CRM assistant for ven
 
 Guidelines:
 - Use tools to ground every factual claim. Never invent funding numbers, contact names, or meeting facts from training-data memory.
+- When a question is about a specific company or person, after identifying it call cyggie_get_context to pull their recent meeting notes and summaries before answering.
 - When a name is ambiguous, present the candidates with disambiguators (recency, industry, stage) and ask which one — do not guess.
 - Be concise. Lead with the answer in one sentence, then optional supporting detail. Partners scan quickly.
 - Use Markdown. Always include the cyggie:// link from tool results so users can click through to Cyggie.
@@ -307,6 +309,35 @@ const TOOL_REGISTRY: Record<string, ToolEntry> = {
         query: input['query'] as string | undefined,
         limit: typeof input['limit'] === 'number' ? input['limit'] : undefined,
         includeFullContent: input['includeFullContent'] as boolean | undefined,
+      }),
+  },
+  cyggie_get_context: {
+    tool: {
+      name: 'cyggie_get_context',
+      description:
+        'Fetch the full working context for ONE company or contact — recent ' +
+        'meetings with notes, AI summaries, and transcripts (and flagged ' +
+        'documents for companies). This is the same context the in-app ' +
+        'detail-page chat uses. Resolve the entity to a cuid2 id FIRST (via ' +
+        'cyggie_search / cyggie_get_company / cyggie_get_contact), then call ' +
+        'this with companyId OR contactId (not both). Prefer this over chaining ' +
+        'cyggie_recent_meetings + cyggie_get_meeting whenever a question is ' +
+        'about a specific company or person.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          companyId: { type: 'string', description: 'cuid2 of a company.' },
+          contactId: { type: 'string', description: 'cuid2 of a contact.' },
+        },
+        required: [],
+      },
+    },
+    execute: (input, ctx) =>
+      cyggieGetContext({
+        db: ctx.db,
+        userId: ctx.userId,
+        companyId: input['companyId'] as string | undefined,
+        contactId: input['contactId'] as string | undefined,
       }),
   },
 }

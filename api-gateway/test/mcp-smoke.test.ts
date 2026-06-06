@@ -6,7 +6,7 @@
 //   3. Garbage Bearer → 401 with INVALID_TOKEN envelope.
 //   4. Token missing required scope → 403 with INSUFFICIENT_SCOPE envelope.
 //   5. Valid JWT (HS256-signed with the gateway secret, cyggie:read scope)
-//      + JSON-RPC tools/list → returns exactly the 6 expected tools.
+//      + JSON-RPC tools/list → returns exactly the 7 expected tools.
 //
 // Slice 9 swap: the smoke test mints its own short-lived JWT with the
 // shape the OAuth server would issue. This sidesteps the full
@@ -58,6 +58,7 @@ const EXPECTED_TOOLS = [
   'cyggie_recent_meetings',
   'cyggie_get_meeting',
   'cyggie_get_notes',
+  'cyggie_get_context',
 ] as const
 
 // Mint a JWT with the same shape the OAuth server issues (HS256, aud
@@ -244,7 +245,7 @@ describe('POST /mcp — protocol surface (valid OAuth JWT)', () => {
     }
   }
 
-  test('tools/list returns exactly the 6 expected tools', async () => {
+  test('tools/list returns exactly the 7 expected tools', async () => {
     const res = await mcpCall(jsonRpc('tools/list'))
     expect(res.status).toBe(200)
     const reply = parseJsonRpcResponse(res.body)
