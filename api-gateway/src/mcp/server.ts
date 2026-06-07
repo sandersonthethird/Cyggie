@@ -1,7 +1,9 @@
 // Cyggie MCP server — Slice 8 (External Agents V1).
 //
-// Builds a per-request McpServer instance with the 6 structured read
-// tools registered. Tools are pure async functions that take the
+// Builds a per-request McpServer instance with the structured read
+// tools registered (search, get_company, get_contact, recent_meetings,
+// get_meeting, get_notes, get_context — plus execute_sql when enabled).
+// Tools are pure async functions that take the
 // per-request context (db + userId) via closure, returning the shared
 // ToolResult envelope. The bridge layer translates that to MCP's
 // CallToolResult wire format.
@@ -29,6 +31,7 @@ import { cyggieGetContact } from './tools/get-contact'
 import { cyggieRecentMeetings } from './tools/recent-meetings'
 import { cyggieGetMeeting } from './tools/get-meeting'
 import { cyggieGetNotes } from './tools/get-notes'
+import { cyggieGetContext } from './tools/get-context'
 import { cyggieExecuteSql } from './tools/execute-sql'
 import type { GatewayEnv } from '../env'
 import { err, ERROR_CODE, type ToolResult } from '../shared/error-envelope'
@@ -241,6 +244,35 @@ export function buildMcpServer(ctx: BuildMcpServerArgs): McpServer {
           query: input.query,
           limit: input.limit,
           includeFullContent: input.includeFullContent,
+        }),
+      ),
+  )
+
+  // cyggie_get_context ─────────────────────────────────────────────────
+  server.registerTool(
+    'cyggie_get_context',
+    {
+      description:
+        'Fetch the full working context for ONE company or contact — recent ' +
+        'meetings with notes, AI summaries, and transcripts (and flagged ' +
+        'documents for companies). This is the same context the in-app ' +
+        'detail-page chat uses. Resolve the entity to a cuid2 id first (via ' +
+        'cyggie_search / cyggie_get_company / cyggie_get_contact), then call ' +
+        'this with companyId OR contactId (not both). Prefer it over chaining ' +
+        'cyggie_recent_meetings + cyggie_get_meeting when a question is about ' +
+        'a specific company or person.',
+      inputSchema: {
+        companyId: z.string().optional().describe('cuid2 of a company.'),
+        contactId: z.string().optional().describe('cuid2 of a contact.'),
+      },
+    },
+    async (input) =>
+      run('cyggie_get_context', () =>
+        cyggieGetContext({
+          db: ctx.db,
+          userId: ctx.userId,
+          companyId: input.companyId,
+          contactId: input.contactId,
         }),
       ),
   )

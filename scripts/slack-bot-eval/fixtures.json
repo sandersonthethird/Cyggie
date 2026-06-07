@@ -23,11 +23,25 @@
     "expectedToolsAnyOf": [
       "cyggie_recent_meetings",
       "cyggie_get_company",
+      "cyggie_get_context",
       "cyggie_search"
     ],
     "expectedToolArgsContain": {
       "cyggie_recent_meetings": { "companyName": "anthropic" },
       "cyggie_get_company": { "name": "anthropic" },
+      "cyggie_search": { "query": "anthropic" }
+    }
+  },
+  {
+    "name": "company-deep-context",
+    "question": "Catch me up on everything going on with Anthropic — recent meetings, what we discussed, where the deal stands.",
+    "expectedToolsAnyOf": [
+      "cyggie_get_context",
+      "cyggie_get_company",
+      "cyggie_search"
+    ],
+    "expectedToolArgsContain": {
+      "cyggie_get_company": { "query": "anthropic" },
       "cyggie_search": { "query": "anthropic" }
     }
   },
