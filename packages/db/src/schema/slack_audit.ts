@@ -29,6 +29,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { users } from './auth'
 import { firms } from './firms'
+import { chatSessions } from './chat'
 
 export const slackUserMappings = pgTable(
   'slack_user_mappings',
@@ -114,3 +115,35 @@ export const mcpAudit = pgTable(
     index('mcp_audit_tool_idx').on(t.toolName),
   ],
 )
+
+// slack_thread_focus — the entity a Slack thread is currently "about", so a
+// follow-up question can reuse that entity's already-loaded context instead of
+// re-resolving + re-fetching from scratch (External Agents V1 follow-up,
+// Part 2). Server-only: NOT part of the SQLite↔Neon sync (the desktop has no
+// notion of a Slack thread), so it lives here beside mcp_audit rather than in a
+// synced owned-row table. One row per chat session; the agent loop reports the
+// entity it loaded (capture flow 1A) and the handler upserts it.
+//
+//   ┌──────────── decideFocus (handler, warm turn only) ────────────┐
+//   │ resolver == focus / none  → reuse  (rebuild block, inject)     │
+//   │ resolver single != focus  → switch (drop, load new, re-upsert) │
+//   │ resolver candidates       → ambiguous-skip (no inject)         │
+//   │ updatedAt older than TTL  → cold   (treat as fresh)            │
+//   └────────────────────────────────────────────────────────────────┘
+export const slackThreadFocus = pgTable('slack_thread_focus', {
+  // One focus per chat session. Cascade-deletes with the session so a
+  // pruned thread can't leave a dangling focus row.
+  sessionId: text('session_id')
+    .primaryKey()
+    .references(() => chatSessions.id, { onDelete: 'cascade' }),
+  // 'company' | 'contact' — which builder rehydrates the context block.
+  entityType: text('entity_type').notNull(),
+  // cuid2 of the company/contact. Only the id is stored; the rendered block
+  // is rebuilt each turn (freshness) and cached at the prompt layer.
+  entityId: text('entity_id').notNull(),
+  // Warmth clock. A follow-up within the TTL (15 min) may reuse this focus;
+  // past it, the thread is treated as cold.
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})

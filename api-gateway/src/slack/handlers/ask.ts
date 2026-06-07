@@ -31,6 +31,17 @@ import {
 } from '../thread-session'
 import { resolveSlackUser } from '../user-mapping'
 import { recordAuditAsync } from '../../audit/buffer'
+import {
+  decideFocus,
+  getFocus,
+  loadFocusName,
+  upsertFocus,
+  type ThreadFocus,
+} from '../thread-focus'
+import {
+  buildCompanyContextForChat,
+  buildContactContextForChat,
+} from '../../services/chat-agent/context-builders'
 
 export const PLACEHOLDER_TEXT = ":thinking_face: Looking that up..."
 
@@ -198,6 +209,20 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
     }
   }
 
+  // Part 2: if this thread has a warm focus and the follow-up is about that
+  // same entity (or a pure anaphor), pre-inject its context so the agent
+  // doesn't re-fetch it — and the cache_control'd segment makes it a cheap
+  // cache read. A different-entity follow-up skips injection (no stale
+  // context). All of this is best-effort: any failure falls through to the
+  // normal stateless loop (the invariant).
+  let focusBlock: string | undefined
+  let reusedFocus: ThreadFocus | undefined
+  if (sessionId) {
+    const inj = await computeFocusInjection({ db, userId, question, sessionId, log })
+    focusBlock = inj.block
+    reusedFocus = inj.reused
+  }
+
   // The ask flow has three distinct failure surfaces. We catch each
   // separately so the audit row records the actual failing layer
   // instead of conflating "cyggieAsk threw" with "Slack rejected our
@@ -214,6 +239,7 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
       caller: 'slack',
       onBehalfOf: args.onBehalfOf,
       conversationContext: conversationContext.length > 0 ? conversationContext : undefined,
+      focusContextBlock: focusBlock,
     })
   } catch (err) {
     const friendly = categorizeForSlack(err)
@@ -312,6 +338,27 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
     }
   }
 
+  // Part 2: persist this thread's focus. The authoritative entity is whatever
+  // cyggie_get_context actually loaded (1A); on a pure-reuse turn the agent
+  // didn't reload, so we just touch the reused focus to keep it warm. Fire-and-
+  // forget — the user already has the answer; a failed write only costs the
+  // next follow-up its cache hit.
+  if (sessionId) {
+    const persist = result.loadedFocus ?? reusedFocus ?? null
+    if (persist) {
+      void upsertFocus(db, {
+        sessionId,
+        entityType: persist.entityType,
+        entityId: persist.entityId,
+      }).catch((focusErr) => {
+        log.warn(
+          { err: focusErr, metric: 'slack.focus.persist_fail', sessionId },
+          'failed to upsert slack thread focus',
+        )
+      })
+    }
+  }
+
   log.info(
     {
       metric: 'slack.queries',
@@ -337,8 +384,57 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
       iterations: result.iterationCount,
       session_id: sessionId,
       prior_turns: conversationContext.length,
+      focus_reused: reusedFocus ? reusedFocus.entityType : null,
+      focus_loaded: result.loadedFocus ? result.loadedFocus.entityType : null,
     },
   })
+}
+
+// Part 2 — best-effort focus pre-check. Loads the thread's stored focus +
+// its display name, asks decideFocus whether to reuse it, and (on reuse)
+// rebuilds the entity's context block via the same builders the detail-page
+// chat uses. Any failure returns {} so the ask falls through to the normal
+// stateless loop (the silent-degradation invariant).
+async function computeFocusInjection(args: {
+  db: ReturnType<typeof getDb>
+  userId: string
+  question: string
+  sessionId: string
+  log: FastifyBaseLogger
+}): Promise<{ block?: string; reused?: ThreadFocus }> {
+  const { db, userId, question, sessionId, log } = args
+  try {
+    const currentFocus = await getFocus(db, sessionId)
+    if (!currentFocus) return {}
+    const focusName = await loadFocusName(db, currentFocus, userId)
+    const decision = decideFocus({ question, currentFocus, focusName, nowMs: Date.now() })
+    log.info(
+      {
+        metric: 'slack.focus',
+        decision: decision.action,
+        focus_type: currentFocus.entityType,
+        entity_id: currentFocus.entityId,
+      },
+      'slack focus decision',
+    )
+    if (decision.action !== 'reuse' || !decision.injectFocus) return {}
+    const f = decision.injectFocus
+    const block =
+      f.entityType === 'company'
+        ? await buildCompanyContextForChat(db, f.entityId, userId)
+        : await buildContactContextForChat(db, f.entityId, userId)
+    // Entity deleted since the focus was set → nothing to inject; skip rather
+    // than error the turn.
+    if (!block) return {}
+    return { block, reused: f }
+  } catch (focusErr) {
+    log.warn(
+      { err: focusErr, metric: 'slack.focus.fail', sessionId },
+      'focus injection failed — continuing without it',
+    )
+    Sentry.captureException(focusErr, { tags: { surface: 'slack_focus' } })
+    return {}
+  }
 }
 
 function truncate(s: string, max: number): string {
