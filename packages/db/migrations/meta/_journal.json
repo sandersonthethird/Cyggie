@@ -120,6 +120,111 @@
       "when": 1779482000000,
       "tag": "0016_user_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779568400000,
+      "tag": "0017_meetings_summary_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1779654800000,
+      "tag": "0018_user_credentials_more_providers",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1779741200000,
+      "tag": "0019_memo_versions_lamport",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1779827600000,
+      "tag": "0020_chat_sessions_cache_enabled",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1779914000000,
+      "tag": "0021_org_companies_passed_from_stage",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1780000400000,
+      "tag": "0022_meetings_self_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1780086800000,
+      "tag": "0023_contacts_address",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1780173200000,
+      "tag": "0024_contact_key_takeaways_user_note",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1780259600000,
+      "tag": "0025_company_key_takeaways_user_note",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1780346000000,
+      "tag": "0026_meetings_transcript_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1780432400000,
+      "tag": "0027_meetings_me_speaker_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1780518800000,
+      "tag": "0028_oauth_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1780605200000,
+      "tag": "0029_chat_sessions_slack_thread",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1780691600000,
+      "tag": "0030_slack_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1780778000000,
+      "tag": "0031_slack_thread_focus",
+      "breakpoints": true
     }
   ]
 }
