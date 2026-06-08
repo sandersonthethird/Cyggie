@@ -367,6 +367,13 @@ export async function buildSelectedCompaniesContext(
   //       link-table-only query would miss. link metadata is aggregated
   //       separately (`link_meta`) to keep the UNION dedupe clean.
   const emailCap = await readEmailCap(db, userId)
+  // Explicit IN-list (drizzle raw `sql` doesn't bind a JS array for ANY()
+  // cleanly — it errors "malformed array literal"). validIds is non-empty here
+  // (guarded by the companies.length===0 early return above).
+  const idList = sql.join(
+    validIds.map((id) => sql`${id}`),
+    sql`, `,
+  )
   const emailResult = await db.execute(sql`
     WITH linked AS (
       SELECT
@@ -377,7 +384,7 @@ export async function buildSelectedCompaniesContext(
         COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at
       FROM email_company_links ecl
       JOIN email_messages em ON em.id = ecl.message_id
-      WHERE ecl.company_id = ANY(${validIds}) AND em.user_id = ${userId}
+      WHERE ecl.company_id IN (${idList}) AND em.user_id = ${userId}
       UNION
       SELECT
         c.primary_company_id AS scope_id,
@@ -388,20 +395,20 @@ export async function buildSelectedCompaniesContext(
       FROM email_contact_links ecl
       JOIN contacts c ON c.id = ecl.contact_id
       JOIN email_messages em ON em.id = ecl.message_id
-      WHERE c.primary_company_id = ANY(${validIds}) AND em.user_id = ${userId}
+      WHERE c.primary_company_id IN (${idList}) AND em.user_id = ${userId}
     ),
     link_meta AS (
       SELECT scope_id, message_id, MAX(conf) AS link_confidence, MAX(man) AS link_manual
       FROM (
         SELECT company_id AS scope_id, message_id, confidence AS conf,
           (CASE WHEN linked_by = 'manual' THEN 1 ELSE 0 END) AS man
-        FROM email_company_links WHERE company_id = ANY(${validIds})
+        FROM email_company_links WHERE company_id IN (${idList})
         UNION ALL
         SELECT c.primary_company_id AS scope_id, ecl.message_id, ecl.confidence AS conf,
           (CASE WHEN ecl.linked_by = 'manual' THEN 1 ELSE 0 END) AS man
         FROM email_contact_links ecl
         JOIN contacts c ON c.id = ecl.contact_id
-        WHERE c.primary_company_id = ANY(${validIds})
+        WHERE c.primary_company_id IN (${idList})
       ) m
       GROUP BY scope_id, message_id
     ),
