@@ -14,6 +14,24 @@ declare module '*.txt?raw' {
   export default content
 }
 
+// pdf-parse ships no type declarations. The text-extraction path in
+// storage/file-manager.ts dynamically imports it and narrows the shape at the
+// call site; this ambient declaration just gives the module specifier a type.
+declare module 'pdf-parse' {
+  interface PdfParseResult {
+    text: string
+    numpages: number
+    info: unknown
+    metadata: unknown
+    version: string
+  }
+  function pdfParse(
+    dataBuffer: Buffer,
+    options?: Record<string, unknown>
+  ): Promise<PdfParseResult>
+  export = pdfParse
+}
+
 interface ImportMetaEnv {
   readonly DEV: boolean
   readonly PROD: boolean

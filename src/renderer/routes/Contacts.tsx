@@ -891,7 +891,7 @@ export default function Contacts() {
   }, [loadContacts, query])
 
   // ── Effects ───────────────────────────────────────────────────────────────
-  const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
     if (!query) {
@@ -969,10 +969,10 @@ export default function Contacts() {
     const typeFilter = CONTACT_SCOPE_TO_TYPE[scope]
     if (typeFilter) items = items.filter(c => c.contactType === typeFilter)
     if (talentPipelineFilter) items = items.filter(c => c.talentPipeline === talentPipelineFilter)
-    return sortRows(items as Record<string, unknown>[], sort, CONTACT_COLUMN_DEFS) as ContactSummary[]
+    return sortRows(items as unknown as Record<string, unknown>[], sort, CONTACT_COLUMN_DEFS) as unknown as ContactSummary[]
   }, [contacts, columnFilters, rangeFilters, textFilters, customFieldValues, customFieldTypes, sort, scope, talentPipelineFilter])
 
-  const groupedRows = useGroupedRows(filteredContacts as Record<string, unknown>[], groupBy, CONTACT_GROUPABLE_FIELDS, collapsedGroups)
+  const groupedRows = useGroupedRows<ContactSummary>(filteredContacts, groupBy, CONTACT_GROUPABLE_FIELDS, collapsedGroups)
 
   const dedupEditActive = Boolean(editingDedupContactId) || savingDedupContact
 

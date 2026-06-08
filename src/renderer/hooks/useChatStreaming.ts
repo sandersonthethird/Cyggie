@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import { IPC_CHANNELS } from '../../shared/constants/channels'
+import { IPC_CHANNELS, type IpcChannel } from '../../shared/constants/channels'
 import { chatChannels, type ChatKind } from '../lib/chat-channels'
 import { parseChatError, isAbortError } from '../lib/chat-errors'
 import type { ChatAttachmentIPC } from '../lib/chat-attachments'
@@ -77,7 +77,7 @@ export function useChatStreaming({
   // and from async send() callbacks. Refs avoid stale-closure bugs.
   const isStreamingRef = useRef(false)
   const streamedContentRef = useRef('')
-  const lastAbortChannelRef = useRef<string | null>(null)
+  const lastAbortChannelRef = useRef<IpcChannel | null>(null)
   const watchdogRef = useRef<number | null>(null)
 
   // Keep the latest onComplete / onAbortPartial / onError so the long-lived
@@ -99,7 +99,7 @@ export function useChatStreaming({
     }
   }, [])
 
-  const fireAbort = useCallback(async (channel: string) => {
+  const fireAbort = useCallback(async (channel: IpcChannel) => {
     try {
       await api.invoke(channel)
     } catch (err) {

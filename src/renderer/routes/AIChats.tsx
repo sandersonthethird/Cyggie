@@ -622,6 +622,7 @@ function SearchSection({
           isActive: false,
           isPinned: false,
           isArchived: false,
+          cacheEnabled: false,
           lastMessageAt: r.lastMessageAt,
         }
         return (

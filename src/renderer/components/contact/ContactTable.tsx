@@ -188,7 +188,7 @@ export function ContactTable({
     count: number
   }
   const [undoAction, setUndoAction] = useState<UndoAction | null>(null)
-  const undoTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   // ── Column header filters ──────────────────────────────────────────────────
   const [filterOpenCol, setFilterOpenCol] = useState<string | null>(null)
@@ -434,7 +434,7 @@ export function ContactTable({
         const { failedIds } = await executeBulkEdit({
           ids: idsToUpdate,
           getOriginalValue: (id) => originalsMap.get(id) ?? null,
-          updateFn: (id) => ipcCall(id),
+          updateFn: async (id) => { await ipcCall(id) },
           onPatch: (id, val) => onPatch(id, { [field]: val })
         })
         const succeededIds = idsToUpdate.filter((id) => !failedIds.includes(id))

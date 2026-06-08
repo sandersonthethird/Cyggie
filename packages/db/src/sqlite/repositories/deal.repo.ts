@@ -11,9 +11,9 @@ import type {
   PipelineConfig,
   PipelineDealCard,
   PipelineStage,
-  PipelineSummaryItem,
+  PipelineStageSummaryItem,
   StuckDealItem
-} from '@shared/types/pipeline'
+} from './pipeline.types'
 
 interface DealCardRow {
   id: string
@@ -384,7 +384,7 @@ export function getCompanyActiveDeal(companyId: string): CompanyActiveDeal | nul
   }
 }
 
-export function getPipelineSummary(configId?: string): PipelineSummaryItem[] {
+export function getPipelineSummary(configId?: string): PipelineStageSummaryItem[] {
   const config = getPipelineConfig(configId)
   const stages = listPipelineStages(config.id)
   if (stages.length === 0) return []

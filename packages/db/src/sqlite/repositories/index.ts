@@ -354,7 +354,7 @@ export const getCompanyEmailById = rawOrgCompany.getCompanyEmailById
 export const fixConcatenatedCompanyNames =
   rawOrgCompany.fixConcatenatedCompanyNames
 export const repairContactCompanyMismatches =
-  rawOrgCompany.repairContactCompanyMismatches
+  rawContact.repairContactCompanyMismatches
 
 // ── notes ───────────────────────────────────────────────────────────────────
 

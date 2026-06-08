@@ -4,7 +4,7 @@ import { useRemoteApply } from '../api/useRemoteApply'
 import type { BackNavState } from '../utils/backNavState'
 import { Share2 } from 'lucide-react'
 import { AddToSyncModal } from '../components/partner-meeting/AddToSyncModal'
-import { IPC_CHANNELS } from '../../shared/constants/channels'
+import { IPC_CHANNELS, type IpcChannel } from '../../shared/constants/channels'
 import type { CompanyDetail as CompanyDetailType, CompanyMeetingRef } from '../../shared/types/company'
 import { ENTITY_TYPE_OPTIONS } from '../../shared/types/company'
 import type { CompanySummaryUpdateProposal, CompanySummaryUpdateChange, CompanySummaryUpdatePayload, EnrichmentResult, EnrichmentFailureReason } from '../../shared/types/summary'
@@ -293,7 +293,7 @@ export default function CompanyDetail() {
     }
   }, [enrichProposal, fieldSelections, id, company])
 
-  const handleEnrichFromSource = useCallback(async (channel: string, errorContext: 'notes' | 'emails') => {
+  const handleEnrichFromSource = useCallback(async (channel: IpcChannel, errorContext: 'notes' | 'emails') => {
     if (!id) return
     setIsLoadingEnrich(true)
     setEnrichError(null)

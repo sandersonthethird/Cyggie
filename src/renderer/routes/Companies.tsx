@@ -377,7 +377,7 @@ export default function Companies() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companiesEnabled, query, backendSortBy, needsInvestorNames, stubsView, getGuard, mountId])
 
-  const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => {
     clearTimeout(searchDebounceRef.current)
     if (!query) {
@@ -459,10 +459,10 @@ export default function Companies() {
     })
     // Short-circuit: if primary sort is backend-sorted and no secondary sorts, skip client sort
     if (BACKEND_SORT_KEYS.has(sort[0]?.key ?? '') && sort.length === 1) return filtered
-    return sortRows(filtered, sort, COLUMN_DEFS)
+    return sortRows<CompanySummary>(filtered, sort, COLUMN_DEFS)
   }, [companies, columnFilters, rangeFilters, textFilters, customFieldValues, customFieldTypes, sort])
 
-  const groupedRows = useGroupedRows(displayCompanies, groupBy, COMPANY_GROUPABLE_FIELDS, collapsedGroups)
+  const groupedRows = useGroupedRows<CompanySummary>(displayCompanies, groupBy, COMPANY_GROUPABLE_FIELDS, collapsedGroups)
 
   const dedupActionableGroups = dedupGroups
     ? dedupGroups.filter((group) => {

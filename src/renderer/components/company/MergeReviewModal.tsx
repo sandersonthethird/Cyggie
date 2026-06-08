@@ -262,7 +262,7 @@ export function MergeReviewModal({
                           name={`autofill-${c.column}`}
                           aria-label={`Drop ${c.label}`}
                           checked={autoFillPicks[c.column] === 'drop'}
-                          onChange={() => setAutoFillPicks((s) => ({ ...s, [c.column]: 'drop' as Side }))}
+                          onChange={() => setAutoFillPicks((s) => ({ ...s, [c.column]: 'drop' }))}
                         />
                       </td>
                     </tr>

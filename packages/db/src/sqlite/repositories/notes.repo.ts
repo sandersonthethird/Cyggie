@@ -20,6 +20,7 @@ interface NoteRow {
   import_source: string | null
   company_name?: string | null
   contact_name?: string | null
+  meeting_title?: string | null
 }
 
 function rowToNote(row: NoteRow): Note {

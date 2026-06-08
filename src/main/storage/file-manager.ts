@@ -454,7 +454,12 @@ async function extractXlsxText(filePath: string, buf: Buffer): Promise<string | 
       | { default: typeof import('exceljs') }
     const ExcelJS = 'Workbook' in mod ? mod : mod.default
     const wb = new ExcelJS.Workbook()
-    await wb.xlsx.load(buf)
+    // exceljs types `load` as its own `Buffer extends ArrayBuffer`, which a
+    // Node Buffer doesn't satisfy. Copy the exact bytes into a fresh
+    // ArrayBuffer (accepted at runtime, structurally matches the param).
+    const xlsxBytes = new Uint8Array(buf.byteLength)
+    xlsxBytes.set(buf)
+    await wb.xlsx.load(xlsxBytes.buffer)
     const parts: string[] = []
     wb.eachSheet((sheet) => {
       const rows: string[] = []

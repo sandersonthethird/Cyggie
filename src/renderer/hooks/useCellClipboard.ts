@@ -109,8 +109,8 @@ export function useCellClipboard<T extends { id: string }>(
   const [clipboardToast, setClipboardToast] = useState<string | null>(null)
   const [undoAction, setUndoAction] = useState<UndoAction | null>(null)
 
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout>>()
-  const undoTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   // Keep refs for async operations
   const rowsRef = useRef(rows)

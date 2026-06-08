@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
-import type { PipelineConfig, PipelineStage } from '@shared/types/pipeline'
+import type { PipelineConfig, PipelineStage } from './pipeline.types'
 
 interface PipelineConfigRow {
   id: string

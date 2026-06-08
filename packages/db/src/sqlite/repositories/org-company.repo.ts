@@ -60,6 +60,10 @@ interface CompanyRow {
   raise_size: number | null
   round: string | null
   pipeline_stage: string | null
+  // Optional: only a subset of company SELECTs project this column (Pre-Pass
+  // stage capture, schema 105). Queries that omit it yield undefined, which the
+  // mapper coerces to null.
+  passed_from_stage?: string | null
   last_touchpoint: string | null
   created_at: string
   updated_at: string

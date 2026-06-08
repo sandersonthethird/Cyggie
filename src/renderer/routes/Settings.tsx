@@ -579,7 +579,8 @@ export default function Settings() {
 
   // Listen for import progress events from main process
   useEffect(() => {
-    const unsub = api.on(IPC_CHANNELS.NOTES_IMPORT_PROGRESS, (progress: { created: number; skipped: number; total: number }) => {
+    const unsub = api.on(IPC_CHANNELS.NOTES_IMPORT_PROGRESS, (...args: unknown[]) => {
+      const progress = args[0] as { created: number; skipped: number; total: number }
       setNotesImportProgress(progress)
     })
     return unsub

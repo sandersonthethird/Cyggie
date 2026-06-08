@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api'
+import type { IpcChannel } from '../../shared/types/ipc'
 
 // Sort invariant mirrors DB: is_pinned DESC, updated_at DESC
 export function sortByPin<T extends { isPinned: boolean; updatedAt: string }>(notes: T[]): T[] {
@@ -11,7 +12,7 @@ export function sortByPin<T extends { isPinned: boolean; updatedAt: string }>(no
 }
 
 export function usePinToggle<T extends { id: string; isPinned: boolean; updatedAt: string }>(
-  ipcChannel: string,
+  ipcChannel: IpcChannel,
   setNotes: React.Dispatch<React.SetStateAction<T[]>>
 ) {
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set())

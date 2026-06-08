@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  type AnyPgColumn,
   check,
   doublePrecision,
   index,
@@ -53,7 +54,7 @@ export const contacts = pgTable(
     email: text('email'),
     phone: text('phone'),
     // Affiliation
-    primaryCompanyId: text('primary_company_id').references(() => orgCompanies.id, { onDelete: 'set null' }),
+    primaryCompanyId: text('primary_company_id').references((): AnyPgColumn => orgCompanies.id, { onDelete: 'set null' }),
     title: text('title'),
     contactType: varchar('contact_type', { length: 32 }), // 'founder' | 'investor' | 'operator' | etc.
     // External identities

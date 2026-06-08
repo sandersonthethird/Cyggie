@@ -149,7 +149,7 @@ export class TranscriptAssembler {
       for (const seg of stabilizedSegments) {
         if (seg.speaker !== result.channelIndex) {
           seg.speaker = result.channelIndex
-          for (const w of seg.words) w.speaker = result.channelIndex
+          for (const w of seg.words ?? []) w.speaker = result.channelIndex
         }
       }
     }
@@ -264,7 +264,7 @@ export class TranscriptAssembler {
       } else {
         current.text += ' ' + word.punctuatedWord
         current.endTime = word.end + this.timeOffset
-        current.words.push(tw)
+        ;(current.words ??= []).push(tw)
       }
     }
 
@@ -315,7 +315,7 @@ export class TranscriptAssembler {
         if (DEBUG_TRANSCRIPTION) {
           console.log(
             '[TranscriptAssembler] Suppressing low-evidence speaker switch',
-            `from=${activeSpeaker} to=${seg.speaker} words=${seg.words.length} ` +
+            `from=${activeSpeaker} to=${seg.speaker} words=${seg.words?.length ?? 0} ` +
               `duration=${(seg.endTime - seg.startTime).toFixed(2)}s`
           )
         }
@@ -334,11 +334,12 @@ export class TranscriptAssembler {
   }
 
   private shouldAcceptSpeakerSwitch(seg: TranscriptSegment): boolean {
-    const wordCount = seg.words.length
+    const words = seg.words ?? []
+    const wordCount = words.length
     const durationSeconds = Math.max(seg.endTime - seg.startTime, 0)
     if (wordCount === 0) return false
 
-    const avgSpeakerConfidence = seg.words.reduce((sum, word) => {
+    const avgSpeakerConfidence = words.reduce((sum, word) => {
       const conf = Number.isFinite(word.speakerConfidence) ? word.speakerConfidence : 0
       return sum + conf
     }, 0) / wordCount
@@ -353,7 +354,7 @@ export class TranscriptAssembler {
     return {
       ...seg,
       speaker,
-      words: seg.words.map((word) => ({
+      words: (seg.words ?? []).map((word) => ({
         ...word,
         speaker
       }))
@@ -369,11 +370,11 @@ export class TranscriptAssembler {
       if (prev && prev.speaker === seg.speaker) {
         prev.text += ' ' + seg.text
         prev.endTime = seg.endTime
-        prev.words.push(...seg.words)
+        ;(prev.words ??= []).push(...(seg.words ?? []))
       } else {
         merged.push({
           ...seg,
-          words: [...seg.words]
+          words: [...(seg.words ?? [])]
         })
       }
     }
@@ -518,12 +519,18 @@ export class TranscriptAssembler {
       const segB = this.finalizedSegments[i + 1]
 
       if (segA.speaker === segB.speaker) continue
-      if (segA.words.length < 2) continue
+      // Word-level metadata is stripped at the persistence boundary
+      // (getSerializableState); tail correction is a no-op without it.
+      const segAWords = segA.words
+      const segBWords = segB.words
+      if (!segAWords || !segBWords) continue
+      if (segAWords.length < 2) continue
 
       // Count trailing low-confidence words in segA
       let moveCount = 0
-      for (let w = segA.words.length - 1; w >= 1; w--) {
-        if (segA.words[w].speakerConfidence < 0.4) {
+      for (let w = segAWords.length - 1; w >= 1; w--) {
+        const segAWord = segAWords[w]
+        if (segAWord && segAWord.speakerConfidence < 0.4) {
           moveCount++
         } else {
           break
@@ -533,35 +540,39 @@ export class TranscriptAssembler {
       if (moveCount === 0) continue
 
       // Move trailing words from segA to front of segB
-      const movedWords = segA.words.splice(segA.words.length - moveCount)
+      const movedWords = segAWords.splice(segAWords.length - moveCount)
       for (const w of movedWords) {
         w.speaker = segB.speaker
       }
-      segB.words.unshift(...movedWords)
+      segBWords.unshift(...movedWords)
 
       // Rebuild text and times
-      segA.text = segA.words.map((w) => w.punctuatedWord).join(' ')
-      segA.endTime = segA.words[segA.words.length - 1].end
-      segB.text = segB.words.map((w) => w.punctuatedWord).join(' ')
-      segB.startTime = segB.words[0].start
+      segA.text = segAWords.map((w) => w.punctuatedWord).join(' ')
+      const segALast = segAWords[segAWords.length - 1]
+      if (segALast) segA.endTime = segALast.end
+      segB.text = segBWords.map((w) => w.punctuatedWord).join(' ')
+      const segBFirst = segBWords[0]
+      if (segBFirst) segB.startTime = segBFirst.start
     }
 
     // --- Pass 2: Merge micro-segments ---
     const merged: TranscriptSegment[] = []
     for (const seg of this.finalizedSegments) {
+      const segWords = seg.words
       const avgConf =
-        seg.words.length > 0
-          ? seg.words.reduce((sum, w) => sum + w.speakerConfidence, 0) / seg.words.length
+        segWords && segWords.length > 0
+          ? segWords.reduce((sum, w) => sum + w.speakerConfidence, 0) / segWords.length
           : 0
 
-      if (seg.words.length < 3 && avgConf < 0.4 && merged.length > 0) {
-        const prev = merged[merged.length - 1]
-        for (const w of seg.words) {
+      const prev = merged[merged.length - 1]
+      if (segWords && segWords.length < 3 && avgConf < 0.4 && prev) {
+        for (const w of segWords) {
           w.speaker = prev.speaker
         }
-        prev.words.push(...seg.words)
-        prev.text += ' ' + seg.words.map((w) => w.punctuatedWord).join(' ')
-        prev.endTime = seg.words[seg.words.length - 1].end
+        ;(prev.words ??= []).push(...segWords)
+        prev.text += ' ' + segWords.map((w) => w.punctuatedWord).join(' ')
+        const segLast = segWords[segWords.length - 1]
+        if (segLast) prev.endTime = segLast.end
       } else {
         merged.push(seg)
       }
@@ -596,7 +607,7 @@ export class TranscriptAssembler {
       if (prev && prev.speaker === seg.speaker) {
         prev.text += ' ' + seg.text
         prev.endTime = seg.endTime
-        prev.words.push(...seg.words)
+        ;(prev.words ??= []).push(...(seg.words ?? []))
       } else {
         collapsed.push(seg)
       }

@@ -1241,8 +1241,8 @@ export function createContact(data: {
     }
 
     const primaryEmail = normalizeEmail(existing?.email || '')
-    attachEmailToContact(db, contactId, email, !primaryEmail || primaryEmail === email)
-    if (!existing.primary_company_id && inferredCompanyId) {
+    if (email) attachEmailToContact(db, contactId, email, !primaryEmail || primaryEmail === email)
+    if (!existing?.primary_company_id && inferredCompanyId) {
       ensurePrimaryCompanyLink(db, contactId, inferredCompanyId, userId)
     }
   }

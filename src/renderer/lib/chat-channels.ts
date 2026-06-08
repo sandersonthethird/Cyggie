@@ -1,4 +1,4 @@
-import { IPC_CHANNELS } from '../../shared/constants/channels'
+import { IPC_CHANNELS, type IpcChannel } from '../../shared/constants/channels'
 import type { ChatAttachmentIPC } from './chat-attachments'
 
 /**
@@ -29,8 +29,8 @@ export interface ChatSendArgs {
 }
 
 export interface ChatChannelDispatch {
-  query: string
-  abort: string
+  query: IpcChannel
+  abort: IpcChannel
   buildInvokeArgs: (send: ChatSendArgs) => unknown[]
 }
 

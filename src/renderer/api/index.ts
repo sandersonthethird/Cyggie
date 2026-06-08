@@ -6,11 +6,12 @@
  * fetch/WebSocket without touching any call sites.
  */
 
+import type { IpcChannel } from '../../shared/types/ipc'
 import { ipcCache, MUTATION_INVALIDATIONS } from './ipcCache'
 
 const SLOW_INVOKE_MS = 50
 
-function instrumentedInvoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+function instrumentedInvoke<T>(channel: IpcChannel, ...args: unknown[]): Promise<T> {
   const start = import.meta.env.DEV ? performance.now() : 0
   return window.api.invoke<T>(channel, ...args)
     .then((value) => {
@@ -32,16 +33,16 @@ function instrumentedInvoke<T>(channel: string, ...args: unknown[]): Promise<T> 
 }
 
 export const api = {
-  invoke: <T = unknown>(channel: string, ...args: unknown[]): Promise<T> =>
+  invoke: <T = unknown>(channel: IpcChannel, ...args: unknown[]): Promise<T> =>
     instrumentedInvoke<T>(channel, ...args),
 
-  send: (channel: string, ...args: unknown[]): void =>
+  send: (channel: IpcChannel, ...args: unknown[]): void =>
     window.api.send(channel, ...args),
 
-  on: (channel: string, callback: (...args: unknown[]) => void): (() => void) =>
+  on: (channel: IpcChannel, callback: (...args: unknown[]) => void): (() => void) =>
     window.api.on(channel, callback),
 
-  once: (channel: string, callback: (...args: unknown[]) => void): void =>
+  once: (channel: IpcChannel, callback: (...args: unknown[]) => void): void =>
     window.api.once(channel, callback),
 
   getPathForFile: (file: File): string | null =>

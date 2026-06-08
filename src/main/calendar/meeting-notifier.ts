@@ -145,7 +145,7 @@ async function showMeetingNotification(event: CalendarEvent): Promise<void> {
 
   // Bounce dock icon on macOS for extra attention
   if (process.platform === 'darwin') {
-    app.dock.bounce('critical')
+    app.dock?.bounce('critical')
   }
 
   const notification = new Notification({

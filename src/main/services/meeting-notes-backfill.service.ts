@@ -66,7 +66,7 @@ export function backfillMeetingSummaryNotes(userId: string | null): { meetings: 
       const emails: string[] = JSON.parse(meeting.attendee_emails || '[]')
       if (emails.length > 0) {
         const emailToContactId = resolveContactsByEmails(emails)
-        const contactIds = [...new Set(Object.values(emailToContactId))]
+        const contactIds = [...new Set(Object.values(emailToContactId).map((c) => c.id))]
         for (const contactId of contactIds) {
           const note = createMeetingCompanionNote({
             entityType: 'contact',

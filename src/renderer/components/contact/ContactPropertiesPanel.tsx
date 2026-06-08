@@ -67,11 +67,16 @@ const TALENT_PIPELINE_STAGES: { value: string; label: string }[] = [
 interface ContactPropertiesPanelProps {
   contact: ContactDetail
   lastTouchpoint?: string | null
-  onUpdate: (updates: Record<string, unknown>) => void
+  /**
+   * Called with either a partial field patch (e.g. `{ firstName: 'x' }`) or a
+   * full ContactDetail replacement returned from an IPC mutation.
+   */
+  onUpdate: (updates: Record<string, unknown> | ContactDetail) => void
   showEnrichBanner?: boolean
   enrichMeetingCount?: number
   fieldSources?: Record<string, { meetingId: string; meetingTitle: string }>
   onEnrichFromMeetings?: () => void
+  isLoadingEnrich?: boolean
   exaApiKey?: string
   onRequestCreateCompany?: () => void
 }
@@ -739,7 +744,7 @@ export function ContactPropertiesPanel({
   // Returns void: callers are fire-and-forget field-save handlers (PropertyRow's
   // onSave is `=> Promise<void>`). withOptimisticUpdate's result is unused here.
   async function save(field: string, value: unknown): Promise<void> {
-    const prev = (contact as Record<string, unknown>)[field]
+    const prev = (contact as unknown as Record<string, unknown>)[field]
     await withOptimisticUpdate(
       () => onUpdate({ [field]: value }),
       () => window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { [field]: value }),
@@ -753,8 +758,8 @@ export function ContactPropertiesPanel({
     await withOptimisticUpdate(
       () => onUpdate({ emails: optimisticEmails, ...(isPrimary ? { email: newEmail } : {}) }),
       () => isPrimary
-        ? window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { email: newEmail })
-        : window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE_EMAIL, { contactId: contact.id, oldEmail, newEmail }),
+        ? window.api.invoke<ContactDetail>(IPC_CHANNELS.CONTACT_UPDATE, contact.id, { email: newEmail })
+        : window.api.invoke<ContactDetail>(IPC_CHANNELS.CONTACT_UPDATE_EMAIL, { contactId: contact.id, oldEmail, newEmail }),
       () => onUpdate({ emails: contact.emails, ...(isPrimary ? { email: contact.email } : {}) }),
       (updated) => onUpdate(updated),
     )
@@ -764,9 +769,9 @@ export function ContactPropertiesPanel({
     const isFirst = contact.emails.length === 0
     await withOptimisticUpdate(
       () => onUpdate({ emails: [...contact.emails, email], ...(isFirst ? { email } : {}) }),
-      () => window.api.invoke(IPC_CHANNELS.CONTACT_ADD_EMAIL, contact.id, email),
+      () => window.api.invoke<ContactDetail>(IPC_CHANNELS.CONTACT_ADD_EMAIL, contact.id, email),
       () => onUpdate({ emails: contact.emails, ...(isFirst ? { email: contact.email } : {}) }),
-      (updated) => onUpdate(updated as Record<string, unknown>),
+      (updated) => onUpdate(updated),
     )
   }
 
@@ -778,7 +783,7 @@ export function ContactPropertiesPanel({
           emails: contact.emails.filter(e => e !== email),
           ...(isPrimary ? { email: null } : {}),
         }),
-        () => window.api.invoke(IPC_CHANNELS.CONTACT_REMOVE_EMAIL, contact.id, email),
+        () => window.api.invoke<ContactDetail>(IPC_CHANNELS.CONTACT_REMOVE_EMAIL, contact.id, email),
         () => onUpdate({
           emails: contact.emails,
           ...(isPrimary ? { email: contact.email } : {}),
@@ -1106,7 +1111,7 @@ export function ContactPropertiesPanel({
     // Built-in field
     const col = CONTACT_COLUMN_DEFS.find((c) => c.key === key)
     if (!col || !col.field) return null
-    const value = (contact as Record<string, unknown>)[col.field]
+    const value = (contact as unknown as Record<string, unknown>)[col.field]
     const display = formatPinnedValue(value, col.type, col.options as { value: string; label: string }[] | undefined)
     if (!display) return null
     return (
@@ -1504,7 +1509,7 @@ export function ContactPropertiesPanel({
             customFields={customFields.filter(f => !f.isBuiltin)}
             addedFields={fieldVisibility.addedFields}
             hiddenFields={hiddenFields}
-            entityData={contact as Record<string, unknown>}
+            entityData={contact as unknown as Record<string, unknown>}
             fieldPlacements={fieldVisibility.fieldPlacements}
             sections={CONTACT_SECTIONS.filter(s => s.key !== 'summary')}
             defaultSection={addFieldSection ?? undefined}

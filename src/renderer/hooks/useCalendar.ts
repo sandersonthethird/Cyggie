@@ -12,7 +12,7 @@ export function useCalendar() {
   const calendarConnected = useAppStore((s) => s.calendarConnected)
   const setCalendarEvents = useAppStore((s) => s.setCalendarEvents)
   const setCalendarConnected = useAppStore((s) => s.setCalendarConnected)
-  const pollRef = useRef<ReturnType<typeof setInterval>>()
+  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
 
   // Normal fetch — hits the in-session ipcCache (5-min TTL) so re-mounts and
   // multiple consumers don't re-invoke. The main-process persistent cache

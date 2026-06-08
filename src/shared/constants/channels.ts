@@ -20,6 +20,10 @@ export const IPC_CHANNELS = {
   RECORDING_ERROR: 'recording:error',
   RECORDING_AUTO_STOP: 'recording:auto-stop',
   RECORDING_SYSTEM_AUDIO_STATUS: 'recording:system-audio-status',
+  // Broadcast by the tray menu (src/main/tray.ts) to start/stop recording from
+  // the macOS menu-bar item; the renderer listens via api.on.
+  RECORDING_START_FROM_TRAY: 'recording:start-from-tray',
+  RECORDING_STOP_FROM_TRAY: 'recording:stop-from-tray',
   // Broadcast events fired by the main process when background transcript
   // finalization (after RECORDING_STOP returns optimistically) completes or
   // fails. Mirrors VIDEO_FINALIZED / VIDEO_FINALIZE_ERROR.

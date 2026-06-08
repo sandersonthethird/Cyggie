@@ -102,11 +102,11 @@ interface CompanyHeaderCardProps {
   descriptionClamped: boolean
   onDescriptionToggle: (expanded: boolean) => void
   showDescription: boolean
-  onSaveDescription: (value: unknown) => void
+  onSaveDescription: (newValue: string | number | boolean | null) => Promise<void>
   fieldSources?: Record<string, { meetingId: string; meetingTitle: string }>
 
   // Social / website
-  onSaveWebsite: (value: unknown) => void
+  onSaveWebsite: (newValue: string | number | boolean | null) => Promise<void>
 }
 
 export function CompanyHeaderCard({

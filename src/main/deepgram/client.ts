@@ -14,6 +14,16 @@ interface FinalizeCloseOptions {
   closeWaitMs?: number
 }
 
+/**
+ * Extract the exact bytes of a Buffer as a standalone ArrayBuffer. Node
+ * Buffers are views into a shared pool, so we slice on byteOffset/byteLength
+ * to avoid sending the whole backing pool. Deepgram's `send` accepts
+ * `string | ArrayBufferLike | Blob`, not Node's Buffer type directly.
+ */
+function toArrayBuffer(chunk: Buffer): ArrayBufferLike {
+  return chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength)
+}
+
 export class DeepgramStreamingClient extends EventEmitter implements StreamingTranscriber {
   readonly provider: TranscriptionProvider = 'deepgram'
 
@@ -187,7 +197,7 @@ export class DeepgramStreamingClient extends EventEmitter implements StreamingTr
 
   sendAudio(chunk: Buffer): void {
     if (this.connection && this.connection.getReadyState() === 1) {
-      this.connection.send(chunk)
+      this.connection.send(toArrayBuffer(chunk))
     } else {
       this.audioBuffer.push(chunk)
       // Rolling buffer - keep last ~5 seconds at 100ms chunks
@@ -262,7 +272,7 @@ export class DeepgramStreamingClient extends EventEmitter implements StreamingTr
     while (this.audioBuffer.length > 0) {
       const chunk = this.audioBuffer.shift()
       if (chunk && this.connection && this.connection.getReadyState() === 1) {
-        this.connection.send(chunk)
+        this.connection.send(toArrayBuffer(chunk))
       }
     }
   }

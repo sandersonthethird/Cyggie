@@ -1,7 +1,24 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 
-export type AuditAction = 'create' | 'update' | 'delete' | 'stage_change' | 'set_group_event'
+export type AuditAction =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'stage_change'
+  | 'set_group_event'
+  // Meeting ↔ CRM tagging / company linkage (meeting.ipc.ts)
+  | 'tag_speaker_contact'
+  | 'untag_speaker_contact'
+  | 'link_company'
+  | 'unlink_company'
+  | 'dismiss_company_suggestion'
+  | 'swap_company'
+  // Bulk task ops (task.ipc.ts), partner-meeting reconcile, memo export
+  | 'bulk_create'
+  | 'bulk_update'
+  | 'reconcile'
+  | 'export'
 
 /**
  * Append a row to `audit_log`.

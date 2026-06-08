@@ -34,7 +34,7 @@ export type MemoSectionKind = 'narrative' | 'research' | 'synthesis'
 export type MemoSectionGate = 'series_a_plus' | 'has_reference_calls' | 'has_substantive_thesis'
 
 export interface MemoSection {
-  readonly heading: string
+  readonly heading: SharedHeading
   readonly kind: MemoSectionKind
   /** Position in the assembled memo output (1-indexed). */
   readonly ordinal: number
@@ -87,8 +87,10 @@ export type MemoSectionHeading = SharedHeading
   }
 }
 
-const HEADING_SET = new Set(MEMO_SECTIONS.map((s) => s.heading))
-const BY_HEADING = new Map(MEMO_SECTIONS.map((s) => [s.heading, s]))
+const HEADING_SET: ReadonlySet<string> = new Set(MEMO_SECTIONS.map((s) => s.heading))
+const BY_HEADING: ReadonlyMap<string, MemoSection> = new Map(
+  MEMO_SECTIONS.map((s) => [s.heading, s] as const),
+)
 
 export function isMemoSectionHeading(heading: string): heading is MemoSectionHeading {
   return HEADING_SET.has(heading)

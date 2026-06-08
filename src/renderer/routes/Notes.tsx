@@ -216,7 +216,8 @@ export default function Notes() {
   useEffect(() => {
     const off = api.on(
       IPC_CHANNELS.NOTES_FOLDER_TAG_SUGGESTION,
-      (_event: unknown, { folderPath, suggestion }: { folderPath: string; suggestion: TagSuggestion }) => {
+      (...args: unknown[]) => {
+        const { folderPath, suggestion } = args[0] as { folderPath: string; suggestion: TagSuggestion }
         setFolderTagSuggestions(prev => new Map(prev).set(folderPath, suggestion))
       }
     )

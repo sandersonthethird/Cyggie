@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode, type ReactElement } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { TranscriptSegment } from '../../../shared/types/recording'
 import {
@@ -50,7 +50,7 @@ interface SegmentMatch {
  * Swap Me/Them button (in the MeetingDetail header) is responsible for
  * persisting the flip.
  */
-export function TranscriptBubbles(props: TranscriptBubblesProps): JSX.Element {
+export function TranscriptBubbles(props: TranscriptBubblesProps): ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
 
   const items: TranscriptItem[] = useMemo(

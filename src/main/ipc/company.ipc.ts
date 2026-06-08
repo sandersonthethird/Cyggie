@@ -58,7 +58,7 @@ function buildLookupKeys(companyName: string, primaryDomain?: string | null): st
   const normalizedName = normalizeToken(companyName)
   if (normalizedName) keys.add(normalizedName)
 
-  const normalizedDomain = normalizeToken(primaryDomain)
+  const normalizedDomain = normalizeToken(primaryDomain || '')
   if (normalizedDomain) {
     keys.add(normalizedDomain)
     const domainBase = normalizeToken((primaryDomain || '').split('.')[0] || '')

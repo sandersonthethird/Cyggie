@@ -1,6 +1,7 @@
 import type {
   ContactSortBy,
-  ContactSummary
+  ContactSummary,
+  ContactType
 } from '../../../shared/types/contact'
 import {
   createColumnConfigLoader,
@@ -235,9 +236,9 @@ export function filterContacts(
   const range = splitFiltersByCustom(rangeFilters ?? {})
   const text = splitFiltersByCustom(textFilters ?? {})
 
-  let result = applySelectFilter(contacts as Record<string, unknown>[], select.builtIn) as ContactSummary[]
-  result = applyRangeFilter(result as Record<string, unknown>[], range.builtIn) as ContactSummary[]
-  result = applyTextFilter(result as Record<string, unknown>[], text.builtIn) as ContactSummary[]
+  let result = applySelectFilter(contacts as unknown as Record<string, unknown>[], select.builtIn) as unknown as ContactSummary[]
+  result = applyRangeFilter(result as unknown as Record<string, unknown>[], range.builtIn) as unknown as ContactSummary[]
+  result = applyTextFilter(result as unknown as Record<string, unknown>[], text.builtIn) as unknown as ContactSummary[]
   result = applyCustomSelectFilter(result, select.custom, customFieldValues)
   result = applyCustomRangeFilter(result, range.custom, customFieldValues, customFieldTypes)
   result = applyCustomTextFilter(result, text.custom, customFieldValues)

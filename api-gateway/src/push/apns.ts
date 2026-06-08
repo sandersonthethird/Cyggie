@@ -129,7 +129,7 @@ async function send(args: {
   try {
     const result = await provider.send(note, args.deviceToken)
     const unregistered = (result.failed ?? [])
-      .filter((f) => f.status === '410' || f.response?.reason === 'Unregistered')
+      .filter((f) => f.status === 410 || f.response?.reason === 'Unregistered')
       .map((f) => f.device)
     if (result.failed && result.failed.length > 0) {
       console.warn(

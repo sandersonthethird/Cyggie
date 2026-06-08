@@ -429,13 +429,13 @@ export async function previewImport(
     ? contactRepo.resolveContactsByNormalizedNames([...contactNameRowData.keys()])
     : {}
   const duplicateContactCount = new Set([
-    ...Object.values(existingEmailMap),
+    ...Object.values(existingEmailMap).map((c) => c.id),
     ...Object.values(existingNameMap)
   ]).size
 
   // Fetch full contact records for conflict detection
   const duplicateContactIds = [...new Set([
-    ...Object.values(existingEmailMap),
+    ...Object.values(existingEmailMap).map((c) => c.id),
     ...Object.values(existingNameMap)
   ])]
   const existingContacts = contactRepo.getContactsByIds(duplicateContactIds)
@@ -468,9 +468,9 @@ export async function previewImport(
   // Build per-record contact diffs (email-keyed rows)
   const contactDiffs: ContactDiff[] = []
   for (const [email, csvFields] of contactRowData.entries()) {
-    const contactId = existingEmailMap[email]
-    if (!contactId) continue
-    const diff = buildContactDiff(contactId, csvFields)
+    const match = existingEmailMap[email]
+    if (!match) continue
+    const diff = buildContactDiff(match.id, csvFields)
     if (diff) contactDiffs.push(diff)
   }
   // Build diffs for name-keyed rows (no email)
@@ -731,10 +731,13 @@ export async function runImport(
   // Fetch full contact records for fill-blanks/overwrite merge logic
   const preExistingContactsByEmail = allEmailsInCSV.length > 0
     ? (() => {
-        const byId = contactRepo.getContactsByIds(Object.values(emailToContactId))
+        const byId = contactRepo.getContactsByIds(
+          Object.values(emailToContactId).map((c) => c.id)
+        )
         const byEmail: Record<string, typeof byId[string]> = {}
-        for (const [email, id] of Object.entries(emailToContactId)) {
-          if (byId[id]) byEmail[email] = byId[id]
+        for (const [email, match] of Object.entries(emailToContactId)) {
+          const record = byId[match.id]
+          if (record) byEmail[email] = record
         }
         return byEmail
       })()
@@ -817,7 +820,7 @@ export async function runImport(
                   // New company: apply all values. Skipped company: no updates.
                   if (!companySkipSet.has(company.id)) updateData[camelKey] = val
                 } else {
-                  const existingVal = (company as Record<string, unknown>)[camelKey]
+                  const existingVal = (company as unknown as Record<string, unknown>)[camelKey]
                   if (!existingVal || companyOverwriteSetCamel.has(camelKey)) {
                     updateData[camelKey] = val
                   }
@@ -975,7 +978,7 @@ export async function runImport(
               if (actuallyNew) {
                 extraFields[camelKey] = val
               } else {
-                const existingVal = (existingContact as Record<string, unknown>)[camelKey]
+                const existingVal = (existingContact as unknown as Record<string, unknown>)[camelKey]
                 if (!existingVal) {
                   extraFields[camelKey] = val
                   totalFieldsFilled++

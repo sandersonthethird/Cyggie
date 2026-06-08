@@ -165,7 +165,8 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
 
   // Cross-window sync: update note state + saved baseline when another window saves
   useEffect(() => {
-    return api.on(IPC_CHANNELS.NOTE_UPDATED, (updated: Note) => {
+    return api.on(IPC_CHANNELS.NOTE_UPDATED, (...args: unknown[]) => {
+      const updated = args[0] as Note
       if (updated.id !== noteId) return
       // Refresh timestamp display; update savedRef so next debounce comparison
       // is against the latest persisted content. Do NOT reset editor content —
