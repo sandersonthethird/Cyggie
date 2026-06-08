@@ -2,7 +2,7 @@ import { shell } from 'electron'
 import { createServer, type Server } from 'http'
 import { URL } from 'url'
 import { randomBytes, createHash } from 'crypto'
-import { google } from 'googleapis'
+import { google, Auth } from 'googleapis'
 import { getCredential, storeCredential } from '../security/credentials'
 
 const CALENDAR_SCOPES = [
@@ -186,7 +186,7 @@ async function runAuthorizationFlow(config: OAuthFlowConfig): Promise<void> {
     access_type: 'offline',
     scope: scopes,
     include_granted_scopes: false,
-    code_challenge_method: 'S256',
+    code_challenge_method: Auth.CodeChallengeMethod.S256,
     code_challenge: codeChallenge,
     prompt: 'consent select_account'
   })

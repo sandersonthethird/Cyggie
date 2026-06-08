@@ -353,7 +353,7 @@ export function CompanyPropertiesPanel({
     }
   }
 
-  async function handlePinnedFieldSave(field: CustomFieldWithValue, newValue: string | number | boolean | null) {
+  async function handlePinnedFieldSave(field: CustomFieldWithValue, newValue: string | number | boolean | null): Promise<void> {
     if (newValue == null || newValue === '') {
       await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_DELETE_VALUE, field.id, company.id)
       setCustomFields(prev => prev.map(f => f.id === field.id ? { ...f, value: null } : f))
@@ -368,15 +368,15 @@ export function CompanyPropertiesPanel({
       valueDate: null, valueRefId: null, resolvedLabel: null,
       createdAt: field.value?.createdAt ?? '',
       updatedAt: new Date().toISOString(),
-      ...(field.fieldType === 'number' || field.fieldType === 'currency'
-        ? { valueNumber: Number(newValue) }
-        : field.fieldType === 'boolean'
-        ? { valueBoolean: Boolean(newValue) }
-        : field.fieldType === 'date'
-        ? { valueDate: String(newValue) }
-        : field.fieldType === 'contact_ref' || field.fieldType === 'company_ref'
-        ? { valueRefId: String(newValue) }
-        : { valueText: String(newValue) })
+    }
+    // Set the one type-specific column via assignment (not a conditional spread,
+    // which trips TS2783 by overwriting a key already in the literal above).
+    switch (field.fieldType) {
+      case 'number': case 'currency': optimisticValue.valueNumber = Number(newValue); break
+      case 'boolean': optimisticValue.valueBoolean = Boolean(newValue); break
+      case 'date': optimisticValue.valueDate = String(newValue); break
+      case 'contact_ref': case 'company_ref': optimisticValue.valueRefId = String(newValue); break
+      default: optimisticValue.valueText = String(newValue)
     }
     const input: import('../../../shared/types/custom-fields').SetCustomFieldValueInput = {
       fieldDefinitionId: field.id,
@@ -391,7 +391,7 @@ export function CompanyPropertiesPanel({
       default: input.valueText = String(newValue)
     }
     const prev = customFields
-    return withOptimisticUpdate(
+    await withOptimisticUpdate(
       () => setCustomFields(fs => fs.map(f => f.id === field.id ? { ...f, value: optimisticValue } : f)),
       () => api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input),
       () => setCustomFields(prev),
@@ -725,8 +725,10 @@ export function CompanyPropertiesPanel({
       .catch(() => setDigestItem(null))
   }, [company.id])
 
-  function save(field: string, value: unknown) {
-    return saveFields({ [field]: value })
+  // Returns void: callers are fire-and-forget field-save handlers (PropertyRow's
+  // onSave is `=> Promise<void>`). saveFields' result is consumed internally.
+  async function save(field: string, value: unknown): Promise<void> {
+    await saveFields({ [field]: value })
   }
 
   function saveFields(updates: Record<string, unknown>) {

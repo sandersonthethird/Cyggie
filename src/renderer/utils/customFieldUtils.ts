@@ -27,14 +27,16 @@ export function slugify(label: string): string {
  * Merge hardcoded built-in options with user-added extensions from options_json.
  * Returns hardcoded options unchanged if optionsJson is null or malformed.
  */
-export function mergeBuiltinOptions(
-  hardcoded: { value: string; label: string }[],
+export function mergeBuiltinOptions<T extends string>(
+  hardcoded: { value: T; label: string }[],
   optionsJson: string | null
-): { value: string; label: string }[] {
+): { value: T; label: string }[] {
   if (!optionsJson) return hardcoded
   try {
     const ext: string[] = JSON.parse(optionsJson)
-    return [...hardcoded, ...ext.map((v) => ({ value: v, label: v }))]
+    // User-added option strings are persisted from this same select's value
+    // domain, so they belong to T even though JSON.parse erases the type.
+    return [...hardcoded, ...ext.map((v) => ({ value: v as T, label: v }))]
   } catch {
     return hardcoded
   }

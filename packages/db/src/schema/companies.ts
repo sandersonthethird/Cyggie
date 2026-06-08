@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  type AnyPgColumn,
   check,
   doublePrecision,
   index,
@@ -94,7 +95,7 @@ export const orgCompanies = pgTable(
     relationshipOwner: text('relationship_owner'),
     dealSource: text('deal_source'),
     warmIntroSource: text('warm_intro_source'),
-    referralContactId: text('referral_contact_id').references(() => contacts.id, { onDelete: 'set null' }),
+    referralContactId: text('referral_contact_id').references((): AnyPgColumn => contacts.id, { onDelete: 'set null' }),
     nextFollowupDate: timestamp('next_followup_date', { withTimezone: true }),
     // Investment (when we've decided to invest)
     investmentSize: text('investment_size'),

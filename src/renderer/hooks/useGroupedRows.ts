@@ -43,7 +43,7 @@ export type VirtualRow<T> = GroupHeaderRow | DataRow<T>
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useGroupedRows<T extends Record<string, unknown>>(
+export function useGroupedRows<T extends object>(
   items: T[],
   groupByKey: string | null,
   fields: GroupableField[],
@@ -62,7 +62,7 @@ export function useGroupedRows<T extends Record<string, unknown>>(
     const groups = new Map<string, Array<{ item: T; dataIndex: number }>>()
 
     items.forEach((item, i) => {
-      const raw = item[groupByKey]
+      const raw = (item as Record<string, unknown>)[groupByKey]
       const key = raw != null && raw !== '' ? String(raw) : '__null__'
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key)!.push({ item, dataIndex: i })

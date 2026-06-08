@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { api } from '../api'
+import type { IpcChannel } from '../../shared/types/ipc'
 
 export interface PickerState<T> {
   results: T[]
@@ -8,7 +9,7 @@ export interface PickerState<T> {
 }
 
 export function usePicker<T>(
-  channel: string,
+  channel: IpcChannel,
   limit = 20,
   extraParams?: Record<string, unknown>
 ): PickerState<T> {

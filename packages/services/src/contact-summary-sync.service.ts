@@ -294,28 +294,28 @@ export async function getContactSummaryUpdateProposals(
     const rawStageFocus     = extractString((extracted as Record<string, unknown>).investmentStageFocus)
     const rawSectorFocus    = extractString((extracted as Record<string, unknown>).investmentSectorFocus)
 
-    if (rawFundSize != null && rawFundSize !== (contact as Record<string, unknown>).fundSize && !hiddenFields.has('fundSize')) {
+    if (rawFundSize != null && rawFundSize !== contact.fundSize && !hiddenFields.has('fundSize')) {
       updates.fundSize = rawFundSize
-      const prev = (contact as Record<string, unknown>).fundSize
+      const prev = contact.fundSize
       changes.push({ field: 'fundSize', from: prev != null ? String(prev) : null, to: String(rawFundSize) })
     }
-    if (rawCheckMin != null && rawCheckMin !== (contact as Record<string, unknown>).typicalCheckSizeMin && !hiddenFields.has('typicalCheckSizeMin')) {
+    if (rawCheckMin != null && rawCheckMin !== contact.typicalCheckSizeMin && !hiddenFields.has('typicalCheckSizeMin')) {
       updates.typicalCheckSizeMin = rawCheckMin
-      const prev = (contact as Record<string, unknown>).typicalCheckSizeMin
+      const prev = contact.typicalCheckSizeMin
       changes.push({ field: 'typicalCheckSizeMin', from: prev != null ? String(prev) : null, to: String(rawCheckMin) })
     }
-    if (rawCheckMax != null && rawCheckMax !== (contact as Record<string, unknown>).typicalCheckSizeMax && !hiddenFields.has('typicalCheckSizeMax')) {
+    if (rawCheckMax != null && rawCheckMax !== contact.typicalCheckSizeMax && !hiddenFields.has('typicalCheckSizeMax')) {
       updates.typicalCheckSizeMax = rawCheckMax
-      const prev = (contact as Record<string, unknown>).typicalCheckSizeMax
+      const prev = contact.typicalCheckSizeMax
       changes.push({ field: 'typicalCheckSizeMax', from: prev != null ? String(prev) : null, to: String(rawCheckMax) })
     }
-    if (rawStageFocus && !hiddenFields.has('investmentStageFocus') && isDifferentText(rawStageFocus, (contact as Record<string, unknown>).investmentStageFocus as string | null)) {
+    if (rawStageFocus && !hiddenFields.has('investmentStageFocus') && isDifferentText(rawStageFocus, contact.investmentStageFocus)) {
       updates.investmentStageFocus = rawStageFocus
-      changes.push({ field: 'investmentStageFocus', from: (contact as Record<string, unknown>).investmentStageFocus as string | null, to: rawStageFocus })
+      changes.push({ field: 'investmentStageFocus', from: contact.investmentStageFocus, to: rawStageFocus })
     }
-    if (rawSectorFocus && !hiddenFields.has('investmentSectorFocus') && isDifferentText(rawSectorFocus, (contact as Record<string, unknown>).investmentSectorFocus as string | null)) {
+    if (rawSectorFocus && !hiddenFields.has('investmentSectorFocus') && isDifferentText(rawSectorFocus, contact.investmentSectorFocus)) {
       updates.investmentSectorFocus = rawSectorFocus
-      changes.push({ field: 'investmentSectorFocus', from: (contact as Record<string, unknown>).investmentSectorFocus as string | null, to: rawSectorFocus })
+      changes.push({ field: 'investmentSectorFocus', from: contact.investmentSectorFocus, to: rawSectorFocus })
     }
 
     // --- Custom fields ---

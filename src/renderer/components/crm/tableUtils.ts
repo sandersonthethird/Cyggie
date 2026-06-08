@@ -345,7 +345,7 @@ export function createColumnWidthsHelper(storageKey: string): {
  * Keys are evaluated in order (primary → tiebreaker). Nulls always sort last.
  * If sort array is empty, rows are returned unchanged.
  */
-export function sortRows<T extends Record<string, unknown>>(
+export function sortRows<T extends object>(
   rows: T[],
   sort: SortKey[],
   defs: ColumnDef[]
@@ -359,7 +359,7 @@ export function sortRows<T extends Record<string, unknown>>(
     const dir = sk.dir === 'asc' ? 1 : -1
     if (col.sortAccessor) {
       const accessor = col.sortAccessor
-      return [{ get: (row: T) => accessor(row as Record<string, unknown>), dir }]
+      return [{ get: (row: T) => accessor(row as unknown as Record<string, unknown>), dir }]
     }
     if (!col.field) return []
     const field = col.field as keyof T
@@ -507,7 +507,7 @@ function parseCustomOptions(json: string | null): { value: string; label: string
  *   getCellValue(entity, col) → raw string value (or null)
  *   saveCellValue(entity, col, value) → async save via IPC
  */
-export function createCellCallbacks<T extends Record<string, unknown> & { id: string }>(opts: {
+export function createCellCallbacks<T extends { id: string }>(opts: {
   /** Read a custom field value for an entity. colKey is the full 'custom:xyz' key. */
   getCustomFieldValue: (entityId: string, customFieldId: string) => string | null
   /** Save a custom field value. */
@@ -527,7 +527,7 @@ export function createCellCallbacks<T extends Record<string, unknown> & { id: st
     if (customFieldId) return getCustomFieldValue(entity.id, customFieldId)
     if (getComputedValue && !col.field) return getComputedValue(entity, col)
     if (col.field) {
-      const val = entity[col.field]
+      const val = (entity as Record<string, unknown>)[col.field]
       return val == null || val === '' ? null : String(val)
     }
     return null

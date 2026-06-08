@@ -14,7 +14,7 @@ export function useSearch() {
   const setIsSearching = useAppStore((s) => s.setIsSearching)
   const searchResults = useAppStore((s) => s.searchResults)
   const isSearching = useAppStore((s) => s.isSearching)
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const hasQuery = searchQuery.trim().length > 0
   const hasFilters = searchDateFrom !== '' || searchDateTo !== '' || searchSpeakers.length > 0

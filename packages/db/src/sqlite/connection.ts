@@ -122,7 +122,13 @@ let db: Database.Database | null = null
 const SLOW_QUERY_MS = 20
 
 function instrumentDatabase(database: Database.Database): void {
-  if (!import.meta.env.DEV) return
+  // `import.meta.env.DEV` is injected by Vite (electron-vite) at build time. The
+  // ambient `ImportMeta.env` augmentation lives in the desktop bundle's type
+  // roots, which aren't on the path for every tsconfig that typechecks this
+  // package (e.g. the gateway build). Read it through a local structural type so
+  // the access is sound under all configs without depending on that ambient.
+  const meta = import.meta as ImportMeta & { env?: { DEV?: boolean } }
+  if (!meta.env?.DEV) return
   const originalPrepare = database.prepare.bind(database)
   database.prepare = ((sql: string) => {
     const stmt = originalPrepare(sql)

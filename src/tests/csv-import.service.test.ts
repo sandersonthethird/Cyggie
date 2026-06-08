@@ -379,7 +379,7 @@ describe('runImport — contacts only', () => {
 
   it('updates duplicate contacts (email already exists) and increments contactsUpdated', async () => {
     mockResolveContactsByEmails.mockReturnValue({
-      'existing@example.com': 'existing-contact-id'
+      'existing@example.com': { id: 'existing-contact-id', fullName: 'Alice' }
     })
     mockGetContactsByIds.mockReturnValue({
       'existing-contact-id': { id: 'existing-contact-id', full_name: 'Alice', email: 'existing@example.com' }
@@ -670,8 +670,8 @@ describe('previewImport', () => {
 
   it('detects duplicate contacts via batch email query (not N+1)', async () => {
     mockResolveContactsByEmails.mockReturnValue({
-      'alice@example.com': 'contact-1',
-      'bob@example.com': 'contact-2'
+      'alice@example.com': { id: 'contact-1', fullName: 'Alice' },
+      'bob@example.com': { id: 'contact-2', fullName: 'Bob' }
     })
     const csv = 'Name,Email,Company\nAlice,alice@example.com,Acme\nBob,bob@example.com,Beta\nCarol,carol@example.com,Gamma\n'
     const filePath = writeTempCsv('dedup.csv', csv)

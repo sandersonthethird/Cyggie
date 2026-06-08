@@ -9,7 +9,7 @@ interface TiptapBubbleMenuProps {
 export function TiptapBubbleMenu({ editor }: TiptapBubbleMenuProps) {
   if (!editor) return null
   return (
-    <BubbleMenu editor={editor} tippyOptions={{ duration: 100 }}>
+    <BubbleMenu editor={editor}>
       <div className={styles.bubbleMenu}>
         <button
           onClick={() => editor.chain().focus().toggleBold().run()}

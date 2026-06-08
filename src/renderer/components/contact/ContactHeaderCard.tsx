@@ -85,7 +85,7 @@ interface ContactHeaderCardProps {
   setCompanyActiveIdx: (n: number) => void
   handleCompanyInput: (v: string) => void
   companyAutocompleteKeyDown: (e: ReactKeyboardEvent) => void
-  companyAutocompleteRef: RefObject<HTMLDivElement | null>
+  companyAutocompleteRef: RefObject<HTMLElement | null>
   saveCompany: (name: string) => Promise<void> | void
 
   // Refs

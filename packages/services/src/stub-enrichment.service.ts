@@ -57,13 +57,13 @@ function release(): void {
 
 const VALID_ENTITY_TYPES: ReadonlyArray<CompanyEntityType> = [
   'prospect', 'portfolio', 'vc_fund', 'pass', 'customer',
-  'partner', 'vendor', 'angel_investor', 'lp', 'other', 'unknown',
+  'partner', 'vendor', 'lp', 'other', 'unknown',
 ] as const
 
 const SYSTEM_PROMPT = `You are a venture-capital domain expert. Given the name of a company that has been added as an investor in a portfolio company tracker, you must identify what kind of investor it is and provide minimal verified metadata.
 
 Return ONLY a JSON object with these fields (use null when unknown — never guess):
-- entity_type: one of "vc_fund", "angel_investor", "lp", "customer", "partner", "vendor", "other", or null
+- entity_type: one of "vc_fund", "lp", "customer", "partner", "vendor", "other", or null
 - primary_domain: the canonical website domain (e.g. "sequoiacap.com") without protocol, without "www.", or null if unsure
 - description: a single short sentence (≤ 120 chars) describing the firm, or null
 

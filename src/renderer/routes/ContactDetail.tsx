@@ -155,7 +155,7 @@ export default function ContactDetail() {
     return mostRecentMeeting > contact.lastTouchpoint ? mostRecentMeeting : contact.lastTouchpoint
   }, [contact, mergedMeetings])
 
-  function handleUpdate(updates: Record<string, unknown>) {
+  function handleUpdate(updates: Record<string, unknown> | ContactDetailType) {
     setContact((prev) => prev ? { ...prev, ...updates } : prev)
   }
 

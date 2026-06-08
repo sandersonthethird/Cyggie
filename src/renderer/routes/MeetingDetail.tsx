@@ -172,6 +172,7 @@ const TAG_LABELS: Record<CompanyEntityType, string> = {
   portfolio: 'Portfolio',
   pass: 'Pass',
   vc_fund: 'Investor',
+  lp: 'LP',
   customer: 'Customer',
   partner: 'Partner',
   vendor: 'Vendor',
@@ -397,7 +398,7 @@ export default function MeetingDetail() {
   const prevRecordingRef = useRef(false)
   // Tracks the most-recently-requested meeting load; used to discard stale async
   // results when the user navigates away before a load completes.
-  const loadIdRef = useRef<string | undefined>()
+  const loadIdRef = useRef<string | undefined>(undefined)
   const [videoPath, setVideoPath] = useState<string | null>(null)
   const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null)
   const [isVideoLoading, setIsVideoLoading] = useState(false)
@@ -411,6 +412,7 @@ export default function MeetingDetail() {
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false)
   const speedMenuRef = useRef<HTMLDivElement>(null)
+  const [shareMenuOpen, setShareMenuOpen] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [videoDuration, setVideoDuration] = useState(0)
@@ -1916,7 +1918,7 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
                 {(() => {
                   const deduped = dedupResolvedAttendees(
                     meeting.attendees ?? [],
-                    meeting.attendeeEmails,
+                    meeting.attendeeEmails ?? undefined,
                     attendeeContactMap,
                   )
                   const visible = deduped.slice(0, 4)
@@ -2646,7 +2648,6 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
                           step={0.01}
                           value={isMuted ? 0 : volume}
                           onChange={handleVolumeChange}
-                          orient="vertical"
                         />
                       </div>
                     )}

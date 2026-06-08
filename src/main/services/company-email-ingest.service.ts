@@ -941,8 +941,8 @@ async function _ingestCompanyEmails(companyId: string, signal: AbortSignal): Pro
         last_message_at: string | null
       } | undefined
 
-      let threadId = existingThread?.id || null
-      if (!threadId) {
+      let threadId: string
+      if (!existingThread) {
         threadId = randomUUID()
         insertThread.run(
           threadId,
@@ -954,6 +954,7 @@ async function _ingestCompanyEmails(companyId: string, signal: AbortSignal): Pro
           messageTimestamp
         )
       } else {
+        threadId = existingThread.id
         const currentFirst = existingThread.first_message_at
         const currentLast = existingThread.last_message_at
         const nextFirst = !currentFirst
@@ -1423,8 +1424,8 @@ async function _ingestContactEmails(contactId: string, signal: AbortSignal): Pro
         last_message_at: string | null
       } | undefined
 
-      let threadId = existingThread?.id || null
-      if (!threadId) {
+      let threadId: string
+      if (!existingThread) {
         threadId = randomUUID()
         insertThread.run(
           threadId,
@@ -1436,6 +1437,7 @@ async function _ingestContactEmails(contactId: string, signal: AbortSignal): Pro
           messageTimestamp
         )
       } else {
+        threadId = existingThread.id
         const currentFirst = existingThread.first_message_at
         const currentLast = existingThread.last_message_at
         const nextFirst = !currentFirst

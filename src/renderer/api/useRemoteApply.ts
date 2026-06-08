@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { api } from './index'
 import { invalidateTable, REMOTE_APPLIED_TO_TABLE } from './ipcCache'
+import type { IpcChannel } from '../../shared/types/ipc'
 
 // =============================================================================
 // useRemoteApply — desktop renderer subscription to *_REMOTE_APPLIED IPC events
@@ -37,7 +38,7 @@ interface PendingDispatch {
 }
 
 export function useRemoteApply(
-  channel: string,
+  channel: IpcChannel,
   onApplied: (ids: string[]) => void,
 ): void {
   // Stash the callback in a ref so we don't tear down + re-subscribe on

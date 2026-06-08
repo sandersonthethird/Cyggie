@@ -1,7 +1,8 @@
 import { existsSync, unlinkSync, renameSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { join, extname, basename } from 'path'
 import { spawn, spawnSync } from 'child_process'
-import type { ChildProcessWithoutNullStreams } from 'child_process'
+import type { ChildProcessByStdio } from 'child_process'
+import type { Readable, Writable } from 'stream'
 import { once } from 'events'
 import { getRecordingsDir } from '../storage/paths'
 
@@ -9,7 +10,9 @@ interface ActiveRecording {
   meetingId: string
   tempPath: string
   ffmpegPath: string
-  process: ChildProcessWithoutNullStreams
+  // stdio is ['pipe', 'ignore', 'pipe']: stdin = Writable, stdout ignored
+  // (null), stderr = Readable. Only stdin + stderr are accessed.
+  process: ChildProcessByStdio<Writable, null, Readable>
   bytesWritten: number
   pendingWrite: Promise<void>
   error: Error | null

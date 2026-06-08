@@ -75,7 +75,7 @@ export function useVideoCapture() {
       setVideoError(null)
       meetingIdRef.current = meetingId
 
-      let stream: MediaStream
+      let stream: MediaStream | undefined
 
       // When we know the meeting platform, try to capture just that app's window
       if (meetingPlatform && meetingPlatform !== 'other') {
@@ -113,6 +113,10 @@ export function useVideoCapture() {
         }
       } else {
         stream = await getFallbackStream(displayStream, mixedAudioStream)
+      }
+
+      if (!stream) {
+        throw new Error('Failed to acquire a video capture stream')
       }
 
       // Tell main process to prepare the file

@@ -9,7 +9,10 @@ import { schema } from '@cyggie/db'
  * `self_name` even when the inbound payload didn't carry one.
  *
  * Fallback chain mirrors migration 0022's backfill: display_name →
- * "first_name last_name" → email → null. Single PK-indexed read.
+ * email → null. (The Postgres users table doesn't carry
+ * first_name/last_name — those columns live only on desktop SQLite per
+ * migration 033 — so unlike SQLite migration 107 there's no name-parts
+ * step here.) Single PK-indexed read.
  */
 export async function deriveSelfNameFromUser(
   db: NodePgDatabase<typeof schema>,
@@ -19,16 +22,12 @@ export async function deriveSelfNameFromUser(
     where: eq(schema.users.id, userId),
     columns: {
       displayName: true,
-      firstName: true,
-      lastName: true,
       email: true,
     },
   })
   if (!user) return null
   const display = user.displayName?.trim()
   if (display) return display
-  const full = [user.firstName, user.lastName].filter(Boolean).join(' ').trim()
-  if (full) return full
   const email = user.email?.trim()
   if (email) return email
   return null

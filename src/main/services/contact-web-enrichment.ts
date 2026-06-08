@@ -217,7 +217,7 @@ async function inferWithLlm(
     const parsed = JSON.parse(payload) as { title?: unknown; linkedinUrl?: unknown }
     const title = typeof parsed.title === 'string' ? parsed.title.trim() : null
     const linkedinUrl = normalizeLinkedinUrl(
-      typeof parsed.linkedinUrl === 'string' ? parsed.linkedinUrl : null
+      typeof parsed.linkedinUrl === 'string' ? parsed.linkedinUrl : ''
     )
 
     return {
@@ -381,7 +381,7 @@ export async function enrichContactsViaWebLookup(
       if ((stillMissingLinkedin && !inferredLinkedinUrl) || (stillMissingTitle && !inferredTitle)) {
         const llmGuess = await inferWithLlm(latest, domain, pages)
         if (!inferredLinkedinUrl) {
-          inferredLinkedinUrl = normalizeLinkedinUrl(llmGuess.linkedinUrl)
+          inferredLinkedinUrl = normalizeLinkedinUrl(llmGuess.linkedinUrl ?? '')
         }
         if (!inferredTitle) {
           inferredTitle = llmGuess.title?.trim() || null

@@ -25,10 +25,11 @@ export function registerTemplateHandlers(): void {
         category: TemplateCategory
         systemPrompt: string
         userPromptTemplate: string
+        instructions?: string | null
         outputFormat: OutputFormat
       }
     ) => {
-      return templateRepo.createTemplate(data)
+      return templateRepo.createTemplate({ ...data, instructions: data.instructions ?? null })
     }
   )
 

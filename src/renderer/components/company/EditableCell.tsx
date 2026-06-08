@@ -156,7 +156,7 @@ function EditableCellInner({
   const [errorMsg, setErrorMsg] = useState('')
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement>(null)
   const cellRootRef = useRef<HTMLDivElement>(null)
-  const errorTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const savedValueRef = useRef<unknown>(value)
   // Mirror cellState so the unmount cleanup can read the final value without
   // adding it as a dep (which would re-fire the cleanup on every state change).

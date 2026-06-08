@@ -15,6 +15,12 @@ declare module '*.md?raw' {
   export default content
 }
 
+// Static image assets — Vite resolves these to a URL string at build time.
+declare module '*.png' {
+  const src: string
+  export default src
+}
+
 interface ImportMetaEnv {
   readonly DEV: boolean
   readonly PROD: boolean

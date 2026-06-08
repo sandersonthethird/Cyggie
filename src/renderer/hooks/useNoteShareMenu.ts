@@ -35,7 +35,7 @@ export function useNoteShareMenu(noteId: string | null, contentDraft: string) {
     setShareMenuOpen(false)
     try {
       const result = await api.invoke<WebShareResponse>(IPC_CHANNELS.WEB_SHARE_CREATE_NOTE, noteId)
-      if (result.success && result.url) {
+      if (result.success) {
         await navigator.clipboard.writeText(result.url)
         notice.show({ variant: 'success', title: 'Share link copied to clipboard', url: result.url })
       } else {

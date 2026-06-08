@@ -456,7 +456,7 @@ export class SyncPullService {
     return row?.last_pulled_lamport ?? '0'
   }
 
-  private clock() {
+  private clock(): NonNullable<SyncPullServiceConfig['clock']> {
     return (
       this.cfg.clock ?? {
         setInterval,

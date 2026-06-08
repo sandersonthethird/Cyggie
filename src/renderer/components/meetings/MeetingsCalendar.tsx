@@ -30,6 +30,7 @@ const STAGE_COLORS: Record<CompanyPipelineStage, string> = {
   diligence: '#3B82F6',     // blue
   decision: '#22C55E',      // green
   documentation: '#F59E0B', // amber
+  portfolio: '#14B8A6',     // teal
   pass: '#9CA3AF',          // gray
 }
 

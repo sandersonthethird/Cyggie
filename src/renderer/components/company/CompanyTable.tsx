@@ -284,7 +284,7 @@ export function CompanyTable({
     const originals = new Map(
       ids.map((id) => {
         const company = companies.find((c) => c.id === id)
-        return [id, company ? (company as Record<string, unknown>)[bulkEditField] : null]
+        return [id, company ? (company as unknown as Record<string, unknown>)[bulkEditField] : null]
       })
     )
 

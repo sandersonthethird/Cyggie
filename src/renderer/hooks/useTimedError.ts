@@ -19,7 +19,7 @@ export interface TimedError {
  */
 export function useTimedError(autoClearMs?: number): TimedError {
   const [error, setError] = useState<string | null>(null)
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const show = useCallback((msg: string) => {
     if (timerRef.current) clearTimeout(timerRef.current)

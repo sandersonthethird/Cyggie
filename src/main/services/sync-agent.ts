@@ -316,7 +316,7 @@ export class SyncAgent {
 
   // -- internals --------------------------------------------------------------
 
-  private clock() {
+  private clock(): NonNullable<SyncAgentConfig['clock']> {
     return (
       this.cfg.clock ?? {
         setInterval: setInterval,

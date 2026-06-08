@@ -4,7 +4,11 @@ import * as decisionRepo from '@cyggie/db/sqlite/repositories/company-decision-l
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import { autoAddDecisionToDigest } from '@cyggie/db/sqlite/repositories/partner-meeting.repo'
-import type { CompanyDecisionLog } from '../../shared/types/company'
+import type {
+  CompanyDecisionLog,
+  DecisionLinkedArtifact,
+  DecisionNextStep,
+} from '../../shared/types/company'
 
 export function registerCompanyDecisionHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.COMPANY_DECISION_LOG_LIST, (_event, companyId: string) => {
@@ -37,8 +41,8 @@ export function registerCompanyDecisionHandlers(): void {
         structure?: string | null
         rationale?: string[]
         dependencies?: string[]
-        nextSteps?: Array<{ what: string; byWhom: string | null; dueDate: string | null }>
-        linkedArtifacts?: Array<{ type: string; refId: string | null; label: string }>
+        nextSteps?: DecisionNextStep[]
+        linkedArtifacts?: DecisionLinkedArtifact[]
       }
     ) => {
       if (!data?.companyId) throw new Error('companyId is required')

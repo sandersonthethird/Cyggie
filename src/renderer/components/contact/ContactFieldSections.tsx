@@ -112,7 +112,7 @@ export interface ContactFieldSectionsProps {
   showAllFields: boolean
 
   // Save / IPC
-  save: (field: string, value: unknown) => Promise<unknown>
+  save: (field: string, value: unknown) => Promise<void>
 
   // Grouped hook returns
   sectionOrder: SectionOrderState
@@ -142,7 +142,7 @@ export interface ContactFieldSectionsProps {
   setEditingFieldLabel: (label: string) => void
   handleFieldLabelSave: (id: string, label: string) => Promise<void>
   getPinnedFieldValue: (field: CustomFieldWithValue) => string | number | boolean | null
-  handlePinnedFieldSave: (field: CustomFieldWithValue, value: string | number | boolean | null) => Promise<unknown>
+  handlePinnedFieldSave: (field: CustomFieldWithValue, value: string | number | boolean | null) => Promise<void>
 
   // Section drag
   syncedSectionDragProps: (sectionKey: string) => HTMLAttributes<HTMLDivElement>
