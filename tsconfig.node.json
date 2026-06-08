@@ -29,6 +29,12 @@
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
-    "electron.vite.config.ts"
+    "electron.vite.config.ts",
+    // Workspace packages are imported via the @cyggie/* path aliases above.
+    // List their sources so composite mode doesn't flag every transitively
+    // imported file (e.g. connection.ts → migrations/*) with TS6307.
+    "packages/db/src/**/*.ts",
+    "packages/services/src/**/*.ts",
+    "packages/shared/src/**/*.ts"
   ]
 }
