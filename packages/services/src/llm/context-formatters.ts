@@ -129,42 +129,10 @@ export function formatMeetingsSection(opts: {
   return blocks.join('\n\n')
 }
 
-// ── Email helpers ──────────────────────────────────────────────────────
-
-export interface EmailRef {
-  fromEmail: string
-  subject: string | null
-  receivedAt?: string | null
-  sentAt?: string | null
-  bodyText?: string | null
-}
-
-const MIN_EMAIL_BODY_CHARS = 50
-
-/**
- * Renders email correspondence as `From / Subject / Date / body` blocks
- * separated by `---`. Skips bodies under MIN_EMAIL_BODY_CHARS (likely auto-
- * replies, calendar invites). Date prefers receivedAt over sentAt; falls
- * back to '' if neither is present.
- */
-export function formatEmailsSection(emails: EmailRef[], caps: SectionCaps): string {
-  const limit = caps.maxItems ?? emails.length
-  const trimmed = emails.slice(0, limit)
-  const parts: string[] = []
-  let total = 0
-  for (const e of trimmed) {
-    if (!e.bodyText || e.bodyText.trim().length < MIN_EMAIL_BODY_CHARS) continue
-    if (total >= caps.total) break
-    const body = e.bodyText.length > caps.perItem
-      ? e.bodyText.substring(0, caps.perItem) + '...'
-      : e.bodyText
-    const date = e.receivedAt || e.sentAt || ''
-    parts.push(`From: ${e.fromEmail}\nSubject: ${e.subject || '(no subject)'}\nDate: ${date}\n\n${body}`)
-    total += body.length
-  }
-  if (parts.length === 0) return ''
-  return '## Email Correspondence\n' + parts.join('\n\n---\n\n')
-}
+// Email rendering moved to the shared, thread-reconstructing `renderEmailRows`
+// in ./email-signal (decisions 1A/2A + Part F). The old per-message
+// `formatEmailsSection` / `EmailRef` were removed — both desktop and gateway
+// now build email context through that single helper.
 
 // ── Notes helpers ──────────────────────────────────────────────────────
 

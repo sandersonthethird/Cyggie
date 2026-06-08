@@ -198,25 +198,55 @@ export default function Layout() {
     navigate('/tasks')
   }
 
-  // Panel width is driven by the panel store (default 400, resizable). Becomes
-  // 0 when the panel is closed or popped (full-screen route active) so the
-  // grid third column collapses and main reflows.
+  // The chat panel always floats over the content as an absolute overlay — it
+  // never takes a grid column, so opening it never reflows/compresses the page.
+  // Desktop: resizable (store width), no dimming scrim, dashboard stays live.
+  // Narrow: fixed-width overlay with a dimming backdrop that taps to close.
   const panelIsOpen = useChatPanelStore((s) => s.isOpen)
   const panelPopped = useChatPanelStore((s) => s.popped)
   const panelWidth = useChatPanelStore((s) => s.width)
   const isNarrow = useMediaQuery('(max-width: 1024px)')
-  // Mobile/narrow viewport: rail becomes an overlay, doesn't take a grid column.
-  const useOverlay = panelIsOpen && !panelPopped && isNarrow
-  const useReflow = panelIsOpen && !panelPopped && !isNarrow
-  const effectivePanelWidth = useReflow ? `${panelWidth}px` : '0px'
   const closePanel = useChatPanelStore((s) => s.setOpen)
+
+  // Presence state machine — keep the panel mounted through its slide-out:
+  //
+  //   wantOpen=true  ──► render=true, closing=false   (slide-IN via .panelOverlay)
+  //   wantOpen=false ─► closing=true (slide-OUT)  ──[220ms]──► render=false
+  //        (prefers-reduced-motion: skip the 220ms, unmount immediately)
+  //
+  const wantPanel = panelIsOpen && !panelPopped
+  const [renderPanel, setRenderPanel] = useState(wantPanel)
+  const [panelClosing, setPanelClosing] = useState(false)
+  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+  useEffect(() => {
+    if (wantPanel) {
+      setRenderPanel(true)
+      setPanelClosing(false)
+      return
+    }
+    if (!renderPanel) return // nothing mounted → nothing to animate out
+    if (reduceMotion) {
+      setRenderPanel(false) // skip exit animation
+      return
+    }
+    setPanelClosing(true)
+    const t = setTimeout(() => {
+      setRenderPanel(false)
+      setPanelClosing(false)
+    }, 220)
+    return () => clearTimeout(t)
+    // renderPanel intentionally omitted: re-running on its own change would
+    // re-arm the close timer; we only react to want/motion transitions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantPanel, reduceMotion])
 
   return (
     <div
       className={`${styles.layout} ${sidebarMode === 'collapsed' ? styles.sidebarCollapsed : ''}`}
       style={{
         '--sidebar-width': sidebarMode === 'collapsed' ? 'var(--sidebar-width-collapsed)' : '240px',
-        '--panel-width': effectivePanelWidth,
+        // Panel is an absolute overlay now; the grid's third column stays empty.
+        '--panel-width': '0px',
       } as React.CSSProperties}
     >
       <div className={styles.titlebar}>
@@ -261,8 +291,15 @@ export default function Layout() {
               <Outlet />
             </div>
           </div>
-          {useReflow && <AIChatPanel overlay={false} />}
-          {useOverlay && <AIChatPanel overlay onBackdropTap={() => closePanel(false)} />}
+          {renderPanel && (
+            <AIChatPanel
+              closing={panelClosing}
+              dimmed={isNarrow}
+              resizable={!isNarrow}
+              width={isNarrow ? undefined : panelWidth}
+              onBackdropTap={isNarrow ? () => closePanel(false) : undefined}
+            />
+          )}
         </div>
       </PanelOutletProvider>
       {bannerEvent && (

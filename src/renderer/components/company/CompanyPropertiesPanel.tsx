@@ -17,10 +17,14 @@ import { usePreferencesStore } from '../../stores/preferences.store'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
 import { ChipSelect } from '../crm/ChipSelect'
-import { AddFieldDropdown } from '../crm/AddFieldDropdown'
+import { AddFieldDropdown, type FieldEditor } from '../crm/AddFieldDropdown'
+import { PropertyRow, type PropertyRowType } from '../crm/PropertyRow'
+import { MultiCompanyPicker } from '../crm/MultiCompanyPicker'
+import { PolymorphicEntitySearch } from '../crm/PolymorphicEntitySearch'
 import { computeChipDelta } from '../../utils/chip-delta'
 import { usePinnedMigration } from '../../hooks/usePinnedMigration'
-import { COMPANY_HARDCODED_FIELDS } from '../../constants/companyFields'
+import { COMPANY_HARDCODED_FIELDS, COMPANY_HARDCODED_FIELD_MAP } from '../../constants/companyFields'
+import { COMPANY_FIELD_META } from '../../constants/companyFieldMeta'
 import { resolveLayoutPref, saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
 import {
   COLUMN_DEFS,
@@ -33,6 +37,7 @@ import {
   BUSINESS_MODELS,
   PRODUCT_STAGES,
   INDUSTRY_OPTIONS,
+  TARGET_INVESTMENT_STAGES,
 } from './companyColumns'
 import { useTakeaways } from '../../hooks/useTakeaways'
 import { useUserNote } from '../../hooks/useUserNote'
@@ -220,6 +225,8 @@ export function CompanyPropertiesPanel({
   const productStageDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'productStage')
   const employeeCountDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'employeeCountRange')
   const industryDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'industry')
+  const targetInvestmentStageDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'targetInvestmentStage')
+  const targetInvestmentSectorDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'targetInvestmentSector')
 
   const entityTypeOptions = mergeBuiltinOptions(ENTITY_TYPES, entityTypeDef?.optionsJson ?? null)
   const stageOptions = mergeBuiltinOptions(STAGES, stageDef?.optionsJson ?? null)
@@ -229,6 +236,8 @@ export function CompanyPropertiesPanel({
   const businessModelOptions = mergeBuiltinOptions(BUSINESS_MODELS, businessModelDef?.optionsJson ?? null)
   const productStageOptions = mergeBuiltinOptions(PRODUCT_STAGES, productStageDef?.optionsJson ?? null)
   const industryOptions = mergeBuiltinOptions(INDUSTRY_OPTIONS, industryDef?.optionsJson ?? null)
+  const targetInvestmentStageOptions = mergeBuiltinOptions(TARGET_INVESTMENT_STAGES, targetInvestmentStageDef?.optionsJson ?? null)
+  const targetInvestmentSectorOptions = mergeBuiltinOptions(INDUSTRY_OPTIONS, targetInvestmentSectorDef?.optionsJson ?? null)
   const employeeRangeOptions = mergeBuiltinOptions(
     EMPLOYEE_RANGES.map(v => ({ value: v, label: v })),
     employeeCountDef?.optionsJson ?? null
@@ -387,6 +396,152 @@ export function CompanyPropertiesPanel({
       () => api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input),
       () => setCustomFields(prev),
     )
+  }
+
+  // ── Inline value editor resolver for the Add Field modal ──
+  // Returns the editor descriptor for a field key, or null if the key is
+  // unknown. Reuses the panel's already-computed options/defs and save handlers
+  // so the modal can edit any field type without duplicating that wiring.
+  function hardcodedAddOption(fieldKey: string): ((opt: string) => Promise<void>) | undefined {
+    const defByKey: Record<string, { id: string; optionsJson: string | null } | undefined> = {
+      industry: industryDef ? { id: industryDef.id, optionsJson: industryDef.optionsJson } : undefined,
+      targetCustomer: targetCustomerDef ? { id: targetCustomerDef.id, optionsJson: targetCustomerDef.optionsJson } : undefined,
+      businessModel: businessModelDef ? { id: businessModelDef.id, optionsJson: businessModelDef.optionsJson } : undefined,
+      productStage: productStageDef ? { id: productStageDef.id, optionsJson: productStageDef.optionsJson } : undefined,
+      targetInvestmentStage: targetInvestmentStageDef ? { id: targetInvestmentStageDef.id, optionsJson: targetInvestmentStageDef.optionsJson } : undefined,
+      targetInvestmentSector: targetInvestmentSectorDef ? { id: targetInvestmentSectorDef.id, optionsJson: targetInvestmentSectorDef.optionsJson } : undefined,
+      employeeCountRange: employeeCountDef ? { id: employeeCountDef.id, optionsJson: employeeCountDef.optionsJson } : undefined,
+      round: roundDef ? { id: roundDef.id, optionsJson: roundDef.optionsJson } : undefined,
+    }
+    const d = defByKey[fieldKey]
+    return d ? async (opt) => { await addCustomFieldOption(d.id, d.optionsJson, opt) } : undefined
+  }
+
+  function getFieldEditor(fieldKey: string): FieldEditor | null {
+    // ── Custom fields ──
+    if (fieldKey.startsWith('custom:')) {
+      const f = customFields.find(c => c.id === fieldKey.slice('custom:'.length))
+      if (!f) return null
+      const opts = (() => { try { return f.optionsJson ? JSON.parse(f.optionsJson) : [] } catch { return [] } })()
+      const onAddOption = (f.fieldType === 'select' || f.fieldType === 'multiselect')
+        ? async (newOption: string) => {
+            const opt = newOption.trim().slice(0, 200)
+            await addCustomFieldOption(f.id, f.optionsJson, opt)
+            setCustomFields(prev => prev.map(x => {
+              if (x.id !== f.id) return x
+              const cur: string[] = (() => { try { return JSON.parse(x.optionsJson ?? '[]') } catch { return [] } })()
+              return { ...x, optionsJson: JSON.stringify([...cur, opt]) }
+            }))
+          }
+        : undefined
+      return {
+        initialValue: getPinnedFieldValue(f),
+        renderEditor: (value, onChange) => (
+          <PropertyRow
+            label={f.label}
+            value={value as string | number | boolean | null}
+            type={f.fieldType as PropertyRowType}
+            options={opts}
+            editMode
+            onSave={async (v) => onChange(v)}
+            onAddOption={onAddOption}
+          />
+        ),
+        commit: (value) => handlePinnedFieldSave(f, value as string | number | boolean | null).then(() => {}),
+      }
+    }
+
+    // ── Hardcoded fields ──
+    const meta = COMPANY_FIELD_META[fieldKey]
+    if (!meta) return null
+    type Investor = { id: string; name: string; domain: string | null }
+    if (meta.complex) {
+      switch (fieldKey) {
+        case 'leadInvestor':
+          return {
+            initialValue: company.leadInvestorCompany ? [company.leadInvestorCompany] : [],
+            renderEditor: (value, onChange) => (
+              <MultiCompanyPicker value={(value as Investor[]) ?? []} onChange={(v) => onChange(v)} maxChips={1} />
+            ),
+            commit: async (value) => { const v = (value as Investor[]) ?? []; onUpdate({ leadInvestorCompanyId: v.length > 0 ? v[0].id : null }) },
+          }
+        case 'coInvestors':
+          return {
+            initialValue: company.coInvestorsList,
+            renderEditor: (value, onChange) => <MultiCompanyPicker value={(value as Investor[]) ?? []} onChange={(v) => onChange(v)} />,
+            commit: async (value) => { onUpdate({ coInvestorsList: (value as Investor[]) ?? [] }) },
+          }
+        case 'priorInvestors':
+          return {
+            initialValue: company.priorInvestorsList,
+            renderEditor: (value, onChange) => <MultiCompanyPicker value={(value as Investor[]) ?? []} onChange={(v) => onChange(v)} />,
+            commit: async (value) => { onUpdate({ priorInvestorsList: (value as Investor[]) ?? [] }) },
+          }
+        case 'subsequentInvestors':
+          return {
+            initialValue: company.subsequentInvestorsList,
+            renderEditor: (value, onChange) => <MultiCompanyPicker value={(value as Investor[]) ?? []} onChange={(v) => onChange(v)} />,
+            commit: async (value) => { onUpdate({ subsequentInvestorsList: (value as Investor[]) ?? [] }) },
+          }
+        case 'sourceEntityId': {
+          type SourceRef = { id: string; type: string; name: string } | null
+          return {
+            initialValue: company.sourceEntityId
+              ? { id: company.sourceEntityId, type: company.sourceEntityType ?? 'company', name: company.sourceEntityName ?? company.sourceEntityId }
+              : null,
+            renderEditor: (value, onChange) => {
+              const v = value as SourceRef
+              if (v) {
+                return (
+                  <span className={styles.chipInline}>
+                    <span>{v.name}</span>
+                    <button className={styles.chipRemoveInline} onClick={() => onChange(null)} title="Clear">×</button>
+                  </span>
+                )
+              }
+              return (
+                <PolymorphicEntitySearch
+                  onSelect={(ent) => onChange({ id: ent.id, type: ent.type, name: ent.name })}
+                  onClose={() => {}}
+                  placeholder="Search company or contact…"
+                />
+              )
+            },
+            commit: async (value) => { const v = value as SourceRef; onUpdate({ sourceEntityId: v?.id ?? null, sourceEntityType: v?.type ?? null }) },
+          }
+        }
+        default:
+          return null
+      }
+    }
+
+    // ── Simple hardcoded fields (plain PropertyRow) ──
+    const optionCtx = {
+      industry: industryOptions,
+      targetCustomer: targetCustomerOptions,
+      businessModel: businessModelOptions,
+      productStage: productStageOptions,
+      employeeRange: employeeRangeOptions,
+      round: roundOptions,
+      targetInvestmentStage: targetInvestmentStageOptions,
+      targetInvestmentSector: targetInvestmentSectorOptions,
+    }
+    const label = COMPANY_HARDCODED_FIELD_MAP.get(fieldKey)?.label ?? fieldKey
+    return {
+      initialValue: (company as unknown as Record<string, unknown>)[fieldKey] ?? null,
+      renderEditor: (value, onChange) => (
+        <PropertyRow
+          label={label}
+          value={value as string | number | boolean | null}
+          type={meta.type}
+          options={meta.getOptions?.(optionCtx)}
+          editMode
+          onSave={async (v) => onChange(v)}
+          onAddOption={hardcodedAddOption(fieldKey)}
+        />
+      ),
+      commit: (value) => save(fieldKey, meta.coerceNull ? ((value as unknown as string) || null) : value).then(() => {}),
+    }
   }
 
   const sectionableFields = useMemo(() => customFields.filter(f => !f.isBuiltin), [customFields])
@@ -1007,13 +1162,15 @@ export function CompanyPropertiesPanel({
         {/* Variant C: single white card containing stepper / sections / footer */}
         <PropertiesCard
           topBand={
-            <PipelineStepper
-              stages={COMPANY_PIPELINE_STAGES_FULL}
-              currentValue={company.pipelineStage}
-              passedFromStage={company.passedFromStage}
-              daysInStage={daysInStage}
-              onStageClick={(value) => saveWithDecisionPrompt('pipelineStage', value)}
-            />
+            company.pipelineStage ? (
+              <PipelineStepper
+                stages={COMPANY_PIPELINE_STAGES_FULL}
+                currentValue={company.pipelineStage}
+                passedFromStage={company.passedFromStage}
+                daysInStage={daysInStage}
+                onStageClick={(value) => saveWithDecisionPrompt('pipelineStage', value)}
+              />
+            ) : undefined
           }
           footer={
             <PropertiesCardFooter
@@ -1057,6 +1214,8 @@ export function CompanyPropertiesPanel({
               employeeRange: employeeRangeOptions,
               round: roundOptions,
               industry: industryOptions,
+              targetInvestmentStage: targetInvestmentStageOptions,
+              targetInvestmentSector: targetInvestmentSectorOptions,
             }}
             builtinDefs={{
               targetCustomer: targetCustomerDef ? { id: targetCustomerDef.id, optionsJson: targetCustomerDef.optionsJson } : undefined,
@@ -1065,6 +1224,8 @@ export function CompanyPropertiesPanel({
               employeeCount: employeeCountDef ? { id: employeeCountDef.id, optionsJson: employeeCountDef.optionsJson } : undefined,
               round: roundDef ? { id: roundDef.id, optionsJson: roundDef.optionsJson } : undefined,
               industry: industryDef ? { id: industryDef.id, optionsJson: industryDef.optionsJson } : undefined,
+              targetInvestmentStage: targetInvestmentStageDef ? { id: targetInvestmentStageDef.id, optionsJson: targetInvestmentStageDef.optionsJson } : undefined,
+              targetInvestmentSector: targetInvestmentSectorDef ? { id: targetInvestmentSectorDef.id, optionsJson: targetInvestmentSectorDef.optionsJson } : undefined,
             }}
             fieldSources={fieldSources}
             onAddInSection={(sectionKey) => openAddFieldDropdown(sectionKey)}
@@ -1092,6 +1253,7 @@ export function CompanyPropertiesPanel({
               fieldPlacements={fieldVisibility.fieldPlacements}
               sections={COMPANY_SECTIONS.filter(s => s.key !== 'summary')}
               defaultSection={addFieldSection ?? undefined}
+              getFieldEditor={getFieldEditor}
               onToggleField={(key, checked) => {
                 if (checked) fieldVisibility.addToAddedFields([key])
                 else fieldVisibility.removeFromAddedFields(key)

@@ -20,6 +20,7 @@ import type {
   CompanyMeetingRef,
   CompanyContactRef,
   CompanyEmailRef,
+  ChatEmailMessage,
   CompanyFileRef,
   CompanyTimelineItem,
   CompanyDedupAction,
@@ -75,6 +76,8 @@ interface CompanyRow {
   business_model: string | null
   product_stage: string | null
   revenue_model: string | null
+  target_investment_stage: string | null
+  target_investment_sector: string | null
   arr: number | null
   burn_rate: number | null
   runway_months: number | null
@@ -322,6 +325,12 @@ interface EmailMessageRow {
   thread_message_count: number
   participants_json: string
   account_email?: string | null
+  labels_json?: string | null
+  has_attachments?: number | null
+  link_confidence?: number | null
+  link_manual?: number | null
+  thread_has_inbound?: number | null
+  thread_has_outbound?: number | null
 }
 
 function mapEmailRow(row: EmailMessageRow): CompanyEmailRef {
@@ -341,6 +350,11 @@ function mapEmailRow(row: EmailMessageRow): CompanyEmailRef {
     threadGroup: row.thread_group,
     participants: parseEmailParticipants(row.participants_json),
     accountEmail: row.account_email ?? null,
+    labelsJson: row.labels_json ?? null,
+    hasAttachments: row.has_attachments === 1,
+    linkConfidence: row.link_confidence ?? null,
+    linkedBy: row.link_manual === 1 ? 'manual' : row.link_manual === 0 ? 'auto' : null,
+    isTwoWay: row.thread_has_inbound === 1 && row.thread_has_outbound === 1,
   }
 }
 
@@ -388,6 +402,8 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     businessModel: row.business_model ?? null,
     productStage: row.product_stage ?? null,
     revenueModel: row.revenue_model ?? null,
+    targetInvestmentStage: row.target_investment_stage ?? null,
+    targetInvestmentSector: row.target_investment_sector ?? null,
     arr: row.arr ?? null,
     burnRate: row.burn_rate ?? null,
     runwayMonths: row.runway_months ?? null,
@@ -547,6 +563,8 @@ function baseCompanySelect(whereClause = '', opts?: BaseSelectOpts): string {
       c.business_model,
       c.product_stage,
       c.revenue_model,
+      c.target_investment_stage,
+      c.target_investment_sector,
       c.arr,
       c.burn_rate,
       c.runway_months,
@@ -957,6 +975,7 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         linkedinCompanyUrl: nullStr, twitterHandle: nullStr, crunchbaseUrl: nullStr,
         angellistUrl: nullStr, targetCustomer: nullStr, businessModel: nullStr,
         productStage: nullStr, revenueModel: nullStr, foundingYear: nullNum,
+        targetInvestmentStage: nullStr, targetInvestmentSector: nullStr,
         employeeCountRange: nullStr, burnRate: nullNum, runwayMonths: nullNum,
         totalFundingRaised: nullNum, lastFundingDate: nullStr, leadInvestor: nullStr,
         sourceType: nullStr, sourceEntityType: null, sourceEntityId: nullStr,
@@ -1290,6 +1309,8 @@ const COMPANY_UPDATABLE_FIELDS = {
   businessModel: 'business_model',
   productStage: 'product_stage',
   revenueModel: 'revenue_model',
+  targetInvestmentStage: 'target_investment_stage',
+  targetInvestmentSector: 'target_investment_sector',
   arr: 'arr',
   burnRate: 'burn_rate',
   runwayMonths: 'runway_months',
@@ -1667,7 +1688,9 @@ const MERGEABLE_COLUMNS = [
   'founding_year', 'employee_count_range', 'hq_address',
   'linkedin_company_url', 'twitter_handle', 'crunchbase_url',
   'angellist_url', 'industry', 'target_customer', 'business_model',
-  'product_stage', 'revenue_model', 'arr', 'burn_rate', 'runway_months',
+  'product_stage', 'revenue_model',
+  'target_investment_stage', 'target_investment_sector',
+  'arr', 'burn_rate', 'runway_months',
   'last_funding_date', 'total_funding_raised', 'lead_investor',
   'source_type', 'source_entity_type', 'source_entity_id',
   'relationship_owner', 'deal_source', 'warm_intro_source',
@@ -1711,6 +1734,8 @@ const MERGEABLE_COLUMN_LABELS: Record<string, string> = {
   business_model: 'Business model',
   product_stage: 'Product stage',
   revenue_model: 'Revenue model',
+  target_investment_stage: 'Target investment stage',
+  target_investment_sector: 'Target investment sector',
   arr: 'ARR',
   burn_rate: 'Burn rate',
   runway_months: 'Runway (months)',
@@ -2224,6 +2249,7 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
     'description', 'city', 'state', 'stage', 'employee_count_range',
     'linkedin_company_url', 'twitter_handle', 'crunchbase_url', 'sector',
     'target_customer', 'business_model', 'product_stage', 'revenue_model',
+    'target_investment_stage', 'target_investment_sector',
     'lead_investor', 'co_investors', 'round', 'key_takeaways', 'key_takeaways_user_note'
   ]
   const NUMERIC_RICHNESS_COLUMNS = ['founding_year', 'post_money_valuation', 'raise_size']
@@ -2996,7 +3022,10 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
           em.updated_at,
           COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
           COALESCE(em.thread_id, em.id) AS thread_group,
-          em.account_id
+          em.account_id,
+          em.direction,
+          em.labels_json,
+          em.has_attachments
         FROM email_company_links l
         JOIN email_messages em ON em.id = l.message_id
         WHERE l.company_id = ?
@@ -3015,7 +3044,10 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
           em.updated_at,
           COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
           COALESCE(em.thread_id, em.id) AS thread_group,
-          em.account_id
+          em.account_id,
+          em.direction,
+          em.labels_json,
+          em.has_attachments
         FROM email_message_participants p
         JOIN email_messages em ON em.id = p.message_id
         WHERE p.contact_id IN (SELECT id FROM company_contact_ids)
@@ -3038,7 +3070,13 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
             ORDER BY datetime(sort_at) DESC, datetime(updated_at) DESC, id DESC
           ) AS row_num,
           COUNT(*) OVER (PARTITION BY thread_group) AS thread_message_count,
-          account_id
+          account_id,
+          labels_json,
+          has_attachments,
+          MAX(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END)
+            OVER (PARTITION BY thread_group) AS thread_has_inbound,
+          MAX(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END)
+            OVER (PARTITION BY thread_group) AS thread_has_outbound
         FROM linked
       ),
       participant_rows AS (
@@ -3083,6 +3121,15 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
             email
         ) source
         GROUP BY source.message_id
+      ),
+      company_link_meta AS (
+        SELECT
+          message_id,
+          MAX(confidence) AS link_confidence,
+          MAX(CASE WHEN linked_by = 'manual' THEN 1 ELSE 0 END) AS link_manual
+        FROM email_company_links
+        WHERE company_id = ?
+        GROUP BY message_id
       )
       SELECT
         ranked.id,
@@ -3098,15 +3145,22 @@ export function listCompanyEmails(companyId: string): CompanyEmailRef[] {
         COALESCE(ranked.thread_id, ranked.id) AS thread_group,
         ranked.thread_message_count,
         COALESCE(participants.participants_json, '[]') AS participants_json,
-        ea.account_email
+        ea.account_email,
+        ranked.labels_json,
+        ranked.has_attachments,
+        ranked.thread_has_inbound,
+        ranked.thread_has_outbound,
+        clm.link_confidence,
+        clm.link_manual
       FROM ranked
       LEFT JOIN participants ON participants.message_id = ranked.id
       LEFT JOIN email_accounts ea ON ea.id = ranked.account_id
+      LEFT JOIN company_link_meta clm ON clm.message_id = ranked.id
       WHERE ranked.row_num = 1
       ORDER BY datetime(ranked.sort_at) DESC, ranked.id DESC
       LIMIT 200
     `)
-    .all(companyId, companyId, companyId) as EmailMessageRow[]
+    .all(companyId, companyId, companyId, companyId) as EmailMessageRow[]
 
   return rows.map(mapEmailRow)
 }
@@ -3156,6 +3210,119 @@ export function getCompanyEmailById(messageId: string): CompanyEmailRef | null {
     `)
     .get(messageId) as EmailMessageRow | undefined
   return row ? mapEmailRow(row) : null
+}
+
+// =============================================================================
+// listCompanyEmailMessagesForChat — Part F (thread reconstruction).
+//
+// Unlike listCompanyEmails (one deduped row per thread, for the email-list UI),
+// this returns EVERY message of the top-`cap` threads (ranked by recency) so the
+// chat context builder can reconstruct the full back-and-forth. Same company
+// link-or-participant inclusion as listCompanyEmails; UNION dedupes a message
+// that matches both arms. Ordered by thread then time ASC (oldest→newest).
+// =============================================================================
+export interface ChatEmailRow {
+  id: string
+  thread_group: string
+  from_name: string | null
+  from_email: string
+  subject: string | null
+  direction: string | null
+  body_text: string | null
+  labels_json: string | null
+  has_attachments: number | null
+  received_at: string | null
+  sent_at: string | null
+  link_confidence: number | null
+  link_manual: number | null
+}
+
+export function mapChatEmailRow(r: ChatEmailRow): ChatEmailMessage {
+  return {
+    messageId: r.id,
+    threadGroup: r.thread_group,
+    fromName: r.from_name,
+    fromEmail: r.from_email,
+    subject: r.subject,
+    direction: r.direction,
+    bodyText: r.body_text,
+    labelsJson: r.labels_json,
+    hasAttachments: r.has_attachments === 1,
+    receivedAt: r.received_at,
+    sentAt: r.sent_at,
+    linkConfidence: r.link_confidence,
+    linkedBy: r.link_manual === 1 ? 'manual' : r.link_manual === 0 ? 'auto' : null,
+  }
+}
+
+export function listCompanyEmailMessagesForChat(companyId: string, cap: number): ChatEmailMessage[] {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      WITH company_contact_ids AS (
+        SELECT c.id
+        FROM contacts c
+        LEFT JOIN org_company_contacts occ ON occ.contact_id = c.id
+        WHERE occ.company_id = ? OR c.primary_company_id = ?
+      ),
+      linked AS (
+        SELECT
+          em.id, em.thread_id, em.from_name, em.from_email, em.subject,
+          em.direction, em.body_text, em.labels_json, em.has_attachments,
+          em.received_at, em.sent_at,
+          COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
+          COALESCE(em.thread_id, em.id) AS thread_group
+        FROM email_company_links l
+        JOIN email_messages em ON em.id = l.message_id
+        WHERE l.company_id = ?
+        UNION
+        SELECT
+          em.id, em.thread_id, em.from_name, em.from_email, em.subject,
+          em.direction, em.body_text, em.labels_json, em.has_attachments,
+          em.received_at, em.sent_at,
+          COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
+          COALESCE(em.thread_id, em.id) AS thread_group
+        FROM email_message_participants p
+        JOIN email_messages em ON em.id = p.message_id
+        WHERE p.contact_id IN (SELECT id FROM company_contact_ids)
+      ),
+      top_threads AS (
+        SELECT thread_group
+        FROM linked
+        GROUP BY thread_group
+        ORDER BY MAX(datetime(sort_at)) DESC
+        LIMIT ?
+      ),
+      company_link_meta AS (
+        SELECT message_id,
+          MAX(confidence) AS link_confidence,
+          MAX(CASE WHEN linked_by = 'manual' THEN 1 ELSE 0 END) AS link_manual
+        FROM email_company_links
+        WHERE company_id = ?
+        GROUP BY message_id
+      )
+      SELECT
+        linked.id,
+        linked.thread_group,
+        linked.from_name,
+        linked.from_email,
+        linked.subject,
+        linked.direction,
+        linked.body_text,
+        linked.labels_json,
+        linked.has_attachments,
+        linked.received_at,
+        linked.sent_at,
+        clm.link_confidence,
+        clm.link_manual
+      FROM linked
+      JOIN top_threads ON top_threads.thread_group = linked.thread_group
+      LEFT JOIN company_link_meta clm ON clm.message_id = linked.id
+      ORDER BY linked.thread_group, datetime(linked.sort_at) ASC, linked.id ASC
+    `)
+    .all(companyId, companyId, companyId, cap, companyId) as ChatEmailRow[]
+
+  return rows.map(mapChatEmailRow)
 }
 
 export function listCompanyFiles(companyId: string): CompanyFileRef[] {

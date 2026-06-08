@@ -24,9 +24,12 @@ process.env['CYGGIE_SLACK_DEFAULT_USER_ID'] = 'test-ask-user'
 
 // Mock Slack Web API.
 const postMessageMock = vi.fn().mockResolvedValue({ ok: true, ts: '1.0' })
+const reactionsAddMock = vi.fn().mockResolvedValue({ ok: true })
+const reactionsRemoveMock = vi.fn().mockResolvedValue({ ok: true })
 vi.mock('@slack/web-api', () => ({
   WebClient: vi.fn().mockImplementation(() => ({
     chat: { postMessage: postMessageMock },
+    reactions: { add: reactionsAddMock, remove: reactionsRemoveMock },
   })),
 }))
 
@@ -109,6 +112,8 @@ beforeEach(() => {
   // reset every test so per-test expectations are about THIS test only.
   cyggieAskMock.mockReset()
   postMessageMock.mockReset().mockResolvedValue({ ok: true, ts: '1.0' })
+  reactionsAddMock.mockReset().mockResolvedValue({ ok: true })
+  reactionsRemoveMock.mockReset().mockResolvedValue({ ok: true })
   fetchMock.mockReset().mockImplementation(async (url: string) => {
     if (typeof url === 'string' && url.includes('hooks.slack.com')) {
       return new Response('ok', { status: 200 })
@@ -397,5 +402,88 @@ describe('POST /slack/events — app_mention NL Q&A (slice 5)', () => {
     expect(postMessageMock).toHaveBeenCalledWith(
       expect.objectContaining({ text: "Hello! I'm Cyggie." }),
     )
+  })
+})
+
+describe('POST /slack/events — "Cyggie is working" reaction indicator', () => {
+  test('app_mention adds 👀 on the message then removes it after answering', async () => {
+    cyggieAskMock.mockResolvedValueOnce({
+      answer: 'Jane is the CEO.',
+      iterationCount: 1,
+      durationMs: 200,
+      usage: { inputTokens: 50, outputTokens: 10, cacheReadTokens: 0 },
+    })
+
+    await postAppMention('who is the CEO?')
+    await waitFor(() => reactionsRemoveMock.mock.calls.length >= 1, 3000)
+
+    expect(reactionsAddMock).toHaveBeenCalledTimes(1)
+    expect(reactionsAddMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C_TEST',
+        timestamp: '1700000000.000100',
+        name: 'eyes',
+      }),
+    )
+    // Removed with the same coordinates once the answer posted.
+    expect(reactionsRemoveMock).toHaveBeenCalledTimes(1)
+    expect(reactionsRemoveMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C_TEST',
+        timestamp: '1700000000.000100',
+        name: 'eyes',
+      }),
+    )
+    expect(postMessageMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('reaction is still removed when cyggieAsk throws', async () => {
+    cyggieAskMock.mockRejectedValueOnce(
+      new CyggieAskError({ code: 'INTERNAL', message: 'boom' }),
+    )
+
+    await postAppMention('a question that errors')
+    await waitFor(() => reactionsRemoveMock.mock.calls.length >= 1, 3000)
+
+    expect(reactionsAddMock).toHaveBeenCalledTimes(1)
+    expect(reactionsRemoveMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('missing reactions:write scope degrades silently — answer still posts', async () => {
+    cyggieAskMock.mockResolvedValueOnce({
+      answer: 'Acme raised $12.5M.',
+      iterationCount: 1,
+      durationMs: 200,
+      usage: { inputTokens: 50, outputTokens: 10, cacheReadTokens: 0 },
+    })
+    // Slack rejects add with missing_scope; the client wrapper swallows it.
+    reactionsAddMock.mockRejectedValueOnce({ data: { error: 'missing_scope' } })
+
+    await postAppMention('how much did Acme raise?')
+    await waitFor(() => postMessageMock.mock.calls.length >= 1, 3000)
+
+    expect(postMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Acme raised $12.5M.' }),
+    )
+    // Add was attempted but reported not-placed → nothing to remove.
+    expect(reactionsAddMock).toHaveBeenCalledTimes(1)
+    expect(reactionsRemoveMock).not.toHaveBeenCalled()
+  })
+
+  test('slash command does NOT use reactions (keeps placeholder UX)', async () => {
+    cyggieAskMock.mockResolvedValueOnce({
+      answer: 'Acme raised $12.5M.',
+      iterationCount: 1,
+      durationMs: 200,
+      usage: { inputTokens: 50, outputTokens: 10, cacheReadTokens: 0 },
+    })
+
+    await postSlash('how much did Acme raise?')
+    await waitFor(() => fetchMock.mock.calls.length >= 1, 3000)
+    // Give any stray async reaction work a beat to (not) fire.
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(reactionsAddMock).not.toHaveBeenCalled()
+    expect(reactionsRemoveMock).not.toHaveBeenCalled()
   })
 })

@@ -15,12 +15,14 @@ import {
   applyRemoteContactEmails,
   applyRemoteChatSessions,
   applyRemoteChatSessionMessages,
+  applyRemoteUserPreferences,
   type PulledOrgCompanyRow,
   type PulledOrgCompanyAliasRow,
   type PulledContactRow,
   type PulledContactEmailRowWire,
   type PulledChatSessionRow,
   type PulledChatSessionMessageRow,
+  type PulledUserPreferenceRowWire,
 } from '@main/services/sync-remote-apply'
 
 const DEVICE_ID = 'device-test-1'
@@ -76,6 +78,8 @@ function freshDb(): Database.Database {
       business_model TEXT,
       product_stage TEXT,
       revenue_model TEXT,
+      target_investment_stage TEXT,
+      target_investment_sector TEXT,
       arr REAL,
       burn_rate REAL,
       runway_months INTEGER,
@@ -156,7 +160,6 @@ function freshDb(): Database.Database {
       relationship_strength TEXT,
       last_met_event TEXT,
       warm_intro_path TEXT,
-      investor_stage TEXT,
       fund_size REAL,
       typical_check_size_min REAL,
       typical_check_size_max REAL,
@@ -220,6 +223,14 @@ function freshDb(): Database.Database {
       lamport TEXT NOT NULL DEFAULT '0',
       FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
     );
+
+    -- Part E — user_preferences: global key/value (no user_id column on desktop).
+    CREATE TABLE user_preferences (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      lamport TEXT NOT NULL DEFAULT '0'
+    );
   `)
 
   db.prepare('INSERT INTO users (id) VALUES (?)').run(USER_ID)
@@ -261,6 +272,8 @@ function makeCompanyRow(
     businessModel: null,
     productStage: null,
     revenueModel: null,
+    targetInvestmentStage: null,
+    targetInvestmentSector: null,
     arr: null,
     burnRate: null,
     runwayMonths: null,
@@ -337,7 +350,6 @@ function makeContactRow(
     relationshipStrength: null,
     lastMetEvent: null,
     warmIntroPath: null,
-    investorStage: null,
     fundSize: null,
     typicalCheckSizeMin: null,
     typicalCheckSizeMax: null,
@@ -752,5 +764,51 @@ describe('applyRemoteChatSessionMessages', () => {
       'SELECT attachments_json FROM chat_session_messages WHERE id = ?',
     ).get('msg-1') as { attachments_json: string }
     expect(JSON.parse(row.attachments_json)).toEqual([{ kind: 'meeting', id: 'mtg-1' }])
+  })
+})
+
+describe('applyRemoteUserPreferences (Part E)', () => {
+  let db: Database.Database
+  beforeEach(() => { db = freshDb() })
+  afterEach(() => db.close())
+
+  function pref(over: Partial<PulledUserPreferenceRowWire> & { key: string; lamport: string }): PulledUserPreferenceRowWire {
+    return {
+      key: over.key,
+      value: over.value ?? '20',
+      lamport: over.lamport,
+      updatedAt: over.updatedAt ?? '2026-06-01T10:00:00.000Z',
+    }
+  }
+
+  it('inserts a new preference row when none exists locally', () => {
+    const res = applyRemoteUserPreferences(db, DEVICE_ID, USER_ID, [
+      pref({ key: 'emailThreadsPerCompany', value: '35', lamport: '5' }),
+    ])
+    expect(res.appliedIds).toEqual(['emailThreadsPerCompany'])
+    const row = db.prepare('SELECT value, lamport FROM user_preferences WHERE key = ?')
+      .get('emailThreadsPerCompany') as { value: string; lamport: string }
+    expect(row.value).toBe('35')
+    expect(row.lamport).toBe('5')
+  })
+
+  it('skips when local lamport is greater-or-equal (LWW)', () => {
+    db.prepare("INSERT INTO user_preferences (key, value, lamport) VALUES ('emailThreadsPerCompany', '10', '9')").run()
+    applyRemoteUserPreferences(db, DEVICE_ID, USER_ID, [
+      pref({ key: 'emailThreadsPerCompany', value: '99', lamport: '4' }),
+    ])
+    const row = db.prepare('SELECT value FROM user_preferences WHERE key = ?')
+      .get('emailThreadsPerCompany') as { value: string }
+    expect(row.value).toBe('10') // unchanged — incoming lamport lower
+  })
+
+  it('updates on higher lamport', () => {
+    db.prepare("INSERT INTO user_preferences (key, value, lamport) VALUES ('emailThreadsPerCompany', '10', '2')").run()
+    applyRemoteUserPreferences(db, DEVICE_ID, USER_ID, [
+      pref({ key: 'emailThreadsPerCompany', value: '50', lamport: '7' }),
+    ])
+    const row = db.prepare('SELECT value FROM user_preferences WHERE key = ?')
+      .get('emailThreadsPerCompany') as { value: string }
+    expect(row.value).toBe('50')
   })
 })

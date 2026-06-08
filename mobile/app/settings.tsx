@@ -3,10 +3,17 @@ import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import Constants from 'expo-constants'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../lib/auth/store'
 import { useCalendarStore } from '../lib/calendar/store'
 import { fetchMe } from '../lib/api/auth'
+import {
+  fetchPreferences,
+  setPreference,
+  clampEmailThreads,
+  EMAIL_THREADS_PREF_KEY,
+  EMAIL_THREADS_DEFAULT,
+} from '../lib/api/preferences'
 import { colors, radii, spacing, type } from '../theme'
 
 // M6-light: account + diagnostics in one place. Today's reachability is via
@@ -27,6 +34,22 @@ export default function SettingsScreen() {
     staleTime: 5 * 60_000,
   })
   const email = meQuery.data?.email ?? null
+
+  // Part E — per-company email-thread cap (synced preference, honored by chat).
+  const queryClient = useQueryClient()
+  const prefsQuery = useQuery({
+    queryKey: ['user', 'preferences'],
+    queryFn: ({ signal }) => fetchPreferences({ signal }),
+    enabled: authStatus === 'signed_in',
+    staleTime: 60_000,
+  })
+  const emailThreads = clampEmailThreads(
+    Number(prefsQuery.data?.[EMAIL_THREADS_PREF_KEY] ?? EMAIL_THREADS_DEFAULT),
+  )
+  const setEmailThreads = useMutation({
+    mutationFn: (n: number) => setPreference(EMAIL_THREADS_PREF_KEY, String(clampEmailThreads(n))),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['user', 'preferences'] }),
+  })
 
   const appVersion = Constants.expoConfig?.version ?? 'unknown'
   const buildNumber = Constants.expoConfig?.ios?.buildNumber ?? '—'
@@ -89,6 +112,16 @@ export default function SettingsScreen() {
           <Section title="App">
             <Row label="Version" value={`${appVersion} (${buildNumber})`} />
             <Row label="Channel" value={runtimeChannel} />
+          </Section>
+
+          <Section title="AI Chat">
+            <RowStepper
+              label="Emails per company"
+              value={emailThreads}
+              disabled={prefsQuery.isLoading || setEmailThreads.isPending}
+              onDecrement={() => setEmailThreads.mutate(emailThreads - 1)}
+              onIncrement={() => setEmailThreads.mutate(emailThreads + 1)}
+            />
           </Section>
 
           <Section title="Server">
@@ -191,8 +224,66 @@ function RowAction({ icon, label, onPress, destructive }: RowActionProps): React
   )
 }
 
+interface RowStepperProps {
+  label: string
+  value: number
+  disabled?: boolean
+  onDecrement: () => void
+  onIncrement: () => void
+}
+
+function RowStepper({
+  label,
+  value,
+  disabled,
+  onDecrement,
+  onIncrement,
+}: RowStepperProps): React.JSX.Element {
+  return (
+    <View style={styles.row}>
+      <Text style={styles.rowLabel}>{label}</Text>
+      <View style={styles.stepper}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Decrease ${label}`}
+          disabled={disabled}
+          onPress={onDecrement}
+          hitSlop={8}
+          style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed, disabled && styles.stepperDisabled]}
+        >
+          <Ionicons name="remove" size={18} color={colors.text} />
+        </Pressable>
+        <Text style={styles.stepperValue}>{value}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Increase ${label}`}
+          disabled={disabled}
+          onPress={onIncrement}
+          hitSlop={8}
+          style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed, disabled && styles.stepperDisabled]}
+        >
+          <Ionicons name="add" size={18} color={colors.text} />
+        </Pressable>
+      </View>
+    </View>
+  )
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  stepper: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  stepperBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.sm,
+    backgroundColor: colors.bg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  stepperDisabled: { opacity: 0.4 },
+  stepperValue: { color: colors.text, fontSize: type.body, fontWeight: '600', minWidth: 28, textAlign: 'center' },
   safeArea: { backgroundColor: colors.surface },
   bodyArea: { flex: 1, backgroundColor: colors.bg },
 

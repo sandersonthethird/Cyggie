@@ -9,11 +9,20 @@
 // LLM sees the same shape regardless of surface.
 
 import type { FastifyBaseLogger } from 'fastify'
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { stripContextIdPrefix } from '@cyggie/shared'
 import { getDb } from '../../db'
 import { flattenSegments, truncateTranscript } from '../../llm/transcript-flatten'
+import {
+  renderEmailRows,
+  resolveEmailCap,
+  emailCapsForLimit,
+  COMPANY_EMAIL_CAPS,
+  CONTACT_EMAIL_CAPS,
+  EMAIL_THREADS_PREF_KEY,
+  type EmailRowForThread,
+} from '@cyggie/services/llm/email-signal'
 
 // Phase 2.5: defensive cap on aggregated company-context size. Raised
 // 100K → 300K to accommodate per-meeting summary + transcript content
@@ -35,6 +44,66 @@ const NOTES_PER_MEETING_CAP = 2_000
 // Matches the desktop chat's existing 48KB per-item budget at
 // packages/services/src/llm/context-builders.ts:70 (COMPANY_FILE_CAPS).
 const FLAGGED_FILE_PER_FILE_CAP = 8_000
+
+// =============================================================================
+// Part F — tagged-email context (gateway twin of the desktop path). The actual
+// filtering / scoring / thread reconstruction / capping lives in the SHARED
+// renderEmailRows (@cyggie/services/llm/email-signal) so mobile/web and desktop
+// render identical correspondence. Here we only (a) read the per-company cap
+// preference, (b) run a windowed CTE that returns ALL messages of the top-`cap`
+// threads (so reconstruction has them), and (c) map DB rows → EmailRowForThread.
+// =============================================================================
+
+// One row from the windowed email CTE (snake_case from raw SQL).
+interface GatewayEmailQueryRow {
+  scope_id: string // company_id or contact_id, for bucketing
+  thread_group: string
+  message_id: string
+  from_name: string | null
+  from_email: string
+  subject: string | null
+  direction: string | null
+  body_text: string | null
+  labels_json: string | null
+  has_attachments: number | null
+  received_at: Date | string | null
+  sent_at: Date | string | null
+  link_confidence: number | null
+  linked_by: string | null
+}
+
+function toEmailRow(r: GatewayEmailQueryRow): EmailRowForThread {
+  return {
+    threadGroup: r.thread_group,
+    messageId: r.message_id,
+    fromName: r.from_name,
+    fromEmail: r.from_email,
+    subject: r.subject,
+    direction: r.direction,
+    bodyText: r.body_text,
+    labelsJson: r.labels_json,
+    hasAttachments: (r.has_attachments ?? 0) === 1,
+    receivedAt: r.received_at,
+    sentAt: r.sent_at,
+    linkConfidence: r.link_confidence,
+    linkedBy: r.linked_by,
+  }
+}
+
+/** Resolve the per-company email-thread cap from the user's preference row. */
+async function readEmailCap(db: ReturnType<typeof getDb>, userId: string): Promise<number> {
+  const rows = await db
+    .select({ value: schema.userPreferences.value })
+    .from(schema.userPreferences)
+    .where(
+      and(
+        eq(schema.userPreferences.userId, userId),
+        eq(schema.userPreferences.key, EMAIL_THREADS_PREF_KEY),
+      ),
+    )
+    .limit(1)
+  return resolveEmailCap(rows[0]?.value ?? null)
+}
 
 // =============================================================================
 // composeMeetingContextBlock — formats one meeting for the LLM system prompt.
@@ -285,6 +354,82 @@ export async function buildSelectedCompaniesContext(
     filesByCompany.set(f.companyId, bucket)
   }
 
+  // Part F — query 4: tagged emails. Windowed CTE returns ALL messages of the
+  // top-`cap` threads PER company (ranked by recency) so renderEmailRows can
+  // reconstruct the full back-and-forth. Scoped by userId on the message row.
+  //
+  // `linked` UNIONs two arms (identical columns so a message in both dedupes):
+  //   (a) direct email_company_links, and
+  //   (b) email_contact_links for a contact whose primary company is this one —
+  //       the gateway twin of the desktop participant UNION. Company ingest
+  //       writes a contact link for every participant-contact, so this recovers
+  //       outbound replies / participant-only threads (two-way detection) that a
+  //       link-table-only query would miss. link metadata is aggregated
+  //       separately (`link_meta`) to keep the UNION dedupe clean.
+  const emailCap = await readEmailCap(db, userId)
+  const emailResult = await db.execute(sql`
+    WITH linked AS (
+      SELECT
+        ecl.company_id AS scope_id,
+        COALESCE(em.thread_id, em.id) AS thread_group,
+        em.id AS message_id, em.from_name, em.from_email, em.subject, em.direction,
+        em.body_text, em.labels_json, em.has_attachments, em.received_at, em.sent_at,
+        COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at
+      FROM email_company_links ecl
+      JOIN email_messages em ON em.id = ecl.message_id
+      WHERE ecl.company_id = ANY(${validIds}) AND em.user_id = ${userId}
+      UNION
+      SELECT
+        c.primary_company_id AS scope_id,
+        COALESCE(em.thread_id, em.id) AS thread_group,
+        em.id AS message_id, em.from_name, em.from_email, em.subject, em.direction,
+        em.body_text, em.labels_json, em.has_attachments, em.received_at, em.sent_at,
+        COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at
+      FROM email_contact_links ecl
+      JOIN contacts c ON c.id = ecl.contact_id
+      JOIN email_messages em ON em.id = ecl.message_id
+      WHERE c.primary_company_id = ANY(${validIds}) AND em.user_id = ${userId}
+    ),
+    link_meta AS (
+      SELECT scope_id, message_id, MAX(conf) AS link_confidence, MAX(man) AS link_manual
+      FROM (
+        SELECT company_id AS scope_id, message_id, confidence AS conf,
+          (CASE WHEN linked_by = 'manual' THEN 1 ELSE 0 END) AS man
+        FROM email_company_links WHERE company_id = ANY(${validIds})
+        UNION ALL
+        SELECT c.primary_company_id AS scope_id, ecl.message_id, ecl.confidence AS conf,
+          (CASE WHEN ecl.linked_by = 'manual' THEN 1 ELSE 0 END) AS man
+        FROM email_contact_links ecl
+        JOIN contacts c ON c.id = ecl.contact_id
+        WHERE c.primary_company_id = ANY(${validIds})
+      ) m
+      GROUP BY scope_id, message_id
+    ),
+    ranked AS (
+      SELECT scope_id, thread_group,
+        ROW_NUMBER() OVER (PARTITION BY scope_id ORDER BY MAX(sort_at) DESC) AS rn
+      FROM linked GROUP BY scope_id, thread_group
+    )
+    SELECT linked.scope_id, linked.thread_group, linked.message_id, linked.from_name,
+      linked.from_email, linked.subject, linked.direction, linked.body_text,
+      linked.labels_json, linked.has_attachments, linked.received_at, linked.sent_at,
+      lm.link_confidence,
+      (CASE WHEN lm.link_manual = 1 THEN 'manual' ELSE 'auto' END) AS linked_by
+    FROM linked
+    JOIN ranked ON ranked.scope_id = linked.scope_id AND ranked.thread_group = linked.thread_group
+    LEFT JOIN link_meta lm ON lm.scope_id = linked.scope_id AND lm.message_id = linked.message_id
+    WHERE ranked.rn <= ${emailCap}
+  `)
+  const emailsByCompany = new Map<string, EmailRowForThread[]>()
+  for (const raw of emailResult.rows as unknown as GatewayEmailQueryRow[]) {
+    const bucket = emailsByCompany.get(raw.scope_id) ?? []
+    bucket.push(toEmailRow(raw))
+    emailsByCompany.set(raw.scope_id, bucket)
+  }
+  // Part C — one shared `seen` set so a thread linked to multiple selected
+  // companies renders exactly once across the whole context.
+  const seenEmailThreads = new Set<string>()
+
   // Compose per-company blocks in input order (matches selection order).
   const byId = new Map(companies.map((c) => [c.id, c]))
   const blocks: string[] = []
@@ -333,6 +478,16 @@ export async function buildSelectedCompaniesContext(
         parts.push(`Flagged documents:\n\n${fileBlocks.join('\n\n')}`)
       }
     }
+    // Part F — reconstructed tagged-email threads, noise-filtered + ranked by
+    // the shared renderer (parity with desktop). `seenEmailThreads` dedupes a
+    // thread shared across selected companies (Part C). Empty when nothing
+    // high-signal survives.
+    const emailBlock = renderEmailRows(
+      emailsByCompany.get(c.id) ?? [],
+      emailCapsForLimit(COMPANY_EMAIL_CAPS, emailCap),
+      seenEmailThreads,
+    )
+    if (emailBlock) parts.push(emailBlock)
     const block = parts.join('\n')
     // Defensive total-size cap: drop trailing blocks rather than letting
     // the system prompt grow unbounded. Includes the "\n\n---\n\n"
@@ -462,6 +617,41 @@ export async function buildContactContextForChat(
     )
     parts.push(`Recent meetings:\n\n${meetingBlocks.join('\n\n')}`)
   }
+
+  // Part F — tagged emails for this contact: windowed CTE returns all messages
+  // of the top-`cap` threads (via email_contact_links), reconstructed by the
+  // shared renderer. Single entity → no cross-block dedup set needed.
+  const emailCap = await readEmailCap(db, userId)
+  const emailResult = await db.execute(sql`
+    WITH linked AS (
+      SELECT
+        ${contactId}::text AS scope_id,
+        COALESCE(em.thread_id, em.id) AS thread_group,
+        em.id AS message_id, em.from_name, em.from_email, em.subject, em.direction,
+        em.body_text, em.labels_json, em.has_attachments, em.received_at, em.sent_at,
+        ecl.confidence AS link_confidence, ecl.linked_by,
+        COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at
+      FROM email_contact_links ecl
+      JOIN email_messages em ON em.id = ecl.message_id
+      WHERE ecl.contact_id = ${contactId} AND em.user_id = ${userId}
+    ),
+    ranked AS (
+      SELECT thread_group,
+        ROW_NUMBER() OVER (ORDER BY MAX(sort_at) DESC) AS rn
+      FROM linked GROUP BY thread_group
+    )
+    SELECT linked.scope_id, linked.thread_group, linked.message_id, linked.from_name,
+      linked.from_email, linked.subject, linked.direction, linked.body_text,
+      linked.labels_json, linked.has_attachments, linked.received_at, linked.sent_at,
+      linked.link_confidence, linked.linked_by
+    FROM linked
+    JOIN ranked ON ranked.thread_group = linked.thread_group
+    WHERE ranked.rn <= ${emailCap}
+  `)
+  const emailRows = (emailResult.rows as unknown as GatewayEmailQueryRow[]).map(toEmailRow)
+  const emailBlock = renderEmailRows(emailRows, emailCapsForLimit(CONTACT_EMAIL_CAPS, emailCap))
+  if (emailBlock) parts.push(emailBlock)
+
   return parts.join('\n')
 }
 

@@ -11,10 +11,19 @@ import { usePanelOutlet } from './PanelOutletContext'
 import styles from './AIChatPanel.module.css'
 
 interface AIChatPanelProps {
-  /** Caller (Layout) decides whether to render at all (skipped when closed). */
-  /** True when below the mobile breakpoint — switches to overlay layout. */
-  overlay: boolean
-  /** Callback to dismiss the overlay backdrop tap. */
+  /**
+   * The panel is always an absolute overlay. These props tune its behavior;
+   * Layout decides whether to render at all (skipped when closed/popped).
+   */
+  /** True while sliding out — applies the exit animation before unmount. */
+  closing: boolean
+  /** Narrow viewports: show a dimming backdrop that taps to close. */
+  dimmed: boolean
+  /** Desktop: show the left-edge resize handle. */
+  resizable: boolean
+  /** Explicit overlay width (desktop store width). Omit to use the CSS default. */
+  width?: number
+  /** Callback to dismiss via a backdrop tap (narrow only). */
   onBackdropTap?: () => void
 }
 
@@ -36,7 +45,7 @@ interface AIChatPanelProps {
  * The actual <PanelThread/> + <PanelComposer/> live in <ChatPanelRoot/> and
  * portal into the slots registered here via setMountPoint*.
  */
-export function AIChatPanel({ overlay, onBackdropTap }: AIChatPanelProps) {
+export function AIChatPanel({ closing, dimmed, resizable, width, onBackdropTap }: AIChatPanelProps) {
   const navigate = useNavigate()
   const mode = useChatPanelStore((s) => s.mode)
   const setMode = useChatPanelStore((s) => s.setMode)
@@ -75,8 +84,8 @@ export function AIChatPanel({ overlay, onBackdropTap }: AIChatPanelProps) {
     if (!openSessionId) return
     setReturnTo(window.location.hash.replace(/^#/, '') || '/')
     // popped=true alone removes the rail from Layout's render
-    // (useReflow = isOpen && !popped). Keeping isOpen=true means
-    // AIChatFullscreen's mount effect doesn't have to flip it back.
+    // (Layout renders the panel only when isOpen && !popped). Keeping
+    // isOpen=true means AIChatFullscreen's mount effect needn't flip it back.
     setPopped(true)
     navigate(`/ai-chats/${openSessionId}`)
   }, [openSessionId, setReturnTo, setPopped, navigate])
@@ -135,12 +144,19 @@ export function AIChatPanel({ overlay, onBackdropTap }: AIChatPanelProps) {
 
   return (
     <>
-      {overlay && <div className={styles.backdrop} onClick={onBackdropTap} aria-hidden />}
+      {dimmed && (
+        <div
+          className={`${styles.backdrop} ${closing ? styles.backdropClosing : ''}`}
+          onClick={onBackdropTap}
+          aria-hidden
+        />
+      )}
       <aside
-        className={`${styles.panel} ${overlay ? styles.panelOverlay : ''}`}
+        className={`${styles.panel} ${styles.panelOverlay} ${closing ? styles.panelClosing : ''}`}
+        style={{ width: width ? `${width}px` : undefined }}
         aria-label="AI Chat panel"
       >
-        {!overlay && <ResizeHandle />}
+        {resizable && <ResizeHandle />}
         <PanelHeader
           mode={mode}
           totalChats={totalChats}

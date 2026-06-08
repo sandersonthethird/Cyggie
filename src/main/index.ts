@@ -30,6 +30,8 @@ import { runTranscriptionEvalMigration } from './transcription-eval/repo/migrati
 import { runEvalBootCleanup } from './transcription-eval/service/boot-cleanup'
 import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.service'
 import { backfillMemosForSyncOnLaunch } from './services/memo-sync-backfill.service'
+import { backfillEmailsForSyncOnLaunch } from './services/email-sync-backfill.service'
+import { backfillPreferencesForSyncOnLaunch } from './services/preference-sync.service'
 import { startExtractionWorker } from './services/flagged-file-extraction-worker'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
@@ -314,6 +316,18 @@ app.whenReady().then(() => {
   // tab on company detail sees them after the next /sync/push drain.
   // Idempotent: lamport='0' is the only candidate set.
   backfillMemosForSyncOnLaunch(startupUserId)
+
+  // Email sync backfill (Part B) — email rows are written by ingest via raw
+  // SQL (not wrapped repos), so they carry no outbox entry. This pass enqueues
+  // one outbox INSERT per email_messages / email_company_links /
+  // email_contact_links row still at lamport='0' (body_text truncated to ~4 KB
+  // in the payload), so the gateway/mobile chat context can include tagged
+  // emails after the next /sync/push drain. Idempotent.
+  backfillEmailsForSyncOnLaunch(startupUserId)
+
+  // Part E — enqueue any pre-existing user_preferences rows (at lamport='0')
+  // so synced chat settings (e.g. emailThreadsPerCompany) reach Neon.
+  backfillPreferencesForSyncOnLaunch(startupUserId)
 
   // Phase 3 — kick the flagged-file extraction worker. Drains any
   // 'pending' or stuck-'extracting' rows (post-crash recovery), and

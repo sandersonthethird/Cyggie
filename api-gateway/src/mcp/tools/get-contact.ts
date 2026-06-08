@@ -110,14 +110,13 @@ function renderContactMarkdown(
   // has investor metadata. Saves noise for non-investor contacts.
   if (c.contactType === 'investor') {
     const investorLines = labeledLines([
-      ['Investor stage', c.investorStage],
       ['Fund size', formatUSD(c.fundSize)],
       [
         'Typical check',
         formatCheckRange(c.typicalCheckSizeMin, c.typicalCheckSizeMax),
       ],
-      ['Stage focus', formatJsonArray(c.investmentStageFocus)],
-      ['Sector focus', formatJsonArray(c.investmentSectorFocus)],
+      ['Target investment stage', formatJsonArray(c.investmentStageFocus)],
+      ['Target investment sector', formatJsonArray(c.investmentSectorFocus)],
     ])
     if (investorLines) {
       sections.push(`## Investor profile\n${investorLines}`)

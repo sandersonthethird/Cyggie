@@ -96,8 +96,8 @@ const CONTACT_FIELDS: FieldDef[] = [
   { value: 'fund_size', label: 'Fund Size' },
   { value: 'typical_check_size_min', label: 'Min Check Size' },
   { value: 'typical_check_size_max', label: 'Max Check Size' },
-  { value: 'investment_stage_focus', label: 'Investment Stage Focus', isMultiSelect: true },
-  { value: 'investment_sector_focus', label: 'Investment Sector Focus', isMultiSelect: true },
+  { value: 'investment_stage_focus', label: 'Target Investment Stage', isMultiSelect: true },
+  { value: 'investment_sector_focus', label: 'Target Investment Sector', isMultiSelect: true },
 ]
 
 const COMPANY_FIELDS: FieldDef[] = [

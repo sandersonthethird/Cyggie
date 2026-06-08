@@ -20,10 +20,19 @@
  * one return shape and one job. No dual-API.
  */
 
-import { formatMeetingsSection, formatEmailsSection, formatNotesSection, formatFlaggedFilesSection, type SectionCaps } from './context-formatters'
+import { formatMeetingsSection, formatNotesSection, formatFlaggedFilesSection, type SectionCaps } from './context-formatters'
+import {
+  renderEmailRows,
+  resolveEmailCap,
+  emailCapsForLimit,
+  COMPANY_EMAIL_CAPS,
+  CONTACT_EMAIL_CAPS,
+  EMAIL_THREADS_PREF_KEY,
+} from './email-signal'
 import { readSummary, readTranscript } from '@main/storage/file-manager'
 import * as companyRepo from '@cyggie/db/sqlite/repositories/org-company.repo'
 import * as contactRepo from '@cyggie/db/sqlite/repositories/contact.repo'
+import { getPreference } from '@cyggie/db/sqlite/repositories/user-preferences.repo'
 import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
 import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 import { getFlaggedFilesDetailed } from '@cyggie/db/sqlite/repositories/company-file-flags.repo'
@@ -65,7 +74,8 @@ export interface CompanyContextSignals {
 // emails / files differently.
 const COMPANY_SUMMARY_CAPS: SectionCaps = { perItem: 8_000, total: 30_000 }
 const COMPANY_TRANSCRIPT_CAPS: SectionCaps = { perItem: 3_000, total: Number.MAX_SAFE_INTEGER }
-const COMPANY_EMAIL_CAPS: SectionCaps = { perItem: 2_000, total: 15_000, maxItems: 20 }
+// Email caps now live in email-signal.ts (decision 1A) — COMPANY_EMAIL_CAPS /
+// CONTACT_EMAIL_CAPS are imported above as the single source of truth.
 const COMPANY_NOTE_CAPS: SectionCaps = { perItem: 2_000, total: 8_000 }
 // Bumped from 6_000 / 30_000. Pitch decks etc. now fit substantially in chat
 // context per turn. ChatContextSizeBanner shows the running estimate so the
@@ -138,9 +148,12 @@ export async function assembleCompanyContext(companyId: string): Promise<Company
     parts.push('')
   }
 
-  // Emails
-  const emails = companyRepo.listCompanyEmails(companyId)
-  const emailsMd = formatEmailsSection(emails, COMPANY_EMAIL_CAPS)
+  // Emails — Part F: reconstruct the top-N threads from all their messages,
+  // noise-filtered + ranked by the shared scorer. Cap is the user-tunable
+  // per-company thread count (Part E), defaulting to COMPANY_EMAIL_CAPS.maxItems.
+  const emailCap = resolveEmailCap(getPreference(EMAIL_THREADS_PREF_KEY))
+  const emailRows = companyRepo.listCompanyEmailMessagesForChat(companyId, emailCap)
+  const emailsMd = renderEmailRows(emailRows, emailCapsForLimit(COMPANY_EMAIL_CAPS, emailCap))
   const hasEmails = emailsMd.length > 0
   if (hasEmails) {
     parts.push(emailsMd)
@@ -231,7 +244,7 @@ export interface ContactContextSignals {
 // Caps preserved verbatim from contact-context-builder.ts:8-14.
 const CONTACT_SUMMARY_CAPS: SectionCaps = { perItem: 6_000, total: 24_000 }
 const CONTACT_TRANSCRIPT_CAPS: SectionCaps = { perItem: 2_500, total: Number.MAX_SAFE_INTEGER }
-const CONTACT_EMAIL_CAPS: SectionCaps = { perItem: 1_500, total: 12_000, maxItems: 20 }
+// CONTACT_EMAIL_CAPS imported from email-signal.ts (decision 1A).
 const CONTACT_NOTE_CAPS: SectionCaps = { perItem: 2_000, total: 8_000 }
 
 /**
@@ -279,9 +292,10 @@ export function assembleContactContext(contactId: string): ContactContextSignals
     parts.push('')
   }
 
-  // Emails
-  const emails = contactRepo.listContactEmails(contactId)
-  const emailsMd = formatEmailsSection(emails, CONTACT_EMAIL_CAPS)
+  // Emails — Part F: reconstruct top-N threads (shared renderer).
+  const emailCap = resolveEmailCap(getPreference(EMAIL_THREADS_PREF_KEY))
+  const emailRows = contactRepo.listContactEmailMessagesForChat(contactId, emailCap)
+  const emailsMd = renderEmailRows(emailRows, emailCapsForLimit(CONTACT_EMAIL_CAPS, emailCap))
   const hasEmails = emailsMd.length > 0
   if (hasEmails) {
     parts.push(emailsMd)

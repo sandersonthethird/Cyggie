@@ -85,7 +85,6 @@ function makeContact(overrides: Partial<ContactDetail> = {}): ContactDetail {
     primaryCompany: null,
     emails: ['jane@example.com'],
     meetings: [],
-    investorStage: null,
     city: null,
     state: null,
     notes: null,

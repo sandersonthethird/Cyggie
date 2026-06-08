@@ -322,7 +322,7 @@ function contacts(userId: string): Migrator {
         city, state, street, postal_code, country, timezone, pronouns, birthday,
         university, previous_companies, work_history, education_history,
         tags, relationship_strength, last_met_event, warm_intro_path,
-        investor_stage, fund_size, typical_check_size_min, typical_check_size_max,
+        fund_size, typical_check_size_min, typical_check_size_max,
         investment_stage_focus, investment_sector_focus, investment_sector_focus_notes,
         proud_portfolio_companies, linkedin_headline, linkedin_skills, linkedin_enriched_at,
         talent_pipeline, key_takeaways, field_sources, notes,
@@ -330,7 +330,7 @@ function contacts(userId: string): Migrator {
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
         $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,
-        $46,$47,$48,$49,$50,$51)
+        $46,$47,$48,$49,$50)
       ON CONFLICT (id) DO NOTHING`,
     transform: (r) => [
       r.id,
@@ -365,7 +365,6 @@ function contacts(userId: string): Migrator {
       nullableText(r.relationship_strength),
       nullableText(r.last_met_event),
       nullableText(r.warm_intro_path),
-      nullableText(r.investor_stage),
       nullableNumber(r.fund_size),
       nullableNumber(r.typical_check_size_min),
       nullableNumber(r.typical_check_size_max),

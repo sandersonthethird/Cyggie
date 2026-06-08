@@ -16,6 +16,8 @@ import { themes } from '../schema/themes'
 import { pipelineConfigs, pipelineStages } from '../schema/pipeline'
 import { chatSessions, chatSessionMessages } from '../schema/chat'
 import { investmentMemos, investmentMemoVersions } from '../schema/memos'
+import { emailMessages, emailCompanyLinks, emailContactLinks } from '../schema/email'
+import { userPreferences } from '../schema/settings'
 
 // =============================================================================
 // write-validators.ts — drizzle-zod-derived zod schemas for inbound outbox
@@ -73,6 +75,9 @@ const DATE_KEYS = new Set([
   'endsAt', 'ends_at',
   'scheduledEndAt', 'scheduled_end_at',
   'lastSyncedAt', 'last_synced_at',
+  // email_messages timestamps (lean email sync — Part B).
+  'sentAt', 'sent_at',
+  'receivedAt', 'received_at',
   // org_companies portfolio-row fields surfaced by tonight's drain.
   'dateOfInitialInvestment', 'date_of_initial_investment',
   'followonDate', 'followon_date',
@@ -174,6 +179,14 @@ export const WRITE_VALIDATORS: Record<string, ValidatorBundle> = {
   chat_session_messages: bundleFor(chatSessionMessages, 'chat_session_messages'),
   investment_memos: bundleFor(investmentMemos, 'investment_memos'),
   investment_memo_versions: bundleFor(investmentMemoVersions, 'investment_memo_versions'),
+  // Lean email sync (Part B). is_unread / has_attachments stay Postgres
+  // integer (mirror SQLite 0/1) so the backfill payload's raw ints validate
+  // without boolean coercion — no INT_FLAG_KEYS_BY_TABLE entry needed.
+  email_messages: bundleFor(emailMessages, 'email_messages'),
+  email_company_links: bundleFor(emailCompanyLinks, 'email_company_links'),
+  email_contact_links: bundleFor(emailContactLinks, 'email_contact_links'),
+  // Part E — synced user preference (e.g. emailThreadsPerCompany cap).
+  user_preferences: bundleFor(userPreferences, 'user_preferences'),
 }
 
 export type WriteOp = 'insert' | 'update' | 'delete'

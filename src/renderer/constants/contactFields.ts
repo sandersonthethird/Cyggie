@@ -41,10 +41,9 @@ export const CONTACT_HARDCODED_FIELDS: HardcodedFieldDef[] = [
   { key: 'fundSize',            label: 'Fund Size',        defaultSection: 'investor_info', icon: 'money' },
   { key: 'typicalCheckSizeMin', label: 'Check Size Min',   defaultSection: 'investor_info', icon: 'money' },
   { key: 'typicalCheckSizeMax', label: 'Check Size Max',   defaultSection: 'investor_info', icon: 'money' },
-  { key: 'investmentStageFocus',label: 'Stage Focus',      defaultSection: 'investor_info', icon: 'flag' },
-  { key: 'investmentSectorFocus',label:'Sector Focus',     defaultSection: 'investor_info', icon: 'tag' },
-  { key: 'investmentSectorFocusNotes', label: 'Sector Focus Notes', defaultSection: 'investor_info', icon: 'tag' },
-  { key: 'investorStage',       label: 'Investor Stage',   defaultSection: 'investor_info', icon: 'flag' },
+  { key: 'investmentStageFocus',label: 'Target Investment Stage',  defaultSection: 'investor_info', icon: 'flag' },
+  { key: 'investmentSectorFocus',label:'Target Investment Sector', defaultSection: 'investor_info', icon: 'tag' },
+  { key: 'investmentSectorFocusNotes', label: 'Target Investment Sector Notes', defaultSection: 'investor_info', icon: 'tag' },
   { key: 'proudPortfolioCompanies', label: 'Portfolio Cos', defaultSection: 'investor_info', icon: 'briefcase' },
 ]
 

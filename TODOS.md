@@ -2750,3 +2750,36 @@ risk.
 **Priority:** P3.
 **Depends on:** Shared `OptionListPopover` landing (the three-click
 dropdown plan: `when-the-user-clicks-cheeky-candy.md`).
+
+## Resize cyggie-gateway Fly VM from shared-cpu-1x/512MB to shared-cpu-2x/1GB
+
+**Trigger:** When 3+ Red Swan partners are actively using the Slack
+bot, OR when Sentry shows any OOM/SIGABRT on `cyggie-gateway`, OR when
+average memory utilisation crosses 70% (whichever fires first).
+
+**Action:**
+```
+fly scale vm shared-cpu-2x --memory 1024 -a cyggie-gateway
+```
+Fly recreates both HA machines at the new size. ~30s of unavailability;
+idempotent.
+
+**Why:** Plan slice 1 acceptance criterion (External Agents V1) called
+for this before launch. Deferred 2026-06-05 because:
+1. V1 traffic is Sandy-alone smoke-testing → 1-2 concurrent asks max.
+2. Auto-suspend keeps machines off most of the day → cost is moot.
+3. Resize is non-destructive and runtime-safe → can do it live when load
+   signals warrant.
+
+The known failure mode this protects against (documented in
+[`api-gateway/src/app.ts:51-58`](api-gateway/src/app.ts#L51-L58)) is the
+2026-05-23 OOM-SIGABRT inside V8 JSON parsing when a 50MB SyncAgent push
+collided with chat + agent loops in 512MB. Slack-bot peak load adds the
+same memory pressure profile; once partner concurrency grows, 512MB is
+too tight.
+
+**Cost:** ~$2/mo per machine extra ($4/mo total, negligible vs Anthropic
+spend per query).
+**Effort:** S (one CLI command + ~30s downtime).
+**Priority:** P2 (no impact today; load-triggered).
+**Owner:** Sandy.

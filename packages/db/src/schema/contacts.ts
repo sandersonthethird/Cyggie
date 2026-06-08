@@ -84,7 +84,6 @@ export const contacts = pgTable(
     lastMetEvent: text('last_met_event'),
     warmIntroPath: text('warm_intro_path'),
     // Investor-specific (migration 036, 038)
-    investorStage: varchar('investor_stage', { length: 64 }),
     fundSize: doublePrecision('fund_size'),
     typicalCheckSizeMin: doublePrecision('typical_check_size_min'),
     typicalCheckSizeMax: doublePrecision('typical_check_size_max'),

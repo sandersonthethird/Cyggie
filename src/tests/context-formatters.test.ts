@@ -20,7 +20,6 @@ import type {
   SectionCaps,
   MeetingRef,
   MeetingFull,
-  EmailRef,
   NoteRef,
 } from '@cyggie/services/llm/context-formatters'
 
@@ -36,7 +35,6 @@ vi.mock('../main/storage/file-manager', () => ({
 
 const {
   formatMeetingsSection,
-  formatEmailsSection,
   formatNotesSection,
   formatFlaggedFilesSection,
 } = await import('@cyggie/services/llm/context-formatters')
@@ -165,72 +163,10 @@ describe('formatMeetingsSection', () => {
   })
 })
 
-// ── Emails ─────────────────────────────────────────────────────────────
-
-describe('formatEmailsSection', () => {
-  function email(over: Partial<EmailRef> = {}): EmailRef {
-    return {
-      fromEmail: 'priya@initlabs.test',
-      subject: 'Q2 update',
-      receivedAt: '2026-05-01T10:00:00Z',
-      sentAt: null,
-      bodyText: 'Hi Sandy, sharing the Q2 update on Init Labs. We held pricing at $180/seat...',
-      ...over,
-    }
-  }
-
-  it('returns empty string when no emails', () => {
-    expect(formatEmailsSection([], generousCaps)).toBe('')
-  })
-
-  it('skips bodies < 50 chars', () => {
-    const out = formatEmailsSection([email({ bodyText: 'short' })], generousCaps)
-    expect(out).toBe('')
-  })
-
-  it('renders with From / Subject / Date / body block', () => {
-    const out = formatEmailsSection([email()], generousCaps)
-    expect(out).toContain('## Email Correspondence')
-    expect(out).toContain('From: priya@initlabs.test')
-    expect(out).toContain('Subject: Q2 update')
-    expect(out).toContain('Date: 2026-05-01T10:00:00Z')
-    expect(out).toContain('Hi Sandy')
-  })
-
-  it('separates multiple emails with `\\n\\n---\\n\\n`', () => {
-    const out = formatEmailsSection([email(), email({ subject: 'Second update' })], generousCaps)
-    expect(out).toContain('\n\n---\n\n')
-  })
-
-  it('falls back to (no subject) when subject is null/empty', () => {
-    const out = formatEmailsSection([email({ subject: null })], generousCaps)
-    expect(out).toContain('Subject: (no subject)')
-  })
-
-  it('falls back to sentAt when receivedAt is missing', () => {
-    const out = formatEmailsSection(
-      [email({ receivedAt: null, sentAt: '2026-04-29T08:00:00Z' })],
-      generousCaps
-    )
-    expect(out).toContain('Date: 2026-04-29T08:00:00Z')
-  })
-
-  it('truncates bodies above perItem cap', () => {
-    const out = formatEmailsSection(
-      [email({ bodyText: 'C'.repeat(2000) })],
-      { perItem: 200, total: 5000 }
-    )
-    expect(out).toMatch(/C{200}\.\.\./)
-  })
-
-  it('respects maxItems', () => {
-    const emails = [email({ subject: 'A' }), email({ subject: 'B' }), email({ subject: 'C' })]
-    const out = formatEmailsSection(emails, { perItem: 1000, total: 10_000, maxItems: 2 })
-    expect(out).toContain('Subject: A')
-    expect(out).toContain('Subject: B')
-    expect(out).not.toContain('Subject: C')
-  })
-})
+// Email rendering is covered by the shared renderer's suite in
+// packages/services/src/llm/email-signal.test.ts (renderEmailRows /
+// stripQuotedHistory / truncateEmailBody). The old formatEmailsSection was
+// removed (decisions 1A/2A + Part F).
 
 // ── Notes ──────────────────────────────────────────────────────────────
 
