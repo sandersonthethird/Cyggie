@@ -9,6 +9,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { runChatSessionsMigration } from '@cyggie/db/sqlite/migrations/078-chat-sessions'
+import { runChatSessionSelectedCompaniesMigration } from '@cyggie/db/sqlite/migrations/102-chat-session-selected-companies'
+import { runChatSessionCacheEnabledMigration } from '@cyggie/db/sqlite/migrations/103-chat-session-cache-enabled'
 
 let testDb: Database.Database
 
@@ -48,6 +50,8 @@ function buildDb(): Database.Database {
     CREATE TABLE meetings (id TEXT PRIMARY KEY, title TEXT NOT NULL);
   `)
   runChatSessionsMigration(db)
+  runChatSessionSelectedCompaniesMigration(db)
+  runChatSessionCacheEnabledMigration(db)
   return db
 }
 

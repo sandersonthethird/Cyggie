@@ -17,6 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { stubModule } from './_fixtures/mock-module'
 import { writeFileSync, unlinkSync, mkdtempSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -38,6 +39,15 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: () => testDb
 }))
 
+// The repository barrel wraps owned writes in withSync(), which throws unless
+// configureSyncGlobals() ran (it doesn't in unit tests). Make withSync a
+// pass-through so barrel-exported writes call the mocked repo fns directly;
+// preserve the module's other exports.
+vi.mock('@cyggie/db/sqlite/repositories/_sync', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  withSync: (fn: unknown) => fn,
+}))
+
 // ─── Mock: repos ─────────────────────────────────────────────────────────────
 
 const mockCreateContact = vi.fn()
@@ -47,7 +57,8 @@ const mockResolveContactsByNormalizedNames = vi.fn().mockReturnValue({})
 const mockGetContactsByIds = vi.fn().mockReturnValue({})
 const mockSetContactPrimaryCompany = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () =>
+  stubModule({
   createContact: (...args: unknown[]) => mockCreateContact(...args),
   updateContact: (...args: unknown[]) => mockUpdateContact(...args),
   resolveContactsByEmails: (...args: unknown[]) => mockResolveContactsByEmails(...args),
@@ -60,11 +71,13 @@ const mockGetOrCreateCompanyByName = vi.fn()
 const mockUpdateCompany = vi.fn()
 const mockGetCompaniesByNormalizedNames = vi.fn().mockReturnValue({})
 
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  getOrCreateCompanyByName: (...args: unknown[]) => mockGetOrCreateCompanyByName(...args),
-  updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
-  getCompaniesByNormalizedNames: (...args: unknown[]) => mockGetCompaniesByNormalizedNames(...args)
-}))
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () =>
+  stubModule({
+    getOrCreateCompanyByName: (...args: unknown[]) => mockGetOrCreateCompanyByName(...args),
+    updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
+    getCompaniesByNormalizedNames: (...args: unknown[]) => mockGetCompaniesByNormalizedNames(...args)
+  })
+)
 
 const mockCreateFieldDefinition = vi.fn()
 const mockSetFieldValue = vi.fn()

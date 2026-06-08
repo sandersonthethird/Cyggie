@@ -33,6 +33,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { stubModule } from './_fixtures/mock-module'
 import Database from 'better-sqlite3'
 import { buildTestDbFull } from './_fixtures/test-db'
 
@@ -46,9 +47,11 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
 
 // listCompanyMeetingSummaryPaths is imported by the same module but not used
 // by createMeetingCompanionNote itself — stub it cheaply.
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  listCompanyMeetingSummaryPaths: vi.fn(() => []),
-}))
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () =>
+  stubModule({
+    listCompanyMeetingSummaryPaths: vi.fn(() => []),
+  })
+)
 
 // readSummary likewise imported but not called by createMeetingCompanionNote.
 vi.mock('../main/storage/file-manager', () => ({

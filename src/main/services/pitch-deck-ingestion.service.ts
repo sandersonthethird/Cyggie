@@ -17,7 +17,7 @@
  */
 
 import { BrowserWindow } from 'electron'
-import { readFileSync } from 'fs'
+import { existsSync, readFileSync, statSync } from 'fs'
 import { basename } from 'path'
 import { readLocalFile } from '../storage/file-manager'
 import { safeParseJson, extractString, extractNumber } from '../utils/json-utils'
@@ -60,6 +60,10 @@ export class PitchDeckError extends Error {
 // ---------------------------------------------------------------------------
 
 const MIN_TEXT_LENGTH = 100     // below this → likely image-only PDF
+// Must match MAX_FILE_SIZE in storage/file-manager.ts. We check it here too so
+// an oversized PDF gets a precise "too large" message instead of being routed
+// into the image-only vision fallback (where readLocalFile's null is ambiguous).
+const MAX_PDF_BYTES = 10 * 1024 * 1024
 const URL_TIMEOUT_MS  = 15_000  // 15s BrowserWindow load timeout
 
 // Hostnames whose pages render a wrapper UI even when the underlying document
@@ -293,22 +297,37 @@ export async function extractFromPdf(
   const sourceLabel = basename(filePath)
   console.log('[PitchDeck] ingestion started', { source: 'pdf', sourceLabel })
 
-  const text = await readLocalFile(filePath)
-
-  if (text === null) {
-    console.warn('[PitchDeck] readLocalFile returned null', { filePath })
-    throw new PitchDeckError('no_text', 'Could not read this PDF — it may be corrupted, encrypted, or exceed the 10 MB limit')
+  // Validate the file up front. readLocalFile() collapses "missing", "too large",
+  // and "valid but no extractable text" all into a null return, but those need
+  // different handling: the first two are hard errors, while "no text layer" is
+  // the common image-only-deck case the vision fallback below is built for. Decks
+  // exported from Figma / Canva / Pitch routinely carry zero text layer.
+  if (!existsSync(filePath)) {
+    console.warn('[PitchDeck] file does not exist', { filePath })
+    throw new PitchDeckError('file_not_found', 'Could not find this PDF — it may have been moved or deleted')
   }
+  const sizeBytes = statSync(filePath).size
+  if (sizeBytes > MAX_PDF_BYTES) {
+    const sizeMb = (sizeBytes / 1024 / 1024).toFixed(1)
+    console.warn('[PitchDeck] file exceeds size limit', { filePath, sizeBytes })
+    throw new PitchDeckError('no_text', `This PDF is too large (${sizeMb} MB) — the limit is 10 MB`)
+  }
+
+  const text = await readLocalFile(filePath)
 
   const startMs = Date.now()
 
   let result: PitchDeckExtractionResult
+  // text === null → valid, under-limit PDF but no text layer could be extracted
+  // (image-only). text too short → has a text layer, but not the real content.
+  // Both route to the vision fallback. The file is already known to exist and be
+  // under the size limit, so a null here means image-only, not unreadable.
   // Note: sourceFilePath is set below (outside the if/else) for both text and vision paths.
-  if (text.trim().length < MIN_TEXT_LENGTH) {
+  if (text === null || text.trim().length < MIN_TEXT_LENGTH) {
     // PDF appears image-only — fall back to vision-based extraction via Claude document API
     console.warn('[PitchDeck] PDF text too short, attempting vision fallback', {
       filePath,
-      textLength: text.trim().length,
+      textLength: text === null ? 0 : text.trim().length,
     })
     let pdfBuffer: Buffer
     try {

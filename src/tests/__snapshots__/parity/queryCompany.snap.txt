@@ -19,13 +19,6 @@ Held the Q2 partner call with Init Labs leadership.
 - Runway: 11 months at $340K/mo burn.
 - GTM bets: outbound motion via new SE hire (Q2 ramp).
 
-## Email Correspondence
-From: priya@initlabs.test
-Subject: Q2 update + pricing
-Date: 2026-05-01T10:00:00Z
-
-Hi Sandy, sharing the Q2 update on Init Labs. We held pricing at $180/seat for the enterprise tier; both design partners renewed. Runway sits at 11 months and we expect to push to a Series A in Q3.
-
 ## Linked Documents
 ### init-labs-memo.pdf
 Init Labs Memo: Investment Thesis

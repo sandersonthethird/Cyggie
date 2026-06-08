@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { stubModule } from './_fixtures/mock-module'
 
 type IpcHandler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 
@@ -50,15 +51,19 @@ vi.mock('../main/security/current-user', () => ({
 }))
 
 // Stub everything else company.ipc.ts touches so importing it doesn't blow up.
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  listCompanies: vi.fn(),
-  getCompany: vi.fn(),
-  updateCompany: vi.fn(),
-}))
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () =>
+  stubModule({
+    listCompanies: vi.fn(),
+    getCompany: vi.fn(),
+    updateCompany: vi.fn(),
+  })
+)
 vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
-vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
-  getFlaggedFiles: vi.fn(() => []),
-}))
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () =>
+  stubModule({
+    getFlaggedFiles: vi.fn(() => []),
+  })
+)
 
 const { registerCompanyHandlers } = await import('../main/ipc/company.ipc')
 const CHANNEL = 'company:analyze-file'

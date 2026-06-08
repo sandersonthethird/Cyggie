@@ -53,6 +53,7 @@ function buildDb(): Database.Database {
       investment_stage_focus TEXT, investment_sector_focus TEXT, investment_sector_focus_notes TEXT,
       proud_portfolio_companies TEXT, field_sources TEXT, key_takeaways TEXT,
       key_takeaways_user_note TEXT,
+      street TEXT, postal_code TEXT, country TEXT,
       work_history TEXT, education_history TEXT, linkedin_headline TEXT,
       linkedin_skills TEXT, linkedin_enriched_at TEXT,
       talent_pipeline TEXT,

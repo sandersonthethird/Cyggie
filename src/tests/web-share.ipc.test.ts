@@ -19,6 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
+import { stubModule } from './_fixtures/mock-module'
 import type Database from 'better-sqlite3'
 
 // --- Mocks ---
@@ -39,13 +40,17 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
 }))
 
 const getMeetingMock = vi.fn()
-vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
-  getMeeting: getMeetingMock,
-}))
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () =>
+  stubModule({
+    getMeeting: getMeetingMock,
+  })
+)
 
-vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () => ({
-  getNote: vi.fn(),
-}))
+vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () =>
+  stubModule({
+    getNote: vi.fn(),
+  })
+)
 
 const getCredentialMock = vi.fn()
 vi.mock('../main/security/credentials', () => ({

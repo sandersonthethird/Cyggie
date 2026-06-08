@@ -32,6 +32,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { stubModule } from './_fixtures/mock-module'
 
 // ── Provider mock — captures prompts ────────────────────────────────────
 
@@ -67,31 +68,52 @@ const mockReadSummary = vi.fn()
 const mockReadTranscript = vi.fn()
 const mockReadLocalFile = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
-  getMeeting: (...args: unknown[]) => mockGetMeeting(args[0]),
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () =>
+  stubModule({
+    getMeeting: (...args: unknown[]) => mockGetMeeting(args[0]),
+  })
+)
+
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () =>
+  stubModule({
+    getCompany: (...args: unknown[]) => mockGetCompany(args[0]),
+    listCompanyMeetingSummaryPaths: (...args: unknown[]) => mockListCompanyMeetingSummaryPaths(args[0]),
+    listCompanyMeetings: (...args: unknown[]) => mockListCompanyMeetings(args[0]),
+    listCompanyEmails: (...args: unknown[]) => mockListCompanyEmails(args[0]),
+    // Part F — desktop chat now reconstructs threads via this; no emails in parity fixtures.
+    listCompanyEmailMessagesForChat: () => [],
+  })
+)
+
+vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () =>
+  stubModule({
+    getContact: (...args: unknown[]) => mockGetContact(args[0]),
+    listContactEmails: (...args: unknown[]) => mockListContactEmails(args[0]),
+    listContactEmailMessagesForChat: () => [],
+  })
+)
+
+// Part E — desktop chat reads the emailThreadsPerCompany pref; stub it so the
+// real getDatabase()/Electron path isn't hit.
+vi.mock('@cyggie/db/sqlite/repositories/user-preferences.repo', () => ({
+  getPreference: () => null,
 }))
 
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  getCompany: (...args: unknown[]) => mockGetCompany(args[0]),
-  listCompanyMeetingSummaryPaths: (...args: unknown[]) => mockListCompanyMeetingSummaryPaths(args[0]),
-  listCompanyMeetings: (...args: unknown[]) => mockListCompanyMeetings(args[0]),
-  listCompanyEmails: (...args: unknown[]) => mockListCompanyEmails(args[0]),
-}))
-
-vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
-  getContact: (...args: unknown[]) => mockGetContact(args[0]),
-  listContactEmails: (...args: unknown[]) => mockListContactEmails(args[0]),
-}))
-
-vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
-  getFlaggedFileIds: (...args: unknown[]) => mockGetFlaggedFileIds(args[0]),
-  getFlaggedFiles: (...args: unknown[]) =>
-    (mockGetFlaggedFileIds(args[0]) as string[]).map((id) => ({
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => {
+  const rows = (companyId: unknown) =>
+    (mockGetFlaggedFileIds(companyId) as string[]).map((id) => ({
       fileId: id,
       fileName: id.split('/').pop() ?? id,
       mimeType: null,
-    })),
-}))
+    }))
+  return stubModule({
+    getFlaggedFileIds: (...args: unknown[]) => mockGetFlaggedFileIds(args[0]),
+    getFlaggedFiles: (...args: unknown[]) => rows(args[0]),
+    // assembleCompanyContext now reads detailed rows; same fixture shape, no
+    // extractionStatus → formatter falls back to the mocked readLocalFile.
+    getFlaggedFilesDetailed: (...args: unknown[]) => rows(args[0]),
+  })
+})
 
 vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
   makeEntityNotesRepo: () => ({ list: (id: string) => mockNotesList(id) }),

@@ -15,6 +15,7 @@
  *   - file-manager.buildRecordingFilename → vi.fn() returning a predictable name
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { stubModule } from './_fixtures/mock-module'
 import { IPC_CHANNELS } from '../shared/constants/channels'
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
@@ -53,9 +54,18 @@ vi.mock('../main/video/video-writer', () => ({
 
 const mockGetMeeting = vi.fn()
 const mockUpdateMeeting = vi.fn()
-vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
-  getMeeting: (...args: unknown[]) => mockGetMeeting(...args),
-  updateMeeting: (...args: unknown[]) => mockUpdateMeeting(...args),
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () =>
+  stubModule({
+    getMeeting: (...args: unknown[]) => mockGetMeeting(...args),
+    updateMeeting: (...args: unknown[]) => mockUpdateMeeting(...args),
+  })
+)
+
+// The barrel wraps updateMeeting in withSync(), which throws without
+// configureSyncGlobals(). Make it a pass-through so the mocked write is called.
+vi.mock('@cyggie/db/sqlite/repositories/_sync', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  withSync: (fn: unknown) => fn,
 }))
 
 vi.mock('../main/storage/file-manager', () => ({

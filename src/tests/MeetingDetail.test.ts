@@ -171,7 +171,16 @@ vi.mock('@tiptap/extension-link', () => ({ default: { configure: vi.fn(() => ({}
 vi.mock('@tiptap/extension-placeholder', () => ({ default: { configure: vi.fn(() => ({})) } }))
 vi.mock('@tiptap/markdown', () => ({ Markdown: {} }))
 vi.mock('react-markdown', () => ({ default: () => null }))
-vi.mock('lucide-react', () => ({ Clock: () => null }))
+// Proxy stub: a no-op component for ANY icon name, so adding new lucide icons
+// to the component never breaks this mock.
+// Stub every icon export with a no-op component. Enumerate the real module's
+// export names (via importOriginal) so vitest's named-export validation passes
+// and the mock auto-adapts when the component imports new icons.
+vi.mock('lucide-react', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  const Icon = () => null
+  return Object.fromEntries(Object.keys(actual).map((k) => [k, Icon]))
+})
 
 vi.mock('../renderer/components/common/FindBar', () => ({ default: () => null }))
 vi.mock('../renderer/components/chat/ChatInterface', () => ({ default: () => null }))

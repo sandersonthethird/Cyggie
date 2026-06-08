@@ -20,7 +20,17 @@ vi.mock('electron', () => ({
 
 // Mock internal imports that require electron/DB
 vi.mock('@cyggie/db/sqlite/connection', () => ({ getDatabase: vi.fn() }))
-vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () => ({}))
+// notes.ipc imports several repo fns (createNote/updateNote/getNote/listNotes/…);
+// stub any accessed export so adding repo fns never breaks this mock. The
+// buildFolderPath/etc. tests don't exercise these.
+// Stub every repo export with a vi.fn(). Enumerate the real module's export
+// names (via importOriginal) so vitest's named-export validation passes and the
+// mock auto-adapts when notes.ipc starts importing new repo fns. The
+// buildFolderPath/etc. tests don't exercise these.
+vi.mock('@cyggie/db/sqlite/repositories/notes.repo', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return Object.fromEntries(Object.keys(actual).map((k) => [k, vi.fn()]))
+})
 vi.mock('../main/security/current-user', () => ({ getCurrentUserId: vi.fn() }))
 vi.mock('@cyggie/db/sqlite/repositories/audit.repo', () => ({ logAudit: vi.fn() }))
 vi.mock('../main/storage/paths', () => ({ getStoragePath: vi.fn(() => '/storage') }))

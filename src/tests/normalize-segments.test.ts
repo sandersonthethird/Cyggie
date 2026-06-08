@@ -109,10 +109,13 @@ describe('correctTranscriptMarkdown', () => {
     expect(result).toBe(md)
   })
 
-  it('applies proper-noun correction to body lines (single-word case)', () => {
+  it('leaves a single-word near-miss below the strict threshold unchanged', () => {
+    // SINGLE_WORD_THRESHOLD is 0.97 (raised from 0.92 in c5b8cfe to cut false
+    // positives). jaroWinkler('tobius','tobias') ≈ 0.933 < 0.97, so a one-letter
+    // single-word misspelling is intentionally NOT auto-corrected.
     const md = 'Tobius confirmed the term sheet.'
     const result = correctTranscriptMarkdown(md, ['Tobias'])
-    expect(result).toBe('Tobias confirmed the term sheet.')
+    expect(result).toBe('Tobius confirmed the term sheet.')
   })
 
   it('handles multi-line transcripts, only correcting body lines', () => {
@@ -134,9 +137,12 @@ describe('correctTranscriptMarkdown', () => {
     // The guard is specifically `startsWith('**') && includes('** [')` — both
     // conditions must hold. A line that opens with ** but is just emphasis
     // text (no bracketed timestamp) is treated as body content.
-    const md = '**bold note** Tobius spoke up.'
-    const result = correctTranscriptMarkdown(md, ['Tobias'])
-    expect(result).toContain('Tobias')
+    // Use a multi-word correction (threshold 0.90) so the assertion exercises
+    // the header-guard (body line gets corrected) independent of the strict
+    // single-word threshold: 'Redd Swan Ventures' → 'Red Swan Ventures'.
+    const md = '**bold note** Redd Swan Ventures spoke.'
+    const result = correctTranscriptMarkdown(md, ['Red Swan Ventures'])
+    expect(result).toContain('Red Swan Ventures')
   })
 
   it('returns input unchanged when input is empty', () => {

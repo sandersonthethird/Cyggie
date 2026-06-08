@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
+import { stubModule } from './_fixtures/mock-module'
 import type Database from 'better-sqlite3'
 
 // --- Mocks ---
@@ -34,14 +35,18 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
 }))
 
 const getNoteMock = vi.fn()
-vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () => ({
-  getNote: getNoteMock,
-}))
+vi.mock('@cyggie/db/sqlite/repositories/notes.repo', () =>
+  stubModule({
+    getNote: getNoteMock,
+  })
+)
 
 // meeting.repo is imported by the same file — stub it to avoid DB access
-vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
-  getMeeting: vi.fn(),
-}))
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () =>
+  stubModule({
+    getMeeting: vi.fn(),
+  })
+)
 
 // hydrateCompanionNote: default to identity so existing tests pass unchanged
 const hydrateCompanionNoteMock = vi.fn(<T>(note: T) => note)

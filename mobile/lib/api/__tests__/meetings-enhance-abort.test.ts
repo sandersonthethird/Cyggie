@@ -26,6 +26,22 @@ vi.mock('../../auth/device', () => ({
   getOrCreateDeviceId: vi.fn().mockResolvedValue('test-device'),
 }))
 
+// meetings.ts now imports the lamport clock, which transitively pulls in
+// react-native-mmkv (a native module the node runner can't parse). Stub the
+// cache layer so the import chain resolves.
+const mmkvStore = new Map<string, string>()
+vi.mock('../../cache/mmkv', () => ({
+  appStateStorage: {
+    set: (key: string, value: string) => {
+      mmkvStore.set(key, value)
+    },
+    getString: (key: string) => mmkvStore.get(key),
+    delete: (key: string) => {
+      mmkvStore.delete(key)
+    },
+  },
+}))
+
 import { enhanceMeeting } from '../meetings'
 
 const fetchSpy = vi.spyOn(global, 'fetch')

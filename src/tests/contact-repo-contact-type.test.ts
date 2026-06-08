@@ -78,6 +78,9 @@ function buildDb(): Database.Database {
       linkedin_enriched_at TEXT,
       key_takeaways TEXT,
       key_takeaways_user_note TEXT,
+      street TEXT,
+      postal_code TEXT,
+      country TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );

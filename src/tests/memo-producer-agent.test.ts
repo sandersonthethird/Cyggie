@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { stubModule } from './_fixtures/mock-module'
 
 // All side-effect-heavy modules are mocked. We only want to verify the
 // orchestrator's entry-path behavior here (auth handling, key fallback)
@@ -10,22 +11,30 @@ vi.mock('../main/security/credentials', () => ({
 vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: vi.fn(() => null),
 }))
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  getCompany: vi.fn(),
-  listCompanyMeetings: vi.fn(() => []),
-  listCompanyMeetingSummaryPaths: vi.fn(() => []),
-  listCompanyContacts: vi.fn(() => []),
-  listCompanyEmails: vi.fn(() => []),
-}))
-vi.mock('@cyggie/db/sqlite/repositories/investment-memo.repo', () => ({
-  getMemoLatestVersion: vi.fn(() => null),
-}))
-vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
-  getMeeting: vi.fn(),
-}))
-vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
-  getFlaggedFiles: vi.fn(() => []),
-}))
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () =>
+  stubModule({
+    getCompany: vi.fn(),
+    listCompanyMeetings: vi.fn(() => []),
+    listCompanyMeetingSummaryPaths: vi.fn(() => []),
+    listCompanyContacts: vi.fn(() => []),
+    listCompanyEmails: vi.fn(() => []),
+  })
+)
+vi.mock('@cyggie/db/sqlite/repositories/investment-memo.repo', () =>
+  stubModule({
+    getMemoLatestVersion: vi.fn(() => null),
+  })
+)
+vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () =>
+  stubModule({
+    getMeeting: vi.fn(),
+  })
+)
+vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () =>
+  stubModule({
+    getFlaggedFiles: vi.fn(() => []),
+  })
+)
 vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
   makeEntityNotesRepo: () => ({ list: vi.fn(() => []) }),
 }))

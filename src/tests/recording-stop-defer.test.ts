@@ -49,6 +49,7 @@ vi.mock('../main/deepgram/client', () => ({
     finalizeAndClose: mockFinalizeAndClose,
     close: mockDeepgramClose,
     on: mockDeepgramOn,
+    off: vi.fn(), // connectWithTimeout removes its error listener via client.off()
   })),
 }))
 
@@ -79,6 +80,9 @@ vi.mock('../main/deepgram/transcript-assembler', () => ({
     getDiagnostics: mockTranscriptGetDiagnostics,
     setExpectedSpeakerCount: vi.fn(),
     setKeyterms: vi.fn(),
+    // runBackgroundFinalize derives the "me" speaker index from finalized
+    // segments; empty is fine (falls back to loudness/default).
+    getFinalizedSegments: vi.fn(() => []),
   })),
 }))
 
@@ -141,6 +145,7 @@ vi.mock('../main/storage/file-manager', () => ({
 }))
 vi.mock('../main/storage/paths', () => ({
   getTranscriptsDir: () => '/tmp',
+  getDatabasePath: () => ':memory:',
 }))
 vi.mock('@cyggie/db/sqlite/repositories/search.repo', () => ({
   indexMeeting: vi.fn(),

@@ -37,6 +37,7 @@ function buildDb(): Database.Database {
       speaker_map TEXT NOT NULL DEFAULT '{}',
       transcript_segments TEXT,
       notes TEXT,
+      summary TEXT,
       attendees TEXT,
       attendee_emails TEXT,
       chat_messages TEXT,

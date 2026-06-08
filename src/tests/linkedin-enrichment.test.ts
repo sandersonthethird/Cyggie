@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { stubModule } from './_fixtures/mock-module'
 
 // ─── Mock electron early (before any service imports) ─────────────────────────
 
@@ -38,6 +39,15 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
   getDatabase: vi.fn(),
 }))
 
+// The repository barrel wraps owned writes in withSync(), which throws unless
+// configureSyncGlobals() ran (it doesn't in unit tests). Make withSync a
+// pass-through so barrel-exported writes call the mocked repo fns directly;
+// preserve the module's other exports.
+vi.mock('@cyggie/db/sqlite/repositories/_sync', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  withSync: (fn: unknown) => fn,
+}))
+
 // ─── Mock contact repo ────────────────────────────────────────────────────────
 
 const mockGetContact = vi.fn()
@@ -56,9 +66,11 @@ vi.mock('@cyggie/db/sqlite/repositories/contact.repo', async (importOriginal) =>
 
 const mockFindCompanyIdByNameOrDomain = vi.fn().mockReturnValue(null)
 
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  findCompanyIdByNameOrDomain: (...args: unknown[]) => mockFindCompanyIdByNameOrDomain(...args),
-}))
+vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () =>
+  stubModule({
+    findCompanyIdByNameOrDomain: (...args: unknown[]) => mockFindCompanyIdByNameOrDomain(...args),
+  })
+)
 
 // ─── Mock provider factory ────────────────────────────────────────────────────
 

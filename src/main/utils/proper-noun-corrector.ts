@@ -46,11 +46,11 @@ export function correctProperNouns(text: string, canonicalNames: string[]): stri
 
     // Pre-compute the set of canonical-name tokens (lowercased, ≥ MIN_TOKEN_LENGTH).
     // Used by the single-word pass to short-circuit fuzzy replacement when the
-    // candidate token is itself a known canonical name. Without this, the user's
-    // own name "Sandy" gets rewritten to a similar CRM contact "Andy"
-    // (jaroWinkler("sandy","andy") ≈ 0.933, above the 0.92 threshold). The
-    // multi-word pass intentionally skips this guard so misspellings like
-    // "Redd Swan Ventures" → "Red Swan Ventures" still correct.
+    // candidate token is itself a known canonical name — so a real name isn't
+    // promoted to a *different* canonical it happens to score above
+    // SINGLE_WORD_THRESHOLD (0.97) against. The multi-word pass intentionally
+    // skips this guard so misspellings like "Redd Swan Ventures" → "Red Swan
+    // Ventures" still correct.
     const canonTokenSet = new Set<string>()
     for (const canonical of names) {
       for (const token of canonical.split(/\s+/)) {
