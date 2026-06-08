@@ -44,7 +44,6 @@ function buildDb(): Database.Database {
       linkedin_url TEXT,
       crm_contact_id TEXT,
       crm_provider   TEXT,
-      investor_stage TEXT,
       city  TEXT, state TEXT, notes TEXT, phone TEXT,
       twitter_handle TEXT, other_socials TEXT, timezone TEXT,
       pronouns TEXT, birthday TEXT, university TEXT,

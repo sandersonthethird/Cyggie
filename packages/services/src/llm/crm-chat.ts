@@ -214,8 +214,8 @@ function formatCrmContext(
 
       const meta: string[] = []
       if (ct.contact_type) meta.push(`Type: ${ct.contact_type}`)
-      if (ct.investment_stage_focus) meta.push(`Stage focus: ${ct.investment_stage_focus}`)
-      if (ct.investment_sector_focus) meta.push(`Sector: ${ct.investment_sector_focus}`)
+      if (ct.investment_stage_focus) meta.push(`Target investment stage: ${ct.investment_stage_focus}`)
+      if (ct.investment_sector_focus) meta.push(`Target investment sector: ${ct.investment_sector_focus}`)
       if (meta.length) lines.push(`- ${meta.join(' | ')}`)
 
       const financial: string[] = []

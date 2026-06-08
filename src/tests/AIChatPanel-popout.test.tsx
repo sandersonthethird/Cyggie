@@ -77,7 +77,7 @@ function renderPanel() {
   return render(
     <MemoryRouter>
       <PanelOutletProvider>
-        <AIChatPanel overlay={false} />
+        <AIChatPanel closing={false} dimmed={false} resizable />
       </PanelOutletProvider>
     </MemoryRouter>,
   )

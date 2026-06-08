@@ -24,6 +24,7 @@ import type {
 import { SYSTEM_DECISION_TYPE_STAGE_CHANGE } from '../../shared/types/company'
 import { summaryFileExists } from '../storage/file-manager'
 import { ingestCompanyEmails, cancelCompanyEmailIngest } from '../services/company-email-ingest.service'
+import { backfillEmailsAfterIngest } from '../services/email-sync-backfill.service'
 import {
   getCompanyEnrichmentProposalsFromMeetings,
   getCompanyEnrichmentProposalsFromNotes,
@@ -735,6 +736,9 @@ export function registerCompanyHandlers(): void {
     if (!companyId) throw new Error('companyId is required')
     return ingestCompanyEmails(companyId).then((result) => {
       console.log('[company-email-ingest]', result)
+      // Part B — push freshly-ingested emails to Neon so the gateway/mobile
+      // chat context can include them (idempotent; no-op if nothing new).
+      backfillEmailsAfterIngest(getCurrentUserId())
       return result
     })
   })

@@ -5,8 +5,11 @@ import { UnionFind } from '@main/utils/unionFind'
 import {
   createCompany as createOrgCompany,
   findCompanyIdByDomain,
-  linkMeetingsForContactCompany
+  linkMeetingsForContactCompany,
+  mapChatEmailRow,
+  type ChatEmailRow
 } from './org-company.repo'
+import type { ChatEmailMessage } from '@shared/types/company'
 import { humanizeDomainName } from '@main/utils/company-extractor'
 import {
   type CandidateContact,
@@ -75,7 +78,6 @@ interface ContactRow {
   last_touchpoint?: string | null
   created_at: string
   updated_at: string
-  investor_stage?: string | null
   city?: string | null
   state?: string | null
   street?: string | null
@@ -1263,7 +1265,6 @@ export function createContact(data: {
 
 // Maps TS property names to SQL column names for updateContact
 const CONTACT_UPDATABLE_FIELDS = {
-  investorStage: 'investor_stage',
   city: 'city',
   state: 'state',
   street: 'street',
@@ -1790,7 +1791,6 @@ export function getContact(contactId: string): ContactDetail | null {
         c.linkedin_url,
         c.crm_contact_id,
         c.crm_provider,
-        c.investor_stage,
         c.city,
         c.state,
         c.street,
@@ -1912,7 +1912,6 @@ export function getContact(contactId: string): ContactDetail | null {
       : null,
     emails: contactEmails,
     meetings,
-    investorStage: row.investor_stage ?? null,
     city: row.city ?? null,
     state: row.state ?? null,
     street: row.street ?? null,
@@ -1975,7 +1974,10 @@ export function listContactEmails(contactId: string): ContactEmailRef[] {
           em.thread_id,
           em.updated_at,
           COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
-          COALESCE(em.thread_id, em.id) AS thread_group
+          COALESCE(em.thread_id, em.id) AS thread_group,
+          em.direction,
+          em.labels_json,
+          em.has_attachments
         FROM email_messages em
         WHERE EXISTS (
           SELECT 1
@@ -2005,7 +2007,13 @@ export function listContactEmails(contactId: string): ContactEmailRef[] {
             PARTITION BY thread_group
             ORDER BY datetime(sort_at) DESC, datetime(updated_at) DESC, id DESC
           ) AS row_num,
-          COUNT(*) OVER (PARTITION BY thread_group) AS thread_message_count
+          COUNT(*) OVER (PARTITION BY thread_group) AS thread_message_count,
+          labels_json,
+          has_attachments,
+          MAX(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END)
+            OVER (PARTITION BY thread_group) AS thread_has_inbound,
+          MAX(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END)
+            OVER (PARTITION BY thread_group) AS thread_has_outbound
         FROM linked
       ),
       participant_rows AS (
@@ -2050,6 +2058,15 @@ export function listContactEmails(contactId: string): ContactEmailRef[] {
             email
         ) source
         GROUP BY source.message_id
+      ),
+      contact_link_meta AS (
+        SELECT
+          message_id,
+          MAX(confidence) AS link_confidence,
+          MAX(CASE WHEN linked_by = 'manual' THEN 1 ELSE 0 END) AS link_manual
+        FROM email_contact_links
+        WHERE contact_id = ?
+        GROUP BY message_id
       )
       SELECT
         ranked.id,
@@ -2063,14 +2080,21 @@ export function listContactEmails(contactId: string): ContactEmailRef[] {
         ranked.is_unread,
         ranked.thread_id,
         ranked.thread_message_count,
-        COALESCE(participants.participants_json, '[]') AS participants_json
+        COALESCE(participants.participants_json, '[]') AS participants_json,
+        ranked.labels_json,
+        ranked.has_attachments,
+        ranked.thread_has_inbound,
+        ranked.thread_has_outbound,
+        clm.link_confidence,
+        clm.link_manual
       FROM ranked
       LEFT JOIN participants ON participants.message_id = ranked.id
+      LEFT JOIN contact_link_meta clm ON clm.message_id = ranked.id
       WHERE ranked.row_num = 1
       ORDER BY datetime(ranked.sort_at) DESC, ranked.id DESC
       LIMIT 200
     `)
-    .all(contactId, contactId) as Array<{
+    .all(contactId, contactId, contactId) as Array<{
     id: string
     subject: string | null
     from_email: string
@@ -2083,6 +2107,12 @@ export function listContactEmails(contactId: string): ContactEmailRef[] {
     thread_id: string | null
     thread_message_count: number
     participants_json: string
+    labels_json: string | null
+    has_attachments: number | null
+    thread_has_inbound: number | null
+    thread_has_outbound: number | null
+    link_confidence: number | null
+    link_manual: number | null
   }>
 
   return rows.map((row) => ({
@@ -2097,8 +2127,78 @@ export function listContactEmails(contactId: string): ContactEmailRef[] {
     isUnread: row.is_unread === 1,
     threadId: row.thread_id,
     threadMessageCount: row.thread_message_count || 1,
-    participants: parseEmailParticipants(row.participants_json)
+    participants: parseEmailParticipants(row.participants_json),
+    labelsJson: row.labels_json ?? null,
+    hasAttachments: row.has_attachments === 1,
+    linkConfidence: row.link_confidence ?? null,
+    linkedBy: row.link_manual === 1 ? 'manual' : row.link_manual === 0 ? 'auto' : null,
+    isTwoWay: row.thread_has_inbound === 1 && row.thread_has_outbound === 1,
   }))
+}
+
+// =============================================================================
+// listContactEmailMessagesForChat — Part F (thread reconstruction), contact
+// surface. Returns EVERY message of the top-`cap` threads (by recency) the
+// contact is on (via email_contact_links OR participant), oldest→newest, for
+// reconstruction in the chat context builder. Mirrors
+// listCompanyEmailMessagesForChat; reuses mapChatEmailRow.
+// =============================================================================
+export function listContactEmailMessagesForChat(contactId: string, cap: number): ChatEmailMessage[] {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      WITH linked AS (
+        SELECT
+          em.id, em.thread_id, em.from_name, em.from_email, em.subject,
+          em.direction, em.body_text, em.labels_json, em.has_attachments,
+          em.received_at, em.sent_at,
+          COALESCE(em.received_at, em.sent_at, em.created_at) AS sort_at,
+          COALESCE(em.thread_id, em.id) AS thread_group
+        FROM email_messages em
+        WHERE EXISTS (
+          SELECT 1 FROM email_contact_links l WHERE l.message_id = em.id AND l.contact_id = ?
+        )
+        OR EXISTS (
+          SELECT 1 FROM email_message_participants p WHERE p.message_id = em.id AND p.contact_id = ?
+        )
+      ),
+      top_threads AS (
+        SELECT thread_group
+        FROM linked
+        GROUP BY thread_group
+        ORDER BY MAX(datetime(sort_at)) DESC
+        LIMIT ?
+      ),
+      contact_link_meta AS (
+        SELECT message_id,
+          MAX(confidence) AS link_confidence,
+          MAX(CASE WHEN linked_by = 'manual' THEN 1 ELSE 0 END) AS link_manual
+        FROM email_contact_links
+        WHERE contact_id = ?
+        GROUP BY message_id
+      )
+      SELECT
+        linked.id,
+        linked.thread_group,
+        linked.from_name,
+        linked.from_email,
+        linked.subject,
+        linked.direction,
+        linked.body_text,
+        linked.labels_json,
+        linked.has_attachments,
+        linked.received_at,
+        linked.sent_at,
+        clm.link_confidence,
+        clm.link_manual
+      FROM linked
+      JOIN top_threads ON top_threads.thread_group = linked.thread_group
+      LEFT JOIN contact_link_meta clm ON clm.message_id = linked.id
+      ORDER BY linked.thread_group, datetime(linked.sort_at) ASC, linked.id ASC
+    `)
+    .all(contactId, contactId, cap, contactId) as ChatEmailRow[]
+
+  return rows.map(mapChatEmailRow)
 }
 
 export function autoLinkContactsByDomain(limit = 5000, userId: string | null = null): number {

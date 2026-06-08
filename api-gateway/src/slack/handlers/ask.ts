@@ -45,6 +45,13 @@ import {
 
 export const PLACEHOLDER_TEXT = ":thinking_face: Looking that up..."
 
+// 👀 reaction added to the user's message on the event surface
+// (app_mention / DM) while cyggieAsk runs, then removed when the answer
+// (or error) posts. Signals "Cyggie is working on it" during the lag —
+// slash commands don't need it (they already show PLACEHOLDER_TEXT).
+// Swap to 'hourglass_flowing_sand' (⏳) for a more literal "working" glyph.
+export const REACTION_NAME = 'eyes'
+
 export type AskTarget =
   | { kind: 'slash'; responseUrl: string }
   | { kind: 'event'; channel: string; threadTs?: string; client: SlackClient }
@@ -76,6 +83,11 @@ export function runSlackAskAsync(args: RunSlackAskArgs): void {
   // .catch any escape.
   ;(async () => {
     const startedAt = Date.now()
+    // "Cyggie is working" indicator. Added here — the single chokepoint
+    // all event terminal paths flow through — so the finally guarantees
+    // removal no matter how runSlackAsk exits. Best-effort: never blocks
+    // or fails the answer.
+    const reacted = await addThinkingReaction(args)
     try {
       await runSlackAsk(args)
     } catch (err) {
@@ -89,10 +101,58 @@ export function runSlackAskAsync(args: RunSlackAskArgs): void {
       Sentry.captureException(err, {
         tags: { surface: 'slack_ask_outer' },
       })
+    } finally {
+      if (reacted) await removeThinkingReaction(args)
     }
   })().catch(() => {
     // Last-resort no-op; the .catch above already logged.
   })
+}
+
+// Add the 👀 indicator to the user's message. Only applies to the event
+// surface (app_mention / DM) where we have the message ts to react to;
+// slash commands return undefined target.client and are skipped. Returns
+// true only if the reaction was actually placed, so the caller knows
+// whether there's anything to remove. All failures degrade silently —
+// the reaction is cosmetic, not part of the answer.
+async function addThinkingReaction(args: RunSlackAskArgs): Promise<boolean> {
+  const { target, slackMessageTs } = args
+  if (target.kind !== 'event' || !slackMessageTs) return false
+  try {
+    const res = await target.client.addReaction({
+      channel: target.channel,
+      timestamp: slackMessageTs,
+      name: REACTION_NAME,
+    })
+    return res.ok
+  } catch (err) {
+    args.log.warn(
+      { err, metric: 'slack.reaction.add_fail' },
+      'failed to add working-indicator reaction — continuing',
+    )
+    Sentry.captureException(err, { tags: { surface: 'slack_reaction_add' } })
+    return false
+  }
+}
+
+// Mirror of addThinkingReaction — remove the indicator once the answer or
+// error has posted. Best-effort; a leftover reaction is harmless.
+async function removeThinkingReaction(args: RunSlackAskArgs): Promise<void> {
+  const { target, slackMessageTs } = args
+  if (target.kind !== 'event' || !slackMessageTs) return
+  try {
+    await target.client.removeReaction({
+      channel: target.channel,
+      timestamp: slackMessageTs,
+      name: REACTION_NAME,
+    })
+  } catch (err) {
+    args.log.warn(
+      { err, metric: 'slack.reaction.remove_fail' },
+      'failed to remove working-indicator reaction — leaving it',
+    )
+    Sentry.captureException(err, { tags: { surface: 'slack_reaction_remove' } })
+  }
 }
 
 async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {

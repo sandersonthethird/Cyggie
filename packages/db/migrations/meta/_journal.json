@@ -225,6 +225,27 @@
       "when": 1780778000000,
       "tag": "0031_slack_thread_focus",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1780779000000,
+      "tag": "0032_email_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1780780000000,
+      "tag": "0033_company_target_investment",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1780781000000,
+      "tag": "0034_drop_contact_investor_stage",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,8 @@ export const COMPANY_HARDCODED_FIELDS: HardcodedFieldDef[] = [
   { key: 'targetCustomer',      label: 'Target Customer',   defaultSection: 'overview',    icon: 'tag' },
   { key: 'businessModel',       label: 'Business Model',    defaultSection: 'overview',    icon: 'tag' },
   { key: 'productStage',        label: 'Product Stage',     defaultSection: 'overview',    icon: 'tag' },
+  { key: 'targetInvestmentStage',  label: 'Target Investment Stage',  defaultSection: 'overview', icon: 'flag' },
+  { key: 'targetInvestmentSector', label: 'Target Investment Sector', defaultSection: 'overview', icon: 'tag' },
   { key: 'foundingYear',        label: 'Founded',           defaultSection: 'overview',    icon: 'calendar' },
   { key: 'employeeCountRange',  label: 'Employees',         defaultSection: 'overview',    icon: 'user' },
   { key: 'hqAddress',           label: 'HQ',                defaultSection: 'overview',    icon: 'pin' },

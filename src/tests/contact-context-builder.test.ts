@@ -36,9 +36,20 @@ const mockGetMeeting = vi.fn()
 const mockReadSummary = vi.fn<[string], string | null>()
 const mockReadTranscript = vi.fn<[string], string | null>()
 
+const mockListContactEmailMessagesForChat = vi.fn()
 vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: (...args: unknown[]) => mockGetContact(args[0] as string),
   listContactEmails: (...args: unknown[]) => mockListContactEmails(args[0] as string),
+  // Part F — assembleContactContext now reconstructs threads from all messages.
+  listContactEmailMessagesForChat: (...args: unknown[]) =>
+    mockListContactEmailMessagesForChat(args[0], args[1]),
+}))
+
+// Part E — assembleContactContext reads the emailThreadsPerCompany pref; mock it
+// so the test doesn't hit the real getDatabase() (Electron app.getPath).
+const mockGetPreference = vi.fn()
+vi.mock('@cyggie/db/sqlite/repositories/user-preferences.repo', () => ({
+  getPreference: (...args: unknown[]) => mockGetPreference(args[0]),
 }))
 
 vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
@@ -85,7 +96,6 @@ function makeContact(overrides: Partial<ContactDetail> = {}): ContactDetail {
     primaryCompany: null,
     emails: ['jane@example.com'],
     meetings: [],
-    investorStage: null,
     city: null,
     state: null,
     notes: null,
@@ -125,6 +135,8 @@ describe('assembleContactContext', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockListContactEmails.mockReturnValue([])
+    mockListContactEmailMessagesForChat.mockReturnValue([])
+    mockGetPreference.mockReturnValue(null)
     mockListContactNotes.mockReturnValue([])
     mockGetMeeting.mockReturnValue(null)
     mockReadSummary.mockReturnValue(null)
@@ -173,42 +185,35 @@ describe('assembleContactContext', () => {
     expect(result.markdown).toContain('Meeting Transcripts')
   })
 
-  it('sets hasEmails true when an email has a body', () => {
+  it('sets hasEmails true when a two-way thread survives the filter', () => {
     mockGetContact.mockReturnValue(makeContact())
-    mockListContactEmails.mockReturnValue([{
-      id: 'e1',
-      subject: 'Partnership inquiry',
-      fromEmail: 'jane@example.com',
-      fromName: 'Jane Smith',
-      receivedAt: '2024-05-01T10:00:00Z',
-      sentAt: null,
-      snippet: null,
-      bodyText: 'Hi, I wanted to discuss a potential partnership with your fund.',
-      isUnread: false,
-      threadId: null,
-      threadMessageCount: 1,
-      participants: [],
-    }])
+    // Part F: chat reconstructs threads from all messages (listContactEmailMessagesForChat).
+    const body = 'Hi, I wanted to discuss a potential partnership with your fund in detail.'
+    mockListContactEmailMessagesForChat.mockReturnValue([
+      {
+        messageId: 'e1', threadGroup: 'T1', fromName: 'Jane Smith', fromEmail: 'jane@example.com',
+        subject: 'Partnership inquiry', direction: 'inbound', bodyText: body, labelsJson: '["INBOX"]',
+        hasAttachments: false, receivedAt: '2024-05-01T10:00:00Z', sentAt: null,
+        linkConfidence: 0.98, linkedBy: 'auto',
+      },
+      {
+        messageId: 'e2', threadGroup: 'T1', fromName: 'Me', fromEmail: 'me@firm.test',
+        subject: 'Re: Partnership inquiry', direction: 'outbound', bodyText: 'Happy to chat — sharing a few times.',
+        labelsJson: '["SENT"]', hasAttachments: false, receivedAt: '2024-05-02T10:00:00Z', sentAt: null,
+        linkConfidence: 0.98, linkedBy: 'auto',
+      },
+    ])
     const result = assembleContactContext('c1')
     expect(result.hasEmails).toBe(true)
     expect(result.markdown).toContain('Email Correspondence')
   })
 
-  it('does NOT set hasEmails when email body is too short (< 50 chars)', () => {
+  it('does NOT set hasEmails when the only thread is low-signal (short one-way)', () => {
     mockGetContact.mockReturnValue(makeContact())
-    mockListContactEmails.mockReturnValue([{
-      id: 'e2',
-      subject: 'Hi',
-      fromEmail: 'jane@example.com',
-      fromName: null,
-      receivedAt: null,
-      sentAt: null,
-      snippet: null,
-      bodyText: 'Thanks!',
-      isUnread: false,
-      threadId: null,
-      threadMessageCount: 1,
-      participants: [],
+    mockListContactEmailMessagesForChat.mockReturnValue([{
+      messageId: 'e2', threadGroup: 'e2', fromName: null, fromEmail: 'jane@example.com',
+      subject: 'Hi', direction: 'inbound', bodyText: 'Thanks!', labelsJson: '["INBOX"]',
+      hasAttachments: false, receivedAt: null, sentAt: null, linkConfidence: 0.9, linkedBy: 'auto',
     }])
     const result = assembleContactContext('c1')
     expect(result.hasEmails).toBe(false)

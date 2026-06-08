@@ -44,6 +44,7 @@ import {
   applyRemoteContactEmails,
   applyRemoteChatSessions,
   applyRemoteChatSessionMessages,
+  applyRemoteUserPreferences,
   type PulledMeetingRow,
   type PulledNoteRow,
   type PulledOrgCompanyRow,
@@ -52,6 +53,7 @@ import {
   type PulledContactEmailRowWire,
   type PulledChatSessionRow,
   type PulledChatSessionMessageRow,
+  type PulledUserPreferenceRowWire,
 } from './sync-remote-apply'
 import type { SyncAgent } from './sync-agent'
 
@@ -85,6 +87,8 @@ export interface PullResponse {
   /** 2026-05-24 (Bug B) — chat tables join the pull path. */
   chatSessions?: PulledChatSessionRow[]
   chatSessionMessages?: PulledChatSessionMessageRow[]
+  /** Part E — synced chat preferences (e.g. emailThreadsPerCompany). */
+  userPreferences?: PulledUserPreferenceRowWire[]
   serverLamport: string
 }
 
@@ -364,6 +368,12 @@ export class SyncPullService {
             ...(this.cfg.log ? { log: this.cfg.log } : {}),
           },
         )
+      }
+      // Part E — synced chat preferences (no FK ordering constraint).
+      if (response.userPreferences && response.userPreferences.length > 0) {
+        applyRemoteUserPreferences(this.cfg.db, deviceId, userId, response.userPreferences, {
+          ...(this.cfg.log ? { log: this.cfg.log } : {}),
+        })
       }
     } catch (err) {
       // Top-level apply failure (something other than per-sub-batch

@@ -33,10 +33,20 @@ const mockReadSummary = vi.fn()
 const mockReadTranscript = vi.fn()
 const mockReadLocalFile = vi.fn()
 
+const mockListCompanyEmailMessagesForChat = vi.fn()
 vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getCompany: (...args: unknown[]) => mockGetCompany(args[0]),
   listCompanyMeetings: (...args: unknown[]) => mockListCompanyMeetings(args[0]),
   listCompanyEmails: (...args: unknown[]) => mockListCompanyEmails(args[0]),
+  listCompanyEmailMessagesForChat: (...args: unknown[]) =>
+    mockListCompanyEmailMessagesForChat(args[0], args[1]),
+}))
+
+// Part E — assembleCompanyContext now reads the emailThreadsPerCompany pref.
+// Mock it so the test doesn't hit the real getDatabase() (Electron app.getPath).
+const mockGetPreference = vi.fn()
+vi.mock('@cyggie/db/sqlite/repositories/user-preferences.repo', () => ({
+  getPreference: (...args: unknown[]) => mockGetPreference(args[0]),
 }))
 
 vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
@@ -50,6 +60,16 @@ vi.mock('@cyggie/db/sqlite/repositories/company-file-flags.repo', () => ({
       fileId: id,
       fileName: id.split('/').pop() ?? id,
       mimeType: null,
+    })),
+  // assembleCompanyContext uses the detailed variant (pre-extracted text +
+  // status) — pre-existing mock gap, unrelated to the email change.
+  getFlaggedFilesDetailed: (...args: unknown[]) =>
+    (mockGetFlaggedFileIds(args[0]) as string[]).map((id) => ({
+      fileId: id,
+      fileName: id.split('/').pop() ?? id,
+      mimeType: null,
+      extractionStatus: 'done',
+      extractedText: 'flagged file body text long enough to count as content',
     })),
 }))
 
@@ -75,6 +95,8 @@ beforeEach(() => {
   mockGetCompany.mockReturnValue(null)
   mockListCompanyMeetings.mockReturnValue([])
   mockListCompanyEmails.mockReturnValue([])
+  mockListCompanyEmailMessagesForChat.mockReturnValue([])
+  mockGetPreference.mockReturnValue(null)
   mockGetMeeting.mockReturnValue(null)
   mockGetFlaggedFileIds.mockReturnValue([])
   mockReadSummary.mockReturnValue(null)
@@ -82,6 +104,26 @@ beforeEach(() => {
   mockReadLocalFile.mockResolvedValue(null)
   mockCompanyNotesList.mockReturnValue([])
 })
+
+// A 2-message, two-way thread (inbound + outbound) that survives
+// isLowSignalEmail — shape matches ChatEmailMessage (Part F retrieval).
+function twoWayThread() {
+  const body = 'Sharing the Q2 update on Init Labs with enough substantive body to pass the MIN filter.'
+  return [
+    {
+      messageId: 'm1', threadGroup: 'T1', fromName: 'Priya', fromEmail: 'priya@initlabs.test',
+      subject: 'Q2 update', direction: 'inbound', bodyText: body, labelsJson: '["INBOX"]',
+      hasAttachments: false, receivedAt: '2026-05-01T10:00:00Z', sentAt: null,
+      linkConfidence: 0.95, linkedBy: 'auto',
+    },
+    {
+      messageId: 'm2', threadGroup: 'T1', fromName: 'Me', fromEmail: 'me@firm.test',
+      subject: 'Re: Q2 update', direction: 'outbound', bodyText: 'Thanks Priya — a few quick follow-up questions on pricing.',
+      labelsJson: '["SENT"]', hasAttachments: false, receivedAt: '2026-05-02T10:00:00Z', sentAt: null,
+      linkConfidence: 0.95, linkedBy: 'auto',
+    },
+  ]
+}
 
 function makeCompany(over: Record<string, unknown> = {}) {
   return {
@@ -134,17 +176,9 @@ describe('assembleCompanyContext', () => {
     expect(result.markdown).toContain('Q2 pricing reset held')
   })
 
-  it('hasEmails true when an email passes the MIN_BODY filter', async () => {
+  it('hasEmails true when a two-way thread survives the signal filter', async () => {
     mockGetCompany.mockReturnValue(makeCompany())
-    mockListCompanyEmails.mockReturnValue([
-      {
-        fromEmail: 'priya@initlabs.test',
-        subject: 'Q2 update',
-        receivedAt: '2026-05-01T10:00:00Z',
-        sentAt: null,
-        bodyText: 'Hi Sandy, sharing the Q2 update on Init Labs. Pricing held at $180/seat...',
-      },
-    ])
+    mockListCompanyEmailMessagesForChat.mockReturnValue(twoWayThread())
     const result = await assembleCompanyContext('co1')
     expect(result.hasEmails).toBe(true)
     expect(result.markdown).toContain('## Email Correspondence')
@@ -192,15 +226,7 @@ describe('buildCompanyContext', () => {
 
   it("returns kind: 'context' when at least one signal is present", async () => {
     mockGetCompany.mockReturnValue(makeCompany())
-    mockListCompanyEmails.mockReturnValue([
-      {
-        fromEmail: 'priya@initlabs.test',
-        subject: 'Q2 update',
-        receivedAt: '2026-05-01T10:00:00Z',
-        sentAt: null,
-        bodyText: 'Hi Sandy, sharing the Q2 update with enough body characters to pass the MIN filter.',
-      },
-    ])
+    mockListCompanyEmailMessagesForChat.mockReturnValue(twoWayThread())
     const result = await buildCompanyContext({ companyId: 'co1' })
     expect(result.kind).toBe('context')
     if (result.kind === 'context') {

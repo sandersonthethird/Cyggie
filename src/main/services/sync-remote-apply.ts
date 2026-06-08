@@ -455,6 +455,8 @@ export interface PulledOrgCompanyRow extends PulledRow {
   businessModel: string | null
   productStage: string | null
   revenueModel: string | null
+  targetInvestmentStage: string | null
+  targetInvestmentSector: string | null
   arr: number | null
   burnRate: number | null
   runwayMonths: number | null
@@ -529,6 +531,7 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        city, state, hq_address,
        founding_year, employee_count_range,
        target_customer, business_model, product_stage, revenue_model,
+       target_investment_stage, target_investment_sector,
        arr, burn_rate, runway_months, last_funding_date, total_funding_raised,
        lead_investor, lead_investor_company_id, co_investors,
        round, raise_size, post_money_valuation,
@@ -550,6 +553,7 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        @city, @state, @hqAddress,
        @foundingYear, @employeeCountRange,
        @targetCustomer, @businessModel, @productStage, @revenueModel,
+       @targetInvestmentStage, @targetInvestmentSector,
        @arr, @burnRate, @runwayMonths, @lastFundingDate, @totalFundingRaised,
        @leadInvestor, @leadInvestorCompanyId, @coInvestors,
        @round, @raiseSize, @postMoneyValuation,
@@ -592,6 +596,8 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        business_model = excluded.business_model,
        product_stage = excluded.product_stage,
        revenue_model = excluded.revenue_model,
+       target_investment_stage = excluded.target_investment_stage,
+       target_investment_sector = excluded.target_investment_sector,
        arr = excluded.arr,
        burn_rate = excluded.burn_rate,
        runway_months = excluded.runway_months,
@@ -662,6 +668,8 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
     businessModel: row.businessModel,
     productStage: row.productStage,
     revenueModel: row.revenueModel,
+    targetInvestmentStage: row.targetInvestmentStage,
+    targetInvestmentSector: row.targetInvestmentSector,
     arr: row.arr,
     burnRate: row.burnRate,
     runwayMonths: row.runwayMonths,
@@ -794,7 +802,6 @@ export interface PulledContactRow extends PulledRow {
   relationshipStrength: string | null
   lastMetEvent: string | null
   warmIntroPath: string | null
-  investorStage: string | null
   fundSize: number | null
   typicalCheckSizeMin: number | null
   typicalCheckSizeMax: number | null
@@ -846,7 +853,7 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        city, state, timezone, pronouns, birthday,
        university, previous_companies, work_history, education_history,
        tags, relationship_strength, last_met_event, warm_intro_path,
-       investor_stage, fund_size, typical_check_size_min, typical_check_size_max,
+       fund_size, typical_check_size_min, typical_check_size_max,
        investment_stage_focus, investment_sector_focus, investment_sector_focus_notes,
        proud_portfolio_companies, linkedin_headline, linkedin_skills, linkedin_enriched_at,
        talent_pipeline, key_takeaways, field_sources, notes,
@@ -860,7 +867,7 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        @city, @state, @timezone, @pronouns, @birthday,
        @university, @previousCompanies, @workHistory, @educationHistory,
        @tags, @relationshipStrength, @lastMetEvent, @warmIntroPath,
-       @investorStage, @fundSize, @typicalCheckSizeMin, @typicalCheckSizeMax,
+       @fundSize, @typicalCheckSizeMin, @typicalCheckSizeMax,
        @investmentStageFocus, @investmentSectorFocus, @investmentSectorFocusNotes,
        @proudPortfolioCompanies, @linkedinHeadline, @linkedinSkills, @linkedinEnrichedAt,
        @talentPipeline, @keyTakeaways, @fieldSources, @notes,
@@ -895,7 +902,6 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        relationship_strength = excluded.relationship_strength,
        last_met_event = excluded.last_met_event,
        warm_intro_path = excluded.warm_intro_path,
-       investor_stage = excluded.investor_stage,
        fund_size = excluded.fund_size,
        typical_check_size_min = excluded.typical_check_size_min,
        typical_check_size_max = excluded.typical_check_size_max,
@@ -944,7 +950,6 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
     relationshipStrength: row.relationshipStrength,
     lastMetEvent: row.lastMetEvent,
     warmIntroPath: row.warmIntroPath,
-    investorStage: row.investorStage,
     fundSize: row.fundSize,
     typicalCheckSizeMin: row.typicalCheckSizeMin,
     typicalCheckSizeMax: row.typicalCheckSizeMax,
@@ -1032,6 +1037,69 @@ function upsertContactEmailRow(
     email: row.email,
     isPrimary: row.isPrimary ? 1 : 0,
     createdAt: toIso(row.createdAt),
+    lamport: row.lamport,
+  })
+}
+
+// ─── User Preferences (Part E) ──────────────────────────────────────────────
+//
+// Neon→desktop pull of the synced chat preferences (e.g. emailThreadsPerCompany
+// cap set on mobile). SQLite user_preferences PK is `key` (single-user, no
+// user_id column), so we upsert on `key`. hasUserId:false — the gateway scopes
+// the pull to the requesting user, and there's no local user_id column to
+// validate against (same posture as contact_emails). `id` is synthesized = key.
+
+/** Wire shape — gateway sends camelCase; SQLite has no user_id column. */
+export interface PulledUserPreferenceRowWire {
+  key: string
+  value: string
+  lamport: string
+  updatedAt: string | Date
+}
+
+interface PulledUserPreferenceRow extends PulledRow {
+  id: string
+  key: string
+  value: string
+  lamport: string
+  updatedAt: string | Date
+}
+
+export function applyRemoteUserPreferences(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledUserPreferenceRowWire[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  const stamped: PulledUserPreferenceRow[] = rows.map((r) => ({ ...r, id: r.key }))
+  return applyRemoteRows(db, deviceId, userId, stamped, USER_PREFERENCES_SPEC, opts)
+}
+
+const USER_PREFERENCES_SPEC: TableSpec<PulledUserPreferenceRow> = {
+  tableName: 'user_preferences',
+  hasUserId: false,
+  selectLamportSql: 'SELECT lamport FROM user_preferences WHERE key = ?',
+  rowKey: (row) => [row.key],
+  rowId: (row) => row.key,
+  upsert: (db, row) => upsertUserPreferenceRow(db, row),
+}
+
+function upsertUserPreferenceRow(db: Database.Database, row: PulledUserPreferenceRow): void {
+  db.prepare(
+    `INSERT INTO user_preferences (
+       key, value, updated_at, lamport
+     ) VALUES (
+       @key, @value, @updatedAt, @lamport
+     )
+     ON CONFLICT(key) DO UPDATE SET
+       value = excluded.value,
+       updated_at = excluded.updated_at,
+       lamport = excluded.lamport`,
+  ).run({
+    key: row.key,
+    value: row.value,
+    updatedAt: toIso(row.updatedAt),
     lamport: row.lamport,
   })
 }

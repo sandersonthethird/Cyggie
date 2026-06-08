@@ -94,6 +94,22 @@ export const PRODUCT_STAGES: { value: string; label: string }[] = [
 
 export const INDUSTRY_OPTIONS: { value: string; label: string }[] = CANONICAL_INDUSTRIES.map((v) => ({ value: v, label: v }))
 
+// Investment stage(s) we target — a multi-select on BOTH companies
+// (targetInvestmentStage) and contacts (investmentStageFocus). Distinct from
+// `round` (the round a company is currently raising); this captures thesis fit.
+// Values are human-readable (value === label) to match the existing contact
+// investment_stage_focus data, which stores labels like "Seed, Series A".
+// The companion multi-select `targetInvestmentSector` reuses INDUSTRY_OPTIONS.
+export const TARGET_INVESTMENT_STAGES: { value: string; label: string }[] = [
+  { value: 'Pre-Seed', label: 'Pre-Seed' },
+  { value: 'Seed', label: 'Seed' },
+  { value: 'Series A', label: 'Series A' },
+  { value: 'Series B', label: 'Series B' },
+  { value: 'Series C', label: 'Series C' },
+  { value: 'Growth', label: 'Growth' },
+  { value: 'Late Stage', label: 'Late Stage' },
+]
+
 // Keys that are hardcoded in the company header — excluded from the pin mechanism
 export const COMPANY_HEADER_KEYS = new Set(['entityType', 'pipelineStage', 'priority', 'round'])
 

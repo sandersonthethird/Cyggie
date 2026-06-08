@@ -124,6 +124,10 @@ export interface CompanySummary {
   businessModel: string | null
   productStage: string | null
   revenueModel: string | null
+  /** Single-select investment stage we target for this company (e.g. 'seed'). */
+  targetInvestmentStage: string | null
+  /** Multi-select sectors we target, stored CSV (e.g. 'FinTech,SaaS'). */
+  targetInvestmentSector: string | null
   // Financials
   arr: number | null
   burnRate: number | null
@@ -398,6 +402,39 @@ export interface CompanyEmailRef {
   threadMessageCount: number
   participants: CompanyEmailParticipantRef[]
   accountEmail: string | null
+  // ── Signal-scoring fields (see packages/services/src/llm/email-signal.ts) ──
+  /** Raw Gmail labels JSON array, e.g. '["INBOX","CATEGORY_PROMOTIONS"]'. */
+  labelsJson: string | null
+  hasAttachments: boolean
+  /** Best email_company_links.confidence for this message↔company link (0..1). */
+  linkConfidence: number | null
+  /** 'manual' if a human linked this email to the entity, else 'auto'/null. */
+  linkedBy: string | null
+  /** Thread contains both an inbound and an outbound message. */
+  isTwoWay: boolean
+}
+
+/**
+ * One email message row for AI-chat thread reconstruction (Part F). Unlike
+ * CompanyEmailRef (one deduped row per thread, for the email-list UI), this
+ * returns EVERY message of the top-N threads so the chat context builder can
+ * reconstruct the full back-and-forth. Shape maps directly to
+ * `EmailRowForThread` in @cyggie/services/llm/email-signal.
+ */
+export interface ChatEmailMessage {
+  messageId: string
+  threadGroup: string
+  fromName: string | null
+  fromEmail: string
+  subject: string | null
+  direction: string | null
+  bodyText: string | null
+  labelsJson: string | null
+  hasAttachments: boolean
+  receivedAt: string | null
+  sentAt: string | null
+  linkConfidence: number | null
+  linkedBy: string | null
 }
 
 export type EmailParticipantRole = 'from' | 'to' | 'cc' | 'bcc' | 'reply_to'

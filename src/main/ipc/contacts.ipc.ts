@@ -5,6 +5,7 @@ import { generateKeyTakeaways } from '@cyggie/services/llm/contact-key-takeaways
 import * as companyRepo from '@cyggie/db/sqlite/repositories'
 import * as contactDecisionLogRepo from '@cyggie/db/sqlite/repositories/contact-decision-log.repo'
 import { ingestContactEmails, cancelContactEmailIngest } from '../services/company-email-ingest.service'
+import { backfillEmailsAfterIngest } from '../services/email-sync-backfill.service'
 import {
   enrichContactsViaWebLookup,
   mergeContactEnrichmentResults
@@ -82,7 +83,11 @@ export function registerContactHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.CONTACT_EMAIL_INGEST, (_event, contactId: string) => {
     if (!contactId) throw new Error('contactId is required')
-    return ingestContactEmails(contactId)
+    return ingestContactEmails(contactId).then((result) => {
+      // Part B — push freshly-ingested emails to Neon (idempotent).
+      backfillEmailsAfterIngest(getCurrentUserId())
+      return result
+    })
   })
 
   ipcMain.handle(IPC_CHANNELS.CONTACT_EMAIL_INGEST_CANCEL, (_event, contactId: string) => {

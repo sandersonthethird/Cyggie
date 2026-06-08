@@ -22,6 +22,8 @@ const FIELD_KEY_MAP: Record<string, { table: string; column: string }> = {
   businessModel:      { table: 'org_companies', column: 'business_model' },
   productStage:       { table: 'org_companies', column: 'product_stage' },
   employeeCountRange: { table: 'org_companies', column: 'employee_count_range' },
+  targetInvestmentStage:  { table: 'org_companies', column: 'target_investment_stage' },
+  targetInvestmentSector: { table: 'org_companies', column: 'target_investment_sector' },
   contactType:        { table: 'contacts',      column: 'contact_type' },
   talentPipeline:     { table: 'contacts',      column: 'talent_pipeline' },
 }

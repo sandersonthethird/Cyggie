@@ -5,10 +5,10 @@
   border: 1px solid var(--color-border);
   border-radius: 8px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  width: 280px;
+  width: 320px;
   display: flex;
   flex-direction: column;
-  max-height: 400px;
+  max-height: 460px;
 }
 
 .searchRow {
@@ -70,6 +70,11 @@
   color: var(--color-text-muted);
 }
 
+.itemWrap {
+  display: flex;
+  flex-direction: column;
+}
+
 .item {
   display: flex;
   align-items: center;
@@ -78,6 +83,12 @@
   cursor: pointer;
   font-size: 13px;
   color: var(--color-text-primary);
+}
+
+/* Inline value editor revealed under a checked field. Indented to align past
+   the checkbox; hosts a PropertyRow (or bespoke picker) in edit mode. */
+.inlineEditorRow {
+  padding: 2px 10px 8px 32px;
 }
 
 .item:hover {
@@ -135,7 +146,8 @@
 
 .createFieldBtn {
   flex: 1;
-  padding: 6px 10px;
+  min-width: 0;
+  padding: 6px 8px;
   background: none;
   border: 1px dashed var(--color-border);
   border-radius: 6px;
@@ -143,13 +155,32 @@
   font-size: 12px;
   cursor: pointer;
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .createFieldBtn:hover {
   background: var(--color-hover-bg, rgba(0, 0, 0, 0.04));
 }
 
-.doneBtn {
+.cancelBtn {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cancelBtn:hover {
+  background: var(--color-hover-bg, rgba(0, 0, 0, 0.04));
+}
+
+.saveBtn {
   flex-shrink: 0;
   padding: 6px 14px;
   background: var(--color-primary);
@@ -161,6 +192,6 @@
   cursor: pointer;
 }
 
-.doneBtn:hover {
+.saveBtn:hover {
   filter: brightness(1.05);
 }

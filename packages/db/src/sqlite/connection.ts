@@ -111,6 +111,11 @@ import { runContactKeyTakeawaysUserNoteMigration } from './migrations/109-contac
 import { runCompanyKeyTakeawaysUserNoteMigration } from './migrations/110-company-key-takeaways-user-note'
 import { runMeetingsTranscriptProviderMigration } from './migrations/111-meetings-transcript-provider'
 import { runMeetingsMeSpeakerIndexMigration } from './migrations/112-meetings-me-speaker-index'
+import { runEmailSyncLamportMigration } from './migrations/113-email-sync-lamport'
+import { runCompanyTargetInvestmentFieldsMigration } from './migrations/114-company-target-investment-fields'
+import { runContactTargetInvestmentStageMigration } from './migrations/115-contact-target-investment-stage'
+import { runDropContactInvestorStageMigration } from './migrations/116-drop-contact-investor-stage'
+import { runUserPreferencesLamportMigration } from './migrations/117-user-preferences-lamport'
 
 let db: Database.Database | null = null
 
@@ -260,6 +265,11 @@ export function getDatabase(): Database.Database {
     runCompanyKeyTakeawaysUserNoteMigration(db)
     runMeetingsTranscriptProviderMigration(db)
     runMeetingsMeSpeakerIndexMigration(db)
+    runEmailSyncLamportMigration(db)
+    runCompanyTargetInvestmentFieldsMigration(db)
+    runContactTargetInvestmentStageMigration(db)
+    runDropContactInvestorStageMigration(db)
+    runUserPreferencesLamportMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or

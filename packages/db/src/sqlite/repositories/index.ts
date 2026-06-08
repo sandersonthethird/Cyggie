@@ -222,6 +222,7 @@ export const listContactsForEmailOnboarding = rawContact.listContactsForEmailOnb
 export const hasContactEmailHistory = rawContact.hasContactEmailHistory
 export const getContact = rawContact.getContact
 export const listContactEmails = rawContact.listContactEmails
+export const listContactEmailMessagesForChat = rawContact.listContactEmailMessagesForChat
 export const autoLinkContactsByDomain = rawContact.autoLinkContactsByDomain
 export const syncContactsFromAttendees = rawContact.syncContactsFromAttendees
 export const syncContactsFromMeetings = rawContact.syncContactsFromMeetings
@@ -341,6 +342,7 @@ export const listCompanyMeetingSummaryPaths = rawOrgCompany.listCompanyMeetingSu
 // re-exported above; do not duplicate here.)
 export const listCompanyContacts = rawOrgCompany.listCompanyContacts
 export const listCompanyEmails = rawOrgCompany.listCompanyEmails
+export const listCompanyEmailMessagesForChat = rawOrgCompany.listCompanyEmailMessagesForChat
 export const listCompanyFiles = rawOrgCompany.listCompanyFiles
 export const listCompanyTimeline = rawOrgCompany.listCompanyTimeline
 export const setCompanyPrimaryContact = rawOrgCompany.setCompanyPrimaryContact

@@ -74,6 +74,9 @@ export const orgCompanies = pgTable(
     businessModel: text('business_model'),
     productStage: text('product_stage'),
     revenueModel: text('revenue_model'),
+    // Investment-thesis fit (single-select stage + multi-select sector CSV)
+    targetInvestmentStage: text('target_investment_stage'),
+    targetInvestmentSector: text('target_investment_sector'),
     // Financials
     arr: doublePrecision('arr'),
     burnRate: doublePrecision('burn_rate'),

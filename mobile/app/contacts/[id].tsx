@@ -315,10 +315,6 @@ function OverviewSection({ contact }: { contact: ContactDetail }) {
       // Investor-specific (only meaningful for contactType === 'investor', but
       // showing whatever's set rather than hiding behind a type check).
       {
-        label: 'Investor stage',
-        value: contact.investorStage ? humanize(contact.investorStage) : null,
-      },
-      {
         label: 'Fund size',
         value: contact.fundSize ? formatCurrency(contact.fundSize) : null,
       },

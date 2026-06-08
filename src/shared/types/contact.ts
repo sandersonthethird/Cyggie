@@ -62,6 +62,16 @@ export interface ContactEmailRef {
   threadId: string | null
   threadMessageCount: number
   participants: ContactEmailParticipantRef[]
+  // ── Signal-scoring fields (see packages/services/src/llm/email-signal.ts) ──
+  /** Raw Gmail labels JSON array, e.g. '["INBOX","CATEGORY_PROMOTIONS"]'. */
+  labelsJson: string | null
+  hasAttachments: boolean
+  /** Best email_contact_links.confidence for this message↔contact link (0..1). */
+  linkConfidence: number | null
+  /** 'manual' if a human linked this email to the contact, else 'auto'/null. */
+  linkedBy: string | null
+  /** Thread contains both an inbound and an outbound message. */
+  isTwoWay: boolean
 }
 
 export type EmailParticipantRole = 'from' | 'to' | 'cc' | 'bcc' | 'reply_to'
@@ -77,7 +87,6 @@ export interface ContactDetail extends ContactSummary {
   primaryCompany: ContactCompanyRef | null
   emails: string[]
   meetings: ContactMeetingRef[]
-  investorStage: string | null
   city: string | null
   state: string | null
   street: string | null

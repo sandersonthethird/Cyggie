@@ -91,6 +91,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 
 import { AgentLimitsSection } from '../components/settings/AgentLimitsSection'
 import { AgentModelTierSection } from '../components/settings/AgentModelTierSection'
+import { EmailContextSection } from '../components/settings/EmailContextSection'
 import { TranscriptionProviderSection } from '../components/settings/TranscriptionProviderSection'
 
 interface SettingsState {
@@ -1445,6 +1446,12 @@ export default function Settings() {
           Applies to both the memo producer and stress-test agents. Reads happen at run start.
         </p>
         <AgentModelTierSection />
+
+        <h4 className={styles.subsectionTitle ?? ''} style={{ marginTop: 24, fontSize: 14, fontWeight: 600 }}>AI chat email context</h4>
+        <p className={styles.hint} style={{ marginTop: 4 }}>
+          How many recent email threads per company/contact the in-app AI chat includes. Synced to mobile.
+        </p>
+        <EmailContextSection />
       </section>
         </>
       )}

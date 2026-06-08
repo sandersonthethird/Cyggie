@@ -22,15 +22,18 @@ import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFie
 import { chipStyle } from '../../utils/colorChip'
 import { CreateCustomFieldModal } from '../crm/CreateCustomFieldModal'
 import { ChipSelect } from '../crm/ChipSelect'
-import { INDUSTRY_OPTIONS } from '../company/companyColumns'
-import { AddFieldDropdown } from '../crm/AddFieldDropdown'
+import { INDUSTRY_OPTIONS, TARGET_INVESTMENT_STAGES } from '../company/companyColumns'
+import { AddFieldDropdown, type FieldEditor } from '../crm/AddFieldDropdown'
+import { PropertyRow, type PropertyRowType } from '../crm/PropertyRow'
+import { TagPicker } from '../crm/TagPicker'
+import { CONTACT_FIELD_META } from '../../constants/contactFieldMeta'
 import { computeChipDelta } from '../../utils/chip-delta'
 import { usePinnedMigration } from '../../hooks/usePinnedMigration'
 import { ContactFieldSections } from './ContactFieldSections'
 import { ContactHeaderCard } from './ContactHeaderCard'
 import { ContactModalsCollection } from './ContactModalsCollection'
 import { saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
-import { CONTACT_HARDCODED_FIELDS } from '../../constants/contactFields'
+import { CONTACT_HARDCODED_FIELDS, CONTACT_HARDCODED_FIELD_MAP } from '../../constants/contactFields'
 import { PropertiesCard, PropertiesCardFooter } from '../crm/PropertiesCard'
 import { useSectionCollapse } from '../../hooks/useSectionCollapse'
 import {
@@ -282,6 +285,9 @@ export function ContactPropertiesPanel({
   const talentPipelineDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'talentPipeline')
   const talentPipelineOptions = mergeBuiltinOptions(TALENT_PIPELINE_STAGES, talentPipelineDef?.optionsJson ?? null)
 
+  const stageFocusDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'investmentStageFocus')
+  const stageFocusOptions = mergeBuiltinOptions(TARGET_INVESTMENT_STAGES, stageFocusDef?.optionsJson ?? null)
+
   const sectorFocusDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'investmentSectorFocus')
   const sectorFocusOptions = mergeBuiltinOptions(INDUSTRY_OPTIONS, sectorFocusDef?.optionsJson ?? null)
 
@@ -430,6 +436,102 @@ export function ContactPropertiesPanel({
       case 'date': return field.value.valueDate
       case 'contact_ref': case 'company_ref': return field.value.valueRefId
       default: return field.value.valueText
+    }
+  }
+
+  // ── Inline value editor resolver for the Add Field modal ──
+  // Mirror of the company panel: returns an editor descriptor (or null) for a
+  // field key, reusing the panel's save handlers / option sets. previousCompanies
+  // is intentionally not inline-editable — its main-surface editor preserves the
+  // company-link autocomplete that a buffered editor would silently drop.
+  function getFieldEditor(fieldKey: string): FieldEditor | null {
+    // ── Custom fields ──
+    if (fieldKey.startsWith('custom:')) {
+      const f = customFields.find(c => c.id === fieldKey.slice('custom:'.length))
+      if (!f) return null
+      const opts = (() => { try { return f.optionsJson ? JSON.parse(f.optionsJson) : [] } catch { return [] } })()
+      const onAddOption = (f.fieldType === 'select' || f.fieldType === 'multiselect')
+        ? async (newOption: string) => {
+            const opt = newOption.trim().slice(0, 200)
+            await addCustomFieldOption(f.id, f.optionsJson, opt)
+            setCustomFields(prev => prev.map(x => {
+              if (x.id !== f.id) return x
+              const cur: string[] = (() => { try { return JSON.parse(x.optionsJson ?? '[]') } catch { return [] } })()
+              return { ...x, optionsJson: JSON.stringify([...cur, opt]) }
+            }))
+          }
+        : undefined
+      return {
+        initialValue: getPinnedFieldValue(f),
+        renderEditor: (value, onChange) => (
+          <PropertyRow
+            label={f.label}
+            value={value as string | number | boolean | null}
+            type={f.fieldType as PropertyRowType}
+            options={opts}
+            editMode
+            onSave={async (v) => onChange(v)}
+            onAddOption={onAddOption}
+          />
+        ),
+        commit: (value) => handlePinnedFieldSave(f, value as string | number | boolean | null).then(() => {}),
+      }
+    }
+
+    // ── Hardcoded fields ──
+    const meta = CONTACT_FIELD_META[fieldKey]
+    if (!meta) return null
+    if (meta.complex) {
+      if (fieldKey === 'investmentStageFocus') {
+        return {
+          initialValue: contact.investmentStageFocus ?? null,
+          renderEditor: (value, onChange) => (
+            <TagPicker
+              value={value as string | null}
+              options={stageFocusOptions}
+              isEditing
+              onSave={(v) => onChange(v)}
+              onAddOption={stageFocusDef ? async (opt) => addCustomFieldOption(stageFocusDef.id, stageFocusDef.optionsJson, opt) : undefined}
+            />
+          ),
+          commit: (value) => save('investmentStageFocus', value).then(() => {}),
+        }
+      }
+      if (fieldKey === 'investmentSectorFocus') {
+        return {
+          initialValue: contact.investmentSectorFocus ?? null,
+          renderEditor: (value, onChange) => (
+            <TagPicker
+              value={value as string | null}
+              options={sectorFocusOptions}
+              isEditing
+              onSave={(v) => onChange(v)}
+              onAddOption={sectorFocusDef ? async (opt) => addCustomFieldOption(sectorFocusDef.id, sectorFocusDef.optionsJson, opt) : undefined}
+            />
+          ),
+          commit: (value) => save('investmentSectorFocus', value).then(() => {}),
+        }
+      }
+      // previousCompanies (and any other complex contact field): edit on the
+      // main surface to preserve its richer editor.
+      return null
+    }
+
+    const label = CONTACT_HARDCODED_FIELD_MAP.get(fieldKey)?.label ?? fieldKey
+    return {
+      initialValue: (contact as unknown as Record<string, unknown>)[fieldKey] ?? null,
+      renderEditor: (value, onChange) => (
+        <PropertyRow
+          label={label}
+          value={value as string | number | boolean | null}
+          type={meta.type}
+          options={meta.getOptions?.({ talentPipeline: talentPipelineOptions })}
+          editMode
+          onSave={async (v) => onChange(v)}
+          onAddOption={fieldKey === 'talentPipeline' && talentPipelineDef ? async (opt) => addCustomFieldOption(talentPipelineDef.id, talentPipelineDef.optionsJson, opt) : undefined}
+        />
+      ),
+      commit: (value) => save(fieldKey, meta.coerceNull ? ((value as unknown as string) || null) : value).then(() => {}),
     }
   }
 
@@ -1382,6 +1484,8 @@ export function ContactPropertiesPanel({
         liEduEntries={liEduEntries}
         talentPipelineDef={talentPipelineDef}
         talentPipelineOptions={talentPipelineOptions}
+        stageFocusDef={stageFocusDef}
+        stageFocusOptions={stageFocusOptions}
         sectorFocusDef={sectorFocusDef}
         sectorFocusOptions={sectorFocusOptions}
         onRequestCreateCompany={onRequestCreateCompany}
@@ -1402,6 +1506,7 @@ export function ContactPropertiesPanel({
             fieldPlacements={fieldVisibility.fieldPlacements}
             sections={CONTACT_SECTIONS.filter(s => s.key !== 'summary')}
             defaultSection={addFieldSection ?? undefined}
+            getFieldEditor={getFieldEditor}
             onToggleField={(key, checked) => {
               if (checked) fieldVisibility.addToAddedFields([key])
               else fieldVisibility.removeFromAddedFields(key)

@@ -31,6 +31,7 @@ import { CollapsibleSection } from '../crm/CollapsibleSection'
 import { HideableRow as SharedHideableRow } from '../crm/HideableRow'
 import { DraggableFieldRow } from '../crm/DraggableFieldRow'
 import { addCustomFieldOption } from '../../utils/customFieldUtils'
+import { CONTACT_FIELD_META as M } from '../../constants/contactFieldMeta'
 import { parsePriorCompanies, type PriorCompanyEntry } from './ContactPropertiesPanel'
 import styles from './ContactPropertiesPanel.module.css'
 
@@ -158,6 +159,8 @@ export interface ContactFieldSectionsProps {
   // Contact-specific: investor section option sets
   talentPipelineDef?: CustomFieldDefinition
   talentPipelineOptions: { value: string; label: string }[]
+  stageFocusDef?: CustomFieldDefinition
+  stageFocusOptions: { value: string; label: string }[]
   sectorFocusDef?: CustomFieldDefinition
   sectorFocusOptions: { value: string; label: string }[]
 
@@ -198,6 +201,8 @@ export function ContactFieldSections({
   liEduEntries,
   talentPipelineDef,
   talentPipelineOptions,
+  stageFocusDef,
+  stageFocusOptions,
   sectorFocusDef,
   sectorFocusOptions,
   onRequestCreateCompany,
@@ -372,12 +377,12 @@ export function ContactFieldSections({
               {renderHardcodedSection([
                 { key: 'twitterHandle', visible: showField('twitterHandle', contact.twitterHandle), render: () => (
                   <HideableRow fieldKey="twitterHandle" isEmpty={!contact.twitterHandle}>
-                    <PropertyRow label="Twitter/X" value={contact.twitterHandle} type="text" editMode={isEditing} onSave={(v) => save('twitterHandle', v)} />
+                    <PropertyRow label="Twitter/X" value={contact.twitterHandle} type={M.twitterHandle.type} editMode={isEditing} onSave={(v) => save('twitterHandle', v)} />
                   </HideableRow>
                 )},
                 { key: 'timezone', visible: showField('timezone', contact.timezone), render: () => (
                   <HideableRow fieldKey="timezone" isEmpty={!contact.timezone}>
-                    <PropertyRow label="Timezone" value={contact.timezone} type="text" editMode={isEditing} onSave={(v) => save('timezone', v)} />
+                    <PropertyRow label="Timezone" value={contact.timezone} type={M.timezone.type} editMode={isEditing} onSave={(v) => save('timezone', v)} />
                   </HideableRow>
                 )},
               ], 'contact_info')}
@@ -490,17 +495,17 @@ export function ContactFieldSections({
                 )},
                 { key: 'university', visible: showField('university', contact.university) && liEduEntries.length === 0, render: () => (
                   <HideableRow fieldKey="university" isEmpty={!contact.university}>
-                    <PropertyRow label="University" value={contact.university} type="text" editMode={isEditing} onSave={(v) => save('university', v)} />
+                    <PropertyRow label="University" value={contact.university} type={M.university.type} editMode={isEditing} onSave={(v) => save('university', v)} />
                   </HideableRow>
                 )},
                 { key: 'tags', visible: showField('tags', contact.tags), render: () => (
                   <HideableRow fieldKey="tags" isEmpty={!contact.tags}>
-                    <PropertyRow label="Tags" value={contact.tags} type="tags" editMode={isEditing} onSave={(v) => save('tags', v)} />
+                    <PropertyRow label="Tags" value={contact.tags} type={M.tags.type} editMode={isEditing} onSave={(v) => save('tags', v)} />
                   </HideableRow>
                 )},
                 { key: 'pronouns', visible: showField('pronouns', contact.pronouns), render: () => (
                   <HideableRow fieldKey="pronouns" isEmpty={!contact.pronouns}>
-                    <PropertyRow label="Pronouns" value={contact.pronouns} type="text" editMode={isEditing} onSave={(v) => save('pronouns', v)} />
+                    <PropertyRow label="Pronouns" value={contact.pronouns} type={M.pronouns.type} editMode={isEditing} onSave={(v) => save('pronouns', v)} />
                   </HideableRow>
                 )},
               ], 'professional')}
@@ -536,9 +541,9 @@ export function ContactFieldSections({
                     <PropertyRow
                       label="Talent Pipeline"
                       value={contact.talentPipeline}
-                      type="select"
+                      type={M.talentPipeline.type}
                       editMode={isEditing}
-                      options={[{ value: '', label: '—' }, ...talentPipelineOptions]}
+                      options={M.talentPipeline.getOptions!({ talentPipeline: talentPipelineOptions })}
                       onSave={(v) => save('talentPipeline', v || null)}
                       onAddOption={talentPipelineDef ? async (opt) => addCustomFieldOption(talentPipelineDef.id, talentPipelineDef.optionsJson, opt) : undefined}
                     />
@@ -546,17 +551,17 @@ export function ContactFieldSections({
                 )},
                 { key: 'lastMetEvent', visible: showField('lastMetEvent', contact.lastMetEvent), render: () => (
                   <HideableRow fieldKey="lastMetEvent" isEmpty={!contact.lastMetEvent}>
-                    <PropertyRow label="Last Met At" value={contact.lastMetEvent} type="text" editMode={isEditing} onSave={(v) => save('lastMetEvent', v)} />
+                    <PropertyRow label="Last Met At" value={contact.lastMetEvent} type={M.lastMetEvent.type} editMode={isEditing} onSave={(v) => save('lastMetEvent', v)} />
                   </HideableRow>
                 )},
                 { key: 'warmIntroPath', visible: showField('warmIntroPath', contact.warmIntroPath), render: () => (
                   <HideableRow fieldKey="warmIntroPath" isEmpty={!contact.warmIntroPath}>
-                    <PropertyRow label="Warm Intro Path" value={contact.warmIntroPath} type="textarea" editMode={isEditing} onSave={(v) => save('warmIntroPath', v)} />
+                    <PropertyRow label="Warm Intro Path" value={contact.warmIntroPath} type={M.warmIntroPath.type} editMode={isEditing} onSave={(v) => save('warmIntroPath', v)} />
                   </HideableRow>
                 )},
                 { key: 'notes', visible: showField('notes', contact.notes), render: () => (
                   <HideableRow fieldKey="notes" isEmpty={!contact.notes}>
-                    <PropertyRow label="Notes" value={contact.notes} type="textarea" editMode={isEditing} onSave={(v) => save('notes', v)} />
+                    <PropertyRow label="Notes" value={contact.notes} type={M.notes.type} editMode={isEditing} onSave={(v) => save('notes', v)} />
                   </HideableRow>
                 )},
               ], 'relationship')}
@@ -589,28 +594,37 @@ export function ContactFieldSections({
                 {contact.contactType === 'investor' && renderHardcodedSection([
                   { key: 'fundSize', visible: showField('fundSize', contact.fundSize), render: () => (
                     <HideableRow fieldKey="fundSize" isEmpty={!contact.fundSize}>
-                      <PropertyRow label="Fund Size" value={contact.fundSize} type="currency" editMode={isEditing} onSave={(v) => save('fundSize', v)} />
+                      <PropertyRow label="Fund Size" value={contact.fundSize} type={M.fundSize.type} editMode={isEditing} onSave={(v) => save('fundSize', v)} />
                     </HideableRow>
                   )},
                   { key: 'typicalCheckSizeMin', visible: showField('typicalCheckSizeMin', contact.typicalCheckSizeMin), render: () => (
                     <HideableRow fieldKey="typicalCheckSizeMin" isEmpty={!contact.typicalCheckSizeMin}>
-                      <PropertyRow label="Check Size Min" value={contact.typicalCheckSizeMin} type="currency" editMode={isEditing} onSave={(v) => save('typicalCheckSizeMin', v)} />
+                      <PropertyRow label="Check Size Min" value={contact.typicalCheckSizeMin} type={M.typicalCheckSizeMin.type} editMode={isEditing} onSave={(v) => save('typicalCheckSizeMin', v)} />
                     </HideableRow>
                   )},
                   { key: 'typicalCheckSizeMax', visible: showField('typicalCheckSizeMax', contact.typicalCheckSizeMax), render: () => (
                     <HideableRow fieldKey="typicalCheckSizeMax" isEmpty={!contact.typicalCheckSizeMax}>
-                      <PropertyRow label="Check Size Max" value={contact.typicalCheckSizeMax} type="currency" editMode={isEditing} onSave={(v) => save('typicalCheckSizeMax', v)} />
+                      <PropertyRow label="Check Size Max" value={contact.typicalCheckSizeMax} type={M.typicalCheckSizeMax.type} editMode={isEditing} onSave={(v) => save('typicalCheckSizeMax', v)} />
                     </HideableRow>
                   )},
                   { key: 'investmentStageFocus', visible: showField('investmentStageFocus', contact.investmentStageFocus), render: () => (
                     <HideableRow fieldKey="investmentStageFocus" isEmpty={!contact.investmentStageFocus}>
-                      <PropertyRow label="Stage Focus" value={contact.investmentStageFocus} type="text" editMode={isEditing} onSave={(v) => save('investmentStageFocus', v)} />
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                        <span style={{ minWidth: 120, color: 'var(--text-muted)' }}>Target Investment Stage</span>
+                        <TagPicker
+                          value={contact.investmentStageFocus}
+                          options={stageFocusOptions}
+                          isEditing={isEditing}
+                          onSave={(v) => save('investmentStageFocus', v)}
+                          onAddOption={stageFocusDef ? async (opt) => addCustomFieldOption(stageFocusDef.id, stageFocusDef.optionsJson, opt) : undefined}
+                        />
+                      </div>
                     </HideableRow>
                   )},
                   { key: 'investmentSectorFocus', visible: showField('investmentSectorFocus', contact.investmentSectorFocus), render: () => (
                     <HideableRow fieldKey="investmentSectorFocus" isEmpty={!contact.investmentSectorFocus}>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                        <span style={{ minWidth: 120, color: 'var(--text-muted)' }}>Sector Focus</span>
+                        <span style={{ minWidth: 120, color: 'var(--text-muted)' }}>Target Investment Sector</span>
                         <TagPicker
                           value={contact.investmentSectorFocus}
                           options={sectorFocusOptions}
@@ -623,17 +637,12 @@ export function ContactFieldSections({
                   )},
                   { key: 'investmentSectorFocusNotes', visible: showField('investmentSectorFocusNotes', contact.investmentSectorFocusNotes), render: () => (
                     <HideableRow fieldKey="investmentSectorFocusNotes" isEmpty={!contact.investmentSectorFocusNotes}>
-                      <PropertyRow label="Sector Focus Notes" value={contact.investmentSectorFocusNotes} type="text" editMode={isEditing} onSave={(v) => save('investmentSectorFocusNotes', v)} />
-                    </HideableRow>
-                  )},
-                  { key: 'investorStage', visible: showField('investorStage', contact.investorStage), render: () => (
-                    <HideableRow fieldKey="investorStage" isEmpty={!contact.investorStage}>
-                      <PropertyRow label="Investor Stage" value={contact.investorStage} type="text" editMode={isEditing} onSave={(v) => save('investorStage', v)} />
+                      <PropertyRow label="Target Investment Sector Notes" value={contact.investmentSectorFocusNotes} type={M.investmentSectorFocusNotes.type} editMode={isEditing} onSave={(v) => save('investmentSectorFocusNotes', v)} />
                     </HideableRow>
                   )},
                   { key: 'proudPortfolioCompanies', visible: showField('proudPortfolioCompanies', contact.proudPortfolioCompanies), render: () => (
                     <HideableRow fieldKey="proudPortfolioCompanies" isEmpty={!contact.proudPortfolioCompanies}>
-                      <PropertyRow label="Portfolio Cos" value={contact.proudPortfolioCompanies} type="text" editMode={isEditing} onSave={(v) => save('proudPortfolioCompanies', v)} />
+                      <PropertyRow label="Portfolio Cos" value={contact.proudPortfolioCompanies} type={M.proudPortfolioCompanies.type} editMode={isEditing} onSave={(v) => save('proudPortfolioCompanies', v)} />
                     </HideableRow>
                   )},
                 ], 'investor_info')}

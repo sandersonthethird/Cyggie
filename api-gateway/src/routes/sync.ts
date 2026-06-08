@@ -347,9 +347,13 @@ export async function registerSyncRoutes(
                 if (typeof v === 'object') return JSON.stringify(v)
                 return v
               })
-              const conflictCols = spec.primaryKey.map((c) => `"${c}"`).join(', ')
+              // ON CONFLICT target = the Postgres unique constraint, which can
+              // be wider than the SQLite primaryKey (e.g. user_preferences:
+              // SQLite (key) vs Neon (user_id, key)). Falls back to primaryKey.
+              const conflictKeyCols = spec.conflictKey ?? spec.primaryKey
+              const conflictCols = conflictKeyCols.map((c) => `"${c}"`).join(', ')
               const updateSets = cols
-                .filter((c) => !spec.primaryKey.includes(c))
+                .filter((c) => !conflictKeyCols.includes(c))
                 .map((c) => `"${c}" = EXCLUDED."${c}"`)
                 .join(', ')
               const upsertSql = `
@@ -456,6 +460,7 @@ export async function registerSyncRoutes(
           contactEmails: z.array(z.unknown()),
           chatSessions: z.array(z.unknown()),
           chatSessionMessages: z.array(z.unknown()),
+          userPreferences: z.array(z.unknown()),
           serverLamport: z.string(),
         }),
       },
@@ -488,6 +493,7 @@ export async function registerSyncRoutes(
         contactEmails,
         chatSessions,
         chatSessionMessages,
+        userPreferences,
       ] = await Promise.all([
         db
           .select()
@@ -596,6 +602,22 @@ export async function registerSyncRoutes(
                 AND CAST(${schema.chatSessionMessages.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.chatSessionMessages.lamport} AS numeric) ASC`),
+        // Part E — user_preferences: scoped by userId (column on row). Select
+        // only the synced columns (no user_id; desktop SQLite has no such
+        // column) so the wire shape matches PulledUserPreferenceRowWire.
+        db
+          .select({
+            key: schema.userPreferences.key,
+            value: schema.userPreferences.value,
+            lamport: schema.userPreferences.lamport,
+            updatedAt: schema.userPreferences.updatedAt,
+          })
+          .from(schema.userPreferences)
+          .where(
+            sql`${schema.userPreferences.userId} = ${user.sub}
+                AND CAST(${schema.userPreferences.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.userPreferences.lamport} AS numeric) ASC`),
       ])
 
       // Suppress transcript_segments for in-progress meetings so the recording
@@ -618,6 +640,7 @@ export async function registerSyncRoutes(
         ...contactEmails,
         ...chatSessions,
         ...chatSessionMessages,
+        ...userPreferences,
       ] as Array<{ lamport: string | null }>
       const serverLamport = allRows.length > 0
         ? String(
@@ -640,6 +663,7 @@ export async function registerSyncRoutes(
           contactEmailCount: contactEmails.length,
           chatSessionCount: chatSessions.length,
           chatSessionMessageCount: chatSessionMessages.length,
+          userPreferenceCount: userPreferences.length,
           metric: 'sync.pull.row_count',
         },
         'sync.pull complete',
@@ -654,6 +678,7 @@ export async function registerSyncRoutes(
         contactEmails,
         chatSessions,
         chatSessionMessages,
+        userPreferences,
         serverLamport,
       }
     },

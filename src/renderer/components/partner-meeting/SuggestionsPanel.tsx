@@ -90,6 +90,8 @@ export function SuggestionsPanel({ digestId, suggestions, onDismiss, onAdded }: 
       businessModel: null,
       productStage: null,
       revenueModel: null,
+      targetInvestmentStage: null,
+      targetInvestmentSector: null,
       arr: null,
       burnRate: null,
       runwayMonths: null,

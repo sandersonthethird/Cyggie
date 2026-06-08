@@ -34,7 +34,6 @@ export interface ContactDetail extends ContactListItem {
   twitterHandle: string | null
   linkedinHeadline: string | null
   relationshipStrength: string | null
-  investorStage: string | null
   fundSize: number | null
   typicalCheckSizeMin: number | null
   typicalCheckSizeMax: number | null

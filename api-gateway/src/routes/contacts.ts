@@ -61,7 +61,6 @@ const ContactDetailSchema = ContactListItemSchema.extend({
   linkedinHeadline: z.string().nullable(),
   relationshipStrength: z.string().nullable(),
   // Investor-shaped fields — surface them when present, mostly null otherwise.
-  investorStage: z.string().nullable(),
   fundSize: z.number().nullable(),
   typicalCheckSizeMin: z.number().nullable(),
   typicalCheckSizeMax: z.number().nullable(),
@@ -229,7 +228,6 @@ export async function registerContactRoutes(
           twitterHandle: schema.contacts.twitterHandle,
           linkedinHeadline: schema.contacts.linkedinHeadline,
           relationshipStrength: schema.contacts.relationshipStrength,
-          investorStage: schema.contacts.investorStage,
           fundSize: schema.contacts.fundSize,
           typicalCheckSizeMin: schema.contacts.typicalCheckSizeMin,
           typicalCheckSizeMax: schema.contacts.typicalCheckSizeMax,
@@ -399,7 +397,6 @@ export async function registerContactRoutes(
         twitterHandle: row.twitterHandle,
         linkedinHeadline: row.linkedinHeadline,
         relationshipStrength: row.relationshipStrength,
-        investorStage: row.investorStage,
         fundSize: row.fundSize,
         typicalCheckSizeMin: row.typicalCheckSizeMin,
         typicalCheckSizeMax: row.typicalCheckSizeMax,

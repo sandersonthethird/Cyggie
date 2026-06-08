@@ -71,6 +71,16 @@ export interface OwnedTableSpec {
    * the PK).
    */
   largeColumns?: readonly string[]
+  /**
+   * Postgres ON CONFLICT target columns, when the gateway's unique constraint
+   * differs from the SQLite `primaryKey`. Defaults to `primaryKey`. Needed for
+   * tables whose SQLite PK is column-narrower than the Neon PK — e.g.
+   * `user_preferences` is `(key)` in SQLite (single-user) but `(user_id, key)`
+   * in Postgres; the gateway stamps `user_id` from the JWT, so the upsert must
+   * conflict on `(user_id, key)`. Used only by the gateway `/sync/push` upsert,
+   * NOT by `encodeRowId` / the SQLite WHERE (those still use `primaryKey`).
+   */
+  conflictKey?: readonly string[]
 }
 
 // Order matters: parents before children. Matches `allMigrators()`.
@@ -87,6 +97,12 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
   { table: 'themes', primaryKey: ['id'], hasUserId: true },
   { table: 'pipeline_configs', primaryKey: ['id'], hasUserId: true },
   { table: 'speakers', primaryKey: ['id'], hasUserId: true },
+  // Part E — user preferences (e.g. emailThreadsPerCompany cap). SQLite PK is
+  // global `key` (single-user desktop, no user_id column); hasUserId:true makes
+  // the gateway stamp user_id from JWT before validating, matching the
+  // investment_memos / email_messages pattern. Writes emit via the pref-sync
+  // backfill (setPreference is raw SQL), not withSync.
+  { table: 'user_preferences', primaryKey: ['key'], hasUserId: true, conflictKey: ['user_id', 'key'] },
 
   // ── Layer 2 ────────────────────────────────────────────────────────────
   { table: 'pipeline_stages', primaryKey: ['id'], hasUserId: false },
@@ -145,6 +161,32 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
   { table: 'tasks', primaryKey: ['id'], hasUserId: true },
   { table: 'chat_sessions', primaryKey: ['id'], hasUserId: true },
   { table: 'chat_session_messages', primaryKey: ['id'], hasUserId: false },
+
+  // ── Lean email sync (Part B) ─────────────────────────────────────────────
+  // Three of the nine desktop email tables, synced so the gateway chat context
+  // (mobile / web) can include tagged-email correspondence at parity with the
+  // desktop-local chat. Email-ingest writes raw SQL (not via wrapped repos),
+  // so these rows are enqueued by email-sync-backfill.service.ts (lamport='0'
+  // sentinel, like memos), which ALSO truncates body_text to ~12 KB before
+  // emit — raw bodies never reach Neon.
+  //
+  // email_messages: SQLite table has no user_id column (single-user desktop);
+  // hasUserId:true makes the gateway stamp user_id from JWT.sub before
+  // validating, matching the investment_memos pattern. The link tables scope
+  // via their parent message + company/contact (hasUserId:false), like
+  // meeting_company_links.
+  //
+  // FK order: messages before links (links reference email_messages.id).
+  // body_text is the only large column (capped at emit; status updates are
+  // n/a — email rows are insert-only from ingest's perspective).
+  {
+    table: 'email_messages',
+    primaryKey: ['id'],
+    hasUserId: true,
+    largeColumns: ['bodyText'],
+  },
+  { table: 'email_company_links', primaryKey: ['message_id', 'company_id'], hasUserId: false },
+  { table: 'email_contact_links', primaryKey: ['message_id', 'contact_id'], hasUserId: false },
 ] as const
 
 /**
