@@ -122,6 +122,8 @@ function buildDb(): Database.Database {
       business_model TEXT,
       product_stage TEXT,
       revenue_model TEXT,
+      target_investment_stage TEXT,
+      target_investment_sector TEXT,
       arr REAL,
       burn_rate REAL,
       runway_months REAL,

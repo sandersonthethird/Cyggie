@@ -121,6 +121,15 @@ import { runStressTestReportsMigration } from '@cyggie/db/sqlite/migrations/092-
 import { runStressTestReportsNoFkMigration } from '@cyggie/db/sqlite/migrations/093-stress-test-reports-no-fk'
 import { runAgentRunsDropVersionFkMigration } from '@cyggie/db/sqlite/migrations/094-agent-runs-drop-version-fk'
 import { runPriorityRenameFurtherWorkMigration } from '@cyggie/db/sqlite/migrations/095-priority-rename-further-work'
+// Branch additions (113-117). NOTE: this fixture historically stopped at 095;
+// these only depend on tables already present at that point (email tables from
+// 013, contacts, org_companies, user_preferences from 043), so they apply
+// cleanly without backfilling 096-112.
+import { runEmailSyncLamportMigration } from '@cyggie/db/sqlite/migrations/113-email-sync-lamport'
+import { runCompanyTargetInvestmentFieldsMigration } from '@cyggie/db/sqlite/migrations/114-company-target-investment-fields'
+import { runContactTargetInvestmentStageMigration } from '@cyggie/db/sqlite/migrations/115-contact-target-investment-stage'
+import { runDropContactInvestorStageMigration } from '@cyggie/db/sqlite/migrations/116-drop-contact-investor-stage'
+import { runUserPreferencesLamportMigration } from '@cyggie/db/sqlite/migrations/117-user-preferences-lamport'
 
 type MigrationFn = (db: Database.Database) => void
 
@@ -224,6 +233,12 @@ const ALL_MIGRATIONS: MigrationFn[] = [
   runStressTestReportsNoFkMigration,
   runAgentRunsDropVersionFkMigration,
   runPriorityRenameFurtherWorkMigration,
+  // Branch additions (113-117) — target-investment fields + email/pref lamport.
+  runEmailSyncLamportMigration,
+  runCompanyTargetInvestmentFieldsMigration,
+  runContactTargetInvestmentStageMigration,
+  runDropContactInvestorStageMigration,
+  runUserPreferencesLamportMigration,
 ]
 
 /**
