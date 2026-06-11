@@ -77,7 +77,11 @@ async function insertCompany(userId: string, name: string): Promise<string> {
     id,
     userId,
     canonicalName: name,
-    normalizedName: name.toLowerCase().trim(),
+    // org_companies.normalized_name is globally UNIQUE. Suffix with the unique
+    // row id so a fixed display name (e.g. "Private Co") can't collide with a
+    // leftover row from an interrupted run. canonicalName stays the asserted
+    // display value (loadFocusName returns canonical_name, not normalized_name).
+    normalizedName: `${name.toLowerCase().trim()} ${id}`,
     status: 'active',
     entityType: 'unknown',
     classificationSource: 'manual',
