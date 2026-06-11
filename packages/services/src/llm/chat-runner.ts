@@ -33,6 +33,27 @@ import { getProvider } from './provider-factory'
 import { sendProgress } from './send-progress'
 import type { ChatAttachment } from '@shared/types/chat'
 
+// ── Surrogate sanitization ─────────────────────────────────────────────
+
+/**
+ * Replace unpaired UTF-16 surrogates with U+FFFD so the request body is valid
+ * JSON. Context is assembled from per-item truncations (transcripts, emails,
+ * notes, flagged-file text); a `.slice`/`.substring` boundary can land in the
+ * middle of a surrogate pair (emoji, 4-byte chars), leaving a lone high or low
+ * surrogate. Anthropic's JSON parser rejects that ("no low surrogate in
+ * string"). Source data can also contain lone surrogates from upstream
+ * corruption. Stripping at this single chokepoint covers every chat path
+ * (meeting / search / company / contact / entities / global all call here).
+ */
+export function stripLoneSurrogates(s: string): string {
+  // High surrogate not followed by a low surrogate, OR low surrogate not
+  // preceded by a high surrogate.
+  return s.replace(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/g,
+    (m) => (m.length === 1 ? '�' : m[0] + '�'),
+  )
+}
+
 // ── Shared AbortController slot ────────────────────────────────────────
 
 let activeController: AbortController | null = null
@@ -148,8 +169,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<string> {
   activeController = new AbortController()
   try {
     const response = await provider.generateSummary(
-      args.systemPrompt,
-      userPrompt,
+      stripLoneSurrogates(args.systemPrompt),
+      stripLoneSurrogates(userPrompt),
       sendProgress,
       activeController.signal,
       imageAtts
