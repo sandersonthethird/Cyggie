@@ -65,6 +65,7 @@ export function registerAllHandlers(): void {
   registerPartnerMeetingIpc()
   registerWindowHandlers()
   registerCrmChatHandlers()
+  registerEntitiesChatHandlers()
   registerFileHandlers()
   registerChatSessionHandlers()
 }
