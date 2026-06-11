@@ -205,6 +205,7 @@ function freshDb(): Database.Database {
       is_pinned INTEGER NOT NULL DEFAULT 0,
       is_archived INTEGER NOT NULL DEFAULT 0,
       cache_enabled INTEGER NOT NULL DEFAULT 1,
+      attached_context_entities TEXT NOT NULL DEFAULT '[]',
       last_message_at TEXT NOT NULL DEFAULT (datetime('now')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -692,6 +693,50 @@ describe('applyRemoteChatSessions', () => {
       .prepare('SELECT cache_enabled FROM chat_sessions WHERE id = ?')
       .get('sess-1') as { cache_enabled: number }
     expect(row.cache_enabled).toBe(0)
+  })
+
+  it('INSERT carries attached_context_entities from the wire (array → JSON text)', () => {
+    const entities = [
+      { type: 'company', id: 'c1', label: 'Tempo' },
+      { type: 'contact', id: 'p1', label: 'Anne-Lise' },
+    ]
+    applyRemoteChatSessions(db, DEVICE_ID, USER_ID, [
+      // node-pg returns jsonb pre-parsed (an array), not a string.
+      makeSessionRow({ id: 'sess-1', lamport: '5', attachedContextEntities: entities }),
+    ])
+    const row = db
+      .prepare('SELECT attached_context_entities FROM chat_sessions WHERE id = ?')
+      .get('sess-1') as { attached_context_entities: string }
+    expect(JSON.parse(row.attached_context_entities)).toEqual(entities)
+  })
+
+  it('INSERT defaults attached_context_entities to [] when absent', () => {
+    applyRemoteChatSessions(db, DEVICE_ID, USER_ID, [
+      makeSessionRow({ id: 'sess-1', lamport: '5' }),
+    ])
+    const row = db
+      .prepare('SELECT attached_context_entities FROM chat_sessions WHERE id = ?')
+      .get('sess-1') as { attached_context_entities: string }
+    expect(row.attached_context_entities).toBe('[]')
+  })
+
+  it('UPDATE preserves the LOCAL attached_context_entities (never clobbered by a pulled row)', () => {
+    // Local row already has chips; lamport low so a higher-lamport pull applies.
+    db.prepare(
+      `INSERT INTO chat_sessions (id, context_id, context_kind, lamport, attached_context_entities)
+       VALUES ('sess-1', 'ctx-1', 'crm', '1', '[{"type":"company","id":"c1","label":"Tempo"}]')`,
+    ).run()
+    // Pulled row is staler on chips (empty) but newer lamport — must NOT wipe chips.
+    applyRemoteChatSessions(db, DEVICE_ID, USER_ID, [
+      makeSessionRow({ id: 'sess-1', lamport: '9', title: 'Renamed', attachedContextEntities: [] }),
+    ])
+    const row = db
+      .prepare('SELECT title, attached_context_entities FROM chat_sessions WHERE id = ?')
+      .get('sess-1') as { title: string; attached_context_entities: string }
+    expect(row.title).toBe('Renamed') // metadata still updates
+    expect(JSON.parse(row.attached_context_entities)).toEqual([
+      { type: 'company', id: 'c1', label: 'Tempo' },
+    ]) // chips preserved
   })
 })
 

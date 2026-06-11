@@ -115,18 +115,31 @@ export function ChatPanelRoot() {
   // applies remote chat updates. Mobile-sent messages on the currently-
   // open session land in SQLite via pull; without this subscription the
   // panel keeps showing the old message list.
-  useRemoteApply(IPC_CHANNELS.CHAT_SESSION_MESSAGES_REMOTE_APPLIED, () => {
+  //
+  // IMPORTANT: a remote apply for the CURRENTLY-OPEN session must NOT reset its
+  // attached-context chips. The desktop re-pulls its own just-written session
+  // row on a sync tick (the local lamport isn't stamped, so the row looks
+  // "older" than Neon); if that pull hits the apply INSERT branch the row's
+  // attached_context_entities defaults to '[]', and reloading from it would
+  // wipe the user's chips mid-chat. The in-memory list is authoritative for the
+  // open chat's UI, so preserve it; only adopt the DB value for a *different*
+  // session. See sync-remote-apply.ts upsertChatSessionRow for the data-layer
+  // defense.
+  const reloadOpenSession = useCallback(() => {
     if (!openSessionId) return
     void loadSessionAndMessages(openSessionId, (s, msgs) => {
-      loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, s.attachedContextEntities ?? [], msgs)
+      const current = useChatStore.getState().panelSession
+      const entities =
+        current && current.sessionId === s.id
+          ? current.attachedEntities
+          : s.attachedContextEntities ?? []
+      loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, entities, msgs)
     })
-  })
+  }, [openSessionId, loadPanelSession])
+
+  useRemoteApply(IPC_CHANNELS.CHAT_SESSION_MESSAGES_REMOTE_APPLIED, reloadOpenSession)
   useRemoteApply(IPC_CHANNELS.CHAT_SESSIONS_REMOTE_APPLIED, (ids) => {
-    if (openSessionId && ids.includes(openSessionId)) {
-      void loadSessionAndMessages(openSessionId, (s, msgs) => {
-        loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, s.attachedContextEntities ?? [], msgs)
-      })
-    }
+    if (openSessionId && ids.includes(openSessionId)) reloadOpenSession()
   })
 
   const currentKind = useMemo<ChatKind>(

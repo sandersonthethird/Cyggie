@@ -1121,6 +1121,10 @@ export interface PulledChatSessionRow extends PulledRow {
   isPinned: number | boolean
   isArchived: number | boolean
   cacheEnabled: number | boolean
+  // JSON-encoded array of {type,id,label} OR an already-parsed array (node-pg
+  // returns jsonb pre-parsed). Carried so a fresh INSERT of a pulled session
+  // lands the real attached chips instead of defaulting to '[]'.
+  attachedContextEntities?: unknown
   lastMessageAt: string | Date
   createdByUserId: string | null
   updatedByUserId: string | null
@@ -1162,16 +1166,22 @@ function upsertChatSessionRow(
        id, context_id, context_kind, context_label,
        title, preview_text, message_count,
        is_active, is_pinned, is_archived, cache_enabled,
+       attached_context_entities,
        last_message_at, created_at, updated_at,
        created_by_user_id, updated_by_user_id, lamport
      ) VALUES (
        @id, @contextId, @contextKind, @contextLabel,
        @title, @previewText, @messageCount,
        @isActive, @isPinned, @isArchived, @cacheEnabled,
+       @attachedContextEntities,
        @lastMessageAt, @createdAt, @updatedAt,
        @createdByUserId, @updatedByUserId, @lamport
      )
      ON CONFLICT(id) DO UPDATE SET
+       -- attached_context_entities intentionally NOT updated here: a pulled
+       -- row can be staler than an un-pushed local chip edit, and overwriting
+       -- it would wipe the user's chips. New rows take the value on INSERT;
+       -- cross-device edits are reconciled on next session open.
        context_id = excluded.context_id,
        context_kind = excluded.context_kind,
        context_label = excluded.context_label,
@@ -1201,6 +1211,14 @@ function upsertChatSessionRow(
     // Default to 1 (on) when the gateway pre-migration sends rows without
     // the field; same intent as the SQLite column default.
     cacheEnabled: intFlag(row.cacheEnabled ?? true),
+    // SQLite column is TEXT (JSON). node-pg returns jsonb pre-parsed, so
+    // stringify unless the gateway already sent a string. Default '[]'.
+    attachedContextEntities:
+      row.attachedContextEntities == null
+        ? '[]'
+        : typeof row.attachedContextEntities === 'string'
+          ? row.attachedContextEntities
+          : JSON.stringify(row.attachedContextEntities),
     lastMessageAt: toIso(row.lastMessageAt),
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
