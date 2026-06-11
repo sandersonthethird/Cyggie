@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { EditorContent } from '@tiptap/react'
+import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
@@ -201,6 +202,7 @@ export function AddToSyncModal({ company, onClose, onAdded }: AddToSyncModalProp
               {briefLoading && <span className={styles.generating}> ✨ Generating…</span>}
             </label>
             <div className={styles.tiptapWrap}>
+              <TiptapBubbleMenu editor={briefEditor} />
               <EditorContent editor={briefEditor} />
             </div>
           </div>

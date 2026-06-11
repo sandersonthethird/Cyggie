@@ -61,7 +61,7 @@ import { getProvider } from '@cyggie/services/llm/provider-factory'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import * as contactRepo from '@cyggie/db/sqlite/repositories'
 import * as companyRepo from '@cyggie/db/sqlite/repositories'
-import * as customFieldRepo from '@cyggie/db/sqlite/repositories/custom-fields.repo'
+import * as customFieldRepo from '@cyggie/db/sqlite/repositories'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 

@@ -1,28 +1,34 @@
-import { detectRunningMeetingApps, type RunningMeetingApp } from '../audio/process-detector'
+import { MeetingWindowWatcher } from './meeting-window-watcher'
+import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
+import type { WindowSource } from '../audio/window-detector'
 
-// Three concurrent triggers stop a recording. All three are now gated by
-// `minRecordingMs` (default 5 min) so a recording can never auto-stop in
-// its first few minutes — this protects the "click record, wait for late
-// participant" flow.
+// Three concurrent triggers stop a recording.
 //
-//   Trigger 1: calendar end-time             Trigger 2: process poller          Trigger 3: silence
+//   Trigger 1: calendar end-time             Trigger 2: window watcher          Trigger 3: silence
 //   ──────────────────────────────           ──────────────────────────         ──────────────────
-//   At endTime: checkCalendarStop()          Every 10s: detect…()               Every 30s:
-//     if recDur < minRec → reschedule          if status='error' → skip           if recDur < minRec
-//     if sinceSpeech < 60s → reschedule        if recDur < minRec → return          → return
-//     else → triggerStop()                     if allExited → triggerStop()       if silenceDur ≥
-//                                                                                   silenceThr →
-//                                                                                   triggerStop()
+//   At endTime: checkCalendarStop()          MeetingWindowWatcher: the          Every 30s:
+//     if recDur < minRec → reschedule          meeting window closed →            if recDur < minRec
+//     if sinceSpeech < 60s → reschedule        onWindowGone() (or a renderer        → return
+//     else → triggerStop()                     track.ended hint)                  if silenceDur ≥
+//                                              → floor: windowMinRecordingMs       silenceThr →
+//                                                                                  triggerStop()
 //                                    ▼  ▼  ▼
 //                          triggerStop() ── idempotent via this.triggered
 //                                    │
 //                                    ▼
 //                          onAutoStop() callback → sendToRenderer(RECORDING_AUTO_STOP)
+//
+// Two DIFFERENT floors gate stopping — do not unify them:
+//   • minRecordingMs (5 min): guards calendar + silence triggers, protecting the
+//     "click record, wait for a late participant" flow.
+//   • windowMinRecordingMs (45 s): guards window-close only. Closing the meeting
+//     window is a strong, intentional "I'm done" signal, so it needs no long
+//     grace — the short floor just absorbs a transient enumeration glitch at t≈0.
 
 const DEFAULT_SILENCE_THRESHOLD_MS = 10 * 60 * 1000 // 10 minutes of silence
 const DEFAULT_MIN_RECORDING_MS = 5 * 60 * 1000 // 5 minutes minimum recording
+const DEFAULT_WINDOW_MIN_RECORDING_MS = 45 * 1000 // 45s floor for window-close
 const CALENDAR_GRACE_MS = 0 // Check immediately at scheduled end time
-const PROCESS_POLL_INTERVAL_MS = 10 * 1000 // 10 seconds
 const ACTIVE_SPEECH_THRESHOLD_MS = 60 * 1000 // Speech within last 1 min = still active
 const SILENCE_CHECK_INTERVAL_MS = 30 * 1000 // 30 seconds
 
@@ -31,27 +37,37 @@ interface AutoStopOptions {
   calendarEndTime?: string // ISO string
   silenceThresholdMs?: number
   minRecordingMs?: number
+  // Window-close detection (Trigger 2).
+  meetingPlatform?: MeetingPlatform | null
+  windowMinRecordingMs?: number
+  // Injected for tests; the watcher falls back to the real desktopCapturer.
+  getWindowSources?: () => Promise<WindowSource[]>
 }
 
 export class RecordingAutoStop {
   private calendarTimer: NodeJS.Timeout | null = null
-  private processPoller: NodeJS.Timeout | null = null
+  private windowWatcher: MeetingWindowWatcher | null = null
   private silenceChecker: NodeJS.Timeout | null = null
   private lastSpeechTime: number = Date.now()
   private recordingStartTime: number = Date.now()
-  private initialMeetingApps: RunningMeetingApp[] = []
   private triggered = false
   private stopped = false
   private onAutoStop: () => void
   private calendarEndTime: string | undefined
   private silenceThresholdMs: number
   private minRecordingMs: number
+  private windowMinRecordingMs: number
+  private meetingPlatform: MeetingPlatform | null
+  private getWindowSources: (() => Promise<WindowSource[]>) | undefined
 
   constructor(options: AutoStopOptions) {
     this.onAutoStop = options.onAutoStop
     this.calendarEndTime = options.calendarEndTime
     this.silenceThresholdMs = options.silenceThresholdMs ?? DEFAULT_SILENCE_THRESHOLD_MS
     this.minRecordingMs = options.minRecordingMs ?? DEFAULT_MIN_RECORDING_MS
+    this.windowMinRecordingMs = options.windowMinRecordingMs ?? DEFAULT_WINDOW_MIN_RECORDING_MS
+    this.meetingPlatform = options.meetingPlatform ?? null
+    this.getWindowSources = options.getWindowSources
   }
 
   start(): void {
@@ -68,12 +84,27 @@ export class RecordingAutoStop {
     console.log(`[AutoStop] Silence threshold: ${this.silenceThresholdMs / 60000} min, min recording: ${this.minRecordingMs / 60000} min`)
 
     this.startCalendarTimer()
-    this.startProcessPoller()
+    this.startWindowWatcher()
     this.startSilenceChecker()
   }
 
   onSpeechDetected(): void {
     this.lastSpeechTime = Date.now()
+  }
+
+  /**
+   * Single decision point for every "meeting window closed" signal — the
+   * window-presence poll AND the renderer's track.ended hint both route here,
+   * so the 45s floor and idempotency are enforced in one place.
+   */
+  onWindowGone(): void {
+    if (this.triggered || this.stopped) return
+    if (Date.now() - this.recordingStartTime < this.windowMinRecordingMs) {
+      console.log('[AutoStop] Window closed but under window floor; ignoring')
+      return
+    }
+    console.log('[AutoStop] Meeting window closed, stopping recording')
+    this.triggerStop()
   }
 
   stop(): void {
@@ -84,9 +115,9 @@ export class RecordingAutoStop {
       clearTimeout(this.calendarTimer)
       this.calendarTimer = null
     }
-    if (this.processPoller) {
-      clearInterval(this.processPoller)
-      this.processPoller = null
+    if (this.windowWatcher) {
+      this.windowWatcher.stop()
+      this.windowWatcher = null
     }
     if (this.silenceChecker) {
       clearInterval(this.silenceChecker)
@@ -140,32 +171,18 @@ export class RecordingAutoStop {
     this.triggerStop()
   }
 
-  private startProcessPoller(): void {
-    const { apps: initialApps } = detectRunningMeetingApps()
-    this.initialMeetingApps = initialApps
-    if (this.initialMeetingApps.length === 0) return
+  /** Forward the renderer's captured-window track.ended hint (Signal B). */
+  notifyWindowGone(): void {
+    this.windowWatcher?.notifyTrackEnded()
+  }
 
-    console.log(
-      '[AutoStop] Detected meeting apps:',
-      this.initialMeetingApps.map((a) => a.name).join(', ')
-    )
-
-    this.processPoller = setInterval(() => {
-      const { apps: currentApps, status } = detectRunningMeetingApps()
-      if (status === 'error') return // skip flaky ticks
-
-      if (Date.now() - this.recordingStartTime < this.minRecordingMs) return
-
-      const currentPlatforms = new Set(currentApps.map((a) => a.platform))
-      const allExited = this.initialMeetingApps.every(
-        (app) => !currentPlatforms.has(app.platform)
-      )
-
-      if (allExited) {
-        console.log('[AutoStop] All initially-detected meeting apps have exited')
-        this.triggerStop()
-      }
-    }, PROCESS_POLL_INTERVAL_MS)
+  private startWindowWatcher(): void {
+    this.windowWatcher = new MeetingWindowWatcher({
+      meetingPlatform: this.meetingPlatform,
+      getWindowSources: this.getWindowSources,
+      onGone: () => this.onWindowGone()
+    })
+    void this.windowWatcher.start()
   }
 
   private startSilenceChecker(): void {

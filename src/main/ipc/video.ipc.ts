@@ -10,6 +10,7 @@ import {
 import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 import { buildRecordingFilename } from '../storage/file-manager'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
+import { findMeetingWindow } from '../audio/window-detector'
 import { addPending, removePending } from './_finalizations'
 import { broadcast } from './_broadcast'
 
@@ -28,43 +29,8 @@ import { broadcast } from './_broadcast'
  *   .finally()   →   removePending('video', meetingId)
  */
 
-const BROWSER_NAMES = ['google chrome', 'chrome', 'safari', 'microsoft edge', 'arc', 'firefox', 'brave browser', 'chromium']
-
-function findMeetingWindow(
-  sources: Electron.DesktopCapturerSource[],
-  platform: MeetingPlatform
-): Electron.DesktopCapturerSource | null {
-  if (platform === 'zoom') {
-    const matches = sources.filter((s) => s.name.toLowerCase().includes('zoom'))
-    // Prefer the active meeting window over ancillary windows
-    return (
-      matches.find((s) => s.name.includes('Zoom Meeting') || s.name.includes('Zoom Workplace')) ||
-      matches[0] ||
-      null
-    )
-  }
-
-  if (platform === 'teams') {
-    const matches = sources.filter((s) => s.name.toLowerCase().includes('teams'))
-    // Prefer a call/meeting window over the main hub
-    return (
-      matches.find((s) => !s.name.startsWith('Microsoft Teams') || matches.length === 1) ||
-      matches[0] ||
-      null
-    )
-  }
-
-  if (platform === 'google_meet') {
-    // Google Meet runs in a browser tab — look for "Google Meet" in the window title
-    const matches = sources.filter((s) => {
-      const name = s.name.toLowerCase()
-      return name.includes('google meet') || name.includes('meet.google.com')
-    })
-    return matches.find((s) => s.name.includes('Google Meet')) || matches[0] || null
-  }
-
-  return null
-}
+// findMeetingWindow moved to ../audio/window-detector (shared with auto-stop's
+// MeetingWindowWatcher; title patterns live in MEETING_APPS).
 
 export function registerVideoHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.VIDEO_START, (_event, meetingId: string) => {

@@ -1,0 +1,30 @@
+=== SYSTEM PROMPT ===
+You are a helpful research assistant for a venture capital firm.
+You answer questions using the combined context of several companies and people
+the user has attached: meeting notes and transcripts, email correspondence,
+linked documents, and notes. The context is deduplicated — each meeting, email
+thread, note, and file appears once even when it relates to more than one of the
+attached entities.
+Answer accurately based on the provided context. If information isn't available,
+say so. Be concise but thorough. Use bullet points when listing multiple items.
+
+=== USER PROMPT ===
+Here is the available information about the attached companies and contacts:
+
+# Company: Init Labs
+AI infrastructure for VC firms
+Stage: Seed | Round: $8M Seed | Industry: AI infrastructure
+
+# Contact: Priya Mehta
+Title: CEO | Company: Init Labs | Type: founder
+
+## Meeting Summaries
+### Init Labs partner call (5/2/2026)
+Held the Q2 partner call with Init Labs leadership.
+- Pricing held at $180/seat enterprise; 2 design partners renewed.
+- Runway: 11 months at $340K/mo burn.
+- GTM bets: outbound motion via new SE hire (Q2 ramp).
+
+---
+
+Question: How is Init Labs pricing trending?

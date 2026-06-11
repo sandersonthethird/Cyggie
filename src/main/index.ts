@@ -32,6 +32,8 @@ import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.se
 import { backfillMemosForSyncOnLaunch } from './services/memo-sync-backfill.service'
 import { backfillEmailsForSyncOnLaunch } from './services/email-sync-backfill.service'
 import { backfillPreferencesForSyncOnLaunch } from './services/preference-sync.service'
+import { consolidateTargetStageFieldsOnLaunch } from './services/target-stage-consolidation-backfill.service'
+import { backfillCustomFieldsForSyncOnLaunch } from './services/custom-field-sync-backfill.service'
 import { startExtractionWorker } from './services/flagged-file-extraction-worker'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
@@ -328,6 +330,20 @@ app.whenReady().then(() => {
   // Part E — enqueue any pre-existing user_preferences rows (at lamport='0')
   // so synced chat settings (e.g. emailThreadsPerCompany) reach Neon.
   backfillPreferencesForSyncOnLaunch(startupUserId)
+
+  // Consolidate the orphaned custom "Target Stage" / "Focus" fields into the
+  // canonical built-in "Target Investment Stage" (native columns) and delete the
+  // orphans. Runs at 3s, BEFORE the custom-field sync backfill (3.5s) so the
+  // orphan defs are gone before survivors are enqueued. Idempotent (no-op once
+  // the orphan defs are deleted). Writes flow through the wrapped barrel writers
+  // → outbox → Neon.
+  consolidateTargetStageFieldsOnLaunch(startupUserId)
+
+  // Custom-field sync backfill — definitions + values joined the sync engine via
+  // migrations 119/120, but rows created before that have no outbox entry. This
+  // enqueues each def/value still at lamport='0' (defs before values) so mobile/
+  // web see custom fields after the next /sync/push drain. Idempotent.
+  backfillCustomFieldsForSyncOnLaunch(startupUserId)
 
   // Phase 3 — kick the flagged-file extraction worker. Drains any
   // 'pending' or stuck-'extracting' rows (post-crash recovery), and

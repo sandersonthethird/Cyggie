@@ -1,0 +1,72 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rowLabel {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.segmented {
+  display: inline-flex;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--seg-border);
+}
+
+.seg,
+.segActive {
+  flex: 1;
+  border: none;
+  background: var(--seg-bg);
+  color: var(--seg-text);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  border-right: 1px solid var(--seg-border);
+}
+
+.seg:last-child,
+.segActive:last-child {
+  border-right: none;
+}
+
+.seg:hover {
+  background: var(--seg-hover);
+}
+
+.segActive {
+  background: var(--seg-active-bg);
+  color: var(--seg-active-text);
+}
+
+/* Light tone — Settings tab */
+.light {
+  --seg-border: var(--color-border, #d0d6de);
+  --seg-bg: var(--color-card-bg, #fff);
+  --seg-text: var(--color-text, #1a1e24);
+  --seg-hover: var(--color-bg-secondary, #eef0f4);
+  --seg-active-bg: var(--cy-brand, #b91c1c);
+  --seg-active-text: #fff;
+}
+
+/* Dark tone — bubble "Aa" popover (matches the dark bubble bar) */
+.dark {
+  --seg-border: rgba(255, 255, 255, 0.18);
+  --seg-bg: transparent;
+  --seg-text: #e5e5e5;
+  --seg-hover: rgba(255, 255, 255, 0.12);
+  --seg-active-bg: var(--color-accent, #4f46e5);
+  --seg-active-text: #fff;
+}

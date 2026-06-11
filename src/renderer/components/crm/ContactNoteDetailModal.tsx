@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { EditorContent } from '@tiptap/react'
+import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
@@ -259,6 +260,7 @@ export function ContactNoteDetailModal({ noteId, onClose, onDeleted, onUpdated }
                 />
               )}
               <div className={`${styles.editorContent} ${saveError ? styles.saveError : ''}`}>
+                <TiptapBubbleMenu editor={editor} />
                 <EditorContent editor={editor} />
               </div>
             </div>

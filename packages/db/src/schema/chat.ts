@@ -56,6 +56,15 @@ export const chatSessions = pgTable(
       .$type<string[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
+    // Per-session list of companies/contacts whose full context is folded
+    // into the AI Chat prompt (the in-panel "+ Add context" chips). Generalizes
+    // selectedCompanyIds to mixed company+contact refs. Desktop assembles the
+    // deduped multi-entity context via queryEntities; the gateway mirrors it in
+    // buildContextForSession so mobile/web chats match desktop context.
+    attachedContextEntities: jsonb('attached_context_entities')
+      .$type<Array<{ type: 'company' | 'contact'; id: string; label: string }>>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     // User-controllable Anthropic prompt-caching toggle for this chat session.
     // When true (default), the gateway tags the context-block segment of the
     // system prompt with `cache_control: ephemeral` so multi-turn chats read

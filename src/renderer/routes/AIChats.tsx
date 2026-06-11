@@ -221,6 +221,7 @@ export default function AIChats() {
           session.contextId,
           session.contextKind,
           session.contextLabel,
+          session.attachedContextEntities ?? [],
           messages.map((m) => ({ role: m.role, content: m.content }))
         )
         window.requestAnimationFrame(() => {
@@ -369,6 +370,7 @@ export default function AIChats() {
           session.contextId,
           session.contextKind,
           session.contextLabel,
+          session.attachedContextEntities ?? [],
           messages.map((m) => ({ role: m.role, content: m.content }))
         )
         // Open chat in the new side panel (replacing the legacy modal-only flow).
@@ -623,6 +625,7 @@ function SearchSection({
           isPinned: false,
           isArchived: false,
           cacheEnabled: false,
+          attachedContextEntities: [],
           lastMessageAt: r.lastMessageAt,
         }
         return (

@@ -1358,6 +1358,98 @@ const COMPANY_UPDATABLE_FIELDS = {
 
 type CompanyUpdatableKey = keyof typeof COMPANY_UPDATABLE_FIELDS
 
+/**
+ * Propagate a company's name change to every DENORMALIZED copy of that name so
+ * a single rename in the Company detail view fixes the name everywhere it was
+ * cached — the user never has to hunt down each meeting / contact / cache row.
+ *
+ * Authoritative storage is org_companies.canonical_name (updated by the caller).
+ * The copies kept for read-hot-paths that would otherwise go stale:
+ *   - meetings.companies          JSON array of name strings (meeting list / chips)
+ *   - contacts.previous_companies JSON array of (string | {name, companyId})
+ *   - companies                   legacy domain → display_name enrichment cache
+ *
+ * Mirrors the cascade mergeCompanies() performs. Runs in the caller's
+ * transaction. Case-insensitive match on the OLD name; de-dupes if the new name
+ * is already present. Returns per-table change counts (for logging/tests).
+ */
+export function cascadeCompanyRename(
+  db: ReturnType<typeof getDatabase>,
+  companyId: string,
+  oldName: string,
+  newName: string,
+): { meetings: number; contacts: number; cache: number } {
+  const oldLower = oldName.trim().toLowerCase()
+  const next = newName.trim()
+  const stats = { meetings: 0, contacts: 0, cache: 0 }
+  if (!oldLower || !next || oldLower === next.toLowerCase()) return stats
+  const like = `%${oldLower}%`
+
+  // 1. meetings.companies — JSON array of name strings.
+  const meetingRows = db
+    .prepare(`SELECT id, companies FROM meetings WHERE companies IS NOT NULL AND lower(companies) LIKE ?`)
+    .all(like) as { id: string; companies: string | null }[]
+  for (const row of meetingRows) {
+    if (!row.companies) continue
+    try {
+      const names = JSON.parse(row.companies)
+      if (!Array.isArray(names)) continue
+      if (!names.some((n) => typeof n === 'string' && n.toLowerCase() === oldLower)) continue
+      const hasNew = names.some((n) => typeof n === 'string' && n.toLowerCase() === next.toLowerCase())
+      const updated = names
+        .filter((n) => typeof n === 'string' && n.toLowerCase() !== oldLower)
+        .concat(hasNew ? [] : [next])
+      db.prepare('UPDATE meetings SET companies = ? WHERE id = ?').run(JSON.stringify(updated), row.id)
+      stats.meetings++
+    } catch { /* skip malformed JSON */ }
+  }
+
+  // 2. contacts.previous_companies — entries are `string` or `{name, companyId}`.
+  //    Mirrors parsePriorCompanies(): a non-array parse falls back to [raw].
+  //    Prefilter on the old name OR the companyId so object entries are caught
+  //    even if their stored `name` has drifted from the current canonical name.
+  const contactRows = db
+    .prepare(`SELECT id, previous_companies FROM contacts WHERE previous_companies IS NOT NULL AND (lower(previous_companies) LIKE ? OR previous_companies LIKE ?)`)
+    .all(like, `%${companyId}%`) as { id: string; previous_companies: string | null }[]
+  for (const row of contactRows) {
+    const raw = row.previous_companies
+    if (!raw) continue
+    let entries: unknown[]
+    try {
+      const parsed = JSON.parse(raw)
+      entries = Array.isArray(parsed) ? parsed : [raw]
+    } catch {
+      entries = [raw]
+    }
+    let changed = false
+    const updated = entries.map((e) => {
+      if (typeof e === 'string') {
+        if (e.toLowerCase() === oldLower) { changed = true; return next }
+        return e
+      }
+      if (e && typeof e === 'object') {
+        const obj = e as { name?: string; companyId?: string }
+        if (obj.companyId === companyId || (typeof obj.name === 'string' && obj.name.toLowerCase() === oldLower)) {
+          changed = true
+          return { ...obj, name: next }
+        }
+      }
+      return e
+    })
+    if (changed) {
+      db.prepare('UPDATE contacts SET previous_companies = ? WHERE id = ?').run(JSON.stringify(updated), row.id)
+      stats.contacts++
+    }
+  }
+
+  // 3. legacy domain → display_name enrichment cache.
+  stats.cache = db
+    .prepare('UPDATE companies SET display_name = ? WHERE lower(display_name) = ?')
+    .run(next, oldLower).changes as number
+
+  return stats
+}
+
 export function updateCompany(
   companyId: string,
   data: Partial<{
@@ -1375,6 +1467,16 @@ export function updateCompany(
   const params: unknown[] = []
   let normalizedCanonicalName: string | null = null
   let normalizedPrimaryDomain: string | null = null
+
+  // Capture the pre-update name so a rename can be propagated to every
+  // denormalized copy (meetings/contacts/cache) in this same transaction.
+  let previousCanonicalName: string | null = null
+  if (data.canonicalName !== undefined) {
+    const existing = db
+      .prepare('SELECT canonical_name FROM org_companies WHERE id = ?')
+      .get(companyId) as { canonical_name: string } | undefined
+    previousCanonicalName = existing?.canonical_name ?? null
+  }
 
   if (data.canonicalName !== undefined) {
     normalizedCanonicalName = data.canonicalName.trim()
@@ -1459,6 +1561,16 @@ export function updateCompany(
       for (const candidate of getDomainLookupCandidates(normalizedPrimaryDomain)) {
         upsertCompanyAlias(db, companyId, candidate, 'domain')
       }
+    }
+
+    // Single-source-of-truth rename: push the new name to every denormalized
+    // copy so the user fixes a bad/auto-derived name in exactly one place.
+    if (
+      normalizedCanonicalName &&
+      previousCanonicalName &&
+      previousCanonicalName.toLowerCase() !== normalizedCanonicalName.toLowerCase()
+    ) {
+      cascadeCompanyRename(db, companyId, previousCanonicalName, normalizedCanonicalName)
     }
   }
 

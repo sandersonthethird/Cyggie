@@ -148,4 +148,45 @@ export function registerChatHandlers(): void {
       return { ...estimate, flaggedFileCount: flaggedFiles.length }
     },
   )
+
+  /**
+   * Batched, DEDUPED size estimate across multiple attached companies. The
+   * multi-entity chat (queryEntities) dedupes shared meetings/files, so a naïve
+   * per-company sum would overstate what the LLM actually sees — this handler
+   * dedupes meeting summaries by meetingId, notes by id, and files by fileId
+   * across the company set so the banner matches the real prompt.
+   *
+   * Contacts are not counted (no contact-level size preflight exists yet — see
+   * TODOS.md "contact context-size estimation"); pass only company ids.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_CONTEXT_SIZE_PREFLIGHT_MULTI,
+    (_event, companyIds: string[]): ChatContextSizeEstimate => {
+      const ids = Array.from(new Set((companyIds ?? []).filter(Boolean)))
+      const summaryByMeeting = new Map<string, true>()
+      const noteIds = new Set<string>()
+      const filesById = new Map<string, { fileName: string; mimeType: string | null }>()
+
+      for (const companyId of ids) {
+        for (const row of companyRepo.listCompanyMeetingSummaryPaths(companyId)) {
+          summaryByMeeting.set(row.meetingId, true)
+        }
+        for (const n of _chatCompanyNotesRepo.list(companyId)) {
+          noteIds.add(n.id)
+        }
+        for (const f of getFlaggedFiles(companyId)) {
+          if (!filesById.has(f.fileId)) filesById.set(f.fileId, { fileName: f.fileName, mimeType: f.mimeType })
+        }
+      }
+
+      const flaggedFiles = [...filesById.values()]
+      const estimate = estimateChatContext({
+        flaggedFiles: flaggedFiles.map(f => ({ fileName: f.fileName, sizeBytes: 0, mimeType: f.mimeType })),
+        summaryCount: summaryByMeeting.size,
+        companyNoteCount: noteIds.size,
+        caps: { perItemCap: 48_000, totalCap: 300_000 },
+      })
+      return { ...estimate, flaggedFileCount: flaggedFiles.length }
+    },
+  )
 }

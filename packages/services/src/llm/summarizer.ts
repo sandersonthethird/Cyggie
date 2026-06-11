@@ -14,7 +14,7 @@ import { hasDriveScope } from '@main/calendar/google-auth'
 import { uploadSummary as uploadSummaryToDrive } from '@main/drive/google-drive'
 import { getSummariesDir } from '@main/storage/paths'
 import { join } from 'path'
-import { critiqueText } from './critique'
+import { critiqueText, shouldRefineSummaries } from './critique'
 import { getVcSummaryCompanyUpdateProposals } from '@cyggie/services/company-summary-sync.service'
 import { extractTasksFromSummary } from '@cyggie/services/task-extraction.service'
 import { getContactSummaryUpdateProposals } from '@cyggie/services/contact-summary-sync.service'
@@ -22,6 +22,7 @@ import { listMeetingCompanies } from '@cyggie/db/sqlite/repositories/org-company
 import { resolveContactsByEmails } from '@cyggie/db/sqlite/repositories/contact.repo'
 import { createMeetingCompanionNote } from '@main/services/note-companion-backfill.service'
 import { getUser } from '@cyggie/db/sqlite/repositories/user.repo'
+import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
 import type { SummaryGenerateResult } from '@shared/types/summary'
 import type { TaskExtractionResult } from '@shared/types/task'
 
@@ -101,9 +102,16 @@ export async function generateSummary(
   const draft = await provider.generateSummary(systemPrompt, userPrompt, (chunk) => {
     sendProgress(chunk)
   }, summaryAbortController.signal)
-  sendClear()
-  sendPhase('refining')
-  const summary = await critiqueText(provider, draft, sendProgress, summaryAbortController.signal)
+  // Second "refining" pass condenses the draft. Optional — gated by the
+  // `refineSummaries` setting (default on; only an explicit 'false' disables it).
+  // When off, the structured first draft is used directly, saving an LLM call.
+  const refineSummaries = shouldRefineSummaries(getSetting('refineSummaries'))
+  let summary = draft
+  if (refineSummaries) {
+    sendClear()
+    sendPhase('refining')
+    summary = await critiqueText(provider, draft, sendProgress, summaryAbortController.signal)
+  }
   summaryAbortController = null
 
   // Save summary

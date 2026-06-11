@@ -22,6 +22,7 @@ const mockQuerySearchResults = vi.fn()
 const mockQueryCompany = vi.fn()
 const mockQueryContact = vi.fn()
 const mockQueryAll = vi.fn()
+const mockQueryEntities = vi.fn()
 const mockAbortChatTurn = vi.fn()
 
 vi.mock('@cyggie/services/llm/chat', () => ({
@@ -50,6 +51,11 @@ vi.mock('@cyggie/services/llm/crm-chat', () => ({
   buildCrmContext: () => Promise.resolve(''),
 }))
 
+vi.mock('@cyggie/services/llm/entities-chat', () => ({
+  queryEntities: (...args: unknown[]) => mockQueryEntities(...args),
+  abortEntitiesChat: () => {},
+}))
+
 vi.mock('@cyggie/services/llm/chat-runner', () => ({
   abortChatTurn: () => mockAbortChatTurn(),
 }))
@@ -63,6 +69,7 @@ beforeEach(() => {
   mockQueryCompany.mockResolvedValue('company-response')
   mockQueryContact.mockResolvedValue('contact-response')
   mockQueryAll.mockResolvedValue('global-response')
+  mockQueryEntities.mockResolvedValue('entities-response')
 })
 
 // ── Routing per kind ───────────────────────────────────────────────────
@@ -106,6 +113,19 @@ describe('chatDispatch — routing', () => {
     })
     expect(result).toBe('contact-response')
     expect(mockQueryContact).toHaveBeenCalledWith('p1', 'q?', undefined)
+  })
+
+  it('routes entities → queryEntities with (refs, question, attachments)', async () => {
+    const refs = [
+      { type: 'company' as const, id: 'c1' },
+      { type: 'contact' as const, id: 'p1' },
+    ]
+    const result = await chatDispatch({
+      kind: { kind: 'entities', refs },
+      question: 'q?',
+    })
+    expect(result).toBe('entities-response')
+    expect(mockQueryEntities).toHaveBeenCalledWith(refs, 'q?', undefined)
   })
 
   it('routes global → queryAll with (question, attachments)', async () => {

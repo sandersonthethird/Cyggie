@@ -68,7 +68,7 @@
 
 .titleActions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
 }
 
@@ -90,6 +90,39 @@
 .recordBtn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Emerald "active/now" Join button — paired to the left of Continue Recording.
+   Uses the emerald family so it never competes with the crimson record action.
+   No --cy-emerald token exists yet, so the spec hex values are inlined. */
+.joinBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  padding: 6px 16px; /* matches .recordBtn so it sits flush with Continue Recording */
+  font: 500 13px var(--font-sans);
+  color: #fff;
+  background: #047857; /* emerald-700 */
+  border: none;
+  border-radius: var(--cv-radius);
+  box-shadow: 0 1px 2px rgba(4, 120, 87, 0.25);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.joinBtn:hover:not(:disabled) {
+  background: #03684b; /* darken ~6% */
+}
+
+.joinBtn:focus-visible {
+  outline: 2px solid #047857;
+  outline-offset: 2px;
+}
+
+.joinBtn:disabled {
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .stopMeetingBtn {
@@ -719,7 +752,7 @@
   min-height: 200px;
   padding: 12px;
   font-size: 14px;
-  line-height: 1.6;
+  /* line-height now driven by --cy-reading-lh on .ProseMirror (tiptap.module.css) */
   background: var(--cv-card);
   border: 1px solid var(--cv-crimson);
   border-radius: var(--cv-radius);
@@ -843,7 +876,10 @@
   border-radius: var(--cv-radius);
   border: 1px solid transparent;
   transition: border-color 0.15s, background 0.15s;
-  line-height: 1.6;
+  /* Reading-appearance line spacing (see lib/appearance.ts). Paragraph margin
+     stays 0 below — this read-only view deliberately collapses inter-block
+     whitespace, unlike the editor where Enter = a spaced paragraph. */
+  line-height: var(--cy-reading-lh, 1.6);
   font-size: 14px;
   /* Override .content's inherited pre-wrap, which renders ReactMarkdown's
      inter-block whitespace text nodes as visible line breaks. */

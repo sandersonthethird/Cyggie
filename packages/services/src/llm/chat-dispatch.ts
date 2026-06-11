@@ -29,15 +29,21 @@ import { queryMeeting, querySearchResults } from './chat'
 import { queryCompany } from './company-chat'
 import { queryContact } from './contact-chat'
 import { queryAll } from './crm-chat'
+import { queryEntities, type EntityRef } from './entities-chat'
 import type { ChatAttachment } from '@shared/types/chat'
 
 // Kind shape matches the renderer-side ChatKind in lib/chat-channels.ts.
-// Keep these in sync — the 5 IPC channels select via the renderer's lookup.
+// Keep these in sync — the IPC channels select via the renderer's lookup.
+// NOTE: company/contact are still valid service kinds (queryEntities reuses
+// queryCompany/queryContact internally for the single-entity case), but the
+// renderer no longer emits them — it routes every attached-entity chat through
+// the unified `entities` kind.
 export type ChatKind =
   | { kind: 'meeting'; meetingId: string }
   | { kind: 'meetings'; meetingIds: string[] }
   | { kind: 'company'; companyId: string }
   | { kind: 'contact'; contactId: string }
+  | { kind: 'entities'; refs: EntityRef[] }
   | { kind: 'global' }
 
 export interface ChatDispatchArgs {
@@ -57,6 +63,8 @@ export async function chatDispatch(args: ChatDispatchArgs): Promise<string> {
       return queryCompany(k.companyId, args.question, args.attachments)
     case 'contact':
       return queryContact(k.contactId, args.question, args.attachments)
+    case 'entities':
+      return queryEntities(k.refs, args.question, args.attachments)
     case 'global':
       return queryAll(args.question, args.attachments ?? [])
     default: {

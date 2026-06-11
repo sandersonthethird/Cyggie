@@ -332,7 +332,7 @@
   flex: 1;
   padding: 16px 24px 24px;
   font-size: 14px;
-  line-height: 1.7;
+  /* line-height now driven by --cy-reading-lh on .ProseMirror (tiptap.module.css) */
   overflow-y: auto;
 }
 .tiptapEditor :global(.ProseMirror) {

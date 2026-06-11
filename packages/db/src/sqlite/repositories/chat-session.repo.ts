@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 import { logAudit } from './audit.repo'
 import type { ChatContextKind } from '@shared/utils/chat-context'
+import type { AttachedContextEntity } from '@shared/types/chat'
 
 const PREVIEW_MAX = 120
 const TITLE_MAX = 80
@@ -20,6 +21,9 @@ export interface ChatSession {
   isArchived: boolean
   // Anthropic prompt-caching toggle. See migration 103.
   cacheEnabled: boolean
+  // Companies/contacts whose full context is folded into the chat prompt
+  // (the "+ Add context" chips). See migration 118 + queryEntities.
+  attachedContextEntities: AttachedContextEntity[]
   lastMessageAt: string
   createdAt: string
   updatedAt: string
@@ -57,9 +61,33 @@ interface SessionRow {
   is_pinned: number
   is_archived: number
   cache_enabled: number
+  attached_context_entities: string
   last_message_at: string
   created_at: string
   updated_at: string
+}
+
+/**
+ * Parse the `attached_context_entities` TEXT column (a JSON array) into a
+ * typed array. Returns [] on missing/corrupt JSON so a bad row never crashes
+ * the chat panel. IMPORTANT: callers/sync emit the parsed ARRAY, never the
+ * raw string — the Postgres column is jsonb.
+ */
+function parseAttachedEntities(raw: string | null | undefined): AttachedContextEntity[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (e): e is AttachedContextEntity =>
+        e != null &&
+        (e.type === 'company' || e.type === 'contact') &&
+        typeof e.id === 'string' &&
+        typeof e.label === 'string'
+    )
+  } catch {
+    return []
+  }
 }
 
 interface MessageRow {
@@ -84,6 +112,7 @@ function mapSession(row: SessionRow): ChatSession {
     isPinned: row.is_pinned === 1,
     isArchived: row.is_archived === 1,
     cacheEnabled: row.cache_enabled === 1,
+    attachedContextEntities: parseAttachedEntities(row.attached_context_entities),
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -136,7 +165,8 @@ export function getOrCreateActive(
   contextId: string,
   contextKind: ChatContextKind,
   contextLabel: string | null,
-  userId: string | null = null
+  userId: string | null = null,
+  attachedContextEntities: AttachedContextEntity[] = []
 ): ChatSession {
   if (!contextId) throw new Error('contextId is required')
   const db = getDatabase()
@@ -145,6 +175,7 @@ export function getOrCreateActive(
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
               message_count, is_active, is_pinned, is_archived, cache_enabled,
+              attached_context_entities,
               last_message_at, created_at, updated_at
        FROM chat_sessions
        WHERE context_id = ? AND is_active = 1
@@ -162,16 +193,18 @@ export function getOrCreateActive(
       `INSERT INTO chat_sessions (
         id, context_id, context_kind, context_label,
         is_active, is_pinned, is_archived, cache_enabled, message_count,
+        attached_context_entities,
         last_message_at, created_at, updated_at,
         created_by_user_id, updated_by_user_id
-      ) VALUES (?, ?, ?, ?, 1, 0, 0, 1, 0, datetime('now'), datetime('now'), datetime('now'), ?, ?)`
-    ).run(id, contextId, contextKind, label, userId, userId)
+      ) VALUES (?, ?, ?, ?, 1, 0, 0, 1, 0, ?, datetime('now'), datetime('now'), datetime('now'), ?, ?)`
+    ).run(id, contextId, contextKind, label, JSON.stringify(attachedContextEntities ?? []), userId, userId)
   } catch (err) {
     // UNIQUE INDEX race: another caller created the active session first.
     const racer = db
       .prepare(
         `SELECT id, context_id, context_kind, context_label, title, preview_text,
                 message_count, is_active, is_pinned, is_archived, cache_enabled,
+                attached_context_entities,
                 last_message_at, created_at, updated_at
          FROM chat_sessions
          WHERE context_id = ? AND is_active = 1
@@ -188,6 +221,7 @@ export function getOrCreateActive(
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
               message_count, is_active, is_pinned, is_archived, cache_enabled,
+              attached_context_entities,
               last_message_at, created_at, updated_at
        FROM chat_sessions WHERE id = ?`
     )
@@ -299,10 +333,11 @@ export function createNew(
   contextId: string,
   contextKind: ChatContextKind,
   contextLabel: string | null,
-  userId: string | null = null
+  userId: string | null = null,
+  attachedContextEntities: AttachedContextEntity[] = []
 ): ChatSession {
   endActive(contextId, userId)
-  return getOrCreateActive(contextId, contextKind, contextLabel, userId)
+  return getOrCreateActive(contextId, contextKind, contextLabel, userId, attachedContextEntities)
 }
 
 export function listRecent(opts: {
@@ -320,6 +355,7 @@ export function listRecent(opts: {
       .prepare(
         `SELECT id, context_id, context_kind, context_label, title, preview_text,
                 message_count, is_active, is_pinned, is_archived, cache_enabled,
+                attached_context_entities,
                 last_message_at, created_at, updated_at
          FROM chat_sessions
          WHERE is_archived = 0 AND is_pinned = 1
@@ -335,6 +371,7 @@ export function listRecent(opts: {
       .prepare(
         `SELECT id, context_id, context_kind, context_label, title, preview_text,
                 message_count, is_active, is_pinned, is_archived, cache_enabled,
+                attached_context_entities,
                 last_message_at, created_at, updated_at
          FROM chat_sessions
          WHERE is_archived = 0 AND context_id = ?
@@ -349,6 +386,7 @@ export function listRecent(opts: {
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
               message_count, is_active, is_pinned, is_archived, cache_enabled,
+              attached_context_entities,
               last_message_at, created_at, updated_at
        FROM chat_sessions
        WHERE is_archived = 0
@@ -365,6 +403,7 @@ export function getSession(sessionId: string): ChatSession | null {
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
               message_count, is_active, is_pinned, is_archived, cache_enabled,
+              attached_context_entities,
               last_message_at, created_at, updated_at
        FROM chat_sessions WHERE id = ?`
     )
@@ -379,6 +418,7 @@ export function getActiveForContext(contextId: string): ChatSession | null {
     .prepare(
       `SELECT id, context_id, context_kind, context_label, title, preview_text,
               message_count, is_active, is_pinned, is_archived, cache_enabled,
+              attached_context_entities,
               last_message_at, created_at, updated_at
        FROM chat_sessions
        WHERE context_id = ? AND is_active = 1
@@ -551,6 +591,25 @@ export function setCacheEnabled(
      WHERE id = ?`,
   ).run(enabled ? 1 : 0, userId, sessionId)
   logAudit(userId, 'chat_session', sessionId, 'update', { cacheEnabled: enabled })
+}
+
+export function setAttachedEntities(
+  sessionId: string,
+  entities: AttachedContextEntity[],
+  userId: string | null = null,
+): void {
+  if (!sessionId) throw new Error('sessionId is required')
+  const db = getDatabase()
+  // Normalize to the persisted shape; JSON-encode for the SQLite TEXT column.
+  const normalized: AttachedContextEntity[] = (entities ?? [])
+    .filter((e) => e && (e.type === 'company' || e.type === 'contact') && e.id)
+    .map((e) => ({ type: e.type, id: e.id, label: e.label ?? '' }))
+  db.prepare(
+    `UPDATE chat_sessions
+       SET attached_context_entities = ?, updated_at = datetime('now'), updated_by_user_id = ?
+     WHERE id = ?`,
+  ).run(JSON.stringify(normalized), userId, sessionId)
+  logAudit(userId, 'chat_session', sessionId, 'update', { attachedEntityCount: normalized.length })
 }
 
 export function archive(sessionId: string, userId: string | null = null): void {

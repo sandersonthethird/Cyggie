@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { ChatMessage } from '../../shared/types/meeting'
-import type { ContextOption, ChatPageContext } from '../../shared/types/chat'
+import type { ContextOption, ChatPageContext, AttachedContextEntity } from '../../shared/types/chat'
 import type { ChatContextKind } from '../../shared/utils/chat-context'
 
 export type { ContextOption, ChatPageContext }
@@ -15,6 +15,9 @@ interface PanelSession {
   contextId: string
   contextKind: ChatContextKind
   contextLabel: string | null
+  // Companies/contacts whose full context is attached to this chat (the
+  // "+ Add context" chips). Drives chat routing + the context-size banner.
+  attachedEntities: AttachedContextEntity[]
   messages: ChatMessage[]
 }
 
@@ -52,8 +55,12 @@ interface ChatState {
     contextId: string,
     contextKind: ChatContextKind,
     contextLabel: string | null,
+    attachedEntities: AttachedContextEntity[],
     messages: ChatMessage[]
   ) => void
+  // Replace the in-memory attached-entity list for the open panel session
+  // (after the user adds/removes a chip; persistence is fired separately).
+  setPanelAttachedEntities: (entities: AttachedContextEntity[]) => void
   openModalList: () => void
   closeModal: () => void
   appendPanelMessage: (message: ChatMessage) => void
@@ -119,7 +126,7 @@ export const useChatStore = create<ChatState>((set) => ({
       },
     })),
 
-  loadPanelSession: (sessionId, contextId, contextKind, contextLabel, messages) =>
+  loadPanelSession: (sessionId, contextId, contextKind, contextLabel, attachedEntities, messages) =>
     set({
       modalOpen: true,
       panelSession: {
@@ -127,9 +134,17 @@ export const useChatStore = create<ChatState>((set) => ({
         contextId,
         contextKind,
         contextLabel,
+        attachedEntities: [...attachedEntities],
         messages: [...messages],
       },
     }),
+
+  setPanelAttachedEntities: (entities) =>
+    set((state) =>
+      state.panelSession
+        ? { panelSession: { ...state.panelSession, attachedEntities: [...entities] } }
+        : {}
+    ),
 
   openModalList: () => set({ modalOpen: true }),
 

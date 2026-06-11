@@ -90,6 +90,16 @@
   --cy-font: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --cy-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
 
+  /* ── Reading appearance ──
+   * User-adjustable density for long-form text (TipTap editors + the
+   * meeting-summary .markdown view). Defaults match the historical hardcoded
+   * look so untouched users are unaffected. Overridden at runtime on
+   * document.documentElement by src/renderer/lib/appearance.ts. */
+  --cy-reading-lh:  1.6;     /* line-height (unitless) */
+  --cy-reading-gap: 0.75em;  /* paragraph bottom margin */
+  --cy-reading-fs:  1em;     /* font-size of reading surfaces */
+  --cy-reading-mw:  100%;    /* max-width / measure of reading surfaces */
+
   --sidebar-width-collapsed: 56px;
 
   /* ── Layering scale ──

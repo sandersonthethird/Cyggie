@@ -243,6 +243,80 @@ as default).
 
 ---
 
+## Keyboard shortcut to cycle reading density
+
+**What:** A keyboard shortcut (e.g. `Cmd+Shift+=` / `Cmd+Shift+-`) that steps
+the reading line-spacing preference through compact → normal → relaxed without
+opening Settings.
+
+**Why:** Power users adjust reading comfort mid-session; a shortcut makes it
+feel native and discoverable — "oh nice, they thought of that." The Appearance
+tab (shipped with the reading-appearance feature) is the canonical home, but a
+shortcut removes the friction of navigating there each time.
+
+**Context:** Lands cleanly once `src/renderer/lib/appearance.ts` and
+`src/renderer/hooks/useAppearance.ts` exist (shipped with the reading-appearance
+feature). Bind in the renderer keymap and call the same
+`setJSON('cyggie:appearance', next)` the Settings tab and the TiptapBubbleMenu
+"Aa Display" popover use — `lib/appearance.ts` is the single source of truth, so
+all three stay in sync. Consider cycling `fontSize` on a second chord.
+
+**Effort:** S.
+
+**Priority:** P3.
+
+**Depends on / blocked by:** Reading-appearance feature
+(`lib/appearance.ts` + `useAppearance`) shipping first.
+
+---
+
+## "Reset to defaults" in the Appearance settings tab
+
+**What:** A reset link/button in `AppearanceSection` that restores line spacing,
+font size, and line width to the shipped defaults in one click.
+
+**Why:** Users experiment with density settings and want an obvious way back to
+the known-good baseline; avoids "how do I undo this / what was the default again"
+confusion and support pings.
+
+**Context:** Trivial once `src/renderer/lib/appearance.ts` exposes a `DEFAULTS`
+constant (it does, as of the reading-appearance feature) — the handler is
+`setJSON('cyggie:appearance', DEFAULTS)`. Place next to the three segmented
+controls in `src/renderer/components/settings/AppearanceSection.tsx`.
+
+**Effort:** S.
+
+**Priority:** P3.
+
+**Depends on / blocked by:** Reading-appearance feature shipping first.
+
+---
+
+## Persist reading density per-window
+
+**What:** Let each app window remember its own reading density instead of a
+single global value applied to `document.documentElement`.
+
+**Why:** A user with a wide main window and a narrow side/detached window may
+want different line lengths (measure) per window — a wide window can afford a
+roomier `--cy-reading-mw` than a cramped one.
+
+**Context:** ⚠️ Design tension — this conflicts with the global-preference model
+the reading-appearance feature is built on (one `cyggie:appearance` value applied
+once at the root). Building it requires a decision on global-vs-per-window source
+of truth, then keying appearance by window id and applying per `BrowserWindow`
+rather than at a single `documentElement`. Revisit **only** if the global model
+proves too coarse in real use — do not build speculatively.
+
+**Effort:** M.
+
+**Priority:** P3.
+
+**Depends on / blocked by:** Reading-appearance feature shipping first **and** a
+global-vs-per-window design decision.
+
+---
+
 ## P1 — Mobile V1 (Phase 0–M7)
 
 Tracker for the Cyggie Mobile V1 + cloud rearchitecture initiative.
@@ -2783,3 +2857,51 @@ spend per query).
 **Effort:** S (one CLI command + ~30s downtime).
 **Priority:** P2 (no impact today; load-triggered).
 **Owner:** Sandy.
+
+## Multi-entity AI Chat — attach the context picker to meeting-anchored chats
+
+**What:** Extend the "+ Add context" chip row (`ContextChipRow`) so it also
+appears in meeting-anchored chats. Today the picker shows only for
+company/contact/global chats; a chat opened from a meeting keeps the legacy
+behavior (its own transcript, no attach control). See
+[`ChatPanelRoot.tsx`](src/renderer/components/chat-panel/ChatPanelRoot.tsx)
+(`deriveCurrentKind` short-circuits `meeting` sessions before the entities
+branch) and the `canAttach` gate in
+[`PanelComposer.tsx`](src/renderer/components/chat-panel/PanelComposer.tsx).
+
+**Why:** Consistency. A user mid-conversation about a meeting may want to pull
+in a company/contact's full context without starting a new chat. The reported
+pain (company/contact context that couldn't be re-added) is fully solved; this
+is the inverse, lower-frequency direction.
+
+**Context:** The multi-entity chat shipped 2026-06-10 (attached_context_entities
+on chat_sessions, `queryEntities` deduped builder). The meeting kind uses a
+separate `pageContext.meetingId` routing path and a distinct session contextId
+scheme; folding it into the entities model means deciding whether the meeting
+itself becomes an attachable entity or stays the session anchor with entities
+layered on top. Start in `deriveCurrentKind`.
+
+**Effort:** M. **Priority:** P3 (nice-to-have; no reported demand yet).
+**Owner:** Sandy.
+
+## Multi-entity AI Chat — contact + lone-contact context-size estimation
+
+**What:** Give the chat context-size banner (`ChatContextSizeBanner`) a size
+figure for contacts. Today `CHAT_CONTEXT_SIZE_PREFLIGHT_MULTI`
+([`chat.ipc.ts`](src/main/ipc/chat.ipc.ts)) aggregates **company** ids only —
+contacts have no size preflight — so a contact-only chat shows no meter, and a
+mixed chat's meter omits contact-derived meetings/emails/notes.
+
+**Why:** The banner is meant to show "what the LLM will see per message." With
+contacts excluded it under-reports for contact-heavy chats. Low stakes (the
+deduped multi-entity builder still bounds the real context via caps), but the
+meter is misleading when contacts dominate.
+
+**Context:** Add a contact estimator (meetings + emails + notes char count,
+mirroring the company `estimateChatContext` inputs) and feed contact ids into
+the multi preflight. Ideally share the same union/dedup gathering as
+`buildUnifiedEntitiesContext`
+([`entities-chat.ts`](packages/services/src/llm/entities-chat.ts)) so the meter
+matches the prompt exactly (companies already do this).
+
+**Effort:** S–M. **Priority:** P3. **Owner:** Sandy.

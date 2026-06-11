@@ -9,6 +9,8 @@ import type { CompanyDetail as CompanyDetailType, CompanyMeetingRef } from '../.
 import { ENTITY_TYPE_OPTIONS } from '../../shared/types/company'
 import type { CompanySummaryUpdateProposal, CompanySummaryUpdateChange, CompanySummaryUpdatePayload, EnrichmentResult, EnrichmentFailureReason } from '../../shared/types/summary'
 import { companyEnrichedAtKey } from '../../shared/utils/enrichment-keys'
+import type { SetCustomFieldValueInput } from '../../shared/types/custom-fields'
+import { serializeCustomFieldValue } from '../../shared/custom-field-values'
 import { CompanyPropertiesPanel } from '../components/company/CompanyPropertiesPanel'
 import { CompanyEnrichModal } from '../components/company/CompanyEnrichModal'
 import type { PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
@@ -268,13 +270,13 @@ export default function CompanyDetail() {
 
       for (const cfu of enrichProposal.customFieldUpdates ?? []) {
         if (!selectedFields.has(cfu.label)) continue
-        await window.api.invoke(
-          IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE,
-          'company',
-          id,
-          cfu.fieldDefinitionId,
-          cfu.newValue
-        )
+        const input: SetCustomFieldValueInput = {
+          fieldDefinitionId: cfu.fieldDefinitionId,
+          entityId: id,
+          entityType: 'company',
+          ...serializeCustomFieldValue(cfu.fieldType, cfu.newValue),
+        }
+        await window.api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
       }
 
       const updated = await window.api.invoke<CompanyDetailType>(IPC_CHANNELS.COMPANY_GET, id)

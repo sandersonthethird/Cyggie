@@ -1,5 +1,7 @@
 import { IPC_CHANNELS, type IpcChannel } from '../../shared/constants/channels'
 import type { ChatAttachmentIPC } from './chat-attachments'
+import type { AttachedContextEntity } from '../../shared/types/chat'
+import type { ChatContextKind } from '../../shared/utils/chat-context'
 
 /**
  * Single source of truth mapping a ChatKind to its query channel, abort channel,
@@ -11,16 +13,27 @@ import type { ChatAttachmentIPC } from './chat-attachments'
  *   ─────────────────────────────  ─────────────────────────────  ─────────────────────────────
  *   meeting (single meetingId)     CHAT_QUERY_MEETING             CHAT_ABORT
  *   meetings (search results)      CHAT_QUERY_SEARCH_RESULTS      CHAT_ABORT_ALL
- *   company                        COMPANY_CHAT_QUERY             COMPANY_CHAT_ABORT
- *   contact                        CONTACT_CHAT_QUERY             CONTACT_CHAT_ABORT
+ *   entities (1+ company/contact)  CHAT_QUERY_ENTITIES            CHAT_ABORT_ALL
  *   global                         CHAT_QUERY_ALL                 CHAT_ABORT_ALL
+ *
+ * NOTE: the old single-entity `company`/`contact` kinds were removed when chat
+ * routing unified on `entities`. queryEntities reuses queryCompany/queryContact
+ * internally for the 1-entity case, so single-entity behavior is preserved
+ * server-side. The `entities` kind carries the OPEN session's persistence anchor
+ * (contextId/contextKind/contextLabel) — the attached list overrides routing
+ * but never changes the session row's identity.
  */
 
 export type ChatKind =
   | { kind: 'meeting'; meetingId: string }
   | { kind: 'meetings'; meetingIds: string[] }
-  | { kind: 'company'; companyId: string }
-  | { kind: 'contact'; contactId: string }
+  | {
+      kind: 'entities'
+      refs: AttachedContextEntity[]
+      contextId: string
+      contextKind: ChatContextKind
+      contextLabel: string | null
+    }
   | { kind: 'global' }
 
 export interface ChatSendArgs {
@@ -48,17 +61,20 @@ export function chatChannels(k: ChatKind): ChatChannelDispatch {
         abort: IPC_CHANNELS.CHAT_ABORT_ALL,
         buildInvokeArgs: ({ question, attachments }) => [k.meetingIds, question, attachments],
       }
-    case 'company':
+    case 'entities':
       return {
-        query: IPC_CHANNELS.COMPANY_CHAT_QUERY,
-        abort: IPC_CHANNELS.COMPANY_CHAT_ABORT,
-        buildInvokeArgs: ({ question, attachments }) => [{ companyId: k.companyId, question, attachments }],
-      }
-    case 'contact':
-      return {
-        query: IPC_CHANNELS.CONTACT_CHAT_QUERY,
-        abort: IPC_CHANNELS.CONTACT_CHAT_ABORT,
-        buildInvokeArgs: ({ question, attachments }) => [{ contactId: k.contactId, question, attachments }],
+        query: IPC_CHANNELS.CHAT_QUERY_ENTITIES,
+        abort: IPC_CHANNELS.CHAT_ABORT_ALL,
+        buildInvokeArgs: ({ question, attachments }) => [
+          {
+            refs: k.refs.map((r) => ({ type: r.type, id: r.id })),
+            question,
+            attachments,
+            contextId: k.contextId,
+            contextKind: k.contextKind,
+            contextLabel: k.contextLabel,
+          },
+        ],
       }
     case 'global':
       return {

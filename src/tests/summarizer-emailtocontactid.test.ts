@@ -73,6 +73,13 @@ vi.mock('@cyggie/services/llm/provider-factory', () => ({
 
 vi.mock('@cyggie/services/llm/critique', () => ({
   critiqueText: async (_provider: unknown, draft: string) => draft,
+  shouldRefineSummaries: (raw: string | null) => raw !== 'false',
+}))
+
+// ─── Mock: settings.repo (refineSummaries gate; null → refine on) ──────────────
+
+vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
+  getSetting: () => null,
 }))
 
 // ─── Mock: search.repo ────────────────────────────────────────────────────────

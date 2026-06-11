@@ -136,6 +136,9 @@ export default function SearchResults() {
         hit.contextId,
         hit.contextKind,
         hit.contextLabel,
+        // Search hits don't carry the attached-entity list; the openSessionId
+        // hydration path refreshes it from the session row when the panel loads.
+        [],
         messages.map((m) => ({ role: m.role, content: m.content }))
       )
     } catch (err) {

@@ -172,6 +172,14 @@ export async function buildContextForSession(
   session: typeof schema.chatSessions.$inferSelect,
   log?: FastifyBaseLogger,
 ): Promise<string | null> {
+  // Desktop unifies chat context on the attached-entity list (the "+ Add
+  // context" chips) — that list overrides routing regardless of the session's
+  // contextKind. Honor it first so mobile/web chats fold in the same companies
+  // + contacts. Empty list → fall through to the contextKind-based builders.
+  if (session.attachedContextEntities && session.attachedContextEntities.length > 0) {
+    return buildAttachedEntitiesContext(db, session.attachedContextEntities, session.userId)
+  }
+
   let result: string | null
   switch (session.contextKind) {
     case 'meeting':
@@ -540,6 +548,39 @@ export async function buildCompanyContextForChat(
   userId: string,
 ): Promise<string | null> {
   return buildSelectedCompaniesContext(db, [companyId], userId)
+}
+
+/**
+ * Build the combined context for a chat's attached company/contact entities
+ * (desktop parity for the "+ Add context" chips). Companies are deduped among
+ * themselves by buildSelectedCompaniesContext; contacts are appended each via
+ * buildContactContextForChat.
+ *
+ * NOTE: cross-type item dedup (a meeting shared by an attached company AND one
+ * of its contacts) is NOT performed here — the desktop builder (queryEntities)
+ * is the authoritative deduper. Acceptable for the secondary mobile/web surface;
+ * see TODOS.md for full gateway-side item dedup.
+ */
+export async function buildAttachedEntitiesContext(
+  db: ReturnType<typeof getDb>,
+  entities: Array<{ type: 'company' | 'contact'; id: string; label: string }>,
+  userId: string,
+): Promise<string | null> {
+  const companyIds = [...new Set(entities.filter((e) => e.type === 'company').map((e) => e.id))]
+  const contactIds = [...new Set(entities.filter((e) => e.type === 'contact').map((e) => e.id))]
+
+  const blocks: string[] = []
+  if (companyIds.length > 0) {
+    const companiesBlock = await buildSelectedCompaniesContext(db, companyIds, userId)
+    if (companiesBlock) blocks.push(companiesBlock)
+  }
+  for (const contactId of contactIds) {
+    const contactBlock = await buildContactContextForChat(db, contactId, userId)
+    if (contactBlock) blocks.push(contactBlock)
+  }
+
+  if (blocks.length === 0) return null
+  return blocks.join('\n\n---\n\n')
 }
 
 export async function buildContactContextForChat(

@@ -29,6 +29,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { EditorContent } from '@tiptap/react'
+import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
@@ -146,6 +147,7 @@ export function DigestItemNotes({ content, placeholder = 'Click to add notes…'
 
   return (
     <div ref={containerRef} className={styles.editor}>
+      <TiptapBubbleMenu editor={editor} />
       <EditorContent editor={editor} />
     </div>
   )

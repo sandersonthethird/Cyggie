@@ -5,6 +5,7 @@ import { formatCurrency, formatDate } from '../../utils/format'
 import { useDebounce } from '../../hooks/useDebounce'
 import { EntitySearch } from './EntitySearch'
 import { chipStyle } from '../../utils/colorChip'
+import { parseMultiselectValue } from '../../../shared/custom-field-values'
 import styles from './PropertyRow.module.css'
 import { api } from '../../api'
 
@@ -191,7 +192,8 @@ export function PropertyRow({
 
   function openDropdown(initialValue?: string | number | boolean | null) {
     const src = initialValue !== undefined ? initialValue : editValue
-    const current = String(src ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    // Tolerate legacy JSON-array values so their options match the popover checkboxes.
+    const current = parseMultiselectValue(src)
     setDraftSelected(current)
     setDropdownOpen(true)
   }
@@ -487,7 +489,7 @@ export function PropertyRow({
 
     if (type === 'multiselect' && displayValue) {
       const parsedOpts = safeParseOptions(options)
-      const vals = String(displayValue).split(',').map(s => s.trim()).filter(Boolean)
+      const vals = parseMultiselectValue(displayValue)
       if (vals.length === 0) return <span className={styles.empty}>{EMPTY_DISPLAY}</span>
       return (
         <span className={styles.chips}>

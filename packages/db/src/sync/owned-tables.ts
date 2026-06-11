@@ -127,6 +127,15 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
     hasUserId: true,
     largeColumns: ['extractedText'],
   },
+  // Custom fields — definitions (parent) before values (child references a
+  // definition via field_definition_id). Both SQLite tables use a single `id`
+  // PK (a UNIQUE(field_definition_id, entity_id) gives the natural upsert key)
+  // and lack a user_id column — hasUserId:true makes the gateway stamp user_id
+  // from JWT.sub before validating, matching the investment_memos pattern.
+  // Writes flow through the wrapped barrel exports; pre-existing rows are
+  // enqueued by custom-field-sync-backfill.service.ts (lamport='0' sentinel).
+  { table: 'custom_field_definitions', primaryKey: ['id'], hasUserId: true },
+  { table: 'custom_field_values', primaryKey: ['id'], hasUserId: true },
 
   // ── Layer 4 ────────────────────────────────────────────────────────────
   // contact_emails uses composite (contact_id, email).

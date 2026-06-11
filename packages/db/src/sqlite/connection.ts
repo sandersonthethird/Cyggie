@@ -116,6 +116,9 @@ import { runCompanyTargetInvestmentFieldsMigration } from './migrations/114-comp
 import { runContactTargetInvestmentStageMigration } from './migrations/115-contact-target-investment-stage'
 import { runDropContactInvestorStageMigration } from './migrations/116-drop-contact-investor-stage'
 import { runUserPreferencesLamportMigration } from './migrations/117-user-preferences-lamport'
+import { runChatSessionAttachedEntitiesMigration } from './migrations/118-chat-session-attached-entities'
+import { runCustomFieldDefinitionsSyncLamportMigration } from './migrations/119-custom-field-definitions-sync-lamport'
+import { runCustomFieldValuesSyncLamportMigration } from './migrations/120-custom-field-values-sync-lamport'
 
 let db: Database.Database | null = null
 
@@ -276,6 +279,9 @@ export function getDatabase(): Database.Database {
     runContactTargetInvestmentStageMigration(db)
     runDropContactInvestorStageMigration(db)
     runUserPreferencesLamportMigration(db)
+    runChatSessionAttachedEntitiesMigration(db)
+    runCustomFieldDefinitionsSyncLamportMigration(db)
+    runCustomFieldValuesSyncLamportMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'
     // older than the threshold was abandoned by a prior app session (crash or

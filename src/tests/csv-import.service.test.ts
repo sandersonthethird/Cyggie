@@ -82,10 +82,12 @@ vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () =>
 const mockCreateFieldDefinition = vi.fn()
 const mockSetFieldValue = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () => ({
-  createFieldDefinition: (...args: unknown[]) => mockCreateFieldDefinition(...args),
-  setFieldValue: (...args: unknown[]) => mockSetFieldValue(...args)
-}))
+vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () =>
+  stubModule({
+    createFieldDefinition: (...args: unknown[]) => mockCreateFieldDefinition(...args),
+    setFieldValue: (...args: unknown[]) => mockSetFieldValue(...args)
+  })
+)
 
 vi.mock('../main/security/current-user', () => ({
   getCurrentUserId: () => 'test-user'

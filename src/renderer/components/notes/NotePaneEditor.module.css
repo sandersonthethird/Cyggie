@@ -223,7 +223,7 @@
   padding: 0 24px 16px;
   min-height: 0;
   font-size: 14px;
-  line-height: 1.6;
+  /* line-height now driven by --cy-reading-lh on .ProseMirror (tiptap.module.css) */
   cursor: text;
 }
 

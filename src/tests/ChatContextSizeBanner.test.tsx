@@ -41,15 +41,15 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('ChatContextSizeBanner', () => {
-  it('renders nothing when companyId is null', () => {
-    const { container } = render(<ChatContextSizeBanner companyId={null} />)
+  it('renders nothing when no companies are attached', () => {
+    const { container } = render(<ChatContextSizeBanner companyIds={[]} />)
     expect(container.firstChild).toBeNull()
     expect(apiInvoke).not.toHaveBeenCalled()
   })
 
   it('fetches preflight estimate on mount and renders the banner', async () => {
     apiInvoke.mockResolvedValue(ESTIMATE)
-    const { getByRole } = render(<ChatContextSizeBanner companyId="co-1" />)
+    const { getByRole } = render(<ChatContextSizeBanner companyIds={['co-1']} />)
     await waitFor(() => {
       expect(getByRole('status')).toBeTruthy()
     })
@@ -60,7 +60,7 @@ describe('ChatContextSizeBanner', () => {
 
   it('renders nothing when flaggedFileCount === 0 (no banner = no value)', async () => {
     apiInvoke.mockResolvedValue({ ...ESTIMATE, flaggedFileCount: 0 })
-    const { container } = render(<ChatContextSizeBanner companyId="co-1" />)
+    const { container } = render(<ChatContextSizeBanner companyIds={['co-1']} />)
     // Wait for the IPC to resolve
     await waitFor(() => expect(apiInvoke).toHaveBeenCalled())
     expect(container.firstChild).toBeNull()
@@ -68,7 +68,7 @@ describe('ChatContextSizeBanner', () => {
 
   it('uses singular "file" when flaggedFileCount === 1', async () => {
     apiInvoke.mockResolvedValue({ ...ESTIMATE, flaggedFileCount: 1 })
-    const { getByRole } = render(<ChatContextSizeBanner companyId="co-1" />)
+    const { getByRole } = render(<ChatContextSizeBanner companyIds={['co-1']} />)
     await waitFor(() => {
       expect(getByRole('status').textContent).toContain('1 file ·')
     })
@@ -76,7 +76,7 @@ describe('ChatContextSizeBanner', () => {
 
   it('subscribes to COMPANY_FLAGS_CHANGED broadcast', () => {
     apiInvoke.mockResolvedValue(ESTIMATE)
-    render(<ChatContextSizeBanner companyId="co-1" />)
+    render(<ChatContextSizeBanner companyIds={['co-1']} />)
     expect(apiOn).toHaveBeenCalledWith(
       'company:flags-changed',
       expect.any(Function),
@@ -90,7 +90,7 @@ describe('ChatContextSizeBanner', () => {
       broadcastHandler = cb
       return () => {}
     })
-    render(<ChatContextSizeBanner companyId="co-1" />)
+    render(<ChatContextSizeBanner companyIds={['co-1']} />)
     await waitFor(() => expect(apiInvoke).toHaveBeenCalledTimes(1))
 
     // Fire broadcast — should trigger debounced refetch
@@ -109,7 +109,7 @@ describe('ChatContextSizeBanner', () => {
       broadcastHandler = cb
       return () => {}
     })
-    render(<ChatContextSizeBanner companyId="co-1" />)
+    render(<ChatContextSizeBanner companyIds={['co-1']} />)
     await waitFor(() => expect(apiInvoke).toHaveBeenCalledTimes(1))
 
     // Different company's flag changed — banner should NOT refetch
@@ -121,7 +121,7 @@ describe('ChatContextSizeBanner', () => {
   it('fails open: renders nothing when preflight IPC throws', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     apiInvoke.mockRejectedValue(new Error('DB locked'))
-    const { container } = render(<ChatContextSizeBanner companyId="co-1" />)
+    const { container } = render(<ChatContextSizeBanner companyIds={['co-1']} />)
     await waitFor(() => expect(apiInvoke).toHaveBeenCalled())
     expect(container.firstChild).toBeNull()
     expect(warn).toHaveBeenCalledWith('[chat-context-banner] preflight failed:', expect.any(Error))
@@ -132,7 +132,7 @@ describe('ChatContextSizeBanner', () => {
     apiInvoke.mockResolvedValue(ESTIMATE)
     const onManageFiles = vi.fn()
     const { getByRole } = render(
-      <ChatContextSizeBanner companyId="co-1" onManageFiles={onManageFiles} />
+      <ChatContextSizeBanner companyIds={['co-1']} onManageFiles={onManageFiles} />
     )
     await waitFor(() => getByRole('button', { name: /manage files/i }))
     fireEvent.click(getByRole('button', { name: /manage files/i }))

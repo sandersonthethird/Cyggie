@@ -1,0 +1,1 @@
+ALTER TABLE "chat_sessions" ADD COLUMN "attached_context_entities" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -12,7 +12,7 @@ import { PanelThread } from './PanelThread'
 import { PanelComposer } from './PanelComposer'
 import { usePanelOutlet } from './PanelOutletContext'
 import type { ChatKind } from '../../lib/chat-channels'
-import type { ChatPageContext, ContextOption } from '../../../shared/types/chat'
+import type { ChatPageContext, ContextOption, AttachedContextEntity } from '../../../shared/types/chat'
 import type { Note } from '../../../shared/types/note'
 
 interface ActiveSession {
@@ -21,6 +21,17 @@ interface ActiveSession {
   contextKind: ChatContextKind
   contextLabel: string | null
   title: string | null
+  attachedContextEntities: AttachedContextEntity[]
+}
+
+/** Shape returned by CHAT_SESSION_LIST_RECENT (subset of ChatSession). */
+interface RecentSessionRow {
+  id: string
+  contextId: string
+  contextKind: ChatContextKind
+  contextLabel: string | null
+  title: string | null
+  attachedContextEntities: AttachedContextEntity[]
 }
 
 interface PersistedMessage {
@@ -65,12 +76,11 @@ export function ChatPanelRoot() {
 
   const panelSession = useChatStore((s) => s.panelSession)
   const loadPanelSession = useChatStore((s) => s.loadPanelSession)
+  const setPanelAttachedEntities = useChatStore((s) => s.setPanelAttachedEntities)
   const appendPanelMessage = useChatStore((s) => s.appendPanelMessage)
   const pageContext = useChatStore((s) => s.pageContext)
-  const dismissedContextChips = useChatPanelStore((s) => s.dismissedContextChips)
 
   const [error, setError] = useState<string | null>(null)
-  const [activeContextId, setActiveContextId] = useState<string | null>(null)
 
   // ── Hydrate on mount ───────────────────────────────────────────────────
   // If lastChatId is in localStorage, load its messages. Otherwise fall
@@ -82,7 +92,7 @@ export function ChatPanelRoot() {
     void hydratePanelOnMount({
       lastChatId: openSessionId,
       onLoad: (s, msgs) => {
-        loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, msgs)
+        loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, s.attachedContextEntities ?? [], msgs)
       },
       onClearLastChatId: () => setOpenSessionId(null),
     })
@@ -96,7 +106,7 @@ export function ChatPanelRoot() {
     if (!openSessionId) return
     if (panelSession?.sessionId === openSessionId) return
     void loadSessionAndMessages(openSessionId, (s, msgs) => {
-      loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, msgs)
+      loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, s.attachedContextEntities ?? [], msgs)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSessionId])
@@ -108,41 +118,62 @@ export function ChatPanelRoot() {
   useRemoteApply(IPC_CHANNELS.CHAT_SESSION_MESSAGES_REMOTE_APPLIED, () => {
     if (!openSessionId) return
     void loadSessionAndMessages(openSessionId, (s, msgs) => {
-      loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, msgs)
+      loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, s.attachedContextEntities ?? [], msgs)
     })
   })
   useRemoteApply(IPC_CHANNELS.CHAT_SESSIONS_REMOTE_APPLIED, (ids) => {
     if (openSessionId && ids.includes(openSessionId)) {
       void loadSessionAndMessages(openSessionId, (s, msgs) => {
-        loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, msgs)
+        loadPanelSession(s.id, s.contextId, s.contextKind, s.contextLabel, s.attachedContextEntities ?? [], msgs)
       })
     }
   })
 
-  // Pick the active ContextOption to display in the chip.
-  // - If panelSession has a contextId matching pageContext.contextOptions, use it.
-  // - Else use pageContext.contextOptions[0] when present.
-  const contextOptions: ContextOption[] = useMemo(() => pageContext?.contextOptions ?? [], [pageContext])
-  useEffect(() => {
-    if (contextOptions.length === 0) {
-      setActiveContextId(null)
-      return
-    }
-    setActiveContextId((prev) => {
-      if (prev && contextOptions.some((o) => o.id === prev)) return prev
-      return contextOptions[0].id
-    })
-  }, [contextOptions])
-
   const currentKind = useMemo<ChatKind>(
-    () => deriveCurrentKind({
-      contextOptions,
-      activeContextId,
-      panelSession,
-      pageContext,
-      dismissedContextChips,
-    }),
-    [contextOptions, activeContextId, panelSession, pageContext, dismissedContextChips]
+    () => deriveCurrentKind({ panelSession, pageContext }),
+    [panelSession, pageContext]
+  )
+
+  // The chips shown above the composer come from the persisted attached-entity
+  // list (or, before a session exists, the entities the next message will use).
+  const attachedEntities = useMemo<AttachedContextEntity[]>(
+    () => (currentKind.kind === 'entities' ? currentKind.refs : []),
+    [currentKind]
+  )
+
+  // Persist a new attached-entity list and mirror it into the in-memory panel
+  // session so the chips + routing update immediately. Requires an existing
+  // session (the chip row only renders once one is open).
+  const persistAttachedEntities = useCallback(
+    async (next: AttachedContextEntity[]) => {
+      const sessionId = panelSession?.sessionId
+      if (!sessionId) return
+      setPanelAttachedEntities(next)
+      bumpAction()
+      try {
+        await api.invoke(IPC_CHANNELS.CHAT_SESSION_SET_ATTACHED_ENTITIES, { sessionId, entities: next })
+      } catch (err) {
+        console.warn('[chat-panel] persist attached entities failed', err)
+      }
+    },
+    [panelSession?.sessionId, setPanelAttachedEntities, bumpAction]
+  )
+
+  const handleAddEntity = useCallback(
+    (entity: AttachedContextEntity) => {
+      const current = panelSession?.attachedEntities ?? attachedEntities
+      if (current.some((e) => e.type === entity.type && e.id === entity.id)) return
+      void persistAttachedEntities([...current, entity])
+    },
+    [panelSession?.attachedEntities, attachedEntities, persistAttachedEntities]
+  )
+
+  const handleRemoveEntity = useCallback(
+    (entity: AttachedContextEntity) => {
+      const current = panelSession?.attachedEntities ?? attachedEntities
+      void persistAttachedEntities(current.filter((e) => !(e.type === entity.type && e.id === entity.id)))
+    },
+    [panelSession?.attachedEntities, attachedEntities, persistAttachedEntities]
   )
 
   // ── Streaming hook ────────────────────────────────────────────────────
@@ -172,12 +203,31 @@ export function ChatPanelRoot() {
 
   const handleNewChat = useCallback(async () => {
     const ctx = deriveChatForNewChat(pageContext)
+    // Seed the attached-entity list from the page's primary entity so a chat
+    // opened from a company/contact page starts with that context chip.
+    const seedEntities: AttachedContextEntity[] = (pageContext?.contextOptions ?? []).map((o) => ({
+      type: o.type,
+      id: o.id,
+      label: o.name,
+    }))
     try {
-      const newSession = await api.invoke<{ id: string; contextId: string; contextKind: ChatContextKind; contextLabel: string | null; title: string | null }>(
+      const newSession = await api.invoke<RecentSessionRow>(
         IPC_CHANNELS.CHAT_SESSION_CREATE_NEW,
-        { contextId: ctx.contextId, contextKind: ctx.contextKind, contextLabel: ctx.contextLabel ?? null }
+        {
+          contextId: ctx.contextId,
+          contextKind: ctx.contextKind,
+          contextLabel: ctx.contextLabel ?? null,
+          attachedContextEntities: seedEntities,
+        }
       )
-      loadPanelSession(newSession.id, newSession.contextId, newSession.contextKind, newSession.contextLabel, [])
+      loadPanelSession(
+        newSession.id,
+        newSession.contextId,
+        newSession.contextKind,
+        newSession.contextLabel,
+        newSession.attachedContextEntities ?? seedEntities,
+        []
+      )
       setOpenSessionId(newSession.id)
       setMode('thread')
       bumpAction()
@@ -209,8 +259,17 @@ export function ChatPanelRoot() {
       return
     }
     try {
-      const companyId = panelSession.contextKind === 'company' ? stripContextIdPrefix('company', panelSession.contextId) : null
-      const contactId = panelSession.contextKind === 'contact' ? stripContextIdPrefix('contact', panelSession.contextId) : null
+      // Link the saved note to the chat's attached entities. The session's
+      // contextId/contextKind is the anchor, but multi-entity chats live on a
+      // 'global'/seeded anchor — so prefer the first attached company/contact.
+      const firstCompany = panelSession.attachedEntities.find((e) => e.type === 'company')
+      const firstContact = panelSession.attachedEntities.find((e) => e.type === 'contact')
+      const companyId =
+        firstCompany?.id ??
+        (panelSession.contextKind === 'company' ? stripContextIdPrefix('company', panelSession.contextId) : null)
+      const contactId =
+        firstContact?.id ??
+        (panelSession.contextKind === 'contact' ? stripContextIdPrefix('contact', panelSession.contextId) : null)
       await api.invoke<Note>(IPC_CHANNELS.CHAT_SAVE_AS_NOTE, {
         transcriptMarkdown: transcript,
         companyId,
@@ -230,22 +289,14 @@ export function ChatPanelRoot() {
     return () => window.removeEventListener('cyggie:open-save-to-note', handler as EventListener)
   }, [handleSaveToNote])
 
-  // Adapter for context-chip selection (single-context model in v1: no persisted
-  // kind change; the next message just routes through the selected entity).
-  const handleContextChange = useCallback((option: ContextOption | null) => {
-    setActiveContextId(option?.id ?? null)
-  }, [])
-
-  // Determine a context-aware placeholder. After the user dismisses the chip,
-  // we drop entity-specific copy so the input clearly looks "global".
+  // Context-aware placeholder driven by the attached-entity list.
   const placeholder = useMemo(() => {
-    const dismissed = panelSession ? dismissedContextChips.has(panelSession.sessionId) : false
-    if (dismissed) return 'Ask Cyggie anything…'
-    const selected = contextOptions.find((o) => o.id === activeContextId)
-    if (selected) return `Ask Cyggie about ${selected.name}…`
-    if (pageContext?.meetingId) return 'Ask Cyggie about this meeting…'
+    if (attachedEntities.length === 1) return `Ask Cyggie about ${attachedEntities[0].label}…`
+    if (attachedEntities.length > 1) return `Ask Cyggie about these ${attachedEntities.length} items…`
+    if (currentKind.kind === 'meeting') return 'Ask Cyggie about this meeting…'
+    if (currentKind.kind === 'global') return 'Ask Cyggie anything…'
     return 'Ask Cyggie about this conversation…'
-  }, [contextOptions, activeContextId, pageContext, panelSession, dismissedContextChips])
+  }, [attachedEntities, currentKind])
 
   // Skip rendering when the panel is fully closed AND not popped (no targets to portal into).
   // Keep rendering when isOpen=false but popped=true so the full-screen route can mount the targets.
@@ -268,9 +319,10 @@ export function ChatPanelRoot() {
         createPortal(
           <PanelComposer
             kind={currentKind}
-            contextOptions={contextOptions}
-            activeContextId={activeContextId}
-            onContextChange={handleContextChange}
+            attachedEntities={attachedEntities}
+            canAttach={panelSession != null && currentKind.kind !== 'meeting' && currentKind.kind !== 'meetings'}
+            onAddEntity={handleAddEntity}
+            onRemoveEntity={handleRemoveEntity}
             isLoading={isLoading}
             send={send}
             abort={abort}
@@ -293,46 +345,70 @@ export function ChatPanelRoot() {
  * Pure function that maps the current panel state to a ChatKind for
  * useChatStreaming dispatch.
  *
- *   Priority:
- *     0. dismissed chip            → global  (user explicitly detached)
- *     1. explicit chip selection   → company / contact
- *     2. panelSession's persisted  → company / contact / meeting / global
- *     3. pageContext (no session)  → meeting / meetings
- *     4. fallback                  → global
+ *   Priority (unified multi-entity model):
+ *     panelSession exists:
+ *       • contextKind 'meeting'      → meeting
+ *       • attachedEntities ≥ 1       → entities (deduped multi-entity context)
+ *       • attachedEntities empty     → global  (user removed all context)
+ *     no panelSession (fresh page):
+ *       • pageContext.contextOptions → entities (seeded from the page entity)
+ *       • pageContext.meetingId      → meeting
+ *       • pageContext.meetingIds     → meetings
+ *       • fallback                   → global
  *
- * The dismissed-chip override is what the user gets after clicking × on the
- * "Including context: <Init Labs>" chip. Without this, a persisted session
- * created with company kind on a company page keeps routing through
- * COMPANY_CHAT_QUERY even after dismissal — which caused the
- * "Bobby Kwon couldn't be found" trap.
+ * The persisted attachedEntities list overrides routing but NEVER changes the
+ * session row's contextId/contextKind — those stay the anchor the chat
+ * messages persist under. Removing every chip yields the empty-list → global
+ * state (this replaced the old transient "dismissed chip" hack).
  *
  * Exported for tests; not consumed elsewhere.
  */
 export function deriveCurrentKind(opts: {
-  contextOptions: ContextOption[]
-  activeContextId: string | null
-  panelSession: { sessionId: string; contextId: string; contextKind: ChatContextKind } | null
+  panelSession: {
+    sessionId: string
+    contextId: string
+    contextKind: ChatContextKind
+    contextLabel: string | null
+    attachedEntities: AttachedContextEntity[]
+  } | null
   pageContext: ChatPageContext | null
-  dismissedContextChips: Set<string>
 }): ChatKind {
-  const { contextOptions, activeContextId, panelSession, pageContext, dismissedContextChips } = opts
+  const { panelSession, pageContext } = opts
 
-  const dismissed = panelSession ? dismissedContextChips.has(panelSession.sessionId) : false
-  if (dismissed) return { kind: 'global' }
-
-  const selected = contextOptions.find((o) => o.id === activeContextId)
-  if (selected) {
-    return selected.type === 'company'
-      ? { kind: 'company', companyId: selected.id }
-      : { kind: 'contact', contactId: selected.id }
-  }
   if (panelSession) {
-    switch (panelSession.contextKind) {
-      case 'company': return { kind: 'company', companyId: stripContextIdPrefix('company', panelSession.contextId) }
-      case 'contact': return { kind: 'contact', contactId: stripContextIdPrefix('contact', panelSession.contextId) }
-      case 'meeting': return { kind: 'meeting', meetingId: panelSession.contextId }
-      case 'global':
-      default:        return { kind: 'global' }
+    if (panelSession.contextKind === 'meeting') {
+      return { kind: 'meeting', meetingId: panelSession.contextId }
+    }
+    if (panelSession.attachedEntities.length >= 1) {
+      return {
+        kind: 'entities',
+        refs: panelSession.attachedEntities,
+        contextId: panelSession.contextId,
+        contextKind: panelSession.contextKind,
+        contextLabel: panelSession.contextLabel,
+      }
+    }
+    return { kind: 'global' }
+  }
+
+  // No session yet — seed routing from the current page.
+  const pageEntities: AttachedContextEntity[] = (pageContext?.contextOptions ?? []).map((o) => ({
+    type: o.type,
+    id: o.id,
+    label: o.name,
+  }))
+  if (pageEntities.length >= 1) {
+    const primary = pageEntities[0]
+    const ctx = deriveChatContext({
+      companyId: primary.type === 'company' ? primary.id : undefined,
+      contactId: primary.type === 'contact' ? primary.id : undefined,
+    })
+    return {
+      kind: 'entities',
+      refs: pageEntities,
+      contextId: ctx?.contextId ?? 'global-all',
+      contextKind: ctx?.kind ?? 'global',
+      contextLabel: primary.label,
     }
   }
   if (pageContext?.meetingId) return { kind: 'meeting', meetingId: pageContext.meetingId }
@@ -356,7 +432,7 @@ async function hydratePanelOnMount(opts: {
         )
         // We don't have the session metadata cached here — derive a minimal
         // ActiveSession from the recents list so contextKind/Label are right.
-        const recents = await api.invoke<{ id: string; contextId: string; contextKind: ChatContextKind; contextLabel: string | null; title: string | null }[]>(
+        const recents = await api.invoke<RecentSessionRow[]>(
           IPC_CHANNELS.CHAT_SESSION_LIST_RECENT,
           { limit: 100 }
         )
@@ -368,7 +444,7 @@ async function hydratePanelOnMount(opts: {
             const top = recents[0]
             const topMsgs = await api.invoke<PersistedMessage[]>(IPC_CHANNELS.CHAT_SESSION_LOAD_MESSAGES, top.id)
             opts.onLoad(
-              { id: top.id, contextId: top.contextId, contextKind: top.contextKind, contextLabel: top.contextLabel, title: top.title },
+              { id: top.id, contextId: top.contextId, contextKind: top.contextKind, contextLabel: top.contextLabel, title: top.title, attachedContextEntities: top.attachedContextEntities ?? [] },
               topMsgs.map((m) => ({ role: m.role, content: m.content }))
             )
           }
@@ -376,7 +452,7 @@ async function hydratePanelOnMount(opts: {
           return
         }
         opts.onLoad(
-          { id: match.id, contextId: match.contextId, contextKind: match.contextKind, contextLabel: match.contextLabel, title: match.title },
+          { id: match.id, contextId: match.contextId, contextKind: match.contextKind, contextLabel: match.contextLabel, title: match.title, attachedContextEntities: match.attachedContextEntities ?? [] },
           messages.map((m) => ({ role: m.role, content: m.content }))
         )
         console.info('[chat-panel] hydrated', { ms: Date.now() - start, lastChatId: match.id })
@@ -386,7 +462,7 @@ async function hydratePanelOnMount(opts: {
       }
     }
     // No lastChatId or it failed — load most-recent.
-    const recents = await api.invoke<{ id: string; contextId: string; contextKind: ChatContextKind; contextLabel: string | null; title: string | null }[]>(
+    const recents = await api.invoke<RecentSessionRow[]>(
       IPC_CHANNELS.CHAT_SESSION_LIST_RECENT,
       { limit: 1 }
     )
@@ -394,7 +470,7 @@ async function hydratePanelOnMount(opts: {
       const top = recents[0]
       const topMsgs = await api.invoke<PersistedMessage[]>(IPC_CHANNELS.CHAT_SESSION_LOAD_MESSAGES, top.id)
       opts.onLoad(
-        { id: top.id, contextId: top.contextId, contextKind: top.contextKind, contextLabel: top.contextLabel, title: top.title },
+        { id: top.id, contextId: top.contextId, contextKind: top.contextKind, contextLabel: top.contextLabel, title: top.title, attachedContextEntities: top.attachedContextEntities ?? [] },
         topMsgs.map((m) => ({ role: m.role, content: m.content }))
       )
       console.info('[chat-panel] hydrated', { ms: Date.now() - start, lastChatId: top.id, fallback: 'most-recent' })
@@ -412,7 +488,7 @@ async function loadSessionAndMessages(
 ) {
   try {
     const [recents, messages] = await Promise.all([
-      api.invoke<{ id: string; contextId: string; contextKind: ChatContextKind; contextLabel: string | null; title: string | null }[]>(
+      api.invoke<RecentSessionRow[]>(
         IPC_CHANNELS.CHAT_SESSION_LIST_RECENT,
         { limit: 100 }
       ),
@@ -424,7 +500,7 @@ async function loadSessionAndMessages(
       return
     }
     onLoad(
-      { id: match.id, contextId: match.contextId, contextKind: match.contextKind, contextLabel: match.contextLabel, title: match.title },
+      { id: match.id, contextId: match.contextId, contextKind: match.contextKind, contextLabel: match.contextLabel, title: match.title, attachedContextEntities: match.attachedContextEntities ?? [] },
       messages.map((m) => ({ role: m.role, content: m.content }))
     )
   } catch (err) {

@@ -8,17 +8,9 @@ import {
   refreshFlaggedFile,
   unflagFile,
 } from '@cyggie/db/sqlite/repositories'
-import { abortCompanyChat } from '@cyggie/services/llm/company-chat'
-import { chatDispatch } from '@cyggie/services/llm/chat-dispatch'
 import { getCurrentUserId } from '../security/current-user'
-import { withChatPersistence } from '@cyggie/services/llm/chat-persistence'
-import { withProgressSink } from '@cyggie/services/llm/send-progress'
-import { createChatProgressSink } from '../lib/ipc-progress-sink'
-import { deriveChatContext } from '../../shared/utils/chat-context'
-import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { validateFileForChatContext } from '../storage/file-manager'
 import { notifyPending } from '../services/flagged-file-extraction-worker'
-import type { ChatAttachment } from '../../shared/types/chat'
 
 /**
  * Broadcast COMPANY_FLAGS_CHANGED to all renderer windows so any listener
@@ -38,14 +30,11 @@ function broadcastFlagsChanged(companyId: string, flagged: boolean): void {
   }
 }
 
-function getCompanyName(companyId: string): string | null {
-  const db = getDatabase()
-  const row = db.prepare(`SELECT canonical_name FROM org_companies WHERE id = ?`).get(companyId) as
-    | { canonical_name: string }
-    | undefined
-  return row?.canonical_name ?? null
-}
-
+// NOTE: the company-scoped chat-query handler (COMPANY_CHAT_QUERY) was removed
+// when chat routing unified on the multi-entity `entities` path — the renderer
+// now routes every company/contact chat through CHAT_QUERY_ENTITIES, which
+// reuses queryCompany internally for the single-entity case. This file retains
+// only the company file-flag handlers (still used by the Files tab + chat banner).
 export function registerCompanyChatHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.COMPANY_FILE_FLAG_GET, (_event, companyId: string) => {
     if (!companyId) throw new Error('companyId is required')
@@ -130,38 +119,4 @@ export function registerCompanyChatHandlers(): void {
     },
   )
 
-  ipcMain.handle(
-    IPC_CHANNELS.COMPANY_CHAT_QUERY,
-    async (
-      _event,
-      data: { companyId: string; question: string; attachments?: ChatAttachment[] }
-    ) => {
-      if (!data?.companyId || !data?.question?.trim()) {
-        throw new Error('companyId and question are required')
-      }
-      const ctx = deriveChatContext({ companyId: data.companyId })
-      if (!ctx) throw new Error('Failed to derive chat context')
-
-      return withChatPersistence({
-        contextId: ctx.contextId,
-        contextKind: ctx.kind,
-        contextLabel: getCompanyName(data.companyId),
-        userMessage: { content: data.question.trim(), attachments: data.attachments },
-        userId: getCurrentUserId(),
-        runLLM: () =>
-          withProgressSink(createChatProgressSink(), () =>
-            chatDispatch({
-              kind: { kind: 'company', companyId: data.companyId },
-              question: data.question.trim(),
-              attachments: data.attachments,
-            }),
-          ),
-        extractText: (response: string) => response,
-      })
-    }
-  )
-
-  ipcMain.handle(IPC_CHANNELS.COMPANY_CHAT_ABORT, () => {
-    abortCompanyChat()
-  })
 }

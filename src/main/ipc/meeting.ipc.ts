@@ -21,7 +21,7 @@ import {
   isFlaggedAnywhere,
 } from '@cyggie/db/sqlite/repositories'
 import { notifyPending as notifyExtractionWorker } from '../services/flagged-file-extraction-worker'
-import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName, listMeetingCompanies } from '@cyggie/db/sqlite/repositories'
+import { linkMeetingCompany, getCompany, findCompanyIdByNameOrDomain, unlinkMeetingCompany, getOrCreateCompanyByName, listMeetingCompanies, updateCompany } from '@cyggie/db/sqlite/repositories'
 import { upsert as upsertCompanyCache, getByDomain as getCompanyCacheByDomain } from '@cyggie/db/sqlite/repositories/company.repo'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import type { Meeting, MeetingListFilter } from '../../shared/types/meeting'
@@ -205,6 +205,105 @@ export function appendCompanyIfMissing(companies: string[] | null, canonicalName
 function removeCompanyFromList(companies: string[] | null, canonicalName: string): string[] {
   if (!companies) return []
   return companies.filter((n) => n.toLowerCase() !== canonicalName.toLowerCase())
+}
+
+/**
+ * Re-point a meeting from one company to another (a re-attribution: the meeting
+ * was actually with a *different* company). Creates the target if needed,
+ * unlinks the old company from THIS meeting only, and leaves the old company
+ * otherwise intact. Use renameMeetingCompany() instead when the user is
+ * correcting a company's name — that propagates to every surface.
+ */
+export function swapMeetingCompany(
+  meetingId: string,
+  oldCompanyId: string | null,
+  newCompanyName: string,
+  userId: string | null,
+): Meeting {
+  const meeting = meetingRepo.getMeeting(meetingId)
+  if (!meeting) throw new Error('Meeting not found')
+
+  // Find or create the target company
+  const newCompany = getOrCreateCompanyByName(newCompanyName.trim(), userId)
+
+  // Unlink old company if it exists and is different from the new one
+  if (oldCompanyId && oldCompanyId !== newCompany.id) {
+    const oldCompany = getCompany(oldCompanyId)
+    if (oldCompany) {
+      unlinkMeetingCompany(meetingId, oldCompanyId)
+      const stripped = removeCompanyFromList(meeting.companies, oldCompany.canonicalName)
+      meetingRepo.updateMeeting(meetingId, { companies: stripped }, userId)
+      logAudit(userId, 'meeting', meetingId, 'unlink_company', { companyId: oldCompanyId })
+
+      // Update the domain→name cache so email-derived suggestions reflect the swap.
+      // We update any domain that currently maps to the old company's name — this
+      // covers both the old company's primary domain and email domains for this meeting
+      // (e.g. angellist.com was cached as "Wellfound" → now maps to "AngelList").
+      const domainsToUpdate = new Set<string>()
+      if (oldCompany.primaryDomain) domainsToUpdate.add(oldCompany.primaryDomain)
+      for (const email of (meeting.attendeeEmails ?? [])) {
+        const d = extractDomainFromEmail(email)
+        if (d) {
+          const cached = getCompanyCacheByDomain(d)
+          if (cached && cached.displayName === oldCompany.canonicalName) domainsToUpdate.add(d)
+        }
+      }
+      for (const d of domainsToUpdate) {
+        upsertCompanyCache(d, newCompany.canonicalName)
+      }
+    }
+  }
+
+  // Link new company (idempotent — INSERT OR IGNORE in linkMeetingCompany)
+  linkMeetingCompany(meetingId, newCompany.id, 1, 'manual', userId)
+  const refreshed = meetingRepo.getMeeting(meetingId)!
+  const updated = appendCompanyIfMissing(refreshed.companies, newCompany.canonicalName)
+  if (updated !== refreshed.companies) {
+    meetingRepo.updateMeeting(meetingId, { companies: updated }, userId)
+  }
+
+  logAudit(userId, 'meeting', meetingId, 'swap_company', { oldCompanyId, newCompanyId: newCompany.id })
+  return meetingRepo.getMeeting(meetingId)!
+}
+
+/**
+ * Correct a linked company's NAME from the meeting detail surface and propagate
+ * the new name to every other surface (other meetings, contacts, the domain
+ * cache) via updateCompany()'s single-source-of-truth rename cascade.
+ *
+ * The meeting chip is the surface users are most likely to fix a bad
+ * auto-derived name on (it sits on their calendar), so a fix here must not
+ * strand the old company under its wrong name — which is what swapMeetingCompany
+ * would do. If the typed name already belongs to a *different* company, this is
+ * really a re-attribution, so we fall back to a swap rather than collide on the
+ * unique normalized_name.
+ */
+export function renameMeetingCompany(
+  meetingId: string,
+  companyId: string,
+  newName: string,
+  userId: string | null,
+): Meeting {
+  const meeting = meetingRepo.getMeeting(meetingId)
+  if (!meeting) throw new Error('Meeting not found')
+  const company = getCompany(companyId)
+  if (!company) throw new Error('Company not found')
+
+  // If another company already owns this name, the user means "this meeting is
+  // actually that company" — re-point instead of renaming (avoids a unique
+  // normalized_name collision and global mis-rename).
+  const existingId = findCompanyIdByNameOrDomain(newName.trim(), null)
+  if (existingId && existingId !== companyId) {
+    return swapMeetingCompany(meetingId, companyId, newName, userId)
+  }
+
+  // True rename — cascades to meetings.companies (incl. this meeting),
+  // contacts.previous_companies, and the legacy domain cache.
+  updateCompany(companyId, { canonicalName: newName.trim() }, userId)
+  logAudit(userId, 'company', companyId, 'update', {
+    via: 'meeting', meetingId, rename: { from: company.canonicalName, to: newName.trim() },
+  })
+  return meetingRepo.getMeeting(meetingId)!
 }
 
 /**
@@ -960,52 +1059,17 @@ export function registerMeetingHandlers(): void {
     (_event, meetingId: string, oldCompanyId: string | null, newCompanyName: string) => {
       if (!meetingId) throw new Error('meetingId is required')
       if (!newCompanyName?.trim()) throw new Error('newCompanyName is required')
-      const userId = getCurrentUserId()
+      return swapMeetingCompany(meetingId, oldCompanyId, newCompanyName, getCurrentUserId())
+    }
+  )
 
-      const meeting = meetingRepo.getMeeting(meetingId)
-      if (!meeting) throw new Error('Meeting not found')
-
-      // Find or create the target company
-      const newCompany = getOrCreateCompanyByName(newCompanyName.trim(), userId)
-
-      // Unlink old company if it exists and is different from the new one
-      if (oldCompanyId && oldCompanyId !== newCompany.id) {
-        const oldCompany = getCompany(oldCompanyId)
-        if (oldCompany) {
-          unlinkMeetingCompany(meetingId, oldCompanyId)
-          const stripped = removeCompanyFromList(meeting.companies, oldCompany.canonicalName)
-          meetingRepo.updateMeeting(meetingId, { companies: stripped }, userId)
-          logAudit(userId, 'meeting', meetingId, 'unlink_company', { companyId: oldCompanyId })
-
-          // Update the domain→name cache so email-derived suggestions reflect the swap.
-          // We update any domain that currently maps to the old company's name — this
-          // covers both the old company's primary domain and email domains for this meeting
-          // (e.g. angellist.com was cached as "Wellfound" → now maps to "AngelList").
-          const domainsToUpdate = new Set<string>()
-          if (oldCompany.primaryDomain) domainsToUpdate.add(oldCompany.primaryDomain)
-          for (const email of (meeting.attendeeEmails ?? [])) {
-            const d = extractDomainFromEmail(email)
-            if (d) {
-              const cached = getCompanyCacheByDomain(d)
-              if (cached && cached.displayName === oldCompany.canonicalName) domainsToUpdate.add(d)
-            }
-          }
-          for (const d of domainsToUpdate) {
-            upsertCompanyCache(d, newCompany.canonicalName)
-          }
-        }
-      }
-
-      // Link new company (idempotent — INSERT OR IGNORE in linkMeetingCompany)
-      linkMeetingCompany(meetingId, newCompany.id, 1, 'manual', userId)
-      const refreshed = meetingRepo.getMeeting(meetingId)!
-      const updated = appendCompanyIfMissing(refreshed.companies, newCompany.canonicalName)
-      if (updated !== refreshed.companies) {
-        meetingRepo.updateMeeting(meetingId, { companies: updated }, userId)
-      }
-
-      logAudit(userId, 'meeting', meetingId, 'swap_company', { oldCompanyId, newCompanyId: newCompany.id })
-      return meetingRepo.getMeeting(meetingId)
+  ipcMain.handle(
+    IPC_CHANNELS.MEETING_RENAME_COMPANY,
+    (_event, meetingId: string, companyId: string, newName: string) => {
+      if (!meetingId) throw new Error('meetingId is required')
+      if (!companyId) throw new Error('companyId is required')
+      if (!newName?.trim()) throw new Error('newName is required')
+      return renameMeetingCompany(meetingId, companyId, newName, getCurrentUserId())
     }
   )
 }

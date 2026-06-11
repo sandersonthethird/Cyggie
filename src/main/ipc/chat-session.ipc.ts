@@ -28,11 +28,13 @@ import {
   deleteChatSession,
   pinChatSession,
   renameChatSession,
+  setChatSessionAttachedEntities,
   setChatSessionCacheEnabled,
   unpinChatSession,
 } from '@cyggie/db/sqlite/repositories'
 import { getCurrentUserId } from '../security/current-user'
 import type { ChatContextKind } from '../../shared/utils/chat-context'
+import type { AttachedContextEntity } from '../../shared/types/chat'
 
 export function registerChatSessionHandlers(): void {
   ipcMain.handle(
@@ -92,6 +94,7 @@ export function registerChatSessionHandlers(): void {
         contextId: string
         contextKind: ChatContextKind
         contextLabel?: string | null
+        attachedContextEntities?: AttachedContextEntity[]
       }
     ) => {
       if (!data?.contextId || !data?.contextKind) {
@@ -102,7 +105,8 @@ export function registerChatSessionHandlers(): void {
         data.contextId,
         data.contextKind,
         data.contextLabel ?? null,
-        userId
+        userId,
+        data.attachedContextEntities ?? []
       )
     }
   )
@@ -152,6 +156,16 @@ export function registerChatSessionHandlers(): void {
       if (typeof data.enabled !== 'boolean') throw new Error('enabled must be boolean')
       const userId = getCurrentUserId()
       setChatSessionCacheEnabled(data.sessionId, data.enabled, userId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_SESSION_SET_ATTACHED_ENTITIES,
+    (_event, data: { sessionId: string; entities: AttachedContextEntity[] }) => {
+      if (!data?.sessionId) throw new Error('sessionId is required')
+      if (!Array.isArray(data.entities)) throw new Error('entities must be an array')
+      const userId = getCurrentUserId()
+      setChatSessionAttachedEntities(data.sessionId, data.entities, userId)
     }
   )
 

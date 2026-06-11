@@ -3,8 +3,22 @@ import * as taskRepo from '@cyggie/db/sqlite/repositories/task.repo'
 import type { TaskCategory, TaskExtractionResult, ProposedTask } from '@shared/types/task'
 
 const ACTION_ITEM_LABELS = ['action items', 'next steps', 'follow-ups', 'follow ups', 'action items & next steps']
-const DECISION_LABELS = ['decisions', 'decisions made', 'key decisions']
 const COMMITMENT_LABELS = ['commitments', 'commitments made']
+
+// Hard cap on how many tasks we ever propose from a single meeting. The LLM
+// prompt asks for a small number of action items, but it's unreliable, so
+// without a cap a busy meeting can yield 15-20 proposals. Keep only the most
+// actionable few.
+const MAX_PROPOSED_TASKS = 5
+
+// Category priority when trimming to MAX_PROPOSED_TASKS: actionable work first,
+// then commitments. Decisions are never auto-extracted (they're records, not
+// tasks), so they don't appear here.
+const CATEGORY_PRIORITY: Record<TaskCategory, number> = {
+  action_item: 0,
+  follow_up: 1,
+  decision: 2
+}
 
 // Extended set of section header hints (superset of company-summary-sync)
 const SECTION_HEADER_HINTS = [
@@ -188,7 +202,6 @@ export function extractTasksFromSummary(
     sourceSection: string
   }> = [
     { labels: ACTION_ITEM_LABELS, category: 'action_item', sourceSection: 'action_items' },
-    { labels: DECISION_LABELS, category: 'decision', sourceSection: 'decisions' },
     { labels: COMMITMENT_LABELS, category: 'follow_up', sourceSection: 'commitments' }
   ]
 
@@ -218,5 +231,12 @@ export function extractTasksFromSummary(
     }
   }
 
-  return { proposed, duplicatesSkipped }
+  // Trim to the most important few. Items are extracted in section order, so a
+  // stable sort by category priority keeps the relative order within each
+  // category while floating action items to the top. Anything beyond the cap is
+  // dropped rather than shown — the user asked for a short, high-signal list.
+  proposed.sort((a, b) => CATEGORY_PRIORITY[a.category] - CATEGORY_PRIORITY[b.category])
+  const capped = proposed.slice(0, MAX_PROPOSED_TASKS)
+
+  return { proposed: capped, duplicatesSkipped }
 }

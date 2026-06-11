@@ -20,6 +20,12 @@
 .tiptapContent :global(.ProseMirror) {
   outline: none;
   color: var(--cv-text);
+  /* User-adjustable reading appearance (see lib/appearance.ts). Defaults in
+     globals.css :root preserve the historical look. */
+  line-height: var(--cy-reading-lh, 1.6);
+  font-size: var(--cy-reading-fs, 1em);
+  max-width: var(--cy-reading-mw, 100%);
+  margin-inline: auto; /* center the column when the measure is capped (no-op at 100%) */
 }
 
 .tiptapContent :global(.ProseMirror a) {
@@ -76,7 +82,7 @@
 }
 
 .tiptapContent :global(.ProseMirror p) {
-  margin: 0 0 0.75em;
+  margin: 0 0 var(--cy-reading-gap, 0.75em);
 }
 
 .tiptapContent :global(.ProseMirror p:last-child) {

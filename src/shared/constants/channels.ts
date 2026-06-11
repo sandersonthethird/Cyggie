@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   MEETING_LINK_EXISTING_COMPANY: 'meeting:link-existing-company',
   MEETING_UNLINK_COMPANY: 'meeting:unlink-company',
   MEETING_SWAP_COMPANY: 'meeting:swap-company',
+  MEETING_RENAME_COMPANY: 'meeting:rename-company',
 
   // Recording
   RECORDING_START: 'recording:start',
@@ -19,6 +20,10 @@ export const IPC_CHANNELS = {
   RECORDING_TRANSCRIPT_UPDATE: 'recording:transcript-update',
   RECORDING_ERROR: 'recording:error',
   RECORDING_AUTO_STOP: 'recording:auto-stop',
+  // Renderer → main hint: the captured meeting window's video track ended
+  // (the window closed). Routed to the active session's auto-stop, which
+  // applies the window floor before stopping. See MeetingWindowWatcher.
+  RECORDING_WINDOW_GONE_HINT: 'recording:window-gone-hint',
   RECORDING_SYSTEM_AUDIO_STATUS: 'recording:system-audio-status',
   // Broadcast by the tray menu (src/main/tray.ts) to start/stop recording from
   // the macOS menu-bar item; the renderer listens via api.on.
@@ -228,10 +233,6 @@ export const IPC_CHANNELS = {
   // Email detail
   EMAIL_GET: 'email:get',
 
-  // Company chat
-  COMPANY_CHAT_QUERY: 'company:chat-query',
-  COMPANY_CHAT_ABORT: 'company-chat:abort',
-
   // Chat session history (persistent chats with FTS5 search)
   CHAT_SESSION_LIST_RECENT: 'chat-session:list-recent',
   CHAT_SESSION_GET_FOR_CONTEXT: 'chat-session:get-for-context',
@@ -244,12 +245,9 @@ export const IPC_CHANNELS = {
   CHAT_SESSION_UNPIN: 'chat-session:unpin',
   CHAT_SESSION_ARCHIVE: 'chat-session:archive',
   CHAT_SESSION_SET_CACHE_ENABLED: 'chat-session:set-cache-enabled',
+  CHAT_SESSION_SET_ATTACHED_ENTITIES: 'chat-session:set-attached-entities',
   CHAT_SESSION_DELETE: 'chat-session:delete',
   CHAT_SESSION_APPEND_MODAL_TURN: 'chat-session:append-modal-turn',
-
-  // Contact chat
-  CONTACT_CHAT_QUERY: 'contact-chat:query',
-  CONTACT_CHAT_ABORT: 'contact-chat:abort',
 
   // Company file flags (for chat context)
   COMPANY_FILE_FLAG_GET: 'company:file-flag-get',
@@ -295,6 +293,8 @@ export const IPC_CHANNELS = {
 
   // Chat context-size preflight (drives the banner above chat input)
   CHAT_CONTEXT_SIZE_PREFLIGHT: 'chat:context-size-preflight',
+  // Batched, deduped size estimate across multiple attached companies.
+  CHAT_CONTEXT_SIZE_PREFLIGHT_MULTI: 'chat:context-size-preflight-multi',
 
   // Broadcast: emitted from toggleFileFlag so any chat banner / Files tab
   // open in another window can refresh in real time.
@@ -342,6 +342,10 @@ export const IPC_CHANNELS = {
   CHAT_QUERY_MEETING: 'chat:query-meeting',
   CHAT_QUERY_SEARCH_RESULTS: 'chat:query-search-results',
   CHAT_QUERY_ALL: 'chat:query-all',
+  // Multi-entity chat: 1+ attached company/contact refs, deduped context.
+  CHAT_QUERY_ENTITIES: 'chat:query-entities',
+  // Resolve attached-entity availability + fresh labels for the chip row.
+  CHAT_RESOLVE_ATTACHED_ENTITIES: 'chat:resolve-attached-entities',
   CHAT_ABORT_ALL: 'chat:abort-all',
   CHAT_PROGRESS: 'chat:progress',
   CHAT_ABORT: 'chat:abort',

@@ -41,17 +41,40 @@ const SYSTEM_PROMPT =
   'Return null unless the value is explicitly stated for the company being described. Specifically:\n' +
   '- round: only return the round currently being raised. Do not infer from comparable companies, prior rounds, or future plans. If the content describes a "seed" round, do not return "series_a" because a comp or competitor is at Series A.\n' +
   '- postMoneyValuation: only return a value if "post-money valuation" is explicitly stated for this company. Do not infer from market size, TAM, comparable company valuations, or pre-money figures.\n' +
-  '- raiseSize: only return if the content explicitly states what this company is raising. Do not infer from comp deals or industry averages.\n\n' +
+  '- raiseSize: only return if the content explicitly states what this company is raising. Do not infer from comp deals or industry averages.\n' +
+  '- industry/sector: an industry or sector classification (e.g. "LegalTech", "FinTech", "HealthTech") belongs ONLY in the "industry" field. Never put a sector value into "pipelineStage" or any custom field.\n' +
+  '- custom fields: fill a custom field ONLY when the content explicitly states a value that matches that specific field\'s label/meaning. Do not place a value in a custom field merely because it is a plausible option there, and never cross-assign a stage/sector/round value between fields.\n\n' +
   'When in doubt, return null. False positives are worse than missing values.'
 
 // Minimal pipeline-stage + industry lists so the user prompt matches
 // production shape closely enough. Eval doesn't assert on these fields
 // (the bug is round / post-money / raise size) so an exact-match isn't
 // required.
-const PIPELINE_STAGES = 'screen, diligence, decision, documentation, pass, portfolio'
-const INDUSTRY_LIST = 'AI/ML, SaaS, Fintech, Healthcare, Consumer, Other'
+const PIPELINE_STAGES = 'screening, diligence, decision, documentation, portfolio, pass'
+// Includes LegalTech so the routing fixture below can verify the model snaps a
+// sector into "industry" rather than a custom field.
+const INDUSTRY_LIST = 'AdTech, AI, FinTech, HealthTech, LegalTech, SaaS, Marketplace, Web3'
 
-function buildUserPrompt(companyName: string, summary: string): string {
+interface CustomFieldDef {
+  key: string
+  label: string
+  // select/multiselect option list; omit for free-text fields
+  options?: string[]
+  multiselect?: boolean
+}
+
+function buildCustomFieldLines(defs: CustomFieldDef[]): string {
+  return defs.map((d) => {
+    const base = `  "${d.key}" (${d.label})`
+    if (d.options && d.options.length > 0) {
+      const type = d.multiselect ? 'array, each item one of' : 'one of'
+      return `${base}: ${type} [${d.options.join(', ')}] or null`
+    }
+    return `${base}: string or null`
+  }).join('\n')
+}
+
+function buildUserPrompt(companyName: string, summary: string, customFields: CustomFieldDef[] = []): string {
   const fields = [
     '  "description": one-sentence company description (string or null)',
     '  "round": funding round, one of [pre_seed, seed, seed_extension, series_a, series_b] or null',
@@ -63,10 +86,15 @@ function buildUserPrompt(companyName: string, summary: string): string {
     `  "industry": one of [${INDUSTRY_LIST}] or null (must be exact string match; null if no good fit)`,
   ].join('\n')
 
+  const customNotes = customFields.length > 0
+    ? `\n\nCustom fields to extract (fill each ONLY from content that explicitly matches that field's label; otherwise null — do not guess or cross-fill from another field's value):\n${buildCustomFieldLines(customFields)}`
+    : ''
+
   return (
     `Extract information about company: ${companyName}\n\n` +
     `Meeting summary:\n${summary}\n\n` +
-    `Return a JSON object with these fields:\n{\n${fields}\n}`
+    `Return a JSON object with these fields:\n{\n${fields}\n}` +
+    customNotes
   )
 }
 
@@ -94,7 +122,9 @@ interface Fixture {
   name: string
   companyName: string
   summary: string
-  assert: (extracted: ExtractedCompany) => string | null  // returns failure message or null
+  customFields?: CustomFieldDef[]
+  // `extracted` also carries any custom-field keys, so the assert sees them too.
+  assert: (extracted: ExtractedCompany & Record<string, unknown>) => string | null  // returns failure message or null
 }
 
 const FIXTURES: Fixture[] = [
@@ -181,6 +211,45 @@ Move to documentation.`,
       return errs.length > 0 ? errs.join('; ') : null
     },
   },
+  {
+    // Regression for the reported bug: "LegalTech" (a sector) was surfacing as a
+    // "Pipeline Stage" suggestion. It must route to the builtin "industry" field
+    // and NOT leak into the custom Pipeline Stage / Focus / Target Stage fields.
+    name: 'sector-vs-custom-field routing (LegalTech must land in industry, not custom fields)',
+    companyName: 'Shepherd AI',
+    summary: `## Company Overview
+
+Shepherd AI is an AI-native legaltech company providing embedded legal services
+for startups. The team is raising a $3M seed round.
+
+## Recommendation
+
+Move to diligence.`,
+    customFields: [
+      { key: 'pipeline_stage', label: 'Pipeline Stage', options: ['screening', 'diligence', 'decision', 'documentation', 'portfolio', 'pass'] },
+      { key: 'focus', label: 'Focus', options: ['AdTech', 'AI', 'FinTech', 'HealthTech', 'LegalTech', 'SaaS'], multiselect: true },
+      { key: 'target_stage', label: 'Target Stage', options: ['Pre-Seed', 'Seed', 'Series A', 'Series B'], multiselect: true },
+    ],
+    assert: (e) => {
+      const errs: string[] = []
+      // The sector must route to the builtin industry field.
+      if (e.industry !== 'LegalTech') {
+        errs.push(`industry="${e.industry}" — expected "LegalTech" (sector should route to industry)`)
+      }
+      // The custom "Pipeline Stage" field must never hold a sector. Valid: a real
+      // stage (the summary says "diligence") or null — never "LegalTech".
+      const ps = e['pipeline_stage']
+      if (typeof ps === 'string' && /legal/i.test(ps)) {
+        errs.push(`pipeline_stage="${ps}" — a sector leaked into the custom Pipeline Stage field`)
+      }
+      // "Target Stage" must not absorb a sector either.
+      const ts = JSON.stringify(e['target_stage'] ?? null)
+      if (/legal/i.test(ts)) {
+        errs.push(`target_stage=${ts} — a sector leaked into the custom Target Stage field`)
+      }
+      return errs.length > 0 ? errs.join('; ') : null
+    },
+  },
 ]
 
 function parseArgs(argv: string[]): { model: string; help: boolean } {
@@ -235,7 +304,7 @@ or post-money values from comp/market mentions in 3 fixture VC pitches.
   let failed = 0
 
   for (const fixture of FIXTURES) {
-    const userPrompt = buildUserPrompt(fixture.companyName, fixture.summary)
+    const userPrompt = buildUserPrompt(fixture.companyName, fixture.summary, fixture.customFields)
     let raw: string
     try {
       raw = await callModel(client, args.model, userPrompt)
@@ -255,7 +324,7 @@ or post-money values from comp/market mentions in 3 fixture VC pitches.
       continue
     }
 
-    const failure = fixture.assert(extracted)
+    const failure = fixture.assert(extracted as ExtractedCompany & Record<string, unknown>)
     if (failure) {
       console.log(`✗ ${fixture.name}`)
       console.log(`   ${failure}`)

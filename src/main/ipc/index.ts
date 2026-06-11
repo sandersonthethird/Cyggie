@@ -24,12 +24,12 @@ import { registerCustomFieldsIpc } from './custom-fields.ipc'
 import { registerContactNotesHandlers } from './contact-notes.ipc'
 import { registerCsvImportHandlers } from './csv-import.ipc'
 import { registerUserPreferencesHandlers } from './user-preferences.ipc'
-import { registerContactChatHandlers } from './contact-chat.ipc'
 import { registerCompanyDecisionHandlers } from './company-decision.ipc'
 import { registerNotesHandlers } from './notes.ipc'
 import { registerPartnerMeetingIpc } from './partner-meeting.ipc'
 import { registerWindowHandlers } from './window.ipc'
 import { registerCrmChatHandlers } from './crm-chat.ipc'
+import { registerEntitiesChatHandlers } from './entities-chat.ipc'
 import { registerFileHandlers } from './file.ipc'
 import { registerChatSessionHandlers } from './chat-session.ipc'
 
@@ -60,7 +60,6 @@ export function registerAllHandlers(): void {
   registerContactNotesHandlers()
   registerCsvImportHandlers()
   registerUserPreferencesHandlers()
-  registerContactChatHandlers()
   registerCompanyDecisionHandlers()
   registerNotesHandlers()
   registerPartnerMeetingIpc()

@@ -35,6 +35,7 @@ export interface ChatSessionRow {
   isPinned: boolean
   isArchived: boolean
   cacheEnabled: boolean
+  attachedContextEntities: import('../../shared/types/chat').AttachedContextEntity[]
   lastMessageAt: string
 }
 

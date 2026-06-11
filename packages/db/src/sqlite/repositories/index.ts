@@ -54,6 +54,7 @@ import * as rawNotes from './notes.repo'
 import * as rawChatSession from './chat-session.repo'
 import * as rawMemo from './investment-memo.repo'
 import * as rawFlaggedFiles from './company-file-flags.repo'
+import * as rawCustomFields from './custom-fields.repo'
 import type { InvestmentMemoWithLatest } from '@shared/types/company'
 import { getDatabase } from '../connection'
 
@@ -501,6 +502,18 @@ export const setChatSessionCacheEnabled = withSync(
   },
 )
 
+// setAttachedEntities returns void; re-read the row so the outbox payload
+// carries attachedContextEntities as a JS array (the Postgres column is jsonb).
+export const setChatSessionAttachedEntities = withSync(
+  rawChatSession.setAttachedEntities,
+  {
+    table: 'chat_sessions',
+    op: 'update',
+    extractRow: ({ args }) =>
+      rawChatSession.getSession(args[0]) as unknown as Record<string, unknown> | null,
+  },
+)
+
 export const deleteChatSession = withSync(rawChatSession.deleteSession, {
   table: 'chat_sessions',
   op: 'delete',
@@ -671,6 +684,88 @@ export type {
   RefreshFlaggedFileArgs,
   UpdateFlaggedFileExtractionPatch,
 } from './company-file-flags.repo'
+
+// ── custom fields (sync-enabled — migrations 119/120) ─────────────────────────
+//
+// Both tables emit the raw `SELECT *` row (snake_case, integer flags) as the
+// outbox payload — the gateway snake→camel maps it before drizzle-zod validation,
+// and integer flags stay integers (no INT_FLAG coercion needed). Reads pass
+// through unwrapped.
+//
+// setFieldValue caveat: when the field is a builtin (FIELD_KEY_MAP), the raw fn
+// ALSO writes the native org_companies/contacts column. Only the
+// custom_field_values row is emitted here; the native column resyncs on its next
+// wrapped updateCompany/updateContact (eventual consistency, Phase 1.5a).
+//
+// deleteFieldDefinition caveat: the SQLite FK cascades to custom_field_values;
+// only the definition tombstone is emitted — Neon's ON DELETE CASCADE removes the
+// child value rows.
+export const createFieldDefinition = withSync(rawCustomFields.createFieldDefinition, {
+  table: 'custom_field_definitions',
+  op: 'insert',
+  // Re-read the snake_case row (createFieldDefinition returns a camelCase DTO).
+  extractRow: ({ result }) =>
+    getDatabase()
+      .prepare(`SELECT * FROM custom_field_definitions WHERE id = ?`)
+      .get((result as { id: string }).id) as Record<string, unknown> | null,
+})
+
+export const updateFieldDefinition = withSync(rawCustomFields.updateFieldDefinition, {
+  table: 'custom_field_definitions',
+  op: 'update',
+  extractRow: ({ result }) =>
+    result == null
+      ? null
+      : (getDatabase()
+          .prepare(`SELECT * FROM custom_field_definitions WHERE id = ?`)
+          .get((result as { id: string }).id) as Record<string, unknown> | null),
+})
+
+export const deleteFieldDefinition = withSync(rawCustomFields.deleteFieldDefinition, {
+  table: 'custom_field_definitions',
+  op: 'delete',
+  captureBeforeDelete: (db, [id]) =>
+    db
+      .prepare(`SELECT * FROM custom_field_definitions WHERE id = ?`)
+      .get(id) as Record<string, unknown> | null,
+})
+
+export const setFieldValue = withSync(rawCustomFields.setFieldValue, {
+  table: 'custom_field_values',
+  op: 'insert',
+  // setFieldValue is an upsert returning void. Re-read by the natural key to get
+  // the persisted row (its `id` is stable across upserts — the INSERT's fresh
+  // uuid is discarded on conflict).
+  extractRow: ({ args }) => {
+    const input = args[0] as { fieldDefinitionId: string; entityId: string }
+    return getDatabase()
+      .prepare(
+        `SELECT * FROM custom_field_values WHERE field_definition_id = ? AND entity_id = ?`,
+      )
+      .get(input.fieldDefinitionId, input.entityId) as Record<string, unknown> | null
+  },
+})
+
+export const deleteFieldValue = withSync(rawCustomFields.deleteFieldValue, {
+  table: 'custom_field_values',
+  op: 'delete',
+  captureBeforeDelete: (db, [fieldDefinitionId, entityId]) =>
+    db
+      .prepare(
+        `SELECT * FROM custom_field_values WHERE field_definition_id = ? AND entity_id = ?`,
+      )
+      .get(fieldDefinitionId, entityId) as Record<string, unknown> | null,
+})
+
+// Pass-throughs (reads + helpers — no row mutation, or handled separately).
+export const listFieldDefinitions = rawCustomFields.listFieldDefinitions
+export const getFieldDefinitionById = rawCustomFields.getFieldDefinitionById
+export const getFieldValuesForEntity = rawCustomFields.getFieldValuesForEntity
+export const getBulkFieldValues = rawCustomFields.getBulkFieldValues
+export const countFieldValues = rawCustomFields.countFieldValues
+export const countBuiltinOptionUsage = rawCustomFields.countBuiltinOptionUsage
+export const reorderFieldDefinitions = rawCustomFields.reorderFieldDefinitions
+export const renameBuiltinOption = rawCustomFields.renameBuiltinOption
 
 // Re-export the database accessor so the rare caller that needs it can
 // continue to import from the barrel rather than reaching into connection.ts.

@@ -18,6 +18,7 @@ import { chatSessions, chatSessionMessages } from '../schema/chat'
 import { investmentMemos, investmentMemoVersions } from '../schema/memos'
 import { emailMessages, emailCompanyLinks, emailContactLinks } from '../schema/email'
 import { userPreferences } from '../schema/settings'
+import { customFieldDefinitions, customFieldValues } from '../schema/custom_fields'
 
 // =============================================================================
 // write-validators.ts — drizzle-zod-derived zod schemas for inbound outbox
@@ -81,6 +82,9 @@ const DATE_KEYS = new Set([
   // org_companies portfolio-row fields surfaced by tonight's drain.
   'dateOfInitialInvestment', 'date_of_initial_investment',
   'followonDate', 'followon_date',
+  // custom_field_values: a `date`-type custom field stores its value here as an
+  // ISO string; Postgres value_date is timestamptz, so coerce like the others.
+  'valueDate', 'value_date',
 ])
 
 // 2026-05-23 — desktop repo mappers (mapSession, mapMeeting, etc.) convert
@@ -187,6 +191,12 @@ export const WRITE_VALIDATORS: Record<string, ValidatorBundle> = {
   email_contact_links: bundleFor(emailContactLinks, 'email_contact_links'),
   // Part E — synced user preference (e.g. emailThreadsPerCompany cap).
   user_preferences: bundleFor(userPreferences, 'user_preferences'),
+  // Custom fields (migrations 119/120). SQLite emits snake_case integer flags
+  // (is_required/show_in_list/is_builtin) which map to Postgres integer columns,
+  // so no INT_FLAG coercion is needed. user_id is absent in the desktop payload
+  // (SQLite tables have no user_id column) — the gateway stamps it from JWT.sub.
+  custom_field_definitions: bundleFor(customFieldDefinitions, 'custom_field_definitions'),
+  custom_field_values: bundleFor(customFieldValues, 'custom_field_values'),
 }
 
 export type WriteOp = 'insert' | 'update' | 'delete'

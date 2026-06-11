@@ -1,0 +1,110 @@
+.wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 14px 8px;
+}
+
+.label {
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 4px 4px 4px 7px;
+  font-size: 11px;
+  color: var(--color-text);
+  max-width: 220px;
+}
+
+.unavailable {
+  opacity: 0.5;
+}
+
+.unavailable .chipName {
+  text-decoration: line-through;
+}
+
+.chipIcon {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  display: grid;
+  place-items: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.toneCompany { background: #6D28D9; }
+.toneContact { background: #0369A1; }
+
+.chipName {
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.remove {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  border: none;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.remove:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.addWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.addBtn {
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.addBtn:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.pickerPopover {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  width: 280px;
+}

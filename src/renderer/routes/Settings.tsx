@@ -78,10 +78,11 @@ const INTELLIGENCE_FUNCTIONS: Array<{
   { label: 'Chat', claudeKey: 'claudeChatModel', openAiKey: 'openAiChatModel', hint: 'In-app AI chat on contacts, companies, and CRM queries' },
 ]
 
-type SettingsTab = 'profile' | 'ai' | 'integrations' | 'import' | 'custom-fields' | 'templates'
+type SettingsTab = 'profile' | 'appearance' | 'ai' | 'integrations' | 'import' | 'custom-fields' | 'templates'
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   profile: 'Profile',
+  appearance: 'Appearance',
   ai: 'AI & Transcription',
   integrations: 'Integrations',
   import: 'Import',
@@ -93,6 +94,7 @@ import { AgentLimitsSection } from '../components/settings/AgentLimitsSection'
 import { AgentModelTierSection } from '../components/settings/AgentModelTierSection'
 import { EmailContextSection } from '../components/settings/EmailContextSection'
 import { TranscriptionProviderSection } from '../components/settings/TranscriptionProviderSection'
+import { AppearanceSection } from '../components/settings/AppearanceSection'
 
 interface SettingsState {
   deepgramApiKey: MaskedKey
@@ -116,6 +118,7 @@ interface SettingsState {
   autoSyncEmails: boolean
   autoGenerateKeyTakeaways: boolean
   autoEnhanceAfterMeeting: boolean
+  refineSummaries: boolean
   exaApiKey: MaskedKey
   // Optional dedicated Claude key for memo + stress-test agents. Falls back
   // to claudeApiKey at runtime when unset (see memo-producer-agent.ts).
@@ -217,6 +220,7 @@ export default function Settings() {
     autoSyncEmails: true,
     autoGenerateKeyTakeaways: false,
     autoEnhanceAfterMeeting: false,
+    refineSummaries: true,
     exaApiKey: UNCONFIGURED_KEY,
     memoApiKey: UNCONFIGURED_KEY
   })
@@ -362,6 +366,7 @@ export default function Settings() {
             autoSyncEmails: str('autoSyncEmails') !== 'false',
             autoGenerateKeyTakeaways: str('autoGenerateKeyTakeaways') === 'true',
             autoEnhanceAfterMeeting: str('autoEnhanceAfterMeeting') === 'true',
+            refineSummaries: str('refineSummaries') !== 'false',
             exaApiKey: asMaskedKey(all.exaApiKey),
             webShareApiKey: asMaskedKey(all.webShareApiKey),
             webShareModel: str('webShareModel', 'claude-sonnet-4-5-20250929'),
@@ -830,7 +835,7 @@ export default function Settings() {
   return (
     <div className={styles.container}>
       <div className={styles.tabRow}>
-        {(['profile', 'ai', 'integrations', 'import', 'custom-fields', 'templates'] as SettingsTab[]).map((tab) => (
+        {(['profile', 'appearance', 'ai', 'integrations', 'import', 'custom-fields', 'templates'] as SettingsTab[]).map((tab) => (
           <button
             key={tab}
             className={`${styles.tab} ${activeTab === tab ? styles.activeTab : ''}`}
@@ -1436,6 +1441,25 @@ export default function Settings() {
           Requires a Summary template selected on the meeting.
         </p>
 
+        <div className={styles.inlineFieldRow} style={{ marginTop: 16 }}>
+          <span className={styles.inlineFieldLabel}>Polish summaries</span>
+          <select
+            className={styles.inlineSelect}
+            value={settings.refineSummaries ? 'on' : 'off'}
+            onChange={async (e) => {
+              const v = e.target.value === 'on'
+              setSettings((prev) => ({ ...prev, refineSummaries: v }))
+              await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'refineSummaries', String(v))
+            }}
+          >
+            <option value="off">Off</option>
+            <option value="on">On</option>
+          </select>
+        </div>
+        <p className={styles.hint} style={{ marginTop: 4 }}>
+          Runs a second pass to tighten and shorten the generated summary. Turn off to keep summaries closer to the raw draft and use fewer tokens.
+        </p>
+
         <h4 className={styles.subsectionTitle ?? ''} style={{ marginTop: 24, fontSize: 14, fontWeight: 600 }}>Investment Thesis Agent</h4>
         <p className={styles.hint} style={{ marginTop: 4 }}>
           Caps on the multi-turn stress-test agent. Defaults are tuned for typical Sonnet 4.5 runs (~$1.20).
@@ -1932,6 +1956,10 @@ export default function Settings() {
             {saved ? 'Saved' : 'Save Settings'}
           </button>
         </div>
+      )}
+
+      {activeTab === 'appearance' && (
+        <AppearanceSection />
       )}
 
       {activeTab === 'custom-fields' && (

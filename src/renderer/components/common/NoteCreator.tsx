@@ -31,6 +31,7 @@
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { EditorContent } from '@tiptap/react'
+import { TiptapBubbleMenu } from './TiptapBubbleMenu'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import Link from '@tiptap/extension-link'
@@ -160,6 +161,7 @@ export function NoteCreator({ onSave, placeholder = 'Add a note…' }: NoteCreat
   return (
     <div ref={containerRef} className={styles.container} onKeyDown={handleKeyDown}>
       <div className={`${styles.editor} ${focused ? styles.editorFocused : ''}`}>
+        <TiptapBubbleMenu editor={editor} />
         <EditorContent editor={editor} />
       </div>
       {focused && (

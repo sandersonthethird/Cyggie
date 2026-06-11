@@ -180,6 +180,7 @@ const { queryMeeting, querySearchResults } = await import('@cyggie/services/llm/
 const { queryCompany } = await import('@cyggie/services/llm/company-chat')
 const { queryContact } = await import('@cyggie/services/llm/contact-chat')
 const { queryAll } = await import('@cyggie/services/llm/crm-chat')
+const { queryEntities } = await import('@cyggie/services/llm/entities-chat')
 const { chatDispatch } = await import('@cyggie/services/llm/chat-dispatch')
 
 // ── Fixture data ────────────────────────────────────────────────────────
@@ -330,6 +331,113 @@ describe('parity baseline — pre-refactor wire format per kind', () => {
     await queryContact('ct1', 'What does Bobby focus on?', undefined)
 
     await snapshotPrompts('queryContact')
+  })
+
+  it('queryEntities (N≥2): company + its own contact, sharing a meeting, dedupes to one', async () => {
+    // Company co1 and contact ct1 both reference meeting m1. The unified
+    // builder must include m1's summary ONCE (dedup by meeting id), not twice.
+    mockGetCompany.mockReturnValue({
+      id: 'co1',
+      canonicalName: 'Init Labs',
+      description: 'AI infrastructure for VC firms',
+      stage: 'Seed',
+      round: '$8M Seed',
+      industry: 'AI infrastructure',
+    })
+    mockListCompanyMeetings.mockReturnValue([
+      { id: 'm1', title: 'Init Labs partner call', date: FIXTURE_DATE },
+    ])
+    mockGetContact.mockReturnValue({
+      id: 'ct1',
+      fullName: 'Priya Mehta',
+      title: 'CEO',
+      contactType: 'founder',
+      primaryCompany: { canonicalName: 'Init Labs' },
+      // Same meeting m1 — the dedup target.
+      meetings: [{ id: 'm1', title: 'Init Labs partner call', date: FIXTURE_DATE }],
+    })
+    mockGetMeeting.mockReturnValue(meetingFixture())
+    mockReadSummary.mockReturnValue(FIXTURE_SUMMARY)
+
+    await queryEntities(
+      [
+        { type: 'company', id: 'co1' },
+        { type: 'contact', id: 'ct1' },
+      ],
+      'How is Init Labs pricing trending?',
+      undefined,
+    )
+
+    // Dedup proof: the shared meeting heading appears exactly once.
+    const occurrences = capturedUser.split('### Init Labs partner call').length - 1
+    expect(occurrences).toBe(1)
+    // Both entity headers are present.
+    expect(capturedUser).toContain('# Company: Init Labs')
+    expect(capturedUser).toContain('# Contact: Priya Mehta')
+
+    await snapshotPrompts('queryEntities')
+  })
+
+  it('queryEntities (N=1): delegates to queryCompany (parity-identical path)', async () => {
+    mockGetCompany.mockReturnValue({
+      id: 'co1',
+      canonicalName: 'Init Labs',
+      description: 'AI infrastructure for VC firms',
+      stage: 'Seed',
+      round: '$8M Seed',
+      industry: 'AI infrastructure',
+    })
+    mockListCompanyMeetings.mockReturnValue([
+      { id: 'm1', title: 'Init Labs partner call', date: FIXTURE_DATE },
+    ])
+    mockGetMeeting.mockReturnValue(meetingFixture())
+    mockReadSummary.mockReturnValue(FIXTURE_SUMMARY)
+
+    await queryEntities([{ type: 'company', id: 'co1' }], 'How is pricing trending?', undefined)
+
+    // Single-entity delegates to queryCompany → uses the company system prompt.
+    expect(capturedSystem).toContain('research assistant for a venture capital firm')
+    expect(capturedUser).toContain('Here is the available information about Init Labs:')
+  })
+
+  it('queryEntities: all attached entities empty → curated response, no LLM call', async () => {
+    mockGetCompany.mockReturnValue({ id: 'co1', canonicalName: 'Init Labs' })
+    mockGetContact.mockReturnValue({ id: 'ct1', fullName: 'Priya Mehta', meetings: [] })
+    // No meetings/emails/notes/files for either entity (default mocks return empty).
+
+    const result = await queryEntities(
+      [
+        { type: 'company', id: 'co1' },
+        { type: 'contact', id: 'ct1' },
+      ],
+      'Anything?',
+      undefined,
+    )
+
+    expect(result).toMatch(/very little information/i)
+    expect(capturedUser).toBe('') // provider never called
+  })
+
+  it('queryEntities: a deleted attached entity is skipped, not fatal', async () => {
+    mockGetCompany.mockReturnValue({ id: 'co1', canonicalName: 'Init Labs' })
+    mockListCompanyMeetings.mockReturnValue([{ id: 'm1', title: 'Init Labs partner call', date: FIXTURE_DATE }])
+    mockGetMeeting.mockReturnValue(meetingFixture())
+    mockReadSummary.mockReturnValue(FIXTURE_SUMMARY)
+    // ct-deleted resolves to null (deleted) — must be skipped, not throw.
+    mockGetContact.mockReturnValue(null)
+
+    const result = await queryEntities(
+      [
+        { type: 'company', id: 'co1' },
+        { type: 'contact', id: 'ct-deleted' },
+      ],
+      'How is Init Labs doing?',
+      undefined,
+    )
+
+    expect(result).toBe('mock-llm-response')
+    expect(capturedUser).toContain('# Company: Init Labs')
+    expect(capturedUser).not.toContain('# Contact:')
   })
 
   it('queryAll: meeting context + (empty CRM) under QUERY_ALL_SYSTEM_PROMPT', async () => {

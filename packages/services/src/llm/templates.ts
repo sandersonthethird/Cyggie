@@ -64,6 +64,31 @@ export const AUTHORITATIVE_ATTENDEES_INSTRUCTION =
   `call should be referenced as "mentioned" or "discussed" — never as attendees.`
 
 /**
+ * Grounding trailer appended to every prompt. Keeps the model from inventing
+ * content the participants never said — the most common failure is fabricating
+ * a company "vision", market sizing, or strengths that go beyond the transcript.
+ */
+export const ANTI_FABRICATION_INSTRUCTION =
+  `Stay grounded in the transcript: Base every statement strictly on what ` +
+  `participants actually said. Do not infer, speculate, or invent. Do NOT describe ` +
+  `the company's vision, market size (TAM/SAM/SOM), competitive positioning, or ` +
+  `strengths unless a participant explicitly stated them. If a section has no ` +
+  `supporting content in the transcript, omit that section entirely rather than ` +
+  `filling it in.`
+
+/**
+ * Trailer appended when the meeting is linked to a known company in the CRM.
+ * The "Company" line in Meeting Context carries the canonical name; this tells
+ * the model to use it verbatim instead of inventing a variant from the
+ * transcript or an email domain (e.g. "Shepherd AI" → "yourShepherd.ai").
+ */
+export const AUTHORITATIVE_COMPANY_INSTRUCTION =
+  `Company name source: The "Company" listed in Meeting Context is the ` +
+  `authoritative name from the CRM. Use it EXACTLY as written when referring to ` +
+  `the company. Do NOT rename it, reformat it, or infer an alternate spelling, ` +
+  `domain, or product name from the transcript or email addresses.`
+
+/**
  * Builds the `{{attendees}}` value for the prompt header and returns a
  * flag indicating whether the value reflects calendar truth (in which
  * case the caller should append the authoritative-source instruction).
@@ -156,6 +181,12 @@ export function buildPrompt(
   if (companiesStr && (usingInstructions || !template.userPromptTemplate.includes('{{companies}}'))) {
     contextParts.push(`Company: ${companiesStr}`)
   }
+  // When the meeting is linked to a known CRM company, instruct the model to use
+  // that canonical name verbatim (gated on companiesStr, not the placeholder
+  // branch above, so it fires for both default and custom templates).
+  if (companiesStr) {
+    contextParts.push(AUTHORITATIVE_COMPANY_INSTRUCTION)
+  }
   if (userIdentityStr && (usingInstructions || !template.userPromptTemplate.includes('{{user_identity}}'))) {
     contextParts.push(`Meeting Owner (you): ${userIdentityStr}`)
   }
@@ -179,6 +210,10 @@ export function buildPrompt(
       `Consolidate related items into a single action item where possible.`
     )
   }
+  // Anti-fabrication grounding fires for every prompt (all default templates and
+  // any user-authored custom template), so summaries never invent vision/market
+  // content beyond what the transcript supports.
+  contextParts.push(ANTI_FABRICATION_INSTRUCTION)
   if (contextParts.length > 0) {
     variables.transcript = `${variables.transcript}\n\n---\nMeeting Context:\n${contextParts.join('\n')}`
   }

@@ -11,6 +11,7 @@ import Database from 'better-sqlite3'
 import { runChatSessionsMigration } from '@cyggie/db/sqlite/migrations/078-chat-sessions'
 import { runChatSessionSelectedCompaniesMigration } from '@cyggie/db/sqlite/migrations/102-chat-session-selected-companies'
 import { runChatSessionCacheEnabledMigration } from '@cyggie/db/sqlite/migrations/103-chat-session-cache-enabled'
+import { runChatSessionAttachedEntitiesMigration } from '@cyggie/db/sqlite/migrations/118-chat-session-attached-entities'
 
 let testDb: Database.Database
 
@@ -38,6 +39,7 @@ const {
   getSession,
   getActiveForContext,
   setTitleIfMissing,
+  setAttachedEntities,
 } = await import('@cyggie/db/sqlite/repositories/chat-session.repo')
 
 function buildDb(): Database.Database {
@@ -52,6 +54,7 @@ function buildDb(): Database.Database {
   runChatSessionsMigration(db)
   runChatSessionSelectedCompaniesMigration(db)
   runChatSessionCacheEnabledMigration(db)
+  runChatSessionAttachedEntitiesMigration(db)
   return db
 }
 
@@ -83,6 +86,64 @@ describe('chat-session.repo', () => {
       testDb.prepare(`INSERT INTO org_companies (id, canonical_name) VALUES (?, ?)`).run('c1', 'Acme')
       const session = getOrCreateActive('company:c1', 'company', null)
       expect(session.contextLabel).toBe('Acme')
+    })
+  })
+
+  describe('attached context entities', () => {
+    const ENT = [
+      { type: 'company' as const, id: 'c1', label: 'Acme' },
+      { type: 'contact' as const, id: 'p1', label: 'Jane Doe' },
+    ]
+
+    it('defaults to an empty array on a new session', () => {
+      const session = getOrCreateActive('global-all', 'global', 'Global')
+      expect(getSession(session.id)?.attachedContextEntities).toEqual([])
+    })
+
+    it('createNew seeds the attached entities in the same INSERT', () => {
+      const session = createNew('company:c1', 'company', 'Acme', 'user-1', ENT)
+      expect(session.attachedContextEntities).toEqual(ENT)
+      // Round-trips through a fresh read.
+      expect(getSession(session.id)?.attachedContextEntities).toEqual(ENT)
+    })
+
+    it('setAttachedEntities round-trips and normalizes the list', () => {
+      const session = getOrCreateActive('global-all', 'global', 'Global')
+      setAttachedEntities(session.id, ENT, 'user-1')
+      expect(getSession(session.id)?.attachedContextEntities).toEqual(ENT)
+
+      // Replacing with a shorter list overwrites.
+      setAttachedEntities(session.id, [ENT[0]], 'user-1')
+      expect(getSession(session.id)?.attachedContextEntities).toEqual([ENT[0]])
+    })
+
+    it('drops malformed entries (missing id / bad type) on write', () => {
+      const session = getOrCreateActive('global-all', 'global', 'Global')
+      setAttachedEntities(
+        session.id,
+        [
+          ENT[0],
+          { type: 'meeting', id: 'm1', label: 'x' } as never, // bad type → dropped
+          { type: 'company', id: '', label: 'y' } as never, // empty id → dropped
+        ],
+        'user-1',
+      )
+      expect(getSession(session.id)?.attachedContextEntities).toEqual([ENT[0]])
+    })
+
+    it('parses corrupt JSON in the column as [] (never crashes the read)', () => {
+      const session = getOrCreateActive('global-all', 'global', 'Global')
+      testDb
+        .prepare(`UPDATE chat_sessions SET attached_context_entities = ? WHERE id = ?`)
+        .run('{not valid json', session.id)
+      expect(getSession(session.id)?.attachedContextEntities).toEqual([])
+    })
+
+    it('listRecent includes the attached entities', () => {
+      const session = createNew('company:c1', 'company', 'Acme', 'user-1', ENT)
+      const recents = listRecent({ limit: 10 })
+      const found = recents.find((r) => r.id === session.id)
+      expect(found?.attachedContextEntities).toEqual(ENT)
     })
   })
 

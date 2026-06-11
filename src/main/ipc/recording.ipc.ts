@@ -222,6 +222,12 @@ export function registerRecordingHandlers(): void {
     activeSession?.onAecDegraded()
   })
 
+  // Signal B: the captured window's track ended in the renderer → forward to
+  // the session's auto-stop, which applies the window floor before stopping.
+  ipcMain.on(IPC_CHANNELS.RECORDING_WINDOW_GONE_HINT, () => {
+    activeSession?.notifyWindowGone()
+  })
+
   ipcMain.on(IPC_CHANNELS.RECORDING_LOUDNESS_SAMPLE, (_event, sample: unknown) => {
     if (!sample || typeof sample !== 'object') return
     const s = sample as { tStart?: number; tEnd?: number; micDb?: number; sysDb?: number }

@@ -22,6 +22,7 @@ import AIChatFullscreen from './routes/AIChatFullscreen'
 import { useCalendar } from './hooks/useCalendar'
 import { useRecordingStore } from './stores/recording.store'
 import { usePreferencesStore } from './stores/preferences.store'
+import { useAppearance } from './hooks/useAppearance'
 import { AudioCaptureProvider } from './contexts/AudioCaptureContext'
 import { RunsProvider } from './contexts/RunsContext'
 import { EnhancementProvider } from './contexts/EnhancementContext'
@@ -85,6 +86,9 @@ function CalendarInit() {
 function PreferencesInit() {
   const load = usePreferencesStore((s) => s.load)
   useEffect(() => { void load() }, [load])
+  // Apply reading-appearance tokens from the synced store + keep the pre-paint
+  // localStorage mirror fresh. Lives here so popout windows get it too.
+  useAppearance()
   return null
 }
 

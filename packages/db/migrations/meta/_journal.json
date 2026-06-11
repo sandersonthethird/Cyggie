@@ -246,6 +246,13 @@
       "when": 1780781000000,
       "tag": "0034_drop_contact_investor_stage",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1781178876347,
+      "tag": "0035_chat_sessions_attached_entities",
+      "breakpoints": true
     }
   ]
 }

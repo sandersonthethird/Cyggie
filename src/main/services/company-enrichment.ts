@@ -58,16 +58,24 @@ async function enrichCompanyInner(domain: string): Promise<string> {
   const cached = companyCacheRepo.getByDomain(domain)
   if (cached) return cached.displayName
 
-  // 2. Tier 1: Fetch homepage HTML and parse
+  // 2. Tier 1: Fetch homepage HTML and parse. Reject taglines/slogans that a
+  //    site puts in its <title>/og:site_name (e.g. "Streamlining The
+  //    Middle-Market Deal Landscape") — those are marketing copy, not names.
   const html = await fetchHomepage(domain)
-  let displayName = html ? parseCompanyName(html) : null
+  const parsed = html ? parseCompanyName(html) : null
+  let displayName = parsed && isPlausibleCompanyName(parsed) ? parsed : null
 
-  // 3. Tier 2: Claude fallback if website didn't yield a name
+  // 3. Tier 2: Claude fallback if website didn't yield a usable name. Also
+  //    gated — the LLM tends to answer "what does this company do" with a
+  //    descriptive phrase rather than the actual name.
   if (!displayName) {
-    displayName = await resolveViaLLM(domain)
+    const llm = await resolveViaLLM(domain)
+    displayName = llm && isPlausibleCompanyName(llm) ? llm : null
   }
 
-  // 4. Last resort: domain heuristic
+  // 4. Last resort: deterministic domain heuristic. Preferred over an
+  //    unverified guess — "caphub.com" → "Cap Hub" is a worse label but never
+  //    a hallucinated tagline, and the user can correct the casing in one place.
   if (!displayName) {
     displayName = domainToTitleCase(domain)
   }
@@ -264,12 +272,19 @@ function cleanTitle(title: string): string {
 async function resolveViaLLM(domain: string): Promise<string | null> {
   try {
     const provider = getProvider('enrichment')
-    const name = (
+    const raw = (
       await provider.generateSummary(
-        '',
-        `What company operates the website domain "${domain}"? Reply with only the company name, nothing else.`
+        'You identify a company by its official brand name only.',
+        `What is the official company/brand name of the business at the domain "${domain}"?\n\n` +
+        `Rules:\n` +
+        `- Reply with ONLY the short brand name (e.g. "Stripe", "CapHub", "Andreessen Horowitz").\n` +
+        `- Do NOT reply with a tagline, slogan, or description of what the company does.\n` +
+        `- If you are not confident of the real name, reply with exactly: UNKNOWN`
       )
     ).trim()
+    // Strip wrapping quotes/punctuation the model sometimes adds.
+    const name = raw.replace(/^["'“”]+|["'“”.]+$/g, '').trim()
+    if (name.toUpperCase() === 'UNKNOWN') return null
     if (name.length >= 2 && name.length <= 100 && !name.includes('\n')) {
       return name
     }
@@ -278,6 +293,28 @@ async function resolveViaLLM(domain: string): Promise<string | null> {
   }
 
   return null
+}
+
+/**
+ * Reject strings that look like a marketing tagline/slogan/sentence rather than
+ * a company name. High-precision: it must not reject real names (which can be
+ * long, e.g. "Bank of America Merrill Lynch"), only obvious value-prop copy
+ * (e.g. "Streamlining The Middle-Market Deal Landscape", "Helping Independent
+ * Sponsors Maximize Every Opportunity"). When in doubt we keep the candidate —
+ * the deterministic domain heuristic is the safety net upstream.
+ */
+export function isPlausibleCompanyName(name: string): boolean {
+  const trimmed = name.trim()
+  if (trimmed.length < 2 || trimmed.length > 60) return false
+  // A trailing period reads as a sentence, not a name.
+  if (/[.!?]$/.test(trimmed)) return false
+  const words = trimmed.split(/\s+/)
+  // Real company names are short; taglines run long.
+  if (words.length > 7) return false
+  // Slogans almost always open with a gerund ("Streamlining…", "Helping…",
+  // "Empowering…") and then keep going. A real name effectively never does.
+  if (words.length >= 3 && /^[A-Za-z]+ing$/.test(words[0])) return false
+  return true
 }
 
 function domainToTitleCase(domain: string): string {

@@ -665,6 +665,10 @@ export class RecordingSession {
         this.callbacks.onAutoStop()
       },
       calendarEndTime: this.calendarEndTime || undefined,
+      // Window-close detection (Trigger 2): watch this platform's window if
+      // known, else whatever meeting window is open at start. getWindowSources
+      // defaults to the real desktopCapturer enumeration inside the watcher.
+      meetingPlatform,
     })
     this.autoStop.start()
 
@@ -672,6 +676,14 @@ export class RecordingSession {
   }
 
   // ─── audio + system-audio + pause/resume ───────────────────────────────────
+
+  /**
+   * Signal B from the renderer: the captured meeting window's video track
+   * ended (the window closed). The auto-stop applies the window floor.
+   */
+  notifyWindowGone(): void {
+    this.autoStop?.notifyWindowGone()
+  }
 
   feedAudio(chunk: Buffer): void {
     if (DEBUG_TRANSCRIPTION) {

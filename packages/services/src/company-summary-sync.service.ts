@@ -23,6 +23,7 @@ import { readSummary } from '@main/storage/file-manager'
 import { downloadSummaryFromDrive } from '@main/drive/google-drive'
 import { safeParseJson, extractString, extractNumber } from '@main/utils/json-utils'
 import { CANONICAL_INDUSTRIES, INDUSTRY_PROMPT_LIST, isCanonicalIndustry } from '@shared/constants/industries'
+import { matchSelectOption } from './select-match'
 
 export interface MeetingContext {
   attendees: string[] | null
@@ -245,17 +246,6 @@ function buildCompanyCustomFieldPromptLines(defs: CustomFieldDefinition[]): stri
   }).join('\n')
 }
 
-// Fuzzy select matching mirrored from contact-summary-sync
-function matchCompanySelectOption(raw: string, options: string[]): string | null {
-  const norm = raw.trim().toLowerCase()
-  // exact match first
-  const exact = options.find(o => o.toLowerCase() === norm)
-  if (exact) return exact
-  // prefix/contains fallback
-  const partial = options.find(o => o.toLowerCase().includes(norm) || norm.includes(o.toLowerCase()))
-  return partial ?? null
-}
-
 // ---------------------------------------------------------------------------
 // On-demand company enrichment (Path 2 — batched LLM call)
 // ---------------------------------------------------------------------------
@@ -309,7 +299,9 @@ export async function buildCompanyEnrichmentProposal(
     'Return null unless the value is explicitly stated for the company being described. Specifically:\n' +
     '- round: only return the round currently being raised. Do not infer from comparable companies, prior rounds, or future plans. If the content describes a "seed" round, do not return "series_a" because a comp or competitor is at Series A.\n' +
     '- postMoneyValuation: only return a value if "post-money valuation" is explicitly stated for this company. Do not infer from market size, TAM, comparable company valuations, or pre-money figures.\n' +
-    '- raiseSize: only return if the content explicitly states what this company is raising. Do not infer from comp deals or industry averages.\n\n' +
+    '- raiseSize: only return if the content explicitly states what this company is raising. Do not infer from comp deals or industry averages.\n' +
+    '- industry/sector: an industry or sector classification (e.g. "LegalTech", "FinTech", "HealthTech") belongs ONLY in the "industry" field. Never put a sector value into "pipelineStage" or any custom field.\n' +
+    '- custom fields: fill a custom field ONLY when the content explicitly states a value that matches that specific field\'s label/meaning. Do not place a value in a custom field merely because it is a plausible option there, and never cross-assign a stage/sector/round value between fields.\n\n' +
     'When in doubt, return null. False positives are worse than missing values.'
 
   const builtinFields = [
@@ -324,7 +316,7 @@ export async function buildCompanyEnrichmentProposal(
   ].join('\n')
 
   const customFieldNotes = customDefs.length > 0
-    ? `\n\nCustom fields to extract:\n${buildCompanyCustomFieldPromptLines(customDefs)}`
+    ? `\n\nCustom fields to extract (fill each ONLY from content that explicitly matches that field's label; otherwise null — do not guess or cross-fill from another field's value):\n${buildCompanyCustomFieldPromptLines(customDefs)}`
     : ''
 
   const userPrompt =
@@ -451,7 +443,7 @@ export async function buildCompanyEnrichmentProposal(
         if (!s) continue
         const opts = parseCustomOptions(def)
         if (opts.length === 0) continue
-        const matched = matchCompanySelectOption(s, opts)
+        const matched = matchSelectOption(s, opts)
         if (!matched || !isDifferentText(matched, existing?.value?.valueText ?? null)) continue
         parsedValue = matched; fromDisplay = existing?.value?.valueText ?? null; toDisplay = matched
 
@@ -462,7 +454,7 @@ export async function buildCompanyEnrichmentProposal(
         if (!rawArr) continue
         const opts = parseCustomOptions(def)
         if (opts.length === 0) continue
-        const matched = rawArr.map(s => matchCompanySelectOption(s, opts)).filter((m): m is string => m != null)
+        const matched = rawArr.map(s => matchSelectOption(s, opts)).filter((m): m is string => m != null)
         if (matched.length === 0) continue
         const newJson = JSON.stringify(matched)
         if (newJson === (existing?.value?.valueText ?? null)) continue

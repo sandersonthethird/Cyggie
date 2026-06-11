@@ -26,18 +26,33 @@ describe('chatChannels', () => {
     expect(d.buildInvokeArgs({ question: 'q' })).toEqual([['a', 'b'], 'q', undefined])
   })
 
-  it('routes company kind to COMPANY_CHAT_QUERY + COMPANY_CHAT_ABORT', () => {
-    const d = chatChannels({ kind: 'company', companyId: 'c1' })
-    expect(d.query).toBe(IPC_CHANNELS.COMPANY_CHAT_QUERY)
-    expect(d.abort).toBe(IPC_CHANNELS.COMPANY_CHAT_ABORT)
-    expect(d.buildInvokeArgs({ question: 'q' })).toEqual([{ companyId: 'c1', question: 'q', attachments: undefined }])
-  })
-
-  it('routes contact kind to CONTACT_CHAT_QUERY + CONTACT_CHAT_ABORT', () => {
-    const d = chatChannels({ kind: 'contact', contactId: 'p1' })
-    expect(d.query).toBe(IPC_CHANNELS.CONTACT_CHAT_QUERY)
-    expect(d.abort).toBe(IPC_CHANNELS.CONTACT_CHAT_ABORT)
-    expect(d.buildInvokeArgs({ question: 'q' })).toEqual([{ contactId: 'p1', question: 'q', attachments: undefined }])
+  it('routes entities kind to CHAT_QUERY_ENTITIES + CHAT_ABORT_ALL, carrying refs + persistence anchor', () => {
+    const d = chatChannels({
+      kind: 'entities',
+      refs: [
+        { type: 'company', id: 'c1', label: 'Acme' },
+        { type: 'contact', id: 'p1', label: 'Jane' },
+      ],
+      contextId: 'company:c1',
+      contextKind: 'company',
+      contextLabel: 'Acme',
+    })
+    expect(d.query).toBe(IPC_CHANNELS.CHAT_QUERY_ENTITIES)
+    expect(d.abort).toBe(IPC_CHANNELS.CHAT_ABORT_ALL)
+    expect(d.buildInvokeArgs({ question: 'q' })).toEqual([
+      {
+        // refs are reduced to {type,id} for the wire (label not needed server-side)
+        refs: [
+          { type: 'company', id: 'c1' },
+          { type: 'contact', id: 'p1' },
+        ],
+        question: 'q',
+        attachments: undefined,
+        contextId: 'company:c1',
+        contextKind: 'company',
+        contextLabel: 'Acme',
+      },
+    ])
   })
 
   it('routes global kind to CHAT_QUERY_ALL + CHAT_ABORT_ALL', () => {

@@ -4,7 +4,18 @@ const CRITIQUE_SYSTEM_PROMPT = `You are a veteran copy editor at a respected new
 
 Rewrite the following text to be clearer and more concise. Your target is 500–800 words — never exceed 800 words. Cut unnecessary words. Prefer active voice. Make every sentence earn its place. Tighten lists — remove redundant bullets that restate the same point. Collapse verbose explanations into single sharp sentences. Preserve all factual content and important details but ruthlessly trim filler, redundancy, and meandering qualifiers.
 
+Do not introduce any new facts, claims, names, or details not present in the input — only condense what is already there.
+
 Return only the improved text. Do not add commentary, preamble, or explain your edits. Match the original format (markdown, bullets, etc).`
+
+/**
+ * The refine/condense pass is opt-OUT: it runs by default and only the explicit
+ * string 'false' (from the `refineSummaries` setting) disables it. `null`
+ * (setting never written) and any other value keep it on.
+ */
+export function shouldRefineSummaries(rawSetting: string | null): boolean {
+  return rawSetting !== 'false'
+}
 
 export async function critiqueText(
   provider: LLMProvider,

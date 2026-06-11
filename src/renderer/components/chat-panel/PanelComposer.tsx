@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useChatPanelStore } from '../../stores/chat-panel.store'
-import { useChatStore } from '../../stores/chat.store'
 import {
   processFiles,
   loadCyggieFile,
@@ -10,17 +9,20 @@ import {
 } from '../../lib/chat-attachments'
 import type { ChatKind } from '../../lib/chat-channels'
 import type { ChatAttachmentIPC } from '../../lib/chat-attachments'
-import { ContextChip } from './ContextChip'
+import type { AttachedContextEntity } from '../../../shared/types/chat'
+import { ContextChipRow } from './ContextChipRow'
 import ChatContextSizeBanner from './ChatContextSizeBanner'
 import styles from './PanelComposer.module.css'
 
 interface PanelComposerProps {
   /** Determined by the caller from current panelSession / pageContext. */
   kind: ChatKind
-  /** "Including context: <name>" chip. Empty array hides chip. */
-  contextOptions: import('../../../shared/types/chat').ContextOption[]
-  activeContextId: string | null
-  onContextChange: (option: import('../../../shared/types/chat').ContextOption | null) => void
+  /** Companies/contacts attached to this chat (the removable context chips). */
+  attachedEntities: AttachedContextEntity[]
+  /** Whether the "+ Add context" picker is available (needs an open session). */
+  canAttach: boolean
+  onAddEntity: (entity: AttachedContextEntity) => void
+  onRemoveEntity: (entity: AttachedContextEntity) => void
 
   /** Hook handles. */
   isLoading: boolean
@@ -53,9 +55,10 @@ interface PanelComposerProps {
  */
 export function PanelComposer({
   kind,
-  contextOptions,
-  activeContextId,
-  onContextChange,
+  attachedEntities,
+  canAttach,
+  onAddEntity,
+  onRemoveEntity,
   isLoading,
   send,
   abort,
@@ -71,12 +74,7 @@ export function PanelComposer({
   const draft = useChatPanelStore((s) => s.draftBySession[draftKey] ?? '')
   const setDraft = useChatPanelStore((s) => s.setDraft)
   const clearDraft = useChatPanelStore((s) => s.clearDraft)
-  const dismissedContextChips = useChatPanelStore((s) => s.dismissedContextChips)
-  const dismissContextChip = useChatPanelStore((s) => s.dismissContextChip)
   const bumpAction = useChatPanelStore((s) => s.bumpAction)
-
-  const panelSessionId = useChatStore((s) => s.panelSession?.sessionId ?? null)
-  const dismissed = panelSessionId !== null && dismissedContextChips.has(panelSessionId)
 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
@@ -232,15 +230,13 @@ export function PanelComposer({
     [handleSubmit, draft, attachments.length]
   )
 
-  const showChip = contextOptions.length > 0 && !dismissed
-
-  // Banner only renders for company-scoped chat (other kinds get nothing).
-  // companyId is the chat's pinned company id from the kind prop.
-  const bannerCompanyId = kind.kind === 'company' ? kind.companyId : null
+  // Size banner aggregates the attached COMPANY ids (contacts have no size
+  // preflight yet — see TODOS.md). Renders nothing when no companies attached.
+  const bannerCompanyIds = attachedEntities.filter((e) => e.type === 'company').map((e) => e.id)
 
   return (
     <div className={`${styles.composer} ${large ? styles.composerLarge : ''}`}>
-      <ChatContextSizeBanner companyId={bannerCompanyId} />
+      <ChatContextSizeBanner companyIds={bannerCompanyIds} />
 
       {error && (
         <div className={styles.error}>
@@ -251,14 +247,12 @@ export function PanelComposer({
         </div>
       )}
 
-      {showChip && panelSessionId && (
-        <ContextChip
-          contextOptions={contextOptions}
-          activeId={activeContextId}
-          onSelect={onContextChange}
-          onDismiss={() => dismissContextChip(panelSessionId)}
-        />
-      )}
+      <ContextChipRow
+        attachedEntities={attachedEntities}
+        canAttach={canAttach}
+        onAddEntity={onAddEntity}
+        onRemoveEntity={onRemoveEntity}
+      />
 
       <div className={styles.actionsRow}>
         <button type="button" className={styles.newChatBtn} onClick={onNewChat} title="Start a new chat">

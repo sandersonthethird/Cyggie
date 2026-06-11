@@ -37,6 +37,7 @@ import { getContact } from '@cyggie/db/sqlite/repositories/contact.repo'
 import { listFieldDefinitions, getFieldValuesForEntity } from '@cyggie/db/sqlite/repositories/custom-fields.repo'
 import { jaroWinkler } from '@main/utils/jaroWinkler'
 import { isDifferentText, normalizeWhitespace } from '@main/utils/summary-text-utils'
+import { matchSelectOption } from './select-match'
 import type { LLMProvider } from '@cyggie/services/llm/provider'
 import type { CustomFieldDefinition } from '@shared/types/custom-fields'
 import type {
@@ -93,19 +94,10 @@ function buildCustomFieldPromptLines(defs: CustomFieldDefinition[]): string {
   }).join('\n')
 }
 
-export function matchSelectOption(raw: string, options: string[]): string | null {
-  const norm = normalizeWhitespace(raw).toLowerCase()
-  let best: string | null = null
-  let bestScore = 0
-  for (const opt of options) {
-    const score = jaroWinkler(normalizeWhitespace(opt).toLowerCase(), norm)
-    if (score >= FUZZY_THRESHOLD && score > bestScore) {
-      bestScore = score
-      best = opt
-    }
-  }
-  return best
-}
+// Select-option fuzzy matching now lives in the shared ./select-match module
+// (used by both contact and company summary-sync). Re-exported here so existing
+// importers (and tests) keep working.
+export { matchSelectOption }
 
 // ---------------------------------------------------------------------------
 // Company lookup

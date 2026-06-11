@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { RecordingAutoStop } from '../main/recording/auto-stop'
-import type { DetectionResult } from '../main/audio/process-detector'
+import type { WindowSource } from '../main/audio/window-detector'
 
-const detectMock = vi.fn<[], DetectionResult>(() => ({ apps: [], status: 'ok' }))
-vi.mock('../main/audio/process-detector', () => ({
-  detectRunningMeetingApps: () => detectMock()
+// The MeetingWindowWatcher (via window-detector) imports desktopCapturer; stub
+// it so the watcher is inert by default (returns no windows). Window-close
+// tests inject getWindowSources directly for determinism.
+vi.mock('electron', () => ({
+  desktopCapturer: { getSources: vi.fn(async () => [] as WindowSource[]) }
 }))
+
+const src = (name: string): WindowSource => ({ id: name, name })
+const noWindows = async (): Promise<WindowSource[]> => []
 
 // Most calendar tests pass a tiny minRecordingMs so the min-duration gate
 // doesn't block the behavior under test. Dedicated gate tests use the real
@@ -15,8 +20,6 @@ const TINY_MIN = 100
 describe('RecordingAutoStop — calendar detection', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    detectMock.mockReset()
-    detectMock.mockReturnValue({ apps: [], status: 'ok' })
   })
 
   afterEach(() => {
@@ -94,8 +97,6 @@ describe('RecordingAutoStop — calendar detection', () => {
 describe('RecordingAutoStop — min-recording-duration gate (late participants)', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    detectMock.mockReset()
-    detectMock.mockReturnValue({ apps: [], status: 'ok' })
   })
 
   afterEach(() => {
@@ -140,78 +141,127 @@ describe('RecordingAutoStop — min-recording-duration gate (late participants)'
   })
 })
 
-describe('RecordingAutoStop — process poller', () => {
+describe('RecordingAutoStop — onWindowGone chokepoint (floor + idempotency)', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    detectMock.mockReset()
   })
 
   afterEach(() => {
     vi.useRealTimers()
   })
 
-  it('is inert when no meeting apps detected at start', () => {
-    detectMock.mockReturnValue({ apps: [], status: 'ok' })
+  it('ignores a window-gone signal under the 45s window floor', () => {
     const onAutoStop = vi.fn()
-    const autoStop = new RecordingAutoStop({ onAutoStop })
+    const autoStop = new RecordingAutoStop({ onAutoStop, getWindowSources: noWindows })
     autoStop.start()
 
-    // Stay under silenceThresholdMs (10 min) so the silence checker doesn't
-    // fire — we're isolating the poller's behavior.
-    vi.advanceTimersByTime(4 * 60 * 1000)
-    expect(onAutoStop).not.toHaveBeenCalled()
-    // After the initial detection call, the poller short-circuits and never
-    // starts setInterval — only the initial sync call should be visible.
-    expect(detectMock).toHaveBeenCalledTimes(1)
-
-    autoStop.stop()
-  })
-
-  it('does NOT stop in the first 5 min even if all initially-detected apps are gone', () => {
-    detectMock
-      .mockReturnValueOnce({ apps: [{ platform: 'teams', name: 'Microsoft Teams', pid: 1 }], status: 'ok' })
-      .mockReturnValue({ apps: [], status: 'ok' }) // every subsequent poll: apps all gone
-    const onAutoStop = vi.fn()
-    const autoStop = new RecordingAutoStop({ onAutoStop })
-    autoStop.start()
-
-    vi.advanceTimersByTime(4 * 60 * 1000) // 4 min — under 5 min minRec
+    autoStop.onWindowGone() // t≈0, default windowMinRecordingMs = 45s
+    vi.advanceTimersByTime(30 * 1000)
+    autoStop.onWindowGone()
     expect(onAutoStop).not.toHaveBeenCalled()
 
     autoStop.stop()
   })
 
-  it('skips polls where detector returns status=error (transient ps flakes)', () => {
-    detectMock
-      .mockReturnValueOnce({ apps: [{ platform: 'teams', name: 'Microsoft Teams', pid: 1 }], status: 'ok' })
-      .mockReturnValue({ apps: [], status: 'error' }) // every subsequent poll: ps errored
+  it('stops once the window-gone signal arrives past the floor', () => {
     const onAutoStop = vi.fn()
-    // Stay well under the silence-stop threshold (10 min default) so an
-    // unrelated silence-stop doesn't pollute the assertion.
-    const autoStop = new RecordingAutoStop({ onAutoStop })
+    const autoStop = new RecordingAutoStop({ onAutoStop, getWindowSources: noWindows })
     autoStop.start()
 
-    // Past minRec (5 min) so the gate isn't what's stopping us — but under
-    // silenceThresholdMs (10 min).
-    vi.advanceTimersByTime(6 * 60 * 1000)
-    expect(onAutoStop).not.toHaveBeenCalled()
-    // The poller is firing every 10s; with `status: 'error'` it should skip
-    // each tick rather than acting on `apps: []`.
-    expect(detectMock.mock.calls.length).toBeGreaterThan(30) // 6min / 10s = 36 polls + 1 initial
+    vi.advanceTimersByTime(45 * 1000 + 100)
+    autoStop.onWindowGone()
+    expect(onAutoStop).toHaveBeenCalledTimes(1)
+  })
 
+  it('is idempotent — repeated window-gone signals fire onAutoStop once', () => {
+    const onAutoStop = vi.fn()
+    const autoStop = new RecordingAutoStop({
+      onAutoStop,
+      windowMinRecordingMs: TINY_MIN,
+      getWindowSources: noWindows
+    })
+    autoStop.start()
+
+    vi.advanceTimersByTime(TINY_MIN + 50)
+    autoStop.onWindowGone()
+    autoStop.onWindowGone()
+    autoStop.onWindowGone()
+    expect(onAutoStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('does nothing after stop()', () => {
+    const onAutoStop = vi.fn()
+    const autoStop = new RecordingAutoStop({
+      onAutoStop,
+      windowMinRecordingMs: TINY_MIN,
+      getWindowSources: noWindows
+    })
+    autoStop.start()
+    autoStop.stop()
+
+    vi.advanceTimersByTime(TINY_MIN + 50)
+    autoStop.onWindowGone()
+    expect(onAutoStop).not.toHaveBeenCalled()
+  })
+})
+
+describe('RecordingAutoStop — window watcher integration', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('stops when the watched meeting window closes past the floor', async () => {
+    const onAutoStop = vi.fn()
+    const getWindowSources = vi
+      .fn<[], Promise<WindowSource[]>>()
+      .mockResolvedValueOnce([src('Zoom Meeting')]) // start snapshot → arm zoom
+      .mockResolvedValue([src('Finder')]) // window closed
+    const autoStop = new RecordingAutoStop({
+      onAutoStop,
+      meetingPlatform: 'zoom',
+      windowMinRecordingMs: TINY_MIN,
+      getWindowSources
+    })
+    autoStop.start()
+
+    await vi.advanceTimersByTimeAsync(TINY_MIN + 750 * 3)
+    expect(onAutoStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not stop while the meeting window stays open', async () => {
+    const onAutoStop = vi.fn()
+    const getWindowSources = vi.fn(async () => [src('Zoom Meeting')])
+    const autoStop = new RecordingAutoStop({
+      onAutoStop,
+      meetingPlatform: 'zoom',
+      windowMinRecordingMs: TINY_MIN,
+      getWindowSources
+    })
+    autoStop.start()
+
+    await vi.advanceTimersByTimeAsync(TINY_MIN + 750 * 5)
+    expect(onAutoStop).not.toHaveBeenCalled()
     autoStop.stop()
   })
 
-  it('stops once recording crosses minRec AND all initially-detected apps are gone', () => {
-    detectMock
-      .mockReturnValueOnce({ apps: [{ platform: 'teams', name: 'Microsoft Teams', pid: 1 }], status: 'ok' })
-      .mockReturnValue({ apps: [], status: 'ok' })
+  it('forwards a track.ended hint through onWindowGone (past floor)', async () => {
     const onAutoStop = vi.fn()
-    const autoStop = new RecordingAutoStop({ onAutoStop })
+    const getWindowSources = vi.fn(async () => [src('Zoom Meeting')])
+    const autoStop = new RecordingAutoStop({
+      onAutoStop,
+      meetingPlatform: 'zoom',
+      windowMinRecordingMs: TINY_MIN,
+      getWindowSources
+    })
     autoStop.start()
+    await vi.advanceTimersByTimeAsync(0) // let the start() snapshot resolve
 
-    // Min recording is 5 min. Poll interval is 10s. First post-min poll fires at 5 min + 10s.
-    vi.advanceTimersByTime(5 * 60 * 1000 + 10 * 1000 + 100)
+    vi.advanceTimersByTime(TINY_MIN + 50)
+    autoStop.notifyWindowGone()
     expect(onAutoStop).toHaveBeenCalledTimes(1)
   })
 })

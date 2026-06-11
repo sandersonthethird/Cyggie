@@ -182,6 +182,45 @@ describe('getVcSummaryCompanyUpdateProposals — LLM-driven extraction', () => {
     expect(proposals).toEqual([])
   })
 
+  it('routes a sector value to the industry field', async () => {
+    const meetingId = 'm-industry'
+    setUpSingleProspect(meetingId, makeCompanySummary())
+
+    const provider = makeProvider(JSON.stringify({
+      description: null, round: null, raiseSize: null, postMoneyValuation: null,
+      city: null, state: null, pipelineStage: null,
+      industry: 'LegalTech'
+    }))
+
+    const proposals = await getVcSummaryCompanyUpdateProposals(
+      meetingId, SAMPLE_SUMMARY, undefined, provider
+    )
+
+    const industryChange = proposals[0]!.changes.find((c) => c.field === 'industry')
+    expect(industryChange?.to).toBe('LegalTech')
+  })
+
+  it('drops a non-canonical pipelineStage value (e.g. a sector leaked into it)', async () => {
+    const meetingId = 'm-bad-stage'
+    setUpSingleProspect(meetingId, makeCompanySummary())
+
+    // Defense-in-depth: even if the model puts "LegalTech" in pipelineStage,
+    // the canonical-stage validation must drop it rather than propose it.
+    const provider = makeProvider(JSON.stringify({
+      description: null, round: null, raiseSize: null, postMoneyValuation: null,
+      city: null, state: null,
+      pipelineStage: 'LegalTech',
+      industry: null
+    }))
+
+    const proposals = await getVcSummaryCompanyUpdateProposals(
+      meetingId, SAMPLE_SUMMARY, undefined, provider
+    )
+
+    const fields = (proposals[0]?.changes ?? []).map((c) => c.field)
+    expect(fields).not.toContain('pipelineStage')
+  })
+
   it('returns empty array when LLM call throws', async () => {
     const meetingId = 'm-3'
     setUpSingleProspect(meetingId, makeCompanySummary())

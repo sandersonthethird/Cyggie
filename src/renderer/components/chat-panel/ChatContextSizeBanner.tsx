@@ -6,17 +6,20 @@ import styles from './ChatContextSizeBanner.module.css'
 
 /**
  * Persistent banner above the chat input. Shows the running context-size
- * budget for company-scoped chat: how many flagged files, how many chars
- * the LLM will see per message.
+ * budget across the chat's attached companies: how many flagged files, how
+ * many chars the LLM will see per message. The estimate is DEDUPED across
+ * companies (matching queryEntities) so a company + its own contact don't
+ * double-count shared meetings/files.
  *
  *   ┌────────────────────────────────────────────────────────────────┐
- *   │  Renders ONLY when companyId is provided. Other chat kinds      │
- *   │  (meeting / global / contact) get nothing.                       │
+ *   │  Renders only when ≥1 attached COMPANY contributes flagged       │
+ *   │  files. Contacts have no size preflight yet (see TODOS.md), so   │
+ *   │  contact-only chats show nothing.                                │
  *   │                                                                  │
  *   │  Refreshes:                                                       │
  *   │   - on mount                                                      │
- *   │   - when companyId changes                                        │
- *   │   - on COMPANY_FLAGS_CHANGED IPC broadcast (300ms debounced)     │
+ *   │   - when the attached company-id set changes                     │
+ *   │   - on COMPANY_FLAGS_CHANGED for any attached company (debounced)│
  *   │                                                                  │
  *   │  Fail-open: if the preflight IPC throws, no banner renders;      │
  *   │  console.warn only. Chat is still functional without it.          │
@@ -26,16 +29,22 @@ import styles from './ChatContextSizeBanner.module.css'
 const REFRESH_DEBOUNCE_MS = 300
 
 interface Props {
-  companyId: string | null
+  /** Attached company ids whose deduped context size to aggregate. */
+  companyIds: string[]
   onManageFiles?: () => void
 }
 
-export default function ChatContextSizeBanner({ companyId, onManageFiles }: Props) {
+export default function ChatContextSizeBanner({ companyIds, onManageFiles }: Props) {
   const [estimate, setEstimate] = useState<ChatContextSizeEstimate | null>(null)
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Stable key so the effect re-runs only when the actual id set changes,
+  // not on every render (companyIds is a fresh array each parent render).
+  const idsKey = [...companyIds].sort().join(',')
+
   useEffect(() => {
-    if (!companyId) {
+    const ids = idsKey ? idsKey.split(',') : []
+    if (ids.length === 0) {
       setEstimate(null)
       return
     }
@@ -43,7 +52,7 @@ export default function ChatContextSizeBanner({ companyId, onManageFiles }: Prop
     let cancelled = false
     function fetchEstimate() {
       void api
-        .invoke<ChatContextSizeEstimate>(IPC_CHANNELS.CHAT_CONTEXT_SIZE_PREFLIGHT, companyId)
+        .invoke<ChatContextSizeEstimate>(IPC_CHANNELS.CHAT_CONTEXT_SIZE_PREFLIGHT_MULTI, ids)
         .then(result => { if (!cancelled) setEstimate(result) })
         .catch(err => {
           if (!cancelled) {
@@ -55,11 +64,11 @@ export default function ChatContextSizeBanner({ companyId, onManageFiles }: Prop
 
     fetchEstimate()
 
-    // Listen for COMPANY_FLAGS_CHANGED broadcasts. Debounce so rapid toggles
-    // don't trigger an IPC storm.
+    // Refresh when flags change for any attached company. Debounce so rapid
+    // toggles don't trigger an IPC storm.
     const off = api.on(IPC_CHANNELS.COMPANY_FLAGS_CHANGED, (...args: unknown[]) => {
       const payload = args[0] as { companyId: string } | undefined
-      if (!payload || payload.companyId !== companyId) return
+      if (!payload || !ids.includes(payload.companyId)) return
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
       debounceTimer.current = setTimeout(fetchEstimate, REFRESH_DEBOUNCE_MS)
     })
@@ -69,7 +78,7 @@ export default function ChatContextSizeBanner({ companyId, onManageFiles }: Prop
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
       off()
     }
-  }, [companyId])
+  }, [idsKey])
 
   // Don't render when no estimate (no company OR error path) OR when there's
   // nothing meaningful to show (no flagged files AND zero meaningful context).

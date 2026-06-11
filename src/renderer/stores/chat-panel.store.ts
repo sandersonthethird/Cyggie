@@ -12,7 +12,7 @@ import { getJSON, setJSON, removeKey } from '../lib/safe-storage'
  *
  *   TRANSIENT (per-process):
  *     popped, returnTo, hasUnread, lastActionAt
- *     draftBySession, dismissedContextChips
+ *     draftBySession
  *
  * Portal mount points (the DOM nodes <ChatPanelRoot/> portals into) live in
  * React Context via PanelOutletContext.tsx — not in this store. Refs are tied
@@ -54,9 +54,6 @@ interface ChatPanelState {
    *  not-yet-created. Capped at MAX_DRAFT_KEYS keys; oldest evicted on insert. */
   draftBySession: Record<string, string>
 
-  /** Per-session in-memory dismissal of the context chip. Lifetime: process. */
-  dismissedContextChips: Set<string>
-
   // Actions
   setOpen: (open: boolean) => void
   toggleOpen: () => void
@@ -69,7 +66,6 @@ interface ChatPanelState {
   bumpAction: () => void
   setDraft: (sessionId: string, text: string) => void
   clearDraft: (sessionId: string) => void
-  dismissContextChip: (sessionId: string) => void
 }
 
 // ── Initial state ────────────────────────────────────────────────────────
@@ -129,7 +125,6 @@ export const useChatPanelStore = create<ChatPanelState>((set, get) => ({
   hasUnread: false,
   lastActionAt: 0,
   draftBySession: {},
-  dismissedContextChips: new Set<string>(),
 
   setOpen: (isOpen) => {
     set({ isOpen, hasUnread: isOpen ? false : get().hasUnread })
@@ -172,12 +167,6 @@ export const useChatPanelStore = create<ChatPanelState>((set, get) => ({
     const { [sessionId]: _, ...rest } = get().draftBySession
     set({ draftBySession: rest })
   },
-
-  dismissContextChip: (sessionId) => {
-    const next = new Set(get().dismissedContextChips)
-    next.add(sessionId)
-    set({ dismissedContextChips: next })
-  },
 }))
 
 /** Internal: exposed for tests that want to reset between cases. */
@@ -192,6 +181,5 @@ export const __resetChatPanelStore = () => {
     hasUnread: false,
     lastActionAt: 0,
     draftBySession: {},
-    dismissedContextChips: new Set(),
   })
 }

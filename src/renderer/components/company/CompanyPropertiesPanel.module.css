@@ -1107,6 +1107,13 @@
   border-radius: var(--radius-sm, 4px);
 }
 
+/* Match the plain PropertyRow hover affordance (.row:not(.editing):hover) so
+   badge-rendered field rows highlight + show the click-to-edit pointer too. */
+.propertyRow:hover {
+  background: var(--color-bg-secondary);
+  cursor: pointer;
+}
+
 .propertyLabel {
   font-size: 12px;
   color: var(--color-text-tertiary);

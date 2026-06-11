@@ -10,9 +10,10 @@ import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
 import { TABLE_EXTENSIONS } from '../lib/tiptap-extensions'
 import { FindHighlight } from '../lib/find-highlight-extension'
-import { Clock, Pencil } from 'lucide-react'
+import { Clock, Pencil, Video } from 'lucide-react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
+import { MEETING_APPS } from '../../shared/constants/meeting-apps'
 import { useRecordingStore } from '../stores/recording.store'
 import { useSharedAudioCapture, useSharedVideoCapture } from '../contexts/AudioCaptureContext'
 import { useEnhancement } from '../contexts/EnhancementContext'
@@ -48,6 +49,7 @@ import { contactEnrichedAtKey, companyEnrichedAtKey } from '../../shared/utils/e
 import { EnrichmentProposalDialog } from '../components/enrichment/EnrichmentProposalDialog'
 import type { EnrichmentEntityProposal } from '../components/enrichment/EnrichmentProposalDialog'
 import type { SetCustomFieldValueInput } from '../../shared/types/custom-fields'
+import { serializeCustomFieldValue } from '../../shared/custom-field-values'
 import type { Task, ProposedTask, TaskCreateData } from '../../shared/types/task'
 import { createPortal } from 'react-dom'
 import { SafeMarkdown } from '../components/SafeMarkdown'
@@ -212,6 +214,11 @@ type UnifiedEnrichProposal =
   | { kind: 'company'; proposal: CompanySummaryUpdateProposal }
   | { kind: 'contact'; proposal: ContactSummaryUpdateProposal }
 
+// How far ahead of a scheduled meeting's start the "Join early" affordance
+// appears. Within this window (or once the start time has passed, i.e. live)
+// a still-'scheduled' meeting with a join URL shows the emerald Join button.
+const EARLY_JOIN_WINDOW_MIN = 60
+
 export default function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -238,6 +245,14 @@ export default function MeetingDetail() {
   const [titleDraft, setTitleDraft] = useState('')
   const [isSavingTitle, setIsSavingTitle] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
+  // Ephemeral "user has clicked into the call" flag. Scoped to this
+  // meeting-detail session only — NOT persisted, so it resets on app restart
+  // and whenever we navigate to a different meeting (the id-keyed effect
+  // below). Once true the Join button unmounts for the rest of the session.
+  const [hasJoined, setHasJoined] = useState(false)
+  // Guards the external-open round-trip so the button can't be double-clicked
+  // while shell.openExternal resolves (drives the disabled/dimmed state).
+  const [isJoining, setIsJoining] = useState(false)
   // Transcript view mode toggle: 'bubbles' is the iMessage-style me/them
   // chat layout (Part 3 of the cheeky-treasure plan); 'markdown' is the
   // legacy speaker-header markdown render. Defaults to bubbles when the
@@ -897,6 +912,31 @@ export default function MeetingDetail() {
     }
   }, [data, isRecording, flushNotes, startRecording])
 
+  // Reset the ephemeral join flag whenever we switch to a different meeting —
+  // react-router keeps this component mounted across :id changes, so without
+  // this a Join from meeting A would stay "joined" for meeting B.
+  useEffect(() => {
+    setHasJoined(false)
+    setIsJoining(false)
+  }, [id])
+
+  // Open the call in the user's default browser / native client, then flip the
+  // ephemeral hasJoined flag so the button unmounts. Errors leave the button in
+  // place (joined stays false) so the user can retry.
+  const handleJoin = useCallback(async () => {
+    const joinUrl = data?.meeting.meetingUrl
+    if (!joinUrl || isJoining) return
+    setIsJoining(true)
+    try {
+      await api.invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, joinUrl)
+      setHasJoined(true)
+    } catch (err) {
+      console.error('Failed to open meeting join URL:', err)
+    } finally {
+      setIsJoining(false)
+    }
+  }, [data, isJoining])
+
 
   const handleTranscriptScroll = useCallback(() => {
     const el = transcriptScrollRef.current
@@ -1052,7 +1092,7 @@ export default function MeetingDetail() {
           if (Object.keys(filteredUpdates).length > 0) {
             await api.invoke(IPC_CHANNELS.COMPANY_UPDATE, p.companyId, filteredUpdates)
           }
-          if (p.founderUpdate) {
+          if (p.founderUpdate && fieldSelections[`${p.companyId}:founderUpdate`] !== false) {
             await api.invoke(
               IPC_CHANNELS.CONTACT_UPDATE,
               p.founderUpdate.contactId,
@@ -1066,14 +1106,7 @@ export default function MeetingDetail() {
                 fieldDefinitionId: cfu.fieldDefinitionId,
                 entityId: p.companyId,
                 entityType: 'company',
-              }
-              const v = cfu.newValue
-              switch (cfu.fieldType) {
-                case 'number': case 'currency': input.valueNumber = Number(v); break
-                case 'boolean': input.valueBoolean = Boolean(v); break
-                case 'date': input.valueDate = String(v); break
-                case 'multiselect': input.valueText = JSON.stringify(v); break
-                default: input.valueText = String(v)
+                ...serializeCustomFieldValue(cfu.fieldType, cfu.newValue),
               }
               await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
             }
@@ -1123,14 +1156,7 @@ export default function MeetingDetail() {
                 fieldDefinitionId: cfu.fieldDefinitionId,
                 entityId: p.contactId,
                 entityType: 'contact',
-              }
-              const v = cfu.newValue
-              switch (cfu.fieldType) {
-                case 'number': case 'currency': input.valueNumber = Number(v); break
-                case 'boolean': input.valueBoolean = Boolean(v); break
-                case 'date': input.valueDate = String(v); break
-                case 'multiselect': input.valueText = JSON.stringify(v); break
-                default: input.valueText = String(v)
+                ...serializeCustomFieldValue(cfu.fieldType, cfu.newValue),
               }
               await api.invoke(IPC_CHANNELS.CUSTOM_FIELD_SET_VALUE, input)
             }
@@ -1317,20 +1343,22 @@ export default function MeetingDetail() {
           entityId: p.companyId,
           entityName: p.companyName,
           changes: [
+            // Keys are entity-prefixed `${entityId}:${field}` — the format the
+            // seeding + apply loops read. Bare keys silently break deselection.
             ...p.changes.map(c => ({
-              key: c.field,
+              key: `${p.companyId}:${c.field}`,
               label: fieldLabel(c.field),
               from: formatFieldValue(c.field, c.from),
               to: formatFieldValue(c.field, c.to),
             })),
             ...(p.customFieldUpdates ?? []).map(cfu => ({
-              key: cfu.label,
+              key: `${p.companyId}:${cfu.label}`,
               label: cfu.label,
               from: cfu.fromDisplay,
               to: cfu.toDisplay,
             })),
             ...(p.founderUpdate ? [{
-              key: 'founderUpdate',
+              key: `${p.companyId}:founderUpdate`,
               label: 'Founder tag',
               from: null,
               to: `Tag ${p.founderUpdate.contactName} as founder`,
@@ -1344,13 +1372,13 @@ export default function MeetingDetail() {
           entityName: p.contactName,
           changes: [
             ...p.changes.map(c => ({
-              key: c.field,
+              key: `${p.contactId}:${c.field}`,
               label: c.field,
               from: c.from || null,
               to: c.to,
             })),
             ...(p.customFieldUpdates ?? []).map(cfu => ({
-              key: cfu.label,
+              key: `${p.contactId}:${cfu.label}`,
               label: cfu.label,
               from: cfu.fromDisplay,
               to: cfu.toDisplay,
@@ -1364,8 +1392,9 @@ export default function MeetingDetail() {
   const handleSelectAll = useCallback(() => {
     setFieldSelections(prev => {
       const next = { ...prev }
+      // c.key is already entity-prefixed (see dialogProposals).
       for (const ep of dialogProposals) {
-        for (const c of ep.changes) next[`${ep.entityId}:${c.key}`] = true
+        for (const c of ep.changes) next[c.key] = true
       }
       return next
     })
@@ -1375,7 +1404,7 @@ export default function MeetingDetail() {
     setFieldSelections(prev => {
       const next = { ...prev }
       for (const ep of dialogProposals) {
-        for (const c of ep.changes) next[`${ep.entityId}:${c.key}`] = false
+        for (const c of ep.changes) next[c.key] = false
       }
       return next
     })
@@ -1621,6 +1650,27 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
     }
   }, [id, loadMeeting])
 
+  // Typing a corrected name for an already-linked company is a RENAME — propagate
+  // it to every surface (other meetings, contacts, the domain cache) rather than
+  // creating a new company and orphaning the old one under its wrong name. A
+  // not-yet-promoted suggestion (no id) has nothing to rename, so it falls back
+  // to a swap (create + link).
+  const handleRenameMeetingCompany = useCallback(async (company: CompanySuggestion, newName: string) => {
+    if (!id || !newName.trim()) return
+    if (!company.id) return handleSwapCompany(company, newName)
+    const key = company.id
+    setOptimisticSwap((prev) => ({ ...prev, [key]: newName.trim() }))
+    setEditingCompanyKey(null)
+    try {
+      await api.invoke(IPC_CHANNELS.MEETING_RENAME_COMPANY, id, company.id, newName.trim())
+      await loadMeeting()
+    } catch (err) {
+      console.error('[MeetingDetail] Failed to rename company:', err)
+    } finally {
+      setOptimisticSwap((prev) => { const n = { ...prev }; delete n[key]; return n })
+    }
+  }, [id, loadMeeting, handleSwapCompany])
+
   const handleCopyDriveLink = useCallback(async () => {
     if (!id) return
     try {
@@ -1803,6 +1853,22 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
   }
 
   const { meeting, transcript, summary } = data
+  // Join affordance: the app's status enum has no 'upcoming'/'live', so a
+  // still-'scheduled' meeting IS the joinable window — before its start time
+  // it's an early join, at/after start it's live. Any post-meeting status
+  // (recording/transcribed/summarized/error) drops below and hides the button,
+  // satisfying "hidden after the meeting ends".
+  const minutesUntilStart = (parseToDate(meeting.date).getTime() - Date.now()) / 60000
+  const isLiveWindow = minutesUntilStart <= 0
+  const canJoin =
+    !!meeting.meetingUrl &&
+    !hasJoined &&
+    meeting.status === 'scheduled' &&
+    minutesUntilStart <= EARLY_JOIN_WINDOW_MIN
+  const joinPlatformName =
+    meeting.meetingPlatform && meeting.meetingPlatform !== 'other'
+      ? MEETING_APPS[meeting.meetingPlatform].name
+      : null
   // Prefer blob playback for stability, but fall back to direct media:// source if blob fetch fails.
   const playbackSrc = videoBlobUrl || (videoBlobFailed ? videoPath : null)
   const displayVideoDuration = videoDuration > 0 ? videoDuration : 0
@@ -1858,6 +1924,18 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
               </h2>
             )}
             <div className={styles.titleActions}>
+              {canJoin && (
+                <button
+                  type="button"
+                  className={styles.joinBtn}
+                  onClick={handleJoin}
+                  disabled={isJoining}
+                  aria-label={`Join meeting${joinPlatformName ? ` (${joinPlatformName})` : ''}`}
+                >
+                  <Video size={15} strokeWidth={2} aria-hidden="true" />
+                  {isLiveWindow ? 'Join meeting' : 'Join early'}
+                </button>
+              )}
               {!isRecording && meeting.status === 'scheduled' && (
                 <button className={styles.recordBtn} onClick={handleStartRecording}>
                   Record
@@ -2023,7 +2101,7 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
                             )}
                             onSelect={(selected) => void handleSwapCompany(c, selected.canonicalName)}
                             onClose={() => setEditingCompanyKey(null)}
-                            onCreate={(query) => void handleSwapCompany(c, query)}
+                            onCreate={(query) => void handleRenameMeetingCompany(c, query)}
                           />
                         ) : (
                           <button
@@ -2287,6 +2365,7 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
                     }}
                     title={editingSummary ? undefined : 'Click to edit'}
                   >
+                    <TiptapBubbleMenu editor={summaryEditor} />
                     <EditorContent editor={summaryEditor} />
                   </div>
                 )}

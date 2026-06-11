@@ -1,0 +1,62 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 640px;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.subtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.reset {
+  align-self: flex-start;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--cy-brand, #b91c1c);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.reset:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+.previewLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.previewCard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--cy-radius, 6px);
+  background: var(--color-card-bg, #fff);
+  padding: 16px 20px;
+}
+
+/* Compose the shared tiptap reading styles so the preview tracks the live
+   --cy-reading-* tokens exactly as the real editors do. */
+.preview {
+  composes: tiptapContent from '../../styles/tiptap.module.css';
+  color: var(--color-text);
+}

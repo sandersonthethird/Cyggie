@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { EditorContent } from '@tiptap/react'
+import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
@@ -393,6 +394,7 @@ function NoteCardEditor({ initialContent, onChange }: NoteCardEditorProps) {
 
   return (
     <div className={styles.noteEditor}>
+      <TiptapBubbleMenu editor={editor} />
       <EditorContent editor={editor} />
     </div>
   )
