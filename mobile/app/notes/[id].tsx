@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Pressable,
@@ -6,14 +6,15 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
-import { fetchNote, type NoteDetail } from '../../lib/api/notes'
+import { fetchNote, updateNote, type NoteDetail } from '../../lib/api/notes'
 import { useAuthStore } from '../../lib/auth/store'
 import { RichMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
@@ -29,6 +30,7 @@ export default function NoteDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>()
   const id = typeof params.id === 'string' ? params.id : ''
   const signOut = useAuthStore((s) => s.signOut)
+  const queryClient = useQueryClient()
 
   const query = useQuery({
     queryKey: ['notes', 'detail', id],
@@ -45,29 +47,137 @@ export default function NoteDetailScreen() {
 
   const note = query.data
 
+  // ── Edit mode ──────────────────────────────────────────────────────────
+  // Tap the pencil → title + body become TextInputs with Save/Cancel. Saves
+  // go through PATCH /notes/:id with a Date.now() lamport (LWW). On a 409
+  // (the note changed on another device) we refetch and ask the user to retry
+  // so their edit is reconciled against the latest server copy rather than
+  // silently clobbering it.
+  const [editing, setEditing] = useState(false)
+  const [draftTitle, setDraftTitle] = useState('')
+  const [draftContent, setDraftContent] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  const contentRef = useRef<TextInput>(null)
+
+  const startEditing = (): void => {
+    if (!note) return
+    setDraftTitle(note.title ?? '')
+    setDraftContent(note.content)
+    setEditError(null)
+    setEditing(true)
+    setTimeout(() => contentRef.current?.focus(), 50)
+  }
+
+  const cancelEditing = (): void => {
+    setEditing(false)
+    setEditError(null)
+  }
+
+  const saveEdits = async (): Promise<void> => {
+    if (!note) return
+    setSaving(true)
+    setEditError(null)
+    try {
+      const result = await updateNote(
+        note.id,
+        { title: draftTitle.trim() || null, content: draftContent },
+        Date.now().toString(),
+      )
+      queryClient.setQueryData<NoteDetail>(['notes', 'detail', note.id], (prev) =>
+        prev
+          ? {
+              ...prev,
+              title: result.title,
+              content: result.content,
+              isPinned: result.isPinned,
+              updatedAt: result.updatedAt,
+            }
+          : prev,
+      )
+      // Refresh the Notes tab list so the preview/title/ordering update too.
+      void queryClient.invalidateQueries({ queryKey: ['notes', 'list'] })
+      setEditing(false)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setEditError('This note changed on another device. Refreshed — re-apply your edits.')
+        const fresh = await query.refetch()
+        // Reseed drafts from the latest server copy so the user edits the
+        // current version rather than overwriting it blindly.
+        if (fresh.data) {
+          setDraftTitle(fresh.data.title ?? '')
+          setDraftContent(fresh.data.content)
+        }
+      } else {
+        setEditError(err instanceof Error ? err.message : 'Save failed — please try again')
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.topbar}>
-          <Pressable
-            onPress={() =>
-              router.canGoBack() ? router.back() : router.replace('/(tabs)/notes')
-            }
-            hitSlop={8}
-            style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            accessibilityLabel="Back"
-            accessibilityRole="button"
-          >
-            <Ionicons name="chevron-back" size={22} color={colors.text} />
-          </Pressable>
+          {editing ? (
+            <Pressable
+              onPress={cancelEditing}
+              disabled={saving}
+              hitSlop={8}
+              style={({ pressed }) => [styles.topbarAction, pressed && styles.pressed]}
+              accessibilityLabel="Cancel editing"
+              accessibilityRole="button"
+            >
+              <Text style={styles.topbarActionText}>Cancel</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={() =>
+                router.canGoBack() ? router.back() : router.replace('/(tabs)/notes')
+              }
+              hitSlop={8}
+              style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
+              accessibilityLabel="Back"
+              accessibilityRole="button"
+            >
+              <Ionicons name="chevron-back" size={22} color={colors.text} />
+            </Pressable>
+          )}
           <Text style={styles.topbarTitle} numberOfLines={1}>
             {note?.title?.trim() || 'Note'}
           </Text>
-          <View style={styles.backBtn}>
-            {note?.isPinned ? (
-              <Ionicons name="bookmark" size={18} color={colors.crimson} />
-            ) : null}
-          </View>
+          {editing ? (
+            <Pressable
+              onPress={saveEdits}
+              disabled={saving}
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.topbarAction,
+                (pressed || saving) && styles.pressed,
+              ]}
+              accessibilityLabel="Save note"
+              accessibilityRole="button"
+            >
+              {saving ? (
+                <ActivityIndicator color={colors.crimson} />
+              ) : (
+                <Text style={[styles.topbarActionText, styles.topbarSave]}>Save</Text>
+              )}
+            </Pressable>
+          ) : note ? (
+            <Pressable
+              onPress={startEditing}
+              hitSlop={8}
+              style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
+              accessibilityLabel="Edit note"
+              accessibilityRole="button"
+            >
+              <Ionicons name="create-outline" size={20} color={colors.text} />
+            </Pressable>
+          ) : (
+            <View style={styles.backBtn} />
+          )}
         </View>
       </SafeAreaView>
 
@@ -87,6 +197,36 @@ export default function NoteDetailScreen() {
           </View>
         ) : query.error && !note ? (
           <ErrorState error={query.error} onRetry={() => query.refetch()} />
+        ) : note && editing ? (
+          <>
+            <View style={styles.headerBlock}>
+              <TextInput
+                value={draftTitle}
+                onChangeText={setDraftTitle}
+                placeholder="Title"
+                placeholderTextColor={colors.text4}
+                style={styles.titleInput}
+                maxLength={500}
+                editable={!saving}
+              />
+            </View>
+
+            <View style={styles.contentBlock}>
+              <TextInput
+                ref={contentRef}
+                value={draftContent}
+                onChangeText={setDraftContent}
+                placeholder="Write your note…"
+                placeholderTextColor={colors.text4}
+                style={styles.contentInput}
+                multiline
+                editable={!saving}
+              />
+              {editError ? <Text style={styles.editError}>{editError}</Text> : null}
+            </View>
+
+            <View style={{ height: spacing.xxl }} />
+          </>
         ) : note ? (
           <>
             <View style={styles.headerBlock}>
@@ -105,13 +245,13 @@ export default function NoteDetailScreen() {
               <LinkedChips note={note} />
             </View>
 
-            <View style={styles.contentBlock}>
+            <Pressable style={styles.contentBlock} onPress={startEditing}>
               {note.content.trim().length === 0 ? (
-                <Text style={styles.emptyInline}>This note is empty.</Text>
+                <Text style={styles.emptyInline}>This note is empty. Tap to edit.</Text>
               ) : (
                 <RichMarkdown>{note.content}</RichMarkdown>
               )}
-            </View>
+            </Pressable>
 
             {note.importSource ? (
               <Text style={styles.provenance}>
@@ -220,6 +360,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  topbarAction: {
+    minWidth: 56,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xs,
+  },
+  topbarActionText: { color: colors.text3, fontSize: type.bodyTight, fontWeight: '500' },
+  topbarSave: { color: colors.crimson, fontWeight: '700' },
   topbarTitle: {
     flex: 1,
     color: colors.text,
@@ -242,6 +391,13 @@ const styles = StyleSheet.create({
     fontSize: type.h1,
     fontWeight: '700',
     letterSpacing: -0.4,
+  },
+  titleInput: {
+    color: colors.text,
+    fontSize: type.h1,
+    fontWeight: '700',
+    letterSpacing: -0.4,
+    padding: 0,
   },
   timestamp: {
     color: colors.text3,
@@ -297,6 +453,18 @@ const styles = StyleSheet.create({
     color: colors.text3,
     fontSize: type.bodyTight,
     fontStyle: 'italic',
+  },
+  contentInput: {
+    color: colors.text,
+    fontSize: type.body,
+    minHeight: 240,
+    textAlignVertical: 'top',
+    padding: 0,
+  },
+  editError: {
+    color: colors.rec,
+    fontSize: type.bodyTight,
+    marginTop: spacing.md,
   },
 
   provenance: {

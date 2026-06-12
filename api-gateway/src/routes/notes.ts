@@ -5,6 +5,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
+import { validateClientLamport } from '../sync/validate-lamport'
 import type { GatewayEnv } from '../env'
 
 // =============================================================================
@@ -249,6 +250,146 @@ export async function registerNoteRoutes(
         importSource: row.importSource,
         createdAt: new Date(row.createdAt).toISOString(),
         updatedAt: new Date(row.updatedAt).toISOString(),
+      }
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // PATCH /notes/:id — partial edit (title / content) with client-sourced
+  // lamport Last-Write-Wins. Mirrors PATCH /contacts/:id and PATCH
+  // /meetings/:id exactly:
+  //   1. validate the lamport ceiling (reject forged far-future values 400)
+  //   2. load the note scoped to (id, userId) — 404 if not the caller's
+  //   3. if incoming lamport <= stored → 409 with the current note so the
+  //      client can reconcile (mobile refetches + retries)
+  //   4. otherwise UPDATE + RETURNING, bumping updated_at / updated_by
+  //
+  // The write lands directly in Neon; the notes table is an owned, synced
+  // table (packages/db/src/sync/owned-tables.ts), so the desktop's sync-pull
+  // carries the edit back to SQLite via the bumped lamport — no extra plumbing.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'PATCH',
+    url: '/notes/:id',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(64) }),
+      body: z.object({
+        title: z.string().max(500).nullable().optional(),
+        content: z.string().max(100_000).optional(),
+        lamport: z.string().min(1).max(40),
+      }),
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id } = req.params
+      const body = req.body
+
+      const lamportCheck = validateClientLamport(body.lamport)
+      if (!lamportCheck.valid) {
+        req.log.warn(
+          {
+            noteId: id,
+            userId: user.sub,
+            incoming: body.lamport,
+            reason: lamportCheck.reason,
+            metric: 'notes.patch.lamport_rejected',
+          },
+          'patch rejected: lamport out of range',
+        )
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'LAMPORT_OUT_OF_RANGE',
+          message:
+            lamportCheck.reason === 'unparseable'
+              ? 'lamport is not a valid integer'
+              : 'lamport is too far in the future',
+        })
+      }
+
+      const existing = await db.query.notes.findFirst({
+        where: and(eq(schema.notes.id, id), eq(schema.notes.userId, user.sub)),
+      })
+      if (!existing) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'NOTE_NOT_FOUND',
+          message: 'Note not found',
+        })
+      }
+
+      const incoming = lamportCheck.bigint
+      const stored = BigInt(existing.lamport ?? '0')
+      if (incoming <= stored) {
+        req.log.info(
+          {
+            noteId: id,
+            userId: user.sub,
+            incoming: body.lamport,
+            stored: existing.lamport,
+            metric: 'notes.patch.conflict_409',
+          },
+          'patch rejected: lamport not strictly greater than stored',
+        )
+        return reply.code(409).send({
+          id: existing.id,
+          title: existing.title,
+          content: existing.content,
+          isPinned: existing.isPinned,
+          lamport: existing.lamport,
+        })
+      }
+
+      const updates: Partial<typeof schema.notes.$inferInsert> = {
+        lamport: body.lamport,
+        updatedAt: new Date(),
+        updatedByUserId: user.sub,
+      }
+      let hasField = false
+      if (body.title !== undefined) {
+        const t = body.title?.trim()
+        updates.title = t ? t.slice(0, 500) : null
+        hasField = true
+      }
+      if (body.content !== undefined) {
+        // content is NOT NULL in the schema — store '' when cleared.
+        updates.content = body.content.slice(0, 100_000)
+        hasField = true
+      }
+      if (!hasField) {
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'NOTE_PATCH_EMPTY',
+          message: 'PATCH must include at least one of: title, content.',
+        })
+      }
+
+      const [updated] = await db
+        .update(schema.notes)
+        .set(updates)
+        .where(eq(schema.notes.id, id))
+        .returning()
+
+      req.log.info(
+        {
+          noteId: id,
+          userId: user.sub,
+          metric: 'notes.patch.success',
+          changed: Object.keys(updates),
+          // size deltas only — never the note content itself
+          contentLenFrom: (existing.content ?? '').length,
+          contentLenTo: (updated.content ?? '').length,
+        },
+        'note patched',
+      )
+
+      return {
+        id: updated.id,
+        title: updated.title,
+        content: updated.content ?? '',
+        isPinned: updated.isPinned,
+        lamport: updated.lamport,
+        updatedAt: new Date(updated.updatedAt).toISOString(),
       }
     },
   })
