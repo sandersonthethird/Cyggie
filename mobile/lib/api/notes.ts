@@ -70,6 +70,39 @@ export async function fetchNote(
   })
 }
 
+export interface UpdateNotePatch {
+  /** Note title. Null/empty clears it. Server trims + caps at 500 chars. */
+  title?: string | null
+  /** Note body (freeform markdown). Server caps at 100k chars. */
+  content?: string
+}
+
+export interface UpdateNoteResult {
+  id: string
+  title: string | null
+  content: string
+  isPinned: boolean
+  lamport: string
+  updatedAt: string
+}
+
+/**
+ * PATCH /notes/:id — partial edit with Lamport LWW. Caller supplies a lamport
+ * string (typically `Date.now().toString()`). On a stale lamport the gateway
+ * responds 409 → `api.patch` throws an `ApiError` with `status === 409`, which
+ * the editor surfaces as "note changed elsewhere, refresh and retry".
+ */
+export async function updateNote(
+  id: string,
+  patch: UpdateNotePatch,
+  lamport: string,
+): Promise<UpdateNoteResult> {
+  return api.patch<UpdateNoteResult>(`/notes/${encodeURIComponent(id)}`, {
+    ...patch,
+    lamport,
+  })
+}
+
 export interface NoteFolder {
   path: string
   count: number
