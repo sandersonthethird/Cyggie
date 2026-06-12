@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // /search fan-out tests.
 
@@ -28,30 +28,10 @@ const TEST_PREFIX = `test-sr-${Date.now().toString(36)}-`
 // Use a search term unique enough not to collide with seeded test data.
 const NEEDLE = `dragonfruit${Date.now().toString(36)}`
 
-const createdUserIds: string[] = []
-const createdCompanyIds: string[] = []
-const createdContactIds: string[] = []
-const createdMeetingIds: string[] = []
-const createdNoteIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdNoteIds.length > 0) {
-    await db.delete(schema.notes).where(inArray(schema.notes.id, createdNoteIds))
-  }
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdContactIds.length > 0) {
-    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db
-      .delete(schema.orgCompanies)
-      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -63,7 +43,7 @@ async function insertUser(): Promise<string> {
     email: `${id}@example.com`,
     displayName: id,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
@@ -76,7 +56,7 @@ async function insertCompany(userId: string, name: string): Promise<string> {
     normalizedName: name.toLowerCase(),
     status: 'active',
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -93,7 +73,7 @@ async function insertContact(opts: {
     normalizedName: opts.fullName.toLowerCase(),
     email: opts.email ?? null,
   })
-  createdContactIds.push(id)
+  cleanup.track(schema.contacts, schema.contacts.id, id)
   return id
 }
 
@@ -107,7 +87,7 @@ async function insertMeeting(userId: string, title: string): Promise<string> {
     durationSeconds: 1800,
     status: 'completed',
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 
@@ -123,7 +103,7 @@ async function insertNote(opts: {
     title: opts.title ?? null,
     content: opts.content,
   })
-  createdNoteIds.push(id)
+  cleanup.track(schema.notes, schema.notes.id, id)
   return id
 }
 

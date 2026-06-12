@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // POST /auth/google/start now opportunistically reads `Authorization: Bearer
 // <jwt>`. When a valid JWT is present, the gateway resolves the user's email
@@ -32,18 +32,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-lh-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdStates: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdStates.length > 0) {
-    await db
-      .delete(schema.oauthPending)
-      .where(inArray(schema.oauthPending.state, createdStates))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -55,7 +47,7 @@ async function insertTestUser(email: string): Promise<string> {
     email,
     displayName: id,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
@@ -88,7 +80,7 @@ describe('POST /auth/google/start — login_hint', () => {
 
     expect(res.statusCode).toBe(200)
     const { authUrl, state } = res.json() as { authUrl: string; state: string }
-    createdStates.push(state)
+    cleanup.track(schema.oauthPending, schema.oauthPending.state, state)
 
     const parsed = new URL(authUrl)
     expect(parsed.searchParams.get('login_hint')).toBe(email)
@@ -104,7 +96,7 @@ describe('POST /auth/google/start — login_hint', () => {
 
     expect(res.statusCode).toBe(200)
     const { authUrl, state } = res.json() as { authUrl: string; state: string }
-    createdStates.push(state)
+    cleanup.track(schema.oauthPending, schema.oauthPending.state, state)
 
     const parsed = new URL(authUrl)
     expect(parsed.searchParams.has('login_hint')).toBe(false)
@@ -123,7 +115,7 @@ describe('POST /auth/google/start — login_hint', () => {
 
     expect(res.statusCode).toBe(200)
     const { authUrl, state } = res.json() as { authUrl: string; state: string }
-    createdStates.push(state)
+    cleanup.track(schema.oauthPending, schema.oauthPending.state, state)
 
     const parsed = new URL(authUrl)
     expect(parsed.searchParams.has('login_hint')).toBe(false)

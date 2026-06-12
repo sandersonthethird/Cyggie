@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Eng-review Issue 6A — lightweight tests for POST /meetings/:id/enhance.
 // Covers the non-Anthropic codepaths:
@@ -31,16 +31,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-enh-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -52,7 +46,7 @@ async function insertTestUser(): Promise<string> {
     email: `${id}@example.com`,
     displayName: id,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
@@ -74,7 +68,7 @@ async function insertMeeting(opts: {
     speakerCount: 1,
     wasImpromptu: false,
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 

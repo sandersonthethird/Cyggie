@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Phase 3 (Mobile Chat) — gateway coverage for the flagged-files section
 // of buildSelectedCompaniesContext. The desktop extraction worker fills
@@ -30,24 +30,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-chat-flagfile-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdCompanyIds: string[] = []
-const createdFlagIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdFlagIds.length > 0) {
-    await db
-      .delete(schema.companyFlaggedFiles)
-      .where(inArray(schema.companyFlaggedFiles.id, createdFlagIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db
-      .delete(schema.orgCompanies)
-      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -58,7 +44,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -83,7 +69,7 @@ async function insertCompany(userId: string, name: string): Promise<string> {
     lamport: '1',
     createdByUserId: userId,
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -107,7 +93,7 @@ async function insertFlaggedFile(opts: {
     extractedTextChars: opts.extractedText?.length ?? null,
     lamport: '1',
   })
-  createdFlagIds.push(id)
+  cleanup.track(schema.companyFlaggedFiles, schema.companyFlaggedFiles.id, id)
   return id
 }
 

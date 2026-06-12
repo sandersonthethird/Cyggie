@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // T17a A3 + A4 — non-Anthropic test coverage.
 //
@@ -32,18 +32,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-chat-a3a4-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdSessionIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdSessionIds.length > 0) {
-    await db
-      .delete(schema.chatSessions)
-      .where(inArray(schema.chatSessions.id, createdSessionIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -54,7 +46,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -84,7 +76,7 @@ async function insertSessionDirect(opts: {
     lastMessageAt: new Date(),
     createdByUserId: opts.userId,
   })
-  createdSessionIds.push(id)
+  cleanup.track(schema.chatSessions, schema.chatSessions.id, id)
   return id
 }
 
@@ -116,7 +108,7 @@ describe('POST /chat/sessions — A4 find-or-create', () => {
     expect(body.contextKind).toBe('company')
     expect(body.isActive).toBe(true)
     expect(body.messageCount).toBe(0)
-    createdSessionIds.push(body.id)
+    cleanup.track(schema.chatSessions, schema.chatSessions.id, body.id)
     void userId
   })
 
@@ -192,7 +184,7 @@ describe('POST /chat/sessions — A4 find-or-create', () => {
     })
     expect(resA.statusCode).toBe(201)
     const aId = (resA.json() as { id: string }).id
-    createdSessionIds.push(aId)
+    cleanup.track(schema.chatSessions, schema.chatSessions.id, aId)
 
     const resB = await app.inject({
       method: 'POST',
@@ -202,7 +194,7 @@ describe('POST /chat/sessions — A4 find-or-create', () => {
     })
     expect(resB.statusCode).toBe(201)
     const bId = (resB.json() as { id: string }).id
-    createdSessionIds.push(bId)
+    cleanup.track(schema.chatSessions, schema.chatSessions.id, bId)
 
     expect(aId).not.toBe(bId)
   })

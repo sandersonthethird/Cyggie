@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
 import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Phase 2 (Mobile Chat) — gateway coverage for the global Ask Cyggie
 // company-context picker. Covers:
@@ -44,35 +45,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-chat-selcomp-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdSessionIds: string[] = []
-const createdCompanyIds: string[] = []
-const createdMeetingIds: string[] = []
-const createdContactIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  // FK-safe deletion order: meetings cascade their link rows + speaker
-  // contact link rows; companies cascade their link rows; contacts
-  // cascade their speaker links. Delete leaves before parents.
-  if (createdSessionIds.length > 0) {
-    await db
-      .delete(schema.chatSessions)
-      .where(inArray(schema.chatSessions.id, createdSessionIds))
-  }
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdContactIds.length > 0) {
-    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db
-      .delete(schema.orgCompanies)
-      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -83,7 +59,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -113,7 +89,7 @@ async function insertCompany(
     createdByUserId: userId,
     ...extra,
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -142,7 +118,7 @@ async function insertMeeting(
       ? { transcriptSegments: opts.transcriptSegments as never }
       : {}),
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 
@@ -170,7 +146,7 @@ async function insertContact(
     createdByUserId: userId,
     ...(primaryCompanyId ? { primaryCompanyId } : {}),
   })
-  createdContactIds.push(id)
+  cleanup.track(schema.contacts, schema.contacts.id, id)
   return id
 }
 
@@ -203,7 +179,7 @@ async function insertCrmSession(
     createdByUserId: userId,
     selectedCompanyIds,
   })
-  createdSessionIds.push(id)
+  cleanup.track(schema.chatSessions, schema.chatSessions.id, id)
   return id
 }
 
@@ -228,7 +204,7 @@ async function insertEntitySession(
     lastMessageAt: new Date(),
     createdByUserId: userId,
   })
-  createdSessionIds.push(id)
+  cleanup.track(schema.chatSessions, schema.chatSessions.id, id)
   const rows = await db
     .select()
     .from(schema.chatSessions)
@@ -826,7 +802,7 @@ describe('buildContextForSession — strips <kind>: prefix before delegating', (
       lastMessageAt: new Date(),
       createdByUserId: userId,
     })
-    createdSessionIds.push(id)
+    cleanup.track(schema.chatSessions, schema.chatSessions.id, id)
     const rows = await db
       .select()
       .from(schema.chatSessions)

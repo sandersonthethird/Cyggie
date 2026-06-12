@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // POST /devices/register-push — stores the APNs device token on the caller's
 // session row so transcribe-job can push to it later.
@@ -29,16 +30,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-devreg-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdSessionIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdSessionIds.length > 0) {
-    await db.delete(schema.sessions).where(inArray(schema.sessions.id, createdSessionIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -50,7 +45,7 @@ async function insertUserAndSession(): Promise<{ userId: string; sessionId: stri
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   await db.insert(schema.sessions).values({
     id: sessionId,
     userId,
@@ -58,7 +53,7 @@ async function insertUserAndSession(): Promise<{ userId: string; sessionId: stri
     refreshTokenHash: 'hash-' + sessionId,
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   })
-  createdSessionIds.push(sessionId)
+  cleanup.track(schema.sessions, schema.sessions.id, sessionId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: sessionId,

@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // /contacts surface against the dev Neon DB. Same teardown pattern as
 // companies.test.ts.
@@ -26,26 +26,12 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-ct-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdCompanyIds: string[] = []
+const cleanup = makeDbCleanup(db)
+// Kept for in-test result filtering only — cleanup is routed through the helper.
 const createdContactIds: string[] = []
-const createdMeetingIds: string[] = []
 
 afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdContactIds.length > 0) {
-    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db
-      .delete(schema.orgCompanies)
-      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -57,7 +43,7 @@ async function insertTestUser(): Promise<string> {
     email: `${id}@example.com`,
     displayName: id,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
@@ -75,7 +61,7 @@ async function insertTestCompany(opts: {
     primaryDomain: opts.primaryDomain ?? null,
     status: 'active',
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -100,6 +86,7 @@ async function insertTestContact(opts: {
     contactType: opts.contactType ?? null,
     lastMeetingAt: opts.lastMeetingAt ?? null,
   })
+  cleanup.track(schema.contacts, schema.contacts.id, id)
   createdContactIds.push(id)
   return id
 }
@@ -119,7 +106,7 @@ async function insertMeetingWithSpeakerLink(opts: {
     durationSeconds: 1800,
     status: 'completed',
   })
-  createdMeetingIds.push(meetingId)
+  cleanup.track(schema.meetings, schema.meetings.id, meetingId)
   // Tie the meeting to the contact via speaker_contact_links.
   // speakerIndex is arbitrary — primary key is (meetingId, speakerIndex).
   await db.insert(schema.meetingSpeakerContactLinks).values({

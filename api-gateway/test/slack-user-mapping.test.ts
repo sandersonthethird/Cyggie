@@ -16,8 +16,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 loadDotenv({
   path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env.local'),
@@ -43,26 +44,9 @@ const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-mapping-${Date.now().toString(36)}-`
 const TEST_WORKSPACE = `T_TEST_${createId().slice(0, 6)}`
-const createdUserIds: string[] = []
-const createdSlackIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
-afterAll(async () => {
-  if (createdSlackIds.length > 0) {
-    await db
-      .delete(schema.slackUserMappings)
-      .where(
-        and(
-          eq(schema.slackUserMappings.slackWorkspaceId, TEST_WORKSPACE),
-          inArray(schema.slackUserMappings.slackUserId, createdSlackIds),
-        ),
-      )
-  }
-  if (createdUserIds.length > 0) {
-    await db
-      .delete(schema.users)
-      .where(inArray(schema.users.id, createdUserIds))
-  }
-})
+afterAll(() => cleanup.cleanup())
 
 beforeEach(() => {
   usersInfoMock.mockReset()
@@ -75,12 +59,12 @@ async function seedUser(email: string): Promise<string> {
     googleSub: 'sub-' + id,
     email,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
 function trackSlack(slackId: string): string {
-  createdSlackIds.push(slackId)
+  cleanup.track(schema.slackUserMappings, schema.slackUserMappings.slackUserId, slackId)
   return slackId
 }
 

@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // GET /meetings/impromptu — T16. Returns recent impromptu (no-cal-event)
 // meetings for the calling user. Mobile calendar tab renders these in a
@@ -35,16 +35,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-impromptu-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -55,7 +49,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -84,7 +78,7 @@ async function insertMeeting(args: {
     status: args.status ?? 'transcribed',
     createdByUserId: args.userId,
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 

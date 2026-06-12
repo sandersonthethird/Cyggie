@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // PATCH /meetings/:id — partial update for notes with client-sourced lamport
 // Last-Write-Wins. Matches the existing /sync/push contract.
@@ -35,20 +36,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-patch-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
-const createdAuditIds: number[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdAuditIds.length > 0) {
-    await db.delete(schema.auditLog).where(inArray(schema.auditLog.id, createdAuditIds))
-  }
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -59,7 +50,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -87,7 +78,7 @@ async function insertMeeting(opts: {
     lamport: opts.lamport ?? '1',
     createdByUserId: opts.userId,
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 
@@ -139,7 +130,7 @@ describe('PATCH /meetings/:id', () => {
     expect(JSON.stringify(details)).not.toContain('new text')
     expect(JSON.stringify(details)).not.toContain('old text')
 
-    if (audit?.id) createdAuditIds.push(audit.id)
+    if (audit?.id) cleanup.track(schema.auditLog, schema.auditLog.id, audit.id as unknown as string)
   })
 
   test('stale lamport (incoming < stored) → 409 + current detail', async () => {

@@ -16,8 +16,9 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 loadDotenv({ path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env.local') })
 process.env['NODE_ENV'] = 'test'
@@ -55,13 +56,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-cal-refresh-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.oauthTokens).where(inArray(schema.oauthTokens.userId, createdUserIds))
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -79,7 +77,7 @@ async function setupUser(refreshTokenEncrypted: string): Promise<{ userId: strin
     email: `${userId}@example.com`,
     displayName: userId,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   await db.insert(schema.oauthTokens).values({
     id: TEST_PREFIX + 'oauth-' + createId().slice(0, 8),
     userId,
@@ -89,6 +87,7 @@ async function setupUser(refreshTokenEncrypted: string): Promise<{ userId: strin
     accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
     needsReauth: false,
   })
+  cleanup.track(schema.oauthTokens, schema.oauthTokens.userId, userId)
   const token = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'session-' + userId,

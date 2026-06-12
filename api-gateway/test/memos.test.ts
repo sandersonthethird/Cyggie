@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Tests for the read-only memos gateway routes:
 //   GET /memos?companyId=:id
@@ -29,32 +29,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-memo-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdCompanyIds: string[] = []
-const createdMemoIds: string[] = []
-const createdVersionIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  // Versions cascade from memos; memos cascade from companies/users.
-  // Explicit deletes still safer in case test data spans manual edits.
-  if (createdVersionIds.length > 0) {
-    await db
-      .delete(schema.investmentMemoVersions)
-      .where(inArray(schema.investmentMemoVersions.id, createdVersionIds))
-  }
-  if (createdMemoIds.length > 0) {
-    await db
-      .delete(schema.investmentMemos)
-      .where(inArray(schema.investmentMemos.id, createdMemoIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db
-      .delete(schema.orgCompanies)
-      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -66,7 +44,7 @@ async function insertTestUser(): Promise<string> {
     email: `${id}@example.com`,
     displayName: id,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
@@ -79,7 +57,7 @@ async function insertCompany(userId: string): Promise<string> {
     normalizedName: ('testco ' + id).toLowerCase(),
     status: 'active',
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -101,7 +79,7 @@ async function insertMemoWithVersion(opts: {
     status: opts.status ?? 'draft',
     latestVersionNumber: versionNumber,
   })
-  createdMemoIds.push(memoId)
+  cleanup.track(schema.investmentMemos, schema.investmentMemos.id, memoId)
 
   if (opts.withVersion === false) return { memoId, versionId: null }
 
@@ -112,7 +90,7 @@ async function insertMemoWithVersion(opts: {
     versionNumber: 1,
     contentMarkdown: opts.contentMarkdown ?? '# Test memo body',
   })
-  createdVersionIds.push(versionId)
+  cleanup.track(schema.investmentMemoVersions, schema.investmentMemoVersions.id, versionId)
   return { memoId, versionId }
 }
 

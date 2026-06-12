@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // POST /recordings/upload happy path:
 //   • multipart audio + title  →  202 { meetingId }
@@ -43,16 +44,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-upload-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -63,7 +58,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -133,7 +128,7 @@ describe('POST /recordings/upload', () => {
     expect(res.statusCode).toBe(202)
     const out = res.json() as { meetingId: string }
     expect(out.meetingId).toBeTruthy()
-    createdMeetingIds.push(out.meetingId)
+    cleanup.track(schema.meetings, schema.meetings.id, out.meetingId)
 
     const meeting = await db.query.meetings.findFirst({
       where: eq(schema.meetings.id, out.meetingId),
@@ -183,7 +178,7 @@ describe('POST /recordings/upload', () => {
       wasImpromptu: false,
       createdByUserId: userId,
     })
-    createdMeetingIds.push(preExistingId)
+    cleanup.track(schema.meetings, schema.meetings.id, preExistingId)
 
     const audioBytes = Buffer.from('audio-after-tap')
     const boundary = '----TestBoundary' + Date.now().toString(36)
@@ -248,7 +243,7 @@ describe('POST /recordings/upload', () => {
     })
     expect(res.statusCode).toBe(202)
     const out = res.json() as { meetingId: string }
-    createdMeetingIds.push(out.meetingId)
+    cleanup.track(schema.meetings, schema.meetings.id, out.meetingId)
 
     const row = await db.query.meetings.findFirst({
       where: eq(schema.meetings.id, out.meetingId),
@@ -276,7 +271,7 @@ describe('POST /recordings/upload', () => {
     })
     expect(res.statusCode).toBe(202)
     const out = res.json() as { meetingId: string }
-    createdMeetingIds.push(out.meetingId)
+    cleanup.track(schema.meetings, schema.meetings.id, out.meetingId)
     const m = await db.query.meetings.findFirst({
       where: eq(schema.meetings.id, out.meetingId),
     })

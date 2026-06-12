@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
 import { eq, inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Load .env.local once. The tests hit the actual Neon DB used by dev —
 // production usage on Fly is shielded because we tag rows with a clear
@@ -29,31 +30,23 @@ const db = getDb(env.GATEWAY_DATABASE_URL)
 
 // Test IDs get prefixed so afterAll can wipe them deterministically.
 const TEST_PREFIX = `test-${Date.now().toString(36)}-`
+const cleanup = makeDbCleanup(db)
+// Retained solely for the pre-delete UPDATE that breaks the users↔firms FK
+// cycle; the row deletes themselves flow through `cleanup`.
 const createdUserIds: string[] = []
-const createdFirmIds: string[] = []
-const createdInviteIds: string[] = []
 
 afterAll(async () => {
-  // Order matters: invites → users (firm_id nulled) → firms.
-  if (createdInviteIds.length > 0) {
-    await db.delete(schema.invites).where(inArray(schema.invites.id, createdInviteIds))
-  }
+  // Unset firm_id + invited_by first so the firm delete doesn't fight the
+  // users FK cycle, then let the shared cleanup remove every tracked row in
+  // FK-safe reverse-insertion order (invites → sessions/oauth/audit → users →
+  // firms).
   if (createdUserIds.length > 0) {
-    // Unset firm_id first so the firm delete cascade doesn't fight users FK.
     await db
       .update(schema.users)
       .set({ firmId: null, invitedByUserId: null })
       .where(inArray(schema.users.id, createdUserIds))
-    await db.delete(schema.sessions).where(inArray(schema.sessions.userId, createdUserIds))
-    await db
-      .delete(schema.oauthTokens)
-      .where(inArray(schema.oauthTokens.userId, createdUserIds))
-    await db.delete(schema.auditLog).where(inArray(schema.auditLog.userId, createdUserIds))
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
   }
-  if (createdFirmIds.length > 0) {
-    await db.delete(schema.firms).where(inArray(schema.firms.id, createdFirmIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -68,6 +61,14 @@ async function insertTestUser(opts: { email: string }): Promise<string> {
     displayName: opts.email,
   })
   createdUserIds.push(id)
+  // Track the user (deleted by id) plus the user-scoped child tables the app
+  // routes may write (sessions / oauth tokens / audit log), deleted by user_id.
+  // Tracked after the user so reverse-insertion order removes the children
+  // before the user. A by-user_id delete is a harmless no-op when empty.
+  cleanup.track(schema.users, schema.users.id, id)
+  cleanup.track(schema.sessions, schema.sessions.userId, id)
+  cleanup.track(schema.oauthTokens, schema.oauthTokens.userId, id)
+  cleanup.track(schema.auditLog, schema.auditLog.userId, id)
   return id
 }
 
@@ -111,7 +112,7 @@ describe('multi-tenant onboarding', () => {
     expect(body.firm.name).toBe('Red Swan Ventures (test)')
     expect(body.firm.slug).toBe(slug)
     expect(body.firm.plan).toBe('trial')
-    createdFirmIds.push(body.firm.id)
+    cleanup.track(schema.firms, schema.firms.id, body.firm.id)
 
     // User row updated with firm_id + admin role.
     const userRow = await db.query.users.findFirst({
@@ -142,7 +143,7 @@ describe('multi-tenant onboarding', () => {
       payload: { name: 'Test Firm A', slug },
     })
     expect(first.statusCode).toBe(200)
-    createdFirmIds.push((first.json() as { firm: { id: string } }).firm.id)
+    cleanup.track(schema.firms, schema.firms.id, (first.json() as { firm: { id: string } }).firm.id)
 
     // Second claim with same slug, different user — must 409.
     const carolEmail = `carol-${TEST_PREFIX}@example.com`
@@ -172,7 +173,7 @@ describe('multi-tenant onboarding', () => {
     })
     expect(first.statusCode).toBe(200)
     const firstBody = first.json() as { firm: { id: string } }
-    createdFirmIds.push(firstBody.firm.id)
+    cleanup.track(schema.firms, schema.firms.id, firstBody.firm.id)
 
     // Now her JWT should carry firm_id — try to claim a second one.
     const refreshedJwt = await mintJwt({
@@ -210,7 +211,7 @@ describe('multi-tenant onboarding', () => {
     })
     expect(claim.statusCode).toBe(200)
     const firmId = (claim.json() as { firm: { id: string } }).firm.id
-    createdFirmIds.push(firmId)
+    cleanup.track(schema.firms, schema.firms.id, firmId)
     const eveAdminJwt = await mintJwt({ userId: eveId, firmId, role: 'admin' })
 
     // Admin generates an invite for frank.
@@ -232,7 +233,7 @@ describe('multi-tenant onboarding', () => {
       expires_at: string
       deep_link: string
     }
-    createdInviteIds.push(inviteBody.id)
+    cleanup.track(schema.invites, schema.invites.id, inviteBody.id)
     expect(inviteBody.email).toBe(frankEmail.toLowerCase())
     expect(inviteBody.token.length).toBeGreaterThan(20)
     expect(inviteBody.deep_link).toBe(`cyggie://invite/${inviteBody.token}`)
@@ -293,7 +294,7 @@ describe('multi-tenant onboarding', () => {
     })
     expect(claim.statusCode).toBe(200)
     const firmId = (claim.json() as { firm: { id: string } }).firm.id
-    createdFirmIds.push(firmId)
+    cleanup.track(schema.firms, schema.firms.id, firmId)
     const ginaAdminJwt = await mintJwt({ userId: ginaId, firmId, role: 'admin' })
 
     const henryEmail = `henry-${TEST_PREFIX}@example.com`
@@ -308,7 +309,7 @@ describe('multi-tenant onboarding', () => {
     })
     expect(issue.statusCode).toBe(200)
     const inviteBody = issue.json() as { id: string; token: string }
-    createdInviteIds.push(inviteBody.id)
+    cleanup.track(schema.invites, schema.invites.id, inviteBody.id)
 
     // Imogen — a completely different account — tries to redeem it.
     const imogenEmail = `imogen-${TEST_PREFIX}@example.com`
@@ -353,7 +354,7 @@ describe('multi-tenant onboarding', () => {
     })
     expect(claim.statusCode).toBe(200)
     const firmId = (claim.json() as { firm: { id: string } }).firm.id
-    createdFirmIds.push(firmId)
+    cleanup.track(schema.firms, schema.firms.id, firmId)
 
     const julesEmail = `jules-${TEST_PREFIX}@example.com`
     const julesId = await insertTestUser({ email: julesEmail })

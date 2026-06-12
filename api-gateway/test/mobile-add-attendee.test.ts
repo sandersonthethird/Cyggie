@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Mobile add-attendee / add-company flow (2026-05-24). Covers:
 //   - POST /contacts                       create-on-the-fly (no enrichment)
@@ -30,25 +31,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-mobile-add-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
-const createdContactIds: string[] = []
-const createdCompanyIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  // FK-safe deletion order: links cascade via meetings/companies deletion.
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdContactIds.length > 0) {
-    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db.delete(schema.orgCompanies).where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -59,7 +45,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -82,7 +68,7 @@ async function insertMeeting(userId: string, lamport = '1'): Promise<string> {
     lamport,
     createdByUserId: userId,
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 
@@ -99,7 +85,7 @@ async function insertCompany(userId: string, canonicalName: string): Promise<str
     lamport: '1',
     createdByUserId: userId,
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -116,7 +102,7 @@ describe('POST /contacts', () => {
     const body = res.json() as { id: string; fullName: string; email: string | null }
     expect(body.fullName).toBe('Ada Lovelace')
     expect(body.email).toBeNull()
-    createdContactIds.push(body.id)
+    cleanup.track(schema.contacts, schema.contacts.id, body.id)
 
     // Verify the row matches: normalized_name + lamport set, user_id stamped.
     const row = await db.query.contacts.findFirst({ where: eq(schema.contacts.id, body.id) })
@@ -137,7 +123,7 @@ describe('POST /contacts', () => {
     expect(res.statusCode).toBe(201)
     const body = res.json() as { id: string; email: string }
     expect(body.email).toBe(email)
-    createdContactIds.push(body.id)
+    cleanup.track(schema.contacts, schema.contacts.id, body.id)
 
     // contact_emails row is the canonical store; verify it exists.
     const emails = await db.query.contactEmails.findMany({
@@ -160,7 +146,7 @@ describe('POST /contacts', () => {
     })
     expect(first.statusCode).toBe(201)
     const firstId = (first.json() as { id: string }).id
-    createdContactIds.push(firstId)
+    cleanup.track(schema.contacts, schema.contacts.id, firstId)
 
     const second = await app.inject({
       method: 'POST',
@@ -208,7 +194,7 @@ describe('POST /companies', () => {
     expect(res.statusCode).toBe(201)
     const body = res.json() as { id: string; name: string }
     expect(body.name).toBe(name)
-    createdCompanyIds.push(body.id)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, body.id)
 
     const row = await db.query.orgCompanies.findFirst({
       where: eq(schema.orgCompanies.id, body.id),
@@ -229,7 +215,7 @@ describe('POST /companies', () => {
     })
     expect(first.statusCode).toBe(201)
     const firstId = (first.json() as { id: string }).id
-    createdCompanyIds.push(firstId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, firstId)
 
     // Different casing/punctuation should normalize to the same key.
     const second = await app.inject({

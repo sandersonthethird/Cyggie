@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Tests for POST /sync/push — the desktop SyncAgent's gateway endpoint.
 // Validates LWW conflict resolution, drizzle-zod validation, composite-PK
@@ -27,22 +28,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-sync-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdCompanyIds: string[] = []
-const createdMeetingIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db
-      .delete(schema.orgCompanies)
-      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -54,7 +43,7 @@ async function insertUser(): Promise<string> {
     email: `${id}@example.com`,
     displayName: id,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
@@ -88,7 +77,7 @@ describe('POST /sync/push', () => {
     const userId = await insertUser()
     const jwt = await mintJwt(userId)
     const companyId = TEST_PREFIX + 'co-' + createId().slice(0, 8)
-    createdCompanyIds.push(companyId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, companyId)
 
     const res = await app.inject({
       method: 'POST',
@@ -138,7 +127,7 @@ describe('POST /sync/push', () => {
     const userId = await insertUser()
     const jwt = await mintJwt(userId)
     const companyId = TEST_PREFIX + 'co-' + createId().slice(0, 8)
-    createdCompanyIds.push(companyId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, companyId)
 
     // Seed
     await db.insert(schema.orgCompanies).values({
@@ -189,7 +178,7 @@ describe('POST /sync/push', () => {
     const userId = await insertUser()
     const jwt = await mintJwt(userId)
     const companyId = TEST_PREFIX + 'co-' + createId().slice(0, 8)
-    createdCompanyIds.push(companyId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, companyId)
 
     // Seed at higher lamport
     await db.insert(schema.orgCompanies).values({
@@ -330,8 +319,8 @@ describe('POST /sync/push', () => {
     const jwt = await mintJwt(userId)
     const companyId = TEST_PREFIX + 'co-' + createId().slice(0, 8)
     const meetingId = TEST_PREFIX + 'mtg-' + createId().slice(0, 8)
-    createdCompanyIds.push(companyId)
-    createdMeetingIds.push(meetingId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, companyId)
+    cleanup.track(schema.meetings, schema.meetings.id, meetingId)
 
     // Seed parent rows
     await db.insert(schema.orgCompanies).values({
@@ -397,7 +386,9 @@ describe('POST /sync/push', () => {
     const c1 = TEST_PREFIX + 'co-' + createId().slice(0, 8)
     const c2 = TEST_PREFIX + 'co-' + createId().slice(0, 8)
     const c3 = TEST_PREFIX + 'co-' + createId().slice(0, 8)
-    createdCompanyIds.push(c1, c2, c3)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, c1)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, c2)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, c3)
 
     const res = await app.inject({
       method: 'POST',
@@ -524,7 +515,8 @@ describe('POST /sync/push', () => {
     const jwt = await mintJwt(userId)
     const goodCompanyId = TEST_PREFIX + 'co-good-' + createId().slice(0, 8)
     const badCompanyId = TEST_PREFIX + 'co-bad-' + createId().slice(0, 8)
-    createdCompanyIds.push(goodCompanyId, badCompanyId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, goodCompanyId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, badCompanyId)
 
     const huge = (2n ** 63n - 1n).toString()
     const res = await app.inject({

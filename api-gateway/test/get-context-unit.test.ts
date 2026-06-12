@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Part 1 (Slack meeting-notes context) — direct coverage for the
 // cyggie_get_context tool. The tool is a thin wrapper over the in-product
@@ -27,25 +27,9 @@ const env = loadEnv()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-getctx-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdCompanyIds: string[] = []
-const createdMeetingIds: string[] = []
-const createdContactIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
-afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdContactIds.length > 0) {
-    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db.delete(schema.orgCompanies).where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
-})
+afterAll(() => cleanup.cleanup())
 
 async function setupUser(): Promise<string> {
   const userId = TEST_PREFIX + createId().slice(0, 8)
@@ -54,7 +38,7 @@ async function setupUser(): Promise<string> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   return userId
 }
 
@@ -71,7 +55,7 @@ async function insertCompany(userId: string, canonicalName: string): Promise<str
     lamport: '1',
     createdByUserId: userId,
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -94,7 +78,7 @@ async function insertMeeting(
       ? { transcriptSegments: opts.transcriptSegments as never }
       : {}),
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 
@@ -117,7 +101,7 @@ async function insertContact(userId: string, fullName: string): Promise<string> 
     lamport: '1',
     createdByUserId: userId,
   })
-  createdContactIds.push(id)
+  cleanup.track(schema.contacts, schema.contacts.id, id)
   return id
 }
 

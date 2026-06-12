@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // On-boot reconciler: scans `meetings WHERE status='recording' AND
 // deepgram_request_id IS NOT NULL`, polls Deepgram for completion, and
@@ -35,17 +36,9 @@ const env = loadEnv()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-reconcile-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
-afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
-})
+afterAll(() => cleanup.cleanup())
 
 async function setupStuckMeeting(args: {
   deepgramRequestId: string
@@ -57,7 +50,7 @@ async function setupStuckMeeting(args: {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   // T32 PR-B: reconcileStuckJobs now requires per-user Deepgram key via
   // user_credentials (env fallback removed). Without a row the reconciler
   // silently skips the meeting → status stays 'recording' and assertions
@@ -75,7 +68,7 @@ async function setupStuckMeeting(args: {
     status: 'recording',
     deepgramRequestId: args.deepgramRequestId,
   })
-  createdMeetingIds.push(meetingId)
+  cleanup.track(schema.meetings, schema.meetings.id, meetingId)
   return { userId, meetingId }
 }
 

@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // GET /sync/pull?since=<lamport> — mobile pulls deltas from Neon.
 //
@@ -34,30 +35,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-pull-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
-const createdCompanyIds: string[] = []
-const createdContactIds: string[] = []
-const createdNoteIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  // Delete in FK-safe order — children before parents.
-  if (createdNoteIds.length > 0) {
-    await db.delete(schema.notes).where(inArray(schema.notes.id, createdNoteIds))
-  }
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdContactIds.length > 0) {
-    // contact_emails + org_company_aliases cascade via FK, no manual cleanup.
-    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db.delete(schema.orgCompanies).where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -68,7 +49,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -91,7 +72,7 @@ async function insertMeeting(userId: string, lamport: string): Promise<string> {
     lamport,
     createdByUserId: userId,
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 
@@ -221,7 +202,7 @@ describe('GET /sync/pull', () => {
       lamport: '11',
       createdByUserId: userId,
     })
-    createdCompanyIds.push(companyId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, companyId)
 
     const aliasId = TEST_PREFIX + 'al-' + createId().slice(0, 6)
     await db.insert(schema.orgCompanyAliases).values({
@@ -241,7 +222,7 @@ describe('GET /sync/pull', () => {
       lamport: '13',
       createdByUserId: userId,
     })
-    createdContactIds.push(contactId)
+    cleanup.track(schema.contacts, schema.contacts.id, contactId)
 
     await db.insert(schema.contactEmails).values({
       contactId,
@@ -290,7 +271,7 @@ describe('GET /sync/pull', () => {
       lamport: '21',
       createdByUserId: bob.userId,
     })
-    createdCompanyIds.push(bobCompanyId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, bobCompanyId)
 
     await db.insert(schema.orgCompanyAliases).values({
       id: TEST_PREFIX + 'al-' + createId().slice(0, 6),
@@ -309,7 +290,7 @@ describe('GET /sync/pull', () => {
       lamport: '23',
       createdByUserId: bob.userId,
     })
-    createdContactIds.push(bobContactId)
+    cleanup.track(schema.contacts, schema.contacts.id, bobContactId)
 
     await db.insert(schema.contactEmails).values({
       contactId: bobContactId,
@@ -458,7 +439,7 @@ describe('GET /sync/pull', () => {
       lamport,
       createdByUserId: userId,
     })
-    createdMeetingIds.push(id)
+    cleanup.track(schema.meetings, schema.meetings.id, id)
     return id
   }
 

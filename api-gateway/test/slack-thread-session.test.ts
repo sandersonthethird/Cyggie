@@ -10,8 +10,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 loadDotenv({
   path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env.local'),
@@ -31,26 +32,17 @@ const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-thread-${Date.now().toString(36)}-`
 const TEST_WORKSPACE = `T_THR_${createId().slice(0, 6)}`
-const createdUserIds: string[] = []
-const createdSessionIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
-afterAll(async () => {
-  // Messages cascade off sessions, but be explicit since FK is set-null
-  // in some schemas.
-  if (createdSessionIds.length > 0) {
-    await db
-      .delete(schema.chatSessionMessages)
-      .where(inArray(schema.chatSessionMessages.sessionId, createdSessionIds))
-    await db
-      .delete(schema.chatSessions)
-      .where(inArray(schema.chatSessions.id, createdSessionIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db
-      .delete(schema.users)
-      .where(inArray(schema.users.id, createdUserIds))
-  }
-})
+// Track a session plus its messages. Tracking the session row first then its
+// messages-by-sessionId means cleanup (reverse order) deletes messages before
+// the session — FK-safe, mirroring the old explicit two-step delete.
+function trackSession(sessionId: string): void {
+  cleanup.track(schema.chatSessions, schema.chatSessions.id, sessionId)
+  cleanup.track(schema.chatSessionMessages, schema.chatSessionMessages.sessionId, sessionId)
+}
+
+afterAll(() => cleanup.cleanup())
 
 async function seedUser(): Promise<string> {
   const id = TEST_PREFIX + createId().slice(0, 8)
@@ -59,7 +51,7 @@ async function seedUser(): Promise<string> {
     googleSub: 'sub-' + id,
     email: `${id}@example.com`,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
@@ -74,7 +66,7 @@ describe('findOrCreateSlackSession — threaded flow', () => {
       userId,
       key: { workspaceId: TEST_WORKSPACE, channelId: channel, threadTs },
     })
-    createdSessionIds.push(session.id)
+    trackSession(session.id)
     expect(session.isNew).toBe(true)
     expect(session.userId).toBe(userId)
 
@@ -98,7 +90,7 @@ describe('findOrCreateSlackSession — threaded flow', () => {
     const key = { workspaceId: TEST_WORKSPACE, channelId: channel, threadTs }
 
     const first = await findOrCreateSlackSession({ db, userId, key })
-    createdSessionIds.push(first.id)
+    trackSession(first.id)
     expect(first.isNew).toBe(true)
 
     const second = await findOrCreateSlackSession({ db, userId, key })
@@ -114,7 +106,7 @@ describe('findOrCreateSlackSession — DM flow (null thread_ts)', () => {
     const key = { workspaceId: TEST_WORKSPACE, channelId: channel, threadTs: null }
 
     const first = await findOrCreateSlackSession({ db, userId, key })
-    createdSessionIds.push(first.id)
+    trackSession(first.id)
     expect(first.isNew).toBe(true)
 
     const second = await findOrCreateSlackSession({ db, userId, key })
@@ -143,7 +135,8 @@ describe('findOrCreateSlackSession — DM flow (null thread_ts)', () => {
       userId,
       key: { workspaceId: TEST_WORKSPACE, channelId: ch2, threadTs: null },
     })
-    createdSessionIds.push(a.id, b.id)
+    trackSession(a.id)
+    trackSession(b.id)
     expect(a.id).not.toBe(b.id)
   })
 })
@@ -160,7 +153,7 @@ describe('loadSlackSessionMessages + appendSlackTurn', () => {
         threadTs: '1700000010.000100',
       },
     })
-    createdSessionIds.push(session.id)
+    trackSession(session.id)
     const msgs = await loadSlackSessionMessages({ db, sessionId: session.id })
     expect(msgs).toEqual([])
   })
@@ -176,7 +169,7 @@ describe('loadSlackSessionMessages + appendSlackTurn', () => {
         threadTs: '1700000020.000100',
       },
     })
-    createdSessionIds.push(session.id)
+    trackSession(session.id)
 
     await appendSlackTurn({
       db,

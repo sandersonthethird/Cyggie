@@ -16,8 +16,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 loadDotenv({
   path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env.local'),
@@ -76,15 +76,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-cal-pt-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdUserIds.length > 0) {
-    await db
-      .delete(schema.oauthTokens)
-      .where(inArray(schema.oauthTokens.userId, createdUserIds))
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -102,7 +97,8 @@ async function setupUser(): Promise<{ userId: string; token: string }> {
     email: `${userId}@example.com`,
     displayName: userId,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
+  cleanup.track(schema.oauthTokens, schema.oauthTokens.userId, userId)
   await db.insert(schema.oauthTokens).values({
     id: TEST_PREFIX + 'oauth-' + createId().slice(0, 8),
     userId,

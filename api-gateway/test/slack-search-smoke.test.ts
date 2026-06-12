@@ -19,8 +19,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
+import { makeDbCleanup, type DbCleanup } from './_helpers/db-cleanup'
 
 loadDotenv({
   path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env.local'),
@@ -57,7 +57,7 @@ const { schema } = await import('@cyggie/db')
 
 let app: FastifyInstance
 let env: ReturnType<typeof loadEnv>
-const createdCompanyIds: string[] = []
+let cleanup: DbCleanup
 const TEST_PREFIX = `acme-test-${createId().slice(0, 6)}-`
 
 beforeAll(async () => {
@@ -68,13 +68,14 @@ beforeAll(async () => {
   // Seed: test user + one company with a recognizable name. The user
   // row is required because org_companies.user_id FKs to users.id.
   const db = getDb(env.GATEWAY_DATABASE_URL)
+  cleanup = makeDbCleanup(db)
   await db.insert(schema.users).values({
     id: TEST_USER_ID,
     googleSub: 'sub-' + TEST_USER_ID,
     email: `${TEST_USER_ID}@example.com`,
   })
+  cleanup.track(schema.users, schema.users.id, TEST_USER_ID)
   const companyId = `co-${createId().slice(0, 12)}`
-  createdCompanyIds.push(companyId)
   await db.insert(schema.orgCompanies).values({
     id: companyId,
     userId: TEST_USER_ID,
@@ -84,18 +85,11 @@ beforeAll(async () => {
     industry: 'AI',
     pipelineStage: 'Series A',
   })
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, companyId)
 })
 
 afterAll(async () => {
-  if (env) {
-    const db = getDb(env.GATEWAY_DATABASE_URL)
-    if (createdCompanyIds.length > 0) {
-      await db
-        .delete(schema.orgCompanies)
-        .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-    }
-    await db.delete(schema.users).where(eq(schema.users.id, TEST_USER_ID))
-  }
+  if (cleanup) await cleanup.cleanup()
   if (app) await app.close()
 })
 

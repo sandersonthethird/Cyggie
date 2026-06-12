@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Per-user monthly minutes cap on POST /recordings/upload.
 //
@@ -36,16 +36,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-quota-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -56,7 +50,7 @@ async function insertUserWithUsage(usedMinutes: number): Promise<string> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   if (usedMinutes > 0) {
     const meetingId = TEST_PREFIX + 'mtg-' + createId().slice(0, 8)
     await db.insert(schema.meetings).values({
@@ -67,7 +61,7 @@ async function insertUserWithUsage(usedMinutes: number): Promise<string> {
       durationSeconds: usedMinutes * 60,
       status: 'transcribed',
     })
-    createdMeetingIds.push(meetingId)
+    cleanup.track(schema.meetings, schema.meetings.id, meetingId)
   }
   return userId
 }

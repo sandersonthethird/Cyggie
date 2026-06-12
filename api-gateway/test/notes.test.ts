@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // /notes list + detail tests.
 
@@ -25,35 +25,12 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-nt-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdCompanyIds: string[] = []
-const createdContactIds: string[] = []
-const createdMeetingIds: string[] = []
+const cleanup = makeDbCleanup(db)
+// Kept for in-test result filtering only — cleanup is routed through the helper.
 const createdNoteIds: string[] = []
 
 afterAll(async () => {
-  if (createdNoteIds.length > 0) {
-    await db.delete(schema.notes).where(inArray(schema.notes.id, createdNoteIds))
-  }
-  if (createdFolderPaths.length > 0) {
-    await db
-      .delete(schema.noteFolders)
-      .where(inArray(schema.noteFolders.path, createdFolderPaths))
-  }
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdContactIds.length > 0) {
-    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db
-      .delete(schema.orgCompanies)
-      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -65,7 +42,7 @@ async function insertUser(): Promise<string> {
     email: `${id}@example.com`,
     displayName: id,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
@@ -78,7 +55,7 @@ async function insertCompany(userId: string, name: string): Promise<string> {
     normalizedName: name.toLowerCase(),
     status: 'active',
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -90,7 +67,7 @@ async function insertContact(userId: string, fullName: string): Promise<string> 
     fullName,
     normalizedName: fullName.toLowerCase(),
   })
-  createdContactIds.push(id)
+  cleanup.track(schema.contacts, schema.contacts.id, id)
   return id
 }
 
@@ -104,7 +81,7 @@ async function insertMeeting(userId: string, title: string): Promise<string> {
     durationSeconds: 1800,
     status: 'completed',
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 
@@ -135,17 +112,17 @@ async function insertNote(opts: {
     createdAt: now,
     updatedAt: now,
   })
+  cleanup.track(schema.notes, schema.notes.id, id)
   createdNoteIds.push(id)
   return id
 }
 
-const createdFolderPaths: string[] = []
 async function insertFolder(userId: string, path: string): Promise<void> {
   await db
     .insert(schema.noteFolders)
     .values({ path, userId })
     .onConflictDoNothing()
-  createdFolderPaths.push(path)
+  cleanup.track(schema.noteFolders, schema.noteFolders.path, path)
 }
 
 async function mintJwt(userId: string): Promise<string> {

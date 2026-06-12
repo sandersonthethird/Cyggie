@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // PATCH /notes/:id — partial edit (title / content) with client-sourced lamport
 // Last-Write-Wins. Mirrors PATCH /meetings/:id and PATCH /contacts/:id.
@@ -36,16 +37,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-note-patch-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdNoteIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdNoteIds.length > 0) {
-    await db.delete(schema.notes).where(inArray(schema.notes.id, createdNoteIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -56,7 +51,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -83,7 +78,7 @@ async function insertNote(opts: {
     lamport: opts.lamport ?? '1',
     createdByUserId: opts.userId,
   })
-  createdNoteIds.push(id)
+  cleanup.track(schema.notes, schema.notes.id, id)
   return id
 }
 

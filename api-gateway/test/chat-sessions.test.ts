@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // T17a A2 — coverage for the new chat session list/detail/PATCH endpoints.
 //
@@ -29,19 +30,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-chat-sess-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdSessionIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdSessionIds.length > 0) {
-    // chat_session_messages cascade via FK
-    await db
-      .delete(schema.chatSessions)
-      .where(inArray(schema.chatSessions.id, createdSessionIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -52,7 +44,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'sess-' + userId,
@@ -91,7 +83,7 @@ async function insertSession(opts: {
     lastMessageAt: opts.lastMessageAt ?? new Date(),
     createdByUserId: opts.userId,
   })
-  createdSessionIds.push(id)
+  cleanup.track(schema.chatSessions, schema.chatSessions.id, id)
   return id
 }
 

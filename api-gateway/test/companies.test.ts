@@ -3,8 +3,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Tests the M2 /companies surface against the live Neon dev DB. Same pattern
 // as firms.flow.test.ts: TEST_PREFIX-tagged rows + afterAll teardown.
@@ -26,28 +26,12 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-cmp-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
+const cleanup = makeDbCleanup(db)
+// Kept for in-test result filtering only — cleanup is routed through the helper.
 const createdCompanyIds: string[] = []
-const createdMeetingIds: string[] = []
-const createdContactIds: string[] = []
 
 afterAll(async () => {
-  // meeting_company_links + contacts cascade via FK ON DELETE CASCADE on
-  // meetings/companies, so deleting parents is enough.
-  if (createdContactIds.length > 0) {
-    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
-  }
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db
-      .delete(schema.orgCompanies)
-      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -59,7 +43,7 @@ async function insertTestUser(): Promise<string> {
     email: `${id}@example.com`,
     displayName: id,
   })
-  createdUserIds.push(id)
+  cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
@@ -81,6 +65,7 @@ async function insertTestCompany(opts: {
     primaryDomain: opts.primaryDomain ?? null,
     status: 'active',
   })
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   createdCompanyIds.push(id)
   return id
 }
@@ -101,7 +86,7 @@ async function insertTestMeeting(opts: {
     durationSeconds: opts.durationSeconds ?? 1800,
     status: 'completed',
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   await db.insert(schema.meetingCompanyLinks).values({
     meetingId: id,
     companyId: opts.companyId,
@@ -126,7 +111,7 @@ async function insertTestContact(opts: {
     primaryCompanyId: opts.companyId,
     title: opts.title ?? null,
   })
-  createdContactIds.push(id)
+  cleanup.track(schema.contacts, schema.contacts.id, id)
   return id
 }
 

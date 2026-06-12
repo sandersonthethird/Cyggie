@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray, sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Stale-recording sweeper: meetings stuck at status='recording' for >1 hour
 // get marked status='error'. Last-resort safety net for phones that crashed
@@ -24,17 +25,9 @@ const env = loadEnv()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-stale-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
-afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
-})
+afterAll(() => cleanup.cleanup())
 
 async function setupMeeting(args: {
   status: string
@@ -47,7 +40,7 @@ async function setupMeeting(args: {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   await db.insert(schema.meetings).values({
     id: meetingId,
     userId,
@@ -61,7 +54,7 @@ async function setupMeeting(args: {
     .update(schema.meetings)
     .set({ createdAt: backdated })
     .where(eq(schema.meetings.id, meetingId))
-  createdMeetingIds.push(meetingId)
+  cleanup.track(schema.meetings, schema.meetings.id, meetingId)
   return { userId, meetingId }
 }
 

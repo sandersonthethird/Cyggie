@@ -40,7 +40,9 @@ const repoRoot = resolve(__dirname, '../..')
 const dbPkgDir = resolve(repoRoot, 'packages/db')
 const drizzleKitBin = resolve(repoRoot, 'node_modules/.bin/drizzle-kit')
 // Fresh data dir each run → empty DB → push builds the full schema clean.
-const dataDir = resolve(repoRoot, 'node_modules/.cache/embedded-pg-test')
+// Port-scoped so concurrent runs on different TEST_PG_PORT (e.g. parallel
+// migration verification) don't clobber each other's cluster.
+const dataDir = resolve(repoRoot, `node_modules/.cache/embedded-pg-test-${PORT}`)
 
 export default async function setup(): Promise<() => Promise<void>> {
   await assertPortAvailable(PORT)

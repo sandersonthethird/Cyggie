@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Three paths for the Deepgram batch webhook + APNs finalize step:
 //   1. Valid secret → meeting flips to 'transcribed', segments persisted,
@@ -67,20 +68,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-finalize-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdSessionIds: string[] = []
-const createdMeetingIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdSessionIds.length > 0) {
-    await db.delete(schema.sessions).where(inArray(schema.sessions.id, createdSessionIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -102,7 +93,7 @@ async function setupUserSessionMeeting(args: {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   await db.insert(schema.sessions).values({
     id: sessionId,
     userId,
@@ -113,7 +104,7 @@ async function setupUserSessionMeeting(args: {
     apnsEnvironment: args.apnsDeviceToken ? 'sandbox' : null,
     apnsTokenUpdatedAt: args.apnsDeviceToken ? new Date() : null,
   })
-  createdSessionIds.push(sessionId)
+  cleanup.track(schema.sessions, schema.sessions.id, sessionId)
   await db.insert(schema.meetings).values({
     id: meetingId,
     userId,
@@ -122,7 +113,7 @@ async function setupUserSessionMeeting(args: {
     status: 'recording',
     deepgramRequestId: 'dg-req-' + meetingId,
   })
-  createdMeetingIds.push(meetingId)
+  cleanup.track(schema.meetings, schema.meetings.id, meetingId)
   return { userId, sessionId, meetingId }
 }
 

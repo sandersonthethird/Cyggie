@@ -20,8 +20,8 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 loadDotenv({
   path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env.local'),
@@ -73,28 +73,10 @@ await app.ready()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-cal-rec-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdMeetingIds: string[] = []
-const createdCompanyIds: string[] = []
+const cleanup = makeDbCleanup(db)
 
 afterAll(async () => {
-  if (createdMeetingIds.length > 0) {
-    await db
-      .delete(schema.meetingCompanyLinks)
-      .where(inArray(schema.meetingCompanyLinks.meetingId, createdMeetingIds))
-    await db.delete(schema.meetings).where(inArray(schema.meetings.id, createdMeetingIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db
-      .delete(schema.orgCompanies)
-      .where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db
-      .delete(schema.oauthTokens)
-      .where(inArray(schema.oauthTokens.userId, createdUserIds))
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
+  await cleanup.cleanup()
   await app.close()
 })
 
@@ -110,7 +92,8 @@ async function setupUser(): Promise<{ userId: string; token: string }> {
     email: `${userId}@example.com`,
     displayName: userId,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
+  cleanup.track(schema.oauthTokens, schema.oauthTokens.userId, userId)
   await db.insert(schema.oauthTokens).values({
     id: TEST_PREFIX + 'oauth-' + createId().slice(0, 8),
     userId,
@@ -149,7 +132,7 @@ async function insertMeeting(opts: {
     attendeeEmails: [] as never,
     speakerCount: 0,
   })
-  createdMeetingIds.push(id)
+  cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 
@@ -166,7 +149,7 @@ async function insertCompany(opts: {
     normalizedName: opts.name.toLowerCase(),
     primaryDomain: opts.primaryDomain,
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -181,6 +164,7 @@ async function linkCompanyToMeeting(opts: {
     confidence: opts.confidence ?? 1.0,
     linkedBy: 'manual',
   })
+  cleanup.track(schema.meetingCompanyLinks, schema.meetingCompanyLinks.meetingId, opts.meetingId)
 }
 
 describe('GET /calendar/events — recordingStatus augmentation', () => {
