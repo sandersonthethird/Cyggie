@@ -23,6 +23,7 @@ import { runNotesFolderPathMigration } from '@cyggie/db/sqlite/migrations/057-no
 import { runNoteFoldersMigration } from '@cyggie/db/sqlite/migrations/058-note-folders'
 import { runLamportOnOwnedTablesMigration } from '@cyggie/db/sqlite/migrations/096-lamport-on-owned-tables'
 import { runSyncOutboxStateMigration } from '@cyggie/db/sqlite/migrations/097-sync-outbox-state'
+import { runNotesIsPrivateMigration } from '@cyggie/db/sqlite/migrations/121-notes-is-private'
 
 let testDb: Database.Database
 
@@ -71,6 +72,7 @@ function buildDb(): Database.Database {
   runNoteFoldersMigration(db)
   runLamportOnOwnedTablesMigration(db)
   runSyncOutboxStateMigration(db)
+  runNotesIsPrivateMigration(db)
   return db
 }
 

@@ -156,7 +156,8 @@ function processNote(title: string, note: { body: string; creationDate: string; 
     const createdAt = note.creationDate ? new Date(note.creationDate).toISOString() : new Date().toISOString()
     const updatedAt = note.modificationDate ? new Date(note.modificationDate).toISOString() : createdAt
     const folderPath = note.container ?? ''
-    runSqlFile(`INSERT INTO notes (id, title, content, folder_path, import_source, created_by_user_id, updated_by_user_id, created_at, updated_at) VALUES ('${noteId}', ${sqlStr(title)}, ${sqlStr(markdown)}, ${sqlStr(folderPath)}, 'apple-notes', '${USER_ID}', '${USER_ID}', '${createdAt}', '${updatedAt}');`)
+    // Imported notes default to private (is_private=1) — see notes.ipc.ts NOTES_IMPORT_FOLDER.
+    runSqlFile(`INSERT INTO notes (id, title, content, folder_path, import_source, is_private, created_by_user_id, updated_by_user_id, created_at, updated_at) VALUES ('${noteId}', ${sqlStr(title)}, ${sqlStr(markdown)}, ${sqlStr(folderPath)}, 'apple-notes', 1, '${USER_ID}', '${USER_ID}', '${createdAt}', '${updatedAt}');`)
     return { status: 'inserted', images: imagesWritten }
   }
 }

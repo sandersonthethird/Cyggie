@@ -5,6 +5,7 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -30,6 +31,7 @@ export default function NoteDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>()
   const id = typeof params.id === 'string' ? params.id : ''
   const signOut = useAuthStore((s) => s.signOut)
+  const myUserId = useAuthStore((s) => s.userId)
   const queryClient = useQueryClient()
 
   const query = useQuery({
@@ -46,6 +48,10 @@ export default function NoteDetailScreen() {
   }, [query.error, signOut])
 
   const note = query.data
+  // A note is the viewer's own iff they authored it. Only the owner may edit or
+  // toggle privacy — teammates can read a shared note but the gateway PATCH is
+  // owner-scoped (would 404), so we hide the edit affordance for them.
+  const isOwner = !!note && !!myUserId && note.authorUserId === myUserId
 
   // ── Edit mode ──────────────────────────────────────────────────────────
   // Tap the pencil → title + body become TextInputs with Save/Cancel. Saves
@@ -56,14 +62,16 @@ export default function NoteDetailScreen() {
   const [editing, setEditing] = useState(false)
   const [draftTitle, setDraftTitle] = useState('')
   const [draftContent, setDraftContent] = useState('')
+  const [draftPrivate, setDraftPrivate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const contentRef = useRef<TextInput>(null)
 
   const startEditing = (): void => {
-    if (!note) return
+    if (!note || !isOwner) return
     setDraftTitle(note.title ?? '')
     setDraftContent(note.content)
+    setDraftPrivate(note.isPrivate)
     setEditError(null)
     setEditing(true)
     setTimeout(() => contentRef.current?.focus(), 50)
@@ -81,7 +89,7 @@ export default function NoteDetailScreen() {
     try {
       const result = await updateNote(
         note.id,
-        { title: draftTitle.trim() || null, content: draftContent },
+        { title: draftTitle.trim() || null, content: draftContent, isPrivate: draftPrivate },
         Date.now().toString(),
       )
       queryClient.setQueryData<NoteDetail>(['notes', 'detail', note.id], (prev) =>
@@ -91,6 +99,7 @@ export default function NoteDetailScreen() {
               title: result.title,
               content: result.content,
               isPinned: result.isPinned,
+              isPrivate: result.isPrivate,
               updatedAt: result.updatedAt,
             }
           : prev,
@@ -165,7 +174,7 @@ export default function NoteDetailScreen() {
                 <Text style={[styles.topbarActionText, styles.topbarSave]}>Save</Text>
               )}
             </Pressable>
-          ) : note ? (
+          ) : note && isOwner ? (
             <Pressable
               onPress={startEditing}
               hitSlop={8}
@@ -225,6 +234,25 @@ export default function NoteDetailScreen() {
               {editError ? <Text style={styles.editError}>{editError}</Text> : null}
             </View>
 
+            <View style={styles.privacyRow}>
+              <View style={styles.privacyText}>
+                <Text style={styles.privacyLabel}>Private</Text>
+                <Text style={styles.privacyHint}>
+                  {draftPrivate
+                    ? 'Only you can see this note.'
+                    : note.companyId || note.contactId
+                      ? 'Visible to your firm because it’s tagged.'
+                      : 'Only you — tag a company or contact to share it.'}
+                </Text>
+              </View>
+              <Switch
+                value={draftPrivate}
+                onValueChange={setDraftPrivate}
+                disabled={saving}
+                trackColor={{ true: colors.crimson, false: colors.surface3 }}
+              />
+            </View>
+
             <View style={{ height: spacing.xxl }} />
           </>
         ) : note ? (
@@ -242,6 +270,7 @@ export default function NoteDetailScreen() {
                   <Text style={styles.folderText}>{note.folderPath}</Text>
                 </View>
               ) : null}
+              <VisibilityBadge note={note} isOwner={isOwner} />
               <LinkedChips note={note} />
             </View>
 
@@ -263,6 +292,34 @@ export default function NoteDetailScreen() {
           </>
         ) : null}
       </ScrollView>
+    </View>
+  )
+}
+
+// Glanceable "who can see this" affordance. Owner sees their own note's
+// effective visibility ("Only you" vs "Visible to your firm"); a teammate's
+// shared note shows its author ("Shared by …").
+function VisibilityBadge({ note, isOwner }: { note: NoteDetail; isOwner: boolean }) {
+  if (!isOwner) {
+    return (
+      <View style={[styles.visBadge, styles.visShared]}>
+        <Ionicons name="people-outline" size={12} color={colors.crimson} />
+        <Text style={[styles.visText, styles.visTextShared]} numberOfLines={1}>
+          Shared by {note.authorName ?? 'a teammate'}
+        </Text>
+      </View>
+    )
+  }
+  const tagged = !!note.companyId || !!note.contactId
+  const firmVisible = tagged && !note.isPrivate
+  return (
+    <View style={styles.visBadge}>
+      <Ionicons
+        name={firmVisible ? 'people-outline' : 'lock-closed-outline'}
+        size={12}
+        color={colors.text4}
+      />
+      <Text style={styles.visText}>{firmVisible ? 'Visible to your firm' : 'Only you'}</Text>
     </View>
   )
 }
@@ -416,6 +473,45 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     letterSpacing: 0.2,
   },
+
+  visBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginTop: 8,
+  },
+  visShared: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: colors.crimsonMuted,
+    borderRadius: radii.pill,
+  },
+  visText: {
+    color: colors.text4,
+    fontSize: type.meta,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  visTextShared: { color: colors.crimson, maxWidth: 220 },
+
+  privacyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  privacyText: { flex: 1 },
+  privacyLabel: { color: colors.text, fontSize: type.body, fontWeight: '600' },
+  privacyHint: { color: colors.text3, fontSize: type.bodyTight, marginTop: 2 },
 
   chipRow: {
     flexDirection: 'row',

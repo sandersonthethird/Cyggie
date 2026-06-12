@@ -13,6 +13,7 @@ import Database from 'better-sqlite3'
 import { runUnifiedNotesMigration } from '@cyggie/db/sqlite/migrations/052-unified-notes'
 import { runNotesFts5Migration } from '@cyggie/db/sqlite/migrations/054-notes-fts5'
 import { runNotesFolderPathMigration } from '@cyggie/db/sqlite/migrations/057-notes-folder-path'
+import { runNotesIsPrivateMigration } from '@cyggie/db/sqlite/migrations/121-notes-is-private'
 
 let testDb: Database.Database
 
@@ -47,6 +48,7 @@ function buildDb(): Database.Database {
   runUnifiedNotesMigration(db)
   runNotesFolderPathMigration(db)
   runNotesFts5Migration(db)
+  runNotesIsPrivateMigration(db)
   return db
 }
 

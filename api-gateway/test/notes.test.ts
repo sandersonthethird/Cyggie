@@ -34,15 +34,27 @@ afterAll(async () => {
   await app.close()
 })
 
+// Each user gets its OWN firm so the firm-scoped visibility filter
+// (api-gateway/src/notes/visibility.ts) reduces to own-notes-only here —
+// preserving these tests' single-user isolation semantics. Cross-user /
+// cross-firm visibility is covered in notes-visibility.test.ts. mintJwt looks
+// up the user's firm so the JWT firm_id matches the DB row the join tests.
+const userFirms = new Map<string, string>()
+
 async function insertUser(): Promise<string> {
   const id = TEST_PREFIX + createId().slice(0, 8)
+  const firmId = TEST_PREFIX + 'firm-' + createId().slice(0, 8)
+  await db.insert(schema.firms).values({ id: firmId, name: firmId, slug: firmId })
+  cleanup.track(schema.firms, schema.firms.id, firmId)
   await db.insert(schema.users).values({
     id,
     googleSub: 'sub-' + id,
     email: `${id}@example.com`,
     displayName: id,
+    firmId,
   })
   cleanup.track(schema.users, schema.users.id, id)
+  userFirms.set(id, firmId)
   return id
 }
 
@@ -131,7 +143,7 @@ async function mintJwt(userId: string): Promise<string> {
     sid: TEST_PREFIX + 'session-' + userId,
     device: TEST_PREFIX + 'device',
     scope: ['user'],
-    firm_id: TEST_PREFIX + 'firm',
+    firm_id: userFirms.get(userId) ?? TEST_PREFIX + 'firm',
     role: 'member',
   })
 }
@@ -369,6 +381,9 @@ describe('GET /notes/:id', () => {
       title: string | null
       content: string
       isPinned: boolean
+      isPrivate: boolean
+      authorUserId: string
+      authorName: string | null
       companyName: string | null
       contactName: string | null
       sourceMeetingTitle: string | null
@@ -378,6 +393,10 @@ describe('GET /notes/:id', () => {
     expect(body.title).toBe('Roadmap notes')
     expect(body.content).toBe('Quarterly priorities and ARR targets.')
     expect(body.isPinned).toBe(true)
+    // Additive privacy + authorship fields.
+    expect(body.isPrivate).toBe(false)
+    expect(body.authorUserId).toBe(userId)
+    expect(body.authorName).toBe(userId) // displayName was set to the id
     expect(body.companyName).toBe('DetailCo ' + TEST_PREFIX)
     expect(body.contactName).toBe('Detail Person ' + TEST_PREFIX)
     expect(body.sourceMeetingTitle).toBe('Source Call ' + TEST_PREFIX)

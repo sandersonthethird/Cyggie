@@ -107,6 +107,24 @@ describe('PATCH /notes/:id', () => {
     expect(row?.updatedByUserId).toBe(userId)
   })
 
+  test('isPrivate toggle: PATCH flips the flag and returns it', async () => {
+    const { userId, jwt } = await setupUser()
+    const noteId = await insertNote({ userId, lamport: '4', content: 'shareable' })
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/notes/${noteId}`,
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { isPrivate: true, lamport: '5' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { isPrivate: boolean }).isPrivate).toBe(true)
+    const row = await db.query.notes.findFirst({ where: eq(schema.notes.id, noteId) })
+    expect(row?.isPrivate).toBe(true)
+    // content untouched (only isPrivate in the patch)
+    expect(row?.content).toBe('shareable')
+  })
+
   test('empty title string clears the title (→ null)', async () => {
     const { userId, jwt } = await setupUser()
     const noteId = await insertNote({ userId, lamport: '2', title: 'has title', content: 'b' })

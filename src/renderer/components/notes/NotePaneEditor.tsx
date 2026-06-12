@@ -67,6 +67,8 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
     saveStatus,
     isPinned,
     setIsPinned,
+    isPrivate,
+    setIsPrivate,
     tagSuggestion,
     dismissSuggestion,
     deleteNote,
@@ -188,6 +190,22 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
       setIsPinned(!newPinned)
     }
   }, [isPinned, setIsPinned, onNoteUpdated])
+
+  // Privacy toggle — mirrors handlePinToggle. Optimistic flip, reverts on
+  // failure. When private, this note stays visible only to its owner; the
+  // gateway withholds it from the rest of the firm even when it's tagged.
+  const handlePrivateToggle = useCallback(async () => {
+    const n = savedNoteRef.current
+    if (!n) return
+    const newPrivate = !isPrivate
+    setIsPrivate(newPrivate)
+    try {
+      const updated = await api.invoke<Note | null>(IPC_CHANNELS.NOTES_UPDATE, n.id, { isPrivate: newPrivate })
+      if (updated) { savedNoteRef.current = updated; setLocalNote(updated); onNoteUpdated(updated) }
+    } catch {
+      setIsPrivate(!newPrivate)
+    }
+  }, [isPrivate, setIsPrivate, onNoteUpdated])
 
   const handleDelete = useCallback(async () => {
     await deleteNote()
@@ -383,6 +401,13 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
             title={isPinned ? 'Unpin note' : 'Pin note'}
           >
             {isPinned ? '📌' : '📍'}
+          </button>
+          <button
+            className={`${styles.pinBtn} ${isPrivate ? styles.pinBtnActive : ''}`}
+            onClick={handlePrivateToggle}
+            title={isPrivate ? 'Private — only you can see this. Click to share with your firm.' : 'Visible to your firm when tagged. Click to make private.'}
+          >
+            {isPrivate ? '🔒' : '🔓'}
           </button>
           <button className={styles.deleteBtn} onClick={handleDelete} title="Delete note">
             🗑

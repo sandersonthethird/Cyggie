@@ -50,6 +50,8 @@ interface UseNoteEditorResult {
   saveStatus: SaveStatus
   isPinned: boolean
   setIsPinned: (v: boolean) => void
+  isPrivate: boolean
+  setIsPrivate: (v: boolean) => void
   tagSuggestion: TagSuggestion | null
   dismissSuggestion: () => void
   deleteNote: () => Promise<void>
@@ -61,6 +63,7 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
   const [titleDraft, setTitleDraft] = useState('')
   const [contentDraft, setContentDraft] = useState('')
   const [isPinned, setIsPinned] = useState(false)
+  const [isPrivate, setIsPrivate] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
   const [tagSuggestion, setTagSuggestion] = useState<TagSuggestion | null>(null)
   const [suggestionDismissed, setSuggestionDismissed] = useState(false)
@@ -112,6 +115,7 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
         setTitleDraft(loaded.title ?? '')
         setContentDraft(loaded.content)
         setIsPinned(loaded.isPinned)
+        setIsPrivate(loaded.isPrivate)
         justLoadedRef.current = true
         loadEditorContent(loaded.content)  // set BEFORE setLoadState so they batch; onCreate parses ✓
         // Safety fallback: clear justLoadedRef if onUpdate never fires
@@ -230,6 +234,8 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
     saveStatus,
     isPinned,
     setIsPinned,
+    isPrivate,
+    setIsPrivate,
     tagSuggestion,
     dismissSuggestion,
     deleteNote,

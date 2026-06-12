@@ -34,6 +34,7 @@ import { backfillEmailsForSyncOnLaunch } from './services/email-sync-backfill.se
 import { backfillPreferencesForSyncOnLaunch } from './services/preference-sync.service'
 import { consolidateTargetStageFieldsOnLaunch } from './services/target-stage-consolidation-backfill.service'
 import { backfillCustomFieldsForSyncOnLaunch } from './services/custom-field-sync-backfill.service'
+import { backfillNotesPrivacyOnLaunch } from './services/notes-privacy-backfill.service'
 import { startExtractionWorker } from './services/flagged-file-extraction-worker'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
@@ -344,6 +345,12 @@ app.whenReady().then(() => {
   // enqueues each def/value still at lamport='0' (defs before values) so mobile/
   // web see custom fields after the next /sync/push drain. Idempotent.
   backfillCustomFieldsForSyncOnLaunch(startupUserId)
+
+  // Notes privacy backfill — one-time: mark every existing note with no company
+  // tagged (untagged + contact-only) as private, syncing the flag to Neon via
+  // the outbox. Run-once guarded (settings flag) so it never re-privatizes notes
+  // created later. Deferred 3.6s, just after the custom-field backfill.
+  backfillNotesPrivacyOnLaunch(startupUserId)
 
   // Phase 3 — kick the flagged-file extraction worker. Drains any
   // 'pending' or stuck-'extracting' rows (post-crash recovery), and

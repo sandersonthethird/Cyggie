@@ -383,6 +383,11 @@ export function registerNotesHandlers(): void {
                   content: finalContent,
                   folderPath: pf.folderPath || null,
                   importSource: format,
+                  // Imported notes are private by default — a user's external
+                  // notes (Apple Notes / Notion / etc.) shouldn't become
+                  // firm-visible just because auto-tagging later attaches a
+                  // company. Any new note importer added here must do the same.
+                  isPrivate: true,
                 },
                 userId,
                 pf.fileDate,

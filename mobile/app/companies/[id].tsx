@@ -422,6 +422,7 @@ function MeetingsSection({ meetings }: { meetings: CompanyMeetingRef[] }) {
 }
 
 function CompanyNotesSection({ companyId }: { companyId: string }) {
+  const myUserId = useAuthStore((s) => s.userId)
   const query = useQuery({
     queryKey: ['notes', 'company', companyId],
     queryFn: ({ signal }) => fetchNotes({ companyId, limit: 50, signal }),
@@ -454,12 +455,20 @@ function CompanyNotesSection({ companyId }: { companyId: string }) {
     )
   }
 
+  // Collective-memory header: how much of this is the firm's vs mine.
+  const mine = myUserId ? notes.filter((n) => n.authorUserId === myUserId).length : 0
+  const summary =
+    mine < notes.length
+      ? `${notes.length} firm · ${mine} yours`
+      : `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`
+
   return (
     <View style={styles.section}>
+      <Text style={styles.notesSummary}>{summary}</Text>
       <View style={styles.kvCard}>
         {notes.map((n, idx) => (
           <View key={n.id}>
-            <CompanyNoteRow note={n} />
+            <CompanyNoteRow note={n} myUserId={myUserId} />
             {idx < notes.length - 1 && <View style={styles.kvDivider} />}
           </View>
         ))}
@@ -468,11 +477,12 @@ function CompanyNotesSection({ companyId }: { companyId: string }) {
   )
 }
 
-function CompanyNoteRow({ note }: { note: NoteListItem }) {
+function CompanyNoteRow({ note, myUserId }: { note: NoteListItem; myUserId: string | null }) {
   const title = note.title?.trim().length
     ? note.title.trim()
     : firstLineOfNote(note.contentPreview)
   const showPreview = note.title?.trim() && note.contentPreview.length > 0
+  const teammate = !!myUserId && note.authorUserId !== myUserId
   return (
     <Pressable
       onPress={() => router.push(`/notes/${note.id}`)}
@@ -498,6 +508,11 @@ function CompanyNoteRow({ note }: { note: NoteListItem }) {
         ) : (
           <Text style={styles.meetingMeta}>{formatNoteRelative(note.updatedAt)}</Text>
         )}
+        {teammate ? (
+          <Text style={styles.noteAuthor} numberOfLines={1}>
+            Shared by {note.authorName ?? 'a teammate'}
+          </Text>
+        ) : null}
       </View>
       <Ionicons name="chevron-forward" size={16} color={colors.text4} />
     </Pressable>
@@ -970,6 +985,21 @@ const styles = StyleSheet.create({
     color: colors.text3,
     fontSize: type.bodyTight,
     marginTop: 2,
+  },
+  noteAuthor: {
+    color: colors.crimson,
+    fontSize: type.meta,
+    fontWeight: '600',
+    marginTop: 3,
+  },
+  notesSummary: {
+    color: colors.text4,
+    fontSize: type.meta,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+    marginBottom: spacing.sm,
+    marginLeft: 2,
   },
   memoTitleRow: {
     flexDirection: 'row',

@@ -6,6 +6,7 @@ import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import { validateClientLamport } from '../sync/validate-lamport'
+import { noteVisibilityFilter } from '../notes/visibility'
 import type { GatewayEnv } from '../env'
 
 // =============================================================================
@@ -36,6 +37,13 @@ const NoteListItemSchema = z.object({
   title: z.string().nullable(),
   contentPreview: z.string(), // first 200 chars, single-line
   isPinned: z.boolean(),
+  // Privacy + authorship for the collective-firm-memory surface. `isPrivate`
+  // drives the "Only you" vs "Visible to firm" affordance; author* identify a
+  // teammate's note ("Shared by …"). A note is the viewer's own iff
+  // authorUserId === their user id.
+  isPrivate: z.boolean(),
+  authorUserId: z.string(),
+  authorName: z.string().nullable(),
   companyId: z.string().nullable(),
   companyName: z.string().nullable(),
   contactId: z.string().nullable(),
@@ -104,7 +112,11 @@ export async function registerNoteRoutes(
         offset,
       } = req.query
 
-      const whereClauses = [eq(schema.notes.userId, user.sub)]
+      // Firm-visibility predicate (own notes + teammates' tagged, non-private
+      // notes), enforced via the single contract in ../notes/visibility. The
+      // inner-join on users below gives the predicate its firm guard and the
+      // author-name column in one pass.
+      const whereClauses = [noteVisibilityFilter(user)]
       if (companyId) whereClauses.push(eq(schema.notes.companyId, companyId))
       if (contactId) whereClauses.push(eq(schema.notes.contactId, contactId))
       if (meetingId) whereClauses.push(eq(schema.notes.sourceMeetingId, meetingId))
@@ -132,6 +144,9 @@ export async function registerNoteRoutes(
           title: schema.notes.title,
           content: schema.notes.content,
           isPinned: schema.notes.isPinned,
+          isPrivate: schema.notes.isPrivate,
+          authorUserId: schema.notes.userId,
+          authorName: schema.users.displayName,
           companyId: schema.notes.companyId,
           companyName: schema.orgCompanies.canonicalName,
           contactId: schema.notes.contactId,
@@ -142,6 +157,9 @@ export async function registerNoteRoutes(
           updatedAt: schema.notes.updatedAt,
         })
         .from(schema.notes)
+        // INNER JOIN on the note owner: serves the visibility firm guard AND
+        // the author name. Inner (not left) is safe — user_id is NOT NULL.
+        .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
         .leftJoin(
           schema.orgCompanies,
           eq(schema.notes.companyId, schema.orgCompanies.id),
@@ -155,10 +173,23 @@ export async function registerNoteRoutes(
         .limit(limit)
         .offset(offset)
 
+      // Count reuses the same join + predicate so `total` reflects exactly the
+      // visibility-filtered set (pagination + FTS inherit visibility for free).
       const [countRow] = await db
         .select({ n: sql<number>`count(*)::int` })
         .from(schema.notes)
+        .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
         .where(and(...whereClauses))
+
+      // Day-1 signal that collective memory is actually flowing: how many of the
+      // served rows belong to a teammate (never the note bodies — count only).
+      const crossUser = rows.filter((r) => r.authorUserId !== user.sub).length
+      if (crossUser > 0) {
+        req.log.info(
+          { userId: user.sub, crossUser, metric: 'notes.served.cross_user' },
+          'notes list served teammate-shared notes',
+        )
+      }
 
       return {
         notes: rows.map((r) => ({
@@ -166,6 +197,9 @@ export async function registerNoteRoutes(
           title: r.title,
           contentPreview: buildPreview(r.content ?? ''),
           isPinned: r.isPinned,
+          isPrivate: r.isPrivate,
+          authorUserId: r.authorUserId,
+          authorName: r.authorName ?? null,
           companyId: r.companyId,
           companyName: r.companyName,
           contactId: r.contactId,
@@ -201,6 +235,9 @@ export async function registerNoteRoutes(
           title: schema.notes.title,
           content: schema.notes.content,
           isPinned: schema.notes.isPinned,
+          isPrivate: schema.notes.isPrivate,
+          authorUserId: schema.notes.userId,
+          authorName: schema.users.displayName,
           companyId: schema.notes.companyId,
           companyName: schema.orgCompanies.canonicalName,
           contactId: schema.notes.contactId,
@@ -213,6 +250,10 @@ export async function registerNoteRoutes(
           updatedAt: schema.notes.updatedAt,
         })
         .from(schema.notes)
+        // Same INNER JOIN as the list: firm guard for the visibility filter +
+        // author name. A note the viewer may not see returns no row → 404 below
+        // (we never disclose that the id exists).
+        .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
         .leftJoin(
           schema.orgCompanies,
           eq(schema.notes.companyId, schema.orgCompanies.id),
@@ -222,7 +263,7 @@ export async function registerNoteRoutes(
           schema.meetings,
           eq(schema.notes.sourceMeetingId, schema.meetings.id),
         )
-        .where(and(eq(schema.notes.id, id), eq(schema.notes.userId, user.sub)))
+        .where(and(eq(schema.notes.id, id), noteVisibilityFilter(user)))
         .limit(1)
 
       if (!row) {
@@ -240,6 +281,9 @@ export async function registerNoteRoutes(
         content,
         contentPreview: buildPreview(content),
         isPinned: row.isPinned,
+        isPrivate: row.isPrivate,
+        authorUserId: row.authorUserId,
+        authorName: row.authorName ?? null,
         companyId: row.companyId,
         companyName: row.companyName,
         contactId: row.contactId,
@@ -276,6 +320,9 @@ export async function registerNoteRoutes(
       body: z.object({
         title: z.string().max(500).nullable().optional(),
         content: z.string().max(100_000).optional(),
+        // Privacy toggle. Additive + optional — old clients omit it. Owner-only:
+        // the (id, userId) scope below means only the note's owner can flip it.
+        isPrivate: z.boolean().optional(),
         lamport: z.string().min(1).max(40),
       }),
     },
@@ -336,6 +383,7 @@ export async function registerNoteRoutes(
           title: existing.title,
           content: existing.content,
           isPinned: existing.isPinned,
+          isPrivate: existing.isPrivate,
           lamport: existing.lamport,
         })
       }
@@ -356,11 +404,15 @@ export async function registerNoteRoutes(
         updates.content = body.content.slice(0, 100_000)
         hasField = true
       }
+      if (body.isPrivate !== undefined) {
+        updates.isPrivate = body.isPrivate
+        hasField = true
+      }
       if (!hasField) {
         throw new GatewayError({
           statusCode: 400,
           code: 'NOTE_PATCH_EMPTY',
-          message: 'PATCH must include at least one of: title, content.',
+          message: 'PATCH must include at least one of: title, content, isPrivate.',
         })
       }
 
@@ -388,6 +440,7 @@ export async function registerNoteRoutes(
         title: updated.title,
         content: updated.content ?? '',
         isPinned: updated.isPinned,
+        isPrivate: updated.isPrivate,
         lamport: updated.lamport,
         updatedAt: new Date(updated.updatedAt).toISOString(),
       }

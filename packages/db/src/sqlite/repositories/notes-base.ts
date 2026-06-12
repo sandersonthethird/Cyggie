@@ -28,6 +28,7 @@ interface NoteBaseRow {
   title: string | null
   content: string
   is_pinned: number
+  is_private: number
   source_meeting_id: string | null
   created_by_user_id: string | null
   updated_by_user_id: string | null
@@ -39,7 +40,7 @@ interface NoteBaseRow {
 
 const SELECT_COLS = `
   id, contact_id, company_id, theme_id, title, content,
-  is_pinned, source_meeting_id, created_by_user_id, updated_by_user_id,
+  is_pinned, is_private, source_meeting_id, created_by_user_id, updated_by_user_id,
   created_at, updated_at, folder_path, import_source
 `
 
@@ -53,6 +54,7 @@ function rowToNote(row: NoteBaseRow): Note {
     sourceMeetingId: row.source_meeting_id,
     themeId: row.theme_id,
     isPinned: row.is_pinned === 1,
+    isPrivate: row.is_private === 1,
     createdByUserId: row.created_by_user_id,
     updatedByUserId: row.updated_by_user_id,
     createdAt: row.created_at,
@@ -84,7 +86,7 @@ export interface EntityNotesRepo {
   ): Note | null
   update(
     noteId: string,
-    data: Partial<{ title: string | null; content: string; isPinned: boolean; themeId: string | null }>,
+    data: Partial<{ title: string | null; content: string; isPinned: boolean; isPrivate: boolean; themeId: string | null }>,
     userId?: string | null
   ): Note | null
   delete(noteId: string): boolean
@@ -163,7 +165,7 @@ export function makeEntityNotesRepo(entityFkCol: EntityFkCol): EntityNotesRepo {
 
   function update(
     noteId: string,
-    data: Partial<{ title: string | null; content: string; isPinned: boolean; themeId: string | null }>,
+    data: Partial<{ title: string | null; content: string; isPinned: boolean; isPrivate: boolean; themeId: string | null }>,
     userId: string | null = null
   ): Note | null {
     const db = getDatabase()
@@ -173,6 +175,7 @@ export function makeEntityNotesRepo(entityFkCol: EntityFkCol): EntityNotesRepo {
     if (data.title !== undefined) { sets.push('title = ?'); params.push(data.title) }
     if (data.content !== undefined) { sets.push('content = ?'); params.push(data.content) }
     if (data.isPinned !== undefined) { sets.push('is_pinned = ?'); params.push(data.isPinned ? 1 : 0) }
+    if (data.isPrivate !== undefined) { sets.push('is_private = ?'); params.push(data.isPrivate ? 1 : 0) }
     if (data.themeId !== undefined) { sets.push('theme_id = ?'); params.push(data.themeId) }
 
     if (sets.length === 0) return get(noteId)

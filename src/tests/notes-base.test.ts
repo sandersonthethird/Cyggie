@@ -32,6 +32,7 @@ function makeDb(): Database.Database {
       title TEXT,
       content TEXT NOT NULL,
       is_pinned INTEGER NOT NULL DEFAULT 0,
+      is_private INTEGER NOT NULL DEFAULT 0,
       source_meeting_id TEXT,
       created_by_user_id TEXT,
       updated_by_user_id TEXT,

@@ -119,6 +119,7 @@ import { runUserPreferencesLamportMigration } from './migrations/117-user-prefer
 import { runChatSessionAttachedEntitiesMigration } from './migrations/118-chat-session-attached-entities'
 import { runCustomFieldDefinitionsSyncLamportMigration } from './migrations/119-custom-field-definitions-sync-lamport'
 import { runCustomFieldValuesSyncLamportMigration } from './migrations/120-custom-field-values-sync-lamport'
+import { runNotesIsPrivateMigration } from './migrations/121-notes-is-private'
 import { runMeetingsLocationMigration } from './migrations/122-meetings-location'
 
 let db: Database.Database | null = null
@@ -283,6 +284,7 @@ export function getDatabase(): Database.Database {
     runChatSessionAttachedEntitiesMigration(db)
     runCustomFieldDefinitionsSyncLamportMigration(db)
     runCustomFieldValuesSyncLamportMigration(db)
+    runNotesIsPrivateMigration(db)
     runMeetingsLocationMigration(db)
 
     // Orphan-run garbage collection: any agent_runs row stuck at status='running'

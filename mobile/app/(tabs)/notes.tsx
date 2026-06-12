@@ -38,6 +38,7 @@ type FilterMode = 'all' | 'untagged'
 
 export default function NotesTab() {
   const signOut = useAuthStore((s) => s.signOut)
+  const myUserId = useAuthStore((s) => s.userId)
   const [searchInput, setSearchInput] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
@@ -153,7 +154,7 @@ export default function NotesTab() {
         <FlatList
           data={notes}
           keyExtractor={(n) => n.id}
-          renderItem={({ item }) => <NoteRow note={item} />}
+          renderItem={({ item }) => <NoteRow note={item} myUserId={myUserId} />}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -258,13 +259,18 @@ function FilterChip({
   )
 }
 
-function NoteRow({ note }: { note: NoteListItem }) {
+function NoteRow({ note, myUserId }: { note: NoteListItem; myUserId: string | null }) {
   const title =
     note.title?.trim().length
       ? note.title.trim()
       : firstLineOf(note.contentPreview)
   const linked = [note.companyName, note.contactName].filter(Boolean).join(' · ')
   const showPreviewBelowTitle = note.title?.trim() && note.contentPreview.length > 0
+  const isMine = !!myUserId && note.authorUserId === myUserId
+  // A teammate's shared note → show who it belongs to. My own private note →
+  // a lock so I can see at a glance it isn't shared with the firm.
+  const teammate = !isMine
+  const ownPrivate = isMine && note.isPrivate
   return (
     <Pressable
       onPress={() => router.push(`/notes/${note.id}`)}
@@ -273,7 +279,9 @@ function NoteRow({ note }: { note: NoteListItem }) {
       accessibilityLabel={title}
     >
       <View style={styles.rowLeading}>
-        {note.isPinned ? (
+        {ownPrivate ? (
+          <Ionicons name="lock-closed" size={16} color={colors.text4} />
+        ) : note.isPinned ? (
           <Ionicons name="bookmark" size={16} color={colors.crimson} />
         ) : (
           <Ionicons name="document-text-outline" size={18} color={colors.text4} />
@@ -289,6 +297,11 @@ function NoteRow({ note }: { note: NoteListItem }) {
           </Text>
         )}
         <View style={styles.rowMeta}>
+          {teammate && (
+            <Text style={styles.rowAuthor} numberOfLines={1}>
+              {note.authorName ?? 'Teammate'}
+            </Text>
+          )}
           {linked && <Text style={styles.rowLinked}>{linked}</Text>}
           <Text style={styles.rowMetaText}>{formatRelative(note.updatedAt)}</Text>
         </View>
@@ -469,6 +482,13 @@ const styles = StyleSheet.create({
     fontSize: type.meta + 0.5,
     fontWeight: '600',
     letterSpacing: 0.1,
+  },
+  rowAuthor: {
+    color: colors.text3,
+    fontSize: type.meta + 0.5,
+    fontWeight: '600',
+    letterSpacing: 0.1,
+    maxWidth: 120,
   },
   rowMetaText: {
     color: colors.text4,

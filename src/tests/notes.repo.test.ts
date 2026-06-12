@@ -10,6 +10,7 @@ import Database from 'better-sqlite3'
 import { runUnifiedNotesMigration } from '@cyggie/db/sqlite/migrations/052-unified-notes'
 import { runNotesFolderPathMigration } from '@cyggie/db/sqlite/migrations/057-notes-folder-path'
 import { runNoteFoldersMigration } from '@cyggie/db/sqlite/migrations/058-note-folders'
+import { runNotesIsPrivateMigration } from '@cyggie/db/sqlite/migrations/121-notes-is-private'
 
 let testDb: Database.Database
 
@@ -43,6 +44,7 @@ function buildDb(): Database.Database {
   runUnifiedNotesMigration(db)
   runNotesFolderPathMigration(db)
   runNoteFoldersMigration(db)
+  runNotesIsPrivateMigration(db)
   return db
 }
 
@@ -89,6 +91,16 @@ describe('notes.repo', () => {
     it('leaves title null when not provided', () => {
       const note = createNote({ content: 'body' })
       expect(note!.title).toBeNull()
+    })
+
+    it('defaults isPrivate to false (in-app creation stays shared-if-tagged)', () => {
+      const note = createNote({ content: 'body' })
+      expect(note!.isPrivate).toBe(false)
+    })
+
+    it('honors isPrivate: true — the flag imported notes are created with', () => {
+      const note = createNote({ content: 'imported', importSource: 'apple-notes', isPrivate: true })
+      expect(note!.isPrivate).toBe(true)
     })
   })
 

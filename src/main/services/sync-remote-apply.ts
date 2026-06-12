@@ -342,6 +342,7 @@ export interface PulledNoteRow extends PulledRow {
   sourceMeetingId: string | null
   themeId: string | null
   isPinned: boolean
+  isPrivate: boolean
   folderPath: string | null
   importSource: string | null
   sourceDigestId: string | null
@@ -378,13 +379,13 @@ function upsertNoteRow(db: Database.Database, row: PulledNoteRow): void {
     `INSERT INTO notes (
        id, title, content,
        company_id, contact_id, source_meeting_id, theme_id,
-       is_pinned, folder_path, import_source, source_digest_id,
+       is_pinned, is_private, folder_path, import_source, source_digest_id,
        created_by_user_id, updated_by_user_id,
        created_at, updated_at, lamport
      ) VALUES (
        @id, @title, @content,
        @companyId, @contactId, @sourceMeetingId, @themeId,
-       @isPinned, @folderPath, @importSource, @sourceDigestId,
+       @isPinned, @isPrivate, @folderPath, @importSource, @sourceDigestId,
        @createdByUserId, @updatedByUserId,
        @createdAt, @updatedAt, @lamport
      )
@@ -396,6 +397,7 @@ function upsertNoteRow(db: Database.Database, row: PulledNoteRow): void {
        source_meeting_id = excluded.source_meeting_id,
        theme_id = excluded.theme_id,
        is_pinned = excluded.is_pinned,
+       is_private = excluded.is_private,
        folder_path = excluded.folder_path,
        import_source = excluded.import_source,
        source_digest_id = excluded.source_digest_id,
@@ -413,6 +415,7 @@ function upsertNoteRow(db: Database.Database, row: PulledNoteRow): void {
     sourceMeetingId: row.sourceMeetingId,
     themeId: row.themeId,
     isPinned: row.isPinned ? 1 : 0,
+    isPrivate: row.isPrivate ? 1 : 0,
     folderPath: row.folderPath,
     importSource: row.importSource,
     sourceDigestId: row.sourceDigestId,

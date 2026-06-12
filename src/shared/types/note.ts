@@ -7,6 +7,11 @@ export interface Note {
   sourceMeetingId: string | null
   themeId: string | null
   isPinned: boolean
+  // Per-note privacy override. A *tagged* note is firm-visible by default
+  // (isPrivate = false); true keeps it owner-only regardless of tags. Untagged
+  // notes are private regardless. Enforced at the gateway
+  // (api-gateway/src/notes/visibility.ts); desktop is single-user.
+  isPrivate: boolean
   createdByUserId: string | null
   updatedByUserId: string | null
   createdAt: string
@@ -32,6 +37,7 @@ export interface NoteCreateData {
   sourceMeetingId?: string | null
   folderPath?: string | null
   importSource?: string | null
+  isPrivate?: boolean
 }
 
 export interface NoteUpdateData {
@@ -40,6 +46,7 @@ export interface NoteUpdateData {
   companyId?: string | null
   contactId?: string | null
   isPinned?: boolean
+  isPrivate?: boolean
   themeId?: string | null
   folderPath?: string | null
 }

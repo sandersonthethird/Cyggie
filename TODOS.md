@@ -2905,3 +2905,184 @@ the multi preflight. Ideally share the same union/dedup gathering as
 matches the prompt exactly (companies already do this).
 
 **Effort:** S–M. **Priority:** P3. **Owner:** Sandy.
+
+---
+
+## Refactor RECORDING_START to a single options object
+
+**What:** Replace the positional argument list
+`(title, calEventId, appendToMeetingId, meetingUrl)` on the `RECORDING_START`
+IPC handler with one `{ title?, calEventId?, appendToMeetingId?, meetingUrl? }`
+options object, updating the handler
+([`recording.ipc.ts`](src/main/ipc/recording.ipc.ts)) and the ~7 renderer call
+sites ([`App.tsx`](src/renderer/App.tsx),
+[`Layout.tsx`](src/renderer/components/layout/Layout.tsx),
+[`useMiniCalendarActions.ts`](src/renderer/hooks/useMiniCalendarActions.ts),
+[`Dashboard.tsx`](src/renderer/routes/Dashboard.tsx),
+[`LiveRecording.tsx`](src/renderer/routes/LiveRecording.tsx),
+[`MeetingList.tsx`](src/renderer/routes/MeetingList.tsx),
+[`MeetingDetail.tsx`](src/renderer/routes/MeetingDetail.tsx)).
+
+**Why:** The meeting-window duplicate fix (the notification "Join Meeting"
+double-open) pushed the parameter count to 5, forcing `undefined` placeholders
+at call sites like `invoke(ch, title, calEventId, undefined, meetingUrl)` —
+fragile and easy to mis-order. An options object is explicit and safe to extend
+when the next optional field appears.
+
+**Context:** The notification path now forwards the calendar event's
+`meetingUrl` as a fallback so the URL still opens once when the recording-side
+`getEventById` lookup can't resolve it (calendar disconnected between
+notification show and click). That fallback is what added the 5th positional
+arg. Only `App.tsx`'s notification path passes it today; all other call sites
+leave it undefined. Start at the handler signature and let the type error drive
+the call-site updates.
+
+**Effort:** S. **Priority:** P3. **Depends on / blocked by:** Nothing.
+
+---
+
+## Write the OAuth consent E2E (the last deferred MCP/OAuth tests)
+
+**What:** Author `api-gateway/test/oauth-e2e.test.ts` covering the four OAuth
+cases still skipped in
+[`oauth-unit.test.ts`](api-gateway/test/oauth-unit.test.ts): full
+`register → authorize+PKCE → consent → token exchange → /mcp 200`,
+`refresh_token` rotation (old token invalid), refresh-token reuse → chain
+revocation + Sentry alert, and a `client_credentials` grant. Add Playwright +
+chromium (gateway-project dev dep) for the browser-driven consent step.
+
+**Why:** These are the only 4 `test.skip`s left in the whole suite. They were
+deferred because you can't obtain a refresh token without the consent
+round-trip (browser), and `client_credentials` needs a separately-provisioned
+confidential client — neither is expressible from the headless harness.
+
+**Context:** The rest of the MCP/OAuth surface is now covered headlessly
+against the local embedded Postgres (mcp-smoke per-tool + seed-backed tests,
+`/oauth/reg` 429). Reuse the existing `mintTestToken` + `app.inject` +
+`callTool` helpers in `api-gateway/test/_helpers/`. The consent leg needs a
+test Cyggie user with a server-side session cookie; the provider's
+reuse-detection lives in `api-gateway/src/oauth/reuse-detection.ts` and the
+events it fires are in `api-gateway/src/oauth/hooks.ts`.
+
+**Effort:** M. **Priority:** P3. **Depends on / blocked by:** Playwright/chromium
+added to the gateway test project.
+
+---
+
+## Add CI (GitHub Actions) now that the gateway suite is hermetic
+
+**What:** Add a GitHub Actions workflow that runs `npx vitest run` on PRs. The
+gateway test project boots its own ephemeral Postgres
+([`api-gateway/test/global-setup.ts`](api-gateway/test/global-setup.ts)) and is
+fully hermetic — it runs with **zero `.env.local`** (every required env var has
+a dummy in [`vitest.config.ts`](vitest.config.ts) `test.env`), so no secrets
+need wiring.
+
+**Why:** There's no CI today; nothing guards `main` against regressions on
+push. The whole point of making the suite hermetic was to unlock this — it's
+the payoff.
+
+**Context:** On CI, decide the embedded-Postgres engine: either cache the
+`embedded-postgres` PG17 binary download, or switch the gateway project to
+`@testcontainers/postgresql` (Docker is native in GH Actions) — revisit the
+engine choice (eng-review Issue 4) specifically for CI. The non-gateway
+`default` project needs no DB. `node scripts/check-repo-imports.mjs` should run
+as a separate step.
+
+**Effort:** S–M. **Priority:** P2. **Depends on / blocked by:** Nothing (the
+hermetic suite is already on `main`).
+
+## DB-backed integration test for dashboard `listRecentActivity`
+
+**What:** Stand up a `better-sqlite3` `:memory:` test harness (run migrations,
+seed companies/notes/meetings/emails) and assert
+[`listRecentActivity`](packages/db/src/sqlite/repositories/dashboard.repo.ts)
+end-to-end: notes appear/disappear by `filter.types`; the `'none'` stage
+includes null/empty-stage companies *and* untagged notes; tagged notes respect
+stage/entity-type filters; and `getActivityFilter` accepts `'none'` (rather than
+silently stripping it).
+
+**Why:** The current unit tests in
+[`dashboard-filter.test.ts`](src/tests/dashboard-filter.test.ts) cover only the
+pure SQL-string builders (`buildCompanyConditions`, `buildCompanyExistsClause`,
+`buildNoteWhereClause`). The actual query assembly, the `getActivityFilter`
+validation branch, and the union/JOIN behavior have no automated coverage — a
+regression there (e.g. `'none'` getting dropped from validation) would be a
+**silent** failure: the chip toggles in the UI but the result set never changes.
+
+**Context:** Added alongside the "Notes type + None stage + untagged-notes"
+change (feat/mobile-meeting-view-fixes). No DB-backed sqlite repo tests exist in
+the repo today — this would be the first, so it also establishes the harness
+pattern (migrations + seed helpers) other repo tests can reuse. Start from
+`packages/db/src/sqlite/connection.ts` for how the DB is opened.
+
+**Depends on / blocked by:** Nothing; independent of the shipped UI change.
+
+**Effort:** M (mostly harness setup). **Priority:** P3. **Owner:** Sandy.
+
+## Notes — desktop parity for firm-shared reads
+
+**What:** Extend `GET /sync/pull` (and the desktop apply path) so that
+firm-shared notes owned by *other* firm members land read-only in each
+desktop's local SQLite, closing the asymmetry where mobile shows the firm's
+collective notes but the desktop shows only your own.
+
+**Why:** The private-notes feature (shipped) made firm members' tagged,
+non-private notes visible to each other — but only through the gateway, which
+mobile consumes. Desktop SQLite sync stayed strictly per-user (`/sync/pull`
+filters by `user_id = me`), so the same user sees different note sets on
+desktop vs mobile. This is the deliberate V1 scope cut; closing it is the main
+step toward true desktop multiplayer.
+
+**Context:** The visibility contract already exists as one function —
+`noteVisibilityFilter(user)` in
+[`api-gateway/src/notes/visibility.ts`](api-gateway/src/notes/visibility.ts).
+The hard part is the *ownership model*: pulled foreign rows must be stored
+read-only and must NOT re-enter the desktop outbox (`withSync`) or they'd
+ping-pong back and the gateway LWW would reject them. The pull-apply primitive
+is `applyRemoteNotes` /`upsertNoteRow` in
+[`src/main/services/sync-remote-apply.ts`](src/main/services/sync-remote-apply.ts);
+it already bypasses the outbox, but it assumes every applied row is owned by
+the local user. Needs a non-owned marker (e.g. a `read_only` / `owner_user_id`
+column on the local notes table) so the renderer can render but not edit, and
+so the sync engine never enqueues them. Also requires the gateway pull query to
+return firm-shared rows (currently `notes.userId = me` only) using the same
+visibility predicate.
+
+**Depends on / blocked by:** Builds on the shipped private-notes feature
+(`is_private` column + `noteVisibilityFilter`). No hard blockers.
+
+**Effort:** L. **Priority:** P2. **Owner:** Sandy.
+
+## Notes — let AI + MCP reason over firm-shared notes
+
+**What:** Route the AI/RAG context builder and the `cyggie_get_notes` MCP tool
+through `noteVisibilityFilter` so they surface firm-shared (tagged, non-private)
+notes in addition to the caller's own — unlocking "ask the firm brain" across
+the partnership's collective note-taking.
+
+**Why:** The private-notes feature enforces visibility at the two REST routes
+(`GET /notes`, `GET /notes/:id`). The MCP read path
+([`api-gateway/src/mcp/tools/get-notes.ts`](api-gateway/src/mcp/tools/get-notes.ts))
+and any gateway/mobile AI context builder still scope strictly to `user_id = me`
+— so the firm's shared notes are invisible to the Slack bot and to AI answers.
+This is intentional in V1 (own-only = no leak), but it leaves the biggest payoff
+of collective memory on the table.
+
+**Context:** The single enforcement contract already exists:
+`noteVisibilityFilter(user)` in
+[`api-gateway/src/notes/visibility.ts`](api-gateway/src/notes/visibility.ts).
+Swap the `eq(notes.userId, user.sub)` filter in `get-notes.ts` (and the RAG
+context query) for the visibility predicate + the `users` inner-join (see how
+`api-gateway/src/routes/notes.ts` does it). **Important — threat model first:**
+once a teammate's note content can enter *another* user's LLM context, a
+malicious or careless note becomes a prompt-injection vector. Add the injection
+boundary (delimit/escape note bodies in the prompt; never let note content carry
+tool-call authority) as part of this work, and a test that a private note never
+appears in another member's AI context.
+
+**Depends on / blocked by:** Builds on the shipped `noteVisibilityFilter`. The
+MCP tool name/schema is a public contract (see CLAUDE.md) — changes here must be
+output-additive only, never a rename.
+
+**Effort:** M. **Priority:** P2. **Owner:** Sandy.

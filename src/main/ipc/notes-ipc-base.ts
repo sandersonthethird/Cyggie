@@ -84,7 +84,7 @@ export function registerEntityNotesIpc(config: EntityNotesIpcConfig): void {
     (
       _event,
       noteId: string,
-      updates: Partial<{ title: string | null; content: string; isPinned: boolean; themeId: string | null }>
+      updates: Partial<{ title: string | null; content: string; isPinned: boolean; isPrivate: boolean; themeId: string | null }>
     ) => {
       if (!noteId) throw new Error('noteId is required')
       const userId = getCurrentUserId()

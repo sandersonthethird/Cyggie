@@ -7,6 +7,12 @@ export interface NoteListItem {
   title: string | null
   contentPreview: string
   isPinned: boolean
+  /** True = visible only to the author; false = firm-visible when tagged. */
+  isPrivate: boolean
+  /** Owner of the note. The note is "mine" iff this === my user id. */
+  authorUserId: string
+  /** Owner's display name (for "Shared by …" on a teammate's note). */
+  authorName: string | null
   companyId: string | null
   companyName: string | null
   contactId: string | null
@@ -75,6 +81,8 @@ export interface UpdateNotePatch {
   title?: string | null
   /** Note body (freeform markdown). Server caps at 100k chars. */
   content?: string
+  /** Privacy toggle. Owner-only on the server (scoped by note owner). */
+  isPrivate?: boolean
 }
 
 export interface UpdateNoteResult {
@@ -82,6 +90,7 @@ export interface UpdateNoteResult {
   title: string | null
   content: string
   isPinned: boolean
+  isPrivate: boolean
   lamport: string
   updatedAt: string
 }

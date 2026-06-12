@@ -18,6 +18,7 @@ describe('api/notes updateNote', () => {
       title: 'T',
       content: 'body',
       isPinned: false,
+      isPrivate: false,
       lamport: '123',
       updatedAt: '2026-06-12T00:00:00.000Z',
     })
@@ -29,6 +30,14 @@ describe('api/notes updateNote', () => {
       title: 'T',
       content: 'body',
       lamport: '123',
+    })
+  })
+
+  it('forwards the isPrivate toggle in the PATCH body', async () => {
+    await updateNote('n1', { isPrivate: true }, '124')
+    expect(apiPatchMock).toHaveBeenCalledWith('/notes/n1', {
+      isPrivate: true,
+      lamport: '124',
     })
   })
 

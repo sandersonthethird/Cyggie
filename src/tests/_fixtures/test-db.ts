@@ -130,6 +130,7 @@ import { runCompanyTargetInvestmentFieldsMigration } from '@cyggie/db/sqlite/mig
 import { runContactTargetInvestmentStageMigration } from '@cyggie/db/sqlite/migrations/115-contact-target-investment-stage'
 import { runDropContactInvestorStageMigration } from '@cyggie/db/sqlite/migrations/116-drop-contact-investor-stage'
 import { runUserPreferencesLamportMigration } from '@cyggie/db/sqlite/migrations/117-user-preferences-lamport'
+import { runNotesIsPrivateMigration } from '@cyggie/db/sqlite/migrations/121-notes-is-private'
 
 type MigrationFn = (db: Database.Database) => void
 
@@ -239,6 +240,9 @@ const ALL_MIGRATIONS: MigrationFn[] = [
   runContactTargetInvestmentStageMigration,
   runDropContactInvestorStageMigration,
   runUserPreferencesLamportMigration,
+  // is_private on notes (per-note firm-visibility override). Idempotent ALTER;
+  // safe to run after the unified notes table exists.
+  runNotesIsPrivateMigration,
 ]
 
 /**

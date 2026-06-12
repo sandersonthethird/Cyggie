@@ -21,6 +21,7 @@ import {
   type ContactDetail,
   type ContactMeetingRef,
 } from '../../lib/api/contacts'
+import { fetchNotes, type NoteListItem } from '../../lib/api/notes'
 import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo } from '../../components/CompanyLogo'
 import { UserNoteEditor } from '../../components/UserNoteEditor'
@@ -127,7 +128,12 @@ export default function ContactDetailScreen() {
             <Hero contact={contact} />
             <StatsCard contact={contact} />
             <SegmentControl value={segment} onChange={setSegment} />
-            {segment === 'overview' && <OverviewSection contact={contact} />}
+            {segment === 'overview' && (
+              <>
+                <OverviewSection contact={contact} />
+                <ContactNotesSection contactId={contact.id} />
+              </>
+            )}
             {segment === 'meetings' && (
               <MeetingsSection meetings={contact.recentMeetings} />
             )}
@@ -377,6 +383,104 @@ function OverviewSection({ contact }: { contact: ContactDetail }) {
         </View>
       )}
     </View>
+  )
+}
+
+// Firm-shared notes feed for this contact — the collective-memory surface
+// mirroring CompanyNotesSection. Each firm member's tagged, non-private notes
+// on this contact appear here, attributed; a header counts firm vs yours.
+function ContactNotesSection({ contactId }: { contactId: string }) {
+  const myUserId = useAuthStore((s) => s.userId)
+  const query = useQuery({
+    queryKey: ['notes', 'contact', contactId],
+    queryFn: ({ signal }) => fetchNotes({ contactId, limit: 50, signal }),
+    enabled: contactId.length > 0,
+    staleTime: 30_000,
+  })
+
+  if (query.isLoading && !query.data) {
+    return (
+      <View style={styles.section}>
+        <ActivityIndicator color={colors.crimson} />
+      </View>
+    )
+  }
+  if (query.error) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.emptyInline}>Couldn&apos;t load notes. Pull to refresh.</Text>
+      </View>
+    )
+  }
+
+  const notes = query.data?.notes ?? []
+  if (notes.length === 0) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.descHeading}>Notes</Text>
+        <Text style={styles.emptyInline}>No notes for this contact yet.</Text>
+      </View>
+    )
+  }
+
+  const mine = myUserId ? notes.filter((n) => n.authorUserId === myUserId).length : 0
+  const summary =
+    mine < notes.length
+      ? `${notes.length} firm · ${mine} yours`
+      : `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.notesSummary}>{summary}</Text>
+      <View style={styles.kvCard}>
+        {notes.map((n, idx) => (
+          <View key={n.id}>
+            <ContactNoteRow note={n} myUserId={myUserId} />
+            {idx < notes.length - 1 && <View style={styles.kvDivider} />}
+          </View>
+        ))}
+      </View>
+    </View>
+  )
+}
+
+function ContactNoteRow({ note, myUserId }: { note: NoteListItem; myUserId: string | null }) {
+  const title = note.title?.trim().length ? note.title.trim() : note.contentPreview || 'Untitled note'
+  const showPreview = note.title?.trim() && note.contentPreview.length > 0
+  const teammate = !!myUserId && note.authorUserId !== myUserId
+  return (
+    <Pressable
+      onPress={() => router.push(`/notes/${note.id}`)}
+      style={({ pressed }) => [styles.meetingRow, pressed && styles.rowPressed]}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+    >
+      <View style={styles.meetingIconWrap}>
+        {note.isPinned ? (
+          <Ionicons name="bookmark" size={16} color={colors.crimson} />
+        ) : (
+          <Ionicons name="document-text-outline" size={16} color={colors.text2} />
+        )}
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.meetingTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        {showPreview ? (
+          <Text style={styles.meetingMeta} numberOfLines={2}>
+            {note.contentPreview}
+          </Text>
+        ) : (
+          <Text style={styles.meetingMeta}>{formatRelativeDay(note.updatedAt)}</Text>
+        )}
+        {teammate ? (
+          <Text style={styles.noteAuthor} numberOfLines={1}>
+            Shared by {note.authorName ?? 'a teammate'}
+          </Text>
+        ) : null}
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.text4} />
+    </Pressable>
   )
 }
 
@@ -772,6 +876,21 @@ const styles = StyleSheet.create({
     color: colors.text3,
     fontSize: type.bodyTight,
     marginTop: 2,
+  },
+  noteAuthor: {
+    color: colors.crimson,
+    fontSize: type.meta,
+    fontWeight: '600',
+    marginTop: 3,
+  },
+  notesSummary: {
+    color: colors.text4,
+    fontSize: type.meta,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+    marginBottom: spacing.sm,
+    marginLeft: 2,
   },
 
   emptyInline: {

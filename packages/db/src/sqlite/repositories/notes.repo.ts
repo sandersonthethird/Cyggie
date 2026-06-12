@@ -12,6 +12,7 @@ interface NoteRow {
   source_meeting_id: string | null
   theme_id: string | null
   is_pinned: number
+  is_private: number
   created_by_user_id: string | null
   updated_by_user_id: string | null
   created_at: string
@@ -33,6 +34,7 @@ function rowToNote(row: NoteRow): Note {
     sourceMeetingId: row.source_meeting_id,
     themeId: row.theme_id,
     isPinned: row.is_pinned === 1,
+    isPrivate: row.is_private === 1,
     createdByUserId: row.created_by_user_id,
     updatedByUserId: row.updated_by_user_id,
     createdAt: row.created_at,
@@ -55,6 +57,7 @@ const BASE_SELECT = `
     n.source_meeting_id,
     n.theme_id,
     n.is_pinned,
+    n.is_private,
     n.created_by_user_id,
     n.updated_by_user_id,
     n.created_at,
@@ -187,10 +190,10 @@ export function createNote(
   const result = db.prepare(`
     INSERT INTO notes (
       id, title, content, company_id, contact_id, source_meeting_id, theme_id,
-      is_pinned, created_by_user_id, updated_by_user_id, created_at, updated_at,
+      is_pinned, is_private, created_by_user_id, updated_by_user_id, created_at, updated_at,
       folder_path, import_source
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ${createdAt ? '?' : "datetime('now')"}, ${updatedAt ? '?' : "datetime('now')"}, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ${createdAt ? '?' : "datetime('now')"}, ${updatedAt ? '?' : "datetime('now')"}, ?, ?)
   `).run(
     id,
     data.title ?? null,
@@ -199,6 +202,7 @@ export function createNote(
     data.contactId ?? null,
     data.sourceMeetingId ?? null,
     data.themeId ?? null,
+    data.isPrivate ? 1 : 0,
     userId,
     userId,
     ...(createdAt ? [createdAt] : []),
@@ -249,6 +253,10 @@ export function updateNote(
   if (data.isPinned !== undefined) {
     sets.push('is_pinned = ?')
     params.push(data.isPinned ? 1 : 0)
+  }
+  if (data.isPrivate !== undefined) {
+    sets.push('is_private = ?')
+    params.push(data.isPrivate ? 1 : 0)
   }
   if (data.themeId !== undefined) {
     sets.push('theme_id = ?')

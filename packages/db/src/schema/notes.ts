@@ -51,6 +51,14 @@ export const notes = pgTable(
     // in rowToNote (`is_pinned === 1`), so the SQLite shape is unchanged.
     // Migration 0012 casts the existing column.
     isPinned: boolean('is_pinned').notNull().default(false),
+    // Per-note privacy override. When false (default) a *tagged* note is visible
+    // to the whole firm (collective memory); when true it is visible only to its
+    // owner regardless of tags. Untagged notes are private regardless of this flag
+    // (the firm-visibility rule requires a company_id or contact_id). Mirrors the
+    // is_pinned shape: real Postgres boolean here, INTEGER 0/1 in SQLite converted
+    // in rowToNote (`is_private === 1`). The gateway's noteVisibilityFilter is the
+    // single enforcement point — see api-gateway/src/notes/visibility.ts.
+    isPrivate: boolean('is_private').notNull().default(false),
     // Hierarchical organization (migrations 057, 058)
     folderPath: text('folder_path'),
     // Provenance of imported notes (Granola, Google Docs, etc.)
@@ -66,6 +74,12 @@ export const notes = pgTable(
   },
   (t) => [
     index('notes_user_idx').on(t.userId),
+    // Composite covering index for the firm-visibility read path
+    // (api-gateway/src/notes/visibility.ts): the query INNER JOINs users for the
+    // firm guard, then filters notes by owner + privacy + tag presence. Ordering
+    // (user_id, is_private, company_id, contact_id) serves both the own-branch
+    // (user_id = me) and the teammate-branch (is_private = false AND tagged).
+    index('notes_visibility_idx').on(t.userId, t.isPrivate, t.companyId, t.contactId),
     index('notes_company_idx').on(t.companyId),
     index('notes_contact_idx').on(t.contactId),
     index('notes_updated_idx').on(t.updatedAt),
