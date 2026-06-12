@@ -130,18 +130,44 @@ describe('rate-limit: checkRegistrationRateLimit', () => {
   })
 })
 
-describe('OAuth E2E flow (DB-dependent, currently deferred)', () => {
-  // Full flow requires:
-  //   1. A real test DB (Neon quota currently blocks)
-  //   2. Playwright + chromium for the browser-driven consent step
-  //   3. A test Cyggie user with a server-side session cookie
-  //
-  // Each is bounded engineering work but adds runtime to CI. Defer until
-  // Neon quota issue resolved, then bring up the full suite in one PR
-  // alongside the per-tool DB-touching tests.
+describe('POST /oauth/reg — registration rate limit (Part 3 Group C)', () => {
+  test('returns 429 with RATE_LIMITED after 10 registrations from same IP', async () => {
+    const body = {
+      client_name: 'test-client',
+      redirect_uris: ['http://127.0.0.1/cb'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+    }
+    // The 11th request from the same IP (app.inject → 127.0.0.1) trips the
+    // in-memory limiter, which runs BEFORE the registration handoff. The
+    // afterEach reset keeps this isolated from the unit rate-limit tests.
+    let last: Awaited<ReturnType<typeof app.inject>> | undefined
+    for (let i = 0; i < 11; i++) {
+      last = await app.inject({
+        method: 'POST',
+        url: '/oauth/reg',
+        headers: { 'content-type': 'application/json' },
+        payload: body,
+      })
+    }
+    expect(last!.statusCode).toBe(429)
+    expect(last!.json().error.code).toBe('RATE_LIMITED')
+    expect(Number(last!.headers['retry-after'])).toBeGreaterThan(0)
+  })
+})
+
+describe('OAuth flows still deferred (need the browser consent leg)', () => {
+  // These remain unwritten because obtaining a refresh token requires the
+  // authorize→consent→code→token round-trip, whose consent step is
+  // browser-driven (Playwright). They belong with the consent E2E
+  // (api-gateway/test/oauth-e2e.test.ts, not yet created — tracked in TODOS).
   test.skip('register → authorize+PKCE → consent → token exchange → MCP /mcp 200', () => {})
   test.skip('refresh_token rotation issues new pair, old one invalid', () => {})
   test.skip('refresh-token reuse triggers chain revocation + Sentry alert', () => {})
+  // client_credentials: DCR clients here are registered with
+  // authorization_code+refresh_token grants only; testing a client_credentials
+  // grant needs a separately-provisioned confidential CC client — deferred
+  // with the E2E slice rather than guessed at.
   test.skip('client_credentials grant issues a token without user interaction', () => {})
-  test.skip('/oauth/reg returns 429 after 10 registrations from same IP', () => {})
 })
