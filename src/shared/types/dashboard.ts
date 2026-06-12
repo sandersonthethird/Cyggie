@@ -8,6 +8,11 @@ export type DashboardEntityTypeFilter = Extract<
   'portfolio' | 'lp' | 'vc_fund' | 'prospect'
 >
 
+// A stage filter value is a real pipeline stage or the synthetic 'none' sentinel,
+// which matches items with no stage: companies whose pipeline_stage is null/empty
+// (for any activity type) and untagged notes (notes with no company_id).
+export type StageFilterValue = CompanyPipelineStage | 'none'
+
 export interface DashboardActivityItem {
   id: string
   type: DashboardActivityType
@@ -49,7 +54,7 @@ export interface DashboardData {
 
 export interface DashboardActivityFilter {
   types: DashboardActivityType[]
-  pipelineStages: CompanyPipelineStage[] | null   // null = no stage filter (show all)
+  pipelineStages: StageFilterValue[] | null       // null = no stage filter (show all); may include 'none'
   entityTypes: DashboardEntityTypeFilter[] | null  // null = no entity type filter (show all)
 }
 

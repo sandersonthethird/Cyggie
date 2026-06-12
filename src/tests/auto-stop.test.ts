@@ -1,16 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { RecordingAutoStop } from '../main/recording/auto-stop'
-import type { WindowSource } from '../main/audio/window-detector'
 
-// The MeetingWindowWatcher (via window-detector) imports desktopCapturer; stub
-// it so the watcher is inert by default (returns no windows). Window-close
-// tests inject getWindowSources directly for determinism.
+// RecordingAutoStop constructs a MeetingAudioWatcher (which imports electron +
+// spawns a helper). Inject a no-op stub so tests never spawn anything.
 vi.mock('electron', () => ({
-  desktopCapturer: { getSources: vi.fn(async () => [] as WindowSource[]) }
+  app: { isPackaged: false, getAppPath: () => '/tmp' }
 }))
 
-const src = (name: string): WindowSource => ({ id: name, name })
-const noWindows = async (): Promise<WindowSource[]> => []
+const stubWatcher = () => ({ start: vi.fn(), stop: vi.fn() })
 
 // Most calendar tests pass a tiny minRecordingMs so the min-duration gate
 // doesn't block the behavior under test. Dedicated gate tests use the real
@@ -30,7 +27,7 @@ describe('RecordingAutoStop — calendar detection', () => {
     const onAutoStop = vi.fn()
     const endTime = new Date(Date.now() + 100).toISOString()
 
-    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, minRecordingMs: TINY_MIN })
+    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, minRecordingMs: TINY_MIN, audioWatcher: stubWatcher() })
     autoStop.start()
 
     vi.advanceTimersByTime(50)
@@ -47,7 +44,7 @@ describe('RecordingAutoStop — calendar detection', () => {
     const onAutoStop = vi.fn()
     const endTime = new Date(Date.now() + 100).toISOString()
 
-    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, minRecordingMs: TINY_MIN })
+    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, minRecordingMs: TINY_MIN, audioWatcher: stubWatcher() })
     autoStop.start()
 
     vi.advanceTimersByTime(200)
@@ -63,7 +60,7 @@ describe('RecordingAutoStop — calendar detection', () => {
     const onAutoStop = vi.fn()
     const endTime = new Date(Date.now() + 100).toISOString()
 
-    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, minRecordingMs: TINY_MIN })
+    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, minRecordingMs: TINY_MIN, audioWatcher: stubWatcher() })
     autoStop.start()
 
     vi.advanceTimersByTime(200)
@@ -85,7 +82,7 @@ describe('RecordingAutoStop — calendar detection', () => {
     const onAutoStop = vi.fn()
     const endTime = new Date(Date.now() + 100).toISOString()
 
-    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, minRecordingMs: TINY_MIN })
+    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, minRecordingMs: TINY_MIN, audioWatcher: stubWatcher() })
     autoStop.start()
     autoStop.stop()
 
@@ -110,7 +107,7 @@ describe('RecordingAutoStop — min-recording-duration gate (late participants)'
     // participant" case.
     const endTime = new Date(Date.now() - 5 * 60 * 1000).toISOString()
 
-    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime })
+    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, audioWatcher: stubWatcher() })
     autoStop.start()
 
     // Immediately past endTime → checkCalendarStop fires → recDur < minRec → reschedule.
@@ -126,7 +123,7 @@ describe('RecordingAutoStop — min-recording-duration gate (late participants)'
     const onAutoStop = vi.fn()
     const endTime = new Date(Date.now() - 5 * 60 * 1000).toISOString()
 
-    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime })
+    const autoStop = new RecordingAutoStop({ onAutoStop, calendarEndTime: endTime, audioWatcher: stubWatcher() })
     autoStop.start()
 
     // First check at t=0: recDur < minRec → reschedule for 60s
@@ -141,7 +138,7 @@ describe('RecordingAutoStop — min-recording-duration gate (late participants)'
   })
 })
 
-describe('RecordingAutoStop — onWindowGone chokepoint (floor + idempotency)', () => {
+describe('RecordingAutoStop — onMeetingEnded (mic released)', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -150,118 +147,47 @@ describe('RecordingAutoStop — onWindowGone chokepoint (floor + idempotency)', 
     vi.useRealTimers()
   })
 
-  it('ignores a window-gone signal under the 45s window floor', () => {
+  it('stops immediately when the meeting ends (no floor — the watcher gates it)', () => {
     const onAutoStop = vi.fn()
-    const autoStop = new RecordingAutoStop({ onAutoStop, getWindowSources: noWindows })
+    const autoStop = new RecordingAutoStop({ onAutoStop, audioWatcher: stubWatcher() })
     autoStop.start()
 
-    autoStop.onWindowGone() // t≈0, default windowMinRecordingMs = 45s
-    vi.advanceTimersByTime(30 * 1000)
-    autoStop.onWindowGone()
-    expect(onAutoStop).not.toHaveBeenCalled()
-
-    autoStop.stop()
-  })
-
-  it('stops once the window-gone signal arrives past the floor', () => {
-    const onAutoStop = vi.fn()
-    const autoStop = new RecordingAutoStop({ onAutoStop, getWindowSources: noWindows })
-    autoStop.start()
-
-    vi.advanceTimersByTime(45 * 1000 + 100)
-    autoStop.onWindowGone()
+    autoStop.onMeetingEnded()
     expect(onAutoStop).toHaveBeenCalledTimes(1)
   })
 
-  it('is idempotent — repeated window-gone signals fire onAutoStop once', () => {
+  it('is idempotent — repeated meeting-ended signals fire onAutoStop once', () => {
     const onAutoStop = vi.fn()
-    const autoStop = new RecordingAutoStop({
-      onAutoStop,
-      windowMinRecordingMs: TINY_MIN,
-      getWindowSources: noWindows
-    })
+    const autoStop = new RecordingAutoStop({ onAutoStop, audioWatcher: stubWatcher() })
     autoStop.start()
 
-    vi.advanceTimersByTime(TINY_MIN + 50)
-    autoStop.onWindowGone()
-    autoStop.onWindowGone()
-    autoStop.onWindowGone()
+    autoStop.onMeetingEnded()
+    autoStop.onMeetingEnded()
+    autoStop.onMeetingEnded()
     expect(onAutoStop).toHaveBeenCalledTimes(1)
   })
 
   it('does nothing after stop()', () => {
     const onAutoStop = vi.fn()
-    const autoStop = new RecordingAutoStop({
-      onAutoStop,
-      windowMinRecordingMs: TINY_MIN,
-      getWindowSources: noWindows
-    })
+    const watcher = stubWatcher()
+    const autoStop = new RecordingAutoStop({ onAutoStop, audioWatcher: watcher })
     autoStop.start()
     autoStop.stop()
 
-    vi.advanceTimersByTime(TINY_MIN + 50)
-    autoStop.onWindowGone()
+    autoStop.onMeetingEnded()
     expect(onAutoStop).not.toHaveBeenCalled()
-  })
-})
-
-describe('RecordingAutoStop — window watcher integration', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
+    expect(watcher.stop).toHaveBeenCalled() // watcher torn down on stop()
   })
 
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
-  it('stops when the watched meeting window closes past the floor', async () => {
+  it('starts and stops the injected audio watcher with the recording', () => {
     const onAutoStop = vi.fn()
-    const getWindowSources = vi
-      .fn<[], Promise<WindowSource[]>>()
-      .mockResolvedValueOnce([src('Zoom Meeting')]) // start snapshot → arm zoom
-      .mockResolvedValue([src('Finder')]) // window closed
-    const autoStop = new RecordingAutoStop({
-      onAutoStop,
-      meetingPlatform: 'zoom',
-      windowMinRecordingMs: TINY_MIN,
-      getWindowSources
-    })
+    const watcher = stubWatcher()
+    const autoStop = new RecordingAutoStop({ onAutoStop, audioWatcher: watcher })
+
     autoStop.start()
+    expect(watcher.start).toHaveBeenCalledTimes(1)
 
-    await vi.advanceTimersByTimeAsync(TINY_MIN + 750 * 3)
-    expect(onAutoStop).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not stop while the meeting window stays open', async () => {
-    const onAutoStop = vi.fn()
-    const getWindowSources = vi.fn(async () => [src('Zoom Meeting')])
-    const autoStop = new RecordingAutoStop({
-      onAutoStop,
-      meetingPlatform: 'zoom',
-      windowMinRecordingMs: TINY_MIN,
-      getWindowSources
-    })
-    autoStop.start()
-
-    await vi.advanceTimersByTimeAsync(TINY_MIN + 750 * 5)
-    expect(onAutoStop).not.toHaveBeenCalled()
     autoStop.stop()
-  })
-
-  it('forwards a track.ended hint through onWindowGone (past floor)', async () => {
-    const onAutoStop = vi.fn()
-    const getWindowSources = vi.fn(async () => [src('Zoom Meeting')])
-    const autoStop = new RecordingAutoStop({
-      onAutoStop,
-      meetingPlatform: 'zoom',
-      windowMinRecordingMs: TINY_MIN,
-      getWindowSources
-    })
-    autoStop.start()
-    await vi.advanceTimersByTimeAsync(0) // let the start() snapshot resolve
-
-    vi.advanceTimersByTime(TINY_MIN + 50)
-    autoStop.notifyWindowGone()
-    expect(onAutoStop).toHaveBeenCalledTimes(1)
+    expect(watcher.stop).toHaveBeenCalledTimes(1)
   })
 })

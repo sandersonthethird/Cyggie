@@ -122,6 +122,7 @@ export function registerRecordingHandlers(): void {
       title?: string,
       calEventId?: string,
       appendToMeetingId?: string,
+      fallbackMeetingUrl?: string,
     ) => {
       // Idempotent re-fire from the renderer: if we're already recording
       // *this exact* calendar event, return the existing session info
@@ -197,8 +198,12 @@ export function registerRecordingHandlers(): void {
           }
         }
         aac.start(result.meetingId)
-        if (result.meetingUrl) {
-          void openMeetingUrlInBrowser(result.meetingUrl)
+        // The freshly-resolved URL wins; fall back to the one the caller
+        // already had in hand (the notification path forwards event.meetingUrl)
+        // for cases where the calendar lookup couldn't resolve it.
+        const urlToOpen = result.meetingUrl ?? fallbackMeetingUrl
+        if (urlToOpen) {
+          void openMeetingUrlInBrowser(urlToOpen)
         }
         const win = getMainWindow()
         if (win) updateTrayMenu(win, true)
@@ -220,12 +225,6 @@ export function registerRecordingHandlers(): void {
 
   ipcMain.on(IPC_CHANNELS.RECORDING_AEC_DEGRADED, () => {
     activeSession?.onAecDegraded()
-  })
-
-  // Signal B: the captured window's track ended in the renderer → forward to
-  // the session's auto-stop, which applies the window floor before stopping.
-  ipcMain.on(IPC_CHANNELS.RECORDING_WINDOW_GONE_HINT, () => {
-    activeSession?.notifyWindowGone()
   })
 
   ipcMain.on(IPC_CHANNELS.RECORDING_LOUDNESS_SAMPLE, (_event, sample: unknown) => {

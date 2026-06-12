@@ -9,6 +9,11 @@ directories:
 extraResources:
   - from: src/main/logo.png
     to: logo.png
+  # macOS-only Swift helper that detects when the meeting app releases the mic
+  # (call ended) so recording stops instantly. Built by build-native-helper.mjs
+  # (universal) before packaging; resolved at runtime via process.resourcesPath.
+  - from: native/meeting-audio-watch/meeting-audio-watch
+    to: meeting-audio-watch
 
 files:
   - '!**/.vscode/*'

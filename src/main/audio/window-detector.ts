@@ -1,4 +1,3 @@
-import { desktopCapturer } from 'electron'
 import {
   MEETING_APPS,
   type MeetingPlatform,
@@ -6,29 +5,14 @@ import {
 } from '../../shared/constants/meeting-apps'
 
 /**
- * Window-based meeting detection.
- *
- * The meeting "window" is the real end-of-meeting signal: closing a Zoom
- * meeting window / leaving a Meet tab removes the window even though the app
- * (Zoom.us, Chrome) keeps running, so process-liveness can't see it. Reading
- * window titles via desktopCapturer needs only the Screen Recording permission
- * the app already holds for system-audio capture — no extra permission.
- *
- * Title matching lives in MEETING_APPS.titlePatterns (single source of truth);
- * this module never hardcodes title strings.
+ * Find the active meeting window for a platform among desktopCapturer sources,
+ * for targeting screen capture (video.ipc). Title patterns live in
+ * MEETING_APPS.titlePatterns (single source of truth).
  */
 
 // We only read id + name off a source, so accept the minimal shape. This lets
 // callers (and tests) pass plain objects without the full Electron type.
 export type WindowSource = Pick<Electron.DesktopCapturerSource, 'id' | 'name'>
-
-/** Enumerate open windows. thumbnailSize 0 skips the expensive thumbnail capture. */
-export async function getWindowSources(): Promise<WindowSource[]> {
-  return desktopCapturer.getSources({
-    types: ['window'],
-    thumbnailSize: { width: 0, height: 0 }
-  })
-}
 
 function titleMatches(name: string, platform: DetectablePlatform): boolean {
   const lower = name.toLowerCase()
@@ -37,8 +21,7 @@ function titleMatches(name: string, platform: DetectablePlatform): boolean {
 
 /**
  * Pick the best window for a platform — the *active meeting* window over
- * ancillary ones. Used by video capture to target the right window.
- * Returns null for 'other' or when nothing matches.
+ * ancillary ones. Returns null for 'other' or when nothing matches.
  */
 export function findMeetingWindow(
   sources: WindowSource[],
@@ -66,17 +49,4 @@ export function findMeetingWindow(
   }
 
   return matches[0]
-}
-
-/** Which detectable platforms currently have at least one meeting window open. */
-export function detectMeetingWindowPlatforms(
-  sources: WindowSource[]
-): Set<DetectablePlatform> {
-  const present = new Set<DetectablePlatform>()
-  for (const platform of Object.keys(MEETING_APPS) as DetectablePlatform[]) {
-    if (sources.some((s) => titleMatches(s.name, platform))) {
-      present.add(platform)
-    }
-  }
-  return present
 }

@@ -20,3 +20,8 @@ cyggie.db
 
 # Claude Code per-project scratch (settings, scheduled task locks).
 .claude/
+
+# Compiled native helpers (rebuilt by scripts/build-native-helper.mjs)
+native/meeting-audio-watch/meeting-audio-watch
+native/meeting-audio-watch/meeting-audio-watch.arm64
+native/meeting-audio-watch/meeting-audio-watch.x86_64

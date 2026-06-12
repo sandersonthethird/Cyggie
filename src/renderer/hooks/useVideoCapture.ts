@@ -142,17 +142,11 @@ export function useVideoCapture() {
         setVideoError('Video recording error')
       }
 
-      // Listen for the video track ending — the user stopped sharing via OS
-      // controls OR the captured meeting window closed. Only act while the
-      // recorder is live so our own teardown (which also stops the track)
-      // doesn't re-trigger. Signal B: tell main the window is gone so auto-stop
-      // can end the whole session (it applies the 45s window floor); the local
-      // stop() only ends video capture.
+      // Listen for the video track ending (user stops sharing via OS controls)
       const videoTrack = stream.getVideoTracks()[0]
       if (videoTrack) {
         videoTrack.onended = () => {
           if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-            api.send(IPC_CHANNELS.RECORDING_WINDOW_GONE_HINT)
             stop()
           }
         }

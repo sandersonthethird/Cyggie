@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, Notification } from 'electron'
+import { app, BrowserWindow, Notification } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { getUpcomingEvents } from './google-calendar'
@@ -6,7 +6,7 @@ import { isCalendarConnected } from './google-auth'
 import { MEETING_APPS } from '../../shared/constants/meeting-apps'
 import type { CalendarEvent } from '../../shared/types/calendar'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
-import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
+import { getCurrentUserId } from '../security/current-user'
 import { getStoragePath } from '../storage/paths'
 import { prepareMeetingFromCalendarEvent } from '../ipc/meeting.ipc'
 
@@ -161,34 +161,11 @@ async function showMeetingNotification(event: CalendarEvent): Promise<void> {
   notification.on('click', () => {
     console.log('[MeetingNotifier] Starting meeting for:', event.title)
 
-    // Open the meeting URL externally (Zoom, Meet, Teams, etc.)
-    if (event.meetingUrl) {
-      let url = event.meetingUrl
-      try {
-        const parsed = new URL(url)
-        if (parsed.hostname === 'meet.google.com') {
-          const email = getCurrentUserProfile().email
-          if (email) parsed.searchParams.set('authuser', email)
-          url = parsed.toString()
-        }
-      } catch {
-        // Bad URL — open as-is
-      }
-      shell.openExternal(url).catch((err) => {
-        console.error('[MeetingNotifier] Failed to open meeting URL:', err)
-      })
-    } else {
-      // No URL was extracted from the calendar event. Log enough to debug
-      // (but not the description itself — it can hold PII/meeting passwords).
-      console.warn('[MeetingNotifier] No meetingUrl on click; cannot auto-launch', {
-        eventId: event.id,
-        title: event.title,
-        platform: event.platform,
-        descriptionLength: event.description?.length ?? 0,
-      })
-    }
-
-    // Focus Cyggie window and start recording
+    // Focus Cyggie window and start recording. The RECORDING_START path
+    // (recording.ipc.ts) opens the meeting URL exactly once — opening it here
+    // too produced a duplicate window. event.meetingUrl is forwarded via
+    // focusAndRecord as a fallback in case the recording-side lookup can't
+    // resolve it (e.g. calendar disconnected between show and click).
     focusAndRecord(event)
     notification.close()
     activeNotifications.delete(notification)

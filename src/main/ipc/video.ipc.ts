@@ -30,7 +30,7 @@ import { broadcast } from './_broadcast'
  */
 
 // findMeetingWindow moved to ../audio/window-detector (shared with auto-stop's
-// MeetingWindowWatcher; title patterns live in MEETING_APPS).
+// title patterns live in MEETING_APPS).
 
 export function registerVideoHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.VIDEO_START, (_event, meetingId: string) => {
