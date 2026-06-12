@@ -12,6 +12,14 @@ const EnvSchema = z.object({
   // Generate with: openssl rand -base64 32
   JWT_SIGNING_SECRET: z.string().min(32),
 
+  // Required: AES-256-GCM key for encrypting Google OAuth refresh tokens at
+  // rest (oauth_tokens.refresh_token_encrypted). Must decode to exactly 32
+  // bytes — generate with: openssl rand -base64 32. Lives only in Fly secrets,
+  // never in the DB, so a Neon leak alone can't decrypt stored refresh tokens.
+  // See auth/token-crypto.ts. Loud min() here; exact byte-length is enforced
+  // in loadKey() at use.
+  GOOGLE_TOKEN_ENC_KEY: z.string().min(32),
+
   // Required: Google OAuth client (Web application type — not the desktop client).
   GOOGLE_CLIENT_ID: z.string().min(1),
   GOOGLE_CLIENT_SECRET: z.string().min(1),

@@ -7,7 +7,23 @@ import { eq, and, inArray } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
+import { decryptToken } from '../auth/token-crypto'
 import type { GatewayEnv } from '../env'
+
+// Detect Google's `invalid_grant` — the one error that means the refresh token
+// itself is dead (revoked / expired / password-changed). google-auth-library
+// surfaces it on the GaxiosError as response.data.error and in the message.
+// Everything else (5xx, ENOTFOUND, rate limit) is transient and must NOT force
+// re-consent.
+function isInvalidGrant(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const data = (err as { response?: { data?: { error?: unknown } } }).response?.data
+  if (data && typeof data === 'object' && 'error' in data && data.error === 'invalid_grant') {
+    return true
+  }
+  const msg = err instanceof Error ? err.message : String(err)
+  return msg.includes('invalid_grant')
+}
 
 // First read endpoint per the mobile V1 plan (M1b). Calendar today + range.
 //
@@ -137,13 +153,66 @@ export async function registerCalendarRoutes(
         })
       }
 
+      // Decrypt the stored refresh token so google-auth-library can mint a fresh
+      // access token on its own when the current one is expired. A legacy row
+      // (SHA-256 hash from before token-crypto) or a key mismatch throws here →
+      // flip needs_reauth and bounce the user through OAuth once, which re-stores
+      // a real encrypted refresh token.
+      let refreshToken: string
+      try {
+        refreshToken = decryptToken(oauth.refreshTokenEncrypted ?? '', env.GOOGLE_TOKEN_ENC_KEY)
+      } catch (err) {
+        await db
+          .update(schema.oauthTokens)
+          .set({ needsReauth: true, updatedAt: new Date() })
+          .where(eq(schema.oauthTokens.id, oauth.id))
+        req.log.warn(
+          { err: err instanceof Error ? err.message : String(err), userId: user.sub },
+          'google refresh token undecryptable — forcing reauth',
+        )
+        throw new GatewayError({
+          statusCode: 401,
+          code: 'REAUTH_REQUIRED',
+          message: 'Google access has expired or been revoked',
+          reauthRequired: true,
+        })
+      }
+
       const client = new google.auth.OAuth2({
         clientId: env.GOOGLE_CLIENT_ID,
         clientSecret: env.GOOGLE_CLIENT_SECRET,
       })
+      // expiry_date is epoch ms (not a Date). With a refresh_token set, the
+      // library auto-refreshes when this is past and emits 'tokens'.
       client.setCredentials({
         access_token: oauth.accessToken,
+        refresh_token: refreshToken,
         expiry_date: oauth.accessTokenExpiresAt?.getTime() ?? null,
+      })
+
+      // Persist the refreshed access token (+ expiry) so the next request reuses
+      // it instead of refreshing again. Persist access_token + expiry ONLY —
+      // Google omits the refresh token on refresh, so writing it back would null
+      // out refresh_token_encrypted and re-break the cycle. The listener is
+      // fire-and-forget (EventEmitter doesn't await); a failed write self-heals
+      // on the next request, so we just log it with context.
+      client.on('tokens', (tokens) => {
+        if (!tokens.access_token) return
+        void db
+          .update(schema.oauthTokens)
+          .set({
+            accessToken: tokens.access_token,
+            accessTokenExpiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : null,
+            lastRefreshedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.oauthTokens.id, oauth.id))
+          .catch((err: unknown) => {
+            req.log.warn(
+              { err: err instanceof Error ? err.message : String(err), userId: user.sub },
+              'failed to persist refreshed google access token (will retry next request)',
+            )
+          })
       })
 
       const calendar = google.calendar({ version: 'v3', auth: client })
@@ -159,20 +228,31 @@ export async function registerCalendarRoutes(
           ...(req.query.pageToken ? { pageToken: req.query.pageToken } : {}),
         })
       } catch (err) {
-        // Token expired during a stretch of inactivity → flip needs_reauth and bail.
-        // Google's invalid_grant on access_token usually means refresh is fine, but
-        // V1 keeps it simple — push the user back through OAuth.
-        await db
-          .update(schema.oauthTokens)
-          .set({ needsReauth: true, updatedAt: new Date() })
-          .where(eq(schema.oauthTokens.id, oauth.id))
         const msg = err instanceof Error ? err.message : String(err)
-        req.log.warn({ err: msg }, 'google calendar list failed')
+        // Only a genuinely dead refresh token (invalid_grant: revoked, expired,
+        // or password-changed) warrants forcing re-consent. The library already
+        // tried to refresh; if it still failed with invalid_grant the credential
+        // is unrecoverable. Anything else (network blip, Google 5xx, rate limit)
+        // is transient — surface a retryable error WITHOUT flipping needs_reauth,
+        // so a momentary hiccup doesn't kick the user back through OAuth.
+        if (isInvalidGrant(err)) {
+          await db
+            .update(schema.oauthTokens)
+            .set({ needsReauth: true, updatedAt: new Date() })
+            .where(eq(schema.oauthTokens.id, oauth.id))
+          req.log.warn({ err: msg, userId: user.sub }, 'google refresh failed (invalid_grant)')
+          throw new GatewayError({
+            statusCode: 401,
+            code: 'GOOGLE_AUTH_FAILED',
+            message: 'Google rejected the calendar request — sign in again',
+            reauthRequired: true,
+          })
+        }
+        req.log.warn({ err: msg, userId: user.sub }, 'google calendar list failed (transient)')
         throw new GatewayError({
-          statusCode: 401,
-          code: 'GOOGLE_AUTH_FAILED',
-          message: 'Google rejected the calendar request — sign in again',
-          reauthRequired: true,
+          statusCode: 502,
+          code: 'GOOGLE_UNAVAILABLE',
+          message: 'Could not reach Google Calendar — try again',
         })
       }
 
