@@ -253,6 +253,13 @@
       "when": 1781178876347,
       "tag": "0035_chat_sessions_attached_entities",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1781178900000,
+      "tag": "0036_meetings_location",
+      "breakpoints": true
     }
   ]
 }

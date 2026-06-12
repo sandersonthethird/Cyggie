@@ -303,6 +303,7 @@ export default function CalendarTab() {
           attendeeEmails: event.attendees.map((a) => a.email).filter((e) => e.length > 0),
           ...(endTimeIso ? { endTime: endTimeIso } : {}),
           ...(event.meetingUrl ? { meetingUrl: event.meetingUrl } : {}),
+          ...(event.location ? { location: event.location } : {}),
         })
         router.push(`/meetings/${meeting.id}`)
         // Refresh the relevant calendar query so the next render carries

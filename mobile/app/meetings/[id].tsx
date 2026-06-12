@@ -14,7 +14,14 @@ import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
+import { useFocusEffect } from '@react-navigation/native'
 import { ApiError } from '../../lib/api/client'
+import { meetingDetailRefetchInterval } from '../../lib/meetings/in-progress'
+import {
+  classifyLocation,
+  extractLocationUrl,
+  extractPhoneNumber,
+} from '@cyggie/shared/location-classifier'
 import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { decideSummaryDisplay } from '../../lib/meetings/summary-display'
 
@@ -87,7 +94,24 @@ export default function MeetingDetailScreen() {
     queryFn: ({ signal }) => fetchMeeting(id, { signal }),
     enabled: id.length > 0,
     staleTime: 30_000,
+    // While the meeting is still recording/transcribing, repoll so the status
+    // pill flips to "transcribed" live — without the user having to leave the
+    // screen and come back. Stops once the server reaches a terminal status.
+    refetchInterval: (q) => meetingDetailRefetchInterval(q.state.data?.status),
+    refetchIntervalInBackground: false,
   })
+
+  // Refetch when the screen regains focus so any change made elsewhere while
+  // we were away (a desktop-added summary, edited notes, a status flip we
+  // missed) is reflected on return. Complements the in-progress poll above:
+  // the poll covers "changing while I watch", this covers "changed while I
+  // was gone". refetch() is a no-op when the query is disabled (empty id).
+  useFocusEffect(
+    useCallback(() => {
+      void query.refetch()
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]),
+  )
 
   // Enhance UI state. Only relevant when SUMMARY_TAB_ENABLED, but the
   // hooks have to run unconditionally to satisfy rules-of-hooks.
@@ -330,22 +354,70 @@ function Hero({ meeting }: { meeting: MeetingDetail }) {
       <View style={styles.heroPillRow}>
         <MeetingStatusPill status={meeting.status} />
       </View>
-      {meeting.meetingUrl && (
-        <View style={styles.heroLinks}>
-          <LinkChip
-            icon="videocam-outline"
-            label={meeting.meetingPlatform ?? 'Join'}
-            disabled={joinLinkExpired}
-            onPress={() =>
-              openExternal(
-                meeting.meetingUrl!,
-                meeting.meetingPlatform ?? 'Meeting link',
-                meeting.meetingUrl!,
-              )
-            }
-          />
-        </View>
-      )}
+      <ConferencingChip meeting={meeting} joinLinkExpired={joinLinkExpired} />
+    </View>
+  )
+}
+
+// Drives the Hero's conferencing chip off the calendar `location` field.
+// Google auto-attaches a Meet link to most events, so meeting.meetingUrl
+// alone can't tell an in-person meeting from a video one — classifyLocation
+// disambiguates the overloaded `location` text:
+//   in_person → "In person" → Google Maps
+//   phone     → "Call"      → tel: (never "In person")
+//   video     → the URL in `location`, else fall through to meetingUrl
+//   none      → the existing meetingUrl / platform chip
+function ConferencingChip({
+  meeting,
+  joinLinkExpired,
+}: {
+  meeting: MeetingDetail
+  joinLinkExpired: boolean
+}) {
+  const kind = classifyLocation(meeting.location)
+
+  if (kind === 'in_person') {
+    const loc = meeting.location ?? ''
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc)}`
+    return (
+      <View style={styles.heroLinks}>
+        <LinkChip
+          icon="location-outline"
+          label="In person"
+          onPress={() => openExternal(mapsUrl, 'Location', loc)}
+        />
+      </View>
+    )
+  }
+
+  if (kind === 'phone') {
+    const phone = extractPhoneNumber(meeting.location)
+    return (
+      <View style={styles.heroLinks}>
+        <LinkChip
+          icon="call-outline"
+          label="Call"
+          disabled={!phone}
+          onPress={() =>
+            phone && openExternal(`tel:${phone}`, 'Call', meeting.location ?? '')
+          }
+        />
+      </View>
+    )
+  }
+
+  // video class: prefer the URL embedded in `location`, else the meetingUrl.
+  const videoUrl = kind === 'video' ? extractLocationUrl(meeting.location) : null
+  const url = videoUrl ?? meeting.meetingUrl
+  if (!url) return null
+  return (
+    <View style={styles.heroLinks}>
+      <LinkChip
+        icon="videocam-outline"
+        label={meeting.meetingPlatform ?? 'Join'}
+        disabled={joinLinkExpired}
+        onPress={() => openExternal(url, meeting.meetingPlatform ?? 'Meeting link', url)}
+      />
     </View>
   )
 }

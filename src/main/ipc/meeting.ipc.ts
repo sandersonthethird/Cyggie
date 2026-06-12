@@ -336,6 +336,7 @@ export function prepareMeetingFromCalendarEvent(
     startTime: string
     platform: MeetingPlatform | null
     meetingUrl: string | null
+    location?: string | null
     attendees: string[]
     attendeeEmails: string[]
     // Optional: callers with a full CalendarEvent forward this from
@@ -362,6 +363,7 @@ export function prepareMeetingFromCalendarEvent(
     calendarEventId: event.id,
     meetingPlatform: event.platform,
     meetingUrl: event.meetingUrl,
+    location: event.location?.trim() ? event.location : null,
     attendees: event.attendees.length > 0 ? event.attendees : null,
     attendeeEmails: event.attendeeEmails.length > 0 ? event.attendeeEmails : null,
     selfName: event.selfName ?? deriveSelfNameFromUser(userId),

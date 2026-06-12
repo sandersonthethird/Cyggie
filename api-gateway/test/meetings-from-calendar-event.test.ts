@@ -431,3 +431,101 @@ describe('POST /meetings/from-calendar-event', () => {
     expect(row?.date?.toISOString()).toBe('2026-05-22T14:00:00.000Z')
   })
 })
+
+describe('POST /meetings/from-calendar-event — location (in-person signal)', () => {
+  test('stores + returns location on create', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-' + createId()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: {
+        calendarEventId: calEventId,
+        title: 'Coffee with a founder',
+        startTime: '2026-05-21T15:00:00.000Z',
+        location: '124 Main St, San Francisco, CA',
+      },
+    })
+
+    expect(res.statusCode).toBe(201)
+    const body = res.json() as { id: string; location: string | null }
+    await reapMeeting(body.id)
+    expect(body.location).toBe('124 Main St, San Francisco, CA')
+
+    const row = await db.query.meetings.findFirst({
+      where: and(
+        eq(schema.meetings.userId, userId),
+        eq(schema.meetings.calendarEventId, calEventId),
+      ),
+    })
+    expect(row?.location).toBe('124 Main St, San Francisco, CA')
+  })
+
+  test('normalizes an empty-string location to null', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-' + createId()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: {
+        calendarEventId: calEventId,
+        title: 'Video call',
+        startTime: '2026-05-21T15:00:00.000Z',
+        location: '   ',
+      },
+    })
+
+    expect(res.statusCode).toBe(201)
+    const body = res.json() as { id: string; location: string | null }
+    await reapMeeting(body.id)
+    expect(body.location).toBeNull()
+  })
+
+  test('backfills location onto an existing row on re-tap (diffCalendarFields)', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-' + createId()
+    const base = {
+      calendarEventId: calEventId,
+      title: 'Sync',
+      startTime: '2026-05-21T15:00:00.000Z',
+    }
+
+    // First tap: no location (e.g. desktop created the row before location
+    // capture, or the event had none at the time).
+    const first = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: base,
+    })
+    expect(first.statusCode).toBe(201)
+    const firstBody = first.json() as { id: string; location: string | null }
+    await reapMeeting(firstBody.id)
+    expect(firstBody.location).toBeNull()
+
+    // Second tap now carries a location → existing row is refreshed (200) and
+    // the location is backfilled onto the SAME row id.
+    const second = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { ...base, location: 'Conference Room B' },
+    })
+    expect(second.statusCode).toBe(200)
+    const secondBody = second.json() as { id: string; location: string | null }
+    expect(secondBody.id).toBe(firstBody.id)
+    expect(secondBody.location).toBe('Conference Room B')
+
+    const row = await db.query.meetings.findFirst({
+      where: and(
+        eq(schema.meetings.userId, userId),
+        eq(schema.meetings.calendarEventId, calEventId),
+      ),
+    })
+    expect(row?.location).toBe('Conference Room B')
+  })
+})

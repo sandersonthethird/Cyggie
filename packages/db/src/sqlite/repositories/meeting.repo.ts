@@ -17,6 +17,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     calendarEventId: row.calendar_event_id,
     meetingPlatform: row.meeting_platform as MeetingPlatform | null,
     meetingUrl: row.meeting_url,
+    location: row.location ?? null,
     transcriptPath: row.transcript_path,
     summaryPath: row.summary_path,
     summary: row.summary ?? null,
@@ -268,6 +269,7 @@ export function createMeeting(data: {
   date: string
   meetingPlatform?: MeetingPlatform | null
   meetingUrl?: string | null
+  location?: string | null
   calendarEventId?: string | null
   attendees?: string[] | null
   attendeeEmails?: string[] | null
@@ -281,17 +283,18 @@ export function createMeeting(data: {
 
   db.prepare(
     `INSERT INTO meetings (
-      id, title, date, meeting_platform, meeting_url, calendar_event_id,
+      id, title, date, meeting_platform, meeting_url, location, calendar_event_id,
       attendees, attendee_emails, self_name, companies, status, is_group_event,
       created_by_user_id, updated_by_user_id
     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     data.title,
     data.date,
     data.meetingPlatform ?? null,
     data.meetingUrl ?? null,
+    data.location ?? null,
     data.calendarEventId ?? null,
     data.attendees ? JSON.stringify(data.attendees) : null,
     data.attendeeEmails ? JSON.stringify(data.attendeeEmails) : null,

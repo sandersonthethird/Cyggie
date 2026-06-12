@@ -10,6 +10,7 @@ import {
   type SharedValue,
 } from 'react-native-reanimated'
 import type { CalendarEvent } from '../lib/api/calendar'
+import { classifyLocation } from '@cyggie/shared/location-classifier'
 import { CompanyLogo } from './CompanyLogo'
 import { MeetingStatusPill } from './MeetingStatusPill'
 import { colors, radii, spacing, type } from '../theme'
@@ -278,8 +279,23 @@ function buildMetaLine(event: CalendarEvent): string {
   if (attendeeCount > 0) {
     parts.push(`${attendeeCount} attendee${attendeeCount === 1 ? '' : 's'}`)
   }
-  if (event.location) parts.push(event.location)
-  if (event.meetingUrl && parts.length === 0) parts.push('Video call')
+  // Label the location the same way the detail view's chip does, so the list
+  // and detail agree (a phone-call note shouldn't read as a place). The raw
+  // address is still shown for a genuine in-person location.
+  switch (classifyLocation(event.location)) {
+    case 'in_person':
+      parts.push(event.location!)
+      break
+    case 'phone':
+      parts.push('Call')
+      break
+    case 'video':
+      parts.push('Video call')
+      break
+    case 'none':
+      if (event.meetingUrl && parts.length === 0) parts.push('Video call')
+      break
+  }
   return parts.join(' · ')
 }
 

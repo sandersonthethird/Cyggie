@@ -1757,6 +1757,29 @@
 .statusTranscribed { background: var(--chip-warning-bg);  color: var(--chip-warning-text); }
 .statusScheduled   { background: var(--chip-neutral-bg);  color: var(--chip-neutral-text); }
 
+/* In-person / Call chip derived from the calendar event's `location` (Google
+   auto-adds a Meet link to most events, so meetingUrl alone can't tell
+   in-person from video). Clickable variant opens Google Maps. */
+.locationChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 2px 8px;
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-text);
+  border: none;
+}
+.locationChipClickable {
+  cursor: pointer;
+}
+.locationChipClickable:hover {
+  background: var(--chip-neutral-bg-hover, var(--chip-neutral-bg));
+  text-decoration: underline;
+}
+
 /* ── Summary / Task cards ───────────────────────────────── */
 .summaryCard,
 .taskCard {

@@ -80,6 +80,7 @@ function markNotified(event: CalendarEvent): void {
         startTime: event.startTime,
         platform: event.platform,
         meetingUrl: event.meetingUrl,
+        location: event.location,
         attendees: event.attendees,
         attendeeEmails: event.attendeeEmails,
         selfName: event.selfName,

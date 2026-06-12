@@ -4,3 +4,4 @@
 // are added in Phase 0.5 when the gateway and packages/services consumers exist.
 export * from './constants/meetings'
 export * from './chat-context-id'
+export * from './location-classifier'

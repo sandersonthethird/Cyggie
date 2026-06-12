@@ -33,7 +33,8 @@ function mapGoogleEvent(item: any): CalendarEvent {
     attendeeEmails,
     meetingUrl: detected?.url || null,
     platform: detected?.platform || null,
-    description: item.description || null
+    description: item.description || null,
+    location: item.location || null
   }
 }
 

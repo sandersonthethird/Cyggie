@@ -62,6 +62,10 @@ export interface PulledMeetingRow {
   calendarEventId: string | null
   meetingPlatform: string | null
   meetingUrl: string | null
+  // Free-text calendar location (migration 122). Drives the desktop In person /
+  // Call chip via classifyLocation(). Pulled down so a location captured on
+  // mobile (or by another desktop) reaches this install's MeetingDetail.
+  location: string | null
   transcriptPath: string | null
   summaryPath: string | null
   recordingPath: string | null
@@ -1300,7 +1304,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
   db.prepare(
     `INSERT INTO meetings (
        id, title, date, duration_seconds, calendar_event_id,
-       meeting_platform, meeting_url,
+       meeting_platform, meeting_url, location,
        transcript_path, summary_path, recording_path,
        transcript_drive_id, summary_drive_id,
        template_id,
@@ -1313,7 +1317,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        created_at, updated_at, lamport
      ) VALUES (
        @id, @title, @date, @durationSeconds, @calendarEventId,
-       @meetingPlatform, @meetingUrl,
+       @meetingPlatform, @meetingUrl, @location,
        @transcriptPath, @summaryPath, @recordingPath,
        @transcriptDriveId, @summaryDriveId,
        @templateId,
@@ -1332,6 +1336,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        calendar_event_id = excluded.calendar_event_id,
        meeting_platform = excluded.meeting_platform,
        meeting_url = excluded.meeting_url,
+       location = excluded.location,
        transcript_path = excluded.transcript_path,
        summary_path = excluded.summary_path,
        recording_path = excluded.recording_path,
@@ -1372,6 +1377,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
     calendarEventId: row.calendarEventId,
     meetingPlatform: row.meetingPlatform,
     meetingUrl: row.meetingUrl,
+    location: row.location ?? null,
     transcriptPath: row.transcriptPath,
     summaryPath: row.summaryPath,
     recordingPath: row.recordingPath,

@@ -52,6 +52,13 @@ export interface Meeting {
   calendarEventId: string | null
   meetingPlatform: MeetingPlatform | null
   meetingUrl: string | null
+  /**
+   * Free-text location from the originating Google Calendar event. Google
+   * auto-attaches a Meet link to most events, so meetingUrl alone can't tell
+   * in-person from video — this is the signal. classifyLocation() in
+   * @cyggie/shared interprets the overloaded field at display time.
+   */
+  location: string | null
   transcriptPath: string | null
   summaryPath: string | null
   /**

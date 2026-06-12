@@ -11,4 +11,8 @@ export interface CalendarEvent {
   meetingUrl: string | null
   platform: MeetingPlatform | null
   description: string | null
+  // Raw `location` from the Google Calendar event. Persisted onto the meeting
+  // row so the In person / Call chip can be shown (Google auto-adds a Meet
+  // link to most events, so meetingUrl alone can't signal in-person).
+  location: string | null
 }

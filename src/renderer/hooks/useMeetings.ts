@@ -56,6 +56,7 @@ export function calendarEventToMeeting(event: CalendarEvent): Meeting {
     calendarEventId: event.id,
     meetingPlatform: event.platform,
     meetingUrl: event.meetingUrl,
+    location: event.location,
     transcriptPath: null,
     summaryPath: null,
     summary: null,

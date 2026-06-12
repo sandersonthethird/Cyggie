@@ -56,6 +56,7 @@ export default defineConfig({
             // Co-located unit tests inside the workspace packages — pure
             // logic with no DB / IPC / React.
             'packages/services/src/**/*.test.ts',
+            'packages/shared/src/**/*.test.ts',
             // Renderer co-located tests (2026-05-24). Pure-JS modules in the
             // renderer (no React rendering needed) live next to their source
             // under src/renderer/**/__tests__/. The `// @vitest-environment

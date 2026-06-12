@@ -66,6 +66,13 @@ export const meetings = pgTable(
     calendarEventId: text('calendar_event_id'),
     meetingPlatform: varchar('meeting_platform', { length: 32 }),
     meetingUrl: text('meeting_url'),
+    // Free-text `location` from the originating Google Calendar event. Google
+    // auto-attaches a Meet link to most events, so `meetingUrl` alone can't
+    // distinguish an in-person meeting from a video one — `location` is the
+    // signal. Overloaded in practice (address, room name, phone-call note, or
+    // a pasted conference URL); classifyLocation() in @cyggie/shared decides
+    // what to show. Null for impromptu / Record-FAB rows and pre-migration rows.
+    location: text('location'),
     // Storage paths (desktop: local disk; gateway: R2 keys).
     transcriptPath: text('transcript_path'),
     summaryPath: text('summary_path'),

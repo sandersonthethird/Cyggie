@@ -38,6 +38,7 @@ function freshDb(): Database.Database {
       calendar_event_id TEXT,
       meeting_platform TEXT,
       meeting_url TEXT,
+      location TEXT,
       transcript_path TEXT,
       summary_path TEXT,
       recording_path TEXT,

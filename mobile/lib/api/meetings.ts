@@ -58,6 +58,13 @@ export interface MeetingDetail {
   isGroupEvent: boolean
   meetingPlatform: string | null
   meetingUrl: string | null
+  /**
+   * Free-text location from the calendar event. classifyLocation() in
+   * @cyggie/shared interprets it to pick the In person / Call / video chip
+   * (Google auto-adds a Meet link to most events, so meetingUrl alone can't
+   * tell in-person from video). Null on impromptu / pre-migration rows.
+   */
+  location: string | null
   notes: string | null
   /**
    * AI-generated summary markdown (Item 2). Populated by the desktop
@@ -125,6 +132,7 @@ export interface PrepareMeetingFromCalendarEventInput {
   attendeeEmails?: string[]
   meetingUrl?: string
   meetingPlatform?: string
+  location?: string
 }
 
 /**

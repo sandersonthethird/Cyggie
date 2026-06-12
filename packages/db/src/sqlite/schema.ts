@@ -8,6 +8,10 @@ export interface MeetingRow {
   calendar_event_id: string | null
   meeting_platform: string | null
   meeting_url: string | null
+  // Free-text location from the originating Google Calendar event (migration
+  // 122). Distinguishes in-person from video meetings (Google auto-adds a Meet
+  // link to most events); classifyLocation() in @cyggie/shared interprets it.
+  location: string | null
   transcript_path: string | null
   summary_path: string | null
   // AI-generated summary markdown — populated by the desktop summarizer alongside

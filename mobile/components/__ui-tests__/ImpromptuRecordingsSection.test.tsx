@@ -23,6 +23,7 @@ function makeMeeting(overrides: Partial<MeetingDetail> = {}): MeetingDetail {
     isGroupEvent: false,
     meetingPlatform: null,
     meetingUrl: null,
+    location: null,
     notes: null,
     summary: null,
     speakerCount: 1,

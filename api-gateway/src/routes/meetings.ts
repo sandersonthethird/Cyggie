@@ -98,6 +98,10 @@ const MeetingDetailSchema = z.object({
   isGroupEvent: z.boolean(),
   meetingPlatform: z.string().nullable(),
   meetingUrl: z.string().nullable(),
+  // Free-text location from the calendar event. classifyLocation() in
+  // @cyggie/shared interprets it client-side to choose the In person / Call /
+  // video chip. Null for impromptu rows and pre-migration meetings.
+  location: z.string().nullable(),
   notes: z.string().nullable(),
   // AI-generated meeting summary markdown. Item 2 — dual-written by the
   // desktop summarizer alongside `summaryPath` so mobile can render it
@@ -288,6 +292,7 @@ async function buildMeetingDetail(
     isGroupEvent: meeting.isGroupEvent,
     meetingPlatform: meeting.meetingPlatform,
     meetingUrl: meeting.meetingUrl,
+    location: meeting.location ?? null,
     notes: meeting.notes,
     summary: meeting.summary ?? null,
     speakerCount: meeting.speakerCount,
@@ -318,6 +323,7 @@ interface FromCalEventBody {
   endTime?: string | undefined
   meetingPlatform?: string | undefined
   meetingUrl?: string | undefined
+  location?: string | undefined
   attendees?: string[] | undefined
   attendeeEmails?: string[] | undefined
 }
@@ -357,6 +363,15 @@ function diffCalendarFields(
   if (existing.meetingUrl !== incomingUrl) {
     changed.push('meetingUrl')
     set.meetingUrl = incomingUrl
+  }
+
+  // Empty string → null so a blank location doesn't read as a real place
+  // (classifyLocation treats "" as 'none', but normalizing here keeps the
+  // stored value clean and the diff stable).
+  const incomingLocation = body.location?.trim() ? body.location : null
+  if (existing.location !== incomingLocation) {
+    changed.push('location')
+    set.location = incomingLocation
   }
 
   const sortedJSON = (xs: string[] | null | undefined): string =>
@@ -503,6 +518,7 @@ export async function registerMeetingRoutes(
         attendeeEmails: z.array(z.string()).optional(),
         meetingUrl: z.string().optional(),
         meetingPlatform: z.string().optional(),
+        location: z.string().optional(),
       }),
       response: { 200: MeetingDetailSchema, 201: MeetingDetailSchema },
     },
@@ -561,6 +577,7 @@ export async function registerMeetingRoutes(
           calendarEventId: body.calendarEventId,
           meetingPlatform: body.meetingPlatform ?? null,
           meetingUrl: body.meetingUrl ?? null,
+          location: body.location?.trim() ? body.location : null,
           attendees: body.attendees ?? null,
           attendeeEmails: body.attendeeEmails ?? null,
           selfName,

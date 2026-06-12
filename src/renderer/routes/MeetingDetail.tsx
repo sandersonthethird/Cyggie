@@ -56,6 +56,7 @@ import { SafeMarkdown } from '../components/SafeMarkdown'
 import { TranscriptBubbles } from '../components/transcript/TranscriptBubbles'
 import { buildBubbleSearchIndex, resolveMeIndexForRender } from '../transcript/to-me-them-view'
 import styles from './MeetingDetail.module.css'
+import { classifyLocation } from '@cyggie/shared/location-classifier'
 import { api } from '../api'
 import { ipcCache } from '../api/ipcCache'
 import { useRemoteApply } from '../api/useRemoteApply'
@@ -1990,6 +1991,38 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
                   {label}
                 </span>
               )
+            })()}
+            {(() => {
+              // Calendar `location` → In person / Call chip. Google auto-adds a
+              // Meet link to most events, so meetingUrl can't distinguish
+              // in-person from video; `location` is the signal. Desktop can't
+              // dial, so the phone chip is informational (the note is the
+              // title); the in-person chip opens Google Maps.
+              const kind = classifyLocation(meeting.location)
+              if (kind === 'in_person') {
+                const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(meeting.location ?? '')}`
+                return (
+                  <button
+                    className={`${styles.locationChip} ${styles.locationChipClickable}`}
+                    title={meeting.location ?? undefined}
+                    onClick={() =>
+                      api
+                        .invoke(IPC_CHANNELS.APP_OPEN_EXTERNAL_URL, mapsUrl)
+                        .catch((err) => console.error('[MeetingDetail] open maps failed', err))
+                    }
+                  >
+                    📍 In person
+                  </button>
+                )
+              }
+              if (kind === 'phone') {
+                return (
+                  <span className={styles.locationChip} title={meeting.location ?? undefined}>
+                    📞 Call
+                  </span>
+                )
+              }
+              return null
             })()}
             <div className={styles.speakers}>
               <div className={styles.attendeeAvatars}>
