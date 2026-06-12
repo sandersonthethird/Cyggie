@@ -64,7 +64,7 @@ export function useLastView(
         saveColumnConfig(saved.columns)
       }
     } catch { /* corrupt data — fall back to default view */ }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps — intentionally mount-only
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- intentionally mount-only
 
   // ── Save on every param/column change ──────────────────────────────────────
   useEffect(() => {

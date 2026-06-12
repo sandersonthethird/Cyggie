@@ -7,7 +7,8 @@ import type {
   DashboardCalendarCompanyContext,
   DashboardData,
   DashboardEntityTypeFilter,
-  DashboardStaleCompany
+  DashboardStaleCompany,
+  StageFilterValue
 } from '@shared/types/dashboard'
 import { DEFAULT_ACTIVITY_FILTER } from '@shared/types/dashboard'
 import type { PipelineSummaryItem, StalledPipelineCompany } from '@shared/types/pipeline'
@@ -255,10 +256,11 @@ const ACTIVITY_SQL_NOTE = `
     NULL AS body_text,
     NULL AS snippet
   FROM notes n
-  WHERE n.company_id IS NOT NULL
 `
 
-const VALID_STAGES: CompanyPipelineStage[] = COMPANY_PIPELINE_STAGE_VALUES
+// 'none' is a valid stage *filter* value (matches null/empty-stage items + untagged
+// notes) even though it isn't a real pipeline stage.
+const VALID_STAGE_FILTERS: StageFilterValue[] = [...COMPANY_PIPELINE_STAGE_VALUES, 'none']
 const VALID_ENTITY_TYPES: DashboardEntityTypeFilter[] = ['portfolio', 'lp', 'vc_fund', 'prospect']
 
 function getActivityFilter(): DashboardActivityFilter {
@@ -274,7 +276,7 @@ function getActivityFilter(): DashboardActivityFilter {
 
     const rawStages = parsed.pipelineStages
     const pipelineStages = Array.isArray(rawStages) && rawStages.length > 0
-      ? (rawStages as unknown[]).filter(s => VALID_STAGES.includes(s as CompanyPipelineStage)) as CompanyPipelineStage[]
+      ? (rawStages as unknown[]).filter(s => VALID_STAGE_FILTERS.includes(s as StageFilterValue)) as StageFilterValue[]
       : null
 
     const rawEntityTypes = parsed.entityTypes
@@ -288,22 +290,30 @@ function getActivityFilter(): DashboardActivityFilter {
   }
 }
 
-// Builds an AND EXISTS clause that filters activity rows to companies matching
-// the given pipeline stages and/or entity types. Values are validated against
-// known enums before interpolation — safe from SQL injection.
-// Returns '' when no filter is active (caller uses unfiltered SQL in that case).
-export function buildCompanyExistsClause(
-  pipelineStages: CompanyPipelineStage[] | null,
-  entityTypes: DashboardEntityTypeFilter[] | null,
-  linkTable: string,    // 'meeting_company_links' | 'email_company_links'
-  linkCol: string,      // 'meeting_id' | 'message_id'
-  activityAlias: string // 'm' | 'em'
+// Builds the inner predicate (against an `oc` org_companies alias) that matches the
+// selected pipeline stages and/or entity types. The synthetic 'none' stage matches
+// companies with a null/empty pipeline_stage. Values are validated against known enums
+// before interpolation — safe from SQL injection. Returns '' when no filter is active.
+//
+// Single source of truth for the stage/type predicate, shared by:
+//   buildCompanyExistsClause  → meetings/emails (link-table EXISTS)
+//   buildNoteWhereClause      → notes (direct company_id, plus untagged handling)
+export function buildCompanyConditions(
+  pipelineStages: StageFilterValue[] | null,
+  entityTypes: DashboardEntityTypeFilter[] | null
 ): string {
   const conditions: string[] = []
 
   if (pipelineStages && pipelineStages.length > 0) {
-    const list = pipelineStages.map(s => `'${s}'`).join(', ')
-    conditions.push(`oc.pipeline_stage IN (${list})`)
+    const stageConds: string[] = []
+    const realStages = pipelineStages.filter(s => s !== 'none')
+    if (realStages.length > 0) {
+      stageConds.push(`oc.pipeline_stage IN (${realStages.map(s => `'${s}'`).join(', ')})`)
+    }
+    if (pipelineStages.includes('none')) {
+      stageConds.push(`oc.pipeline_stage IS NULL`, `oc.pipeline_stage = ''`)
+    }
+    if (stageConds.length > 0) conditions.push(`(${stageConds.join(' OR ')})`)
   }
   if (entityTypes && entityTypes.length > 0) {
     const list = entityTypes.map(e => `'${e}'`).join(', ')
@@ -311,13 +321,56 @@ export function buildCompanyExistsClause(
   }
   if (conditions.length === 0) return ''
 
+  return conditions.join(' OR ')
+}
+
+// Builds an AND EXISTS clause that filters link-table-backed activity (meetings,
+// emails) to companies matching the given stages/entity types.
+// Returns '' when no filter is active (caller uses unfiltered SQL in that case).
+export function buildCompanyExistsClause(
+  pipelineStages: StageFilterValue[] | null,
+  entityTypes: DashboardEntityTypeFilter[] | null,
+  linkTable: string,    // 'meeting_company_links' | 'email_company_links'
+  linkCol: string,      // 'meeting_id' | 'message_id'
+  activityAlias: string // 'm' | 'em'
+): string {
+  const conditions = buildCompanyConditions(pipelineStages, entityTypes)
+  if (!conditions) return ''
+
   return `
   AND EXISTS (
     SELECT 1 FROM ${linkTable} lnk
     JOIN org_companies oc ON oc.id = lnk.company_id
     WHERE lnk.${linkCol} = ${activityAlias}.id
-      AND (${conditions.join(' OR ')})
+      AND (${conditions})
   )`
+}
+
+// Builds the WHERE clause for the notes activity branch. Notes carry company_id
+// directly (no link table) and are frequently untagged (company_id IS NULL).
+//
+//   no company filter            → ''            (show ALL notes, tagged + untagged)
+//   company filter active        → WHERE (tagged note matches conditions)
+//                                    [ OR n.company_id IS NULL  ← only if 'None' / no stage filter ]
+//
+// Untagged notes have no stage, so they're gated by the 'None' stage chip: shown when
+// pipelineStages is null (no stage filter) or explicitly includes 'none'.
+export function buildNoteWhereClause(
+  pipelineStages: StageFilterValue[] | null,
+  entityTypes: DashboardEntityTypeFilter[] | null
+): string {
+  const conditions = buildCompanyConditions(pipelineStages, entityTypes)
+  if (!conditions) return ''
+
+  const tagged =
+    `(n.company_id IS NOT NULL AND EXISTS (` +
+    `SELECT 1 FROM org_companies oc WHERE oc.id = n.company_id AND (${conditions})))`
+
+  const untaggedAllowed = pipelineStages === null || pipelineStages.includes('none')
+  const parts = [tagged]
+  if (untaggedAllowed) parts.push('n.company_id IS NULL')
+
+  return `\n  WHERE ${parts.join('\n     OR ')}`
 }
 
 function listRecentActivity(limit = 20): DashboardActivityItem[] {
@@ -353,7 +406,9 @@ function listRecentActivity(limit = 20): DashboardActivityItem[] {
     }
   }
 
-  if (filter.types.includes('note')) unions.push(ACTIVITY_SQL_NOTE)
+  if (filter.types.includes('note')) {
+    unions.push(`${ACTIVITY_SQL_NOTE}${buildNoteWhereClause(filter.pipelineStages, filter.entityTypes)}`)
+  }
 
   if (unions.length === 0) return []
 

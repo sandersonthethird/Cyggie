@@ -21,7 +21,11 @@ export const MEETING_APPS = {
     macBundleId: null,
     processName: null,
     urlPatterns: [/meet\.google\.com\//],
-    titlePatterns: ['google meet', 'meet.google.com'],
+    // 'google meet'/'meet.google.com' match the lobby/landing page; the
+    // ACTIVE call tab title is "Meet - <code>" (various dashes), so include
+    // those prefixes too. Substring 'meet -' won't match "meeting -" (the
+    // chars after "meet" are "ing", not " -").
+    titlePatterns: ['google meet', 'meet.google.com', 'meet - ', 'meet – ', 'meet — '],
     preferredTitles: ['Google Meet']
   },
   teams: {
@@ -40,3 +44,29 @@ export type MeetingPlatform = keyof typeof MEETING_APPS | 'other'
 
 // Platforms with a window-title signature (everything except 'other').
 export type DetectablePlatform = keyof typeof MEETING_APPS
+
+// macOS bundle ids of the app that holds the microphone for each platform —
+// used to detect "the meeting app released the mic" = the call ended (see
+// MeetingAudioWatcher). Google Meet is browser-based, so it's matched via
+// BROWSER_BUNDLE_IDS instead of a fixed app id.
+export const MEETING_APP_BUNDLE_IDS: Record<DetectablePlatform, readonly string[]> = {
+  zoom: ['us.zoom.xos'],
+  google_meet: [],
+  teams: ['com.microsoft.teams2', 'com.microsoft.teams']
+}
+
+export const BROWSER_BUNDLE_IDS: readonly string[] = [
+  'com.google.Chrome',
+  'com.google.Chrome.beta',
+  'com.google.Chrome.canary',
+  'com.google.Chrome.dev',
+  'com.apple.Safari',
+  'com.apple.SafariTechnologyPreview',
+  'com.microsoft.edgemac',
+  'com.microsoft.edgemac.Beta',
+  'company.thebrowser.Browser', // Arc
+  'org.mozilla.firefox',
+  'com.brave.Browser',
+  'com.operasoftware.Opera',
+  'com.vivaldi.Vivaldi'
+]

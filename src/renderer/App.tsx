@@ -114,7 +114,7 @@ function NotificationListener() {
   }, [])
 
   useEffect(() => {
-    const startFromIpc = async (payload?: { title?: string; calendarEventId?: string }) => {
+    const startFromIpc = async (payload?: { title?: string; calendarEventId?: string; meetingUrl?: string }) => {
       if (isRecordingRef.current) {
         const activeMeetingId = useRecordingStore.getState().meetingId
         if (activeMeetingId) navigate(`/meeting/${activeMeetingId}`)
@@ -124,7 +124,9 @@ function NotificationListener() {
         const result = await api.invoke<{ meetingId: string; meetingPlatform: string | null; alreadyRecording?: boolean }>(
           IPC_CHANNELS.RECORDING_START,
           payload?.title,
-          payload?.calendarEventId
+          payload?.calendarEventId,
+          undefined,
+          payload?.meetingUrl
         )
         if (!result.alreadyRecording) {
           startRecording(result.meetingId, result.meetingPlatform)
@@ -137,7 +139,7 @@ function NotificationListener() {
 
     const unsubNotification = api.on('notification:start-recording', (payload: unknown) => {
       const p = (payload as { title: string; calendarEventId?: string; meetingUrl?: string }) ?? {}
-      void startFromIpc({ title: p.title, calendarEventId: p.calendarEventId })
+      void startFromIpc({ title: p.title, calendarEventId: p.calendarEventId, meetingUrl: p.meetingUrl })
     })
 
     const unsubTrayStart = api.on('recording:start-from-tray', () => {

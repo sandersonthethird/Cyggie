@@ -17,7 +17,8 @@ import type {
   DashboardActivityFilter,
   DashboardActivityItem,
   DashboardData,
-  DashboardEntityTypeFilter
+  DashboardEntityTypeFilter,
+  StageFilterValue
 } from '../../shared/types/dashboard'
 import type { Meeting } from '../../shared/types/meeting'
 import type { TaskListItem } from '../../shared/types/task'
@@ -129,7 +130,12 @@ const ACTIVITY_ICONS: Record<string, string> = {
   note: '\u270E'
 }
 
-const STAGE_FILTER_OPTIONS = COMPANY_STAGE_OPTIONS
+// Real pipeline stages plus a synthetic 'None' chip that toggles un-staged items:
+// activity on companies with no pipeline_stage, and untagged notes (no company_id).
+const STAGE_FILTER_OPTIONS: { value: StageFilterValue; label: string }[] = [
+  ...COMPANY_STAGE_OPTIONS,
+  { value: 'none', label: 'None' },
+]
 
 const ENTITY_TYPE_OPTIONS: { value: DashboardEntityTypeFilter; label: string }[] = [
   { value: 'portfolio', label: 'Portfolio' },
@@ -309,6 +315,10 @@ export default function Dashboard() {
     // Panel stays open — multi-select; closed only via click-outside or button toggle
     try {
       await api.invoke(IPC_CHANNELS.SETTINGS_SET, 'dashboardActivityFilter', JSON.stringify(next))
+      // The filter lives in the settings DB, not in the DASHBOARD_GET args, so the cache
+      // key never changes on a toggle. Invalidate explicitly so the reload fetches fresh
+      // data for the new filter instead of returning the stale (pre-toggle) blob.
+      ipcCache.invalidate(IPC_CHANNELS.DASHBOARD_GET)
       void loadDashboard()
     } catch {
       setActivityFilter(activityFilter)
@@ -581,7 +591,7 @@ export default function Dashboard() {
                     <div className={styles.filterSection}>
                       <span className={styles.filterSectionLabel}>TYPE</span>
                       <div className={styles.filterChips}>
-                        {(['email', 'meeting'] as const).map(type => {
+                        {(['email', 'meeting', 'note'] as const).map(type => {
                           const active = activityFilter.types.includes(type)
                           return (
                             <button
@@ -595,7 +605,7 @@ export default function Dashboard() {
                                 void saveAndReloadFilter({ ...activityFilter, types: next as DashboardActivityFilter['types'] })
                               }}
                             >
-                              {type === 'email' ? 'Emails' : 'Meetings'}
+                              {type === 'email' ? 'Emails' : type === 'meeting' ? 'Meetings' : 'Notes'}
                             </button>
                           )
                         })}

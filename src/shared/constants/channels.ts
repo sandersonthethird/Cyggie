@@ -20,10 +20,6 @@ export const IPC_CHANNELS = {
   RECORDING_TRANSCRIPT_UPDATE: 'recording:transcript-update',
   RECORDING_ERROR: 'recording:error',
   RECORDING_AUTO_STOP: 'recording:auto-stop',
-  // Renderer → main hint: the captured meeting window's video track ended
-  // (the window closed). Routed to the active session's auto-stop, which
-  // applies the window floor before stopping. See MeetingWindowWatcher.
-  RECORDING_WINDOW_GONE_HINT: 'recording:window-gone-hint',
   RECORDING_SYSTEM_AUDIO_STATUS: 'recording:system-audio-status',
   // Broadcast by the tray menu (src/main/tray.ts) to start/stop recording from
   // the macOS menu-bar item; the renderer listens via api.on.

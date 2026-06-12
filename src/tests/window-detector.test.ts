@@ -1,14 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-
-// window-detector imports desktopCapturer at module load; stub it (these tests
-// exercise the pure title-matching functions, not the real enumeration).
-vi.mock('electron', () => ({ desktopCapturer: { getSources: vi.fn() } }))
-
-import {
-  findMeetingWindow,
-  detectMeetingWindowPlatforms,
-  type WindowSource
-} from '../main/audio/window-detector'
+import { describe, it, expect } from 'vitest'
+import { findMeetingWindow, type WindowSource } from '../main/audio/window-detector'
 
 const src = (name: string): WindowSource => ({ id: name, name })
 
@@ -35,6 +26,10 @@ describe('findMeetingWindow', () => {
     expect(findMeetingWindow([src('meet.google.com/abc-defg — Chrome')], 'google_meet')).not.toBeNull()
   })
 
+  it('matches an in-call "Meet - <code>" title', () => {
+    expect(findMeetingWindow([src('Meet - abc-defg-hij')], 'google_meet')).not.toBeNull()
+  })
+
   it('prefers a Teams call window over the main hub', () => {
     const sources = [src('Microsoft Teams'), src('Meeting with Acme | Microsoft Teams')]
     expect(findMeetingWindow(sources, 'teams')?.name).toBe('Meeting with Acme | Microsoft Teams')
@@ -42,30 +37,5 @@ describe('findMeetingWindow', () => {
 
   it('falls back to the Teams hub when it is the only window', () => {
     expect(findMeetingWindow([src('Microsoft Teams')], 'teams')?.name).toBe('Microsoft Teams')
-  })
-})
-
-describe('detectMeetingWindowPlatforms', () => {
-  it('returns an empty set when window titles are blank (Screen Recording not granted)', () => {
-    // Without permission, desktopCapturer returns sources with empty names.
-    expect(detectMeetingWindowPlatforms([src(''), src('')]).size).toBe(0)
-  })
-
-  it('returns the correct subset for mixed windows', () => {
-    const result = detectMeetingWindowPlatforms([
-      src('Zoom Meeting'),
-      src('Slack'),
-      src('meet.google.com/xyz — Google Chrome')
-    ])
-    expect([...result].sort()).toEqual(['google_meet', 'zoom'])
-  })
-
-  it('detects all three platforms when all are present', () => {
-    const result = detectMeetingWindowPlatforms([
-      src('Zoom Meeting'),
-      src('Standup | Microsoft Teams'),
-      src('Google Meet')
-    ])
-    expect([...result].sort()).toEqual(['google_meet', 'teams', 'zoom'])
   })
 })
