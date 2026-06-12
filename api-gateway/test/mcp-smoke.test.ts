@@ -24,8 +24,11 @@ import { fileURLToPath } from 'node:url'
 import type { FastifyInstance } from 'fastify'
 import { SignJWT } from 'jose'
 import { createSecretKey } from 'node:crypto'
+import { createId } from '@paralleldrive/cuid2'
+import { schema } from '@cyggie/db'
 import { mintTestToken as mintToken } from './_helpers/auth'
 import { jsonRpc, parseJsonRpcResponse, callTool } from './_helpers/mcp'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 loadDotenv({
   path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env.local'),
@@ -39,6 +42,7 @@ process.env['CYGGIE_MCP_SQL_ENABLED'] = 'false'
 
 const { loadEnv } = await import('../src/env')
 const { buildApp } = await import('../src/app')
+const { getDb } = await import('../src/db')
 
 let app: FastifyInstance
 let env: ReturnType<typeof loadEnv>
@@ -263,6 +267,107 @@ describe('POST /mcp — per-tool smoke (validation + not-found, no seed)', () =>
     const result = await callTool(app, token, 'cyggie_get_notes', {})
     expect(result.isError).toBe(true)
     expect(result._meta?.code).toBe('INVALID_INPUT')
+  })
+})
+
+describe('POST /mcp — per-tool smoke (seed-backed: OK / AMBIGUOUS)', () => {
+  // Group A: exercise the success + ambiguous branches that need real rows.
+  // Seed companies/contacts owned by a throwaway user (the JWT `sub`), then
+  // call the tools with that user's token. org_companies.userId FK → users.id,
+  // so the owner user row must exist. Cleanup via the shared FK-safe helper.
+  const db = getDb(env?.GATEWAY_DATABASE_URL ?? process.env['GATEWAY_DATABASE_URL']!)
+  const cleanup = makeDbCleanup(db)
+  const userId = `mcp-seed-${Date.now().toString(36)}`
+  let token: string
+
+  beforeAll(async () => {
+    token = await mintTestToken({ sub: userId })
+
+    await db.insert(schema.users).values({
+      id: userId,
+      googleSub: 'sub-' + userId,
+      email: `${userId}@example.com`,
+    })
+    cleanup.track(schema.users, schema.users.id, userId)
+
+    // One uniquely-named company → single match → OK.
+    const okCo = `co-ok-${createId().slice(0, 8)}`
+    await insertCompany(okCo, 'Zeta Unique Holdings')
+    // Two companies sharing the substring "Acme" → ILIKE fallback returns
+    // 2 candidates → AMBIGUOUS (normalized_name is globally unique, so the
+    // ambiguity comes from the substring fallback, not exact-name dupes).
+    await insertCompany(`co-am1-${createId().slice(0, 8)}`, 'Acme Alpha Labs')
+    await insertCompany(`co-am2-${createId().slice(0, 8)}`, 'Acme Beta Works')
+
+    // One uniquely-named contact → OK; two contacts sharing a normalized
+    // name → exact-match dupes → AMBIGUOUS (contact names may duplicate).
+    await insertContact(`ct-ok-${createId().slice(0, 8)}`, 'Jane Singular')
+    await insertContact(`ct-am1-${createId().slice(0, 8)}`, 'John Ambiguous')
+    await insertContact(`ct-am2-${createId().slice(0, 8)}`, 'John Ambiguous')
+  })
+
+  afterAll(() => cleanup.cleanup())
+
+  async function insertCompany(id: string, name: string): Promise<void> {
+    await db.insert(schema.orgCompanies).values({
+      id,
+      userId,
+      canonicalName: name,
+      // normalized_name is globally unique — suffix with the row id so the
+      // display name can repeat across runs without colliding.
+      normalizedName: `${name.toLowerCase()} ${id}`,
+      status: 'active',
+      entityType: 'unknown',
+      classificationSource: 'manual',
+      lamport: '1',
+      createdByUserId: userId,
+    })
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
+  }
+
+  async function insertContact(id: string, fullName: string): Promise<void> {
+    await db.insert(schema.contacts).values({
+      id,
+      userId,
+      fullName,
+      // Intentionally NOT row-id-suffixed: the two "John Ambiguous" rows must
+      // share a normalized name to trigger the exact-match ambiguity branch.
+      normalizedName: fullName.toLowerCase(),
+      lamport: '1',
+      createdByUserId: userId,
+    })
+    cleanup.track(schema.contacts, schema.contacts.id, id)
+  }
+
+  test('cyggie_get_company returns an OK markdown block for a unique name', async () => {
+    const r = await callTool(app, token, 'cyggie_get_company', { query: 'Zeta Unique Holdings' })
+    expect(r.isError).toBeFalsy()
+    expect(r.content?.[0]?.text).toContain('Zeta Unique Holdings')
+  })
+
+  test('cyggie_get_company returns AMBIGUOUS for a shared substring', async () => {
+    const r = await callTool(app, token, 'cyggie_get_company', { query: 'Acme' })
+    expect(r.isError).toBe(true)
+    expect(r._meta?.code).toBe('AMBIGUOUS')
+  })
+
+  test('cyggie_get_contact returns an OK block for a unique name', async () => {
+    const r = await callTool(app, token, 'cyggie_get_contact', { query: 'Jane Singular' })
+    expect(r.isError).toBeFalsy()
+    expect(r.content?.[0]?.text).toContain('Jane Singular')
+  })
+
+  test('cyggie_get_contact returns AMBIGUOUS for duplicate normalized names', async () => {
+    const r = await callTool(app, token, 'cyggie_get_contact', { query: 'John Ambiguous' })
+    expect(r.isError).toBe(true)
+    expect(r._meta?.code).toBe('AMBIGUOUS')
+  })
+
+  test('cyggie_search returns a non-error markdown result', async () => {
+    const r = await callTool(app, token, 'cyggie_search', { query: 'Acme' })
+    expect(r.isError).toBeFalsy()
+    expect(typeof r.content?.[0]?.text).toBe('string')
+    expect(r.content?.[0]?.text?.length ?? 0).toBeGreaterThan(0)
   })
 })
 
