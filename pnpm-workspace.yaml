@@ -9,6 +9,7 @@ packages:
 # Electron for the desktop runtime, esbuild for bundling, sharp for image
 # optimization, unrs-resolver for fast TS resolution.
 allowBuilds:
+  '@embedded-postgres/darwin-arm64': true
   better-sqlite3: true
   electron: true
   esbuild: true

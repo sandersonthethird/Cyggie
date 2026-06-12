@@ -21,9 +21,11 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { FastifyInstance } from 'fastify'
 import { SignJWT } from 'jose'
 import { createSecretKey } from 'node:crypto'
-import type { FastifyInstance } from 'fastify'
+import { mintTestToken as mintToken } from './_helpers/auth'
+import { jsonRpc, parseJsonRpcResponse, callTool } from './_helpers/mcp'
 
 loadDotenv({
   path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env.local'),
@@ -61,36 +63,10 @@ const EXPECTED_TOOLS = [
   'cyggie_get_context',
 ] as const
 
-// Mint a JWT with the same shape the OAuth server issues (HS256, aud
-// 'cyggie-mcp', sub + scope + firm_id claims). The MCP route verifies
-// with the same secret, so this token is indistinguishable from one
-// issued by /oauth/token end-to-end.
-async function mintTestToken(opts: {
-  sub?: string
-  scope?: string
-  firmId?: string | null
-  expSeconds?: number
-} = {}): Promise<string> {
-  const key = createSecretKey(Buffer.from(env.JWT_SIGNING_SECRET, 'utf-8'))
-  const now = Math.floor(Date.now() / 1000)
-  const expSeconds = opts.expSeconds ?? 15 * 60
-  return new SignJWT({
-    scope: opts.scope ?? 'cyggie:read cyggie:ask',
-    firm_id: opts.firmId === undefined ? 'test-firm' : opts.firmId,
-    client_id: 'test-client',
-  })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setSubject(opts.sub ?? 'test-user')
-    .setIssuer('http://127.0.0.1:8443/oauth')
-    .setAudience('cyggie-mcp')
-    .setIssuedAt(now)
-    .setExpirationTime(now + expSeconds)
-    .sign(key)
-}
-
-function jsonRpc(method: string, params: Record<string, unknown> = {}, id = 1) {
-  return { jsonrpc: '2.0', id, method, params }
-}
+// Thin wrapper over the shared minter (Issue 5A) that closes over this suite's
+// loaded env so call sites stay terse.
+const mintTestToken = (opts: Parameters<typeof mintToken>[1] = {}): Promise<string> =>
+  mintToken(env.JWT_SIGNING_SECRET, opts)
 
 describe('POST /mcp — auth surface (slice 9 OAuth)', () => {
   test('rejects requests with no Authorization header', async () => {
@@ -230,40 +206,87 @@ describe('POST /mcp — protocol surface (valid OAuth JWT)', () => {
     return { status: res.statusCode, body: res.body }
   }
 
-  function parseJsonRpcResponse(body: string): {
-    result?: { tools?: Array<{ name: string }> }
-    error?: { code: number; message: string }
-  } {
-    try {
-      const parsed = JSON.parse(body)
-      return Array.isArray(parsed) ? parsed[0] : parsed
-    } catch {
-      const m = /^data:\s*(.+)$/m.exec(body)
-      if (!m) throw new Error(`Cannot parse MCP response: ${body.slice(0, 200)}`)
-      const parsed = JSON.parse(m[1])
-      return Array.isArray(parsed) ? parsed[0] : parsed
-    }
-  }
-
   test('tools/list returns exactly the 7 expected tools', async () => {
     const res = await mcpCall(jsonRpc('tools/list'))
     expect(res.status).toBe(200)
-    const reply = parseJsonRpcResponse(res.body)
+    const reply = parseJsonRpcResponse(res.body) as {
+      result?: { tools?: Array<{ name: string }> }
+      error?: unknown
+    }
     expect(reply.error).toBeUndefined()
     const names = (reply.result?.tools ?? []).map((t) => t.name).sort()
     expect(names).toEqual([...EXPECTED_TOOLS].sort())
   })
 })
 
-describe('POST /mcp — per-tool smoke (DB-dependent, currently deferred)', () => {
-  test.skip('cyggie_search returns a sectioned markdown result', () => {})
-  test.skip('cyggie_get_company returns AMBIGUOUS / NOT_FOUND / OK envelope', () => {})
-  test.skip('cyggie_get_contact returns AMBIGUOUS / NOT_FOUND / OK envelope', () => {})
-  test.skip('cyggie_recent_meetings rejects both companyId AND contactId set', () => {})
-  test.skip('cyggie_get_meeting returns NOT_FOUND for an invalid id', () => {})
-  test.skip('cyggie_get_notes returns INVALID_INPUT with no filter', () => {})
+describe('POST /mcp — per-tool smoke (validation + not-found, no seed)', () => {
+  // These exercise the tools/call path end-to-end against the real DB, but
+  // only the no-seed branches: input validation (INVALID_INPUT) and empty
+  // result (NOT_FOUND). Auth uses the JWT `sub` directly as userId
+  // (oauth-auth.ts) — no real user row required — so a query scoped to a
+  // throwaway sub matches nothing and returns NOT_FOUND. The OK / AMBIGUOUS
+  // branches (which need seeded companies/contacts/notes + cleanup) are a
+  // separate seed-backed slice.
+  let token: string
+  beforeAll(async () => {
+    token = await mintTestToken({ sub: `mcp-smoke-${Date.now().toString(36)}` })
+  })
+
+  test('cyggie_get_company returns NOT_FOUND for an unknown query', async () => {
+    const result = await callTool(app, token, 'cyggie_get_company', { query: 'no-such-company-xyzzy' })
+    expect(result.isError).toBe(true)
+    expect(result._meta?.code).toBe('NOT_FOUND')
+  })
+
+  test('cyggie_get_contact returns NOT_FOUND for an unknown query', async () => {
+    const result = await callTool(app, token, 'cyggie_get_contact', { query: 'no-such-contact-xyzzy' })
+    expect(result.isError).toBe(true)
+    expect(result._meta?.code).toBe('NOT_FOUND')
+  })
+
+  test('cyggie_recent_meetings rejects both companyId AND contactId set', async () => {
+    const result = await callTool(app, token, 'cyggie_recent_meetings', {
+      companyId: 'co-x',
+      contactId: 'ct-x',
+    })
+    expect(result.isError).toBe(true)
+    expect(result._meta?.code).toBe('INVALID_INPUT')
+  })
+
+  test('cyggie_get_meeting returns NOT_FOUND for an invalid id', async () => {
+    const result = await callTool(app, token, 'cyggie_get_meeting', { id: 'definitely-not-a-real-id' })
+    expect(result.isError).toBe(true)
+    expect(result._meta?.code).toBe('NOT_FOUND')
+  })
+
+  test('cyggie_get_notes returns INVALID_INPUT with no filter', async () => {
+    const result = await callTool(app, token, 'cyggie_get_notes', {})
+    expect(result.isError).toBe(true)
+    expect(result._meta?.code).toBe('INVALID_INPUT')
+  })
 })
 
 describe('POST /mcp — feature flag', () => {
-  test.skip('CYGGIE_MCP_ENABLED=false returns 404 (deferred — needs separate app boot)', () => {})
+  // Group B: a separate app boot with the emergency kill-switch off. The /mcp
+  // route must not bind at all, so any request 404s cleanly.
+  test('CYGGIE_MCP_ENABLED=false returns 404', async () => {
+    const prev = process.env['CYGGIE_MCP_ENABLED']
+    process.env['CYGGIE_MCP_ENABLED'] = 'false'
+    let disabledApp: FastifyInstance | undefined
+    try {
+      disabledApp = await buildApp(loadEnv())
+      await disabledApp.ready()
+      const res = await disabledApp.inject({
+        method: 'POST',
+        url: '/mcp',
+        payload: jsonRpc('tools/list'),
+        headers: { 'content-type': 'application/json' },
+      })
+      expect(res.statusCode).toBe(404)
+    } finally {
+      if (disabledApp) await disabledApp.close()
+      if (prev === undefined) delete process.env['CYGGIE_MCP_ENABLED']
+      else process.env['CYGGIE_MCP_ENABLED'] = prev
+    }
+  })
 })

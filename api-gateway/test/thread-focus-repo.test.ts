@@ -3,8 +3,9 @@ import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
-import { inArray, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
+import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // Part 2 — DB round-trip coverage for the slack_thread_focus repo
 // (getFocus / upsertFocus / loadFocusName) against the real Neon schema.
@@ -21,26 +22,13 @@ const env = loadEnv()
 const db = getDb(env.GATEWAY_DATABASE_URL)
 
 const TEST_PREFIX = `test-focus-repo-${Date.now().toString(36)}-`
-const createdUserIds: string[] = []
-const createdSessionIds: string[] = []
-const createdCompanyIds: string[] = []
-const createdContactIds: string[] = []
 
-afterAll(async () => {
-  // Sessions cascade-delete their slack_thread_focus rows (FK ON DELETE CASCADE).
-  if (createdSessionIds.length > 0) {
-    await db.delete(schema.chatSessions).where(inArray(schema.chatSessions.id, createdSessionIds))
-  }
-  if (createdCompanyIds.length > 0) {
-    await db.delete(schema.orgCompanies).where(inArray(schema.orgCompanies.id, createdCompanyIds))
-  }
-  if (createdContactIds.length > 0) {
-    await db.delete(schema.contacts).where(inArray(schema.contacts.id, createdContactIds))
-  }
-  if (createdUserIds.length > 0) {
-    await db.delete(schema.users).where(inArray(schema.users.id, createdUserIds))
-  }
-})
+// Shared FK-safe cleanup (Issue 7B). slack_thread_focus cascade-deletes with
+// its chatSession; companies/contacts have no inbound FK from focus (entityId
+// is plain text), so reverse-insertion order — users tracked first, deleted
+// last — is safe here.
+const cleanup = makeDbCleanup(db)
+afterAll(() => cleanup.cleanup())
 
 async function setupUser(): Promise<string> {
   const userId = TEST_PREFIX + createId().slice(0, 8)
@@ -49,7 +37,7 @@ async function setupUser(): Promise<string> {
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
   })
-  createdUserIds.push(userId)
+  cleanup.track(schema.users, schema.users.id, userId)
   return userId
 }
 
@@ -67,7 +55,7 @@ async function insertSession(userId: string): Promise<string> {
     createdByUserId: userId,
     origin: 'slack',
   })
-  createdSessionIds.push(id)
+  cleanup.track(schema.chatSessions, schema.chatSessions.id, id)
   return id
 }
 
@@ -88,7 +76,7 @@ async function insertCompany(userId: string, name: string): Promise<string> {
     lamport: '1',
     createdByUserId: userId,
   })
-  createdCompanyIds.push(id)
+  cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
 }
 
@@ -102,7 +90,7 @@ async function insertContact(userId: string, fullName: string): Promise<string> 
     lamport: '1',
     createdByUserId: userId,
   })
-  createdContactIds.push(id)
+  cleanup.track(schema.contacts, schema.contacts.id, id)
   return id
 }
 
@@ -159,7 +147,8 @@ describe('slack_thread_focus repo', () => {
     const sessionId = await insertSession(userId)
     await upsertFocus(db, { sessionId, entityType: 'company', entityId: 'co_x' })
     await db.delete(schema.chatSessions).where(eq(schema.chatSessions.id, sessionId))
-    createdSessionIds.splice(createdSessionIds.indexOf(sessionId), 1) // already gone
+    // No manual untracking needed — cleanup's delete-by-id is a harmless no-op
+    // for this already-deleted session.
     const rows = await db
       .select()
       .from(schema.slackThreadFocus)

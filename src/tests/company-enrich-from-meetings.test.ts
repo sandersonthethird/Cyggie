@@ -12,7 +12,6 @@
  *   - google-drive (downloadSummaryFromDrive) → vi.fn() stub
  *   - custom-fields.repo (listFieldDefinitions, getFieldValuesForEntity) → vi.fn() stubs
  *   - contact.repo → vi.fn() stubs (required by same module)
- *   - company-notes.repo → vi.fn() stub (required by same module)
  *   - database/connection → stubbed (repos are mocked; DB never called)
  */
 
@@ -23,10 +22,6 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({ getDatabase: vi.fn() }))
 vi.mock('@cyggie/db/sqlite/repositories/contact.repo', () => ({
   getContact: vi.fn(),
   resolveContactsByEmails: vi.fn(),
-}))
-
-vi.mock('@cyggie/db/sqlite/repositories/company-notes.repo', () => ({
-  listCompanyNotes: vi.fn(() => []),
 }))
 
 const mockListFieldDefinitions = vi.fn()

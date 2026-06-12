@@ -4,7 +4,6 @@
  * Mock boundaries:
  *   - database/connection (getDatabase) → in-memory SQLite
  *   - org-company.repo (getCompany, updateCompany) → vi.fn()
- *   - company-notes.repo (listCompanyNotes) → vi.fn()
  *   - meeting.repo (getMeeting) → vi.fn()
  *   - storage/file-manager (readTranscript) → vi.fn()
  *   - task.repo (bulkCreate) → vi.fn()
@@ -32,14 +31,6 @@ const mockUpdateCompany = vi.fn()
 vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
   getCompany: (...args: unknown[]) => mockGetCompany(...args),
   updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
-}))
-
-// ─── Mock: company-notes.repo ─────────────────────────────────────────────────
-
-const mockListCompanyNotes = vi.fn()
-
-vi.mock('@cyggie/db/sqlite/repositories/company-notes.repo', () => ({
-  listCompanyNotes: (...args: unknown[]) => mockListCompanyNotes(...args),
 }))
 
 // ─── Mock: meeting.repo ───────────────────────────────────────────────────────
@@ -155,7 +146,6 @@ beforeEach(() => {
     pipelineStage: 'diligence',
     entityType: 'prospect',
   })
-  mockListCompanyNotes.mockReturnValue([])
   mockGetMeeting.mockReturnValue(null)
   mockReadTranscript.mockReturnValue(null)
   mockBulkCreateTasks.mockReturnValue([])

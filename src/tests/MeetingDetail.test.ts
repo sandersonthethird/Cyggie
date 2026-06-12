@@ -183,7 +183,6 @@ vi.mock('lucide-react', async (importOriginal) => {
 })
 
 vi.mock('../renderer/components/common/FindBar', () => ({ default: () => null }))
-vi.mock('../renderer/components/chat/ChatInterface', () => ({ default: () => null }))
 vi.mock('../renderer/components/common/ConfirmDialog', () => ({ default: () => null }))
 vi.mock('../renderer/components/enrichment/EnrichmentProposalDialog', () => ({
   EnrichmentProposalDialog: () => null,

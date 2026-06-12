@@ -7,7 +7,6 @@
  *   - contact.repo → vi.fn() stubs (required by same module)
  *   - meeting.repo → vi.fn() stub (required by same module)
  *   - file-manager → vi.fn() stub (required by same module)
- *   - company-notes.repo → vi.fn() stub (required by same module)
  *   - database/connection → stubbed (repos are mocked; DB never called)
  *
  * The LLM provider is injected directly, so no module-level mock needed.
@@ -32,10 +31,6 @@ vi.mock('../main/storage/file-manager', () => ({
 
 vi.mock('../main/drive/google-drive', () => ({
   downloadSummaryFromDrive: vi.fn(),
-}))
-
-vi.mock('@cyggie/db/sqlite/repositories/company-notes.repo', () => ({
-  listCompanyNotes: vi.fn(() => []),
 }))
 
 const mockListFieldDefinitions = vi.fn()
