@@ -45,6 +45,7 @@ vi.mock('googleapis', () => ({
     auth: {
       OAuth2: class {
         setCredentials(_creds: unknown): void {}
+        on(_event: string, _cb: unknown): void {}
       },
     },
     calendar: () => ({
@@ -67,6 +68,7 @@ const { buildApp } = await import('../src/app')
 const { loadEnv } = await import('../src/env')
 const { getDb } = await import('../src/db')
 const { signAccessToken } = await import('../src/auth/jwt')
+const { encryptToken } = await import('../src/auth/token-crypto')
 
 const env = loadEnv()
 const app = await buildApp(env)
@@ -106,7 +108,7 @@ async function setupUser(): Promise<{ userId: string; token: string }> {
     userId,
     provider: 'google',
     accessToken: 'fake-access-token',
-    refreshToken: 'fake-refresh-token',
+    refreshTokenEncrypted: encryptToken('fake-refresh-token', env.GOOGLE_TOKEN_ENC_KEY),
     accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
     needsReauth: false,
   })

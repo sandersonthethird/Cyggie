@@ -68,7 +68,11 @@ export default defineConfig({
     // The .env.local at the repo root still wins for any var listed there.
     env: {
       DEEPGRAM_API_KEY: 'test-deepgram-key',
-      DEEPGRAM_WEBHOOK_SECRET: 'test-webhook-secret-at-least-16-chars'
+      DEEPGRAM_WEBHOOK_SECRET: 'test-webhook-secret-at-least-16-chars',
+      // AES-256-GCM key for Google refresh-token encryption (decodes to 32
+      // bytes). Test-only default so loadEnv() doesn't throw; .env.local wins
+      // for tests that load it. Real key is a Fly secret in prod.
+      GOOGLE_TOKEN_ENC_KEY: 'Y3lnZ2llLXZpdGVzdC1kZWZhdWx0LWdvb2dsZS1rZXk='
     }
   }
 })

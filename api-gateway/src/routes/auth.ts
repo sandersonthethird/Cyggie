@@ -11,6 +11,7 @@ import {
   fetchGoogleIdentity,
 } from '../auth/google'
 import { signAccessToken } from '../auth/jwt'
+import { encryptToken } from '../auth/token-crypto'
 import { consumePending, generatePkcePair, generateState, rememberPending } from '../auth/pending'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
@@ -216,12 +217,14 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         })
       }
 
-      // Persist Google tokens. We store access_token in plaintext (short-lived,
-      // ~1 hour) and refresh_token encrypted-at-rest. For V1 dev the encryption
-      // is a placeholder — TODO before production: wrap with a KMS key fetched
-      // from Fly secrets. The DB-stored value is hex(sha256(refresh)+iv+ciphertext).
+      // Persist Google tokens. access_token is stored plaintext (short-lived,
+      // ~1 hour); the refresh_token is encrypted-at-rest with AES-256-GCM
+      // (auth/token-crypto.ts) so calendar.ts can replay it to refresh access
+      // tokens server-side. The key lives only in Fly secrets, not the DB.
+      // (Earlier this ran through a one-way SHA-256 hash, which made the refresh
+      // token unrecoverable and forced a full re-consent every hour.)
       const refreshTokenForStorage = googleTokens.refreshToken
-        ? hashForStorage(googleTokens.refreshToken)
+        ? encryptToken(googleTokens.refreshToken, env.GOOGLE_TOKEN_ENC_KEY)
         : null
       const oauthTokenId = createId()
       // Idempotent upsert keyed on (user_id, provider).
