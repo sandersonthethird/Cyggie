@@ -3086,3 +3086,41 @@ MCP tool name/schema is a public contract (see CLAUDE.md) — changes here must 
 output-additive only, never a rename.
 
 **Effort:** M. **Priority:** P2. **Owner:** Sandy.
+
+---
+
+## Transcript-aware chat context-size warning + user cap
+
+**What:** Make the chat context-size banner account for the *full* context a
+turn will send, and let the user cap/trim it when it gets expensive. Today
+`ChatContextSizeBanner` only sums attached **companies'** flagged-file context
+via `CHAT_CONTEXT_SIZE_PREFLIGHT_MULTI`; it ignores the anchor meeting's
+transcript (sent uncapped) and contacts entirely. Add: (1) the anchor meeting's
+transcript chars to the estimate, (2) an "expensive context" threshold warning,
+and (3) a user-facing hard cap/trim control on what's sent per message.
+
+**Why:** With the new meeting-aware chat (PR `feat/meeting-chat-context`), a long
+meeting transcript (uncapped) plus an attached company can produce a very large,
+costly per-message context with no visibility or control. The user asked to be
+warned and able to cap it. Each component is individually bounded today, but the
+*combined* size is neither surfaced nor capped.
+
+**Context:** This is a cross-surface feature, not specific to meeting-detail
+chat — company/contact/global chats want the same warning+cap. Start points:
+- `src/renderer/components/chat-panel/ChatContextSizeBanner.tsx` — currently
+  renders only when `flaggedFileCount > 0`; generalize to a total-chars estimate
+  with a threshold style + a "trim/cap" action.
+- `CHAT_CONTEXT_SIZE_PREFLIGHT_MULTI` handler in `src/main/ipc/chat.ipc.ts` +
+  `estimateChatContext` in `@cyggie/services/llm/context-size` — extend to accept
+  an optional anchor `meetingId` and include its transcript chars.
+- `ChatContextSizeEstimate` type in `src/shared/types/company.ts` — add the
+  transcript/total breakdown fields.
+- The cap mechanism is new design: a per-session max-chars the assembler honors
+  (queryMeeting / buildUnifiedEntitiesContext already have per-section caps to
+  build on; see `OUTER_TOTAL_CAP` in entities-chat.ts).
+
+**Effort:** M. **Priority:** P2. **Owner:** Sandy.
+
+**Depends on / blocked by:** The meeting-chat `refs` plumbing shipped in
+`feat/meeting-chat-context` (meeting chats can now carry attached companies, which
+is what makes a combined estimate meaningful).
