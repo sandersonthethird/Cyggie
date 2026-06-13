@@ -29,7 +29,7 @@ import { queryMeeting, querySearchResults } from './chat'
 import { queryCompany } from './company-chat'
 import { queryContact } from './contact-chat'
 import { queryAll } from './crm-chat'
-import { queryEntities, type EntityRef } from './entities-chat'
+import { queryEntities, buildUnifiedEntitiesContext, type EntityRef } from './entities-chat'
 import type { ChatAttachment } from '@shared/types/chat'
 
 // Kind shape matches the renderer-side ChatKind in lib/chat-channels.ts.
@@ -39,7 +39,7 @@ import type { ChatAttachment } from '@shared/types/chat'
 // renderer no longer emits them — it routes every attached-entity chat through
 // the unified `entities` kind.
 export type ChatKind =
-  | { kind: 'meeting'; meetingId: string }
+  | { kind: 'meeting'; meetingId: string; refs?: EntityRef[] }
   | { kind: 'meetings'; meetingIds: string[] }
   | { kind: 'company'; companyId: string }
   | { kind: 'contact'; contactId: string }
@@ -55,8 +55,18 @@ export interface ChatDispatchArgs {
 export async function chatDispatch(args: ChatDispatchArgs): Promise<string> {
   const k = args.kind
   switch (k.kind) {
-    case 'meeting':
-      return queryMeeting(k.meetingId, args.question, args.attachments ?? [])
+    case 'meeting': {
+      // When the user attached companies/contacts to a meeting chat, resolve
+      // their deduped context here (this layer already imports entities-chat) and
+      // hand it to queryMeeting as ready markdown. The viewed meeting is excluded
+      // from the attached set so it isn't duplicated (full above + 3k snippet here).
+      const refs = k.refs ?? []
+      const attachedContext =
+        refs.length > 0
+          ? (await buildUnifiedEntitiesContext(refs, { excludeMeetingId: k.meetingId })).markdown
+          : null
+      return queryMeeting(k.meetingId, args.question, args.attachments ?? [], attachedContext)
+    }
     case 'meetings':
       return querySearchResults(k.meetingIds, args.question, args.attachments ?? [])
     case 'company':

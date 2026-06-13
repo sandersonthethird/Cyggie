@@ -147,7 +147,10 @@ function gatherEntityItems(ref: EntityRef, emailCap: number): EntityItems {
  * Returns null when no attached entity yields any content (so the caller can
  * emit the curated empty-state response instead of a degraded LLM call).
  */
-export async function buildUnifiedEntitiesContext(refs: EntityRef[]): Promise<{
+export async function buildUnifiedEntitiesContext(
+  refs: EntityRef[],
+  opts: { excludeMeetingId?: string } = {},
+): Promise<{
   markdown: string | null
   resolvedNames: string[]
   unavailable: EntityRef[]
@@ -171,7 +174,13 @@ export async function buildUnifiedEntitiesContext(refs: EntityRef[]): Promise<{
 
   for (const g of resolved) {
     if (g.headerBlock) headerBlocks.push(g.headerBlock)
-    for (const m of g.meetings) if (!meetingById.has(m.id)) meetingById.set(m.id, m)
+    for (const m of g.meetings) {
+      // Skip a caller-excluded meeting (e.g. the meeting a meeting-chat is
+      // anchored on — its full transcript is already in context, so we must not
+      // re-add a 3k-truncated copy here).
+      if (opts.excludeMeetingId && m.id === opts.excludeMeetingId) continue
+      if (!meetingById.has(m.id)) meetingById.set(m.id, m)
+    }
     for (const n of g.notes) {
       const id = (n as NoteRef & { id?: string }).id
       // Notes without a stable id (shouldn't happen for persisted rows) fall
