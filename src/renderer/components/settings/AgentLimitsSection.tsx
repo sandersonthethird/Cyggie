@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import {
+  CLAUDE_MODEL_LABELS,
+  resolveAgentModelId,
+} from '../../../shared/constants/claude-models'
+import { estimateAgentRunCostUsd } from '../../../shared/cost-estimate'
+import { AGENT_SETTINGS_CHANGED_EVENT } from './agent-settings-events'
 
 /**
  * Three numeric inputs that drive `agent.maxIterations`, `agent.maxWebSearches`,
@@ -47,6 +53,9 @@ export function AgentLimitsSection() {
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(FIELDS.map(f => [f.key, String(f.defaultValue)])),
   )
+  // Selected agent model (resolved from agent.model / legacy tier) drives the
+  // pricing used in the live cost estimate below.
+  const [modelId, setModelId] = useState<string>(() => resolveAgentModelId({}))
 
   useEffect(() => {
     let cancelled = false
@@ -58,9 +67,22 @@ export function AgentLimitsSection() {
         next[f.key] = all[f.key] ?? String(f.defaultValue)
       }
       setValues(next)
+      setModelId(resolveAgentModelId(all))
     }
     void load()
     return () => { cancelled = true }
+  }, [])
+
+  // Re-read the selected model when the sibling model picker changes, so the
+  // estimate updates live without a reload.
+  useEffect(() => {
+    async function refreshModel() {
+      const all = await api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL)
+      setModelId(resolveAgentModelId(all))
+    }
+    function onChanged() { void refreshModel() }
+    window.addEventListener(AGENT_SETTINGS_CHANGED_EVENT, onChanged)
+    return () => window.removeEventListener(AGENT_SETTINGS_CHANGED_EVENT, onChanged)
   }, [])
 
   async function commit(key: string, raw: string) {
@@ -68,6 +90,16 @@ export function AgentLimitsSection() {
     const trimmed = raw.trim()
     await api.invoke(IPC_CHANNELS.SETTINGS_SET, key, trimmed)
   }
+
+  const estimateUsd = estimateAgentRunCostUsd(
+    {
+      inputTokens: Number(values['agent.maxInputTokens']),
+      iterations: Number(values['agent.maxIterations']),
+      webSearches: Number(values['agent.maxWebSearches']),
+    },
+    modelId,
+  )
+  const modelLabel = CLAUDE_MODEL_LABELS[modelId] ?? modelId
 
   return (
     <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -96,6 +128,9 @@ export function AgentLimitsSection() {
           </p>
         </div>
       ))}
+      <p style={{ marginLeft: 192, marginTop: 2, fontSize: 13 }}>
+        Estimated cost per run: <strong>~${estimateUsd.toFixed(2)}</strong> ({modelLabel})
+      </p>
     </div>
   )
 }

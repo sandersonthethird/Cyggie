@@ -36,6 +36,7 @@ import { getCredential } from '@main/security/credentials'
 import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
 import {
   getAgentModelId,
+  getAgentPricing,
   getCacheTtl,
   HAIKU_MODEL_ID,
   EXTENDED_CACHE_TTL_BETA,
@@ -341,6 +342,7 @@ export async function runMemoProducerAgent(
     enableThinking: extendedThinkingEnabled,
     thinkingBudgetTokens: 2048,
     cacheTtl,
+    pricing: getAgentPricing(),
   })
 
   // ─── Assemble + threshold check ───────────────────────────────────────

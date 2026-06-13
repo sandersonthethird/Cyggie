@@ -22,7 +22,7 @@ import { getAgentLimits, type AgentLimits } from './limits'
 import { SubmitReviewInputSchema, type SubmitReviewInput } from '@shared/types/stress-test-report'
 import type { AgentEvent } from '@shared/types/agent-events'
 import { getCredential } from '@main/security/credentials'
-import { getAgentModelId, getCacheTtl, EXTENDED_CACHE_TTL_BETA } from './model-tier'
+import { getAgentModelId, getAgentPricing, getCacheTtl, EXTENDED_CACHE_TTL_BETA } from './model-tier'
 // Vite ?raw inlines the markdown content as a string at build time.
 import THESIS_SYSTEM_PROMPT_TEMPLATE from './prompts/thesis-stress-test.system.md?raw'
 import STRESS_TEST_CHECKLIST from './prompts/stress-test-checklist.md?raw'
@@ -123,6 +123,7 @@ export async function runStressTestAgent(
     mode: 'stress_test',
     companyId: input.companyId,
     cacheTtl,
+    pricing: getAgentPricing(),
   })
 
   if (result.status !== 'success' || !result.terminalToolInput) {

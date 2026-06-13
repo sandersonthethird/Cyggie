@@ -7,7 +7,8 @@ vi.mock('@cyggie/db/sqlite/repositories/settings.repo', () => ({
   getSetting: (key: string): string | undefined => settings.get(key),
 }))
 
-import { getAgentModelId, SONNET_MODEL_ID, HAIKU_MODEL_ID } from './model-tier'
+import { getAgentModelId, getAgentPricing, SONNET_MODEL_ID, HAIKU_MODEL_ID } from './model-tier'
+import { getPricingForModel } from '@shared/constants/claude-models'
 
 describe('getAgentModelId', () => {
   beforeEach(() => settings.clear())
@@ -50,5 +51,24 @@ describe('getAgentModelId', () => {
     settings.set('agent.modelTier', 'opus')
     expect(getAgentModelId()).toBe(SONNET_MODEL_ID)
     expect(warn).toHaveBeenCalledOnce()
+  })
+})
+
+describe('getAgentPricing', () => {
+  beforeEach(() => settings.clear())
+  afterEach(() => vi.restoreAllMocks())
+
+  it('returns pricing for the selected model', () => {
+    settings.set('agent.model', HAIKU_MODEL_ID)
+    expect(getAgentPricing()).toEqual(getPricingForModel(HAIKU_MODEL_ID))
+  })
+
+  it('defaults to Sonnet pricing when nothing is set', () => {
+    expect(getAgentPricing()).toEqual(getPricingForModel(SONNET_MODEL_ID))
+  })
+
+  it('honors the legacy haiku tier', () => {
+    settings.set('agent.modelTier', 'haiku')
+    expect(getAgentPricing()).toEqual(getPricingForModel(HAIKU_MODEL_ID))
   })
 })

@@ -58,13 +58,13 @@ import type {
 import { findTerminalTool, buildToolRegistry, type Tool, type ToolContext } from './define-tool'
 import type { AgentEvent, AgentRunMode } from '@shared/types/agent-events'
 import type { AgentLimits } from './limits'
+import { DEFAULT_AGENT_PRICING, type AgentPricing } from '@shared/cost-estimate'
 
-export interface AgentPricing {
-  inputPerM: number
-  outputPerM: number
-}
+// AgentPricing now lives in cost-estimate.ts (the canonical run-cost source);
+// re-exported here so existing importers of `agent-loop` keep working.
+export type { AgentPricing }
 
-const DEFAULT_PRICING: AgentPricing = { inputPerM: 3, outputPerM: 15 }   // Sonnet 4.5
+const DEFAULT_PRICING: AgentPricing = DEFAULT_AGENT_PRICING
 const TOOL_RESULT_PRE_TRUNC_CHARS = 4_000
 const SUMMARIZE_OLDER_THAN_TURNS = 2
 const MAX_RETRY_5XX = 1

@@ -1450,7 +1450,7 @@ export default function Settings() {
 
         <h4 className={styles.subsectionTitle ?? ''} style={{ marginTop: 24, fontSize: 14, fontWeight: 600 }}>Investment Thesis Agent</h4>
         <p className={styles.hint} style={{ marginTop: 4 }}>
-          Caps on the multi-turn stress-test agent. Defaults are tuned for typical Sonnet 4.5 runs (~$1.20).
+          Caps on the multi-turn stress-test agent. The estimated cost below updates as you adjust the caps and the selected model.
         </p>
         <AgentLimitsSection />
 
