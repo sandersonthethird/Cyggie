@@ -25,6 +25,7 @@ import {
   triggerSyncPull,
 } from './services/sync-bootstrap'
 import { backfillProviderKeysOnLaunch } from './services/gateway-credentials'
+import { backfillWebChatModelOnLaunch } from './services/web-config-push'
 // EVAL-FEATURE: transcription provider evaluation bootstrap.
 import { runTranscriptionEvalMigration } from './transcription-eval/repo/migration'
 import { runEvalBootCleanup } from './transcription-eval/service/boot-cleanup'
@@ -304,6 +305,10 @@ app.whenReady().then(() => {
   // delay inside the helper so it doesn't compete with the SyncAgent's
   // first tick or token refresh.
   backfillProviderKeysOnLaunch()
+
+  // Push the web-chat model up to the public web app so share chats resolve it
+  // live, healing any value set before this shipped or while offline.
+  void backfillWebChatModelOnLaunch()
 
   // Item 4 (mobile summary tab) — bring historical summary_path content
   // into the meetings.summary column so mobile's Summary tab can render

@@ -15,6 +15,13 @@
       "when": 1776030579646,
       "tag": "0001_lazy_sally_floyd",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781366123640,
+      "tag": "0002_web_chat_model_config",
+      "breakpoints": true
     }
   ]
 }

@@ -13,6 +13,8 @@ import {
   pushOpenAiKey,
   pushWebShareKey,
 } from '../services/gateway-credentials'
+import { pushWebChatModel } from '../services/web-config-push'
+import { getCurrentFirmId } from '../security/current-firm'
 
 // settings.ipc.ts — read/write/test paths for AppSettings.
 //
@@ -128,6 +130,11 @@ export function registerSettingsHandlers(): void {
     }
     if (key === 'webShareApiKey' && value.trim().length > 0) {
       void pushWebShareKey(value)
+    }
+    // Web-chat model: push to the Next.js app so public share chats resolve it
+    // live (per-firm). Fire-and-forget; no-ops when firm_id is unknown.
+    if (key === 'webShareModel' && value.trim().length > 0) {
+      void pushWebChatModel(getCurrentFirmId(), value.trim())
     }
   })
 

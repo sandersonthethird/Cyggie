@@ -5,6 +5,7 @@ import { eq, and } from 'drizzle-orm'
 import { decryptApiKey } from '../../../lib/crypto'
 import { checkRateLimit } from '../../../lib/rate-limit'
 import { createClaudeSSEResponse } from '../../../lib/sse-stream'
+import { getWebChatModel } from '../../../lib/web-config'
 
 export const runtime = 'edge'
 
@@ -131,9 +132,11 @@ export async function POST(request: Request) {
     },
   ]
 
+  const model = await getWebChatModel(meeting.firmId)
+
   return createClaudeSSEResponse(
     client,
-    { model: 'claude-sonnet-4-6', system: SYSTEM_PROMPT, messages },
+    { model, system: SYSTEM_PROMPT, messages },
     remaining
   )
 }

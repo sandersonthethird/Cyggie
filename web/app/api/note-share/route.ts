@@ -11,6 +11,7 @@ interface NoteShareRequest {
   logoUrl?: string | null
   firmName?: string | null
   brandColor?: string | null
+  firmId?: string | null
   expiresInDays?: number
 }
 
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
         logoUrl: body.logoUrl ?? null,
         firmName: body.firmName ?? null,
         brandColor: body.brandColor ?? null,
+        firmId: body.firmId ?? null,
         expiresAt,
       })
       break

@@ -13,6 +13,7 @@ interface MemoShareRequest {
   firmName?: string | null
   brandColor?: string | null
   companyLogoUrl?: string | null
+  firmId?: string | null
   expiresInDays?: number
 }
 
@@ -66,6 +67,7 @@ export async function POST(request: Request) {
         brandColor: body.brandColor ?? null,
         companyLogoUrl: body.companyLogoUrl ?? null,
         apiKeyEnc,
+        firmId: body.firmId ?? null,
         expiresAt,
       })
       break

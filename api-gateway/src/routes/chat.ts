@@ -10,6 +10,7 @@ import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
 import { resolveAnthropicKey, toGatewayErrorIfAnthropic } from '../llm/resolve-key'
+import { resolveUserModel } from '../llm/resolve-user-model'
 import { validateClientLamport } from '../sync/validate-lamport'
 import {
   TRANSCRIPT_CONTEXT_BUDGET,
@@ -21,6 +22,7 @@ import {
   truncateHistoryByChars,
 } from '../llm/truncate-history'
 import {
+  CHAT_MODEL,
   runAgentTurn,
   createAgentStream,
   buildContextForSession,
@@ -711,6 +713,10 @@ export async function registerChatRoutes(
         })
       }
 
+      // Per-user chat model (desktop Settings → "Chat" dropdown, synced via
+      // user_preferences). Falls back to CHAT_MODEL when unset.
+      const chatModel = await resolveUserModel(env, user.sub, 'chatModel', CHAT_MODEL)
+
       // Load existing message history (chronological) for multi-turn prompt.
       const historyRows = await db
         .select()
@@ -798,6 +804,7 @@ export async function registerChatRoutes(
         try {
           const stream = createAgentStream({
             apiKey,
+            model: chatModel,
             messages: claudeMessages,
             systemPrompt,
             signal: abortController.signal,
@@ -932,6 +939,7 @@ export async function registerChatRoutes(
       try {
         result = await runAgentTurn({
           apiKey,
+          model: chatModel,
           messages: claudeMessages,
           systemPrompt,
           signal: abortController.signal,

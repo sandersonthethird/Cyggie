@@ -9,6 +9,7 @@ import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
 import Anthropic from '@anthropic-ai/sdk'
 import { resolveAnthropicKey, toGatewayErrorIfAnthropic } from '../llm/resolve-key'
+import { resolveUserModel } from '../llm/resolve-user-model'
 import { deriveSelfNameFromUser } from '../llm/self-name'
 import {
   flattenSegments,
@@ -1016,12 +1017,21 @@ export async function registerMeetingRoutes(
       const abortController = new AbortController()
       const timeoutHandle = setTimeout(() => abortController.abort(), 60_000)
 
+      // Per-user enhancement model (desktop Settings → "Enhancement" dropdown,
+      // synced via user_preferences). Falls back to Sonnet 4.5 when unset.
+      const enhancementModel = await resolveUserModel(
+        env,
+        user.sub,
+        'enhancementModel',
+        'claude-sonnet-4-5-20250929',
+      )
+
       const client = new Anthropic({ apiKey })
       let result
       try {
         result = await client.messages.create(
           {
-            model: 'claude-sonnet-4-5-20250929',
+            model: enhancementModel,
             max_tokens: 4096,
             system: template.systemPrompt,
             messages: [{ role: 'user', content: userPrompt }],
