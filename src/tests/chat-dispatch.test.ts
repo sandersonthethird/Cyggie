@@ -23,6 +23,7 @@ const mockQueryCompany = vi.fn()
 const mockQueryContact = vi.fn()
 const mockQueryAll = vi.fn()
 const mockQueryEntities = vi.fn()
+const mockBuildUnifiedEntitiesContext = vi.fn()
 const mockAbortChatTurn = vi.fn()
 
 vi.mock('@cyggie/services/llm/chat', () => ({
@@ -53,6 +54,7 @@ vi.mock('@cyggie/services/llm/crm-chat', () => ({
 
 vi.mock('@cyggie/services/llm/entities-chat', () => ({
   queryEntities: (...args: unknown[]) => mockQueryEntities(...args),
+  buildUnifiedEntitiesContext: (...args: unknown[]) => mockBuildUnifiedEntitiesContext(...args),
   abortEntitiesChat: () => {},
 }))
 
@@ -70,12 +72,13 @@ beforeEach(() => {
   mockQueryContact.mockResolvedValue('contact-response')
   mockQueryAll.mockResolvedValue('global-response')
   mockQueryEntities.mockResolvedValue('entities-response')
+  mockBuildUnifiedEntitiesContext.mockResolvedValue({ markdown: 'ATTACHED_MD', resolvedNames: ['Acme'], unavailable: [] })
 })
 
 // ── Routing per kind ───────────────────────────────────────────────────
 
 describe('chatDispatch — routing', () => {
-  it('routes meeting → queryMeeting with (id, question, attachments)', async () => {
+  it('routes meeting (no refs) → queryMeeting with (id, question, attachments, null)', async () => {
     const atts: ChatAttachment[] = [
       { name: 'file.txt', mimeType: 'text/plain', type: 'text', data: 'body' },
     ]
@@ -85,7 +88,24 @@ describe('chatDispatch — routing', () => {
       attachments: atts,
     })
     expect(result).toBe('meeting-response')
-    expect(mockQueryMeeting).toHaveBeenCalledWith('m1', 'q?', atts)
+    // No attached entities → no entity-context build, null attachedContext.
+    expect(mockBuildUnifiedEntitiesContext).not.toHaveBeenCalled()
+    expect(mockQueryMeeting).toHaveBeenCalledWith('m1', 'q?', atts, null)
+  })
+
+  it('routes meeting WITH refs → builds entity context (excluding the meeting) and passes the markdown', async () => {
+    const refs = [
+      { type: 'company' as const, id: 'c1' },
+      { type: 'contact' as const, id: 'p1' },
+    ]
+    const result = await chatDispatch({
+      kind: { kind: 'meeting', meetingId: 'm1', refs },
+      question: 'q?',
+    })
+    expect(result).toBe('meeting-response')
+    // The viewed meeting is excluded so it isn't duplicated in the attached set.
+    expect(mockBuildUnifiedEntitiesContext).toHaveBeenCalledWith(refs, { excludeMeetingId: 'm1' })
+    expect(mockQueryMeeting).toHaveBeenCalledWith('m1', 'q?', [], 'ATTACHED_MD')
   })
 
   it('routes meetings → querySearchResults with (ids[], question, attachments)', async () => {
@@ -139,7 +159,7 @@ describe('chatDispatch — routing', () => {
 
   it('defaults attachments to [] for kinds that take a positional array', async () => {
     await chatDispatch({ kind: { kind: 'meeting', meetingId: 'm1' }, question: 'q' })
-    expect(mockQueryMeeting).toHaveBeenCalledWith('m1', 'q', [])
+    expect(mockQueryMeeting).toHaveBeenCalledWith('m1', 'q', [], null)
 
     await chatDispatch({ kind: { kind: 'global' }, question: 'q' })
     expect(mockQueryAll).toHaveBeenCalledWith('q', [])

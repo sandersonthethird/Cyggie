@@ -149,8 +149,14 @@ export function ChatPanelRoot() {
 
   // The chips shown above the composer come from the persisted attached-entity
   // list (or, before a session exists, the entities the next message will use).
+  // Meeting chats carry their attached companies/contacts in `refs` too.
   const attachedEntities = useMemo<AttachedContextEntity[]>(
-    () => (currentKind.kind === 'entities' ? currentKind.refs : []),
+    () =>
+      currentKind.kind === 'entities'
+        ? currentKind.refs
+        : currentKind.kind === 'meeting'
+          ? currentKind.refs ?? []
+          : [],
     [currentKind]
   )
 
@@ -217,12 +223,17 @@ export function ChatPanelRoot() {
   const handleNewChat = useCallback(async () => {
     const ctx = deriveChatForNewChat(pageContext)
     // Seed the attached-entity list from the page's primary entity so a chat
-    // opened from a company/contact page starts with that context chip.
-    const seedEntities: AttachedContextEntity[] = (pageContext?.contextOptions ?? []).map((o) => ({
-      type: o.type,
-      id: o.id,
-      label: o.name,
-    }))
+    // opened from a company/contact page starts with that context chip. A
+    // meeting chat is meeting-only by default (the meeting is the anchor, not a
+    // chip) — the user opts into company/contact context via "+ Add context".
+    const seedEntities: AttachedContextEntity[] =
+      ctx.contextKind === 'meeting'
+        ? []
+        : (pageContext?.contextOptions ?? []).map((o) => ({
+            type: o.type,
+            id: o.id,
+            label: o.name,
+          }))
     try {
       const newSession = await api.invoke<RecentSessionRow>(
         IPC_CHANNELS.CHAT_SESSION_CREATE_NEW,
@@ -304,9 +315,11 @@ export function ChatPanelRoot() {
 
   // Context-aware placeholder driven by the attached-entity list.
   const placeholder = useMemo(() => {
+    // A meeting chat stays anchored on the meeting even when companies/contacts
+    // are attached, so its placeholder reads "this meeting" regardless of chips.
+    if (currentKind.kind === 'meeting') return 'Ask Cyggie about this meeting…'
     if (attachedEntities.length === 1) return `Ask Cyggie about ${attachedEntities[0].label}…`
     if (attachedEntities.length > 1) return `Ask Cyggie about these ${attachedEntities.length} items…`
-    if (currentKind.kind === 'meeting') return 'Ask Cyggie about this meeting…'
     if (currentKind.kind === 'global') return 'Ask Cyggie anything…'
     return 'Ask Cyggie about this conversation…'
   }, [attachedEntities, currentKind])
@@ -333,7 +346,7 @@ export function ChatPanelRoot() {
           <PanelComposer
             kind={currentKind}
             attachedEntities={attachedEntities}
-            canAttach={panelSession != null && currentKind.kind !== 'meeting' && currentKind.kind !== 'meetings'}
+            canAttach={panelSession != null && currentKind.kind !== 'meetings'}
             onAddEntity={handleAddEntity}
             onRemoveEntity={handleRemoveEntity}
             isLoading={isLoading}
@@ -390,7 +403,10 @@ export function deriveCurrentKind(opts: {
 
   if (panelSession) {
     if (panelSession.contextKind === 'meeting') {
-      return { kind: 'meeting', meetingId: panelSession.contextId }
+      // A meeting chat is anchored on the meeting (full transcript/notes/summary)
+      // but may ALSO carry attached companies/contacts the user added via
+      // "+ Add context" — surface them so they route + render as chips.
+      return { kind: 'meeting', meetingId: panelSession.contextId, refs: panelSession.attachedEntities }
     }
     if (panelSession.attachedEntities.length >= 1) {
       return {
@@ -404,7 +420,10 @@ export function deriveCurrentKind(opts: {
     return { kind: 'global' }
   }
 
-  // No session yet — seed routing from the current page.
+  // No session yet — seed routing from the current page. A meeting page anchors
+  // on the meeting (meeting-only by default; the user can still "+ Add context"
+  // once a session exists), so it wins over the meeting's linked companies.
+  if (pageContext?.meetingId) return { kind: 'meeting', meetingId: pageContext.meetingId }
   const pageEntities: AttachedContextEntity[] = (pageContext?.contextOptions ?? []).map((o) => ({
     type: o.type,
     id: o.id,
@@ -424,7 +443,6 @@ export function deriveCurrentKind(opts: {
       contextLabel: primary.label,
     }
   }
-  if (pageContext?.meetingId) return { kind: 'meeting', meetingId: pageContext.meetingId }
   if (pageContext?.meetingIds?.length) return { kind: 'meetings', meetingIds: pageContext.meetingIds }
   return { kind: 'global' }
 }
@@ -521,7 +539,13 @@ async function loadSessionAndMessages(
   }
 }
 
-function deriveChatForNewChat(pageContext: ChatPageContext | null): {
+/**
+ * Derive the anchor (contextId/kind/label) for a "+ New chat" started from the
+ * current page. A meeting page anchors on the meeting itself (its transcript/
+ * notes), NOT its linked company — the meeting is what the user is viewing.
+ * Exported for tests.
+ */
+export function deriveChatForNewChat(pageContext: ChatPageContext | null): {
   contextId: string
   contextKind: ChatContextKind
   contextLabel: string | null
@@ -530,6 +554,12 @@ function deriveChatForNewChat(pageContext: ChatPageContext | null): {
     const ctx = deriveChatContext({})
     return { contextId: ctx?.contextId ?? 'global-all', contextKind: ctx?.kind ?? 'global', contextLabel: null }
   }
+  // A meeting page anchors a new chat on the meeting itself (full transcript/
+  // notes/summary), NOT on its linked company — the meeting is what the user is
+  // looking at. They can still "+ Add context" to pull in a company afterward.
+  if (pageContext.meetingId) {
+    return { contextId: pageContext.meetingId, contextKind: 'meeting', contextLabel: null }
+  }
   const opt = pageContext.contextOptions?.[0]
   if (opt) {
     const ctx = deriveChatContext({
@@ -537,9 +567,6 @@ function deriveChatForNewChat(pageContext: ChatPageContext | null): {
       contactId: opt.type === 'contact' ? opt.id : undefined,
     })
     return { contextId: ctx?.contextId ?? 'global-all', contextKind: ctx?.kind ?? 'global', contextLabel: opt.name }
-  }
-  if (pageContext.meetingId) {
-    return { contextId: pageContext.meetingId, contextKind: 'meeting', contextLabel: null }
   }
   const ctx = deriveChatContext({})
   return { contextId: ctx?.contextId ?? 'global-all', contextKind: ctx?.kind ?? 'global', contextLabel: null }

@@ -19,13 +19,36 @@ export function abortChat(): void {
 // injection runs before runChatTurn).
 export { injectTextAttachments } from './chat-runner'
 
-const MEETING_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about a meeting transcript.
-You have access to the full transcript, any user notes, and the AI-generated summary (if available).
+const MEETING_SYSTEM_PROMPT = `You are a helpful assistant that answers questions about a meeting.
+You have access to the meeting's transcript and/or user notes, plus the AI-generated summary (if available).
 Answer questions accurately based on what was discussed in the meeting.
-If the information isn't in the transcript, say so.
+If the information isn't in the provided context, say so.
 Be concise but thorough. Use bullet points when listing multiple items.`
 
-export async function queryMeeting(meetingId: string, question: string, attachments: ChatAttachment[] = []): Promise<string> {
+// Used when the user has attached companies/contacts to a meeting chat via
+// "+ Add context": the meeting stays primary, but the model may also draw on the
+// attached entities' broader history (their meetings, emails, notes, files).
+const MEETING_WITH_ENTITIES_SYSTEM_PROMPT = `You are a helpful research assistant for a venture capital firm.
+Your PRIMARY context is one meeting — its transcript and/or notes and AI summary. The user has ALSO
+attached the broader context of one or more companies/contacts (their meetings, emails, notes, and files),
+shown under "## Attached context". Answer using all of it; when the question is about the meeting itself,
+lead with the meeting. If the information isn't in the provided context, say so.
+Be concise but thorough. Use bullet points when listing multiple items.`
+
+/**
+ * Single-meeting chat. The meeting's full transcript/notes/summary is the
+ * primary context. When `attachedContext` is provided (deduped markdown for the
+ * companies/contacts the user attached via "+ Add context", built by the caller
+ * — see chat-dispatch.ts), it's appended under "## Attached context" and a
+ * combined system prompt is used. Resolving the attached markdown in the caller
+ * keeps chat.ts free of an entities-chat import (avoids a chat ↔ crm-chat cycle).
+ */
+export async function queryMeeting(
+  meetingId: string,
+  question: string,
+  attachments: ChatAttachment[] = [],
+  attachedContext: string | null = null,
+): Promise<string> {
   const meeting = meetingRepo.getMeeting(meetingId)
   if (!meeting) throw new Error('Meeting not found')
 
@@ -42,6 +65,11 @@ export async function queryMeeting(meetingId: string, question: string, attachme
 
   parts.push('')
 
+  // Track whether the meeting itself yielded any usable content. A meeting may
+  // legitimately have notes/summary but no transcript (in-person calls), so we
+  // no longer hard-require a transcript.
+  let hasMeetingContent = false
+
   // Add transcript
   if (meeting.transcriptPath) {
     const transcript = readTranscript(meeting.transcriptPath)
@@ -49,6 +77,7 @@ export async function queryMeeting(meetingId: string, question: string, attachme
       parts.push('## Transcript')
       parts.push(transcript)
       parts.push('')
+      hasMeetingContent = true
     }
   }
 
@@ -57,6 +86,7 @@ export async function queryMeeting(meetingId: string, question: string, attachme
     parts.push('## User Notes')
     parts.push(meeting.notes)
     parts.push('')
+    hasMeetingContent = true
   }
 
   // Add summary if present
@@ -66,17 +96,27 @@ export async function queryMeeting(meetingId: string, question: string, attachme
       parts.push('## AI Summary')
       parts.push(summary)
       parts.push('')
+      hasMeetingContent = true
     }
+  }
+
+  // Proceed when the meeting OR the attached entities contributed something.
+  if (!hasMeetingContent && !attachedContext) {
+    throw new Error('No transcript, notes, or summary available for this meeting')
+  }
+
+  if (attachedContext) {
+    parts.push('## Attached context')
+    parts.push('The user attached the following companies/contacts for additional context:')
+    parts.push('')
+    parts.push(attachedContext)
+    parts.push('')
   }
 
   const context = parts.join('\n')
 
-  if (!context.includes('## Transcript')) {
-    throw new Error('No transcript available for this meeting')
-  }
-
   return runChatTurn({
-    systemPrompt: MEETING_SYSTEM_PROMPT,
+    systemPrompt: attachedContext ? MEETING_WITH_ENTITIES_SYSTEM_PROMPT : MEETING_SYSTEM_PROMPT,
     context,
     question,
     attachments,

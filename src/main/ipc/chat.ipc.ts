@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { abortChat } from '@cyggie/services/llm/chat'
 import { chatDispatch } from '@cyggie/services/llm/chat-dispatch'
+import type { EntityRef } from '@cyggie/services/llm/entities-chat'
 import { generateChatTitle } from '@cyggie/services/llm/chat-title'
 import { withChatPersistence } from '@cyggie/services/llm/chat-persistence'
 import { withProgressSink } from '@cyggie/services/llm/send-progress'
@@ -35,10 +36,22 @@ export function registerChatHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_QUERY_MEETING,
-    async (_event, meetingId: string, question: string, attachments?: ChatAttachment[]) => {
+    async (
+      _event,
+      meetingId: string,
+      question: string,
+      attachments?: ChatAttachment[],
+      refs?: EntityRef[],
+    ) => {
       if (!meetingId || !question) {
         throw new Error('Meeting ID and question are required')
       }
+      // Companies/contacts the user attached via "+ Add context". The meeting
+      // stays the persistence anchor (contextKind 'meeting'); refs only widen
+      // the LLM context, not the session identity.
+      const validRefs = (refs ?? []).filter(
+        (r): r is EntityRef => !!r && (r.type === 'company' || r.type === 'contact') && !!r.id,
+      )
       const ctx = deriveChatContext({ meetingId })
       if (!ctx) throw new Error('Failed to derive chat context')
       return withChatPersistence({
@@ -50,7 +63,7 @@ export function registerChatHandlers(): void {
         runLLM: () =>
           withProgressSink(createChatProgressSink(), () =>
             chatDispatch({
-              kind: { kind: 'meeting', meetingId },
+              kind: { kind: 'meeting', meetingId, refs: validRefs },
               question: question.trim(),
               attachments,
             }),

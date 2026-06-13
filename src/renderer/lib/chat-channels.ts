@@ -25,7 +25,7 @@ import type { ChatContextKind } from '../../shared/utils/chat-context'
  */
 
 export type ChatKind =
-  | { kind: 'meeting'; meetingId: string }
+  | { kind: 'meeting'; meetingId: string; refs?: AttachedContextEntity[] }
   | { kind: 'meetings'; meetingIds: string[] }
   | {
       kind: 'entities'
@@ -53,7 +53,14 @@ export function chatChannels(k: ChatKind): ChatChannelDispatch {
       return {
         query: IPC_CHANNELS.CHAT_QUERY_MEETING,
         abort: IPC_CHANNELS.CHAT_ABORT,
-        buildInvokeArgs: ({ question, attachments }) => [k.meetingId, question, attachments],
+        // 4th arg: companies/contacts the user attached via "+ Add context".
+        // Empty/omitted → a plain single-meeting chat (byte-identical to before).
+        buildInvokeArgs: ({ question, attachments }) => [
+          k.meetingId,
+          question,
+          attachments,
+          (k.refs ?? []).map((r) => ({ type: r.type, id: r.id })),
+        ],
       }
     case 'meetings':
       return {
