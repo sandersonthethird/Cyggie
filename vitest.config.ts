@@ -58,6 +58,8 @@ export default defineConfig({
             'packages/services/src/**/*.test.ts',
             'packages/shared/src/**/*.test.ts',
             'packages/db/src/**/*.test.ts',
+            // Co-located renderer/main shared pure-logic tests (no DB / IPC / React).
+            'src/shared/**/*.test.ts',
             // Renderer co-located tests (2026-05-24). Pure-JS modules in the
             // renderer (no React rendering needed) live next to their source
             // under src/renderer/**/__tests__/. The `// @vitest-environment

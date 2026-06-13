@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
-import { CLAUDE_MODEL_OPTIONS, CLAUDE_MODEL_IDS } from '../../../shared/constants/claude-models'
+import {
+  CLAUDE_MODEL_OPTIONS,
+  DEFAULT_AGENT_MODEL,
+  resolveAgentModelId,
+} from '../../../shared/constants/claude-models'
+import { AGENT_SETTINGS_CHANGED_EVENT } from './agent-settings-events'
 
 /**
  * A model dropdown + a cache-TTL radio group that drive `agent.model` and
@@ -27,19 +32,7 @@ import { CLAUDE_MODEL_OPTIONS, CLAUDE_MODEL_IDS } from '../../../shared/constant
 type CacheTtl = '5m' | '1h'
 
 const AGENT_MODEL_KEY = 'agent.model'
-const MODEL_TIER_KEY = 'agent.modelTier'
 const CACHE_TTL_KEY = 'agent.cacheTtl'
-
-const DEFAULT_AGENT_MODEL = 'claude-sonnet-4-5-20250929'
-
-/** Mirror getAgentModelId()'s legacy fallback so the UI shows the resolved value. */
-function resolveInitialModel(all: Record<string, string>): string {
-  const model = all[AGENT_MODEL_KEY]
-  if (model && CLAUDE_MODEL_IDS.has(model)) return model
-  const tier = all[MODEL_TIER_KEY]
-  if (tier === 'haiku') return 'claude-haiku-4-5-20251001'
-  return DEFAULT_AGENT_MODEL
-}
 
 export function AgentModelTierSection() {
   const [model, setModel] = useState<string>(DEFAULT_AGENT_MODEL)
@@ -50,7 +43,7 @@ export function AgentModelTierSection() {
     async function load() {
       const all = await api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL)
       if (cancelled) return
-      setModel(resolveInitialModel(all))
+      setModel(resolveAgentModelId(all))
       const ttlRaw = all[CACHE_TTL_KEY]
       setCacheTtl(ttlRaw === '1h' ? '1h' : '5m')
     }
@@ -61,6 +54,8 @@ export function AgentModelTierSection() {
   async function commitModel(value: string) {
     setModel(value)
     await api.invoke(IPC_CHANNELS.SETTINGS_SET, AGENT_MODEL_KEY, value)
+    // Notify the sibling AgentLimitsSection so its cost estimate re-prices live.
+    window.dispatchEvent(new CustomEvent(AGENT_SETTINGS_CHANGED_EVENT))
   }
 
   async function commitCacheTtl(value: CacheTtl) {

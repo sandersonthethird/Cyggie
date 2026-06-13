@@ -1,5 +1,6 @@
 import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
-import { CLAUDE_MODEL_IDS } from '@shared/constants/claude-models'
+import { CLAUDE_MODEL_IDS, getPricingForModel } from '@shared/constants/claude-models'
+import type { AgentPricing } from '@shared/cost-estimate'
 
 /**
  * Agent model + cache TTL resolvers.
@@ -63,6 +64,14 @@ export function getAgentModelId(): string {
   if (tier === 'sonnet') return SONNET_MODEL_ID
   console.warn(`[model-tier] unknown agent.modelTier value "${tier}"; falling back to sonnet`)
   return SONNET_MODEL_ID
+}
+
+/**
+ * Per-token pricing for the resolved agent model. Pass to runAgentLoop so logged
+ * run cost matches the selected model (not a hardcoded Sonnet rate).
+ */
+export function getAgentPricing(): AgentPricing {
+  return getPricingForModel(getAgentModelId())
 }
 
 export function getCacheTtl(): CacheTtl {

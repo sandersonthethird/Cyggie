@@ -1,4 +1,5 @@
 import type { ContextSizeEstimate } from '@shared/types/company'
+import { getPricingForModel } from '@shared/constants/claude-models'
 
 /**
  * Pure helpers that estimate prompt char-size from already-known counts and
@@ -29,7 +30,9 @@ import type { ContextSizeEstimate } from '@shared/types/company'
 /** Trigger the warning modal when total estimated prompt > this many chars. */
 export const LARGE_CONTEXT_WARNING_CHARS = 150_000
 
-const SONNET_INPUT_RATE_USD_PER_M = 3
+// Context-size cost is shown as a Sonnet-input-only upper bound (the warning
+// path doesn't know the agent model). Sourced from the canonical model registry.
+const SONNET_INPUT_RATE_USD_PER_M = getPricingForModel('claude-sonnet-4-5-20250929').inputPerM
 const CHARS_PER_TOKEN = 4
 
 interface FileInput {

@@ -11,7 +11,8 @@ import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
  *   │    web_searches  5   → enforced by counting web_search tool      │
  *   │                       calls; agent's web_search has limited      │
  *   │                       budget by design                           │
- *   │    input_tokens  400_000  → ~$1.20 typical / $1.65 worst case    │
+ *   │    input_tokens  400_000  → dominant cost term; see cost-estimate │
+ *   │                       .ts for the live per-model run-cost estimate │
  *   │                                                                 │
  *   │  Settings UI exposes all three; users can dial up for deep      │
  *   │  dives or down for cost-sensitive runs. Values are clamped       │
