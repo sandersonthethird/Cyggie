@@ -11,6 +11,7 @@ import {
   type PushBatchResponse,
 } from './sync-agent'
 import { SyncPullService, type PullTransport, type PullResponse } from './sync-pull.service'
+import { resetPullWatermarkForRepullOnce } from './sync-repull-once.service'
 import { registerSyncIpc } from '../ipc/sync.ipc'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import {
@@ -218,6 +219,14 @@ export function bootstrapSync(): void {
     getAccessToken: getAccessTokenForSync,
     syncAgent: agent,
     transport: pullTransport,
+    // Console-backed logger so pull progress + per-chunk apply failures are
+    // visible. Previously omitted, which silently swallowed every
+    // `sync.pull.tx_rollback` — masking apply errors that stall whole tables.
+    log: {
+      info: (payload, msg) => console.log(`[sync.pull] ${msg}`, JSON.stringify(payload)),
+      warn: (payload, msg) => console.warn(`[sync.pull] ${msg}`, JSON.stringify(payload)),
+      error: (payload, msg) => console.error(`[sync.pull] ${msg}`, JSON.stringify(payload)),
+    },
     // Per-table IPC fanout. Each callback below broadcasts a *_REMOTE_APPLIED
     // event to the renderer with the affected row ids so screens can refresh
     // without waiting for ipcCache TTL. Renderer subscribers attach via the
@@ -280,6 +289,17 @@ export function bootstrapSync(): void {
       wc.send(IPC_CHANNELS.SYNC_PULL_STATUS_CHANGED, snapshot)
     },
   })
+  // 6. One-time, race-proof full re-pull. Migration 123 added the meeting/contact
+  // columns the pull-apply needs; existing installs must reset their pull
+  // watermark once so those below-watermark rows re-pull and apply. Runs BEFORE
+  // pullService.start() so no in-flight pull can clobber the reset (PR 2b's
+  // deferred reset lost exactly that race). A failed reset must never block sync.
+  try {
+    resetPullWatermarkForRepullOnce(getDatabase())
+  } catch (err) {
+    console.error('[sync-repull] watermark reset failed (non-fatal):', err)
+  }
+
   pullService.start()
   console.log('[sync] bootstrap complete; agent + pull service started')
 }
