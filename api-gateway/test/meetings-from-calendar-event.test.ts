@@ -4,7 +4,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createId } from '@paralleldrive/cuid2'
 import { and, eq } from 'drizzle-orm'
-import { schema } from '@cyggie/db'
+import { schema, deriveCalendarMeetingId } from '@cyggie/db'
 import { makeDbCleanup } from './_helpers/db-cleanup'
 
 // POST /meetings/from-calendar-event — idempotent find-or-create that the
@@ -527,5 +527,53 @@ describe('POST /meetings/from-calendar-event — location (in-person signal)', (
       ),
     })
     expect(row?.location).toBe('Conference Room B')
+  })
+})
+
+describe('POST /meetings/from-calendar-event — deterministic id (convergence)', () => {
+  test('mints a cal_-prefixed deterministic id', async () => {
+    const { jwt } = await setupUser()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: {
+        calendarEventId: 'gcal-' + createId(),
+        title: 'Det id',
+        startTime: '2026-05-21T15:00:00.000Z',
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    const body = res.json() as { id: string }
+    await reapMeeting(body.id)
+    expect(body.id).toMatch(/^cal_[0-9a-f]{24}$/)
+  })
+
+  test('a row pre-existing under the derived id converges (200/reuse, NOT 23505)', async () => {
+    const { userId, jwt } = await setupUser()
+    const calEventId = 'gcal-' + createId()
+    const derivedId = deriveCalendarMeetingId(userId, calEventId)
+    // Simulate the desktop having already pushed its row under the SAME derived
+    // id (this is exactly what deterministic ids guarantee). The gateway must
+    // find-and-return it, not collide.
+    await db.insert(schema.meetings).values({
+      id: derivedId,
+      userId,
+      title: 'Desktop row',
+      date: new Date('2026-05-21T15:00:00.000Z'),
+      status: 'scheduled',
+      calendarEventId: calEventId,
+    })
+    await reapMeeting(derivedId)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { calendarEventId: calEventId, title: 'Det id', startTime: '2026-05-21T15:00:00.000Z' },
+    })
+    expect(res.statusCode).toBe(200) // reused, not a 201 insert / 500 conflict
+    const body = res.json() as { id: string }
+    expect(body.id).toBe(derivedId)
   })
 })

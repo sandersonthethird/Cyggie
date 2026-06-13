@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../connection'
+import { deriveCalendarMeetingId } from '../../meeting-id'
 import { normalizeDomain } from '@main/utils/email-parser'
 import type { MeetingRow } from '../schema'
 import type { ChatMessage, Meeting, MeetingCompany, MeetingListFilter, MeetingStatus } from '@shared/types/meeting'
@@ -279,7 +280,16 @@ export function createMeeting(data: {
   isGroupEvent?: boolean
 }, userId: string | null = null): Meeting {
   const db = getDatabase()
-  const id = uuidv4()
+  // Calendar-sourced meetings get a deterministic id derived from
+  // (userId, calendarEventId) so desktop and the gateway converge on the SAME
+  // row instead of diverging (see @cyggie/db/meeting-id). Impromptu / Record-FAB
+  // rows (no calendar event) — or the rare case with no userId — keep a random
+  // uuid. The findMeetingByCalendarEventId guard in prepareMeetingFromCalendarEvent
+  // already prevents creating a second row for an event that pre-dates this.
+  const id =
+    data.calendarEventId && userId
+      ? deriveCalendarMeetingId(userId, data.calendarEventId)
+      : uuidv4()
 
   db.prepare(
     `INSERT INTO meetings (

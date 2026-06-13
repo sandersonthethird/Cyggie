@@ -458,6 +458,9 @@ export async function registerSyncRoutes(
           orgCompanyAliases: z.array(z.unknown()),
           contacts: z.array(z.unknown()),
           contactEmails: z.array(z.unknown()),
+          meetingCompanyLinks: z.array(z.unknown()),
+          meetingSpeakers: z.array(z.unknown()),
+          meetingSpeakerContactLinks: z.array(z.unknown()),
           chatSessions: z.array(z.unknown()),
           chatSessionMessages: z.array(z.unknown()),
           userPreferences: z.array(z.unknown()),
@@ -491,6 +494,9 @@ export async function registerSyncRoutes(
         orgCompanyAliases,
         contacts,
         contactEmails,
+        meetingCompanyLinks,
+        meetingSpeakers,
+        meetingSpeakerContactLinks,
         chatSessions,
         chatSessionMessages,
         userPreferences,
@@ -569,6 +575,63 @@ export async function registerSyncRoutes(
                 AND CAST(${schema.contactEmails.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.contactEmails.lamport} AS numeric) ASC`),
+        // Meeting child links (down-sync). No user_id column — scope via INNER
+        // JOIN onto meetings. Select only the columns the desktop SQLite tables
+        // carry (no audit FKs) so the wire shape matches the desktop specs.
+        db
+          .select({
+            meetingId: schema.meetingCompanyLinks.meetingId,
+            companyId: schema.meetingCompanyLinks.companyId,
+            confidence: schema.meetingCompanyLinks.confidence,
+            linkedBy: schema.meetingCompanyLinks.linkedBy,
+            createdAt: schema.meetingCompanyLinks.createdAt,
+            lamport: schema.meetingCompanyLinks.lamport,
+          })
+          .from(schema.meetingCompanyLinks)
+          .innerJoin(
+            schema.meetings,
+            sql`${schema.meetings.id} = ${schema.meetingCompanyLinks.meetingId}`,
+          )
+          .where(
+            sql`${schema.meetings.userId} = ${user.sub}
+                AND CAST(${schema.meetingCompanyLinks.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.meetingCompanyLinks.lamport} AS numeric) ASC`),
+        db
+          .select({
+            meetingId: schema.meetingSpeakers.meetingId,
+            speakerIndex: schema.meetingSpeakers.speakerIndex,
+            label: schema.meetingSpeakers.label,
+            lamport: schema.meetingSpeakers.lamport,
+          })
+          .from(schema.meetingSpeakers)
+          .innerJoin(
+            schema.meetings,
+            sql`${schema.meetings.id} = ${schema.meetingSpeakers.meetingId}`,
+          )
+          .where(
+            sql`${schema.meetings.userId} = ${user.sub}
+                AND CAST(${schema.meetingSpeakers.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.meetingSpeakers.lamport} AS numeric) ASC`),
+        db
+          .select({
+            meetingId: schema.meetingSpeakerContactLinks.meetingId,
+            speakerIndex: schema.meetingSpeakerContactLinks.speakerIndex,
+            contactId: schema.meetingSpeakerContactLinks.contactId,
+            createdAt: schema.meetingSpeakerContactLinks.createdAt,
+            lamport: schema.meetingSpeakerContactLinks.lamport,
+          })
+          .from(schema.meetingSpeakerContactLinks)
+          .innerJoin(
+            schema.meetings,
+            sql`${schema.meetings.id} = ${schema.meetingSpeakerContactLinks.meetingId}`,
+          )
+          .where(
+            sql`${schema.meetings.userId} = ${user.sub}
+                AND CAST(${schema.meetingSpeakerContactLinks.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.meetingSpeakerContactLinks.lamport} AS numeric) ASC`),
         // 2026-05-24 — chat_sessions: scope by userId (column on row).
         db
           .select()
@@ -638,6 +701,9 @@ export async function registerSyncRoutes(
         ...orgCompanyAliases,
         ...contacts,
         ...contactEmails,
+        ...meetingCompanyLinks,
+        ...meetingSpeakers,
+        ...meetingSpeakerContactLinks,
         ...chatSessions,
         ...chatSessionMessages,
         ...userPreferences,
@@ -661,6 +727,9 @@ export async function registerSyncRoutes(
           orgCompanyAliasCount: orgCompanyAliases.length,
           contactCount: contacts.length,
           contactEmailCount: contactEmails.length,
+          meetingCompanyLinkCount: meetingCompanyLinks.length,
+          meetingSpeakerCount: meetingSpeakers.length,
+          meetingSpeakerContactLinkCount: meetingSpeakerContactLinks.length,
           chatSessionCount: chatSessions.length,
           chatSessionMessageCount: chatSessionMessages.length,
           userPreferenceCount: userPreferences.length,
@@ -676,6 +745,9 @@ export async function registerSyncRoutes(
         orgCompanyAliases,
         contacts,
         contactEmails,
+        meetingCompanyLinks,
+        meetingSpeakers,
+        meetingSpeakerContactLinks,
         chatSessions,
         chatSessionMessages,
         userPreferences,

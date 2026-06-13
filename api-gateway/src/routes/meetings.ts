@@ -2,8 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
-import { createId } from '@paralleldrive/cuid2'
-import { schema } from '@cyggie/db'
+import { schema, deriveCalendarMeetingId } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
@@ -564,7 +563,11 @@ export async function registerMeetingRoutes(
       }
 
       // 2. Insert. Catch 23505 (race against concurrent insert) → re-find.
-      const newId = createId()
+      // Deterministic id derived from (userId, calendarEventId) so the desktop
+      // (which derives the same id in createMeeting) converges on this row via
+      // ON CONFLICT instead of minting a divergent id and 23505-ing forever.
+      // See @cyggie/db/meeting-id.
+      const newId = deriveCalendarMeetingId(user.sub, body.calendarEventId)
       const selfName = await deriveSelfNameFromUser(db, user.sub)
       try {
         await db.insert(schema.meetings).values({

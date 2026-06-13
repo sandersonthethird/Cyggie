@@ -42,6 +42,9 @@ import {
   applyRemoteOrgCompanyAliases,
   applyRemoteContacts,
   applyRemoteContactEmails,
+  applyRemoteMeetingCompanyLinks,
+  applyRemoteMeetingSpeakers,
+  applyRemoteMeetingSpeakerContactLinks,
   applyRemoteChatSessions,
   applyRemoteChatSessionMessages,
   applyRemoteUserPreferences,
@@ -51,6 +54,9 @@ import {
   type PulledOrgCompanyAliasRow,
   type PulledContactRow,
   type PulledContactEmailRowWire,
+  type PulledMeetingCompanyLinkRowWire,
+  type PulledMeetingSpeakerRowWire,
+  type PulledMeetingSpeakerContactLinkRowWire,
   type PulledChatSessionRow,
   type PulledChatSessionMessageRow,
   type PulledUserPreferenceRowWire,
@@ -84,6 +90,11 @@ export interface PullResponse {
   orgCompanyAliases?: PulledOrgCompanyAliasRow[]
   contacts?: PulledContactRow[]
   contactEmails?: PulledContactEmailRowWire[]
+  /** Meeting child links (down-sync). Optional so older gateway responses
+   *  without these keys still work. */
+  meetingCompanyLinks?: PulledMeetingCompanyLinkRowWire[]
+  meetingSpeakers?: PulledMeetingSpeakerRowWire[]
+  meetingSpeakerContactLinks?: PulledMeetingSpeakerContactLinkRowWire[]
   /** 2026-05-24 (Bug B) — chat tables join the pull path. */
   chatSessions?: PulledChatSessionRow[]
   chatSessionMessages?: PulledChatSessionMessageRow[]
@@ -331,6 +342,41 @@ export class SyncPullService {
           ...(this.cfg.log ? { log: this.cfg.log } : {}),
         },
       )
+      // Meeting child links — AFTER meetings (FK: meeting_id → meetings.id) and
+      // after org_companies/contacts (above). A child whose parent isn't local
+      // yet rolls back its own chunk and retries next pull. No onApplied: the
+      // meeting detail re-renders off the meetings invalidation / next focus.
+      const childLinkOpts = this.cfg.log ? { log: this.cfg.log } : {}
+      if (response.meetingCompanyLinks && response.meetingCompanyLinks.length > 0) {
+        applyRemoteMeetingCompanyLinks(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.meetingCompanyLinks,
+          childLinkOpts,
+        )
+      }
+      if (response.meetingSpeakers && response.meetingSpeakers.length > 0) {
+        applyRemoteMeetingSpeakers(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.meetingSpeakers,
+          childLinkOpts,
+        )
+      }
+      if (
+        response.meetingSpeakerContactLinks &&
+        response.meetingSpeakerContactLinks.length > 0
+      ) {
+        applyRemoteMeetingSpeakerContactLinks(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.meetingSpeakerContactLinks,
+          childLinkOpts,
+        )
+      }
       if (response.notes && response.notes.length > 0) {
         notesResult = applyRemoteNotes(
           this.cfg.db,

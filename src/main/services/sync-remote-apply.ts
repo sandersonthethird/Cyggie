@@ -1048,6 +1048,181 @@ function upsertContactEmailRow(
   })
 }
 
+// ─── Meeting child links (down-sync) ────────────────────────────────────────
+//
+// meeting_company_links / meeting_speakers / meeting_speaker_contact_links are
+// owned tables but were never PULLED down — only pushed up. So company/speaker
+// links authored on mobile or another desktop never reached this device, and a
+// mobile-recorded meeting's links couldn't converge. These three specs pull
+// them down, mirroring contact_emails (composite-PK cascade child, no user_id —
+// the gateway scopes the pull via JOIN onto meetings). Applied AFTER
+// applyRemoteMeetings so the parent meeting row exists first (FK); a child whose
+// parent isn't present yet rolls back its own chunk and retries next pull.
+
+// NOTE: meeting_speakers.speaker_id (FK → speakers, a push-only table) is
+// device-local and would FK-violate if pulled, so we sync ONLY the label:
+// insert speaker_id NULL, and on conflict update label/lamport without touching
+// a locally-set speaker_id.
+export interface PulledMeetingSpeakerRowWire {
+  meetingId: string
+  speakerIndex: number
+  label: string
+  lamport: string
+}
+interface PulledMeetingSpeakerRow extends PulledRow {
+  id: string
+  meetingId: string
+  speakerIndex: number
+  label: string
+  lamport: string
+}
+export function applyRemoteMeetingSpeakers(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledMeetingSpeakerRowWire[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  const stamped: PulledMeetingSpeakerRow[] = rows.map((r) => ({
+    ...r,
+    id: `${r.meetingId}:${r.speakerIndex}`,
+  }))
+  return applyRemoteRows(db, deviceId, userId, stamped, MEETING_SPEAKERS_SPEC, opts)
+}
+const MEETING_SPEAKERS_SPEC: TableSpec<PulledMeetingSpeakerRow> = {
+  tableName: 'meeting_speakers',
+  hasUserId: false,
+  selectLamportSql: 'SELECT lamport FROM meeting_speakers WHERE meeting_id = ? AND speaker_index = ?',
+  rowKey: (row) => [row.meetingId, row.speakerIndex],
+  rowId: (row) => `${row.meetingId}:${row.speakerIndex}`,
+  upsert: (db, row) =>
+    db
+      .prepare(
+        `INSERT INTO meeting_speakers (meeting_id, speaker_index, speaker_id, label, lamport)
+         VALUES (@meetingId, @speakerIndex, NULL, @label, @lamport)
+         ON CONFLICT(meeting_id, speaker_index) DO UPDATE SET
+           label = excluded.label,
+           lamport = excluded.lamport`,
+      )
+      .run({
+        meetingId: row.meetingId,
+        speakerIndex: row.speakerIndex,
+        label: row.label,
+        lamport: row.lamport,
+      }),
+}
+
+export interface PulledMeetingCompanyLinkRowWire {
+  meetingId: string
+  companyId: string
+  confidence: number
+  linkedBy: string
+  createdAt: string | Date
+  lamport: string
+}
+interface PulledMeetingCompanyLinkRow extends PulledRow {
+  id: string
+  meetingId: string
+  companyId: string
+  confidence: number
+  linkedBy: string
+  createdAt: string | Date
+  lamport: string
+}
+export function applyRemoteMeetingCompanyLinks(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledMeetingCompanyLinkRowWire[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  const stamped: PulledMeetingCompanyLinkRow[] = rows.map((r) => ({
+    ...r,
+    id: `${r.meetingId}:${r.companyId}`,
+  }))
+  return applyRemoteRows(db, deviceId, userId, stamped, MEETING_COMPANY_LINKS_SPEC, opts)
+}
+const MEETING_COMPANY_LINKS_SPEC: TableSpec<PulledMeetingCompanyLinkRow> = {
+  tableName: 'meeting_company_links',
+  hasUserId: false,
+  selectLamportSql: 'SELECT lamport FROM meeting_company_links WHERE meeting_id = ? AND company_id = ?',
+  rowKey: (row) => [row.meetingId, row.companyId],
+  rowId: (row) => `${row.meetingId}:${row.companyId}`,
+  upsert: (db, row) =>
+    db
+      .prepare(
+        `INSERT INTO meeting_company_links (meeting_id, company_id, confidence, linked_by, created_at, lamport)
+         VALUES (@meetingId, @companyId, @confidence, @linkedBy, @createdAt, @lamport)
+         ON CONFLICT(meeting_id, company_id) DO UPDATE SET
+           confidence = excluded.confidence,
+           linked_by = excluded.linked_by,
+           created_at = excluded.created_at,
+           lamport = excluded.lamport`,
+      )
+      .run({
+        meetingId: row.meetingId,
+        companyId: row.companyId,
+        confidence: row.confidence,
+        linkedBy: row.linkedBy,
+        createdAt: toIso(row.createdAt),
+        lamport: row.lamport,
+      }),
+}
+
+export interface PulledMeetingSpeakerContactLinkRowWire {
+  meetingId: string
+  speakerIndex: number
+  contactId: string
+  createdAt: string | Date
+  lamport: string
+}
+interface PulledMeetingSpeakerContactLinkRow extends PulledRow {
+  id: string
+  meetingId: string
+  speakerIndex: number
+  contactId: string
+  createdAt: string | Date
+  lamport: string
+}
+export function applyRemoteMeetingSpeakerContactLinks(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledMeetingSpeakerContactLinkRowWire[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  const stamped: PulledMeetingSpeakerContactLinkRow[] = rows.map((r) => ({
+    ...r,
+    id: `${r.meetingId}:${r.speakerIndex}`,
+  }))
+  return applyRemoteRows(db, deviceId, userId, stamped, MEETING_SPEAKER_CONTACT_LINKS_SPEC, opts)
+}
+const MEETING_SPEAKER_CONTACT_LINKS_SPEC: TableSpec<PulledMeetingSpeakerContactLinkRow> = {
+  tableName: 'meeting_speaker_contact_links',
+  hasUserId: false,
+  selectLamportSql:
+    'SELECT lamport FROM meeting_speaker_contact_links WHERE meeting_id = ? AND speaker_index = ?',
+  rowKey: (row) => [row.meetingId, row.speakerIndex],
+  rowId: (row) => `${row.meetingId}:${row.speakerIndex}`,
+  upsert: (db, row) =>
+    db
+      .prepare(
+        `INSERT INTO meeting_speaker_contact_links (meeting_id, speaker_index, contact_id, created_at, lamport)
+         VALUES (@meetingId, @speakerIndex, @contactId, @createdAt, @lamport)
+         ON CONFLICT(meeting_id, speaker_index) DO UPDATE SET
+           contact_id = excluded.contact_id,
+           created_at = excluded.created_at,
+           lamport = excluded.lamport`,
+      )
+      .run({
+        meetingId: row.meetingId,
+        speakerIndex: row.speakerIndex,
+        contactId: row.contactId,
+        createdAt: toIso(row.createdAt),
+        lamport: row.lamport,
+      }),
+}
+
 // ─── User Preferences (Part E) ──────────────────────────────────────────────
 //
 // Neon→desktop pull of the synced chat preferences (e.g. emailThreadsPerCompany
@@ -1300,7 +1475,143 @@ function upsertChatSessionMessageRow(
 
 // ─── Upsert helper ───────────────────────────────────────────────────────────
 
+// ─── Calendar-meeting id reconcile ───────────────────────────────────────────
+//
+// WHY THIS EXISTS (do not "simplify" away):
+// Desktop and the gateway used to mint DIFFERENT ids (uuid vs cuid) for the
+// same calendar event, so a mobile-recorded transcript (gateway row B) could
+// never land on the desktop's own stub row (A) for that calendar_event_id —
+// SQLite's global UNIQUE(calendar_event_id) blocks B, and A's push to Neon
+// 23505s forever (a stuck dead-letter). meeting-id.ts now derives a shared
+// deterministic id so NEW events converge, but desktop is a self-updating
+// installed app: old installs + already-diverged rows still need healing. This
+// reconcile is that heal path, and it must stay correct.
+//
+// When a pulled row B carries a calendar_event_id already held locally by a
+// DIFFERENT id A, we adopt B's id as canonical: migrate A's child rows to B,
+// delete A, purge A's stale outbox entries, then let the normal upsert insert B.
+//
+// FAILURE ISOLATION: applyRemoteRows wraps a whole ≤50-row chunk in one
+// transaction and, because chunks are lamport-ordered, a thrown error there can
+// permanently skip the rest of the chunk. So we wrap the reconcile in a
+// SAVEPOINT and NEVER throw: on error we ROLLBACK TO the savepoint (A intact),
+// log `reconcile_failed`, and return false so upsertMeetingRow skips inserting
+// B (inserting it while A still holds the calendar_event_id would trip the
+// unique index and abort the chunk). The failed meeting re-heals when B's
+// lamport next bumps. Other rows in the chunk are unaffected.
+
+// Child tables that reference meetings(id). CASCADE children would be destroyed
+// by a naive DELETE of A, so they're migrated; SET-NULL children are re-pointed.
+// `unique` = the table has a UNIQUE/PK involving meeting_id, so B may already
+// hold the same child (its rows are pulled down) — UPDATE OR IGNORE then drop
+// the un-migrated leftover. Explicit list (not derived from owned-tables) so it
+// can include non-owned children too.
+const MEETING_CHILD_FKS: ReadonlyArray<{ table: string; column: string; unique: boolean }> = [
+  { table: 'meeting_speakers', column: 'meeting_id', unique: true },
+  { table: 'meeting_company_links', column: 'meeting_id', unique: true },
+  { table: 'meeting_theme_links', column: 'meeting_id', unique: true },
+  { table: 'meeting_speaker_contact_links', column: 'meeting_id', unique: true },
+  { table: 'notes', column: 'source_meeting_id', unique: true },
+  { table: 'tasks', column: 'meeting_id', unique: false },
+  { table: 'artifacts', column: 'meeting_id', unique: false },
+  { table: 'partner_meeting_digests', column: 'meeting_id', unique: false },
+]
+
+// NOTE: migrated children are re-pointed LOCALLY only — they are not re-emitted
+// to the outbox (the apply path has no withSync context). For the single-desktop
+// beta that's sufficient (the data survives on this device). A's own scalar
+// fields (e.g. notes) are NOT preserved: A is an auto-created stub the user
+// never recorded on (they recorded on mobile → B), so A is empty in practice,
+// and preserving a scalar locally would be clobbered by B's next pull anyway.
+function migrateMeetingChildren(db: Database.Database, oldId: string, newId: string): number {
+  let migrated = 0
+  for (const { table, column, unique } of MEETING_CHILD_FKS) {
+    if (unique) {
+      // Move the rows that don't collide; collided rows (B already has the same
+      // child) keep oldId and are removed next so B's copy wins.
+      migrated += db
+        .prepare(`UPDATE OR IGNORE ${table} SET ${column} = ? WHERE ${column} = ?`)
+        .run(newId, oldId).changes
+      db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).run(oldId)
+    } else {
+      migrated += db
+        .prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`)
+        .run(newId, oldId).changes
+    }
+  }
+  return migrated
+}
+
+// Purge every outbox entry that references the dead meeting id — the parent
+// (single-PK row_id = the id) and any composite-PK child rows (row_id is JSON
+// like {"meeting_id":"…","company_id":"…"} — use json_extract, NOT a brittle
+// LIKE). Clears the permanently-failing 23505 dead-letter for A.
+function purgeOutboxForMeeting(db: Database.Database, meetingId: string): void {
+  db.prepare(`DELETE FROM outbox WHERE table_name = 'meetings' AND row_id = ?`).run(meetingId)
+  for (const table of [
+    'meeting_speakers',
+    'meeting_company_links',
+    'meeting_theme_links',
+    'meeting_speaker_contact_links',
+  ]) {
+    db.prepare(
+      `DELETE FROM outbox WHERE table_name = ? AND json_extract(row_id, '$.meeting_id') = ?`,
+    ).run(table, meetingId)
+  }
+}
+
+/**
+ * Heal id-divergence for the incoming meeting `row`. Returns true if the caller
+ * should proceed to upsert `row`, false if it must skip (reconcile failed and A
+ * still holds the calendar_event_id). Never throws — see the header comment.
+ */
+function reconcileCalendarMeeting(db: Database.Database, row: PulledMeetingRow): boolean {
+  if (!row.calendarEventId) return true
+  const diverged = db
+    .prepare(`SELECT id FROM meetings WHERE calendar_event_id = ? AND id != ?`)
+    .get(row.calendarEventId, row.id) as { id: string } | undefined
+  if (!diverged) return true
+
+  const oldId = diverged.id
+  // Defer FK enforcement to COMMIT for this transaction: we migrate A's children
+  // to B's id BEFORE B exists (B can't be inserted until A is deleted, because A
+  // still holds the calendar_event_id under the global unique index). Unlike
+  // `foreign_keys`, `defer_foreign_keys` can be toggled inside a transaction and
+  // auto-resets at COMMIT/ROLLBACK. By commit, B is inserted and every child
+  // points to a valid parent.
+  db.pragma('defer_foreign_keys = ON')
+  db.exec('SAVEPOINT recon')
+  try {
+    const childRowsMigrated = migrateMeetingChildren(db, oldId, row.id)
+    db.prepare('DELETE FROM meetings WHERE id = ?').run(oldId)
+    purgeOutboxForMeeting(db, oldId)
+    db.exec('RELEASE recon')
+    console.info(
+      `[sync:reconcile] calendar_event_reconciled oldId=${oldId} newId=${row.id} ` +
+        `calendarEventId=${row.calendarEventId} childRowsMigrated=${childRowsMigrated} ` +
+        `metric=sync.meeting.calendar_event_reconciled count=1`,
+    )
+    return true
+  } catch (err) {
+    // Roll back just this meeting; the rest of the chunk is untouched.
+    db.exec('ROLLBACK TO recon')
+    db.exec('RELEASE recon')
+    console.error(
+      `[sync:reconcile] reconcile_failed oldId=${oldId} newId=${row.id} ` +
+        `calendarEventId=${row.calendarEventId} ` +
+        `metric=sync.meeting.calendar_event_reconcile_failed count=1`,
+      err,
+    )
+    return false
+  }
+}
+
 function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
+  // Converge a diverged calendar meeting before inserting. If the reconcile
+  // failed, skip the insert — A still holds this calendar_event_id and B would
+  // trip the global unique index (aborting the whole chunk).
+  if (!reconcileCalendarMeeting(db, row)) return
+
   // Hand-rolled camelCase → snake_case mapping. The set of columns is
   // stable; adding a future column means adding it here too. Explicit over
   // clever — matches the project's "no magic" sync convention.
