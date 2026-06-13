@@ -35,6 +35,7 @@ import { backfillPreferencesForSyncOnLaunch } from './services/preference-sync.s
 import { consolidateTargetStageFieldsOnLaunch } from './services/target-stage-consolidation-backfill.service'
 import { backfillCustomFieldsForSyncOnLaunch } from './services/custom-field-sync-backfill.service'
 import { backfillNotesPrivacyOnLaunch } from './services/notes-privacy-backfill.service'
+import { rehealDivergedMeetingsOnLaunch } from './services/reheal-diverged-meetings.service'
 import { startExtractionWorker } from './services/flagged-file-extraction-worker'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
@@ -351,6 +352,13 @@ app.whenReady().then(() => {
   // the outbox. Run-once guarded (settings flag) so it never re-privatizes notes
   // created later. Deferred 3.6s, just after the custom-field backfill.
   backfillNotesPrivacyOnLaunch(startupUserId)
+
+  // One-time re-pull to heal meetings that diverged BEFORE the id-divergence
+  // reconcile shipped: their transcript row sits below the pull watermark and is
+  // never re-pulled, so the reconcile can't fire for them. Resets this device's
+  // last_pulled_lamport once (run-once guarded) so a full re-pull lets the
+  // reconcile converge them. Deferred 4s, after the other launch backfills.
+  rehealDivergedMeetingsOnLaunch(startupUserId)
 
   // Phase 3 — kick the flagged-file extraction worker. Drains any
   // 'pending' or stuck-'extracting' rows (post-crash recovery), and
