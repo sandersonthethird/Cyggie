@@ -9,6 +9,9 @@ directories:
 extraResources:
   - from: src/main/logo.png
     to: logo.png
+  # Square app icon, also set on the Dock at runtime via app.dock.setIcon().
+  - from: build/icon.icns
+    to: icon.icns
   # macOS-only Swift helper that detects when the meeting app releases the mic
   # (call ended) so recording stops instantly. Built by build-native-helper.mjs
   # (universal) before packaging; resolved at runtime via process.resourcesPath.

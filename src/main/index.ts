@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, nativeImage, protocol, shell } from 'electron'
 import { join, normalize, extname } from 'path'
 import { existsSync, statSync, createReadStream } from 'fs'
 import { Readable } from 'stream'
@@ -247,6 +247,21 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  // Show the Cyggie logo in the Dock / ⌘-Tab switcher. In `pnpm dev` the
+  // running binary is stock Electron, so macOS would otherwise draw the
+  // generic Electron icon; the packaged Info.plist icon only applies to a
+  // built .app. setIcon() overrides it at runtime for both. (macOS ignores
+  // the BrowserWindow `icon` option.)
+  if (process.platform === 'darwin' && app.dock) {
+    const iconPath = app.isPackaged
+      ? join(process.resourcesPath, 'icon.icns')
+      : join(__dirname, '../../build/icon.icns')
+    const dockIcon = nativeImage.createFromPath(iconPath)
+    if (!dockIcon.isEmpty()) {
+      app.dock.setIcon(dockIcon)
+    }
+  }
+
   // Initialize default storage paths and database
   initializeStorage()
   getDatabase()
