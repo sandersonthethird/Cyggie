@@ -6,6 +6,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useCalendar } from '../hooks/useCalendar'
 import type { LlmProvider, MaskedKey } from '../../shared/types/settings'
 import { UNCONFIGURED_KEY } from '../../shared/types/settings'
+import { CLAUDE_MODEL_OPTIONS } from '../../shared/constants/claude-models'
 import type {
   ContactEmailOnboardingOptions,
   ContactEmailOnboardingResult,
@@ -53,20 +54,6 @@ const OPENAI_MODEL_OPTIONS = [
   { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
 ]
 
-const CLAUDE_MODEL_LABELS: Record<string, string> = {
-  'claude-opus-4-6': 'Claude Opus 4.6',
-  'claude-sonnet-4-6': 'Claude Sonnet 4.6',
-  'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
-  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
-}
-
-const CLAUDE_MODEL_OPTIONS = [
-  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-  { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
-  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-]
-
 const INTELLIGENCE_FUNCTIONS: Array<{
   label: string
   claudeKey: keyof SettingsState
@@ -92,6 +79,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 
 import { AgentLimitsSection } from '../components/settings/AgentLimitsSection'
 import { AgentModelTierSection } from '../components/settings/AgentModelTierSection'
+import { GatewayModelSection } from '../components/settings/GatewayModelSection'
 import { EmailContextSection } from '../components/settings/EmailContextSection'
 import { TranscriptionProviderSection } from '../components/settings/TranscriptionProviderSection'
 import { AppearanceSection } from '../components/settings/AppearanceSection'
@@ -1466,11 +1454,17 @@ export default function Settings() {
         </p>
         <AgentLimitsSection />
 
-        <h4 className={styles.subsectionTitle ?? ''} style={{ marginTop: 24, fontSize: 14, fontWeight: 600 }}>Model tier &amp; prompt caching</h4>
+        <h4 className={styles.subsectionTitle ?? ''} style={{ marginTop: 24, fontSize: 14, fontWeight: 600 }}>Memo &amp; stress-test model</h4>
         <p className={styles.hint} style={{ marginTop: 4 }}>
           Applies to both the memo producer and stress-test agents. Reads happen at run start.
         </p>
         <AgentModelTierSection />
+
+        <h4 className={styles.subsectionTitle ?? ''} style={{ marginTop: 24, fontSize: 14, fontWeight: 600 }}>Chat &amp; enhancement model</h4>
+        <p className={styles.hint} style={{ marginTop: 4 }}>
+          Models for the in-app chat and meeting enhancement. Synced across your devices.
+        </p>
+        <GatewayModelSection />
 
         <h4 className={styles.subsectionTitle ?? ''} style={{ marginTop: 24, fontSize: 14, fontWeight: 600 }}>AI chat email context</h4>
         <p className={styles.hint} style={{ marginTop: 4 }}>

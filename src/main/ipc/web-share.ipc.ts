@@ -9,6 +9,7 @@ import { recoverSummaryFromCompanionNote } from '@cyggie/services/meeting-summar
 import type { WebShareResponse } from '../../shared/types/web-share'
 import { WEB_SHARE_API_URL, WEB_SHARE_API_SECRET } from '../config/web-share.config'
 import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
+import { getCurrentFirmId } from '../security/current-firm'
 import { listMeetingCompanies } from '@cyggie/db/sqlite/repositories'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 
@@ -135,7 +136,7 @@ export function registerWebShareHandlers(): void {
             transcript,
             notes: meeting.notes,
             claudeApiKey,
-            claudeModel: getSetting('webShareModel') || 'claude-sonnet-4-5-20250929',
+            firmId: getCurrentFirmId(),
             logoUrl: getSetting('brandingLogoDataUrl') || null,
             firmName: getSetting('brandingFirmName') || null,
             brandColor: getSetting('brandingPrimaryColor') || null,
@@ -202,7 +203,7 @@ export function registerWebShareHandlers(): void {
             title: hydrated.title || 'Untitled',
             contentMarkdown: hydrated.content,
             claudeApiKey,
-            claudeModel: getSetting('webShareModel') || 'claude-sonnet-4-5-20250929',
+            firmId: getCurrentFirmId(),
             logoUrl: getSetting('brandingLogoDataUrl') || null,
             firmName: getSetting('brandingFirmName') || null,
             brandColor: getSetting('brandingPrimaryColor') || null,

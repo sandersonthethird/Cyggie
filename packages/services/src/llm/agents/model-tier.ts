@@ -1,17 +1,20 @@
 import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
+import { CLAUDE_MODEL_IDS } from '@shared/constants/claude-models'
 
 /**
- * Agent model tier + cache TTL resolvers.
+ * Agent model + cache TTL resolvers.
  *
  *   ┌──────────────────────────────────────────────────────────────────┐
  *   │  Both the memo producer agent and the thesis stress-test agent  │
  *   │  call getAgentModelId() and getCacheTtl() at run-start.          │
  *   │                                                                   │
- *   │  Model tier (agent.modelTier):                                    │
- *   │    • "sonnet" (default; unset → here too) → Sonnet 4.5            │
- *   │    • "haiku"                                → Haiku 4.5            │
- *   │  Lets us cut cost ~3-4× during plumbing tests at the expense of   │
- *   │  memo quality. Flip back to Sonnet for production runs.           │
+ *   │  Model selection — getAgentModelId() resolves in this order:      │
+ *   │    1. agent.model  — full model id from the Settings dropdown,    │
+ *   │                      if set AND in the CLAUDE_MODEL_IDS allow-list │
+ *   │    2. agent.modelTier (legacy radio) — "haiku"→Haiku, else Sonnet │
+ *   │    3. default → Sonnet 4.5                                        │
+ *   │  Unknown agent.model values warn + fall through to the default.   │
+ *   │  The shared dropdown drives BOTH agents (one picker, both flows). │
  *   │                                                                   │
  *   │  Cache TTL (agent.cacheTtl):                                       │
  *   │    • "5m" (default) — Anthropic ephemeral cache, 5-min TTL        │
@@ -32,6 +35,9 @@ export const HAIKU_MODEL_ID = 'claude-haiku-4-5-20251001'
 export type ModelTier = 'sonnet' | 'haiku'
 export type CacheTtl = '5m' | '1h'
 
+/** Full model id chosen via the Settings dropdown. Preferred over the legacy tier. */
+const AGENT_MODEL_KEY = 'agent.model'
+/** Legacy sonnet/haiku radio. Still honored when agent.model is unset. */
 const MODEL_TIER_KEY = 'agent.modelTier'
 const CACHE_TTL_KEY = 'agent.cacheTtl'
 
@@ -42,11 +48,20 @@ const CACHE_TTL_KEY = 'agent.cacheTtl'
 export const EXTENDED_CACHE_TTL_BETA = 'extended-cache-ttl-2025-04-11'
 
 export function getAgentModelId(): string {
-  const raw = getSetting(MODEL_TIER_KEY)
-  if (!raw) return SONNET_MODEL_ID
-  if (raw === 'haiku') return HAIKU_MODEL_ID
-  if (raw === 'sonnet') return SONNET_MODEL_ID
-  console.warn(`[model-tier] unknown agent.modelTier value "${raw}"; falling back to sonnet`)
+  // 1. Preferred: full model id from the Settings dropdown.
+  const model = getSetting(AGENT_MODEL_KEY)
+  if (model) {
+    if (CLAUDE_MODEL_IDS.has(model)) return model
+    console.warn(`[model-tier] unknown agent.model value "${model}"; falling back to default`)
+    return SONNET_MODEL_ID
+  }
+
+  // 2. Legacy radio (back-compat for installs that set it before the dropdown).
+  const tier = getSetting(MODEL_TIER_KEY)
+  if (!tier) return SONNET_MODEL_ID
+  if (tier === 'haiku') return HAIKU_MODEL_ID
+  if (tier === 'sonnet') return SONNET_MODEL_ID
+  console.warn(`[model-tier] unknown agent.modelTier value "${tier}"; falling back to sonnet`)
   return SONNET_MODEL_ID
 }
 

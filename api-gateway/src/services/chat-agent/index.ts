@@ -27,6 +27,11 @@ export interface RunAgentTurnArgs {
   systemPrompt: Anthropic.MessageCreateParams['system']
   tools?: Anthropic.Tool[]
   signal?: AbortSignal
+  /**
+   * Per-user model id (resolved by the caller from user_preferences via
+   * resolveUserModel). Falls back to CHAT_MODEL when omitted.
+   */
+  model?: string
 }
 
 // Blocking call — returns the full Anthropic.Message once complete.
@@ -53,7 +58,7 @@ export function createAgentStream(args: RunAgentTurnArgs) {
 
 function buildCreateParams(args: RunAgentTurnArgs): Anthropic.MessageCreateParamsNonStreaming {
   const params: Anthropic.MessageCreateParamsNonStreaming = {
-    model: CHAT_MODEL,
+    model: args.model ?? CHAT_MODEL,
     max_tokens: CHAT_MAX_TOKENS,
     system: args.systemPrompt,
     messages: args.messages,

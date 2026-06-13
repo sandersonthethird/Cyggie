@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import { CLAUDE_MODEL_OPTIONS, CLAUDE_MODEL_IDS } from '../../../shared/constants/claude-models'
 
 /**
- * Two radio groups that drive `agent.modelTier` and `agent.cacheTtl` in the
- * settings table. Read by the main process via `getAgentModelId()` and
- * `getCacheTtl()` at the start of each agent run (mid-run setting changes
- * are NOT picked up).
+ * A model dropdown + a cache-TTL radio group that drive `agent.model` and
+ * `agent.cacheTtl` in the settings table. Read by the main process via
+ * `getAgentModelId()` and `getCacheTtl()` at the start of each agent run
+ * (mid-run setting changes are NOT picked up).
  *
  *   ┌────────────────────────────────────────────────────────────────┐
- *   │  Model tier (agent.modelTier):                                  │
- *   │    • "sonnet" (default) — Claude Sonnet 4.5; production quality │
- *   │    • "haiku"            — Claude Haiku 4.5; ~3-4× cheaper       │
+ *   │  Memo & stress-test model (agent.model):                       │
+ *   │    • one full model id from CLAUDE_MODEL_OPTIONS                │
+ *   │    • default Sonnet 4.5; drives BOTH the memo producer and the  │
+ *   │      thesis stress-test agents (one shared picker)              │
+ *   │    • legacy agent.modelTier (sonnet/haiku radio) is still read  │
+ *   │      by getAgentModelId() when agent.model is unset             │
  *   │                                                                  │
  *   │  Cache TTL (agent.cacheTtl):                                     │
  *   │    • "5m" (default) — Anthropic ephemeral cache                 │
@@ -20,14 +24,25 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
  *   └────────────────────────────────────────────────────────────────┘
  */
 
-type ModelTier = 'sonnet' | 'haiku'
 type CacheTtl = '5m' | '1h'
 
+const AGENT_MODEL_KEY = 'agent.model'
 const MODEL_TIER_KEY = 'agent.modelTier'
 const CACHE_TTL_KEY = 'agent.cacheTtl'
 
+const DEFAULT_AGENT_MODEL = 'claude-sonnet-4-5-20250929'
+
+/** Mirror getAgentModelId()'s legacy fallback so the UI shows the resolved value. */
+function resolveInitialModel(all: Record<string, string>): string {
+  const model = all[AGENT_MODEL_KEY]
+  if (model && CLAUDE_MODEL_IDS.has(model)) return model
+  const tier = all[MODEL_TIER_KEY]
+  if (tier === 'haiku') return 'claude-haiku-4-5-20251001'
+  return DEFAULT_AGENT_MODEL
+}
+
 export function AgentModelTierSection() {
-  const [modelTier, setModelTier] = useState<ModelTier>('sonnet')
+  const [model, setModel] = useState<string>(DEFAULT_AGENT_MODEL)
   const [cacheTtl, setCacheTtl] = useState<CacheTtl>('5m')
 
   useEffect(() => {
@@ -35,8 +50,7 @@ export function AgentModelTierSection() {
     async function load() {
       const all = await api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL)
       if (cancelled) return
-      const tierRaw = all[MODEL_TIER_KEY]
-      setModelTier(tierRaw === 'haiku' ? 'haiku' : 'sonnet')
+      setModel(resolveInitialModel(all))
       const ttlRaw = all[CACHE_TTL_KEY]
       setCacheTtl(ttlRaw === '1h' ? '1h' : '5m')
     }
@@ -44,9 +58,9 @@ export function AgentModelTierSection() {
     return () => { cancelled = true }
   }, [])
 
-  async function commitModelTier(value: ModelTier) {
-    setModelTier(value)
-    await api.invoke(IPC_CHANNELS.SETTINGS_SET, MODEL_TIER_KEY, value)
+  async function commitModel(value: string) {
+    setModel(value)
+    await api.invoke(IPC_CHANNELS.SETTINGS_SET, AGENT_MODEL_KEY, value)
   }
 
   async function commitCacheTtl(value: CacheTtl) {
@@ -58,32 +72,21 @@ export function AgentModelTierSection() {
     <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ minWidth: 180, fontSize: 13 }}>Model tier</span>
-          <span style={{ display: 'flex', gap: 16, fontSize: 13 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input
-                type="radio"
-                name="agent-model-tier"
-                value="sonnet"
-                checked={modelTier === 'sonnet'}
-                onChange={() => commitModelTier('sonnet')}
-              />
-              Sonnet 4.5 (default)
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input
-                type="radio"
-                name="agent-model-tier"
-                value="haiku"
-                checked={modelTier === 'haiku'}
-                onChange={() => commitModelTier('haiku')}
-              />
-              Haiku 4.5
-            </label>
-          </span>
+          <span style={{ minWidth: 180, fontSize: 13 }}>Memo &amp; stress-test model</span>
+          <select
+            value={model}
+            onChange={(e) => commitModel(e.target.value)}
+            style={{ fontSize: 13 }}
+          >
+            {CLAUDE_MODEL_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
         </label>
         <p style={{ marginLeft: 192, marginTop: 2, fontSize: 11, color: 'var(--color-text-secondary, #6b7280)' }}>
-          Sonnet for production memos. Haiku is ~3–4× cheaper — useful while testing the agent flow.
+          Drives both the memo producer and the thesis stress-test agents. Sonnet for production memos; Haiku is ~3–4× cheaper for testing the agent flow.
         </p>
       </div>
 

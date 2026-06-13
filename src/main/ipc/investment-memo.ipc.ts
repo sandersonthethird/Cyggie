@@ -14,6 +14,7 @@ import { exportMemoMarkdownToPdf } from '../services/memo-export.service'
 import { exportMemoToGoogleDoc } from '../drive/google-drive'
 import { getSetting } from '@cyggie/db/sqlite/repositories/settings.repo'
 import { getCurrentUserId } from '../security/current-user'
+import { getCurrentFirmId } from '../security/current-firm'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 import { readSummary, readTranscript, readLocalFile } from '../storage/file-manager'
@@ -868,7 +869,7 @@ export function registerInvestmentMemoHandlers(): void {
             companyName,
             contentMarkdown: latest.contentMarkdown,
             claudeApiKey,
-            claudeModel: getSetting('webShareModel') || 'claude-sonnet-4-5-20250929',
+            firmId: getCurrentFirmId(),
             logoUrl,
             firmName,
             brandColor,
