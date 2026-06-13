@@ -12,11 +12,33 @@ import { chatChannels, type ChatKind } from '../renderer/lib/chat-channels'
 import { IPC_CHANNELS } from '../shared/constants/channels'
 
 describe('chatChannels', () => {
-  it('routes meeting kind to CHAT_QUERY_MEETING + CHAT_ABORT', () => {
+  it('routes meeting kind to CHAT_QUERY_MEETING + CHAT_ABORT (no attached refs)', () => {
     const d = chatChannels({ kind: 'meeting', meetingId: 'm1' })
     expect(d.query).toBe(IPC_CHANNELS.CHAT_QUERY_MEETING)
     expect(d.abort).toBe(IPC_CHANNELS.CHAT_ABORT)
-    expect(d.buildInvokeArgs({ question: 'q' })).toEqual(['m1', 'q', undefined])
+    // 4th arg is the attached-entity wire list, empty when none attached.
+    expect(d.buildInvokeArgs({ question: 'q' })).toEqual(['m1', 'q', undefined, []])
+  })
+
+  it('serializes attached company/contact refs as the meeting kind 4th arg', () => {
+    const d = chatChannels({
+      kind: 'meeting',
+      meetingId: 'm1',
+      refs: [
+        { type: 'company', id: 'c1', label: 'Acme' },
+        { type: 'contact', id: 'p1', label: 'Jane' },
+      ],
+    })
+    expect(d.buildInvokeArgs({ question: 'q' })).toEqual([
+      'm1',
+      'q',
+      undefined,
+      // labels dropped for the wire (resolved server-side)
+      [
+        { type: 'company', id: 'c1' },
+        { type: 'contact', id: 'p1' },
+      ],
+    ])
   })
 
   it('routes meetings (search-results) to CHAT_QUERY_SEARCH_RESULTS + CHAT_ABORT_ALL', () => {
@@ -71,6 +93,7 @@ describe('chatChannels', () => {
       'm1',
       'q',
       att,
+      [],
     ])
   })
 
