@@ -8,8 +8,8 @@ import { colors, radii, spacing, type } from '../theme'
 // =============================================================================
 // SelectedCompaniesPillRow — pure presentation. Renders a horizontal row
 // of chips for the companies whose context is being injected into the
-// global Ask Cyggie chat's LLM system prompt. Owned by the Ask Cyggie tab
-// (mobile/app/(tabs)/chat.tsx); fed hydrated CompanyChip[] from the
+// global Ask Cyggie chat's LLM system prompt. Owned by the Ask Cyggie screen
+// (mobile/app/chat/index.tsx); fed hydrated CompanyChip[] from the
 // session-detail query.
 //
 // Each chip shows the company name + an inline × button that removes the

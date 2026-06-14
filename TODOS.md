@@ -3124,3 +3124,30 @@ chat — company/contact/global chats want the same warning+cap. Start points:
 **Depends on / blocked by:** The meeting-chat `refs` plumbing shipped in
 `feat/meeting-chat-context` (meeting chats can now carry attached companies, which
 is what makes a combined estimate meaningful).
+
+## Migrate remaining mobile app bars to `<ScreenHeader>`
+
+**What:** Move the still-hand-rolled app bars on the mobile screens that the
+record-tab PR did not touch — settings, search, meeting detail, and the
+per-entity chat screen (`app/chat/[contextKind]/[contextId].tsx`) — onto the
+shared `mobile/components/ScreenHeader.tsx` component.
+
+**Why:** The record-tab PR (`feat/mobile-record-tab`) introduced `ScreenHeader`
+and migrated the 5 tab screens + global chat onto it, but the remaining screens
+still duplicate the old `appbar` / `appbarTitleWrap` / `appbarTitle` /
+`appbarSubtitle` style vocabulary inline. Consolidating them makes the next
+header change a single-file edit and keeps the chat-button / back-chevron
+affordances consistent app-wide.
+
+**Context:** `ScreenHeader` already supports `title`, `subtitle`, `onBack`,
+`actions`, `showChatButton`, and `borderBottom`, plus a `HeaderIconButton`
+helper for round action buttons — see how `app/chat/index.tsx` and the tab
+screens use them. Each remaining screen just needs its `<View style={appbar}>`
+block swapped for `<ScreenHeader .../>` and its now-dead local appbar styles
+removed. Watch for screens that want a back chevron (detail/search) vs. the
+chat button (top-level surfaces).
+
+**Effort:** M. **Priority:** P3. **Owner:** Sandy.
+
+**Depends on / blocked by:** The `feat/mobile-record-tab` PR landing (ships
+`ScreenHeader`).

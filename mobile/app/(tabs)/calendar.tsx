@@ -48,7 +48,7 @@ import { MeetingRow } from '../../components/MeetingRow'
 import { ImpromptuRecordingsSection } from '../../components/ImpromptuRecordingsSection'
 import { NowRail } from '../../components/NowRail'
 import { formatErrorMessage } from '../../lib/banner/banner-state'
-import { RecordFab } from '../../components/RecordFab'
+import { ScreenHeader, HeaderIconButton } from '../../components/ScreenHeader'
 import { appStateStorage } from '../../lib/cache/mmkv'
 import { pullSince } from '../../lib/sync/pull'
 import { colors, radii, spacing, type } from '../../theme'
@@ -60,10 +60,11 @@ const ONBOARDING_TOOLTIP_KEY = 'onboarding.notes-tooltip-seen'
 // Calendar home — WIREFRAME 1.
 //
 // Composition:
-//   • SafeArea + app bar (Today / date / count + search icon + avatar)
+//   • SafeArea + shared <ScreenHeader> (Today / date / count + search +
+//     settings + the persistent Ask-Cyggie chat button)
 //   • Sectioned scroll (Earlier today / Now / Up next / Later today)
 //   • NowRail divider between Earlier and Now+Next
-//   • RecordFab pinned bottom-right above the tab bar
+//   • Recording is started from the raised center tab button (RecordTabButton)
 //
 // The bucketing logic (eventsForDate + bucketEvents) and data fetching
 // (TanStack Query + MMKV persister) are unchanged from M1b — this pass
@@ -391,30 +392,26 @@ export default function CalendarTab() {
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
-        <View style={styles.appbar}>
-          <View style={styles.appbarTitleWrap}>
-            <Text style={styles.appbarTitle}>{title}</Text>
-            <Text style={styles.appbarSubtitle}>{subtitle}</Text>
-          </View>
-          <View style={styles.appbarActions}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Search"
-              onPress={() => router.push('/search')}
-              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            >
-              <Ionicons name="search" size={16} color={colors.text2} />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Settings"
-              onPress={() => router.push('/settings')}
-              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            >
-              <Ionicons name="settings-outline" size={16} color={colors.text2} />
-            </Pressable>
-          </View>
-        </View>
+        <ScreenHeader
+          title={title}
+          subtitle={subtitle}
+          actions={
+            <>
+              <HeaderIconButton
+                icon="search"
+                onPress={() => router.push('/search')}
+                accessibilityLabel="Search"
+                size={16}
+              />
+              <HeaderIconButton
+                icon="settings-outline"
+                onPress={() => router.push('/settings')}
+                accessibilityLabel="Settings"
+                size={16}
+              />
+            </>
+          }
+        />
         <SegmentControl active={segment} onChange={handleSegmentChange} />
       </SafeAreaView>
 
@@ -598,8 +595,6 @@ export default function CalendarTab() {
           onImpromptuDelete={handleEventDelete}
         />
       )}
-
-      <RecordFab onPress={() => router.push('/record')} />
     </View>
   )
 }
@@ -944,43 +939,6 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safeArea: { backgroundColor: colors.surface },
 
-  appbar: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-    backgroundColor: colors.surface,
-  },
-  appbarTitleWrap: { flex: 1, minWidth: 0 },
-  appbarTitle: {
-    color: colors.text,
-    fontSize: 26,
-    fontWeight: '700',
-    letterSpacing: -0.6,
-    lineHeight: 28,
-  },
-  appbarSubtitle: {
-    color: colors.text3,
-    fontSize: type.meta + 1,
-    fontWeight: '500',
-    marginTop: 2,
-  },
-  appbarActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  iconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: radii.pill,
-    backgroundColor: colors.surface3,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   pressed: { opacity: 0.6 },
 
   segmentWrap: {

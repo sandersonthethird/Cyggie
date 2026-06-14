@@ -23,6 +23,7 @@ import {
 import { NotesFolderPicker } from '../../components/NotesFolderPicker'
 import { useAuthStore } from '../../lib/auth/store'
 import { colors, radii, spacing, type } from '../../theme'
+import { ScreenHeader } from '../../components/ScreenHeader'
 
 // Notes tab — M2 read surface for the unified notes table.
 //
@@ -92,12 +93,7 @@ export default function NotesTab() {
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
-        <View style={styles.appbar}>
-          <View style={styles.appbarTitleWrap}>
-            <Text style={styles.appbarTitle}>Notes</Text>
-            <Text style={styles.appbarSubtitle}>{headerSubtitle}</Text>
-          </View>
-        </View>
+        <ScreenHeader title="Notes" subtitle={headerSubtitle} />
         <View style={styles.searchWrap}>
           <Ionicons
             name="search"
@@ -373,27 +369,6 @@ function formatRelative(iso: string): string {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safeArea: { backgroundColor: colors.surface },
-
-  appbar: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
-    backgroundColor: colors.surface,
-  },
-  appbarTitleWrap: { flex: 1, minWidth: 0 },
-  appbarTitle: {
-    color: colors.text,
-    fontSize: 26,
-    fontWeight: '700',
-    letterSpacing: -0.6,
-    lineHeight: 28,
-  },
-  appbarSubtitle: {
-    color: colors.text3,
-    fontSize: type.meta + 1,
-    fontWeight: '500',
-    marginTop: 2,
-  },
 
   searchWrap: {
     flexDirection: 'row',

@@ -36,8 +36,8 @@ import { colors, radii, spacing, type } from '../theme'
 import { useClearOnSessionSwap } from './useClearOnSessionSwap'
 
 // =============================================================================
-// ChatComposer — shared composer used by both the global Chat tab
-// (mobile/app/(tabs)/chat.tsx) and the per-entity chat stack screen
+// ChatComposer — shared composer used by both the global chat screen
+// (mobile/app/chat/index.tsx) and the per-entity chat stack screen
 // (mobile/app/chat/[contextKind]/[contextId].tsx).
 //
 // Owns:

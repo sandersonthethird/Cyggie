@@ -26,6 +26,7 @@ import { ChatComposer, type ChatComposerHandle } from '../../components/ChatComp
 import { CompanyMultiSelectSheet } from '../../components/CompanyMultiSelectSheet'
 import { SelectedCompaniesPillRow } from '../../components/SelectedCompaniesPillRow'
 import { useStartNewChat } from '../../components/useStartNewChat'
+import { ScreenHeader, HeaderIconButton } from '../../components/ScreenHeader'
 import { colors, radii, spacing, type } from '../../theme'
 
 // T17b Slice 2 — Chat tab is the global ('crm') chat surface. The composer
@@ -124,40 +125,28 @@ export default function ChatTab(): React.JSX.Element {
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.root}>
-      <View style={styles.appbar}>
-        <View style={styles.appbarRow}>
-          <View style={styles.appbarTitleWrap}>
-            <Text style={styles.title}>Ask Cyggie</Text>
-            <Text style={styles.subtitle} numberOfLines={1}>
-              Global chat about your portfolio + pipeline
-            </Text>
-          </View>
-          <Pressable
-            onPress={() => startNew.mutate()}
-            hitSlop={8}
-            disabled={newChatDisabled}
-            style={({ pressed }) => [
-              styles.pastBtn,
-              newChatDisabled && styles.iconDisabled,
-              pressed && !newChatDisabled && styles.pressed,
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Start new chat"
-            accessibilityState={{ disabled: newChatDisabled }}
-          >
-            <Ionicons name="create-outline" size={22} color={colors.text} />
-          </Pressable>
-          <Pressable
-            onPress={() => setPastChatsOpen(true)}
-            hitSlop={8}
-            style={({ pressed }) => [styles.pastBtn, pressed && styles.pressed]}
-            accessibilityRole="button"
-            accessibilityLabel="Past chats"
-          >
-            <Ionicons name="time-outline" size={22} color={colors.text} />
-          </Pressable>
-        </View>
-      </View>
+      <ScreenHeader
+        title="Ask Cyggie"
+        subtitle="Global chat about your portfolio + pipeline"
+        onBack={() => router.back()}
+        showChatButton={false}
+        borderBottom
+        actions={
+          <>
+            <HeaderIconButton
+              icon="create-outline"
+              onPress={() => startNew.mutate()}
+              accessibilityLabel="Start new chat"
+              disabled={newChatDisabled}
+            />
+            <HeaderIconButton
+              icon="time-outline"
+              onPress={() => setPastChatsOpen(true)}
+              accessibilityLabel="Past chats"
+            />
+          </>
+        }
+      />
 
       <SelectedCompaniesPillRow
         companies={selectedCompanies}
@@ -363,28 +352,6 @@ function formatRelativeTime(iso: string): string {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   pressed: { opacity: 0.6 },
-
-  appbar: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.md,
-    backgroundColor: colors.surface,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  appbarRow: { flexDirection: 'row', alignItems: 'center' },
-  appbarTitleWrap: { flex: 1 },
-  title: { color: colors.text, fontSize: type.display, fontWeight: '700' },
-  subtitle: { color: colors.text3, fontSize: type.meta, marginTop: 2 },
-  pastBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: radii.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconDisabled: { opacity: 0.35 },
-
   errorText: { color: colors.text3, fontSize: type.body, textAlign: 'center' },
 })
 

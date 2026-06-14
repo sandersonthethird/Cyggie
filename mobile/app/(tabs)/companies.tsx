@@ -18,6 +18,7 @@ import { fetchCompanies, type CompanyListItem } from '../../lib/api/companies'
 import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo } from '../../components/CompanyLogo'
 import { colors, radii, spacing, type } from '../../theme'
+import { ScreenHeader } from '../../components/ScreenHeader'
 
 // Companies tab — M2 read-only surface.
 //
@@ -69,12 +70,7 @@ export default function CompaniesTab() {
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
-        <View style={styles.appbar}>
-          <View style={styles.appbarTitleWrap}>
-            <Text style={styles.appbarTitle}>Companies</Text>
-            <Text style={styles.appbarSubtitle}>{headerSubtitle}</Text>
-          </View>
-        </View>
+        <ScreenHeader title="Companies" subtitle={headerSubtitle} />
         <View style={styles.searchWrap}>
           <Ionicons
             name="search"
@@ -235,30 +231,6 @@ function humanizeStage(raw: string): string {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safeArea: { backgroundColor: colors.surface },
-
-  appbar: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surface,
-  },
-  appbarTitleWrap: { flex: 1, minWidth: 0 },
-  appbarTitle: {
-    color: colors.text,
-    fontSize: 26,
-    fontWeight: '700',
-    letterSpacing: -0.6,
-    lineHeight: 28,
-  },
-  appbarSubtitle: {
-    color: colors.text3,
-    fontSize: type.meta + 1,
-    fontWeight: '500',
-    marginTop: 2,
-  },
 
   searchWrap: {
     flexDirection: 'row',
