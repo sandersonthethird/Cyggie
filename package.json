@@ -6,7 +6,7 @@
   "author": "Cyggie",
   "license": "MIT",
   "scripts": {
-    "predev": "npx @electron/rebuild -f -w better-sqlite3 --buildFromSource && node scripts/build-native-helper.mjs",
+    "predev": "npx @electron/rebuild -f -w better-sqlite3 --build-from-source && node scripts/build-native-helper.mjs",
     "dev": "node scripts/dev-electron.mjs",
     "dev:mobile-stack": "concurrently --names gateway,mobile --prefix-colors blue,green --kill-others-on-fail 'pnpm --filter @cyggie/api-gateway dev' 'pnpm --filter @cyggie/mobile dev'",
     "build": "electron-vite build",
@@ -16,7 +16,7 @@
     "package:win": "electron-vite build && electron-builder --win",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "test": "npm rebuild better-sqlite3 && vitest run && npx @electron/rebuild -f -w better-sqlite3 --buildFromSource",
+    "test": "npm rebuild better-sqlite3 && vitest run && npx @electron/rebuild -f -w better-sqlite3 --build-from-source",
     "test:watch": "npm rebuild better-sqlite3 && vitest",
     "import:granola": "node scripts/import-granola.js",
     "import:memos": "node scripts/import-memos-from-google-docs.js",
