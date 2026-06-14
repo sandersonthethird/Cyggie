@@ -104,6 +104,14 @@ export interface ApplyRemoteOptions {
   chunkSize?: number
   /** Emit IPC after each sub-batch commit. Optional so tests can spy. */
   onApplied?: (ids: string[]) => void
+  /**
+   * Fired (per committed sub-batch) with the ids a `spec.preGateReconcile`
+   * flagged for re-push — corrupted-blank notes whose desktop copy has content.
+   * The caller re-pushes them through the sync barrel AFTER the apply commits
+   * (the apply path can't touch the barrel). Durable per-chunk so an interrupted
+   * pull can't strand a detected blank. See note-blank-heal.service.ts.
+   */
+  onBlankRepush?: (ids: string[]) => void
   /** Log surface — default is a no-op; production wires pino. */
   log?: {
     info?: (payload: Record<string, unknown>, msg: string) => void
@@ -157,6 +165,15 @@ export interface TableSpec<RowT extends PulledRow> {
   /** Optional extra row-shape validation beyond the default id+lamport
    *  check. Returns false to drop the row. */
   validate?(row: RowT): boolean
+  /**
+   * Optional reconcile that runs PER ROW, BEFORE the lamport gate. Lets a table
+   * intercept an incoming row that LWW would otherwise silently skip. Returns
+   * `skip` (true → don't apply this row, protecting the local copy) and an
+   * optional `repushId` (the local row needs re-pushing to overwrite a bad
+   * remote copy — surfaced to the caller via opts.onBlankRepush after commit).
+   * Used by NOTES_SPEC to heal corrupted blank notes (see isCorruptedBlankNote).
+   */
+  preGateReconcile?(db: Database.Database, row: RowT): { skip: boolean; repushId?: string }
   /** True when rows carry a userId field that must match the local user.
    *  False for cascade-child tables like contact_emails / org_company_aliases. */
   hasUserId: boolean
@@ -235,11 +252,22 @@ export function applyRemoteRows<RowT extends PulledRow>(
   for (let i = 0; i < validated.length; i += chunkSize) {
     const chunk = validated.slice(i, i + chunkSize)
     const subBatchApplied: string[] = []
+    const subBatchRepush: string[] = []
     let subBatchHighWater = 0n
 
     const apply = db.transaction(() => {
       const selectStmt = db.prepare(spec.selectLamportSql)
       for (const row of chunk) {
+        // Pre-gate reconcile (before the lamport gate): lets a table intercept
+        // a row LWW would otherwise silently skip. Corrupted blanks sit at
+        // lamport == local, so they'd be skipped below and never seen — this is
+        // the only place the notes heal can fire for them.
+        if (spec.preGateReconcile) {
+          const r = spec.preGateReconcile(db, row)
+          if (r.repushId) subBatchRepush.push(r.repushId)
+          if (r.skip) continue
+        }
+
         const local = selectStmt.get(...spec.rowKey(row)) as
           | { lamport: string }
           | undefined
@@ -299,6 +327,19 @@ export function applyRemoteRows<RowT extends PulledRow>(
           highWater: subBatchHighWater.toString(),
         },
         'sync.pull applied sub-batch',
+      )
+    }
+    // Fire AFTER commit (durable): re-push the corrupted blanks this chunk
+    // refused, so an interrupted pull can't strand a detected blank.
+    if (subBatchRepush.length > 0) {
+      opts.onBlankRepush?.(subBatchRepush)
+      log.warn?.(
+        {
+          tableName,
+          metric: 'sync.note.blank_incoming_skipped',
+          count: subBatchRepush.length,
+        },
+        'sync.pull refused corrupted blank notes; queued re-push of local content',
       )
     }
   }
@@ -370,6 +411,50 @@ const NOTES_SPEC: TableSpec<PulledNoteRow> = {
   rowKey: (row) => [row.id],
   rowId: (row) => row.id,
   upsert: (db, row) => upsertNoteRow(db, row),
+  preGateReconcile: (db, row) => reconcileBlankNote(db, row),
+}
+
+function isBlankText(v: unknown): boolean {
+  return v == null || (typeof v === 'string' && v.trim() === '')
+}
+
+/**
+ * Heal corrupted "blank" notes. A partial privacy-backfill `op='update'` that
+ * reached Neon before a note's full row blank-INSERTed it there (title NULL,
+ * content ''); the desktop still holds the real content under the same id, at
+ * an EQUAL lamport — a standoff LWW never breaks. On pull we must refuse the
+ * blank (so it can't wipe desktop) and re-push the local content to overwrite
+ * the Neon blank.
+ *
+ *   incoming blank? (title empty AND content empty)
+ *     no  ─────────────────────────────────────────► {skip:false}  (normal apply)
+ *     yes ↓
+ *   local note exists WITH content?
+ *     no  ─────────────────────────────────────────► {skip:false}  (nothing to protect)
+ *     yes ↓
+ *   incoming.lamport > local.lamport ? (a deliberate mobile clear, not corruption)
+ *     yes ─────────────────────────────────────────► {skip:false}  (let the clear apply)
+ *     no  ─────────────────────────────────────────► {skip:true, repushId:id}  (heal)
+ */
+function reconcileBlankNote(
+  db: Database.Database,
+  row: PulledNoteRow,
+): { skip: boolean; repushId?: string } {
+  if (!isBlankText(row.title) || !isBlankText(row.content)) return { skip: false }
+
+  const local = db.prepare('SELECT title, content, lamport FROM notes WHERE id = ?').get(row.id) as
+    | { title: string | null; content: string | null; lamport: string }
+    | undefined
+  if (!local) return { skip: false }
+
+  const localHasContent = !isBlankText(local.title) || !isBlankText(local.content)
+  if (!localHasContent) return { skip: false }
+
+  // A blank arriving at a HIGHER lamport is a deliberate mobile clear, not the
+  // backfill standoff — let it apply so the user's clear propagates.
+  if (BigInt(row.lamport) > BigInt(local.lamport)) return { skip: false }
+
+  return { skip: true, repushId: row.id }
 }
 
 function upsertNoteRow(db: Database.Database, row: PulledNoteRow): void {

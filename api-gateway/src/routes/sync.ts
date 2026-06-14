@@ -325,6 +325,38 @@ export async function registerSyncRoutes(
                 await client.query('RELEASE SAVEPOINT entry_sp')
                 continue
               }
+              // Guard: a partial note `update` for a row not yet on Neon would
+              // blank-INSERT it — the upsert below only carries the payload's
+              // columns, so title lands NULL and content '' (PG default). That
+              // is the exact corruption that made mobile show "Untitled" empty
+              // notes. The ONLY partial note payload in the system is the
+              // privacy backfill ({id, is_private, lamport}); every real note
+              // write returns the full row via getNote(). So when the row is
+              // absent AND the payload omits BOTH title and content, skip the
+              // upsert and ACK (the desktop drains it; the real content reaches
+              // Neon via a later full-row push). Keyed on payload-partialness,
+              // not on op, so a legitimate full-row insert/update still upserts.
+              if (
+                existing == null &&
+                spec.table === 'notes' &&
+                !('title' in validatedPayload) &&
+                !('content' in validatedPayload)
+              ) {
+                acked.push(entry.outboxId)
+                req.log.warn(
+                  {
+                    outboxId: entry.outboxId,
+                    userId: user.sub,
+                    table: entry.table,
+                    op: entry.op,
+                    rowId: entry.rowId,
+                    metric: 'sync.push.update_missing_row_skipped',
+                  },
+                  'sync.push skipped partial note update for missing row (would blank-insert)',
+                )
+                await client.query('RELEASE SAVEPOINT entry_sp')
+                continue
+              }
               // Always carry the new lamport on the upsert.
               validatedPayload['lamport'] = entry.lamport
               const cols = Object.keys(validatedPayload)

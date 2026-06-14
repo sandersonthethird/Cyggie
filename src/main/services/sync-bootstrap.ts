@@ -12,6 +12,7 @@ import {
 } from './sync-agent'
 import { SyncPullService, type PullTransport, type PullResponse } from './sync-pull.service'
 import { resetPullWatermarkForRepullOnce } from './sync-repull-once.service'
+import { repushBlankHealedNotes } from './note-blank-heal.service'
 import { registerSyncIpc } from '../ipc/sync.ipc'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import {
@@ -253,6 +254,11 @@ export function bootstrapSync(): void {
       if (!wc || wc.isDestroyed() || ids.length === 0) return
       wc.send(IPC_CHANNELS.NOTES_REMOTE_APPLIED, { ids })
     },
+    // Notes-heal: re-push local content for corrupted blank notes the pull
+    // reconcile refused, so Neon's blank (and mobile) gets the real note.
+    onBlankNotesRepush: (ids) => {
+      repushBlankHealedNotes(ids)
+    },
     onOrgCompaniesApplied: (ids) => {
       const wc = statusBroadcastTarget
       if (!wc || wc.isDestroyed() || ids.length === 0) return
@@ -289,13 +295,16 @@ export function bootstrapSync(): void {
       wc.send(IPC_CHANNELS.SYNC_PULL_STATUS_CHANGED, snapshot)
     },
   })
-  // 6. One-time, race-proof full re-pull. Migration 123 added the meeting/contact
-  // columns the pull-apply needs; existing installs must reset their pull
-  // watermark once so those below-watermark rows re-pull and apply. Runs BEFORE
-  // pullService.start() so no in-flight pull can clobber the reset (PR 2b's
+  // 6. One-time, race-proof full re-pulls (each guarded by its own flag). Runs
+  // BEFORE pullService.start() so no in-flight pull can clobber the reset (PR 2b's
   // deferred reset lost exactly that race). A failed reset must never block sync.
+  //   - meetingRepullV2Done: heal meetings/contacts after migration 123.
+  //   - notesBlankRepullV1Done: surface corrupted blank notes so the pull
+  //     reconcile refuses + re-pushes them (reconcileBlankNote / note-blank-heal).
   try {
-    resetPullWatermarkForRepullOnce(getDatabase())
+    const db = getDatabase()
+    resetPullWatermarkForRepullOnce(db, 'meetingRepullV2Done')
+    resetPullWatermarkForRepullOnce(db, 'notesBlankRepullV1Done')
   } catch (err) {
     console.error('[sync-repull] watermark reset failed (non-fatal):', err)
   }

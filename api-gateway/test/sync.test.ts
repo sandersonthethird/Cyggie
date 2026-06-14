@@ -581,3 +581,82 @@ describe('POST /sync/push', () => {
     expect(badRow).toBeUndefined()
   })
 })
+
+describe('POST /sync/push — partial note-update guard (blank-insert prevention)', () => {
+  const noteEntry = (noteId: string, payload: Record<string, unknown>) => ({
+    deviceId: TEST_PREFIX + 'device',
+    batch: [{ outboxId: 1, table: 'notes', rowId: noteId, op: 'update', payload, lamport: '100' }],
+  })
+
+  test('a PARTIAL note update for a MISSING row is skipped + acked (NOT blank-inserted)', async () => {
+    const userId = await insertUser()
+    const jwt = await mintJwt(userId)
+    const noteId = TEST_PREFIX + 'note-' + createId().slice(0, 8)
+    cleanup.track(schema.notes, schema.notes.id, noteId)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: noteEntry(noteId, { id: noteId, is_private: true, lamport: '100' }),
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { acked: number[]; rejected: unknown[] }
+    expect(body.acked).toEqual([1]) // acked so the desktop drains the poison entry
+    expect(body.rejected).toEqual([])
+    const row = await db.query.notes.findFirst({ where: eq(schema.notes.id, noteId) })
+    expect(row).toBeUndefined() // the blank-insert was prevented
+  })
+
+  test('a PARTIAL note update for an EXISTING row updates is_private, preserves title/content', async () => {
+    const userId = await insertUser()
+    const jwt = await mintJwt(userId)
+    const noteId = TEST_PREFIX + 'note-' + createId().slice(0, 8)
+    cleanup.track(schema.notes, schema.notes.id, noteId)
+    await db
+      .insert(schema.notes)
+      .values({ id: noteId, userId, title: 'Real', content: 'Body', lamport: '50' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: noteEntry(noteId, { id: noteId, is_private: true, lamport: '100' }),
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { acked: number[] }).acked).toEqual([1])
+    const row = await db.query.notes.findFirst({ where: eq(schema.notes.id, noteId) })
+    expect(row?.title).toBe('Real') // preserved
+    expect(row?.content).toBe('Body') // preserved
+    expect(row?.isPrivate).toBe(true) // applied
+    expect(row?.lamport).toBe('100')
+  })
+
+  test('a FULL-row note update for a missing row still inserts (guard keys on partialness, not op)', async () => {
+    const userId = await insertUser()
+    const jwt = await mintJwt(userId)
+    const noteId = TEST_PREFIX + 'note-' + createId().slice(0, 8)
+    cleanup.track(schema.notes, schema.notes.id, noteId)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: noteEntry(noteId, {
+        id: noteId,
+        user_id: userId,
+        title: 'T',
+        content: 'C',
+        lamport: '100',
+      }),
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { acked: number[] }).acked).toEqual([1])
+    const row = await db.query.notes.findFirst({ where: eq(schema.notes.id, noteId) })
+    expect(row?.title).toBe('T')
+    expect(row?.content).toBe('C')
+  })
+})

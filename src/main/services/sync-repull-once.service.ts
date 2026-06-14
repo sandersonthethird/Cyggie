@@ -36,16 +36,25 @@ import type Database from 'better-sqlite3'
 // `syncDeviceId` is provisioned into `settings` once the device registers with
 // the gateway; the pull watermark lives in sync_state keyed by that id.
 const DEVICE_ID_KEY = 'syncDeviceId'
-const DONE_FLAG_KEY = 'meetingRepullV2Done'
 
 /**
- * Reset this device's pull watermark to 0 exactly once so the next pull
- * re-applies meetings/contacts that could never apply before migration 123.
+ * Reset this device's pull watermark to 0 exactly once (guarded by `flagKey`),
+ * so the next pull re-pulls every owned row from lamport 0. `last_pulled_lamport`
+ * is shared across all owned tables, so this is a full re-pull regardless of the
+ * reason — each one-time reason gets its OWN flag so it fires once even on
+ * installs that already ran an earlier reset:
+ *   - `meetingRepullV2Done`  — heal meetings/contacts after migration 123.
+ *   - `notesBlankRepullV1Done` — surface corrupted blank notes for the pull
+ *     reconcile to refuse + re-push (see reconcileBlankNote / note-blank-heal).
  * Returns whether a reset was performed (false = already done, or device not yet
- * provisioned). Must be called BEFORE the pull service starts.
+ * provisioned). Must be called BEFORE the pull service starts so no in-flight
+ * pull can clobber the reset.
  */
-export function resetPullWatermarkForRepullOnce(db: Database.Database): { reset: boolean } {
-  const done = db.prepare('SELECT value FROM settings WHERE key = ?').get(DONE_FLAG_KEY) as
+export function resetPullWatermarkForRepullOnce(
+  db: Database.Database,
+  flagKey: string,
+): { reset: boolean } {
+  const done = db.prepare('SELECT value FROM settings WHERE key = ?').get(flagKey) as
     | { value: string }
     | undefined
   if (done?.value === '1') return { reset: false }
@@ -56,7 +65,7 @@ export function resetPullWatermarkForRepullOnce(db: Database.Database): { reset:
   const deviceId = deviceIdRow?.value
   if (!deviceId) {
     // Not done-flagged → retried on a later launch once the device registers.
-    console.log('[sync-repull] skipped: device_id not yet provisioned')
+    console.log(`[sync-repull] skipped (${flagKey}): device_id not yet provisioned`)
     return { reset: false }
   }
 
@@ -66,13 +75,12 @@ export function resetPullWatermarkForRepullOnce(db: Database.Database): { reset:
 
   // Mark done BEFORE the pull starts: the watermark is already '0', so even if the
   // app closes mid-pull the SyncPullService resumes the full re-pull on its next
-  // tick. We must never reset the watermark a second time.
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, '1')").run(DONE_FLAG_KEY)
+  // tick. We must never reset the watermark a second time for this reason.
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, '1')").run(flagKey)
 
   console.log(
-    `[sync-repull] watermark reset to 0 (device=${deviceId}, rows=${res.changes}); next pull ` +
-      'does a one-time full re-pull after the schema-column fix ' +
-      'metric=sync.meeting.repull.triggered count=1',
+    `[sync-repull] watermark reset to 0 (device=${deviceId}, rows=${res.changes}, reason=${flagKey}); ` +
+      'next pull does a one-time full re-pull metric=sync.repull.triggered count=1',
   )
   return { reset: res.changes > 0 }
 }

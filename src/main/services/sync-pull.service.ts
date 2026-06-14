@@ -127,6 +127,9 @@ export interface SyncPullServiceConfig {
   onMeetingsApplied?: (ids: string[]) => void
   /** T14 — per-table IPC callbacks for the other owned tables. */
   onNotesApplied?: (ids: string[]) => void
+  /** Notes-heal: ids of corrupted blank notes the reconcile refused; the
+   *  handler re-pushes their local content (see note-blank-heal.service.ts). */
+  onBlankNotesRepush?: (ids: string[]) => void
   onOrgCompaniesApplied?: (ids: string[]) => void
   onOrgCompanyAliasesApplied?: (ids: string[]) => void
   onContactsApplied?: (ids: string[]) => void
@@ -385,6 +388,9 @@ export class SyncPullService {
           response.notes,
           {
             onApplied: this.cfg.onNotesApplied,
+            ...(this.cfg.onBlankNotesRepush
+              ? { onBlankRepush: this.cfg.onBlankNotesRepush }
+              : {}),
             ...(this.cfg.log ? { log: this.cfg.log } : {}),
           },
         )

@@ -42,15 +42,16 @@ const watermark = (db: Database.Database, deviceId: string) =>
   (db.prepare('SELECT last_pulled_lamport AS v FROM sync_state WHERE device_id = ?').get(deviceId) as
     | { v: string }
     | undefined)?.v
-const doneFlag = (db: Database.Database) =>
-  (db.prepare("SELECT value FROM settings WHERE key = 'meetingRepullV2Done'").get() as
+const FLAG = 'meetingRepullV2Done'
+const doneFlag = (db: Database.Database, key: string = FLAG) =>
+  (db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
     | { value: string }
     | undefined)?.value
 
 describe('resetPullWatermarkForRepullOnce', () => {
   it('resets the watermark to 0 and sets the done-flag (once)', () => {
     const db = freshDb({ deviceId: 'dev-1', watermark: '999' })
-    const res = resetPullWatermarkForRepullOnce(db)
+    const res = resetPullWatermarkForRepullOnce(db, FLAG)
     expect(res.reset).toBe(true)
     expect(watermark(db, 'dev-1')).toBe('0')
     expect(doneFlag(db)).toBe('1')
@@ -58,26 +59,32 @@ describe('resetPullWatermarkForRepullOnce', () => {
 
   it('is a no-op on the second run (done-flag set) — never resets twice', () => {
     const db = freshDb({ deviceId: 'dev-1', watermark: '999' })
-    resetPullWatermarkForRepullOnce(db)
+    resetPullWatermarkForRepullOnce(db, FLAG)
     // Simulate the watermark having advanced again after the heal.
     db.prepare("UPDATE sync_state SET last_pulled_lamport = '1200' WHERE device_id = 'dev-1'").run()
-    const res = resetPullWatermarkForRepullOnce(db)
+    const res = resetPullWatermarkForRepullOnce(db, FLAG)
     expect(res.reset).toBe(false)
     expect(watermark(db, 'dev-1')).toBe('1200') // untouched
   })
 
   it('no-ops without setting the flag when the device id is not provisioned (retries later)', () => {
     const db = freshDb() // no syncDeviceId, no sync_state row
-    const res = resetPullWatermarkForRepullOnce(db)
+    const res = resetPullWatermarkForRepullOnce(db, FLAG)
     expect(res.reset).toBe(false)
     expect(doneFlag(db)).toBeUndefined()
   })
 
-  it('is re-armed vs PR 2b: a set divergedMeetingRehealV1Done does NOT suppress it', () => {
+  it('each flag fires independently — a different reason re-pulls even after the first', () => {
     const db = freshDb({ deviceId: 'dev-1', watermark: '999' })
-    db.prepare("INSERT INTO settings (key, value) VALUES ('divergedMeetingRehealV1Done', '1')").run()
-    const res = resetPullWatermarkForRepullOnce(db)
+    // First reason resets + flags.
+    expect(resetPullWatermarkForRepullOnce(db, FLAG).reset).toBe(true)
+    // Watermark advanced again after that heal.
+    db.prepare("UPDATE sync_state SET last_pulled_lamport = '1200' WHERE device_id = 'dev-1'").run()
+    // A second, distinct reason still fires (its own flag is unset).
+    const res = resetPullWatermarkForRepullOnce(db, 'notesBlankRepullV1Done')
     expect(res.reset).toBe(true)
     expect(watermark(db, 'dev-1')).toBe('0')
+    expect(doneFlag(db, 'notesBlankRepullV1Done')).toBe('1')
+    expect(doneFlag(db, FLAG)).toBe('1') // first flag still set
   })
 })
