@@ -252,12 +252,15 @@ app.whenReady().then(() => {
   // built .app. setIcon() overrides it at runtime for both. (macOS ignores
   // the BrowserWindow `icon` option.)
   if (process.platform === 'darwin' && app.dock) {
+    // PNG, not .icns — nativeImage can't decode .icns on macOS (returns empty).
     const iconPath = app.isPackaged
-      ? join(process.resourcesPath, 'icon.icns')
-      : join(__dirname, '../../build/icon.icns')
+      ? join(process.resourcesPath, 'icon.png')
+      : join(__dirname, '../../build/icon.png')
     const dockIcon = nativeImage.createFromPath(iconPath)
     if (!dockIcon.isEmpty()) {
       app.dock.setIcon(dockIcon)
+    } else {
+      console.warn('[Startup] Dock icon failed to load:', iconPath)
     }
   }
 
