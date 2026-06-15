@@ -12,6 +12,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
+    "prepare": "git config core.hooksPath .githooks",
     "package": "node scripts/build-native-helper.mjs --universal && electron-vite build && electron-builder --mac",
     "package:win": "electron-vite build && electron-builder --win",
     "lint": "eslint .",

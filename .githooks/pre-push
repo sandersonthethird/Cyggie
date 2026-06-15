@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Pre-push drift guard (Issue #27). Wired via `git config core.hooksPath .githooks`
+# (set by the root `prepare` script on `npm install`).
+#
+# Short-circuits unless the push touches the Postgres schema or migrations, so
+# normal pushes stay instant. The check itself is offline (no DB) and fail-open
+# (a drizzle-kit error/timeout warns + allows) — see
+# packages/db/scripts/check-migration-drift.mjs.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+remote_sha="$(git rev-parse @{u} 2>/dev/null || true)"  # upstream tip, if any
+range="${remote_sha:+$remote_sha..}HEAD"                 # else diff full HEAD tree
+
+# Only run when schema/migration files are in the push range.
+if git diff --name-only "$range" 2>/dev/null \
+     | grep -qE '^packages/db/(src/schema/|migrations/)'; then
+  echo "[pre-push] schema/migration change detected — checking migration drift…"
+  node "$repo_root/packages/db/scripts/check-migration-drift.mjs"
+fi

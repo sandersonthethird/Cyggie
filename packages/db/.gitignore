@@ -1,0 +1,3 @@
+# Transient temp dirs from scripts/check-migration-drift.mjs (cleaned on exit;
+# ignored in case a killed run leaves one behind).
+.drift-*/
