@@ -108,6 +108,10 @@ export function registerContactHandlers(): void {
         contactType?: string | null
         linkedinUrl?: string | null
         companyName?: string | null
+        // Sets the contact's company field (primary_company_id) WITHOUT claiming
+        // the company's primary-contact slot. Use this (not companyName) when the
+        // contact is created from within a known company, e.g. the Contacts tab.
+        primaryCompanyId?: string | null
         phone?: string | null
         city?: string | null
         state?: string | null

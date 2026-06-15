@@ -19,6 +19,7 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
   const [loaded, setLoaded] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
   const creatingRef = useRef(false)
+  const primaryBusyRef = useRef(false)
   const navigate = useNavigate()
   const contactPicker = usePicker<ContactSummary>(IPC_CHANNELS.CONTACT_LIST, 8)
 
@@ -47,7 +48,7 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
     try {
       const contact = await api.invoke<ContactSummary>(
         IPC_CHANNELS.CONTACT_CREATE,
-        { fullName: name.trim() }
+        { fullName: name.trim(), primaryCompanyId: companyId }
       )
       if (contact) {
         await handleLinkContact(contact.id)
@@ -68,14 +69,36 @@ export function CompanyContacts({ companyId, className }: CompanyContactsProps) 
 
   async function handleSetPrimary(e: React.MouseEvent, contactId: string) {
     e.stopPropagation()
-    await api.invoke(IPC_CHANNELS.COMPANY_SET_PRIMARY_CONTACT, companyId, contactId)
-    setLoaded(false)
+    if (primaryBusyRef.current) return
+    primaryBusyRef.current = true
+    // Optimistically flip the badge so the click feels instant — exactly one
+    // contact can be primary, so clear the rest in the same pass.
+    setContacts((prev) => prev.map((c) => ({ ...c, isPrimary: c.id === contactId })))
+    try {
+      await api.invoke(IPC_CHANNELS.COMPANY_SET_PRIMARY_CONTACT, companyId, contactId)
+    } catch (err) {
+      console.error('[CompanyContacts] Failed to set primary contact:', err)
+    } finally {
+      primaryBusyRef.current = false
+      load() // reconcile with server truth without flashing the loading state
+    }
   }
 
   async function handleClearPrimary(e: React.MouseEvent, contactId: string) {
     e.stopPropagation()
-    await api.invoke(IPC_CHANNELS.COMPANY_CLEAR_PRIMARY_CONTACT, companyId, contactId)
-    setLoaded(false)
+    if (primaryBusyRef.current) return
+    primaryBusyRef.current = true
+    setContacts((prev) =>
+      prev.map((c) => (c.id === contactId ? { ...c, isPrimary: false } : c))
+    )
+    try {
+      await api.invoke(IPC_CHANNELS.COMPANY_CLEAR_PRIMARY_CONTACT, companyId, contactId)
+    } catch (err) {
+      console.error('[CompanyContacts] Failed to clear primary contact:', err)
+    } finally {
+      primaryBusyRef.current = false
+      load() // reconcile with server truth without flashing the loading state
+    }
   }
 
   return (

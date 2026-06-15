@@ -1087,6 +1087,7 @@ export function createContact(data: {
   street?: string | null
   postalCode?: string | null
   country?: string | null
+  primaryCompanyId?: string | null
 }, userId: string | null = null): ContactSummary {
   const db = getDatabase()
   const providedFirstName = (data.firstName || '').trim()
@@ -1099,6 +1100,11 @@ export function createContact(data: {
 
   const email = data.email ? normalizeEmail(data.email) : null
   const inferredCompanyId = email ? findCompanyIdByEmail(email) : null
+  // An explicitly-supplied company (e.g. creating a contact from a company's
+  // Contacts tab) sets the contact's company field but must NOT claim the
+  // company's primary-contact slot — see ensurePrimaryCompanyLink gating below.
+  const explicitCompanyId = data.primaryCompanyId?.trim() || null
+  const primaryCompanyId = explicitCompanyId ?? inferredCompanyId
 
   const normalizedName = normalizeName(fullName)
   const splitName = explicitName
@@ -1176,7 +1182,7 @@ export function createContact(data: {
       splitName.lastName,
       normalizedName,
       email,
-      inferredCompanyId,
+      primaryCompanyId,
       data.title?.trim() || null,
       data.contactType?.trim() || null,
       data.linkedinUrl ? normalizeLinkedinUrl(data.linkedinUrl) : null,
