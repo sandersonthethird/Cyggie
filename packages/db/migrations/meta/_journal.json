@@ -260,6 +260,13 @@
       "when": 1781178900000,
       "tag": "0036_meetings_location",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1781527318900,
+      "tag": "0037_perpetual_zombie",
+      "breakpoints": true
     }
   ]
 }
