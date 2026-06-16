@@ -545,3 +545,34 @@ export function createCellCallbacks<T extends { id: string }>(opts: {
 
   return { getCellValue, saveCellValue }
 }
+
+/**
+ * formatJsonList — display formatter for multi-value/JSON-text columns
+ * (e.g. contact tags, prior companies, investment focus). These are stored
+ * either as a JSON array ('["Seed","Series A"]') or, for some legacy rows, a
+ * plain comma-joined label string ("Seed, Series A").
+ *
+ *   null / "" / "[]"     → null        (empty cell)
+ *   '["A","B"]'          → "A, B"
+ *   "Seed, Series A"     → "Seed, Series A"   (plain string passthrough)
+ *   '{not json'          → "{not json"        (malformed → raw, never throws)
+ *
+ * MUST never throw: a contact with malformed JSON in a column must still render.
+ */
+export function formatJsonList(raw: string | null | undefined): string | null {
+  if (raw == null) return null
+  const s = String(raw).trim()
+  if (s === '' || s === '[]') return null
+  try {
+    const parsed = JSON.parse(s)
+    if (Array.isArray(parsed)) {
+      const joined = parsed
+        .filter((v) => v != null && v !== '')
+        .join(', ')
+      return joined === '' ? null : joined
+    }
+  } catch {
+    /* fall through to raw string */
+  }
+  return s
+}

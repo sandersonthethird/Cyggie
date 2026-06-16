@@ -22,6 +22,7 @@ import {
   filterContacts,
   type ContactScope
 } from '../components/contact/contactColumns'
+import { TALENT_PIPELINE_OPTIONS } from '../constants/contactFields'
 import { useGroupedRows } from '../hooks/useGroupedRows'
 import { GroupByPicker } from '../components/crm/GroupByPicker'
 import { SmartFilters } from '../components/crm/SmartFilters'
@@ -1099,14 +1100,7 @@ export default function Contacts() {
           {contacts.some(c => c.talentPipeline) && (
             <>
               <span className={styles.scopeDivider} />
-              {([
-                { value: 'identified',          label: 'Identified' },
-                { value: 'exploring',           label: 'Exploring' },
-                { value: 'ideating',            label: 'Ideating' },
-                { value: 'fundraising',         label: 'Fundraising' },
-                { value: 'portfolio_candidate', label: 'Portfolio' },
-                { value: 'internal_candidate',  label: 'Internal' },
-              ] as const).map(({ value, label }) => {
+              {TALENT_PIPELINE_OPTIONS.map(({ value, label }) => {
                 const count = contacts.filter(c => c.talentPipeline === value).length
                 if (count === 0) return null
                 return (

@@ -32,6 +32,33 @@ export interface ContactSummary {
   lastTouchpoint: string | null
   createdAt: string
   updatedAt: string
+  // ── Extended fields surfaced as opt-in table columns ──
+  // Populated by listContacts/listContactsLight; null where a query doesn't
+  // select them. JSON fields (tags, previousCompanies, investmentStageFocus,
+  // investmentSectorFocus) arrive as raw JSON/label strings — formatted for
+  // display by formatJsonList in the table layer.
+  phone: string | null
+  street: string | null
+  city: string | null
+  state: string | null
+  postalCode: string | null
+  country: string | null
+  timezone: string | null
+  twitterHandle: string | null
+  university: string | null
+  pronouns: string | null
+  lastMetEvent: string | null
+  warmIntroPath: string | null
+  notes: string | null
+  fundSize: number | null
+  typicalCheckSizeMin: number | null
+  typicalCheckSizeMax: number | null
+  investmentSectorFocusNotes: string | null
+  proudPortfolioCompanies: string | null
+  tags: string | null
+  previousCompanies: string | null
+  investmentStageFocus: string | null
+  investmentSectorFocus: string | null
 }
 
 export interface ContactCompanyRef {
@@ -87,31 +114,11 @@ export interface ContactDetail extends ContactSummary {
   primaryCompany: ContactCompanyRef | null
   emails: string[]
   meetings: ContactMeetingRef[]
-  city: string | null
-  state: string | null
-  street: string | null
-  postalCode: string | null
-  country: string | null
-  notes: string | null
-  phone: string | null
-  twitterHandle: string | null
+  // Detail-only fields (the address/investor/professional fields are inherited
+  // from ContactSummary).
   otherSocials: string | null
-  timezone: string | null
-  pronouns: string | null
   birthday: string | null
-  university: string | null
-  previousCompanies: string | null
-  tags: string | null
   relationshipStrength: string | null
-  lastMetEvent: string | null
-  warmIntroPath: string | null
-  fundSize: number | null
-  typicalCheckSizeMin: number | null
-  typicalCheckSizeMax: number | null
-  investmentStageFocus: string | null
-  investmentSectorFocus: string | null
-  investmentSectorFocusNotes: string | null
-  proudPortfolioCompanies: string | null
   noteCount: number
   fieldSources: string | null
   // LinkedIn enrichment fields

@@ -45,6 +45,28 @@ function buildDb(): Database.Database {
       linkedin_url TEXT,
       crm_contact_id TEXT,
       crm_provider TEXT,
+      phone TEXT,
+      street TEXT,
+      city TEXT,
+      state TEXT,
+      postal_code TEXT,
+      country TEXT,
+      timezone TEXT,
+      twitter_handle TEXT,
+      university TEXT,
+      pronouns TEXT,
+      last_met_event TEXT,
+      warm_intro_path TEXT,
+      notes TEXT,
+      fund_size REAL,
+      typical_check_size_min REAL,
+      typical_check_size_max REAL,
+      investment_sector_focus_notes TEXT,
+      proud_portfolio_companies TEXT,
+      tags TEXT,
+      previous_companies TEXT,
+      investment_stage_focus TEXT,
+      investment_sector_focus TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -126,6 +148,35 @@ describe('listContactsLight — companyId boost', () => {
   })
 })
 
+describe('listContactsLight — surfaces extended fields for table columns', () => {
+  beforeEach(() => {
+    testDb = buildDb()
+    testDb.exec(`
+      INSERT INTO contacts (
+        id, full_name, first_name, last_name, normalized_name, email,
+        city, state, fund_size, tags
+      )
+      VALUES (
+        'c1', 'Pat McGovern', 'Pat', 'McGovern', 'patmcgovern', 'pat@bowery.com',
+        'New York', 'NY', 5000000, '["Lead","Warm"]'
+      )
+    `)
+  })
+
+  it('round-trips address fields (city/state) into the summary', () => {
+    const [c] = listContactsLight({ query: 'Pat' })
+    expect(c.city).toBe('New York')
+    expect(c.state).toBe('NY')
+  })
+
+  it('round-trips numeric and raw JSON fields', () => {
+    const [c] = listContactsLight({ query: 'Pat' })
+    expect(c.fundSize).toBe(5000000)
+    // JSON fields are passed through raw; the table layer formats them.
+    expect(c.tags).toBe('["Lead","Warm"]')
+  })
+})
+
 describe('listContacts — keeps manual/tagged no-email CRM contacts', () => {
   beforeEach(() => {
     const db = new Database(':memory:')
@@ -150,6 +201,27 @@ describe('listContacts — keeps manual/tagged no-email CRM contacts', () => {
         crm_contact_id TEXT,
         crm_provider TEXT,
         tags TEXT,
+        phone TEXT,
+        street TEXT,
+        city TEXT,
+        state TEXT,
+        postal_code TEXT,
+        country TEXT,
+        timezone TEXT,
+        twitter_handle TEXT,
+        university TEXT,
+        pronouns TEXT,
+        last_met_event TEXT,
+        warm_intro_path TEXT,
+        notes TEXT,
+        fund_size REAL,
+        typical_check_size_min REAL,
+        typical_check_size_max REAL,
+        investment_sector_focus_notes TEXT,
+        proud_portfolio_companies TEXT,
+        previous_companies TEXT,
+        investment_stage_focus TEXT,
+        investment_sector_focus TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );

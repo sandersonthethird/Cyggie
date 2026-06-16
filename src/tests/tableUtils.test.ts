@@ -5,7 +5,8 @@ import {
   saveColumnConfig,
   sortRows,
   chunkArray,
-  executeBulkEdit
+  executeBulkEdit,
+  formatJsonList
 } from '../renderer/components/crm/tableUtils'
 import type { ColumnDef, SortState } from '../renderer/components/crm/tableUtils'
 
@@ -198,5 +199,41 @@ describe('executeBulkEdit', () => {
     // All 5 called, in order
     expect(callOrder).toEqual(['a', 'b', 'c', 'd', 'e'])
     expect(updateFn).toHaveBeenCalledTimes(5)
+  })
+})
+
+describe('formatJsonList', () => {
+  it('joins a JSON array with commas', () => {
+    expect(formatJsonList('["Seed","Series A"]')).toBe('Seed, Series A')
+  })
+
+  it('drops null/empty entries inside the array', () => {
+    expect(formatJsonList('["A","",null,"B"]')).toBe('A, B')
+  })
+
+  it('returns null for null, empty string, and "[]"', () => {
+    expect(formatJsonList(null)).toBeNull()
+    expect(formatJsonList(undefined)).toBeNull()
+    expect(formatJsonList('')).toBeNull()
+    expect(formatJsonList('   ')).toBeNull()
+    expect(formatJsonList('[]')).toBeNull()
+  })
+
+  it('returns null for an array of only empty values', () => {
+    expect(formatJsonList('["",null]')).toBeNull()
+  })
+
+  it('passes through a plain comma-joined string (legacy format)', () => {
+    expect(formatJsonList('Seed, Series A')).toBe('Seed, Series A')
+  })
+
+  it('passes through malformed JSON without throwing', () => {
+    expect(formatJsonList('{not json')).toBe('{not json')
+    expect(formatJsonList('["unterminated')).toBe('["unterminated')
+  })
+
+  it('passes through non-array JSON (string/number) as raw', () => {
+    expect(formatJsonList('"x"')).toBe('"x"')
+    expect(formatJsonList('5')).toBe('5')
   })
 })

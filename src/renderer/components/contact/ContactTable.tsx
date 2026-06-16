@@ -37,7 +37,7 @@ import { useColumnDrag } from '../../hooks/useColumnDrag'
 import { useEditCellNav, getRangePosition } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
-import { executeBulkEdit, createCellCallbacks } from '../crm/tableUtils'
+import { executeBulkEdit, createCellCallbacks, formatJsonList } from '../crm/tableUtils'
 import type { RangeValue } from '../crm/tableUtils'
 import { chipStyle } from '../../utils/colorChip'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
@@ -52,6 +52,11 @@ import { api } from '../../api'
 const CHECKBOX_WIDTH = 40
 const PICKER_WIDTH = 44
 const ROW_HEIGHT = 38
+
+/** Read-only computed columns whose underlying value is a JSON/label list. */
+const JSON_LIST_KEYS = new Set([
+  'tags', 'previousCompanies', 'investmentStageFocus', 'investmentSectorFocus'
+])
 
 interface ContactTableProps {
   contacts: ContactSummary[]
@@ -469,6 +474,11 @@ export function ContactTable({
     },
     saveRegularField: async (entity, field, value) => {
       await handleCellSave(entity, field, value)
+    },
+    getComputedValue: (entity, col) => {
+      if (col.key === 'location') return [entity.city, entity.state].filter(Boolean).join(', ') || null
+      if (JSON_LIST_KEYS.has(col.key)) return formatJsonList((entity as unknown as Record<string, string | null>)[col.key])
+      return null
     },
   }), [customFieldValues, handleCellSave, onPatchCustomField])
 

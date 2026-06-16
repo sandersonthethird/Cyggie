@@ -51,3 +51,18 @@ export const CONTACT_HARDCODED_FIELDS: HardcodedFieldDef[] = [
 export const CONTACT_HARDCODED_FIELD_MAP = new Map(
   CONTACT_HARDCODED_FIELDS.map((f) => [f.key, f])
 )
+
+/**
+ * Canonical talent-pipeline options (value + short, table-friendly label).
+ * Single source of truth — consumed by the contacts table's talentPipeline
+ * column, the contacts route scope chips, and the contact detail panel select.
+ * Values mirror the DB enum's user-facing stages.
+ */
+export const TALENT_PIPELINE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'identified',          label: 'Identified'        },
+  { value: 'exploring',           label: 'Exploring'         },
+  { value: 'ideating',            label: 'Ideating'          },
+  { value: 'fundraising',         label: 'Fundraising'       },
+  { value: 'portfolio_candidate', label: 'Portfolio'         },
+  { value: 'internal_candidate',  label: 'Internal Candidate'},
+]

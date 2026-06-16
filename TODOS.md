@@ -3225,3 +3225,61 @@ recording quota math — this is purely abuse protection.
 **Depends on / blocked by:** Nothing hard; revisit before second-firm
 onboarding (see the single-firm-beta constraint in
 `project_provider_key_architecture` memory).
+
+
+## Schema-driven table column registry (contacts + companies)
+
+**What:** Derive table column defs (key / display type / repo SELECT column /
+row-map field) for the contacts and companies tables from a single
+schema-backed registry, instead of hand-listing each field in ~4 places.
+
+**Why:** Adding a contact/company field as a table column today requires edits
+in four spots — the `ContactSummary`/`CompanySummary` type, the repo `SELECT`
+list, `rowToContactSummary`, and the `COLUMN_DEFS` array. They drift easily:
+that drift is exactly what produced the "city/state missing from the contacts
+column picker" bug this TODO follows. A registry would make every DB (and
+custom) field auto-available with no per-field plumbing.
+
+**Pros:** Eliminates the drift class; "any field that exists as a column" becomes
+true by construction. **Cons:** Sizable cross-cutting refactor; must map
+`PropertyRowType` → `ColumnDef['type']` and render JSON/multi-value fields
+generically (the current fix special-cases them as read-only computed columns).
+
+**Context:** Start from `CONTACT_HARDCODED_FIELDS` / `CONTACT_FIELD_META`
+(`src/renderer/constants/`) which already enumerate the user-facing field set and
+editor types — that's the natural registry seed. The contacts table fix in
+`contactColumns.ts` / `contact.repo.ts` is the reference for the manual pattern
+being replaced.
+
+**Effort:** L. **Priority:** P3.
+
+**Depends on / blocked by:** Nothing hard; do it when a third+ batch of fields
+needs surfacing.
+
+
+## Reconcile talentPipeline enum vs. UI labels
+
+**What:** Align the talent-pipeline stage values across the DB enum (migration
+068: `identified, exploring, ideating, parked, internal_candidate`) and the UI
+option list `TALENT_PIPELINE_OPTIONS` (`src/renderer/constants/contactFields.ts`,
+which uses `fundraising` / `portfolio_candidate` and short labels).
+
+**Why:** The DB CHECK constraint and the UI options don't fully match
+(`parked` exists in the enum but no UI option; `fundraising`/`portfolio_candidate`
+exist in the UI but not the enum). Mismatched values can cause filter/group
+misses and confusing labels, and a write of a UI-only value could violate the
+CHECK constraint.
+
+**Pros:** Removes a latent data-integrity foot-gun. **Cons:** Needs a data audit
+of existing `talent_pipeline` values before changing the enum or the options, to
+avoid orphaning rows.
+
+**Context:** Surfaced during the contacts-table column work, when
+`TALENT_PIPELINE_OPTIONS` was consolidated from two divergent inline copies
+(`ContactPropertiesPanel.tsx`, `Contacts.tsx`). The consolidation fixed label
+drift but did NOT touch the enum-vs-options value mismatch.
+
+**Effort:** S. **Priority:** P3.
+
+**Depends on / blocked by:** A read-only audit of distinct `talent_pipeline`
+values in production SQLite/Neon.
