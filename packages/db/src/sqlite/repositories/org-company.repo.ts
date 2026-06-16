@@ -1077,18 +1077,10 @@ export function getCompany(companyId: string): CompanyDetail | null {
   // company. Names resolve via the local users table (the current user always;
   // teammates once the firm directory is synced) — LEFT JOIN so an unknown user
   // yields a null name and the UI degrades to the timestamp.
-  const attribution = db
-    .prepare(
-      `SELECT c.created_by_user_id AS createdByUserId,
-              c.updated_by_user_id AS updatedByUserId,
-              cu.display_name      AS createdByName,
-              uu.display_name      AS updatedByName
-         FROM org_companies c
-         LEFT JOIN users cu ON cu.id = c.created_by_user_id
-         LEFT JOIN users uu ON uu.id = c.updated_by_user_id
-        WHERE c.id = ?`,
-    )
-    .get(companyId) as
+  // Guarded like the field_sources/key_takeaways fetches above: a DB without a
+  // `users` table (partial test schema / migration pending) must not throw —
+  // attribution simply resolves to null and the UI degrades to the timestamp.
+  let attribution:
     | {
         createdByUserId: string | null
         updatedByUserId: string | null
@@ -1096,6 +1088,22 @@ export function getCompany(companyId: string): CompanyDetail | null {
         updatedByName: string | null
       }
     | undefined
+  try {
+    attribution = db
+      .prepare(
+        `SELECT c.created_by_user_id AS createdByUserId,
+                c.updated_by_user_id AS updatedByUserId,
+                cu.display_name      AS createdByName,
+                uu.display_name      AS updatedByName
+           FROM org_companies c
+           LEFT JOIN users cu ON cu.id = c.created_by_user_id
+           LEFT JOIN users uu ON uu.id = c.updated_by_user_id
+          WHERE c.id = ?`,
+      )
+      .get(companyId) as typeof attribution
+  } catch {
+    attribution = undefined
+  }
 
   return {
     ...rowToCompanySummary(row),
