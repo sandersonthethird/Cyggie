@@ -23,6 +23,7 @@ import {
   extractPhoneNumber,
 } from '@cyggie/shared/location-classifier'
 import { ErrorBoundary } from '../../components/ErrorBoundary'
+import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { decideSummaryDisplay } from '../../lib/meetings/summary-display'
 
 // Feature flag — Item 2 Summary tab. Off by default until spot-checks on
@@ -322,7 +323,7 @@ export default function MeetingDetailScreen() {
   }, [discardOnCancel, queryClient])
 
   return (
-    <View style={styles.root}>
+    <KeyboardAvoidingScreen style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.topbar}>
           <Pressable
@@ -342,7 +343,9 @@ export default function MeetingDetailScreen() {
       </SafeAreaView>
 
       <ScrollView
+        style={styles.flex}
         contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={query.isRefetching}
@@ -418,7 +421,7 @@ export default function MeetingDetailScreen() {
           onDismiss={() => setEnhanceModalOpen(false)}
         />
       )}
-    </View>
+    </KeyboardAvoidingScreen>
   )
 }
 
@@ -1563,6 +1566,7 @@ function formatTime(seconds: number): string {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1 },
   safeArea: { backgroundColor: colors.surface },
 
   topbar: {

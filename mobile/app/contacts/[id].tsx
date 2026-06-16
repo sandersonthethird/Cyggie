@@ -24,6 +24,7 @@ import {
 import { fetchNotes, type NoteListItem } from '../../lib/api/notes'
 import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo } from '../../components/CompanyLogo'
+import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { UserNoteEditor } from '../../components/UserNoteEditor'
 import { RichMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
@@ -60,7 +61,7 @@ export default function ContactDetailScreen() {
   const contact = query.data
 
   return (
-    <View style={styles.root}>
+    <KeyboardAvoidingScreen style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.topbar}>
           <Pressable
@@ -108,7 +109,9 @@ export default function ContactDetailScreen() {
       </SafeAreaView>
 
       <ScrollView
+        style={styles.flex}
         contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={query.isRefetching}
@@ -141,7 +144,7 @@ export default function ContactDetailScreen() {
           </>
         ) : null}
       </ScrollView>
-    </View>
+    </KeyboardAvoidingScreen>
   )
 }
 
@@ -638,6 +641,7 @@ function formatCheckRange(min: number | null, max: number | null): string | null
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1 },
   safeArea: { backgroundColor: colors.surface },
 
   topbar: {

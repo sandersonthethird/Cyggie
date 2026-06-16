@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +10,7 @@ import {
   View,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { KeyboardAvoidingScreen } from './KeyboardAvoidingScreen'
 import { Ionicons } from '@expo/vector-icons'
 
 import { type CompanyListItem, fetchCompanies } from '../lib/api/companies'
@@ -151,10 +150,7 @@ export function CompanyMultiSelectSheet({
   return (
     <Modal visible={open} animationType="slide" transparent onRequestClose={onClose}>
       <View style={[styles.root, { paddingTop: insets.top }]}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.flex}
-        >
+        <KeyboardAvoidingScreen style={styles.flex}>
           <View style={styles.header}>
             <Pressable
               onPress={onClose}
@@ -267,7 +263,7 @@ export function CompanyMultiSelectSheet({
               </>
             )}
           </ScrollView>
-        </KeyboardAvoidingView>
+        </KeyboardAvoidingScreen>
       </View>
     </Modal>
   )
