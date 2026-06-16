@@ -20,17 +20,24 @@
 // We don't display in-meeting partial transcripts — that's deliberately
 // dropped per the M3 architecture pivot. The whole upload-then-transcribe
 // model trades live partials for simpler reliability + battery life.
+//
+// NOTE (in-meeting recording change): /record is no longer the entry point for
+// NEW recordings — that now happens inside the meeting view (impromptu via the
+// Record tab → start-impromptu.ts; scheduled via the meeting's Start button).
+// This screen is retained ONLY as the post-sign-in pending-upload RECOVERY /
+// retry surface (_layout.tsx redirects here when an unsent recording exists)
+// and the transcribing-reattach / error states. The former "auto-start a fresh
+// recording on mount" branches now just redirect to the calendar.
 // =============================================================================
 
 import { useEffect, useState } from 'react'
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
 import {
   cancelRecording,
   discardPendingUpload,
   retryPendingUpload,
-  startRecording,
   stopRecording,
 } from '../lib/recording/session'
 import {
@@ -39,6 +46,7 @@ import {
   type PendingUpload,
 } from '../lib/recording/pending-upload'
 import { useRecordingStore } from '../lib/recording/store'
+import { formatElapsed } from '../lib/recording/format-elapsed'
 import { useTranscribingPoll } from '../lib/recording/use-transcribing-poll'
 import { useAuthStore } from '../lib/auth/store'
 import { fetchMeeting } from '../lib/api/meetings'
@@ -48,30 +56,6 @@ import {
   type MeetingProbeResult,
 } from '../lib/recording/mount-action'
 import { colors, radii, spacing, type } from '../theme'
-
-/**
- * Watchdog around startRecording. If Audio.Recording.createAsync hangs
- * (rare platform-edge case — file lock, audio session contention) the
- * spinner UI would otherwise be visible indefinitely. The 5s timeout
- * surfaces the same "Microphone unavailable" alert + router.back() path
- * the existing throw cases use.
- */
-const START_RECORDING_TIMEOUT_MS = 5000
-
-async function startRecordingWithTimeout(): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error('Microphone did not start in time')),
-      START_RECORDING_TIMEOUT_MS,
-    )
-  })
-  try {
-    await Promise.race([startRecording(), timeout])
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
-}
 
 /**
  * One-shot fetch of the meeting's current server-side status, normalized
@@ -158,43 +142,34 @@ export default function RecordScreen() {
         probe,
       })
 
+      // Recovery-only screen: the "start a fresh recording" actions no longer
+      // belong here (recording starts from the meeting view). Those branches
+      // now just leave the user at the calendar. The reattach-poll and
+      // show-retry-ui branches are the reason this screen still exists.
       switch (action.kind) {
         case 'preserve':
           // Active local work in progress — leave alone.
           return
-        case 'reset-and-start-fresh':
-          useRecordingStore.getState().reset()
-          await startFresh()
-          return
-        case 'start-fresh':
-          await startFresh()
-          return
         case 'reattach-poll':
           useRecordingStore.getState().finalizeMeeting(action.meetingId)
-          return
-        case 'discard-and-start-fresh':
-          await discardPendingUploadFileById(action.clientRecordingId)
-          if (cancelled) return
-          setPendingUpload(null)
-          await startFresh()
           return
         case 'show-retry-ui':
           useRecordingStore.getState().markError(
             action.pending.lastError ?? 'Previous upload failed — tap to retry.',
           )
           return
-      }
-
-      async function startFresh(): Promise<void> {
-        try {
-          await startRecordingWithTimeout()
-        } catch (err) {
-          Alert.alert(
-            'Microphone unavailable',
-            err instanceof Error ? err.message : 'Could not start recording',
-          )
-          router.back()
-        }
+        case 'discard-and-start-fresh':
+          await discardPendingUploadFileById(action.clientRecordingId)
+          if (cancelled) return
+          setPendingUpload(null)
+          useRecordingStore.getState().reset()
+          router.replace('/(tabs)/calendar')
+          return
+        case 'reset-and-start-fresh':
+        case 'start-fresh':
+          useRecordingStore.getState().reset()
+          router.replace('/(tabs)/calendar')
+          return
       }
     })()
     return () => {
@@ -269,16 +244,11 @@ export default function RecordScreen() {
     router.back()
   }
 
-  const onStartFresh = async () => {
+  const onStartFresh = () => {
+    // Recovery screen no longer starts recordings — return to the calendar;
+    // the user re-records from the Record tab.
     reset()
-    try {
-      await startRecordingWithTimeout()
-    } catch (err) {
-      Alert.alert(
-        'Microphone unavailable',
-        err instanceof Error ? err.message : 'Could not restart recording',
-      )
-    }
+    router.replace('/(tabs)/calendar')
   }
 
   // While loadPendingUploadOrEvict is running (one tick on cold-start, plus
@@ -413,14 +383,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function formatElapsed(seconds: number): string {
-  const mm = Math.floor(seconds / 60)
-    .toString()
-    .padStart(2, '0')
-  const ss = (seconds % 60).toString().padStart(2, '0')
-  return `${mm}:${ss}`
 }
 
 const styles = StyleSheet.create({

@@ -3151,3 +3151,77 @@ chat button (top-level surfaces).
 
 **Depends on / blocked by:** The `feat/mobile-record-tab` PR landing (ships
 `ScreenHeader`).
+
+---
+
+## Offline company/attendee tagging on the meeting view
+
+**What:** Let the user tag companies + attendees on a meeting while offline
+(e.g. on a flight), the way notes already work offline. Today, when the
+meeting row isn't confirmed on the gateway, the meeting view disables the
+company/attendee **+** buttons and shows "Connect to tag companies and
+attendees." Notes, by contrast, buffer locally and sync later.
+
+**Why:** Notes + tagging are the two things a user does during a meeting. We
+shipped offline notes (the common case) but left tagging online-only to keep
+the first PR's blast radius small. Full offline parity removes a sharp edge —
+"why can I type notes on the plane but not tag the company I'm meeting?"
+
+**Pros:** Complete offline meeting capture; one consistent mental model.
+**Cons:** Adds new sync-outbox op types (company-link, attendee-update) with a
+**create-before-link ordering** requirement, in the exact agent path that
+caused the recent sync-divergence repairs (`7f77b38`, `823a0e3`, `f524254`).
+Needs its own careful, well-tested pass.
+
+**Context:** Building blocks already exist from the in-meeting-recording PR:
+- `mobile/lib/recording/confirmed-meetings.ts` — the confirmed-row gate. Reuse
+  it so link/attendee ops also defer until the row exists.
+- `mobile/lib/sync/outbox.ts` — today the op union is just
+  `'meeting.notes.update'`. Generalize `OutboxOp` + `OutboxPayload` to a
+  discriminated union and extend the agent's `processEntry`
+  (`mobile/lib/sync/agent.ts`) with link/unlink/attendee handlers (the agent
+  currently DLQs any unknown op).
+- Gateway endpoints already exist: `POST/DELETE /meetings/:id/companies`,
+  `PATCH /meetings/:id` (attendees). The mobile API wrappers are in
+  `mobile/lib/api/meetings.ts`.
+- Meeting view gate: `mobile/app/meetings/[id].tsx` `OverviewSection` —
+  `taggingDisabled = busy || !serverConfirmed`. Drop the `!serverConfirmed`
+  half once edits queue offline.
+- Ordering: the outbox drains FIFO; ensure a queued link never drains before
+  the meeting.create/confirm. Test the create→link→drain order explicitly.
+
+**Effort:** M. **Priority:** P2.
+
+**Depends on / blocked by:** The in-meeting-recording PR landing (ships the
+confirmed-row gate + optimistic meeting). No gateway changes needed (endpoints
+exist).
+
+---
+
+## Rate-limit `POST /meetings/impromptu`
+
+**What:** Add a simple per-user rate cap on the impromptu pre-create endpoint
+(`api-gateway/src/routes/meetings.ts`). Today it inserts a meetings row per
+call with no quota/rate gate (unlike `/recordings/upload`, which has the
+monthly-minutes quota check).
+
+**Why:** A misbehaving or malicious client could spam empty `status='recording'`
+rows. Low risk during the single-firm beta — and the 12h no-audio sweeper
+(`api-gateway/src/recording/stale-sweeper.ts`, `sweepNoAudioRecordingsOnce`)
+reaps abandoned ones — but it's an unbounded write surface that should be
+capped before onboarding a second firm.
+
+**Pros:** Closes an unbounded-insert surface. **Cons:** Needs a rate-limit
+mechanism (per-user token bucket / sliding window); none exists in the gateway
+yet, so it's net-new infra (or a lightweight `created_at`-count guard).
+
+**Context:** The endpoint is idempotent on a client-supplied id, so a natural
+cheap guard is "N distinct impromptu rows created in the last hour per user."
+Pre-created rows carry no `durationSeconds`, so they don't corrupt the existing
+recording quota math — this is purely abuse protection.
+
+**Effort:** S. **Priority:** P3.
+
+**Depends on / blocked by:** Nothing hard; revisit before second-firm
+onboarding (see the single-firm-beta constraint in
+`project_provider_key_architecture` memory).

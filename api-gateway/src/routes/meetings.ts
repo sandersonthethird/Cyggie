@@ -2,10 +2,13 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
+import { createId } from '@paralleldrive/cuid2'
 import { schema, deriveCalendarMeetingId } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
+import { insertImpromptuMeeting } from '../recording/insert-impromptu-meeting'
+import { isUniqueViolation } from '../pg-errors'
 import { validateClientLamport } from '../sync/validate-lamport'
 import Anthropic from '@anthropic-ai/sdk'
 import { resolveAnthropicKey, toGatewayErrorIfAnthropic } from '../llm/resolve-key'
@@ -590,10 +593,9 @@ export async function registerMeetingRoutes(
           // lamport defaults to '0' per schema
         })
       } catch (err) {
-        // pg unique-violation = 23505. Drizzle wraps Postgres errors so we
-        // check the underlying `code` if present.
-        const code = err instanceof Error && 'code' in err ? (err as { code?: string }).code : null
-        if (code === '23505') {
+        // pg unique-violation = 23505. Drizzle (0.45+) wraps the pg error, so
+        // the code lives on err.cause — isUniqueViolation handles both shapes.
+        if (isUniqueViolation(err)) {
           const raced = await db.query.meetings.findFirst({
             where: and(
               eq(schema.meetings.userId, user.sub),
@@ -625,6 +627,91 @@ export async function registerMeetingRoutes(
       req.log.info(
         { meetingId: newId, calendarEventId: body.calendarEventId, userId: user.sub, metric: 'meetings.from_cal_event.created' },
         'meeting created from calendar event',
+      )
+      return reply.code(201).send(await buildMeetingDetail(db, created))
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // POST /meetings/impromptu — pre-create an impromptu meeting (no audio).
+  //
+  // Mobile mints the meeting id on-device and opens the meeting view from an
+  // optimistic record the instant recording starts; this endpoint persists the
+  // row so notes / attendees / companies become editable mid-recording. Audio
+  // arrives later via POST /recordings/upload {meetingId}.
+  //
+  //   id present + row exists (scoped to user) → 200 (idempotent; the client
+  //                                              may retry, or a race with the
+  //                                              upload create-if-absent landed)
+  //   id present + absent                       → insert → 201
+  //   id present + 23505 + owned                → 200 (own race recovered)
+  //   id present + 23505 + foreign              → 409 (never touch/return it)
+  //   id absent                                 → server-mint → 201
+  //
+  // Auth mirrors /recordings/upload (requireUser, not requireFirm) — impromptu
+  // recording is the same flow.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/meetings/impromptu',
+    schema: {
+      body: z.object({
+        // cuid2 shape; capped so it can't overflow the meetings.id column.
+        id: z.string().regex(/^[a-z0-9]{1,32}$/).optional(),
+        title: z.string().min(1).max(512).optional(),
+        clientRecordedAt: z.string().datetime({ offset: true }).optional(),
+      }),
+      response: { 200: MeetingDetailSchema, 201: MeetingDetailSchema },
+    },
+    handler: async (req, reply) => {
+      const user = req.requireUser()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const id = req.body.id ?? createId()
+      const title =
+        req.body.title?.trim() ||
+        `Meeting ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`
+      const date = req.body.clientRecordedAt ? new Date(req.body.clientRecordedAt) : new Date()
+
+      // Idempotent: a retried pre-create (or an upload that already created the
+      // row) should return the existing row, not 23505.
+      const existing = await db.query.meetings.findFirst({
+        where: and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)),
+      })
+      if (existing) {
+        return reply.code(200).send(await buildMeetingDetail(db, existing))
+      }
+
+      try {
+        await insertImpromptuMeeting(db, { id, userId: user.sub, title, date })
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err
+        // PK collision. If it's the caller's own row (a concurrent pre-create /
+        // upload), return it idempotently; otherwise the id belongs to another
+        // user — reject, never reveal or mutate a foreign row.
+        const owned = await db.query.meetings.findFirst({
+          where: and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)),
+        })
+        if (owned) return reply.code(200).send(await buildMeetingDetail(db, owned))
+        throw new GatewayError({
+          statusCode: 409,
+          code: 'MEETING_ID_CONFLICT',
+          message: 'meetingId is not available.',
+        })
+      }
+
+      const created = await db.query.meetings.findFirst({
+        where: eq(schema.meetings.id, id),
+      })
+      if (!created) {
+        throw new GatewayError({
+          statusCode: 500,
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to read back created meeting',
+        })
+      }
+      req.log.info(
+        { meetingId: id, userId: user.sub, metric: 'meetings.impromptu.created' },
+        'impromptu meeting pre-created',
       )
       return reply.code(201).send(await buildMeetingDetail(db, created))
     },

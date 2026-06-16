@@ -53,9 +53,25 @@ interface Props {
    * mirror notes, but we don't depend on the result.
    */
   onChangeEnqueued?: (next: string | null) => void
+  /**
+   * Whether the meeting row is CONFIRMED to exist on the gateway. Defaults
+   * to true (scheduled/transcribed meetings — the row predates editing). For
+   * an impromptu meeting still being pre-created/uploaded this is false: we
+   * keep buffering the MMKV draft on every keystroke but do NOT enqueue to the
+   * outbox (a PATCH for a non-existent row dead-letters and loses the note).
+   * On the false→true transition (and on mount when already true) we flush the
+   * buffered draft once. See lib/recording/confirmed-meetings.ts.
+   */
+  serverConfirmed?: boolean
 }
 
 const draftKey = (meetingId: string): string => `notes-draft:${meetingId}`
+
+/** Clear a meeting's local notes draft. Used by the recording-cancel path so a
+ *  discarded impromptu meeting leaves no orphaned draft behind. */
+export function clearNotesDraft(meetingId: string): void {
+  appStateStorage.delete(draftKey(meetingId))
+}
 
 export function NotesEditor({
   meetingId,
@@ -65,6 +81,7 @@ export function NotesEditor({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   serverLamport: _serverLamport,
   onChangeEnqueued,
+  serverConfirmed = true,
 }: Props) {
   // Local input value — initialized from MMKV draft (if any) then server notes.
   const [value, setValue] = useState<string>(() => {
@@ -94,48 +111,72 @@ export function NotesEditor({
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingValue = useRef<string | null>(null)
 
+  // Enqueue `latest` to the outbox if it differs from what we last sent /
+  // the server value. Assumes the gateway row exists (serverConfirmed).
+  const enqueueIfChanged = useCallback(
+    (latest: string) => {
+      const next: string | null = latest.length === 0 ? null : latest
+      if (
+        !shouldEnqueueSave({
+          latest: next,
+          lastEnqueued: lastEnqueuedRef.current,
+          serverValue: serverNotes,
+        })
+      ) {
+        return
+      }
+      const lamport = tickClock()
+      enqueue({
+        op: 'meeting.notes.update',
+        resourceId: meetingId,
+        payload: { notes: next, lamport },
+      })
+      lastEnqueuedRef.current = next
+      setPendCount(pendingCount())
+      onChangeEnqueued?.(next)
+      // Fire-and-forget kick — single-flight mutex inside the agent handles
+      // concurrent triggers. Errors here are non-fatal (network handling lives
+      // in the agent, which will retry per the backoff schedule).
+      void drainNow().then(() => {
+        setPendCount(pendingCount())
+        // If the queue is empty AND we just enqueued, the most recent save
+        // succeeded — record a "saved at" stamp.
+        if (pendingCount() === 0) {
+          setLastSavedAtMs(Date.now())
+          // Draft no longer needed — server has it.
+          appStateStorage.delete(draftKey(meetingId))
+        }
+      })
+    },
+    [meetingId, serverNotes, onChangeEnqueued],
+  )
+
   const flushSave = useCallback(() => {
     const latest = pendingValue.current
     if (latest === null) return
-    const next: string | null = latest.length === 0 ? null : latest
-
-    if (
-      !shouldEnqueueSave({
-        latest: next,
-        lastEnqueued: lastEnqueuedRef.current,
-        serverValue: serverNotes,
-      })
-    ) {
-      return
-    }
-
-    const lamport = tickClock()
-    enqueue({
-      op: 'meeting.notes.update',
-      resourceId: meetingId,
-      payload: { notes: next, lamport },
-    })
-    lastEnqueuedRef.current = next
-    // Persist draft (D3) — only matters if the user kills the app before
-    // the agent drains. We clear it on a confirmed successful save below
-    // via the pendingCount poll.
+    // ALWAYS persist the draft first (D3) — this is the offline-safe buffer,
+    // and the ONLY persistence while the meeting row is still unconfirmed.
     appStateStorage.set(draftKey(meetingId), latest)
-    setPendCount(pendingCount())
-    onChangeEnqueued?.(next)
-    // Fire-and-forget kick — single-flight mutex inside the agent handles
-    // concurrent triggers. Errors here are non-fatal (network handling lives
-    // in the agent, which will retry per the backoff schedule).
-    void drainNow().then(() => {
-      setPendCount(pendingCount())
-      // If the queue is empty AND we just enqueued, the most recent save
-      // succeeded — record a "saved at" stamp.
-      if (pendingCount() === 0) {
-        setLastSavedAtMs(Date.now())
-        // Draft no longer needed — server has it.
-        appStateStorage.delete(draftKey(meetingId))
-      }
-    })
-  }, [meetingId, serverNotes, onChangeEnqueued])
+    // Hold the enqueue until the gateway row exists. An impromptu meeting that
+    // hasn't been pre-created/uploaded yet has no row to PATCH; enqueuing now
+    // would 404 → dead-letter → lost note. The confirm-flush effect drains the
+    // buffered draft once serverConfirmed flips true.
+    if (!serverConfirmed) return
+    enqueueIfChanged(latest)
+  }, [meetingId, serverConfirmed, enqueueIfChanged])
+
+  // Confirm-flush: when the row becomes confirmed (and on mount if already
+  // confirmed — which covers the force-quit-before-flush boot case where a
+  // confirmed id still has a lingering draft), flush the current text once.
+  // shouldEnqueueSave inside enqueueIfChanged no-ops when there's nothing new,
+  // so this is safe for freshly-loaded scheduled meetings (value===serverNotes).
+  useEffect(() => {
+    if (!serverConfirmed) return
+    const latest = pendingValue.current ?? value
+    enqueueIfChanged(latest)
+    // Only react to the confirmation transition, not every keystroke/refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverConfirmed])
 
   const handleChange = useCallback(
     (next: string) => {

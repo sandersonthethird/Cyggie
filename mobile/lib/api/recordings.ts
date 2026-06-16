@@ -32,6 +32,13 @@ export interface UploadRecordingArgs {
   localUri: string
   title?: string
   calEventId?: string
+  /**
+   * Client-minted meeting id to attach this audio to (impromptu pre-create, or
+   * the existing row id for a scheduled meeting). The gateway attaches to (or
+   * create-if-absent for) THIS row instead of inserting a fresh impromptu, and
+   * never re-mints the id — keeping one identity end-to-end.
+   */
+  meetingId?: string
   /** ISO timestamp of when recording started on the device. */
   clientRecordedAt?: string
   /** 0–1; called on every progress event. */
@@ -84,6 +91,7 @@ export async function uploadRecording(args: UploadRecordingArgs): Promise<Upload
   const parameters: Record<string, string> = {}
   if (args.title) parameters['title'] = args.title
   if (args.calEventId) parameters['calEventId'] = args.calEventId
+  if (args.meetingId) parameters['meetingId'] = args.meetingId
   if (args.clientRecordedAt) parameters['clientRecordedAt'] = args.clientRecordedAt
 
   type UploadResult = Awaited<ReturnType<ReturnType<typeof FileSystem.createUploadTask>['uploadAsync']>>

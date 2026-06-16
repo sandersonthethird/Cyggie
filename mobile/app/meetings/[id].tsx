@@ -12,7 +12,7 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useFocusEffect } from '@react-navigation/native'
 import { ApiError } from '../../lib/api/client'
@@ -66,7 +66,15 @@ import {
   loadPendingUploadByMeetingId,
   type PendingUpload,
 } from '../../lib/recording/pending-upload'
-import { retryPendingUpload } from '../../lib/recording/session'
+import { cancelRecording, retryPendingUpload, startRecording, stopRecording } from '../../lib/recording/session'
+import { useRecordingStore } from '../../lib/recording/store'
+import { formatElapsed } from '../../lib/recording/format-elapsed'
+import { clearNotesDraft } from '../../components/NotesEditor'
+import {
+  clearMeetingConfirmed,
+  isMeetingConfirmed,
+  onMeetingConfirmed,
+} from '../../lib/recording/confirmed-meetings'
 import { RichMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -94,6 +102,10 @@ export default function MeetingDetailScreen() {
     queryFn: ({ signal }) => fetchMeeting(id, { signal }),
     enabled: id.length > 0,
     staleTime: 30_000,
+    // Keep the optimistic record (seeded by start-impromptu) on screen when a
+    // fetch 404s — offline, or during the brief pre-create window — so the
+    // meeting view never blanks while it's the active local recording.
+    placeholderData: keepPreviousData,
     // While the meeting is still recording/transcribing, repoll so the status
     // pill flips to "transcribed" live — without the user having to leave the
     // screen and come back. Stops once the server reaches a terminal status.
@@ -233,6 +245,82 @@ export default function MeetingDetailScreen() {
 
   const meeting = query.data
 
+  // ── Recording state ─────────────────────────────────────────────────────
+  // Live-recording UI is gated on the STORE (this device is recording into
+  // this meeting), never on the server status string — a row can read
+  // status='recording' merely because it's uploaded-awaiting-Deepgram.
+  const recStatus = useRecordingStore((s) => s.status)
+  const activeMeetingId = useRecordingStore((s) => s.activeMeetingId)
+  const startedAt = useRecordingStore((s) => s.startedAt)
+  const discardOnCancel = useRecordingStore((s) => s.discardOnCancel)
+  const isRecordingThis = recStatus === 'recording' && activeMeetingId === id
+
+  // serverConfirmed drives whether notes enqueue (vs buffer) and whether
+  // tagging is enabled. A meeting we're NOT actively recording is, by
+  // definition, confirmed on the gateway (you reached it via a real fetch or
+  // after upload). While recording, it's confirmed once pre-create/upload ran.
+  const [confirmed, setConfirmed] = useState(() => isMeetingConfirmed(id))
+  useEffect(() => {
+    setConfirmed(isMeetingConfirmed(id))
+    return onMeetingConfirmed((mid) => {
+      if (mid === id) setConfirmed(true)
+    })
+  }, [id])
+  const serverConfirmed = confirmed || !isRecordingThis
+
+  const onStopRecording = useCallback(async () => {
+    if (!meeting) return
+    try {
+      await stopRecording({
+        title: meeting.title,
+        meetingId: meeting.id,
+        calEventId: meeting.calendarEventId ?? undefined,
+      })
+      // Stay on this screen — the in-progress poll flips status to transcribed;
+      // an upload failure surfaces via RetryUploadBanner (status==='error').
+    } catch {
+      // stopRecording already called markError; the banner/RetryUploadBanner
+      // reflects it. Nothing else to do.
+    }
+  }, [meeting])
+
+  const onStartRecordingHere = useCallback(async () => {
+    if (!meeting) return
+    try {
+      await startRecording({
+        meetingId: meeting.id,
+        title: meeting.title,
+        calEventId: meeting.calendarEventId ?? undefined,
+        discardOnCancel: false, // scheduled row predates us — Cancel won't delete it
+      })
+    } catch (err) {
+      Alert.alert(
+        'Microphone unavailable',
+        err instanceof Error ? err.message : 'Could not start recording',
+      )
+    }
+  }, [meeting])
+
+  const onCancelRecording = useCallback(async () => {
+    const { meetingId: cancelledId } = await cancelRecording()
+    if (cancelledId) {
+      clearNotesDraft(cancelledId)
+      clearMeetingConfirmed(cancelledId)
+      queryClient.removeQueries({ queryKey: ['meetings', 'detail', cancelledId] })
+      // Impromptu rows were pre-created on the gateway — delete so an accidental
+      // tap leaves nothing behind. Best-effort; the 12h no-audio sweeper backstops.
+      if (discardOnCancel) {
+        try {
+          await deleteMeeting(cancelledId)
+        } catch {
+          // ignore — sweeper cleans up
+        }
+      }
+    }
+    if (router.canGoBack()) router.back()
+    else router.replace('/(tabs)/calendar')
+  }, [discardOnCancel, queryClient])
+
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
@@ -267,20 +355,32 @@ export default function MeetingDetailScreen() {
           <View style={styles.center}>
             <ActivityIndicator color={colors.crimson} />
           </View>
-        ) : query.error && !meeting ? (
+        ) : query.error && !meeting && !isRecordingThis ? (
+          // Suppress the load error while this meeting is the active local
+          // recording — the optimistic record carries the screen, and the
+          // poll's 404s (offline / pre-create window) are expected.
           <ErrorState error={query.error} onRetry={() => query.refetch()} />
         ) : meeting ? (
           <>
             <Hero meeting={meeting} />
+            {isRecordingThis && (
+              <RecordingBanner startedAt={startedAt} onStop={onStopRecording} onCancel={onCancelRecording} />
+            )}
             <StatsCard meeting={meeting} />
             {meeting.isGroupEvent && <GroupEventBanner />}
-            <MeetingActionsRow meeting={meeting} />
+            {!isRecordingThis && (
+              <MeetingActionsRow meeting={meeting} onStartRecording={onStartRecordingHere} />
+            )}
             {meeting.status === 'empty' && <EmptyTranscriptBanner meetingId={meeting.id} />}
             {meeting.status === 'error' && <RetryUploadBanner meetingId={meeting.id} />}
             <TerminalCleanupSideEffect meetingStatus={meeting.status} meetingId={meeting.id} />
             <SegmentControl value={segment} onChange={setSegment} />
             {segment === 'overview' && (
-              <OverviewSection meeting={meeting} onChangeEnqueued={onChangeEnqueued} />
+              <OverviewSection
+                meeting={meeting}
+                onChangeEnqueued={onChangeEnqueued}
+                serverConfirmed={serverConfirmed}
+              />
             )}
             {segment === 'transcript' && (
               <TranscriptSection
@@ -538,26 +638,16 @@ function StatCell({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * T5 — "Record" CTA for scheduled meetings. Tapping navigates to /record
- * with the meeting's calendarEventId + title as query params, so the
- * resulting upload finds-or-updates this row via /recordings/upload's
- * (userId, calEventId) find-or-update path. Avoids the previous
- * "go back to Calendar, hit the FAB, get an impromptu meeting instead"
- * dance the E2E run surfaced.
+ * "Record" CTA for scheduled meetings. Starts recording IN PLACE — the meeting
+ * view itself becomes the recording surface (timer + Stop via RecordingBanner),
+ * so the user keeps seeing notes / companies / attendees. No longer navigates
+ * to the /record takeover screen.
  *
- * Renders nothing when calendarEventId is null (impromptu-created
- * scheduled rows shouldn't get this CTA — no calendar event to
- * associate with).
+ * Renders nothing when calendarEventId is null (impromptu-created scheduled
+ * rows shouldn't get this CTA — no calendar event to associate with).
  */
-function RecordCTA({ meeting }: { meeting: MeetingDetail }) {
+function RecordCTA({ meeting, onPress }: { meeting: MeetingDetail; onPress: () => void }) {
   if (!meeting.calendarEventId) return null
-  const onPress = () => {
-    const params = new URLSearchParams({
-      calEventId: meeting.calendarEventId!,
-      title: meeting.title,
-    })
-    router.push(`/record?${params.toString()}` as never)
-  }
   return (
     <Pressable
       onPress={onPress}
@@ -568,6 +658,66 @@ function RecordCTA({ meeting }: { meeting: MeetingDetail }) {
       <Ionicons name="mic" size={18} color="#fff" />
       <Text style={styles.recordCtaText}>Start recording</Text>
     </Pressable>
+  )
+}
+
+/**
+ * RecordingBanner — shown on the meeting view while THIS meeting is actively
+ * recording on this device. Pulsing dot + live timer + Stop + Cancel. The
+ * user can scroll/edit notes below it; the floating bubble takes over when
+ * they navigate away.
+ */
+function RecordingBanner({
+  startedAt,
+  onStop,
+  onCancel,
+}: {
+  startedAt: number | null
+  onStop: () => void
+  onCancel: () => void
+}) {
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!startedAt) return
+    const tick = () => setElapsed(Math.floor((Date.now() - startedAt) / 1000))
+    tick()
+    const h = setInterval(tick, 1000)
+    return () => clearInterval(h)
+  }, [startedAt])
+
+  const confirmCancel = () => {
+    Alert.alert('Discard this recording?', 'The recording and meeting will be deleted.', [
+      { text: 'Keep recording', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: onCancel },
+    ])
+  }
+
+  return (
+    <View style={styles.recBanner}>
+      <View style={styles.recDot} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.recLabel}>Recording</Text>
+        <Text style={styles.recTimer}>{formatElapsed(elapsed)}</Text>
+      </View>
+      <Pressable
+        onPress={onStop}
+        style={({ pressed }) => [styles.recStopBtn, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Stop recording"
+      >
+        <View style={styles.recStopSquare} />
+        <Text style={styles.recStopText}>Stop</Text>
+      </Pressable>
+      <Pressable
+        onPress={confirmCancel}
+        hitSlop={8}
+        style={({ pressed }) => [styles.recCancelLink, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Cancel recording"
+      >
+        <Text style={styles.recCancelText}>Cancel</Text>
+      </Pressable>
+    </View>
   )
 }
 
@@ -617,7 +767,13 @@ function ChatCTA({ meeting }: { meeting: MeetingDetail }) {
  * Returns null when neither would render so we don't leave an empty
  * row taking up vertical space above the segment control.
  */
-function MeetingActionsRow({ meeting }: { meeting: MeetingDetail }) {
+function MeetingActionsRow({
+  meeting,
+  onStartRecording,
+}: {
+  meeting: MeetingDetail
+  onStartRecording: () => void
+}) {
   const showRecord = meeting.status === 'scheduled' && Boolean(meeting.calendarEventId)
   const showChat = meetingHasContent(meeting)
   if (!showRecord && !showChat) return null
@@ -625,7 +781,7 @@ function MeetingActionsRow({ meeting }: { meeting: MeetingDetail }) {
     <View style={styles.actionsRow}>
       {showRecord && (
         <View style={styles.actionsRowItem}>
-          <RecordCTA meeting={meeting} />
+          <RecordCTA meeting={meeting} onPress={onStartRecording} />
         </View>
       )}
       {showChat && (
@@ -865,14 +1021,21 @@ function SegmentControl({
 function OverviewSection({
   meeting,
   onChangeEnqueued,
+  serverConfirmed,
 }: {
   meeting: MeetingDetail
   onChangeEnqueued?: (next: string | null) => void
+  /** False only for an impromptu meeting whose gateway row isn't confirmed yet
+   *  (offline pre-record). Notes still buffer; tagging is disabled until the
+   *  row exists (tagging needs a live gateway round-trip). */
+  serverConfirmed: boolean
 }) {
   const queryClient = useQueryClient()
   const [contactPickerOpen, setContactPickerOpen] = useState(false)
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Tagging requires the row to exist on the gateway. Disabled while unconfirmed.
+  const taggingDisabled = busy || !serverConfirmed
 
   const refresh = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['meetings', 'detail', meeting.id] })
@@ -995,7 +1158,14 @@ function OverviewSection({
         serverUpdatedAt={meeting.updatedAt}
         serverLamport={meeting.lamport}
         onChangeEnqueued={onChangeEnqueued}
+        serverConfirmed={serverConfirmed}
       />
+
+      {!serverConfirmed && (
+        <Text style={styles.offlineTagHint}>
+          Connect to tag companies and attendees. Your notes are saved and will sync.
+        </Text>
+      )}
 
       <View style={styles.descBlock}>
         <View style={styles.descRowHeader}>
@@ -1005,9 +1175,9 @@ function OverviewSection({
           </Text>
           <Pressable
             onPress={() => setCompanyPickerOpen(true)}
-            disabled={busy}
+            disabled={taggingDisabled}
             hitSlop={8}
-            style={({ pressed }) => [styles.addBtn, pressed && styles.pressed, busy && { opacity: 0.5 }]}
+            style={({ pressed }) => [styles.addBtn, pressed && styles.pressed, taggingDisabled && { opacity: 0.5 }]}
             accessibilityLabel="Link company"
             accessibilityRole="button"
           >
@@ -1040,9 +1210,9 @@ function OverviewSection({
           </Text>
           <Pressable
             onPress={() => setContactPickerOpen(true)}
-            disabled={busy}
+            disabled={taggingDisabled}
             hitSlop={8}
-            style={({ pressed }) => [styles.addBtn, pressed && styles.pressed, busy && { opacity: 0.5 }]}
+            style={({ pressed }) => [styles.addBtn, pressed && styles.pressed, taggingDisabled && { opacity: 0.5 }]}
             accessibilityLabel="Add attendee"
             accessibilityRole="button"
           >
@@ -1499,6 +1669,59 @@ const styles = StyleSheet.create({
   recordCta: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
+  },
+  // Live-recording banner on the meeting view.
+  recBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.crimsonMuted,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.crimson,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  recDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.crimson,
+  },
+  recLabel: {
+    color: colors.crimson,
+    fontSize: type.label,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  recTimer: {
+    color: colors.text,
+    fontSize: type.h2,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  recStopBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.crimson,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.md,
+  },
+  recStopSquare: { width: 12, height: 12, borderRadius: 2, backgroundColor: '#fff' },
+  recStopText: { color: '#fff', fontSize: type.bodyTight, fontWeight: '700' },
+  recCancelLink: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  recCancelText: { color: colors.text3, fontSize: type.caption, fontWeight: '600' },
+  offlineTagHint: {
+    color: colors.text3,
+    fontSize: type.caption,
+    fontStyle: 'italic',
+    marginBottom: spacing.md,
+    marginTop: -spacing.xs,
   },
   // T17b — Record + Chat share one action band per detail screen so they
   // sit side-by-side when both apply (rare — Record is scheduled-only,

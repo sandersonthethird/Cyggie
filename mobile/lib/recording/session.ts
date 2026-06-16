@@ -35,12 +35,17 @@ import {
   savePendingUpload,
   type PendingUpload,
 } from './pending-upload'
-import { useRecordingStore } from './store'
+import { useRecordingStore, type BeginRecordingContext } from './store'
+import { markMeetingConfirmed } from './confirmed-meetings'
 
 let activeRecording: Audio.Recording | null = null
 let recordingStartedAt: Date | null = null
 let activeRecordingId: string | null = null
 let maxDurationTimer: ReturnType<typeof setTimeout> | null = null
+// The meeting this session records into — captured at start so stopRecording /
+// the 8h auto-stop can attach the upload to the right row without the caller
+// re-supplying it.
+let activeContext: BeginRecordingContext | null = null
 
 // Hard cap on a single recording. 8 hours is the spec'd limit + aligns with
 // the gateway's RECORDING_MAX_UPLOAD_BYTES default (200 MB ≈ 8hr of 32 kbps
@@ -79,7 +84,7 @@ const RECORDING_OPTIONS: Audio.RecordingOptions = {
   },
 }
 
-export async function startRecording(): Promise<void> {
+export async function startRecording(ctx: BeginRecordingContext): Promise<void> {
   if (activeRecording) {
     throw new Error('Recording already in progress')
   }
@@ -110,7 +115,8 @@ export async function startRecording(): Promise<void> {
   // slot key by performUpload + savePendingUpload, so multiple recordings
   // can coexist in storage without clobbering each other.
   activeRecordingId = generateClientRecordingId()
-  useRecordingStore.getState().beginRecording()
+  activeContext = ctx
+  useRecordingStore.getState().beginRecording(ctx)
 
   // Auto-stop at the 8hr cap. Fire-and-forget — if the user already stopped
   // by then, the timer no-ops via the activeRecording null check inside.
@@ -125,17 +131,26 @@ export async function startRecording(): Promise<void> {
 export async function stopRecording(args: {
   title?: string
   calEventId?: string
+  /** Row to attach the audio to; defaults to the start-time context. */
+  meetingId?: string
 }): Promise<{ meetingId: string }> {
   const recording = activeRecording
   if (!recording) {
+    // Either never started, or already cancelled (cancelRecording nulled it).
+    // After a cancel this MUST stay a no-op so no upload fires for a cancelled
+    // recording (the cancel contract).
     throw new Error('Not recording')
   }
   activeRecording = null
   const startedAt = recordingStartedAt
   recordingStartedAt = null
-  // Capture + clear the active id locally; performUpload owns it from here.
+  // Capture + clear the active id + context locally; performUpload owns it now.
   const clientRecordingId = activeRecordingId ?? generateClientRecordingId()
   activeRecordingId = null
+  const ctx = activeContext
+  activeContext = null
+  const targetMeetingId = args.meetingId ?? ctx?.meetingId
+  const calEventId = args.calEventId ?? ctx?.calEventId
   if (maxDurationTimer) {
     clearTimeout(maxDurationTimer)
     maxDurationTimer = null
@@ -169,8 +184,9 @@ export async function stopRecording(args: {
     clientRecordingId,
     userId,
     localUri,
-    title: args.title,
-    calEventId: args.calEventId,
+    title: args.title ?? ctx?.title,
+    calEventId,
+    targetMeetingId,
     clientRecordedAt: recordedAtIso,
   })
 }
@@ -214,9 +230,15 @@ async function performUpload(p: PendingUpload): Promise<{ meetingId: string }> {
       localUri: p.localUri,
       title: p.title,
       calEventId: p.calEventId,
+      meetingId: p.targetMeetingId,
       clientRecordedAt: p.clientRecordedAt,
       onProgress: (frac) => useRecordingStore.getState().setUploadProgress(frac),
     })
+    // The row now exists on the gateway (created-if-absent or attached) — mark
+    // it confirmed so any buffered notes draft flushes to the outbox. This is
+    // the offline path's create-before-notes signal (the online path confirms
+    // earlier via createImpromptuMeeting).
+    markMeetingConfirmed(result.meetingId)
     useRecordingStore.getState().finalizeMeeting(result.meetingId)
     // Transition the pending entry from awaiting_upload → awaiting_transcription
     // by stamping it with the server-assigned meetingId. Audio file stays put.
@@ -247,11 +269,22 @@ async function performUpload(p: PendingUpload): Promise<{ meetingId: string }> {
  *  canonical implementation lives in pending-upload.ts. */
 export { discardPendingUploadFileById as discardPendingUpload } from './pending-upload'
 
-/** Safe cleanup if the user backs out of the recording screen without stopping. */
-export async function cancelRecording(): Promise<void> {
+/**
+ * Cancel the active recording: stop+unload the mic, delete the local audio,
+ * and tear down all session state. After this, stopRecording() is a no-op
+ * (activeRecording is null) so NO upload can ever fire for a cancelled
+ * recording — the upload-proof half of the cancel contract. The UI layer
+ * additionally clears the notes draft / optimistic cache and (for impromptu)
+ * deletes the gateway row. Returns the cancelled meeting id (if any) so the
+ * caller can do that cleanup.
+ */
+export async function cancelRecording(): Promise<{ meetingId: string | null }> {
   const recording = activeRecording
+  const cancelledMeetingId = activeContext?.meetingId ?? null
   activeRecording = null
   recordingStartedAt = null
+  activeRecordingId = null
+  activeContext = null
   if (maxDurationTimer) {
     clearTimeout(maxDurationTimer)
     maxDurationTimer = null
@@ -266,4 +299,5 @@ export async function cancelRecording(): Promise<void> {
     }
   }
   useRecordingStore.getState().reset()
+  return { meetingId: cancelledMeetingId }
 }
