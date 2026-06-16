@@ -1074,6 +1074,8 @@ export function CompanyPropertiesPanel({
           onSaveDescription={(v) => save('description', v)}
           fieldSources={fieldSources}
           onSaveWebsite={(v) => save('websiteUrl', v)}
+          onSaveCity={(v) => save('city', v)}
+          onSaveState={(v) => save('state', v)}
         />
         {optionError.error && (
           <div style={{ color: '#c0392b', fontSize: '12px', padding: '4px 12px' }}>

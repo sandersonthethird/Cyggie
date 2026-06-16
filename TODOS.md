@@ -3283,3 +3283,32 @@ drift but did NOT touch the enum-vs-options value mismatch.
 
 **Depends on / blocked by:** A read-only audit of distinct `talent_pipeline`
 values in production SQLite/Neon.
+
+---
+
+## Editable "Location" column with City/State parsing
+
+**What:** Make the read-only computed `Location` column (city + state) in the
+company and contact tables editable, parsing a typed `"City, State"` string back
+into the separate `city` and `state` fields. Implement once via a new optional
+`saveComputedValue` hook in `createCellCallbacks`
+(`src/renderer/components/crm/tableUtils.ts`) so both `CompanyTable` and
+`ContactTable` benefit; each table supplies the parse → two-field write
+(`COMPANY_UPDATE` / `CONTACT_UPDATE` patch + `onPatch`).
+
+**Why:** Users currently set location via the separate `City` and `State`
+columns. A single editable `Location` cell would be a faster one-shot entry.
+
+**Context:** Deferred deliberately during the 2026-06-16 location work. The blocker
+is a silent data-loss path: the cell displays `"City, State"`, so a user editing it
+who types just a city (no comma) would, under naive split-and-write-both, wipe the
+existing state. A safe design (e.g. "no comma → set city, keep state; empty → clear
+both") must be chosen before building. The `location` column defs already exist with
+a `sortAccessor` in `companyColumns.ts` / `contactColumns.ts` (both `editable: false`,
+`type: 'computed'`); `createCellCallbacks.saveCellValue` currently no-ops when
+`!col.field`. Revisit only if the City + State columns prove clunky in practice.
+
+**Effort:** S. **Priority:** P3.
+
+**Depends on / blocked by:** Product decision on the no-comma / empty parse
+semantics (the data-loss guard).

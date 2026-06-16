@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useEditCellNav, getRangePosition } from '../renderer/hooks/useEditCellNav'
 import type { ColumnDef } from '../renderer/components/crm/tableUtils'
 
@@ -315,6 +316,47 @@ describe('useEditCellNav', () => {
       act(() => result.current.handleSelectCellClick(2, 1))
       act(() => result.current.handleSelectCellClick(2, 1, true))
       // No edit; focusedCell stays
+      expect(result.current.editCell).toBeNull()
+    })
+  })
+
+  // ── handleKeyboardEvent: type-to-edit guard ───────────────────────────────
+  // Regression: typing into a form field (e.g. the column-picker search box)
+  // must NOT start type-to-edit on the focused cell. The keystroke bubbles up
+  // to the table wrapper's onKeyDown → handleKeyboardEvent, which must ignore it
+  // when it originates in an INPUT/TEXTAREA/SELECT/contentEditable target.
+  describe('handleKeyboardEvent type-to-edit guard', () => {
+    function fakeKeyEvent(key: string, target: EventTarget | null): ReactKeyboardEvent {
+      return {
+        key,
+        target,
+        metaKey: false, ctrlKey: false, altKey: false, repeat: false,
+        preventDefault: vi.fn(),
+      } as unknown as ReactKeyboardEvent
+    }
+
+    it('starts type-to-edit on a printable key when target is not a form field', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      let handled = false
+      act(() => { handled = result.current.handleKeyboardEvent(fakeKeyEvent('a', document.createElement('div'))) })
+      expect(handled).toBe(true)
+      expect(result.current.editCell).toEqual({ rowIdx: 2, colIdx: 1, initialChar: 'a' })
+    })
+
+    it('does NOT start type-to-edit when the keystroke originates in an INPUT (column-picker search)', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      let handled = true
+      act(() => { handled = result.current.handleKeyboardEvent(fakeKeyEvent('a', document.createElement('input'))) })
+      expect(handled).toBe(false)
+      expect(result.current.editCell).toBeNull()
+    })
+
+    it('does NOT start type-to-edit when the target is a TEXTAREA', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => { result.current.handleKeyboardEvent(fakeKeyEvent('a', document.createElement('textarea'))) })
       expect(result.current.editCell).toBeNull()
     })
   })

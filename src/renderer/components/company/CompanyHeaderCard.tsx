@@ -1,5 +1,5 @@
 import React, { useEffect, useState, type ReactNode, type HTMLAttributes, type RefObject, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Share2, AtSign, Link, Mail, ListTodo, CalendarSync } from 'lucide-react'
+import { Share2, AtSign, Link, Mail, ListTodo, CalendarSync, MapPin } from 'lucide-react'
 import type { CompanyDetail } from '../../../shared/types/company'
 import { CompanyAttribution } from './CompanyAttribution'
 import { RecordKebabMenu } from '../common/RecordKebabMenu'
@@ -108,6 +108,10 @@ interface CompanyHeaderCardProps {
 
   // Social / website
   onSaveWebsite: (newValue: string | number | boolean | null) => Promise<void>
+
+  // Location
+  onSaveCity: (newValue: string | number | boolean | null) => Promise<void>
+  onSaveState: (newValue: string | number | boolean | null) => Promise<void>
 }
 
 export function CompanyHeaderCard({
@@ -155,6 +159,8 @@ export function CompanyHeaderCard({
   onSaveDescription,
   fieldSources,
   onSaveWebsite,
+  onSaveCity,
+  onSaveState,
 }: CompanyHeaderCardProps) {
   const logoUrl = companyLogoUrl(company.primaryDomain)
   const faviconUrl = googleFaviconUrl(company.primaryDomain)
@@ -328,6 +334,46 @@ export function CompanyHeaderCard({
               )}
             </div>
           )}
+
+          {/* Social links — moved up under the email icon, aligned with it. */}
+          {isEditing ? (
+            <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={true} onSave={onSaveWebsite} />
+          ) : (
+            (company.websiteUrl || company.linkedinCompanyUrl || company.twitterHandle || company.crunchbaseUrl || company.angellistUrl) && (
+              <div className={styles.socialRow}>
+                {company.linkedinCompanyUrl && (
+                  <button className={styles.socialIcon} title="LinkedIn" onClick={() => openExternal(company.linkedinCompanyUrl!)}>
+                    <Share2 size={16} />
+                  </button>
+                )}
+                {company.twitterHandle && (
+                  <button className={styles.socialIcon} title={`@${company.twitterHandle}`} onClick={() => openExternal(buildXUrl(company.twitterHandle!))}>
+                    <AtSign size={16} />
+                  </button>
+                )}
+                {company.crunchbaseUrl && (
+                  <button className={styles.socialIcon} title="Crunchbase" onClick={() => openExternal(company.crunchbaseUrl!)}>
+                    <Link size={16} />
+                  </button>
+                )}
+              </div>
+            )
+          )}
+
+          {/* Location (city / state) — above the description, aligned under the email icon. */}
+          {isEditing ? (
+            <>
+              <PropertyRow label="City" value={company.city} type="text" editMode={true} onSave={onSaveCity} placeholder="City" icon={<MapPin size={13} />} />
+              <PropertyRow label="State" value={company.state} type="text" editMode={true} onSave={onSaveState} placeholder="State" icon={<MapPin size={13} />} />
+            </>
+          ) : (
+            (company.city || company.state) && (
+              <div className={styles.metaRow}>
+                <span className={styles.metaIcon}>📍</span>
+                <span className={styles.metaValue}>{[company.city, company.state].filter(Boolean).join(', ')}</span>
+              </div>
+            )
+          )}
         </div>
       </div>{/* end headerTopRow */}
 
@@ -360,31 +406,6 @@ export function CompanyHeaderCard({
             )}
             {descriptionExpanded && (
               <button className={styles.descriptionToggleBtn} onClick={() => onDescriptionToggle(false)}>less</button>
-            )}
-          </div>
-        )
-      )}
-
-      {/* Social links */}
-      {isEditing ? (
-        <PropertyRow label="Website" value={company.websiteUrl} type="url" editMode={true} onSave={onSaveWebsite} />
-      ) : (
-        (company.websiteUrl || company.linkedinCompanyUrl || company.twitterHandle || company.crunchbaseUrl || company.angellistUrl) && (
-          <div className={styles.socialRow}>
-            {company.linkedinCompanyUrl && (
-              <button className={styles.socialIcon} title="LinkedIn" onClick={() => openExternal(company.linkedinCompanyUrl!)}>
-                <Share2 size={16} />
-              </button>
-            )}
-            {company.twitterHandle && (
-              <button className={styles.socialIcon} title={`@${company.twitterHandle}`} onClick={() => openExternal(buildXUrl(company.twitterHandle!))}>
-                <AtSign size={16} />
-              </button>
-            )}
-            {company.crunchbaseUrl && (
-              <button className={styles.socialIcon} title="Crunchbase" onClick={() => openExternal(company.crunchbaseUrl!)}>
-                <Link size={16} />
-              </button>
             )}
           </div>
         )

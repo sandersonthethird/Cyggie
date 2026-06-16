@@ -235,6 +235,16 @@ export function useEditCellNav(
     (e: ReactKeyboardEvent, opts?: { suppressEscape?: boolean }): boolean => {
       if (!focusedCell || editCell) return false
 
+      // Ignore keystrokes that originate in a form field (e.g. the column-picker
+      // search box, an inline filter input). Without this, typing into such an
+      // input bubbles up here and starts type-to-edit on the focused cell instead
+      // of going into the input. Mirrors the document-level arrow-nav guard below.
+      const target = e.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return false
+      }
+
       if (e.key === 'Enter') {
         e.preventDefault()
         handleStartEdit(focusedCell.rowIdx, focusedCell.colIdx)
