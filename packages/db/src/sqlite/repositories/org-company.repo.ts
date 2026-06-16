@@ -3554,15 +3554,23 @@ export function listCompanyTimeline(companyId: string): CompanyTimelineItem[] {
     created_at: string
     updated_at: string
   }>
-  const noteItems: CompanyTimelineItem[] = noteRows.map((note) => ({
-    id: `note:${note.id}`,
-    type: 'note',
-    title: note.title?.trim() || 'Note',
-    occurredAt: note.updated_at || note.created_at,
-    subtitle: note.content.trim().slice(0, 220) || null,
-    referenceId: note.id,
-    referenceType: 'company_note'
-  }))
+  const noteItems: CompanyTimelineItem[] = noteRows.map((note) => {
+    // Mirror the Notes tab: prefer an explicit title, else fall back to the
+    // first non-empty line of the body, else the generic "Note" label.
+    const firstLine = (note.content || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0)
+    return {
+      id: `note:${note.id}`,
+      type: 'note',
+      title: note.title?.trim() || firstLine || 'Note',
+      occurredAt: note.updated_at || note.created_at,
+      subtitle: note.content.trim().slice(0, 220) || null,
+      referenceId: note.id,
+      referenceType: 'company_note'
+    }
+  })
 
   const decisionRows = db
     .prepare(`

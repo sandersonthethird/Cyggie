@@ -80,6 +80,10 @@ export default function CompanyDetail() {
   const [enrichJustCompleted, setEnrichJustCompleted] = useState(false)
   const [highlightNoteId, setHighlightNoteId] = useState<string | null>(null)
   const [notesVersion, setNotesVersion] = useState(0)
+  // Bumped whenever a note is created/edited/deleted from any tab, so the
+  // sibling tabs (which are always mounted) silently re-pull fresh note data.
+  const [noteSyncKey, setNoteSyncKey] = useState(0)
+  const bumpNoteSync = useCallback(() => setNoteSyncKey((k) => k + 1), [])
   const enrichCompleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const setPageContext = useChatStore((s) => s.setPageContext)
@@ -476,13 +480,13 @@ export default function CompanyDetail() {
         {/* All tabs always mounted (CSS hide/show) to preserve CompanyMemo draft state */}
         <div className={layoutStyles.tabContent}>
           <div className={activeTab !== 'timeline' ? layoutStyles.hidden : ''}>
-            <CompanyTimeline companyId={company.id} refreshKey={timelineKey} />
+            <CompanyTimeline companyId={company.id} refreshKey={timelineKey} noteSyncKey={noteSyncKey} onNoteChange={bumpNoteSync} />
           </div>
           <div className={activeTab !== 'contacts' ? layoutStyles.hidden : ''}>
             <CompanyContacts companyId={company.id} />
           </div>
           <div className={activeTab !== 'notes' ? layoutStyles.hidden : ''}>
-            <CompanyNotes companyId={company.id} highlightNoteId={highlightNoteId ?? undefined} refreshKey={notesVersion} />
+            <CompanyNotes companyId={company.id} highlightNoteId={highlightNoteId ?? undefined} refreshKey={notesVersion} noteSyncKey={noteSyncKey} onNoteChange={bumpNoteSync} />
           </div>
           <div className={activeTab !== 'thesis' ? layoutStyles.hidden : ''}>
             <div style={{ padding: 32, color: 'var(--color-text-tertiary)', fontSize: 14 }}>
