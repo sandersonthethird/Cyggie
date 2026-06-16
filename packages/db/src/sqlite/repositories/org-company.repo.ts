@@ -1073,10 +1073,38 @@ export function getCompany(companyId: string): CompanyDetail | null {
   const coInvestedIn = getCompanyCoInvestedIn(db, companyId)
   const coInvestorOverlaps = getCoInvestorOverlaps(companyId)
 
+  // Attribution (multiplayer): who created / last edited this firm-shared
+  // company. Names resolve via the local users table (the current user always;
+  // teammates once the firm directory is synced) — LEFT JOIN so an unknown user
+  // yields a null name and the UI degrades to the timestamp.
+  const attribution = db
+    .prepare(
+      `SELECT c.created_by_user_id AS createdByUserId,
+              c.updated_by_user_id AS updatedByUserId,
+              cu.display_name      AS createdByName,
+              uu.display_name      AS updatedByName
+         FROM org_companies c
+         LEFT JOIN users cu ON cu.id = c.created_by_user_id
+         LEFT JOIN users uu ON uu.id = c.updated_by_user_id
+        WHERE c.id = ?`,
+    )
+    .get(companyId) as
+    | {
+        createdByUserId: string | null
+        updatedByUserId: string | null
+        createdByName: string | null
+        updatedByName: string | null
+      }
+    | undefined
+
   return {
     ...rowToCompanySummary(row),
     themes: themes.map((v) => v.name),
     sourceEntityName,
+    createdByUserId: attribution?.createdByUserId ?? null,
+    updatedByUserId: attribution?.updatedByUserId ?? null,
+    createdByName: attribution?.createdByName ?? null,
+    updatedByName: attribution?.updatedByName ?? null,
     coInvestorsList,
     priorInvestorsList,
     subsequentInvestorsList,

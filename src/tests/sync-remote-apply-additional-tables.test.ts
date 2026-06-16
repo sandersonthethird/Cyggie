@@ -116,6 +116,8 @@ function freshDb(): Database.Database {
       source_entity_id TEXT,
       key_takeaways TEXT,
       field_sources TEXT,
+      created_by_user_id TEXT,
+      updated_by_user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       lamport TEXT NOT NULL DEFAULT '0',

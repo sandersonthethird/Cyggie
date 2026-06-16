@@ -539,6 +539,8 @@ export interface PulledOrgCompanyRow extends PulledRow {
   userId: string
   /** Per-column lamports (snake_col → lamport) for the field-LWW pull merge. */
   fieldLamports?: Record<string, unknown> | string | null
+  createdByUserId?: string | null
+  updatedByUserId?: string | null
   canonicalName: string
   normalizedName: string
   description: string | null
@@ -674,6 +676,7 @@ const ORG_COMPANY_COL_MAP: ReadonlyArray<readonly [snake: string, camel: keyof P
   ['source_type', 'sourceType'], ['source_entity_type', 'sourceEntityType'],
   ['source_entity_id', 'sourceEntityId'], ['key_takeaways', 'keyTakeaways'],
   ['field_sources', 'fieldSources'], ['created_at', 'createdAt'], ['updated_at', 'updatedAt'],
+  ['created_by_user_id', 'createdByUserId'], ['updated_by_user_id', 'updatedByUserId'],
 ]
 const ORG_COMPANY_SNAKE_TO_CAMEL = new Map(ORG_COMPANY_COL_MAP)
 
@@ -702,10 +705,21 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
     isInsert,
   })
 
+  // Audit FKs reference users(id) (enforced in SQLite). A teammate's user row
+  // may not be in the local directory yet — store NULL rather than FK-fail the
+  // whole company (attribution resolves once the firm directory syncs).
+  const userExists = (uid: string | null | undefined): boolean =>
+    uid != null &&
+    db.prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1').get(uid) != null
+  const createdByUserId = userExists(row.createdByUserId) ? row.createdByUserId : null
+  const updatedByUserId = userExists(row.updatedByUserId) ? row.updatedByUserId : null
+
   // All incoming values, transformed for SQLite (camelCase keys), reused by
   // both the insert and the dynamic update.
   const bind: Record<string, unknown> = {
     id: row.id,
+    createdByUserId,
+    updatedByUserId,
     canonicalName: row.canonicalName,
     normalizedName: row.normalizedName,
     description: row.description,
@@ -817,6 +831,7 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        followon_check, followon_date, followon_check_2, followon_date_2, investment_mark,
        portfolio_fund, source_type, source_entity_type, source_entity_id,
        key_takeaways, field_sources,
+       created_by_user_id, updated_by_user_id,
        created_at, updated_at, lamport, field_lamports
      ) VALUES (
        @id, @canonicalName, @normalizedName, @description,
@@ -839,6 +854,7 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        @followonCheck, @followonDate, @followonCheck2, @followonDate2, @investmentMark,
        @portfolioFund, @sourceType, @sourceEntityType, @sourceEntityId,
        @keyTakeaways, @fieldSources,
+       @createdByUserId, @updatedByUserId,
        @createdAt, @updatedAt, @lamport, @fieldLamports
      )
      ON CONFLICT(id) DO UPDATE SET
@@ -909,6 +925,8 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        source_entity_id = excluded.source_entity_id,
        key_takeaways = excluded.key_takeaways,
        field_sources = excluded.field_sources,
+       created_by_user_id = excluded.created_by_user_id,
+       updated_by_user_id = excluded.updated_by_user_id,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        lamport = excluded.lamport,

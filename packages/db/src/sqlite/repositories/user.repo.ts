@@ -225,6 +225,52 @@ export function ensureDefaultTeam(): string {
   return id
 }
 
+/**
+ * Firm directory cache. Mirrors the gateway's GET /firms/me/members into the
+ * local users table (keyed by the gateway user id) so multiplayer attribution
+ * — "created by / last edited by / shared by" — resolves offline. Idempotent
+ * upsert by id; never deletes (a member who left simply stops being refreshed).
+ */
+export function upsertFirmMembers(
+  members: ReadonlyArray<{
+    id: string
+    email: string | null
+    displayName: string | null
+    avatarUrl: string | null
+    role: string
+  }>,
+): number {
+  const db = getDatabase()
+  const stmt = db.prepare(`
+    INSERT INTO users (id, display_name, first_name, last_name, email, avatar_url, role, created_at)
+    VALUES (@id, @displayName, @firstName, @lastName, @email, @avatarUrl, @role, datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      display_name = excluded.display_name,
+      first_name = excluded.first_name,
+      last_name = excluded.last_name,
+      email = excluded.email,
+      avatar_url = excluded.avatar_url,
+      role = excluded.role
+  `)
+  const apply = db.transaction((rows: typeof members) => {
+    for (const m of rows) {
+      const displayName = (m.displayName ?? m.email ?? m.id).trim()
+      const split = splitDisplayName(displayName)
+      stmt.run({
+        id: m.id,
+        displayName,
+        firstName: split.firstName,
+        lastName: split.lastName,
+        email: normalizeEmail(m.email ?? null),
+        avatarUrl: m.avatarUrl ?? null,
+        role: m.role === 'admin' ? 'admin' : 'member',
+      })
+    }
+    return rows.length
+  })
+  return apply(members)
+}
+
 export function ensureTeamMembership(
   userId: string,
   role: 'admin' | 'member' = 'member'
