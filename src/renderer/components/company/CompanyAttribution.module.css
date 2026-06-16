@@ -1,0 +1,20 @@
+.attribution {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.part {
+  white-space: nowrap;
+}
+
+.part:not(:last-child)::after {
+  content: '·';
+  margin-left: 10px;
+  color: var(--color-text-tertiary);
+  opacity: 0.6;
+}

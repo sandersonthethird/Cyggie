@@ -190,6 +190,12 @@ export interface CompanyDetail extends CompanySummary {
    * Phase 2C: powers "↑ N more" badges on co-investor chips.
    */
   coInvestorOverlaps: Record<string, number>
+  // Attribution (multiplayer firm-shared). IDs always present; names resolve via
+  // the local users table (null when the user isn't known locally yet).
+  createdByUserId?: string | null
+  updatedByUserId?: string | null
+  createdByName?: string | null
+  updatedByName?: string | null
 }
 
 export type CompanyDedupAction = 'skip' | 'delete' | 'merge'

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, type ReactNode, type HTMLAttributes, type RefObject, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Share2, AtSign, Link, Mail, ListTodo, CalendarSync } from 'lucide-react'
 import type { CompanyDetail } from '../../../shared/types/company'
+import { CompanyAttribution } from './CompanyAttribution'
 import { RecordKebabMenu } from '../common/RecordKebabMenu'
 import { PropertyRow } from '../crm/PropertyRow'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
@@ -388,6 +389,9 @@ export function CompanyHeaderCard({
           </div>
         )
       )}
+
+      {/* Multiplayer attribution — who created / last edited this firm-shared record. */}
+      {!isEditing && <CompanyAttribution company={company} />}
     </div>
   )
 }

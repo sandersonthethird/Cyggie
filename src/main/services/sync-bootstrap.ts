@@ -3,6 +3,7 @@ import type { WebContents } from 'electron'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { configureSyncGlobals } from '@cyggie/db/sqlite/repositories/_sync'
 import { getCurrentUserId } from '../security/current-user'
+import { upsertFirmMembers } from '@cyggie/db/sqlite/repositories/user.repo'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import {
   SyncAgent,
@@ -172,6 +173,51 @@ const pullTransport: PullTransport = {
 }
 
 /**
+ * Firm directory sync — mirror GET /firms/me/members into the local users table
+ * so multiplayer attribution ("created by / last edited by / shared by")
+ * resolves offline. Fire-and-forget + best-effort: any failure is logged and
+ * swallowed (attribution degrades to timestamps, never blocks sync). Same
+ * 401 → refresh → retry pattern as the pull transport.
+ */
+async function syncFirmDirectory(): Promise<void> {
+  try {
+    const tokenA = await getAccessTokenForSync()
+    if (!tokenA) return
+    const url = `${GATEWAY_URL}/firms/me/members`
+    const tryOnce = (token: string): Promise<Response> =>
+      fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
+    let res = await tryOnce(tokenA)
+    if (res.status === 401) {
+      const fresh = await refreshCyggieAuth()
+      if (!fresh) return
+      res = await tryOnce(fresh)
+    }
+    if (!res.ok) return
+    const body = (await res.json()) as {
+      members: Array<{
+        id: string
+        email: string | null
+        display_name: string | null
+        avatar_url: string | null
+        role: string
+      }>
+    }
+    const n = upsertFirmMembers(
+      body.members.map((m) => ({
+        id: m.id,
+        email: m.email,
+        displayName: m.display_name,
+        avatarUrl: m.avatar_url,
+        role: m.role,
+      })),
+    )
+    console.log(`[sync.directory] upserted ${n} firm member(s)`)
+  } catch (err) {
+    console.warn('[sync.directory] firm member sync failed', err)
+  }
+}
+
+/**
  * Initialize sync. Idempotent — calling twice is a no-op.
  */
 export function bootstrapSync(): void {
@@ -310,6 +356,10 @@ export function bootstrapSync(): void {
   }
 
   pullService.start()
+
+  // Populate the local firm directory so teammate attribution resolves. Runs
+  // before teammate companies are rendered; refreshed on focus (triggerSyncPull).
+  void syncFirmDirectory()
   console.log('[sync] bootstrap complete; agent + pull service started')
 }
 
@@ -330,6 +380,8 @@ export function triggerSyncFlush(): void {
  */
 export function triggerSyncPull(): void {
   pullService?.triggerPull()
+  // Refresh the firm directory on focus so newly-added teammates' names resolve.
+  void syncFirmDirectory()
 }
 
 /**

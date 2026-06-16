@@ -45,6 +45,7 @@
 // =============================================================================
 
 import type Database from 'better-sqlite3'
+import { mergeFieldLww, parseFieldLamports } from '@cyggie/db/sync/field-lww'
 
 /** Size of each sub-batch transaction. 50 keeps the IPC payload + the
  *  renderer's TanStack invalidate storm bounded; first-launch catch-up
@@ -177,6 +178,13 @@ export interface TableSpec<RowT extends PulledRow> {
   /** True when rows carry a userId field that must match the local user.
    *  False for cascade-child tables like contact_emails / org_company_aliases. */
   hasUserId: boolean
+  /**
+   * FIELD-LEVEL LWW table (e.g. org_companies). When true the apply loop does
+   * NOT skip on a low row lamport — it always calls `upsert`, which performs a
+   * PER-COLUMN merge (protecting un-pushed local edits from an incoming row that
+   * touched different columns). The row always advances the pull cursor.
+   */
+  fieldLww?: boolean
 }
 
 /**
@@ -268,11 +276,22 @@ export function applyRemoteRows<RowT extends PulledRow>(
           if (r.skip) continue
         }
 
+        const incomingLamport = BigInt(row.lamport)
+
+        // Field-LWW tables: never skip at the ROW level — descend into the
+        // per-column merge (which no-ops losing columns itself). The cursor
+        // still advances to the lamport we've now seen so we don't re-pull it.
+        if (spec.fieldLww) {
+          spec.upsert(db, row)
+          subBatchApplied.push(spec.rowId(row))
+          if (incomingLamport > subBatchHighWater) subBatchHighWater = incomingLamport
+          continue
+        }
+
         const local = selectStmt.get(...spec.rowKey(row)) as
           | { lamport: string }
           | undefined
         const localLamport = local ? BigInt(local.lamport) : -1n
-        const incomingLamport = BigInt(row.lamport)
         if (incomingLamport <= localLamport) {
           skippedLowLamport++
           continue
@@ -518,6 +537,10 @@ function upsertNoteRow(db: Database.Database, row: PulledNoteRow): void {
 export interface PulledOrgCompanyRow extends PulledRow {
   id: string
   userId: string
+  /** Per-column lamports (snake_col → lamport) for the field-LWW pull merge. */
+  fieldLamports?: Record<string, unknown> | string | null
+  createdByUserId?: string | null
+  updatedByUserId?: string | null
   canonicalName: string
   normalizedName: string
   description: string | null
@@ -603,134 +626,100 @@ export function applyRemoteOrgCompanies(
 const ORG_COMPANIES_SPEC: TableSpec<PulledOrgCompanyRow> = {
   tableName: 'org_companies',
   hasUserId: true,
+  fieldLww: true,
   selectLamportSql: 'SELECT lamport FROM org_companies WHERE id = ?',
   rowKey: (row) => [row.id],
   rowId: (row) => row.id,
   upsert: (db, row) => upsertOrgCompanyRow(db, row),
 }
 
+// Explicit snake_column → camelKey map for org_companies' field-LWW data columns
+// (everything except the PK `id` and sync meta `lamport`/`field_lamports`).
+// EXPLICIT on purpose: the generic snake↔camel converters mishandle numbered
+// columns (`followon_check_2` → `followonCheck_2`, not `followonCheck2`), which
+// would silently drop those columns from the per-field merge. `field_lamports`
+// keys are snake (the bare-row diff's native casing); this map looks up the
+// matching camelCase value in the pulled (camelCase) row.
+const ORG_COMPANY_COL_MAP: ReadonlyArray<readonly [snake: string, camel: keyof PulledOrgCompanyRow]> = [
+  ['canonical_name', 'canonicalName'], ['normalized_name', 'normalizedName'],
+  ['description', 'description'], ['primary_domain', 'primaryDomain'],
+  ['website_url', 'websiteUrl'], ['linkedin_company_url', 'linkedinCompanyUrl'],
+  ['twitter_handle', 'twitterHandle'], ['crunchbase_url', 'crunchbaseUrl'],
+  ['angellist_url', 'angellistUrl'], ['stage', 'stage'],
+  ['pipeline_stage', 'pipelineStage'], ['priority', 'priority'], ['status', 'status'],
+  ['entity_type', 'entityType'], ['include_in_companies_view', 'includeInCompaniesView'],
+  ['classification_source', 'classificationSource'],
+  ['classification_confidence', 'classificationConfidence'], ['industry', 'industry'],
+  ['crm_provider', 'crmProvider'], ['crm_company_id', 'crmCompanyId'],
+  ['city', 'city'], ['state', 'state'], ['hq_address', 'hqAddress'],
+  ['founding_year', 'foundingYear'], ['employee_count_range', 'employeeCountRange'],
+  ['target_customer', 'targetCustomer'], ['business_model', 'businessModel'],
+  ['product_stage', 'productStage'], ['revenue_model', 'revenueModel'],
+  ['target_investment_stage', 'targetInvestmentStage'],
+  ['target_investment_sector', 'targetInvestmentSector'], ['arr', 'arr'],
+  ['burn_rate', 'burnRate'], ['runway_months', 'runwayMonths'],
+  ['last_funding_date', 'lastFundingDate'], ['total_funding_raised', 'totalFundingRaised'],
+  ['lead_investor', 'leadInvestor'], ['lead_investor_company_id', 'leadInvestorCompanyId'],
+  ['co_investors', 'coInvestors'], ['round', 'round'], ['raise_size', 'raiseSize'],
+  ['post_money_valuation', 'postMoneyValuation'], ['relationship_owner', 'relationshipOwner'],
+  ['deal_source', 'dealSource'], ['warm_intro_source', 'warmIntroSource'],
+  ['referral_contact_id', 'referralContactId'], ['next_followup_date', 'nextFollowupDate'],
+  ['investment_size', 'investmentSize'], ['ownership_pct', 'ownershipPct'],
+  ['followon_investment_size', 'followonInvestmentSize'], ['total_invested', 'totalInvested'],
+  ['investment_round', 'investmentRound'],
+  ['initial_investment_security', 'initialInvestmentSecurity'],
+  ['date_of_initial_investment', 'dateOfInitialInvestment'],
+  ['initial_round_size', 'initialRoundSize'], ['last_company_valuation', 'lastCompanyValuation'],
+  ['followon_check', 'followonCheck'], ['followon_date', 'followonDate'],
+  ['followon_check_2', 'followonCheck2'], ['followon_date_2', 'followonDate2'],
+  ['investment_mark', 'investmentMark'], ['portfolio_fund', 'portfolioFund'],
+  ['source_type', 'sourceType'], ['source_entity_type', 'sourceEntityType'],
+  ['source_entity_id', 'sourceEntityId'], ['key_takeaways', 'keyTakeaways'],
+  ['field_sources', 'fieldSources'], ['created_at', 'createdAt'], ['updated_at', 'updatedAt'],
+  ['created_by_user_id', 'createdByUserId'], ['updated_by_user_id', 'updatedByUserId'],
+]
+const ORG_COMPANY_SNAKE_TO_CAMEL = new Map(ORG_COMPANY_COL_MAP)
+
 function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): void {
-  // SQLite org_companies has no user_id column — Postgres carries it for
-  // multi-tenant filtering; desktop is single-user.
-  db.prepare(
-    `INSERT INTO org_companies (
-       id, canonical_name, normalized_name, description,
-       primary_domain, website_url, linkedin_company_url, twitter_handle,
-       crunchbase_url, angellist_url,
-       stage, pipeline_stage, priority, status,
-       entity_type, include_in_companies_view, classification_source, classification_confidence,
-       industry, crm_provider, crm_company_id,
-       city, state, hq_address,
-       founding_year, employee_count_range,
-       target_customer, business_model, product_stage, revenue_model,
-       target_investment_stage, target_investment_sector,
-       arr, burn_rate, runway_months, last_funding_date, total_funding_raised,
-       lead_investor, lead_investor_company_id, co_investors,
-       round, raise_size, post_money_valuation,
-       relationship_owner, deal_source, warm_intro_source, referral_contact_id, next_followup_date,
-       investment_size, ownership_pct, followon_investment_size, total_invested,
-       investment_round, initial_investment_security, date_of_initial_investment,
-       initial_round_size, last_company_valuation,
-       followon_check, followon_date, followon_check_2, followon_date_2, investment_mark,
-       portfolio_fund, source_type, source_entity_type, source_entity_id,
-       key_takeaways, field_sources,
-       created_at, updated_at, lamport
-     ) VALUES (
-       @id, @canonicalName, @normalizedName, @description,
-       @primaryDomain, @websiteUrl, @linkedinCompanyUrl, @twitterHandle,
-       @crunchbaseUrl, @angellistUrl,
-       @stage, @pipelineStage, @priority, @status,
-       @entityType, @includeInCompaniesView, @classificationSource, @classificationConfidence,
-       @industry, @crmProvider, @crmCompanyId,
-       @city, @state, @hqAddress,
-       @foundingYear, @employeeCountRange,
-       @targetCustomer, @businessModel, @productStage, @revenueModel,
-       @targetInvestmentStage, @targetInvestmentSector,
-       @arr, @burnRate, @runwayMonths, @lastFundingDate, @totalFundingRaised,
-       @leadInvestor, @leadInvestorCompanyId, @coInvestors,
-       @round, @raiseSize, @postMoneyValuation,
-       @relationshipOwner, @dealSource, @warmIntroSource, @referralContactId, @nextFollowupDate,
-       @investmentSize, @ownershipPct, @followonInvestmentSize, @totalInvested,
-       @investmentRound, @initialInvestmentSecurity, @dateOfInitialInvestment,
-       @initialRoundSize, @lastCompanyValuation,
-       @followonCheck, @followonDate, @followonCheck2, @followonDate2, @investmentMark,
-       @portfolioFund, @sourceType, @sourceEntityType, @sourceEntityId,
-       @keyTakeaways, @fieldSources,
-       @createdAt, @updatedAt, @lamport
-     )
-     ON CONFLICT(id) DO UPDATE SET
-       canonical_name = excluded.canonical_name,
-       normalized_name = excluded.normalized_name,
-       description = excluded.description,
-       primary_domain = excluded.primary_domain,
-       website_url = excluded.website_url,
-       linkedin_company_url = excluded.linkedin_company_url,
-       twitter_handle = excluded.twitter_handle,
-       crunchbase_url = excluded.crunchbase_url,
-       angellist_url = excluded.angellist_url,
-       stage = excluded.stage,
-       pipeline_stage = excluded.pipeline_stage,
-       priority = excluded.priority,
-       status = excluded.status,
-       entity_type = excluded.entity_type,
-       include_in_companies_view = excluded.include_in_companies_view,
-       classification_source = excluded.classification_source,
-       classification_confidence = excluded.classification_confidence,
-       industry = excluded.industry,
-       crm_provider = excluded.crm_provider,
-       crm_company_id = excluded.crm_company_id,
-       city = excluded.city,
-       state = excluded.state,
-       hq_address = excluded.hq_address,
-       founding_year = excluded.founding_year,
-       employee_count_range = excluded.employee_count_range,
-       target_customer = excluded.target_customer,
-       business_model = excluded.business_model,
-       product_stage = excluded.product_stage,
-       revenue_model = excluded.revenue_model,
-       target_investment_stage = excluded.target_investment_stage,
-       target_investment_sector = excluded.target_investment_sector,
-       arr = excluded.arr,
-       burn_rate = excluded.burn_rate,
-       runway_months = excluded.runway_months,
-       last_funding_date = excluded.last_funding_date,
-       total_funding_raised = excluded.total_funding_raised,
-       lead_investor = excluded.lead_investor,
-       lead_investor_company_id = excluded.lead_investor_company_id,
-       co_investors = excluded.co_investors,
-       round = excluded.round,
-       raise_size = excluded.raise_size,
-       post_money_valuation = excluded.post_money_valuation,
-       relationship_owner = excluded.relationship_owner,
-       deal_source = excluded.deal_source,
-       warm_intro_source = excluded.warm_intro_source,
-       referral_contact_id = excluded.referral_contact_id,
-       next_followup_date = excluded.next_followup_date,
-       investment_size = excluded.investment_size,
-       ownership_pct = excluded.ownership_pct,
-       followon_investment_size = excluded.followon_investment_size,
-       total_invested = excluded.total_invested,
-       investment_round = excluded.investment_round,
-       initial_investment_security = excluded.initial_investment_security,
-       date_of_initial_investment = excluded.date_of_initial_investment,
-       initial_round_size = excluded.initial_round_size,
-       last_company_valuation = excluded.last_company_valuation,
-       followon_check = excluded.followon_check,
-       followon_date = excluded.followon_date,
-       followon_check_2 = excluded.followon_check_2,
-       followon_date_2 = excluded.followon_date_2,
-       investment_mark = excluded.investment_mark,
-       portfolio_fund = excluded.portfolio_fund,
-       source_type = excluded.source_type,
-       source_entity_type = excluded.source_entity_type,
-       source_entity_id = excluded.source_entity_id,
-       key_takeaways = excluded.key_takeaways,
-       field_sources = excluded.field_sources,
-       created_at = excluded.created_at,
-       updated_at = excluded.updated_at,
-       lamport = excluded.lamport`,
-  ).run({
+  // Field-LWW pull merge. The gateway row is the firm's authoritative merged
+  // state, but the LOCAL device may hold un-pushed edits to OTHER columns — so
+  // we merge per column rather than whole-row replace:
+  //   • insert (row absent locally) → write the whole incoming row.
+  //   • update → write ONLY the columns the incoming write wins (incoming
+  //     per-column clock > local). Losing columns are left untouched in the DB
+  //     (they keep the local value), protecting un-pushed local edits.
+  const local = db
+    .prepare('SELECT lamport, field_lamports FROM org_companies WHERE id = ? LIMIT 1')
+    .get(row.id) as { lamport: string; field_lamports: string | null } | undefined
+  const isInsert = local == null
+
+  const incomingMap = parseFieldLamports(row.fieldLamports ?? null)
+  const merge = mergeFieldLww({
+    existingFieldLamports: isInsert ? null : parseFieldLamports(local!.field_lamports),
+    existingRowLamport: isInsert ? '0' : local!.lamport,
+    incomingFieldLamports: incomingMap,
+    incomingRowLamport: row.lamport,
+    incomingColumns: incomingMap
+      ? Object.keys(incomingMap)
+      : ORG_COMPANY_COL_MAP.map(([snake]) => snake),
+    isInsert,
+  })
+
+  // Audit FKs reference users(id) (enforced in SQLite). A teammate's user row
+  // may not be in the local directory yet — store NULL rather than FK-fail the
+  // whole company (attribution resolves once the firm directory syncs).
+  const userExists = (uid: string | null | undefined): boolean =>
+    uid != null &&
+    db.prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1').get(uid) != null
+  const createdByUserId = userExists(row.createdByUserId) ? row.createdByUserId : null
+  const updatedByUserId = userExists(row.updatedByUserId) ? row.updatedByUserId : null
+
+  // All incoming values, transformed for SQLite (camelCase keys), reused by
+  // both the insert and the dynamic update.
+  const bind: Record<string, unknown> = {
     id: row.id,
+    createdByUserId,
+    updatedByUserId,
     canonicalName: row.canonicalName,
     normalizedName: row.normalizedName,
     description: row.description,
@@ -800,8 +789,149 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
     fieldSources: stringify(row.fieldSources),
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
-    lamport: row.lamport,
-  })
+    lamport: merge.newRowLamport,
+    fieldLamports: JSON.stringify(merge.mergedFieldLamports),
+  }
+
+  if (!isInsert) {
+    // Dynamic update: only the winning columns + the merged map + row lamport.
+    if (merge.winners.length === 0) return // incoming lost every column — no-op.
+    const setParts: string[] = []
+    for (const snake of merge.winners) {
+      const camel = ORG_COMPANY_SNAKE_TO_CAMEL.get(snake)
+      if (!camel) continue // unknown/meta column — skip defensively.
+      setParts.push(`${snake} = @${camel}`)
+    }
+    setParts.push('field_lamports = @fieldLamports', 'lamport = @lamport')
+    db.prepare(`UPDATE org_companies SET ${setParts.join(', ')} WHERE id = @id`).run(bind)
+    return
+  }
+
+  // Insert path — write the whole incoming row (SQLite org_companies has no
+  // user_id column; Postgres carries it for multi-tenant filtering).
+  db.prepare(
+    `INSERT INTO org_companies (
+       id, canonical_name, normalized_name, description,
+       primary_domain, website_url, linkedin_company_url, twitter_handle,
+       crunchbase_url, angellist_url,
+       stage, pipeline_stage, priority, status,
+       entity_type, include_in_companies_view, classification_source, classification_confidence,
+       industry, crm_provider, crm_company_id,
+       city, state, hq_address,
+       founding_year, employee_count_range,
+       target_customer, business_model, product_stage, revenue_model,
+       target_investment_stage, target_investment_sector,
+       arr, burn_rate, runway_months, last_funding_date, total_funding_raised,
+       lead_investor, lead_investor_company_id, co_investors,
+       round, raise_size, post_money_valuation,
+       relationship_owner, deal_source, warm_intro_source, referral_contact_id, next_followup_date,
+       investment_size, ownership_pct, followon_investment_size, total_invested,
+       investment_round, initial_investment_security, date_of_initial_investment,
+       initial_round_size, last_company_valuation,
+       followon_check, followon_date, followon_check_2, followon_date_2, investment_mark,
+       portfolio_fund, source_type, source_entity_type, source_entity_id,
+       key_takeaways, field_sources,
+       created_by_user_id, updated_by_user_id,
+       created_at, updated_at, lamport, field_lamports
+     ) VALUES (
+       @id, @canonicalName, @normalizedName, @description,
+       @primaryDomain, @websiteUrl, @linkedinCompanyUrl, @twitterHandle,
+       @crunchbaseUrl, @angellistUrl,
+       @stage, @pipelineStage, @priority, @status,
+       @entityType, @includeInCompaniesView, @classificationSource, @classificationConfidence,
+       @industry, @crmProvider, @crmCompanyId,
+       @city, @state, @hqAddress,
+       @foundingYear, @employeeCountRange,
+       @targetCustomer, @businessModel, @productStage, @revenueModel,
+       @targetInvestmentStage, @targetInvestmentSector,
+       @arr, @burnRate, @runwayMonths, @lastFundingDate, @totalFundingRaised,
+       @leadInvestor, @leadInvestorCompanyId, @coInvestors,
+       @round, @raiseSize, @postMoneyValuation,
+       @relationshipOwner, @dealSource, @warmIntroSource, @referralContactId, @nextFollowupDate,
+       @investmentSize, @ownershipPct, @followonInvestmentSize, @totalInvested,
+       @investmentRound, @initialInvestmentSecurity, @dateOfInitialInvestment,
+       @initialRoundSize, @lastCompanyValuation,
+       @followonCheck, @followonDate, @followonCheck2, @followonDate2, @investmentMark,
+       @portfolioFund, @sourceType, @sourceEntityType, @sourceEntityId,
+       @keyTakeaways, @fieldSources,
+       @createdByUserId, @updatedByUserId,
+       @createdAt, @updatedAt, @lamport, @fieldLamports
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       canonical_name = excluded.canonical_name,
+       normalized_name = excluded.normalized_name,
+       description = excluded.description,
+       primary_domain = excluded.primary_domain,
+       website_url = excluded.website_url,
+       linkedin_company_url = excluded.linkedin_company_url,
+       twitter_handle = excluded.twitter_handle,
+       crunchbase_url = excluded.crunchbase_url,
+       angellist_url = excluded.angellist_url,
+       stage = excluded.stage,
+       pipeline_stage = excluded.pipeline_stage,
+       priority = excluded.priority,
+       status = excluded.status,
+       entity_type = excluded.entity_type,
+       include_in_companies_view = excluded.include_in_companies_view,
+       classification_source = excluded.classification_source,
+       classification_confidence = excluded.classification_confidence,
+       industry = excluded.industry,
+       crm_provider = excluded.crm_provider,
+       crm_company_id = excluded.crm_company_id,
+       city = excluded.city,
+       state = excluded.state,
+       hq_address = excluded.hq_address,
+       founding_year = excluded.founding_year,
+       employee_count_range = excluded.employee_count_range,
+       target_customer = excluded.target_customer,
+       business_model = excluded.business_model,
+       product_stage = excluded.product_stage,
+       revenue_model = excluded.revenue_model,
+       target_investment_stage = excluded.target_investment_stage,
+       target_investment_sector = excluded.target_investment_sector,
+       arr = excluded.arr,
+       burn_rate = excluded.burn_rate,
+       runway_months = excluded.runway_months,
+       last_funding_date = excluded.last_funding_date,
+       total_funding_raised = excluded.total_funding_raised,
+       lead_investor = excluded.lead_investor,
+       lead_investor_company_id = excluded.lead_investor_company_id,
+       co_investors = excluded.co_investors,
+       round = excluded.round,
+       raise_size = excluded.raise_size,
+       post_money_valuation = excluded.post_money_valuation,
+       relationship_owner = excluded.relationship_owner,
+       deal_source = excluded.deal_source,
+       warm_intro_source = excluded.warm_intro_source,
+       referral_contact_id = excluded.referral_contact_id,
+       next_followup_date = excluded.next_followup_date,
+       investment_size = excluded.investment_size,
+       ownership_pct = excluded.ownership_pct,
+       followon_investment_size = excluded.followon_investment_size,
+       total_invested = excluded.total_invested,
+       investment_round = excluded.investment_round,
+       initial_investment_security = excluded.initial_investment_security,
+       date_of_initial_investment = excluded.date_of_initial_investment,
+       initial_round_size = excluded.initial_round_size,
+       last_company_valuation = excluded.last_company_valuation,
+       followon_check = excluded.followon_check,
+       followon_date = excluded.followon_date,
+       followon_check_2 = excluded.followon_check_2,
+       followon_date_2 = excluded.followon_date_2,
+       investment_mark = excluded.investment_mark,
+       portfolio_fund = excluded.portfolio_fund,
+       source_type = excluded.source_type,
+       source_entity_type = excluded.source_entity_type,
+       source_entity_id = excluded.source_entity_id,
+       key_takeaways = excluded.key_takeaways,
+       field_sources = excluded.field_sources,
+       created_by_user_id = excluded.created_by_user_id,
+       updated_by_user_id = excluded.updated_by_user_id,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       lamport = excluded.lamport,
+       field_lamports = excluded.field_lamports`,
+  ).run(bind)
 }
 
 // ─── Org Company Aliases (T14) ───────────────────────────────────────────

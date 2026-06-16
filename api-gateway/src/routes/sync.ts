@@ -5,6 +5,7 @@ import { sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { OWNED_TABLES_BY_NAME } from '@cyggie/db/sync/owned-tables'
 import { decodeRowId } from '@cyggie/db/sync/encode-row-id'
+import { mergeFieldLww, parseFieldLamports } from '@cyggie/db/sync/field-lww'
 import {
   validateWritePayload,
   type WriteOp,
@@ -12,6 +13,18 @@ import {
 import { getDb, getPool } from '../db'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
+
+// L2 — pull pagination. Cap each owned table to this many rows per page so a
+// firm-scoped cold start (since=0) can't return the whole firm dataset in one
+// response (memory + 413 on the 512MB gateway). The client loops on `hasMore`
+// until drained. Gap-free: see the min-max ceiling logic in /sync/pull.
+// Read per-request (not memoized) so tests can override via env without
+// reloading the app module. Falls back to the default on a non-numeric value
+// (Number('') / Number('x') → NaN would otherwise reach .limit()).
+const pullPageSize = (): number => {
+  const n = Number(process.env['SYNC_PULL_PAGE_SIZE'])
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000
+}
 
 // =============================================================================
 // POST /sync/push — receives outbox batches from the desktop SyncAgent.
@@ -194,6 +207,24 @@ export async function registerSyncRoutes(
               }
               camelPayload['userId'] = user.sub
             }
+            // Firm-shared tables: stamp firm_id from the JWT (same trust model
+            // + mismatch defense as user_id). The desktop SQLite has no firm_id
+            // column, so the payload arrives without one; the JWT's firm is
+            // canonical. A mismatching payload firm_id is a cross-firm write
+            // attempt — reject.
+            if (spec.firmScoped) {
+              if (
+                camelPayload['firmId'] != null &&
+                camelPayload['firmId'] !== user.firm_id
+              ) {
+                rejected.push({
+                  outboxId: entry.outboxId,
+                  reason: `firm_id mismatch (jwt=${user.firm_id} payload=${String(camelPayload['firmId'])})`,
+                })
+                continue
+              }
+              camelPayload['firmId'] = user.firm_id
+            }
             // T17a follow-up 2026-05-23 — `created_by_user_id` and
             // `updated_by_user_id` are FKs to users.id on most owned tables
             // (notes, investment_memos, org_companies, meetings, ...). The
@@ -257,10 +288,16 @@ export async function registerSyncRoutes(
             .join(' AND ')
           const whereParams = whereCols.map((c) => pkCols[c])
 
-          // Defense-in-depth: also filter by user_id for owned tables.
+          // Defense-in-depth tenancy scope on the row lookup/mutation.
+          //   • firm-shared tables → scope by firm_id (any member may edit a
+          //     teammate's row; user_id is the creator, not an edit gate).
+          //   • user-scoped tables → scope by user_id.
           let userClause = ''
           const allParams: unknown[] = [...whereParams]
-          if (spec.hasUserId) {
+          if (spec.firmScoped) {
+            userClause = ` AND firm_id = $${allParams.length + 1}`
+            allParams.push(user.firm_id)
+          } else if (spec.hasUserId) {
             userClause = ` AND user_id = $${allParams.length + 1}`
             allParams.push(user.sub)
           }
@@ -275,11 +312,120 @@ export async function registerSyncRoutes(
           await client.query('SAVEPOINT entry_sp')
           let entryFailed = false
           try {
-            const existingRes = await client.query<{ lamport: string | null }>(
-              `SELECT lamport FROM ${spec.table} WHERE ${whereSql}${userClause}`,
+            const existingRes = await client.query<{
+              lamport: string | null
+              field_lamports?: Record<string, unknown> | null
+            }>(
+              `SELECT lamport${spec.fieldLww ? ', field_lamports' : ''} FROM ${spec.table} WHERE ${whereSql}${userClause}`,
               allParams,
             )
             const existing = existingRes.rows[0]
+
+            // 3.5 FIELD-LEVEL LWW (e.g. org_companies). Merge per column via the
+            // shared decision instead of whole-row replace, so two partners
+            // editing different fields of the same row both win. Deletes fall
+            // through to the whole-row path below.
+            if (spec.fieldLww === true && entry.op !== 'delete') {
+              if (!validatedPayload) {
+                rejected.push({ outboxId: entry.outboxId, reason: 'no payload' })
+                await client.query('RELEASE SAVEPOINT entry_sp')
+                continue
+              }
+              // node-pg param serialization (mirrors the whole-row upsert): pass
+              // Date through; JSON.stringify objects/arrays for JSONB; else raw.
+              const toParam = (v: unknown): unknown =>
+                v == null || v instanceof Date
+                  ? v
+                  : typeof v === 'object'
+                    ? JSON.stringify(v)
+                    : v
+
+              const isInsert = existing == null
+              const metaCols = new Set([...whereCols, 'lamport', 'field_lamports'])
+              const dataCols = Object.keys(validatedPayload).filter(
+                (c) => !metaCols.has(c),
+              )
+              const merge = mergeFieldLww({
+                existingFieldLamports: parseFieldLamports(
+                  existing?.field_lamports ?? null,
+                ),
+                existingRowLamport: existing?.lamport ?? '0',
+                incomingFieldLamports: parseFieldLamports(
+                  (validatedPayload['field_lamports'] as
+                    | Record<string, unknown>
+                    | string
+                    | null
+                    | undefined) ?? null,
+                ),
+                incomingRowLamport: entry.lamport,
+                incomingColumns: dataCols,
+                isInsert,
+              })
+
+              // SECURITY: `merge.winners` derives from the client-controlled
+              // field_lamports map keys (jsonb — not schema-validated), and they
+              // get interpolated as SQL column identifiers below. Restrict to
+              // REAL columns present in the validated payload so a forged key
+              // can't inject (and can't duplicate the meta SET columns).
+              const realCols = new Set(dataCols)
+              const winners = merge.winners.filter((c) => realCols.has(c))
+
+              if (isInsert) {
+                // Full insert: all columns + densified map + row lamport.
+                const insertObj: Record<string, unknown> = {
+                  ...validatedPayload,
+                  lamport: merge.newRowLamport,
+                  field_lamports: merge.mergedFieldLamports,
+                }
+                const cols = Object.keys(insertObj)
+                const placeholders = cols.map((_, i) => `$${i + 1}`)
+                await client.query(
+                  `INSERT INTO ${spec.table} (${cols
+                    .map((c) => `"${c}"`)
+                    .join(', ')}) VALUES (${placeholders.join(', ')})`,
+                  cols.map((c) => toParam(insertObj[c])),
+                )
+              } else if (winners.length > 0) {
+                // Update only winning columns + merged map + bumped row lamport.
+                const setCols = [...winners, 'lamport', 'field_lamports']
+                const setVals: Record<string, unknown> = {
+                  lamport: merge.newRowLamport,
+                  field_lamports: merge.mergedFieldLamports,
+                }
+                for (const c of winners) setVals[c] = validatedPayload[c]
+                const setSql = setCols
+                  .map((c, i) => `"${c}" = $${i + 1}`)
+                  .join(', ')
+                const params: unknown[] = setCols.map((c) => toParam(setVals[c]))
+                const whereSqlLocal = whereCols
+                  .map((c, i) => `"${c}" = $${setCols.length + i + 1}`)
+                  .join(' AND ')
+                params.push(...whereParams)
+                let userClauseLocal = ''
+                if (spec.firmScoped) {
+                  userClauseLocal = ` AND firm_id = $${params.length + 1}`
+                  params.push(user.firm_id)
+                } else if (spec.hasUserId) {
+                  userClauseLocal = ` AND user_id = $${params.length + 1}`
+                  params.push(user.sub)
+                }
+                await client.query(
+                  `UPDATE ${spec.table} SET ${setSql} WHERE ${whereSqlLocal}${userClauseLocal}`,
+                  params,
+                )
+              } else {
+                // Row present and NO column won — incoming lost everywhere.
+                // Report as a conflict (still ack so the desktop drops it),
+                // preserving the LWW conflict-reporting metric.
+                conflicts.push({
+                  outboxId: entry.outboxId,
+                  reason: `field-LWW: no column won (incoming lamport ${entry.lamport})`,
+                })
+              }
+              acked.push(entry.outboxId)
+              await client.query('RELEASE SAVEPOINT entry_sp')
+              continue
+            }
 
             // 4. LWW compare
             if (existing != null) {
@@ -497,6 +643,9 @@ export async function registerSyncRoutes(
           chatSessionMessages: z.array(z.unknown()),
           userPreferences: z.array(z.unknown()),
           serverLamport: z.string(),
+          // L2 — true when more pages remain (a table hit PULL_PAGE_SIZE). The
+          // client should pull again immediately with since=serverLamport.
+          hasMore: z.boolean(),
         }),
       },
     },
@@ -504,6 +653,7 @@ export async function registerSyncRoutes(
       const user = req.requireFirm()
       const since = req.query.since
       const db = getDb(env.GATEWAY_DATABASE_URL)
+      const PULL_PAGE_SIZE = pullPageSize()
 
       // BigInt-safe comparison via explicit numeric cast. Lamport is stored as
       // text because Postgres bigint values can exceed JS safe-integer range
@@ -540,7 +690,7 @@ export async function registerSyncRoutes(
             sql`${schema.meetings.userId} = ${user.sub}
                 AND CAST(${schema.meetings.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.meetings.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.meetings.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         db
           .select()
           .from(schema.notes)
@@ -548,15 +698,20 @@ export async function registerSyncRoutes(
             sql`${schema.notes.userId} = ${user.sub}
                 AND CAST(${schema.notes.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.notes.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.notes.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
+        // org_companies is FIRM-SCOPED (multiplayer): every member of the firm
+        // pulls the shared pool. Soft-deleted rows ARE sent (deleted_at set) so
+        // the tombstone replicates to teammates' devices; the renderer/repo
+        // reads filter deleted_at IS NULL. Index-backed by
+        // org_companies_firm_lamport_idx (firm_id, lamport::numeric).
         db
           .select()
           .from(schema.orgCompanies)
           .where(
-            sql`${schema.orgCompanies.userId} = ${user.sub}
+            sql`${schema.orgCompanies.firmId} = ${user.firm_id}
                 AND CAST(${schema.orgCompanies.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.orgCompanies.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.orgCompanies.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         // org_company_aliases: scope via INNER JOIN onto org_companies for
         // user_id, but select only alias columns so the row shape matches
         // the table's drizzle-zod schema (camelCase, no extra parent fields).
@@ -575,10 +730,11 @@ export async function registerSyncRoutes(
             sql`${schema.orgCompanies.id} = ${schema.orgCompanyAliases.companyId}`,
           )
           .where(
-            sql`${schema.orgCompanies.userId} = ${user.sub}
+            // Aliases ride their parent company's firm scope.
+            sql`${schema.orgCompanies.firmId} = ${user.firm_id}
                 AND CAST(${schema.orgCompanyAliases.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.orgCompanyAliases.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.orgCompanyAliases.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         db
           .select()
           .from(schema.contacts)
@@ -586,7 +742,7 @@ export async function registerSyncRoutes(
             sql`${schema.contacts.userId} = ${user.sub}
                 AND CAST(${schema.contacts.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.contacts.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.contacts.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         // contact_emails: scope via INNER JOIN onto contacts for user_id;
         // select only email columns to keep the row shape clean.
         db
@@ -606,7 +762,7 @@ export async function registerSyncRoutes(
             sql`${schema.contacts.userId} = ${user.sub}
                 AND CAST(${schema.contactEmails.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.contactEmails.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.contactEmails.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         // Meeting child links (down-sync). No user_id column — scope via INNER
         // JOIN onto meetings. Select only the columns the desktop SQLite tables
         // carry (no audit FKs) so the wire shape matches the desktop specs.
@@ -628,7 +784,7 @@ export async function registerSyncRoutes(
             sql`${schema.meetings.userId} = ${user.sub}
                 AND CAST(${schema.meetingCompanyLinks.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.meetingCompanyLinks.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.meetingCompanyLinks.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         db
           .select({
             meetingId: schema.meetingSpeakers.meetingId,
@@ -645,7 +801,7 @@ export async function registerSyncRoutes(
             sql`${schema.meetings.userId} = ${user.sub}
                 AND CAST(${schema.meetingSpeakers.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.meetingSpeakers.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.meetingSpeakers.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         db
           .select({
             meetingId: schema.meetingSpeakerContactLinks.meetingId,
@@ -663,7 +819,7 @@ export async function registerSyncRoutes(
             sql`${schema.meetings.userId} = ${user.sub}
                 AND CAST(${schema.meetingSpeakerContactLinks.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.meetingSpeakerContactLinks.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.meetingSpeakerContactLinks.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         // 2026-05-24 — chat_sessions: scope by userId (column on row).
         db
           .select()
@@ -672,7 +828,7 @@ export async function registerSyncRoutes(
             sql`${schema.chatSessions.userId} = ${user.sub}
                 AND CAST(${schema.chatSessions.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.chatSessions.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.chatSessions.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         // chat_session_messages: composite ownership via JOIN onto
         // chat_sessions.user_id (the messages table has no user_id
         // column of its own).
@@ -696,7 +852,7 @@ export async function registerSyncRoutes(
             sql`${schema.chatSessions.userId} = ${user.sub}
                 AND CAST(${schema.chatSessionMessages.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.chatSessionMessages.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.chatSessionMessages.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         // Part E — user_preferences: scoped by userId (column on row). Select
         // only the synced columns (no user_id; desktop SQLite has no such
         // column) so the wire shape matches PulledUserPreferenceRowWire.
@@ -712,7 +868,7 @@ export async function registerSyncRoutes(
             sql`${schema.userPreferences.userId} = ${user.sub}
                 AND CAST(${schema.userPreferences.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
-          .orderBy(sql`CAST(${schema.userPreferences.lamport} AS numeric) ASC`),
+          .orderBy(sql`CAST(${schema.userPreferences.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
       ])
 
       // Suppress transcript_segments for in-progress meetings so the recording
@@ -726,28 +882,64 @@ export async function registerSyncRoutes(
         }
       }
 
+      // L2 — gap-free pagination ceiling. Each table was capped at
+      // PULL_PAGE_SIZE. A table that returned a FULL page isn't drained, so its
+      // rows beyond its max are unknown. The safe page boundary is the LOWEST
+      // max-lamport among the tables that hit the cap: every row ≤ that ceiling
+      // is complete across ALL tables. We filter to it and tell the client to
+      // pull again (hasMore). If no table hit the cap, this is the last page.
+      const pageTables = [
+        meetings, notes, orgCompanies, orgCompanyAliases, contacts, contactEmails,
+        meetingCompanyLinks, meetingSpeakers, meetingSpeakerContactLinks,
+        chatSessions, chatSessionMessages, userPreferences,
+      ] as Array<Array<{ lamport: string | null }>>
+      const maxOf = (rows: Array<{ lamport: string | null }>): bigint =>
+        rows.reduce((m, r) => {
+          const v = BigInt(r.lamport ?? '0')
+          return v > m ? v : m
+        }, 0n)
+      let ceiling: bigint | null = null
+      for (const rows of pageTables) {
+        if (rows.length >= PULL_PAGE_SIZE) {
+          const m = maxOf(rows)
+          ceiling = ceiling === null || m < ceiling ? m : ceiling
+        }
+      }
+      const hasMore = ceiling !== null
+      const cap = <T extends { lamport: string | null }>(rows: T[]): T[] =>
+        ceiling === null ? rows : rows.filter((r) => BigInt(r.lamport ?? '0') <= ceiling!)
+
+      const pagedMeetings = cap(meetings)
+      const pagedNotes = cap(notes)
+      const pagedOrgCompanies = cap(orgCompanies)
+      const pagedOrgCompanyAliases = cap(orgCompanyAliases)
+      const pagedContacts = cap(contacts)
+      const pagedContactEmails = cap(contactEmails)
+      const pagedMeetingCompanyLinks = cap(meetingCompanyLinks)
+      const pagedMeetingSpeakers = cap(meetingSpeakers)
+      const pagedMeetingSpeakerContactLinks = cap(meetingSpeakerContactLinks)
+      const pagedChatSessions = cap(chatSessions)
+      const pagedChatSessionMessages = cap(chatSessionMessages)
+      const pagedUserPreferences = cap(userPreferences)
+
       const allRows = [
-        ...meetings,
-        ...notes,
-        ...orgCompanies,
-        ...orgCompanyAliases,
-        ...contacts,
-        ...contactEmails,
-        ...meetingCompanyLinks,
-        ...meetingSpeakers,
-        ...meetingSpeakerContactLinks,
-        ...chatSessions,
-        ...chatSessionMessages,
-        ...userPreferences,
+        ...pagedMeetings, ...pagedNotes, ...pagedOrgCompanies, ...pagedOrgCompanyAliases,
+        ...pagedContacts, ...pagedContactEmails, ...pagedMeetingCompanyLinks,
+        ...pagedMeetingSpeakers, ...pagedMeetingSpeakerContactLinks, ...pagedChatSessions,
+        ...pagedChatSessionMessages, ...pagedUserPreferences,
       ] as Array<{ lamport: string | null }>
-      const serverLamport = allRows.length > 0
-        ? String(
-            allRows.reduce((max, r) => {
-              const v = BigInt(r.lamport ?? '0')
-              return v > max ? v : max
-            }, BigInt(since)),
-          )
-        : since
+      // When paginating, advance the cursor exactly to the ceiling so the next
+      // page picks up strictly after it. Otherwise use the global max returned.
+      const serverLamport = ceiling !== null
+        ? String(ceiling)
+        : allRows.length > 0
+          ? String(
+              allRows.reduce((max, r) => {
+                const v = BigInt(r.lamport ?? '0')
+                return v > max ? v : max
+              }, BigInt(since)),
+            )
+          : since
 
       req.log.info(
         {
@@ -771,19 +963,20 @@ export async function registerSyncRoutes(
       )
 
       return {
-        meetings,
-        notes,
-        orgCompanies,
-        orgCompanyAliases,
-        contacts,
-        contactEmails,
-        meetingCompanyLinks,
-        meetingSpeakers,
-        meetingSpeakerContactLinks,
-        chatSessions,
-        chatSessionMessages,
-        userPreferences,
+        meetings: pagedMeetings,
+        notes: pagedNotes,
+        orgCompanies: pagedOrgCompanies,
+        orgCompanyAliases: pagedOrgCompanyAliases,
+        contacts: pagedContacts,
+        contactEmails: pagedContactEmails,
+        meetingCompanyLinks: pagedMeetingCompanyLinks,
+        meetingSpeakers: pagedMeetingSpeakers,
+        meetingSpeakerContactLinks: pagedMeetingSpeakerContactLinks,
+        chatSessions: pagedChatSessions,
+        chatSessionMessages: pagedChatSessionMessages,
+        userPreferences: pagedUserPreferences,
         serverLamport,
+        hasMore,
       }
     },
   })
