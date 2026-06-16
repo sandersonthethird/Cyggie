@@ -14,6 +14,25 @@ interface CompanyTimelineProps {
   companyId: string
   className?: string
   refreshKey?: number
+  /** Bumped when a note changes in a sibling tab — triggers a silent re-pull. */
+  noteSyncKey?: number
+  /** Notify the parent that a note changed here, so sibling tabs can refresh. */
+  onNoteChange?: () => void
+}
+
+/**
+ * Derive a timeline title for a note, mirroring the backend
+ * (org-company.repo.ts) and the Notes tab: explicit title, else the first
+ * non-empty line of the body, else the generic "Note" label.
+ */
+function deriveNoteTitle(note: CompanyNote): string {
+  const explicit = note.title?.trim()
+  if (explicit) return explicit
+  const firstLine = (note.content || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0)
+  return firstLine || 'Note'
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -35,7 +54,7 @@ const FILTERS: Array<{ key: TimelineFilter; label: string }> = [
   { key: 'decision', label: 'Decisions' }
 ]
 
-export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTimelineProps) {
+export function CompanyTimeline({ companyId, className, refreshKey, noteSyncKey, onNoteChange }: CompanyTimelineProps) {
   const navigate = useNavigate()
   const [items, setItems] = useState<CompanyTimelineItem[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -55,6 +74,13 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
     handleCancel
   } = useEmailSync('company', companyId, () => setLoaded(false))
 
+  const fetchTimeline = useCallback(() => {
+    return window.api
+      .invoke<CompanyTimelineItem[]>(IPC_CHANNELS.COMPANY_TIMELINE, companyId)
+      .then((data) => setItems(Array.isArray(data) ? data : []))
+      .catch(console.error)
+  }, [companyId])
+
   // Reset loaded when refreshKey changes (e.g. after a pipeline stage change creates a new decision log)
   useEffect(() => {
     setLoaded(false)
@@ -62,12 +88,15 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
 
   useEffect(() => {
     if (loaded) return
-    window.api
-      .invoke<CompanyTimelineItem[]>(IPC_CHANNELS.COMPANY_TIMELINE, companyId)
-      .then((data) => setItems(Array.isArray(data) ? data : []))
-      .catch(console.error)
-      .finally(() => setLoaded(true))
-  }, [companyId, loaded])
+    fetchTimeline().finally(() => setLoaded(true))
+  }, [loaded, fetchTimeline])
+
+  // Silent cross-tab refresh: a note changed in a sibling tab. Re-pull without
+  // toggling `loaded`, so the timeline doesn't flash "Loading…". Skip initial mount.
+  useEffect(() => {
+    if (!noteSyncKey) return
+    void fetchTimeline()
+  }, [noteSyncKey, fetchTimeline])
 
   function handleClick(item: CompanyTimelineItem) {
     if (selectMode && item.type === 'email' && item.threadGroup) {
@@ -126,7 +155,7 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
     setItems((prev) =>
       prev.map((i) =>
         i.referenceId === note.id
-          ? { ...i, subtitle: note.content.slice(0, 220) }
+          ? { ...i, title: deriveNoteTitle(note), subtitle: note.content.slice(0, 220) }
           : i
       )
     )
@@ -135,7 +164,8 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
   const handleNoteDeleted = useCallback((deletedId: string) => {
     setItems((prev) => prev.filter((i) => i.referenceId !== deletedId))
     setSelectedItem(null)
-  }, [])
+    onNoteChange?.()
+  }, [onNoteChange])
 
   function getSyncResultMsg() {
     if (!syncResult) return null
@@ -264,7 +294,7 @@ export function CompanyTimeline({ companyId, className, refreshKey }: CompanyTim
       {selectedItem?.type === 'note' && (
         <NoteDetailModal
           noteId={selectedItem.referenceId}
-          onClose={() => setSelectedItem(null)}
+          onClose={() => { setSelectedItem(null); onNoteChange?.() }}
           onUpdated={handleNoteUpdated}
           onDeleted={handleNoteDeleted}
         />
