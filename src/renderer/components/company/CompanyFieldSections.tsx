@@ -419,7 +419,6 @@ export function CompanyFieldSections({
     { key: 'employeeCountRange', visible: show('employeeCountRange', company.employeeCountRange), render: () => (
       <PropertyRow label="Employees" value={company.employeeCountRange} type={M.employeeCountRange.type} options={M.employeeCountRange.getOptions!(options)} editMode={isEditing} onSave={(v) => save('employeeCountRange', v)} onAddOption={builtinDefs.employeeCount ? async (opt) => addCustomFieldOption(builtinDefs.employeeCount!.id, builtinDefs.employeeCount!.optionsJson, opt) : undefined} />
     )},
-    { key: 'hqAddress', visible: show('hqAddress', company.hqAddress), render: () => <PropertyRow label="HQ" value={company.hqAddress} type={M.hqAddress.type} editMode={isEditing} onSave={(v) => save('hqAddress', v)} /> },
     { key: 'revenueModel', visible: show('revenueModel', company.revenueModel), render: () => <PropertyRow label="Revenue Model" value={company.revenueModel} type={M.revenueModel.type} editMode={isEditing} onSave={(v) => save('revenueModel', v)} /> },
   ]
 
