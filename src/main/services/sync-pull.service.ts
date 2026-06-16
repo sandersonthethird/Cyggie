@@ -101,6 +101,8 @@ export interface PullResponse {
   /** Part E — synced chat preferences (e.g. emailThreadsPerCompany). */
   userPreferences?: PulledUserPreferenceRowWire[]
   serverLamport: string
+  /** L2 — true when the gateway capped the page and more rows remain. */
+  hasMore?: boolean
 }
 
 export interface PullTransport {
@@ -224,7 +226,7 @@ export class SyncPullService {
       this.setState('paused_no_auth')
       return
     }
-    this.inFlight = this.runOnce(userId)
+    this.inFlight = this.drain(userId)
     try {
       await this.inFlight
     } finally {
@@ -232,7 +234,23 @@ export class SyncPullService {
     }
   }
 
-  private async runOnce(userId: string): Promise<void> {
+  // L2 — drain all pages. The gateway caps each pull at PULL_PAGE_SIZE rows/table
+  // and sets hasMore; we loop (advancing the cursor each page) until drained.
+  // Capped so a bug can't spin forever; the next tick resumes any remainder.
+  private async drain(userId: string): Promise<void> {
+    const MAX_PAGES = 100
+    for (let page = 0; page < MAX_PAGES; page++) {
+      if (!this.running) return
+      const hasMore = await this.runOnce(userId)
+      if (!hasMore) return
+    }
+    this.cfg.log?.warn?.(
+      { metric: 'sync.pull.drain_cap', maxPages: MAX_PAGES },
+      'sync.pull hit page cap — remainder resumes next tick',
+    )
+  }
+
+  private async runOnce(userId: string): Promise<boolean> {
     const since = this.readLastPulledLamport()
     const deviceId = this.cfg.getDeviceId()
     this.setState('pulling')
@@ -256,14 +274,14 @@ export class SyncPullService {
           'sync.pull 401',
         )
         this.scheduleBackoff()
-        return
+        return false
       }
       this.cfg.log?.warn?.(
         { metric: 'sync.pull.error', error: this.lastError, status },
         'sync.pull error',
       )
       this.scheduleBackoff()
-      return
+      return false
     }
 
     // Apply rows (chunked 50-at-a-time inside each applyRemoteX call).
@@ -436,8 +454,13 @@ export class SyncPullService {
         'sync.pull apply crashed',
       )
       this.scheduleBackoff()
-      return
+      return false
     }
+
+    // L2 — advance the cursor to the page ceiling so the next page picks up
+    // strictly after it, even if every row in this page was skipped (already
+    // local / field-LWW no-winner). serverLamport == the gateway's ceiling.
+    this.advanceCursorTo(response.serverLamport)
 
     this.lastPulledAt = this.clock().now()
     this.lastError = null
@@ -476,9 +499,29 @@ export class SyncPullService {
         skippedLowLamport: allResults.reduce((a, r) => a + r.skippedLowLamport, 0),
         skippedPreValidation: allResults.reduce((a, r) => a + r.skippedPreValidation, 0),
         serverLamport: response.serverLamport,
+        hasMore: response.hasMore ?? false,
       },
       'sync.pull complete',
     )
+    return response.hasMore ?? false
+  }
+
+  /** Advance last_pulled_lamport to `lamport` if it's higher (BigInt-safe). */
+  private advanceCursorTo(lamport: string): void {
+    const deviceId = this.cfg.getDeviceId()
+    const userId = this.cfg.getUserId()
+    if (!userId) return
+    this.cfg.db
+      .prepare(
+        `INSERT INTO sync_state (device_id, user_id, last_pushed_lamport, last_pulled_lamport)
+         VALUES (?, ?, '0', ?)
+         ON CONFLICT(device_id) DO UPDATE SET
+           last_pulled_lamport = CASE
+             WHEN CAST(excluded.last_pulled_lamport AS INTEGER) > CAST(sync_state.last_pulled_lamport AS INTEGER)
+             THEN excluded.last_pulled_lamport ELSE sync_state.last_pulled_lamport END,
+           last_seen_at = datetime('now')`,
+      )
+      .run(deviceId, userId, lamport)
   }
 
   private scheduleBackoff(): void {
