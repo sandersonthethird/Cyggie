@@ -252,23 +252,37 @@ export function upsertFirmMembers(
       avatar_url = excluded.avatar_url,
       role = excluded.role
   `)
-  const apply = db.transaction((rows: typeof members) => {
-    for (const m of rows) {
-      const displayName = (m.displayName ?? m.email ?? m.id).trim()
-      const split = splitDisplayName(displayName)
-      stmt.run({
-        id: m.id,
-        displayName,
-        firstName: split.firstName,
-        lastName: split.lastName,
-        email: normalizeEmail(m.email ?? null),
-        avatarUrl: m.avatarUrl ?? null,
-        role: m.role === 'admin' ? 'admin' : 'member',
-      })
+  // No wrapping transaction: a per-row failure must not abort the whole batch.
+  // `users.email` is UNIQUE, so a gateway member whose email already belongs to
+  // a DIFFERENT local id (e.g. the desktop's legacy current-user row, which has
+  // its own generated id) would violate the constraint. On that collision we
+  // retry the row WITHOUT the email — the member row (and its display name, all
+  // attribution needs) still lands. One bad row never blocks the rest.
+  let n = 0
+  for (const m of members) {
+    const displayName = (m.displayName ?? m.email ?? m.id).trim()
+    const split = splitDisplayName(displayName)
+    const base = {
+      id: m.id,
+      displayName,
+      firstName: split.firstName,
+      lastName: split.lastName,
+      avatarUrl: m.avatarUrl ?? null,
+      role: m.role === 'admin' ? 'admin' : 'member',
     }
-    return rows.length
-  })
-  return apply(members)
+    try {
+      stmt.run({ ...base, email: normalizeEmail(m.email ?? null) })
+      n++
+    } catch {
+      try {
+        stmt.run({ ...base, email: null })
+        n++
+      } catch {
+        // Give up on this member; the rest still sync.
+      }
+    }
+  }
+  return n
 }
 
 export function ensureTeamMembership(

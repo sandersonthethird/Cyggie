@@ -19,9 +19,12 @@ import { validateClientLamport } from '../sync/validate-lamport'
 // response (memory + 413 on the 512MB gateway). The client loops on `hasMore`
 // until drained. Gap-free: see the min-max ceiling logic in /sync/pull.
 // Read per-request (not memoized) so tests can override via env without
-// reloading the app module.
-const pullPageSize = (): number =>
-  Math.max(1, Number(process.env['SYNC_PULL_PAGE_SIZE'] ?? '2000'))
+// reloading the app module. Falls back to the default on a non-numeric value
+// (Number('') / Number('x') → NaN would otherwise reach .limit()).
+const pullPageSize = (): number => {
+  const n = Number(process.env['SYNC_PULL_PAGE_SIZE'])
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000
+}
 
 // =============================================================================
 // POST /sync/push — receives outbox batches from the desktop SyncAgent.
@@ -359,6 +362,14 @@ export async function registerSyncRoutes(
                 isInsert,
               })
 
+              // SECURITY: `merge.winners` derives from the client-controlled
+              // field_lamports map keys (jsonb — not schema-validated), and they
+              // get interpolated as SQL column identifiers below. Restrict to
+              // REAL columns present in the validated payload so a forged key
+              // can't inject (and can't duplicate the meta SET columns).
+              const realCols = new Set(dataCols)
+              const winners = merge.winners.filter((c) => realCols.has(c))
+
               if (isInsert) {
                 // Full insert: all columns + densified map + row lamport.
                 const insertObj: Record<string, unknown> = {
@@ -374,14 +385,14 @@ export async function registerSyncRoutes(
                     .join(', ')}) VALUES (${placeholders.join(', ')})`,
                   cols.map((c) => toParam(insertObj[c])),
                 )
-              } else if (merge.winners.length > 0) {
+              } else if (winners.length > 0) {
                 // Update only winning columns + merged map + bumped row lamport.
-                const setCols = [...merge.winners, 'lamport', 'field_lamports']
+                const setCols = [...winners, 'lamport', 'field_lamports']
                 const setVals: Record<string, unknown> = {
                   lamport: merge.newRowLamport,
                   field_lamports: merge.mergedFieldLamports,
                 }
-                for (const c of merge.winners) setVals[c] = validatedPayload[c]
+                for (const c of winners) setVals[c] = validatedPayload[c]
                 const setSql = setCols
                   .map((c, i) => `"${c}" = $${i + 1}`)
                   .join(', ')

@@ -93,6 +93,26 @@ describe('company attribution', () => {
     expect(detail?.createdByName).toBe('Late Joiner')
   })
 
+  it('directory upsert survives an email collision with a different local id', () => {
+    // 'me' already exists locally with email me@example.com (a generated id).
+    // A gateway member carries the SAME email under a DIFFERENT (gateway) id.
+    // upsertFirmMembers must not throw on the users.email UNIQUE constraint;
+    // the member row still lands (name resolvable) so attribution works.
+    expect(() =>
+      upsertFirmMembers([
+        { id: 'me-gateway-id', email: 'me@example.com', displayName: 'Sandy Cass', avatarUrl: null, role: 'admin' },
+        { id: 'andy', email: 'andy@example.com', displayName: 'Andy Partner', avatarUrl: null, role: 'member' },
+      ]),
+    ).not.toThrow()
+
+    applyRemoteOrgCompanies(testDb, 'device-1', 'me', [
+      incoming({ id: 'co-x', lamport: '999999999999999', createdByUserId: 'me-gateway-id', updatedByUserId: 'andy' }),
+    ])
+    const detail = getCompany('co-x')
+    expect(detail?.createdByName).toBe('Sandy Cass') // landed despite email clash
+    expect(detail?.updatedByName).toBe('Andy Partner')
+  })
+
   it('pull NULLs an unknown teammate id (FK-safe) and still applies the company', () => {
     applyRemoteOrgCompanies(testDb, 'device-1', 'me', [
       incoming({

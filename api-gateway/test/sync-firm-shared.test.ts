@@ -200,4 +200,42 @@ describe('firm-shared org_companies + field-LWW', () => {
     expect(final?.description).toBe('A wins')
     expect(final?.city).toBe('B-ville') // untouched, still B's
   })
+
+  test('SECURITY: a forged field_lamports key (not a real column) is ignored, no injection', async () => {
+    const tokenA = await jwt(userA)
+    const companyId = TEST_PREFIX + 'co-sec'
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, companyId)
+    await push(tokenA, {
+      table: 'org_companies',
+      op: 'insert',
+      rowId: companyId,
+      payload: baseCompany(companyId, userA, '100'),
+      lamport: '100',
+    })
+
+    // A malicious map names a bogus "column" with SQL-breaking characters at a
+    // winning clock. It must NOT be interpolated into the UPDATE; the legit
+    // `stage` change still applies and the table survives.
+    const res = await push(tokenA, {
+      table: 'org_companies',
+      op: 'update',
+      rowId: companyId,
+      payload: {
+        ...baseCompany(companyId, userA, '200'),
+        stage: 'seed',
+        field_lamports: {
+          stage: '200',
+          'evil" = (SELECT 1)--': '999999999999',
+        },
+      },
+      lamport: '200',
+    })
+    expect(res.rejected).toHaveLength(0)
+
+    const row = await db.query.orgCompanies.findFirst({
+      where: eq(schema.orgCompanies.id, companyId),
+    })
+    expect(row?.stage).toBe('seed') // legit column applied
+    expect(row?.canonicalName).toBe('Acme') // table intact, no injection damage
+  })
 })
