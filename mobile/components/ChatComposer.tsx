@@ -10,7 +10,6 @@ import {
 
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -20,6 +19,7 @@ import {
   View,
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
+import { KeyboardAvoidingScreen } from './KeyboardAvoidingScreen'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { RichMarkdown, chatMarkdownStyles } from '../lib/markdown'
@@ -46,7 +46,7 @@ import { useClearOnSessionSwap } from './useClearOnSessionSwap'
 //   - Optimistic pending-message queue (user + assistant placeholder)
 //   - Send mutation + 409 conflict reconciliation
 //   - Composer text input + send button
-//   - KeyboardAvoidingView wrapping the scrollview
+//   - KeyboardAvoidingScreen wrapping the scrollview (offset=92 for the appbar)
 //
 // Does NOT own:
 //   - Outer screen chrome (topbar, back button, kebab actions, past-chats
@@ -416,11 +416,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(
         : `Ask about this ${contextKind}…`)
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.flex}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 92 : 0}
-    >
+    <KeyboardAvoidingScreen style={styles.flex} offset={92}>
       <ScrollView
         ref={scrollRef}
         style={styles.flex}
@@ -476,7 +472,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(
           )}
         </Pressable>
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardAvoidingScreen>
   )
 })
 

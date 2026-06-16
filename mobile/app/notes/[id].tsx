@@ -18,6 +18,7 @@ import { ApiError } from '../../lib/api/client'
 import { fetchNote, updateNote, type NoteDetail } from '../../lib/api/notes'
 import { useAuthStore } from '../../lib/auth/store'
 import { RichMarkdown } from '../../lib/markdown'
+import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { colors, radii, spacing, type } from '../../theme'
 
 // Note detail — single screen because notes don't have enough cardinality to
@@ -126,7 +127,7 @@ export default function NoteDetailScreen() {
   }
 
   return (
-    <View style={styles.root}>
+    <KeyboardAvoidingScreen style={styles.root}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.topbar}>
           {editing ? (
@@ -191,7 +192,9 @@ export default function NoteDetailScreen() {
       </SafeAreaView>
 
       <ScrollView
+        style={styles.flex}
         contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={query.isRefetching}
@@ -292,7 +295,7 @@ export default function NoteDetailScreen() {
           </>
         ) : null}
       </ScrollView>
-    </View>
+    </KeyboardAvoidingScreen>
   )
 }
 
@@ -404,6 +407,7 @@ function formatDateLong(iso: string): string {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1 },
   safeArea: { backgroundColor: colors.surface },
 
   topbar: {

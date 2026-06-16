@@ -1,8 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +9,7 @@ import {
   View,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { router } from 'expo-router'
 import { api, ApiError } from '../../lib/api/client'
 import { useAuthStore } from '../../lib/auth/store'
@@ -101,10 +100,7 @@ export default function CreateWorkspaceScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'left', 'right']}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
+      <KeyboardAvoidingScreen style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
@@ -195,7 +191,7 @@ export default function CreateWorkspaceScreen() {
             </Text>
           )}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAvoidingScreen>
     </SafeAreaView>
   )
 }

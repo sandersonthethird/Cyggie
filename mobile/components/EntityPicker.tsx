@@ -1,9 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +10,7 @@ import {
   View,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { KeyboardAvoidingScreen } from './KeyboardAvoidingScreen'
 import { Ionicons } from '@expo/vector-icons'
 
 import { colors, radii, spacing, type } from '../theme'
@@ -112,10 +111,7 @@ export function EntityPicker<T>({
   return (
     <Modal visible={open} animationType="slide" transparent onRequestClose={onClose}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.root}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.flex}
-        >
+        <KeyboardAvoidingScreen style={styles.flex}>
           <View style={styles.header}>
             <Pressable
               onPress={onClose}
@@ -216,7 +212,7 @@ export function EntityPicker<T>({
               </>
             )}
           </ScrollView>
-        </KeyboardAvoidingView>
+        </KeyboardAvoidingScreen>
       </SafeAreaView>
     </Modal>
   )

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { router, useLocalSearchParams } from 'expo-router'
 import { api, ApiError } from '../../lib/api/client'
 import { useAuthStore } from '../../lib/auth/store'
@@ -98,10 +98,7 @@ export default function JoinFirmScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'left', 'right']}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
+      <KeyboardAvoidingScreen style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
@@ -162,7 +159,7 @@ export default function JoinFirmScreen() {
             </Text>
           </Pressable>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAvoidingScreen>
     </SafeAreaView>
   )
 }
