@@ -33,7 +33,7 @@ import { ContactFieldSections } from './ContactFieldSections'
 import { ContactHeaderCard } from './ContactHeaderCard'
 import { ContactModalsCollection } from './ContactModalsCollection'
 import { saveLayoutPref, propagateLayoutPref, clearPerEntityPref } from '../../utils/layoutPref'
-import { CONTACT_HARDCODED_FIELDS, CONTACT_HARDCODED_FIELD_MAP } from '../../constants/contactFields'
+import { CONTACT_HARDCODED_FIELDS, CONTACT_HARDCODED_FIELD_MAP, TALENT_PIPELINE_OPTIONS } from '../../constants/contactFields'
 import { PropertiesCard, PropertiesCardFooter } from '../crm/PropertiesCard'
 import { useSectionCollapse } from '../../hooks/useSectionCollapse'
 import {
@@ -54,15 +54,6 @@ const LAYOUT_PREF_BASE_KEYS = [
   'cyggie:contact-field-placements',
   'cyggie:contact-sections-order',
 ] as const
-
-const TALENT_PIPELINE_STAGES: { value: string; label: string }[] = [
-  { value: 'identified',          label: 'Identified / Passive' },
-  { value: 'exploring',           label: 'Exploring'             },
-  { value: 'ideating',            label: 'Ideating'              },
-  { value: 'fundraising',         label: 'Fundraising'           },
-  { value: 'portfolio_candidate', label: 'Portfolio Candidate'   },
-  { value: 'internal_candidate',  label: 'Internal Candidate'    },
-]
 
 interface ContactPropertiesPanelProps {
   contact: ContactDetail
@@ -288,7 +279,7 @@ export function ContactPropertiesPanel({
   const contactTypeOptions = mergeBuiltinOptions(CONTACT_TYPES, contactTypeDef?.optionsJson ?? null)
 
   const talentPipelineDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'talentPipeline')
-  const talentPipelineOptions = mergeBuiltinOptions(TALENT_PIPELINE_STAGES, talentPipelineDef?.optionsJson ?? null)
+  const talentPipelineOptions = mergeBuiltinOptions(TALENT_PIPELINE_OPTIONS, talentPipelineDef?.optionsJson ?? null)
 
   const stageFocusDef = contactDefs.find(d => d.isBuiltin && d.fieldKey === 'investmentStageFocus')
   const stageFocusOptions = mergeBuiltinOptions(TARGET_INVESTMENT_STAGES, stageFocusDef?.optionsJson ?? null)

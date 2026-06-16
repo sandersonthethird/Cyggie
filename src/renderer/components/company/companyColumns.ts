@@ -284,6 +284,17 @@ export const COLUMN_DEFS: ColumnDef[] = [
     type: 'text'
   },
   {
+    key: 'state',
+    label: 'State',
+    field: 'state',
+    defaultVisible: false,
+    width: 100,
+    minWidth: 70,
+    sortable: true,
+    editable: true,
+    type: 'text'
+  },
+  {
     key: 'foundingYear',
     label: 'Founded',
     field: 'foundingYear',

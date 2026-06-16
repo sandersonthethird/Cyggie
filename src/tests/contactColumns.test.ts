@@ -2,7 +2,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
   filterContacts,
-  CONTACT_COLUMN_DEFS
+  CONTACT_COLUMN_DEFS,
+  CONTACT_DEFAULT_VISIBLE_KEYS
 } from '../renderer/components/contact/contactColumns'
 import { sortRows } from '../renderer/components/crm/tableUtils'
 import type { SortState } from '../renderer/components/crm/tableUtils'
@@ -28,11 +29,34 @@ function makeContact(overrides: Partial<ContactSummary>): ContactSummary {
     linkedinUrl: null,
     crmContactId: null,
     crmProvider: null,
+    talentPipeline: null,
     lastTouchpoint: null,
     meetingCount: 0,
     emailCount: 0,
     createdAt: '2024-01-01 00:00:00',
     updatedAt: '2024-01-01 00:00:00',
+    phone: null,
+    street: null,
+    city: null,
+    state: null,
+    postalCode: null,
+    country: null,
+    timezone: null,
+    twitterHandle: null,
+    university: null,
+    pronouns: null,
+    lastMetEvent: null,
+    warmIntroPath: null,
+    notes: null,
+    fundSize: null,
+    typicalCheckSizeMin: null,
+    typicalCheckSizeMax: null,
+    investmentSectorFocusNotes: null,
+    proudPortfolioCompanies: null,
+    tags: null,
+    previousCompanies: null,
+    investmentStageFocus: null,
+    investmentSectorFocus: null,
     ...overrides
   }
 }
@@ -99,5 +123,32 @@ describe('sortContacts', () => {
     const sort: SortState = [{ key: 'meetingCount', dir: 'asc' }]
     const result = sortContacts(contacts, sort, CONTACT_COLUMN_DEFS)
     expect(result.map((c) => c.id)).toEqual(['2', '1', '3'])
+  })
+})
+
+describe('CONTACT_COLUMN_DEFS — extended fields surfaced in the picker', () => {
+  const byKey = (k: string) => CONTACT_COLUMN_DEFS.find((c) => c.key === k)
+
+  it('includes the address/location columns', () => {
+    for (const k of ['city', 'state', 'location', 'phone', 'country']) {
+      expect(byKey(k), `missing column: ${k}`).toBeDefined()
+    }
+  })
+
+  it('exposes the multi-value JSON fields as read-only computed columns', () => {
+    for (const k of ['tags', 'previousCompanies', 'investmentStageFocus', 'investmentSectorFocus']) {
+      const def = byKey(k)
+      expect(def, `missing column: ${k}`).toBeDefined()
+      expect(def!.type).toBe('computed')
+      expect(def!.editable).toBe(false)
+      expect(def!.field).toBeNull()
+    }
+  })
+
+  it('keeps all new columns hidden by default (default-visible set unchanged)', () => {
+    // No new key is default-visible; the default set is the original 7.
+    expect(CONTACT_DEFAULT_VISIBLE_KEYS).not.toContain('city')
+    expect(CONTACT_DEFAULT_VISIBLE_KEYS).not.toContain('location')
+    expect(CONTACT_DEFAULT_VISIBLE_KEYS).not.toContain('tags')
   })
 })
