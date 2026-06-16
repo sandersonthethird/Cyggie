@@ -107,6 +107,10 @@ vi.mock('../../auth/store', () => ({
 const { retryPendingUpload, startRecording, stopRecording, cancelRecording } =
   await import('../session')
 
+// startRecording now takes the meeting context (client-minted id, title,
+// discardOnCancel). Tests that just need an active recording use this.
+const START_CTX = { meetingId: 'mtg-ctx', title: 'Test meeting', discardOnCancel: true }
+
 beforeEach(() => {
   mmkvStore.clear()
   fileSystemDeleteCalls.length = 0
@@ -263,7 +267,7 @@ describe('stopRecording — state transitions', () => {
     // The fix moved beginUploading() into performUpload() so this codepath
     // can't regress without breaking retryPendingUpload tests too.
     uploadShouldReturn = { meetingId: 'mtg-stop' }
-    await startRecording()
+    await startRecording(START_CTX)
     await stopRecording({})
     const order = storeCalls.map((c) => c.method)
     const beginIdx = order.indexOf('beginUploading')
@@ -278,7 +282,7 @@ describe('stopRecording — state transitions', () => {
     // leaving the store at 'recording', producing the same silent-stuck UI
     // as the original bug.
     stopAndUnloadShouldThrow = new Error('audio session interrupted')
-    await startRecording()
+    await startRecording(START_CTX)
     await expect(stopRecording({})).rejects.toThrow('audio session interrupted')
     const markErr = storeCalls.find((c) => c.method === 'markError')
     expect(markErr?.arg).toBe('audio session interrupted')
@@ -297,8 +301,23 @@ describe('cancelRecording', () => {
   })
 
   it('calls reset after stopping an active recording', async () => {
-    await startRecording()
+    await startRecording(START_CTX)
     await cancelRecording()
     expect(storeCalls.find((c) => c.method === 'reset')).toBeDefined()
+  })
+
+  it('cancel contract: after cancel, stopRecording is a no-op (NEVER uploads)', async () => {
+    await startRecording(START_CTX)
+    await cancelRecording()
+    // The session is torn down — a Stop that races the cancel must not upload.
+    await expect(stopRecording({})).rejects.toThrow('Not recording')
+    expect(storeCalls.find((c) => c.method === 'beginUploading')).toBeUndefined()
+    expect(storeCalls.find((c) => c.method === 'finalizeMeeting')).toBeUndefined()
+  })
+
+  it('returns the cancelled meetingId so the UI can delete the impromptu row', async () => {
+    await startRecording(START_CTX)
+    const { meetingId } = await cancelRecording()
+    expect(meetingId).toBe(START_CTX.meetingId)
   })
 })

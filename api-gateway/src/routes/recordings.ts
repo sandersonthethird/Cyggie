@@ -18,8 +18,9 @@ import { eq, and, gte, sum, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
-import { deriveSelfNameFromUser } from '../llm/self-name'
 import type { GatewayEnv } from '../env'
+import { insertImpromptuMeeting } from '../recording/insert-impromptu-meeting'
+import { isUniqueViolation } from '../pg-errors'
 import {
   submitTranscribeJob,
   handleDeepgramWebhook,
@@ -29,6 +30,10 @@ import { timingSafeEqual } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+
+// Client-minted ids are cuid2 (lowercase alphanumeric). Cap length defensively
+// so a malformed/oversized `meetingId` field can't reach the meetings.id column.
+const CLIENT_ID_RE = /^[a-z0-9]{1,32}$/
 
 export async function registerRecordingRoutes(
   app: FastifyInstance,
@@ -91,11 +96,23 @@ export async function registerRecordingRoutes(
         fields: Record<string, { value: string }>
       }
 
-      // Extract optional title + calEventId + clientRecordedAt from multipart fields.
+      // Extract optional title + calEventId + clientRecordedAt + meetingId.
       const title = filePart.fields['title']?.value || defaultMeetingTitle()
       const calendarEventId = filePart.fields['calEventId']?.value || null
       const clientRecordedAtRaw = filePart.fields['clientRecordedAt']?.value
       const recordedAt = clientRecordedAtRaw ? new Date(clientRecordedAtRaw) : new Date()
+      // Optional client-minted meeting id (impromptu pre-create / offline path).
+      // When present we attach audio to (or create-if-absent) THIS row instead
+      // of inserting a server-minted impromptu. Validate the format up front
+      // (cuid2 shape) so a malformed id is rejected before we touch storage.
+      const clientMeetingId = filePart.fields['meetingId']?.value || null
+      if (clientMeetingId !== null && !CLIENT_ID_RE.test(clientMeetingId)) {
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'INVALID_MEETING_ID',
+          message: 'meetingId is not a valid id.',
+        })
+      }
 
       const audioBuffer = await filePart.toBuffer()
       if (audioBuffer.length > env.RECORDING_MAX_UPLOAD_BYTES) {
@@ -106,14 +123,25 @@ export async function registerRecordingRoutes(
         })
       }
 
-      // Find-or-create the meeting row. When the mobile client previously
-      // tapped a calendar event (POST /meetings/from-calendar-event) we
-      // already have a row at status='scheduled' for this (user, calEventId).
-      // Reuse it — flipping its status to 'recording' and attaching the
-      // audio path — so that pre-recording notes survive and we don't break
-      // the per-user UNIQUE on (user_id, calendar_event_id) (migration 0014).
+      // Find-or-create the meeting row. Resolution order:
+      //   1. clientMeetingId (impromptu pre-create / offline) — scoped to the
+      //      caller. Found → attach audio. Absent → create-if-absent below
+      //      with the client id (the pre-create may never have landed offline;
+      //      a cancelled id never reaches here per the mobile cancel contract).
+      //   2. calEventId — the scheduled-meeting path: a status='scheduled' row
+      //      already exists for (user, calEventId); reuse it so pre-recording
+      //      notes survive and we don't break the per-user UNIQUE on
+      //      (user_id, calendar_event_id) (migration 0014).
       let existing: { id: string } | undefined
-      if (calendarEventId) {
+      if (clientMeetingId) {
+        existing = await db.query.meetings.findFirst({
+          where: and(
+            eq(schema.meetings.id, clientMeetingId),
+            eq(schema.meetings.userId, user.sub),
+          ),
+          columns: { id: true },
+        })
+      } else if (calendarEventId) {
         existing = await db.query.meetings.findFirst({
           where: and(
             eq(schema.meetings.userId, user.sub),
@@ -123,9 +151,10 @@ export async function registerRecordingRoutes(
         })
       }
       // `meetingId` is the id we'll respond with and pass to Deepgram. It
-      // starts as the existing row's id (if found) or a fresh cuid; the
-      // 23505-recovery branch below may swap it to the racer's id.
-      let meetingId = existing?.id ?? createId()
+      // starts as the existing row's id (if found), else the client-minted id
+      // (create-if-absent), else a fresh server cuid (FAB impromptu). The
+      // 23505-recovery branch below may swap it to a racer's id.
+      let meetingId = existing?.id ?? clientMeetingId ?? createId()
 
       // Save as .m4a — that's what expo-av actually produces (MPEG-4 audio
       // container with AAC codec inside). The extension is cosmetic for
@@ -150,65 +179,96 @@ export async function registerRecordingRoutes(
           })
           .where(eq(schema.meetings.id, meetingId))
       } else {
-        // No prior row — fully impromptu (Record FAB outside a calendar slot)
-        // or a calendar event we've never tapped. `was_impromptu=true`
-        // matches the FAB path; the from-cal-event path would have created
-        // a row first, so reaching here implies impromptu.
+        // No prior row — fully impromptu (Record FAB outside a calendar slot),
+        // an offline client-minted id whose pre-create never landed
+        // (create-if-absent), or a calendar event we've never tapped.
+        // Insert via the shared helper so the row shape can't drift across
+        // the three impromptu-insert call sites.
         //
-        // 23505 recovery: a concurrent /meetings/from-calendar-event (or
-        // another /recordings/upload) for the same (user, calEventId) may
-        // have inserted a row between our SELECT above and this INSERT.
-        // Recover by re-finding and updating that row instead — mirrors
-        // /meetings/from-calendar-event's race-recovery pattern. The audio
-        // file we already wrote stays on disk under the original meetingId
-        // path; we update the racer's row to point recordingPath at it and
-        // reassign `meetingId` so the response + Deepgram submit reference
-        // the correct row.
-        const selfName = await deriveSelfNameFromUser(db, user.sub)
+        // 23505 recovery — two distinct races:
+        //   • clientMeetingId set: our scoped find returned nothing yet the PK
+        //     exists. Either (a) the caller's OWN pre-create raced in after our
+        //     find → re-find scoped to (id, userId) and attach audio; or (b) the
+        //     id belongs to ANOTHER user → reject benignly (409), never attach
+        //     to or reveal a foreign row.
+        //   • calEventId set: a concurrent /from-calendar-event (or upload) for
+        //     the same (user, calEventId) inserted first → re-find + update.
         try {
-          await db.insert(schema.meetings).values({
+          await insertImpromptuMeeting(db, {
             id: meetingId,
             userId: user.sub,
             title,
             date: recordedAt,
-            calendarEventId,
             recordingPath: audioPath,
-            selfName,
-            status: 'recording',
-            wasImpromptu: true,
-            createdByUserId: user.sub,
+            // Preserve the calendar association when a calEventId was supplied
+            // but no scheduled row existed yet (clientMeetingId paths are
+            // impromptu → null).
+            calendarEventId: clientMeetingId ? null : calendarEventId,
           })
         } catch (err) {
-          const code =
-            err instanceof Error && 'code' in err ? (err as { code?: string }).code : null
-          if (code !== '23505' || !calendarEventId) throw err
-          const raced = await db.query.meetings.findFirst({
-            where: and(
-              eq(schema.meetings.userId, user.sub),
-              eq(schema.meetings.calendarEventId, calendarEventId),
-            ),
-            columns: { id: true },
-          })
-          if (!raced) throw err
-          await db
-            .update(schema.meetings)
-            .set({
-              recordingPath: audioPath,
-              status: 'recording',
-              updatedAt: new Date(),
-              updatedByUserId: user.sub,
+          if (!isUniqueViolation(err)) throw err
+
+          if (clientMeetingId) {
+            const owned = await db.query.meetings.findFirst({
+              where: and(
+                eq(schema.meetings.id, clientMeetingId),
+                eq(schema.meetings.userId, user.sub),
+              ),
+              columns: { id: true },
             })
-            .where(eq(schema.meetings.id, raced.id))
-          req.log.info(
-            {
-              meetingId: raced.id,
-              calendarEventId,
-              userId: user.sub,
-              metric: 'recordings.upload.collision_recovered',
-            },
-            'recordings.upload 23505 recovered via re-find',
-          )
-          meetingId = raced.id
+            if (!owned) {
+              // Foreign id — someone else owns this PK. Don't attach audio.
+              throw new GatewayError({
+                statusCode: 409,
+                code: 'MEETING_ID_CONFLICT',
+                message: 'meetingId is not available.',
+              })
+            }
+            await db
+              .update(schema.meetings)
+              .set({
+                recordingPath: audioPath,
+                status: 'recording',
+                updatedAt: new Date(),
+                updatedByUserId: user.sub,
+              })
+              .where(and(eq(schema.meetings.id, owned.id), eq(schema.meetings.userId, user.sub)))
+            req.log.info(
+              { meetingId: owned.id, userId: user.sub, metric: 'recordings.upload.precreate_raced' },
+              'recordings.upload attached to caller pre-created row after 23505',
+            )
+            meetingId = owned.id
+          } else if (calendarEventId) {
+            const raced = await db.query.meetings.findFirst({
+              where: and(
+                eq(schema.meetings.userId, user.sub),
+                eq(schema.meetings.calendarEventId, calendarEventId),
+              ),
+              columns: { id: true },
+            })
+            if (!raced) throw err
+            await db
+              .update(schema.meetings)
+              .set({
+                recordingPath: audioPath,
+                status: 'recording',
+                updatedAt: new Date(),
+                updatedByUserId: user.sub,
+              })
+              .where(eq(schema.meetings.id, raced.id))
+            req.log.info(
+              {
+                meetingId: raced.id,
+                calendarEventId,
+                userId: user.sub,
+                metric: 'recordings.upload.collision_recovered',
+              },
+              'recordings.upload 23505 recovered via re-find',
+            )
+            meetingId = raced.id
+          } else {
+            throw err
+          }
         }
       }
 

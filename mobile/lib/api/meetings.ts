@@ -123,6 +123,32 @@ export async function deleteMeeting(id: string): Promise<void> {
   await api.delete<{ ok: true }>(`/meetings/${encodeURIComponent(id)}`)
 }
 
+/**
+ * POST /meetings/impromptu — pre-create an impromptu meeting row (no audio) so
+ * the client-minted `id` exists on the gateway and notes/attendees/companies
+ * become editable mid-recording. Idempotent upsert: a retried call (or a row
+ * the upload already create-if-absent'd) returns the existing row.
+ *
+ * The caller passes its on-device `id` so the optimistic record, the notes
+ * outbox, and the eventual audio upload all reference the SAME row.
+ */
+export interface CreateImpromptuMeetingInput {
+  id: string
+  title: string
+  clientRecordedAt?: string // ISO
+}
+
+export async function createImpromptuMeeting(
+  input: CreateImpromptuMeetingInput,
+  opts: { signal?: AbortSignal } = {},
+): Promise<MeetingDetail> {
+  return api.post<MeetingDetail, CreateImpromptuMeetingInput>(
+    '/meetings/impromptu',
+    input,
+    { signal: opts.signal },
+  )
+}
+
 export interface PrepareMeetingFromCalendarEventInput {
   calendarEventId: string
   title: string

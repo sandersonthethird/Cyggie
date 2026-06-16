@@ -72,6 +72,15 @@ export interface PendingUpload {
   /** Optional original title — we may not have one if the user never typed it. */
   title?: string
   calEventId?: string
+  /**
+   * Client-minted meeting id this recording belongs to (impromptu pre-create,
+   * or the existing row id for a scheduled meeting). Passed to the gateway's
+   * /recordings/upload as `meetingId` so the audio attaches to (or create-if-
+   * absent for) THIS row. Distinct from `meetingId` below, which is the
+   * server-CONFIRMED id stamped only after a successful upload. They hold the
+   * same value once upload succeeds, but `targetMeetingId` is known up front.
+   */
+  targetMeetingId?: string
   /** ISO timestamp when recording started. */
   clientRecordedAt: string
   /** Stored so the UI can show "you have a 3MB unsent recording from 2:14 pm" */

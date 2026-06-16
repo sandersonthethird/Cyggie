@@ -12,6 +12,7 @@ import { useAuthStore } from '../lib/auth/store'
 import { mmkvAsyncStorage } from '../lib/cache/mmkv'
 import { registerForPushNotifications } from '../lib/push/register'
 import { loadMostRecentPendingUploadOrEvict } from '../lib/recording/pending-upload'
+import { RecordingBubble } from '../components/RecordingBubble'
 import { initSync, shutdownSync } from '../lib/sync/boot'
 
 // Required at module top-level so any pending ASWebAuthenticationSession
@@ -143,6 +144,9 @@ export default function RootLayout() {
           }}
         >
           <Stack screenOptions={{ headerShown: false }} />
+          {/* Global floating recording indicator — visible on every screen
+              except the active meeting's view while recording. */}
+          <RecordingBubble />
           <StatusBar style="dark" />
         </PersistQueryClientProvider>
       </SafeAreaProvider>

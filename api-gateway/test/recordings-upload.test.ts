@@ -74,9 +74,10 @@ function buildMultipart(args: {
   boundary: string
   title?: string
   calEventId?: string
+  meetingId?: string
   audioBytes: Buffer
 }): { body: Buffer; contentType: string } {
-  const { boundary, title, calEventId, audioBytes } = args
+  const { boundary, title, calEventId, meetingId, audioBytes } = args
   const parts: Buffer[] = []
   const push = (s: string) => parts.push(Buffer.from(s))
 
@@ -89,6 +90,11 @@ function buildMultipart(args: {
     push(`--${boundary}\r\n`)
     push(`Content-Disposition: form-data; name="calEventId"\r\n\r\n`)
     push(`${calEventId}\r\n`)
+  }
+  if (meetingId) {
+    push(`--${boundary}\r\n`)
+    push(`Content-Disposition: form-data; name="meetingId"\r\n\r\n`)
+    push(`${meetingId}\r\n`)
   }
 
   push(`--${boundary}\r\n`)
@@ -252,6 +258,132 @@ describe('POST /recordings/upload', () => {
     expect(row?.calendarEventId).toBe(calEventId)
     expect(row?.status).toBe('recording')
     expect(row?.wasImpromptu).toBe(true) // FAB-style: no prior row → impromptu
+  })
+
+  // ── client-minted meetingId (impromptu pre-create / offline) ──
+  test('create-if-absent: upload with a fresh client meetingId inserts that EXACT id (id stability)', async () => {
+    const { userId, jwt } = await setupUser()
+    const clientId = createId() // client-minted; no row exists yet (offline pre-create never landed)
+    const audioBytes = Buffer.from('audio-offline-impromptu')
+    const boundary = '----TestBoundary' + Date.now().toString(36)
+    const { body, contentType } = buildMultipart({ boundary, meetingId: clientId, audioBytes })
+
+    submitCalls.length = 0
+    const res = await app.inject({
+      method: 'POST',
+      url: '/recordings/upload',
+      headers: {
+        authorization: `Bearer ${jwt}`,
+        'content-type': contentType,
+        'content-length': String(body.length),
+      },
+      payload: body,
+    })
+    expect(res.statusCode).toBe(202)
+    const out = res.json() as { meetingId: string }
+    cleanup.track(schema.meetings, schema.meetings.id, out.meetingId)
+    // The gateway must NOT re-mint — the id is stable end-to-end.
+    expect(out.meetingId).toBe(clientId)
+    const row = await db.query.meetings.findFirst({ where: eq(schema.meetings.id, clientId) })
+    expect(row?.userId).toBe(userId)
+    expect(row?.status).toBe('recording')
+    expect(row?.wasImpromptu).toBe(true)
+    expect(row?.recordingPath).toBeTruthy()
+    expect(submitCalls[0].meetingId).toBe(clientId)
+  })
+
+  test('attaches to a caller pre-created row when meetingId matches (no duplicate)', async () => {
+    const { userId, jwt } = await setupUser()
+    const clientId = createId()
+    // Simulate POST /meetings/impromptu having pre-created the row (no audio).
+    await db.insert(schema.meetings).values({
+      id: clientId,
+      userId,
+      title: 'Pre-created impromptu',
+      date: new Date(),
+      status: 'recording',
+      wasImpromptu: true,
+      notes: 'typed while recording',
+      createdByUserId: userId,
+    })
+    cleanup.track(schema.meetings, schema.meetings.id, clientId)
+
+    const audioBytes = Buffer.from('audio-attach')
+    const boundary = '----TestBoundary' + Date.now().toString(36)
+    const { body, contentType } = buildMultipart({ boundary, meetingId: clientId, audioBytes })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/recordings/upload',
+      headers: {
+        authorization: `Bearer ${jwt}`,
+        'content-type': contentType,
+        'content-length': String(body.length),
+      },
+      payload: body,
+    })
+    expect(res.statusCode).toBe(202)
+    const out = res.json() as { meetingId: string }
+    expect(out.meetingId).toBe(clientId)
+    const row = await db.query.meetings.findFirst({ where: eq(schema.meetings.id, clientId) })
+    expect(row?.recordingPath).toBeTruthy()
+    expect(row?.notes).toBe('typed while recording') // pre-recording notes preserved
+  })
+
+  test("rejects (409) when meetingId belongs to ANOTHER user — never attaches to a foreign row", async () => {
+    const owner = await setupUser()
+    const attacker = await setupUser()
+    const foreignId = createId()
+    await db.insert(schema.meetings).values({
+      id: foreignId,
+      userId: owner.userId,
+      title: "Owner's meeting",
+      date: new Date(),
+      status: 'recording',
+      wasImpromptu: true,
+      createdByUserId: owner.userId,
+    })
+    cleanup.track(schema.meetings, schema.meetings.id, foreignId)
+
+    const audioBytes = Buffer.from('audio-attacker')
+    const boundary = '----TestBoundary' + Date.now().toString(36)
+    const { body, contentType } = buildMultipart({ boundary, meetingId: foreignId, audioBytes })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/recordings/upload',
+      headers: {
+        authorization: `Bearer ${attacker.jwt}`,
+        'content-type': contentType,
+        'content-length': String(body.length),
+      },
+      payload: body,
+    })
+    expect(res.statusCode).toBe(409)
+    // The owner's row is untouched (no recordingPath attached).
+    const row = await db.query.meetings.findFirst({ where: eq(schema.meetings.id, foreignId) })
+    expect(row?.userId).toBe(owner.userId)
+    expect(row?.recordingPath).toBeNull()
+  })
+
+  test('rejects malformed meetingId (400)', async () => {
+    const { jwt } = await setupUser()
+    const audioBytes = Buffer.from('audio')
+    const boundary = '----TestBoundary' + Date.now().toString(36)
+    const { body, contentType } = buildMultipart({
+      boundary,
+      meetingId: 'NOT valid id!!',
+      audioBytes,
+    })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/recordings/upload',
+      headers: {
+        authorization: `Bearer ${jwt}`,
+        'content-type': contentType,
+        'content-length': String(body.length),
+      },
+      payload: body,
+    })
+    expect(res.statusCode).toBe(400)
   })
 
   test('default title when none provided', async () => {
