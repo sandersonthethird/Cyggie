@@ -81,6 +81,35 @@ export interface OwnedTableSpec {
    * NOT by `encodeRowId` / the SQLite WHERE (those still use `primaryKey`).
    */
   conflictKey?: readonly string[]
+  /**
+   * Opt this table into FIELD-LEVEL last-write-wins (vs the default whole-row
+   * LWW). When true:
+   *   • the desktop `withSync` wrapper diffs the bare pre/post row and stamps a
+   *     `field_lamports` map (camelCase col → lamport) onto the outbox payload +
+   *     local row (one clock per changed column);
+   *   • the gateway push and the desktop pull-apply merge PER COLUMN via the
+   *     shared `mergeFieldLww` (`packages/db/src/sync/field-lww.ts`) instead of
+   *     replacing the whole row — so concurrent edits to different columns of
+   *     the same row both survive.
+   *
+   * Requires the table to have a `field_lamports` column (JSONB on Postgres,
+   * JSON TEXT on SQLite). Tables without this flag keep whole-row LWW unchanged.
+   * Rolled out per-table; `org_companies` is the Phase 1 tracer.
+   */
+  fieldLww?: boolean
+  /**
+   * Opt this table into the FIRM-SHARED pool. When true:
+   *   • the table has a denormalized `firm_id` column; the gateway stamps it
+   *     from the JWT on push (same defense-in-depth as `user_id`), and
+   *   • `/sync/pull` scopes by `firm_id = me.firm_id` (instead of
+   *     `user_id = me.sub`) — so teammates see each other's rows.
+   *
+   * Rolled out per-table; `org_companies` is the Phase 1 tracer. Tables without
+   * this flag stay user-scoped (private to the owner's devices). Privacy-opt-out
+   * tables (contacts/meetings) additionally carry `is_private` + an owner-aware
+   * pull predicate (later phases).
+   */
+  firmScoped?: boolean
 }
 
 // Order matters: parents before children. Matches `allMigrators()`.
@@ -106,7 +135,15 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
 
   // ── Layer 2 ────────────────────────────────────────────────────────────
   { table: 'pipeline_stages', primaryKey: ['id'], hasUserId: false },
-  { table: 'org_companies', primaryKey: ['id'], hasUserId: true },
+  // Phase 1 multiplayer tracer — field-level LWW so two partners editing
+  // different fields of the same company don't clobber each other.
+  {
+    table: 'org_companies',
+    primaryKey: ['id'],
+    hasUserId: true,
+    fieldLww: true,
+    firmScoped: true,
+  },
 
   // ── Layer 3 ────────────────────────────────────────────────────────────
   { table: 'org_company_aliases', primaryKey: ['id'], hasUserId: false },

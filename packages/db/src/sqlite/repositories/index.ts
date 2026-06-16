@@ -250,6 +250,14 @@ export const createCompany = withSync(rawOrgCompany.createCompany, {
 export const updateCompany = withSync(rawOrgCompany.updateCompany, {
   table: 'org_companies',
   op: 'update',
+  // Field-LWW (org_companies is `fieldLww`): the wrapper diffs this BARE
+  // pre-row against the bare post-row to compute the changed-column set + the
+  // densify baseline. A single cheap SELECT of the row's own columns (3A) —
+  // NOT the enriched getCompany (5+ queries, related-table arrays).
+  captureBeforeUpdate: (db, [id]) =>
+    (db
+      .prepare('SELECT * FROM org_companies WHERE id = ? LIMIT 1')
+      .get(id as string) as Record<string, unknown> | undefined) ?? null,
 })
 
 export const deleteCompany = withSync(rawOrgCompany.deleteCompany, {

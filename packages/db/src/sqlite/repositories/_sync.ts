@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { OWNED_TABLES_BY_NAME } from '../../sync/owned-tables'
+import { OWNED_TABLES_BY_NAME, type OwnedTableSpec } from '../../sync/owned-tables'
 import {
   appendOutboxRowWithSpec,
   currentSyncContext,
@@ -8,6 +8,7 @@ import {
   type SyncContext,
 } from '../sync-wrapper'
 import { nextLamport } from '../../sync/sync-clock'
+import { mergeFieldLww, parseFieldLamports } from '../../sync/field-lww'
 
 // =============================================================================
 // _sync.ts — `withSync` higher-order helper applied at the repository barrel.
@@ -170,17 +171,20 @@ export function withSync<
           preDelete = opts.captureBeforeDelete(db, args)
         }
 
-        // T38: for updates on tables with large columns, snapshot the row
-        // BEFORE the inner fn runs so we can diff and trim unchanged
-        // large columns out of the outbox payload.
-        let preUpdate: Record<string, unknown> | null = null
-        if (
+        // Snapshot the row BEFORE the inner fn runs when we need a pre-state:
+        //   • T38 large-column trimming (tables with `largeColumns`), OR
+        //   • field-LWW (`spec.fieldLww`) — the bare pre-row is diffed against
+        //     the bare post-row to compute the changed-column set + the
+        //     densify baseline. For field-LWW the barrel's `captureBeforeUpdate`
+        //     returns the BARE snake-case row (cheap single SELECT, 3A).
+        const needsPreUpdate =
           opts.op === 'update' &&
-          opts.captureBeforeUpdate &&
-          spec.largeColumns &&
-          spec.largeColumns.length > 0
-        ) {
-          preUpdate = opts.captureBeforeUpdate(db, args)
+          opts.captureBeforeUpdate != null &&
+          (spec.fieldLww === true ||
+            (spec.largeColumns != null && spec.largeColumns.length > 0))
+        let preUpdate: Record<string, unknown> | null = null
+        if (needsPreUpdate) {
+          preUpdate = opts.captureBeforeUpdate!(db, args)
         }
 
         const result = fn(...args)
@@ -204,8 +208,19 @@ export function withSync<
             ? trimUnchangedLargeColumns(rawRow, preUpdate, spec.largeColumns)
             : rawRow
 
-        if (row != null && typeof row === 'object') {
-          appendOutboxRowWithSpec(db, spec, opts.op, row)
+        // Field-LWW: stamp `field_lamports` + `lamport` on the local row and
+        // attach the (sparse, changed-only) field_lamports map to the outbox
+        // payload so the gateway can merge per-column. See stampFieldLww.
+        const emitRow =
+          spec.fieldLww === true &&
+          row != null &&
+          typeof row === 'object' &&
+          (opts.op === 'insert' || opts.op === 'update')
+            ? stampFieldLww(db, spec, opts.op, row, preUpdate, lamport)
+            : row
+
+        if (emitRow != null && typeof emitRow === 'object') {
+          appendOutboxRowWithSpec(db, spec, opts.op, emitRow)
         } else {
           // If we can't emit a primary row (e.g. fn returned null because
           // the target row didn't exist), don't push a bogus outbox entry.
@@ -236,6 +251,101 @@ export function withSync<
   }
 }
 
+// Columns that are sync metadata, never tracked as field-LWW data columns.
+const FIELD_LWW_META_COLS = new Set(['lamport', 'field_lamports'])
+
+/**
+ * Bare-row SELECT (all columns, snake_case) of an owned table by primary key.
+ * Cheap single-row read used for the field-LWW pre/post diff (3A) — NOT the
+ * enriched repo getX.
+ */
+function selectBareRow(
+  db: Database.Database,
+  spec: { table: string; primaryKey: readonly string[] },
+  pk: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const where = spec.primaryKey.map((c) => `"${c}" = ?`).join(' AND ')
+  const vals = spec.primaryKey.map((c) => pk[c])
+  const r = db
+    .prepare(`SELECT * FROM ${spec.table} WHERE ${where} LIMIT 1`)
+    .get(...vals) as Record<string, unknown> | undefined
+  return r ?? null
+}
+
+/**
+ * Field-LWW write stamp. For a `fieldLww` table's insert/update:
+ *   1. Reads the bare post-write row and (for updates) diffs it against the
+ *      bare pre-write snapshot → the changed-column set.
+ *   2. Writes the row's `lamport` (= this txn's lamport) and a DENSIFIED
+ *      `field_lamports` map to the LOCAL row, so a later local edit measures
+ *      against correct per-field baselines and the desktop pull-apply can merge.
+ *   3. Returns the outbox payload with a SPARSE `fieldLamports` map (changed
+ *      columns only) attached — the gateway needs only the changed set to know
+ *      which columns are eligible to win; it densifies its own stored copy.
+ *
+ * Local densified map vs wire sparse map are intentionally different (see
+ * field-lww.ts). Keys are snake_case column names (the bare row's native
+ * casing); the top-level `fieldLamports` key is camelCase so it round-trips the
+ * gateway's snake↔camel mapping into the `field_lamports` column.
+ */
+function stampFieldLww(
+  db: Database.Database,
+  spec: OwnedTableSpec,
+  op: WriteOp,
+  payloadRow: Record<string, unknown>,
+  preUpdate: Record<string, unknown> | null,
+  lamport: string,
+): Record<string, unknown> {
+  // PK value(s) come from the emitted payload row (always carries the PK).
+  const pk: Record<string, unknown> = {}
+  for (const col of spec.primaryKey) pk[col] = payloadRow[col]
+
+  const afterBare = selectBareRow(db, spec, pk)
+  if (afterBare == null) {
+    // Row vanished (deleted concurrently in the same txn) — nothing to stamp.
+    return payloadRow
+  }
+
+  const isInsert = op === 'insert'
+  const dataCols = Object.keys(afterBare).filter(
+    (c) => !FIELD_LWW_META_COLS.has(c) && !spec.primaryKey.includes(c),
+  )
+
+  // Changed-column set. Insert ⇒ every data column is new. Update ⇒ diff the
+  // bare pre/post rows (excluding meta/PK).
+  const changed = isInsert
+    ? dataCols
+    : diffChangedColumns(preUpdate ?? {}, afterBare).filter(
+        (c) => !FIELD_LWW_META_COLS.has(c) && !spec.primaryKey.includes(c),
+      )
+
+  // Sparse wire map — only the columns this write changed, at this lamport.
+  const wireMap: Record<string, string> = {}
+  for (const c of changed) wireMap[c] = lamport
+
+  // Densified local map: reuse the SAME merge the gateway/pull use so the local
+  // stored clocks match what a remote would compute.
+  const { mergedFieldLamports } = mergeFieldLww({
+    existingFieldLamports: isInsert
+      ? null
+      : parseFieldLamports(preUpdate?.['field_lamports'] as string | null),
+    existingRowLamport: (preUpdate?.['lamport'] as string) ?? '0',
+    incomingFieldLamports: wireMap,
+    incomingRowLamport: lamport,
+    incomingColumns: dataCols,
+    isInsert,
+  })
+
+  // Stamp the local row (org-company.repo does NOT self-stamp lamport).
+  const where = spec.primaryKey.map((c) => `"${c}" = ?`).join(' AND ')
+  db.prepare(
+    `UPDATE ${spec.table} SET lamport = ?, field_lamports = ? WHERE ${where}`,
+  ).run(lamport, JSON.stringify(mergedFieldLamports), ...spec.primaryKey.map((c) => pk[c]))
+
+  // Attach the sparse map to the outbox payload (camelCase top-level key).
+  return { ...payloadRow, fieldLamports: wireMap, lamport }
+}
+
 /**
  * Re-export for repo files that need to read the active context (e.g. to
  * stamp deviceId / userId onto an inner row).
@@ -243,17 +353,54 @@ export function withSync<
 export { currentSyncContext }
 
 /**
+ * Returns true when `a` and `b` differ. Fast-path: identical primitives compare
+ * directly (no allocation); only objects/arrays fall back to `JSON.stringify`
+ * (which is order-sensitive but fine because both sides come from the same
+ * source shape — the repo's getX / a bare row SELECT).
+ */
+function valuesDiffer(a: unknown, b: unknown): boolean {
+  if (a === b) return false
+  const aObj = a !== null && typeof a === 'object'
+  const bObj = b !== null && typeof b === 'object'
+  if (!aObj && !bObj) return true // distinct primitives (a===b already false)
+  return JSON.stringify(a) !== JSON.stringify(b)
+}
+
+/**
+ * Returns the keys present in BOTH `before` and `after` whose values differ
+ * (the changed-column set). A key missing on either side is treated as changed
+ * and included — conservative (errs toward marking an edit rather than dropping
+ * one). The single column-diff primitive shared by:
+ *   • T38 large-column trimming (`trimUnchangedLargeColumns`)
+ *   • field-LWW `field_lamports` computation (the wrapper, for `fieldLww` tables)
+ *
+ * Exported for test access.
+ */
+export function diffChangedColumns(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): string[] {
+  const changed: string[] = []
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)])
+  for (const key of keys) {
+    const inBefore = key in before
+    const inAfter = key in after
+    if (!inBefore || !inAfter) {
+      changed.push(key)
+      continue
+    }
+    if (valuesDiffer(before[key], after[key])) changed.push(key)
+  }
+  return changed
+}
+
+/**
  * T38: returns a shallow copy of `row` with any key in `largeColumns`
  * whose value is JSON-equal to its pre-update counterpart deleted.
  *
- * Equality uses `JSON.stringify` on both sides — fine for the JSON-y
- * payloads we trim (arrays of segments, message lists, markdown strings).
- * Both sides must come from the same source shape (the repo's getX) so
- * key order and nested shapes line up.
- *
- * If a large column is missing on either side, treat it as changed and
- * keep it — conservative choice that errs toward over-sending rather
- * than silently dropping a real edit.
+ * Now expressed in terms of `diffChangedColumns` so the equality rule lives in
+ * one place. A large column is dropped iff it is present on both sides and NOT
+ * in the changed set. Missing on either side ⇒ changed ⇒ kept (conservative).
  *
  * Exported for test access.
  */
@@ -263,11 +410,10 @@ export function trimUnchangedLargeColumns(
   largeColumns: readonly string[],
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...row }
+  const changed = new Set(diffChangedColumns(preUpdate, row))
   for (const col of largeColumns) {
     if (!(col in out) || !(col in preUpdate)) continue
-    if (JSON.stringify(out[col]) === JSON.stringify(preUpdate[col])) {
-      delete out[col]
-    }
+    if (!changed.has(col)) delete out[col]
   }
   return out
 }

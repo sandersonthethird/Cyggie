@@ -42,6 +42,16 @@ afterAll(async () => {
   await app.close()
 })
 
+// org_companies is firm-scoped (firm_id FK → firms); every setupUser shares
+// this firm, so it must exist for company inserts + firm-scoped pull.
+const TEST_FIRM_ID = TEST_PREFIX + 'firm'
+await db.insert(schema.firms).values({
+  id: TEST_FIRM_ID,
+  name: 'Pull Test Firm',
+  slug: TEST_PREFIX + 'firm-slug',
+})
+cleanup.track(schema.firms, schema.firms.id, TEST_FIRM_ID)
+
 async function setupUser(): Promise<{ userId: string; jwt: string }> {
   const userId = TEST_PREFIX + createId().slice(0, 8)
   await db.insert(schema.users).values({
@@ -197,6 +207,7 @@ describe('GET /sync/pull', () => {
     await db.insert(schema.orgCompanies).values({
       id: companyId,
       userId,
+      firmId: TEST_FIRM_ID,
       canonicalName: 'Acme',
       normalizedName: `acme-${companyId}`,
       lamport: '11',

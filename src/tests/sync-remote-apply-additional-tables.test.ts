@@ -118,7 +118,10 @@ function freshDb(): Database.Database {
       field_sources TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      lamport TEXT NOT NULL DEFAULT '0'
+      lamport TEXT NOT NULL DEFAULT '0',
+      field_lamports TEXT,
+      deleted_at TEXT,
+      deleted_by_user_id TEXT
     );
 
     CREATE TABLE org_company_aliases (
@@ -391,15 +394,21 @@ describe('applyRemoteOrgCompanies', () => {
     expect(row?.lamport).toBe('5')
   })
 
-  it('skips when local lamport is greater-or-equal', () => {
+  it('field-LWW: a lower-lamport incoming row wins no column (local value preserved)', () => {
+    // org_companies is field-LWW: the apply doesn't skip at the ROW level, it
+    // merges per column. An incoming whole-row write (no field_lamports map) at a
+    // lower lamport loses every column, so the local value is preserved and the
+    // DB row is unchanged.
     db.prepare(
       "INSERT INTO org_companies (id, canonical_name, normalized_name, lamport) VALUES ('co-1', 'Local', 'local', '10')",
     ).run()
-    const r = applyRemoteOrgCompanies(db, DEVICE_ID, USER_ID, [
-      makeCompanyRow({ id: 'co-1', lamport: '5' }),
+    applyRemoteOrgCompanies(db, DEVICE_ID, USER_ID, [
+      makeCompanyRow({ id: 'co-1', lamport: '5', canonicalName: 'Remote' }),
     ])
-    expect(r.appliedIds).toEqual([])
-    expect(r.skippedLowLamport).toBe(1)
+    const row = db
+      .prepare('SELECT canonical_name, lamport FROM org_companies WHERE id = ?')
+      .get('co-1') as { canonical_name: string; lamport: string }
+    expect(row.canonical_name).toBe('Local') // incoming lost — local preserved
   })
 
   it('updates existing row on higher lamport', () => {

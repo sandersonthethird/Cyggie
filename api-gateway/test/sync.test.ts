@@ -30,6 +30,16 @@ const db = getDb(env.GATEWAY_DATABASE_URL)
 const TEST_PREFIX = `test-sync-${Date.now().toString(36)}-`
 const cleanup = makeDbCleanup(db)
 
+// org_companies is now firm-scoped (firm_id FK → firms). mintJwt issues this
+// firm_id, and the gateway stamps it onto pushed rows, so the firm must exist.
+const TEST_FIRM_ID = TEST_PREFIX + 'firm'
+await db.insert(schema.firms).values({
+  id: TEST_FIRM_ID,
+  name: 'Test Firm',
+  slug: TEST_PREFIX + 'firm-slug',
+})
+cleanup.track(schema.firms, schema.firms.id, TEST_FIRM_ID)
+
 afterAll(async () => {
   await cleanup.cleanup()
   await app.close()
@@ -133,6 +143,7 @@ describe('POST /sync/push', () => {
     await db.insert(schema.orgCompanies).values({
       id: companyId,
       userId,
+      firmId: TEST_FIRM_ID,
       canonicalName: 'Old ' + TEST_PREFIX,
       normalizedName: ('old ' + TEST_PREFIX).toLowerCase(),
       status: 'active',
@@ -184,6 +195,7 @@ describe('POST /sync/push', () => {
     await db.insert(schema.orgCompanies).values({
       id: companyId,
       userId,
+      firmId: TEST_FIRM_ID,
       canonicalName: 'Newer ' + TEST_PREFIX,
       normalizedName: ('newer ' + TEST_PREFIX).toLowerCase(),
       status: 'active',
@@ -326,6 +338,7 @@ describe('POST /sync/push', () => {
     await db.insert(schema.orgCompanies).values({
       id: companyId,
       userId,
+      firmId: TEST_FIRM_ID,
       canonicalName: 'P ' + TEST_PREFIX,
       normalizedName: ('p ' + TEST_PREFIX).toLowerCase(),
       status: 'active',
@@ -438,6 +451,7 @@ describe('POST /sync/push', () => {
     await db.insert(schema.orgCompanies).values({
       id: companyId,
       userId,
+      firmId: TEST_FIRM_ID,
       canonicalName: 'ToDelete ' + TEST_PREFIX,
       normalizedName: ('todelete ' + TEST_PREFIX).toLowerCase(),
       status: 'active',

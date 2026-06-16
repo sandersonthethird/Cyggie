@@ -14,6 +14,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 import { users } from './auth'
+import { firms } from './firms'
 import { contacts } from './contacts'
 
 // =============================================================================
@@ -126,6 +127,18 @@ export const orgCompanies = pgTable(
     keyTakeawaysUserNote: text('key_takeaways_user_note'),
     // Per-field source tracking (migration 050)
     fieldSources: jsonb('field_sources'),
+    // Multiplayer (Phase 1) — firm-shared pool + field-level LWW + soft-delete.
+    // firm_id denormalized so the firm-scoped pull filters without a users JOIN
+    // (and is RLS-ready). Stamped by the gateway from the JWT on every push;
+    // backfilled from users.firm_id for existing rows.
+    firmId: text('firm_id').references(() => firms.id, { onDelete: 'cascade' }),
+    // Per-column logical clocks (snake_case col → lamport) for field-level LWW.
+    // NULL until the first field-LWW write, then densified. See sync/field-lww.ts.
+    fieldLamports: jsonb('field_lamports'),
+    // Soft-delete: a user delete sets these (an UPDATE that syncs like any edit);
+    // reads filter deleted_at IS NULL. Hard purge (admin) is a separate path.
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedByUserId: text('deleted_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     // Audit + sync
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -135,6 +148,14 @@ export const orgCompanies = pgTable(
   },
   (t) => [
     index('org_companies_user_idx').on(t.userId),
+    // Firm-scoped pull cursor: WHERE firm_id = ? AND lamport::numeric > ? ORDER
+    // BY lamport::numeric. The numeric cast is index-backed by this expression
+    // index so firm-scoping doesn't turn every pull into a seq-scan + sort (L1).
+    index('org_companies_firm_lamport_idx').on(t.firmId, sql`(${t.lamport}::numeric)`),
+    // Recycle-bin scan: deleted-but-recoverable rows, partial to stay tiny.
+    index('org_companies_recycle_idx')
+      .on(t.firmId, t.deletedAt)
+      .where(sql`${t.deletedAt} IS NOT NULL`),
     uniqueIndex('org_companies_normalized_name_idx').on(t.normalizedName),
     index('org_companies_domain_idx').on(t.primaryDomain),
     index('org_companies_status_idx').on(t.status),

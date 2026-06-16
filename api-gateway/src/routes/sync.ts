@@ -5,6 +5,7 @@ import { sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { OWNED_TABLES_BY_NAME } from '@cyggie/db/sync/owned-tables'
 import { decodeRowId } from '@cyggie/db/sync/encode-row-id'
+import { mergeFieldLww, parseFieldLamports } from '@cyggie/db/sync/field-lww'
 import {
   validateWritePayload,
   type WriteOp,
@@ -194,6 +195,24 @@ export async function registerSyncRoutes(
               }
               camelPayload['userId'] = user.sub
             }
+            // Firm-shared tables: stamp firm_id from the JWT (same trust model
+            // + mismatch defense as user_id). The desktop SQLite has no firm_id
+            // column, so the payload arrives without one; the JWT's firm is
+            // canonical. A mismatching payload firm_id is a cross-firm write
+            // attempt — reject.
+            if (spec.firmScoped) {
+              if (
+                camelPayload['firmId'] != null &&
+                camelPayload['firmId'] !== user.firm_id
+              ) {
+                rejected.push({
+                  outboxId: entry.outboxId,
+                  reason: `firm_id mismatch (jwt=${user.firm_id} payload=${String(camelPayload['firmId'])})`,
+                })
+                continue
+              }
+              camelPayload['firmId'] = user.firm_id
+            }
             // T17a follow-up 2026-05-23 — `created_by_user_id` and
             // `updated_by_user_id` are FKs to users.id on most owned tables
             // (notes, investment_memos, org_companies, meetings, ...). The
@@ -257,10 +276,16 @@ export async function registerSyncRoutes(
             .join(' AND ')
           const whereParams = whereCols.map((c) => pkCols[c])
 
-          // Defense-in-depth: also filter by user_id for owned tables.
+          // Defense-in-depth tenancy scope on the row lookup/mutation.
+          //   • firm-shared tables → scope by firm_id (any member may edit a
+          //     teammate's row; user_id is the creator, not an edit gate).
+          //   • user-scoped tables → scope by user_id.
           let userClause = ''
           const allParams: unknown[] = [...whereParams]
-          if (spec.hasUserId) {
+          if (spec.firmScoped) {
+            userClause = ` AND firm_id = $${allParams.length + 1}`
+            allParams.push(user.firm_id)
+          } else if (spec.hasUserId) {
             userClause = ` AND user_id = $${allParams.length + 1}`
             allParams.push(user.sub)
           }
@@ -275,11 +300,112 @@ export async function registerSyncRoutes(
           await client.query('SAVEPOINT entry_sp')
           let entryFailed = false
           try {
-            const existingRes = await client.query<{ lamport: string | null }>(
-              `SELECT lamport FROM ${spec.table} WHERE ${whereSql}${userClause}`,
+            const existingRes = await client.query<{
+              lamport: string | null
+              field_lamports?: Record<string, unknown> | null
+            }>(
+              `SELECT lamport${spec.fieldLww ? ', field_lamports' : ''} FROM ${spec.table} WHERE ${whereSql}${userClause}`,
               allParams,
             )
             const existing = existingRes.rows[0]
+
+            // 3.5 FIELD-LEVEL LWW (e.g. org_companies). Merge per column via the
+            // shared decision instead of whole-row replace, so two partners
+            // editing different fields of the same row both win. Deletes fall
+            // through to the whole-row path below.
+            if (spec.fieldLww === true && entry.op !== 'delete') {
+              if (!validatedPayload) {
+                rejected.push({ outboxId: entry.outboxId, reason: 'no payload' })
+                await client.query('RELEASE SAVEPOINT entry_sp')
+                continue
+              }
+              // node-pg param serialization (mirrors the whole-row upsert): pass
+              // Date through; JSON.stringify objects/arrays for JSONB; else raw.
+              const toParam = (v: unknown): unknown =>
+                v == null || v instanceof Date
+                  ? v
+                  : typeof v === 'object'
+                    ? JSON.stringify(v)
+                    : v
+
+              const isInsert = existing == null
+              const metaCols = new Set([...whereCols, 'lamport', 'field_lamports'])
+              const dataCols = Object.keys(validatedPayload).filter(
+                (c) => !metaCols.has(c),
+              )
+              const merge = mergeFieldLww({
+                existingFieldLamports: parseFieldLamports(
+                  existing?.field_lamports ?? null,
+                ),
+                existingRowLamport: existing?.lamport ?? '0',
+                incomingFieldLamports: parseFieldLamports(
+                  (validatedPayload['field_lamports'] as
+                    | Record<string, unknown>
+                    | string
+                    | null
+                    | undefined) ?? null,
+                ),
+                incomingRowLamport: entry.lamport,
+                incomingColumns: dataCols,
+                isInsert,
+              })
+
+              if (isInsert) {
+                // Full insert: all columns + densified map + row lamport.
+                const insertObj: Record<string, unknown> = {
+                  ...validatedPayload,
+                  lamport: merge.newRowLamport,
+                  field_lamports: merge.mergedFieldLamports,
+                }
+                const cols = Object.keys(insertObj)
+                const placeholders = cols.map((_, i) => `$${i + 1}`)
+                await client.query(
+                  `INSERT INTO ${spec.table} (${cols
+                    .map((c) => `"${c}"`)
+                    .join(', ')}) VALUES (${placeholders.join(', ')})`,
+                  cols.map((c) => toParam(insertObj[c])),
+                )
+              } else if (merge.winners.length > 0) {
+                // Update only winning columns + merged map + bumped row lamport.
+                const setCols = [...merge.winners, 'lamport', 'field_lamports']
+                const setVals: Record<string, unknown> = {
+                  lamport: merge.newRowLamport,
+                  field_lamports: merge.mergedFieldLamports,
+                }
+                for (const c of merge.winners) setVals[c] = validatedPayload[c]
+                const setSql = setCols
+                  .map((c, i) => `"${c}" = $${i + 1}`)
+                  .join(', ')
+                const params: unknown[] = setCols.map((c) => toParam(setVals[c]))
+                const whereSqlLocal = whereCols
+                  .map((c, i) => `"${c}" = $${setCols.length + i + 1}`)
+                  .join(' AND ')
+                params.push(...whereParams)
+                let userClauseLocal = ''
+                if (spec.firmScoped) {
+                  userClauseLocal = ` AND firm_id = $${params.length + 1}`
+                  params.push(user.firm_id)
+                } else if (spec.hasUserId) {
+                  userClauseLocal = ` AND user_id = $${params.length + 1}`
+                  params.push(user.sub)
+                }
+                await client.query(
+                  `UPDATE ${spec.table} SET ${setSql} WHERE ${whereSqlLocal}${userClauseLocal}`,
+                  params,
+                )
+              } else {
+                // Row present and NO column won — incoming lost everywhere.
+                // Report as a conflict (still ack so the desktop drops it),
+                // preserving the LWW conflict-reporting metric.
+                conflicts.push({
+                  outboxId: entry.outboxId,
+                  reason: `field-LWW: no column won (incoming lamport ${entry.lamport})`,
+                })
+              }
+              acked.push(entry.outboxId)
+              await client.query('RELEASE SAVEPOINT entry_sp')
+              continue
+            }
 
             // 4. LWW compare
             if (existing != null) {
@@ -549,11 +675,16 @@ export async function registerSyncRoutes(
                 AND CAST(${schema.notes.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.notes.lamport} AS numeric) ASC`),
+        // org_companies is FIRM-SCOPED (multiplayer): every member of the firm
+        // pulls the shared pool. Soft-deleted rows ARE sent (deleted_at set) so
+        // the tombstone replicates to teammates' devices; the renderer/repo
+        // reads filter deleted_at IS NULL. Index-backed by
+        // org_companies_firm_lamport_idx (firm_id, lamport::numeric).
         db
           .select()
           .from(schema.orgCompanies)
           .where(
-            sql`${schema.orgCompanies.userId} = ${user.sub}
+            sql`${schema.orgCompanies.firmId} = ${user.firm_id}
                 AND CAST(${schema.orgCompanies.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.orgCompanies.lamport} AS numeric) ASC`),
@@ -575,7 +706,8 @@ export async function registerSyncRoutes(
             sql`${schema.orgCompanies.id} = ${schema.orgCompanyAliases.companyId}`,
           )
           .where(
-            sql`${schema.orgCompanies.userId} = ${user.sub}
+            // Aliases ride their parent company's firm scope.
+            sql`${schema.orgCompanies.firmId} = ${user.firm_id}
                 AND CAST(${schema.orgCompanyAliases.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.orgCompanyAliases.lamport} AS numeric) ASC`),
