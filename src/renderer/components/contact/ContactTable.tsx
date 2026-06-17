@@ -34,7 +34,7 @@ import {
 import type { VirtualRow } from '../../hooks/useGroupedRows'
 import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
-import { useEditCellNav, getRangePosition } from '../../hooks/useEditCellNav'
+import { useEditCellNav, getRangePosition, getCellEdges, cellEdgeBoxShadow, effectiveCells, isCellSelected } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
 import { executeBulkEdit, createCellCallbacks, formatJsonList } from '../crm/tableUtils'
@@ -224,7 +224,7 @@ export function ContactTable({
   const scrollToColRef = useRef<(idx: number) => void>(() => {})
 
   const {
-    focusedCell, editCell, setEditCell, cellRange,
+    selection, focusedCell, editCell, setEditCell, cellRange,
     handleFocusCell, handleStartEdit, handleSelectCellClick, handleEndEdit, handleKeyboardEvent,
   } = useEditCellNav(
     contacts.length,
@@ -484,15 +484,17 @@ export function ContactTable({
 
   // ── Clipboard ──────────────────────────────────────────────────────────────
   const {
-    copiedCell, copiedRange, clipboardToast,
+    copiedCell, copiedRange, copiedCells, clipboardToast,
     undoAction: clipboardUndoAction,
     handleClipboardKeyDown, handleUndo: handleClipboardUndo, dismissUndo: dismissClipboardUndo,
+    fillSelection,
   } = useCellClipboard({
     rows: contacts,
     visibleCols: mergedVisibleCols,
     focusedCell,
     editCell,
     cellRange,
+    selection,
     selectedIds,
     getCellValue,
     saveCellValue,
@@ -833,8 +835,10 @@ export function ContactTable({
                   const isCustomSelect = !!customFieldId && col.type === 'select'
 
                   const isCellEditing = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
-                  const focusPos = isCellEditing ? null : getRangePosition(dataIndex, colIdx, cellRange, focusedCell)
+                  const edges = isCellEditing ? null : getCellEdges(selection, dataIndex, colIdx)
+                  const selBoxShadow = cellEdgeBoxShadow(edges)
                   const copiedPos = getRangePosition(dataIndex, colIdx, copiedRange, copiedCell)
+                  const isCopiedMulti = !!copiedCells && copiedCells.some((c) => c.row === dataIndex && c.col === colIdx)
 
                   // When groupBy is active: scan mode — all cells navigate to detail
                   if (groupBy) {
@@ -852,23 +856,18 @@ export function ContactTable({
                   }
 
                   if (isCustomSelect && !isCellEditing) {
-                    const chipRangeClass = focusPos
-                      ? focusPos === 'only' ? styles.focusedCell
-                        : focusPos === 'top' ? styles.rangeTop
-                        : focusPos === 'mid' ? styles.rangeMid
-                        : styles.rangeBot
-                      : ''
                     const chipCopiedClass = copiedPos
                       ? copiedPos === 'only' ? styles.copiedCell
                         : copiedPos === 'top' ? styles.copiedRangeTop
                         : copiedPos === 'mid' ? styles.copiedRangeMid
                         : styles.copiedRangeBot
-                      : ''
+                      : (isCopiedMulti ? styles.copiedCell : '')
                     return (
                       <div
                         key={col.key}
-                        className={`${styles.chipCell} ${chipRangeClass} ${chipCopiedClass}`.trim()}
-                        onClick={(e) => handleSelectCellClick(dataIndex, colIdx, e.shiftKey)}
+                        className={`${styles.chipCell} ${chipCopiedClass}`.trim()}
+                        style={selBoxShadow ? { boxShadow: selBoxShadow } : undefined}
+                        onClick={(e) => handleSelectCellClick(dataIndex, colIdx, e.shiftKey, e.metaKey || e.ctrlKey)}
                         onDoubleClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
                         {cellValue ? (
@@ -885,18 +884,18 @@ export function ContactTable({
                       : copiedPos === 'top' ? styles.copiedRangeTop
                       : copiedPos === 'mid' ? styles.copiedRangeMid
                       : styles.copiedRangeBot
-                    : undefined
+                    : (isCopiedMulti ? styles.copiedCell : undefined)
 
                   return (
                     <div key={col.key} className={wrapperCopiedClass}>
                       <EditableCell
                         value={cellValue}
                         col={col}
-                        rangePosition={focusPos}
+                        edges={edges}
                         isEditing={isCellEditing}
                         initialChar={isCellEditing ? editCell?.initialChar : undefined}
                         scrollContainer={scrollRef.current}
-                        onFocus={(shiftKey) => handleFocusCell(dataIndex, colIdx, shiftKey)}
+                        onFocus={(shiftKey, metaKey) => handleFocusCell(dataIndex, colIdx, shiftKey, metaKey)}
                         onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
                         onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
                         onAddOption={
@@ -913,7 +912,13 @@ export function ContactTable({
                             : undefined
                         }
                         onSave={async (newVal) => {
-                          await saveCellValue(contact, col, newVal)
+                          // Bulk-fill: a committed value fans out to every selected
+                          // cell in this column when a multi-cell selection is active.
+                          if (isCellSelected(selection, dataIndex, colIdx) && effectiveCells(selection).length > 1) {
+                            await fillSelection(colIdx, newVal)
+                          } else {
+                            await saveCellValue(contact, col, newVal)
+                          }
                         }}
                       />
                     </div>
@@ -1127,7 +1132,7 @@ export function ContactTable({
       {/* Clipboard undo toast */}
       {clipboardUndoAction && (
         <div className={styles.clipboardToast}>
-          Pasted to {clipboardUndoAction.count} cell{clipboardUndoAction.count !== 1 ? 's' : ''}
+          {clipboardUndoAction.label} {clipboardUndoAction.count} cell{clipboardUndoAction.count !== 1 ? 's' : ''}
           <button className={styles.clipboardUndoBtn} onClick={() => void handleClipboardUndo()}>Undo</button>
           <button className={styles.clipboardUndoDismiss} onClick={dismissClipboardUndo}>✕</button>
         </div>

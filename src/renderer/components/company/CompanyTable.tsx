@@ -53,7 +53,7 @@ import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFie
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
 import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
-import { useEditCellNav, getRangePosition } from '../../hooks/useEditCellNav'
+import { useEditCellNav, getRangePosition, getCellEdges, cellEdgeBoxShadow, effectiveCells, isCellSelected } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
 import { HeaderFilter } from '../crm/HeaderFilter'
@@ -243,7 +243,7 @@ export function CompanyTable({
   const scrollToColRef = useRef<(idx: number) => void>(() => {})
 
   const {
-    focusedCell, editCell, setEditCell, cellRange,
+    selection, focusedCell, editCell, setEditCell, cellRange,
     handleFocusCell, handleStartEdit, handleSelectCellClick, handleEndEdit, handleKeyboardEvent,
   } = useEditCellNav(
     companies.length,
@@ -353,14 +353,15 @@ export function CompanyTable({
 
   // ── Clipboard ──────────────────────────────────────────────────────────────
   const {
-    copiedCell, copiedRange, clipboardToast, undoAction,
-    handleClipboardKeyDown, handleUndo, dismissUndo,
+    copiedCell, copiedRange, copiedCells, clipboardToast, undoAction,
+    handleClipboardKeyDown, handleUndo, dismissUndo, fillSelection,
   } = useCellClipboard({
     rows: companies,
     visibleCols: mergedVisibleCols,
     focusedCell,
     editCell,
     cellRange,
+    selection,
     selectedIds,
     getCellValue,
     saveCellValue,
@@ -699,8 +700,10 @@ export function CompanyTable({
                   const isCustomSelect = !!customFieldId && col.type === 'select'
 
                   const isCellEditing = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
-                  const focusPos = isCellEditing ? null : getRangePosition(dataIndex, colIdx, cellRange, focusedCell)
+                  const edges = isCellEditing ? null : getCellEdges(selection, dataIndex, colIdx)
+                  const selBoxShadow = cellEdgeBoxShadow(edges)
                   const copiedPos = getRangePosition(dataIndex, colIdx, copiedRange, copiedCell)
+                  const isCopiedMulti = !!copiedCells && copiedCells.some((c) => c.row === dataIndex && c.col === colIdx)
 
                   // When groupBy is active: scan mode — all cells navigate to detail
                   if (groupBy) {
@@ -718,23 +721,18 @@ export function CompanyTable({
                   }
 
                   if (isCustomSelect && !isCellEditing) {
-                    const chipRangeClass = focusPos
-                      ? focusPos === 'only' ? styles.focusedCell
-                        : focusPos === 'top' ? styles.rangeTop
-                        : focusPos === 'mid' ? styles.rangeMid
-                        : styles.rangeBot
-                      : ''
                     const chipCopiedClass = copiedPos
                       ? copiedPos === 'only' ? styles.copiedCell
                         : copiedPos === 'top' ? styles.copiedRangeTop
                         : copiedPos === 'mid' ? styles.copiedRangeMid
                         : styles.copiedRangeBot
-                      : ''
+                      : (isCopiedMulti ? styles.copiedCell : '')
                     return (
                       <div
                         key={col.key}
-                        className={`${styles.chipCell} ${chipRangeClass} ${chipCopiedClass}`.trim()}
-                        onClick={(e) => handleSelectCellClick(dataIndex, colIdx, e.shiftKey)}
+                        className={`${styles.chipCell} ${chipCopiedClass}`.trim()}
+                        style={selBoxShadow ? { boxShadow: selBoxShadow } : undefined}
+                        onClick={(e) => handleSelectCellClick(dataIndex, colIdx, e.shiftKey, e.metaKey || e.ctrlKey)}
                         onDoubleClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
                         {cellValue ? (
@@ -751,7 +749,7 @@ export function CompanyTable({
                       : copiedPos === 'top' ? styles.copiedRangeTop
                       : copiedPos === 'mid' ? styles.copiedRangeMid
                       : styles.copiedRangeBot
-                    : undefined
+                    : (isCopiedMulti ? styles.copiedCell : undefined)
 
                   // Investor chips cell — four column variants:
                   //   coInvestorNames           → company.coInvestorsList         → patch coInvestorsList
@@ -793,7 +791,8 @@ export function CompanyTable({
                       <div
                         key={col.key}
                         className={`${styles.chipCell} ${wrapperCopiedClass ?? ''}`.trim()}
-                        onClick={(e) => handleFocusCell(dataIndex, colIdx, e.shiftKey)}
+                        style={selBoxShadow ? { boxShadow: selBoxShadow } : undefined}
+                        onClick={(e) => handleFocusCell(dataIndex, colIdx, e.shiftKey, e.metaKey || e.ctrlKey)}
                       >
                         <InvestorChipsCell
                           value={investorList}
@@ -813,11 +812,11 @@ export function CompanyTable({
                       <EditableCell
                         value={cellValue}
                         col={col}
-                        rangePosition={focusPos}
+                        edges={edges}
                         isEditing={isCellEditing}
                         initialChar={isCellEditing ? editCell?.initialChar : undefined}
                         scrollContainer={scrollRef.current}
-                        onFocus={(shiftKey) => handleFocusCell(dataIndex, colIdx, shiftKey)}
+                        onFocus={(shiftKey, metaKey) => handleFocusCell(dataIndex, colIdx, shiftKey, metaKey)}
                         onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
                         onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
                         onAddOption={
@@ -834,7 +833,14 @@ export function CompanyTable({
                             : undefined
                         }
                         onSave={async (newVal) => {
-                          await saveCellValue(company, col, newVal)
+                          // Bulk-fill: if this cell is part of a multi-cell selection,
+                          // the committed value fans out to every selected cell in
+                          // this column; otherwise it's a normal single-cell save.
+                          if (isCellSelected(selection, dataIndex, colIdx) && effectiveCells(selection).length > 1) {
+                            await fillSelection(colIdx, newVal)
+                          } else {
+                            await saveCellValue(company, col, newVal)
+                          }
                         }}
                       />
                     </div>
@@ -1020,10 +1026,10 @@ export function CompanyTable({
         <div className={styles.clipboardToast}>{clipboardToast}</div>
       )}
 
-      {/* Undo paste toast */}
+      {/* Undo toast */}
       {undoAction && (
         <div className={styles.clipboardToast}>
-          Pasted to {undoAction.count} cell{undoAction.count !== 1 ? 's' : ''}
+          {undoAction.label} {undoAction.count} cell{undoAction.count !== 1 ? 's' : ''}
           <button className={styles.undoBtn} onClick={() => void handleUndo()}>Undo</button>
           <button className={styles.undoDismiss} onClick={dismissUndo}>✕</button>
         </div>
