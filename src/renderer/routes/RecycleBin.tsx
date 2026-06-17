@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { api } from '../api'
 import EmptyState from '../components/common/EmptyState'
+import ConfirmDialog from '../components/common/ConfirmDialog'
 import type { DeletedEntitySummary } from '../../shared/types/recycle'
 import { RECYCLE_RETENTION_DAYS } from '../../shared/types/recycle'
+import styles from './RecycleBin.module.css'
 
 // Recycle Bin (Phase 3 multiplayer soft-delete). Lists the firm's trashed
 // companies + tasks (already in local SQLite via pull) and lets any member
-// Restore within the retention window. Admin "Delete permanently" lands in C2.
+// Restore within the retention window. Admins can "Delete permanently" (purge).
 
 function daysUntil(iso: string): number {
   const t = Date.parse(iso)
@@ -22,6 +24,8 @@ export default function RecycleBin() {
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [purgeTarget, setPurgeTarget] = useState<DeletedEntitySummary | null>(null)
+  const [purgeError, setPurgeError] = useState<string | null>(null)
 
   useEffect(() => {
     api
@@ -71,64 +75,55 @@ export default function RecycleBin() {
     [load],
   )
 
-  const purge = useCallback(
-    async (item: DeletedEntitySummary) => {
-      if (!window.confirm(`Permanently delete "${item.label}"? This cannot be undone.`)) return
-      setBusyId(item.id)
-      try {
-        await api.invoke(
-          item.entityType === 'company' ? IPC_CHANNELS.COMPANY_PURGE : IPC_CHANNELS.TASK_PURGE,
-          item.id,
-        )
-        await load()
-      } catch (err) {
-        setError(String(err))
-      } finally {
-        setBusyId(null)
-      }
-    },
-    [load],
-  )
+  const confirmPurge = useCallback(async () => {
+    if (!purgeTarget) return
+    const item = purgeTarget
+    setBusyId(item.id)
+    setPurgeError(null)
+    try {
+      await api.invoke(
+        item.entityType === 'company' ? IPC_CHANNELS.COMPANY_PURGE : IPC_CHANNELS.TASK_PURGE,
+        item.id,
+      )
+      setPurgeTarget(null)
+      await load()
+    } catch (err) {
+      setPurgeError(String(err))
+    } finally {
+      setBusyId(null)
+    }
+  }, [purgeTarget, load])
 
   const renderSection = (title: string, items: DeletedEntitySummary[]) => (
-    <section style={{ marginBottom: 28 }}>
-      <h3 style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, opacity: 0.6, marginBottom: 8 }}>
+    <section className={styles.section}>
+      <h3 className={styles.sectionTitle}>
         {title} ({items.length})
       </h3>
       {items.length === 0 ? (
-        <p style={{ opacity: 0.5, fontSize: 13 }}>Nothing here.</p>
+        <p className={styles.empty}>Nothing here.</p>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+        <ul className={styles.list}>
           {items.map((item) => (
-            <li
-              key={`${item.entityType}:${item.id}`}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 12,
-                padding: '10px 12px',
-                borderBottom: '1px solid var(--border, rgba(0,0,0,0.08))',
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {item.label}
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.6 }}>
+            <li key={`${item.entityType}:${item.id}`} className={styles.row}>
+              <div className={styles.rowMain}>
+                <div className={styles.rowLabel}>{item.label}</div>
+                <div className={styles.rowMeta}>
                   {item.sublabel ? `${item.sublabel} · ` : ''}
                   deleted by {item.deletedByName ?? 'a teammate'} · purges in {daysUntil(item.purgesAt)}d
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              <div className={styles.actions}>
                 <button onClick={() => void restore(item)} disabled={busyId === item.id}>
                   {busyId === item.id ? '…' : 'Restore'}
                 </button>
                 {isAdmin && (
                   <button
-                    onClick={() => void purge(item)}
+                    className={styles.purgeButton}
+                    onClick={() => {
+                      setPurgeError(null)
+                      setPurgeTarget(item)
+                    }}
                     disabled={busyId === item.id}
-                    style={{ color: 'var(--danger, #c0392b)' }}
                   >
                     Delete permanently
                   </button>
@@ -141,17 +136,17 @@ export default function RecycleBin() {
     </section>
   )
 
-  if (loading) return <div style={{ padding: 24 }}>Loading…</div>
+  if (loading) return <div className={styles.container}>Loading…</div>
 
   const empty = companies.length === 0 && tasks.length === 0
 
   return (
-    <div style={{ padding: 24, maxWidth: 760 }}>
-      <h2 style={{ marginBottom: 4 }}>Recycle Bin</h2>
-      <p style={{ opacity: 0.6, fontSize: 13, marginBottom: 20 }}>
+    <div className={styles.container}>
+      <h2 className={styles.heading}>Recycle Bin</h2>
+      <p className={styles.subhead}>
         Deleted companies and tasks are recoverable for {RECYCLE_RETENTION_DAYS} days.
       </p>
-      {error && <div style={{ color: 'var(--danger, #c0392b)', marginBottom: 12 }}>{error}</div>}
+      {error && <div className={styles.error}>{error}</div>}
       {empty ? (
         <EmptyState title="Recycle Bin is empty" description="Deleted companies and tasks will appear here." />
       ) : (
@@ -160,6 +155,20 @@ export default function RecycleBin() {
           {renderSection('Tasks', tasks)}
         </>
       )}
+      <ConfirmDialog
+        open={purgeTarget != null}
+        title="Delete permanently?"
+        message={
+          purgeTarget
+            ? `Permanently delete "${purgeTarget.label}"? This cannot be undone and removes it for the whole firm.`
+            : ''
+        }
+        confirmLabel={busyId && purgeTarget && busyId === purgeTarget.id ? 'Deleting…' : 'Delete permanently'}
+        variant="danger"
+        errorMessage={purgeError}
+        onConfirm={() => void confirmPurge()}
+        onCancel={() => setPurgeTarget(null)}
+      />
     </div>
   )
 }

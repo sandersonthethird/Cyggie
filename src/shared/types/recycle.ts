@@ -1,6 +1,10 @@
 // Recycle bin (Phase 3 multiplayer soft-delete) — shared types + retention.
 
-/** Days a soft-deleted row is recoverable before it's eligible for hard purge. */
+/**
+ * Days a soft-deleted row is recoverable before it's eligible for hard purge.
+ * The gateway has its OWN copy (api-gateway/src/routes/sync.ts) because it can't
+ * import the desktop's src/shared across the build boundary — KEEP THEM IN SYNC.
+ */
 export const RECYCLE_RETENTION_DAYS = 30
 
 /** A trashed company or task shown in the Recycle Bin. */

@@ -117,4 +117,35 @@ describe('admin purge + tombstone registry', () => {
     const tombs = pullB.json().tombstones as Array<{ entityType: string; entityId: string }>
     expect(tombs.some((t) => t.entityId === id && t.entityType === 'company')).toBe(true)
   })
+
+  test('retention sweep purges rows soft-deleted past the window, keeps recent ones', async () => {
+    const tokenAdmin = await jwt(admin, 'admin')
+    const oldId = TEST_PREFIX + 'co-old'
+    const newId = TEST_PREFIX + 'co-new'
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, oldId)
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, newId)
+    cleanup.track(schema.tombstones, schema.tombstones.entityId, oldId)
+
+    await push(tokenAdmin, { table: 'org_companies', op: 'insert', rowId: oldId, payload: baseCompany(oldId, admin, '600'), lamport: '600' })
+    await push(tokenAdmin, { table: 'org_companies', op: 'insert', rowId: newId, payload: baseCompany(newId, admin, '601'), lamport: '601' })
+
+    // Backdate one soft-delete past the 30-day window, keep the other recent.
+    await db.update(schema.orgCompanies)
+      .set({ deletedAt: new Date(Date.now() - 31 * 86_400_000) })
+      .where(eq(schema.orgCompanies.id, oldId))
+    await db.update(schema.orgCompanies)
+      .set({ deletedAt: new Date(Date.now() - 1 * 86_400_000) })
+      .where(eq(schema.orgCompanies.id, newId))
+
+    const sweep = await app.inject({
+      method: 'POST', url: '/admin/recycle/sweep', headers: { authorization: `Bearer ${tokenAdmin}` },
+    })
+    expect(sweep.statusCode).toBe(200)
+    expect(sweep.json().purgedCompanies).toBeGreaterThanOrEqual(1)
+
+    // Expired row hard-deleted + tombstoned; recent row survives.
+    expect(await db.query.orgCompanies.findFirst({ where: eq(schema.orgCompanies.id, oldId) })).toBeFalsy()
+    expect(await db.query.tombstones.findFirst({ where: eq(schema.tombstones.entityId, oldId) })).toBeTruthy()
+    expect(await db.query.orgCompanies.findFirst({ where: eq(schema.orgCompanies.id, newId) })).toBeTruthy()
+  })
 })

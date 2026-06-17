@@ -112,8 +112,10 @@ const TOMBSTONE_ENTITY_TYPE: Record<string, string> = {
   tasks: 'task',
 }
 
-// Retention window before a soft-deleted row is eligible for the pull-triggered
-// auto-purge sweep (mirrors RECYCLE_RETENTION_DAYS on the desktop).
+// Retention window before a soft-deleted row is eligible for the retention sweep
+// endpoint (POST /admin/recycle/sweep). Duplicated here because the gateway can't
+// import the desktop's src/shared — KEEP IN SYNC with RECYCLE_RETENTION_DAYS in
+// src/shared/types/recycle.ts (which drives the recycle bin's "purges in N days").
 const RECYCLE_RETENTION_DAYS = 30
 
 export async function registerSyncRoutes(
