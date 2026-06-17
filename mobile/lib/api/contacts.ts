@@ -43,6 +43,9 @@ export interface ContactDetail extends ContactListItem {
   lastEmailAt: string | null
   lastTouchAt: string | null
   recentMeetings: ContactMeetingRef[]
+  // Guarded passthrough of the full row — investor focus, tags, university, etc.
+  // arrive too and are read by key in the generic ledger renderer.
+  [key: string]: unknown
 }
 
 interface FetchContactsOpts {

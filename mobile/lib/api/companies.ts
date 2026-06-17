@@ -47,6 +47,10 @@ export interface CompanyDetail extends CompanyListItem {
   keyTakeawaysUserNote: string | null
   recentMeetings: CompanyMeetingRef[]
   people: CompanyPersonRef[]
+  // The gateway returns a guarded passthrough of the full row, so every other
+  // business column (portfolio / investment / links / etc.) arrives too. The
+  // generic ledger renderer reads these by key — see lib/ledger/buildGroups.ts.
+  [key: string]: unknown
 }
 
 interface FetchCompaniesOpts {

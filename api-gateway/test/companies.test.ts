@@ -378,3 +378,79 @@ describe('GET /companies/:id', () => {
     expect(res.statusCode).toBe(404)
   })
 })
+
+describe('GET /companies/:id — guarded passthrough', () => {
+  // Internal/audit/sync columns that must NEVER reach a client. This doubles as
+  // the security guard for `.passthrough()` (sanitize-row denylist + pattern).
+  const FORBIDDEN_KEYS = [
+    'userId', 'firmId', 'fieldSources', 'fieldLamports', 'lamport',
+    'createdByUserId', 'updatedByUserId', 'createdAt', 'updatedAt',
+    'normalizedName', 'canonicalName', 'coInvestors', 'crmCompanyId',
+    'crmProvider', 'leadInvestorCompanyId', 'sourceEntityId', 'sourceEntityType',
+    'deletedAt', 'deletedByUserId', 'classificationSource', 'includeInCompaniesView',
+  ]
+
+  test('surfaces business/investment fields and leaks no internal column', async () => {
+    const userId = await insertTestUser()
+    const coId = TEST_PREFIX + 'co-' + createId().slice(0, 8)
+    await db.insert(schema.orgCompanies).values({
+      id: coId,
+      userId,
+      canonicalName: 'Amma Test ' + TEST_PREFIX,
+      normalizedName: ('amma test ' + TEST_PREFIX).toLowerCase(),
+      status: 'active',
+      industry: 'AI Infra, Dev Tools',
+      portfolioFund: 'fund_iv',
+      investmentSize: '500000',
+      ownershipPct: '5%',
+      initialInvestmentSecurity: 'safe',
+      dateOfInitialInvestment: new Date('2026-04-14T00:00:00Z'),
+      postMoneyValuation: 10,
+      round: 'pre_seed',
+      raiseSize: 2,
+      twitterHandle: 'amma',
+    })
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, coId)
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/companies/${coId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as Record<string, unknown>
+
+    // The Amma fix: investment/financial columns now reach mobile.
+    expect(body['name']).toBe('Amma Test ' + TEST_PREFIX)
+    expect(body['portfolioFund']).toBe('fund_iv')
+    expect(body['investmentSize']).toBe('500000')
+    expect(body['ownershipPct']).toBe('5%')
+    expect(body['initialInvestmentSecurity']).toBe('safe')
+    expect(body['postMoneyValuation']).toBe(10)
+    expect(body['round']).toBe('pre_seed')
+    expect(typeof body['dateOfInitialInvestment']).toBe('string') // Date → ISO
+
+    // Leak guard.
+    for (const k of FORBIDDEN_KEYS) {
+      expect(Object.prototype.hasOwnProperty.call(body, k), `internal key "${k}" leaked`).toBe(false)
+    }
+  })
+
+  test('sparse company returns null for unset business fields', async () => {
+    const userId = await insertTestUser()
+    const coId = await insertTestCompany({ userId, name: 'Sparse Co ' + TEST_PREFIX })
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/companies/${coId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const body = res.json() as Record<string, unknown>
+    expect(body['portfolioFund'] ?? null).toBeNull()
+    expect(body['investmentSize'] ?? null).toBeNull()
+    for (const k of FORBIDDEN_KEYS) {
+      expect(Object.prototype.hasOwnProperty.call(body, k), `internal key "${k}" leaked`).toBe(false)
+    }
+  })
+})

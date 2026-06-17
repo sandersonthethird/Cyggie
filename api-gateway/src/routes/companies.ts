@@ -8,6 +8,7 @@ import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
+import { sanitizeCompanyRow } from '../shared/sanitize-row'
 
 /** Normalized canonical name — lowercase + accents stripped + whitespace
  *  collapsed. Matches desktop's org-company.repo.ts normalization so the
@@ -55,39 +56,34 @@ const CompanyListItemSchema = z.object({
   meetingCount: z.number(),
 })
 
-const CompanyDetailSchema = CompanyListItemSchema.extend({
-  description: z.string().nullable(),
-  primaryDomain: z.string().nullable(),
-  websiteUrl: z.string().nullable(),
-  linkedinCompanyUrl: z.string().nullable(),
-  employeeCountRange: z.string().nullable(),
-  foundingYear: z.number().nullable(),
-  arr: z.number().nullable(),
-  runwayMonths: z.number().nullable(),
-  round: z.string().nullable(),
-  raiseSize: z.number().nullable(),
-  totalFundingRaised: z.number().nullable(),
-  // Key Takeaways card surfaced to mobile (read-only AI bullets + writable
-  // user note). Desktop generates the AI bullets; mobile only edits the note.
-  keyTakeaways: z.string().nullable(),
-  keyTakeawaysUserNote: z.string().nullable(),
-  recentMeetings: z.array(
-    z.object({
-      id: z.string(),
-      title: z.string(),
-      date: z.string(),
-      durationSeconds: z.number().nullable(),
-    }),
-  ),
-  people: z.array(
-    z.object({
-      id: z.string(),
-      fullName: z.string(),
-      title: z.string().nullable(),
-      email: z.string().nullable(),
-    }),
-  ),
-})
+// Guarded passthrough: only the fields we GUARANTEE shape for are typed here;
+// every other business column on the row (minus the sanitize-row denylist)
+// flows through `.passthrough()`, so new desktop fields appear on mobile with
+// no schema edit. See api-gateway/src/shared/sanitize-row.ts.
+const CompanyDetailSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    lastTouchAt: z.string().nullable(),
+    meetingCount: z.number(),
+    recentMeetings: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        date: z.string(),
+        durationSeconds: z.number().nullable(),
+      }),
+    ),
+    people: z.array(
+      z.object({
+        id: z.string(),
+        fullName: z.string(),
+        title: z.string().nullable(),
+        email: z.string().nullable(),
+      }),
+    ),
+  })
+  .passthrough()
 
 export async function registerCompanyRoutes(
   app: FastifyInstance,
@@ -275,32 +271,17 @@ export async function registerCompanyRoutes(
           ),
         )
 
+      // Full-row passthrough minus the internal denylist (+ canonicalName→name).
+      // Date columns serialize to ISO via Date#toJSON; computed fields are added
+      // on top. New business columns flow through automatically.
       return {
+        ...sanitizeCompanyRow(company),
         id: company.id,
         name: company.canonicalName,
-        industry: company.industry,
-        stage: company.stage,
-        pipelineStage: company.pipelineStage,
-        status: company.status,
-        city: company.city,
-        state: company.state,
         lastTouchAt: meetingAgg?.lastTouchAt
           ? new Date(meetingAgg.lastTouchAt).toISOString()
           : null,
         meetingCount: meetingAgg?.meetingCount ?? 0,
-        description: company.description,
-        primaryDomain: company.primaryDomain,
-        websiteUrl: company.websiteUrl,
-        linkedinCompanyUrl: company.linkedinCompanyUrl,
-        employeeCountRange: company.employeeCountRange,
-        foundingYear: company.foundingYear,
-        arr: company.arr,
-        runwayMonths: company.runwayMonths,
-        round: company.round,
-        raiseSize: company.raiseSize,
-        totalFundingRaised: company.totalFundingRaised,
-        keyTakeaways: company.keyTakeaways,
-        keyTakeawaysUserNote: company.keyTakeawaysUserNote,
         recentMeetings: recentMeetings.map((m) => ({
           id: m.id,
           title: m.title,

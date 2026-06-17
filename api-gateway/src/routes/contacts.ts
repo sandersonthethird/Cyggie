@@ -8,6 +8,7 @@ import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
+import { sanitizeContactRow } from '../shared/sanitize-row'
 
 /** Normalized name for dedup (matches desktop's contact.repo.ts pattern):
  *  lowercase + accents stripped + whitespace collapsed. */
@@ -52,37 +53,24 @@ const ContactListItemSchema = z.object({
   lastMeetingAt: z.string().nullable(),
 })
 
-const ContactDetailSchema = ContactListItemSchema.extend({
-  firstName: z.string().nullable(),
-  lastName: z.string().nullable(),
-  phone: z.string().nullable(),
-  linkedinUrl: z.string().nullable(),
-  twitterHandle: z.string().nullable(),
-  linkedinHeadline: z.string().nullable(),
-  relationshipStrength: z.string().nullable(),
-  // Investor-shaped fields — surface them when present, mostly null otherwise.
-  fundSize: z.number().nullable(),
-  typicalCheckSizeMin: z.number().nullable(),
-  typicalCheckSizeMax: z.number().nullable(),
-  notes: z.string().nullable(),
-  keyTakeaways: z.string().nullable(),
-  keyTakeawaysUserNote: z.string().nullable(),
-  lastEmailAt: z.string().nullable(),
-  // Most recent of (live max meeting date via speaker_contact_links) and
-  // (denormalized last_email_at). Mirrors the way company detail computes
-  // last_touch from meeting_company_links — see companies.ts. Surfaced here
-  // because the denormalized last_meeting_at column can be stale for contacts
-  // imported outside the writeWithSync path.
-  lastTouchAt: z.string().nullable(),
-  recentMeetings: z.array(
-    z.object({
-      id: z.string(),
-      title: z.string(),
-      date: z.string(),
-      durationSeconds: z.number().nullable(),
-    }),
-  ),
-})
+// Guarded passthrough — only the guaranteed/computed fields are typed; every
+// other business column flows through `.passthrough()` (minus the sanitize-row
+// denylist). See api-gateway/src/shared/sanitize-row.ts.
+const ContactDetailSchema = z
+  .object({
+    id: z.string(),
+    fullName: z.string(),
+    lastTouchAt: z.string().nullable(),
+    recentMeetings: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        date: z.string(),
+        durationSeconds: z.number().nullable(),
+      }),
+    ),
+  })
+  .passthrough()
 
 export async function registerContactRoutes(
   app: FastifyInstance,
@@ -207,55 +195,28 @@ export async function registerContactRoutes(
       const db = getDb(env.GATEWAY_DATABASE_URL)
       const { id } = req.params
 
-      const [row] = await db
-        .select({
-          // contacts
-          id: schema.contacts.id,
-          fullName: schema.contacts.fullName,
-          firstName: schema.contacts.firstName,
-          lastName: schema.contacts.lastName,
-          email: schema.contacts.email,
-          phone: schema.contacts.phone,
-          title: schema.contacts.title,
-          contactType: schema.contacts.contactType,
-          primaryCompanyId: schema.contacts.primaryCompanyId,
-          city: schema.contacts.city,
-          state: schema.contacts.state,
-          street: schema.contacts.street,
-          postalCode: schema.contacts.postalCode,
-          country: schema.contacts.country,
-          linkedinUrl: schema.contacts.linkedinUrl,
-          twitterHandle: schema.contacts.twitterHandle,
-          linkedinHeadline: schema.contacts.linkedinHeadline,
-          relationshipStrength: schema.contacts.relationshipStrength,
-          fundSize: schema.contacts.fundSize,
-          typicalCheckSizeMin: schema.contacts.typicalCheckSizeMin,
-          typicalCheckSizeMax: schema.contacts.typicalCheckSizeMax,
-          notes: schema.contacts.notes,
-          keyTakeaways: schema.contacts.keyTakeaways,
-          keyTakeawaysUserNote: schema.contacts.keyTakeawaysUserNote,
-          lastMeetingAt: schema.contacts.lastMeetingAt,
-          lastEmailAt: schema.contacts.lastEmailAt,
-          // joined company
-          primaryCompanyName: schema.orgCompanies.canonicalName,
-          primaryCompanyDomain: schema.orgCompanies.primaryDomain,
-        })
-        .from(schema.contacts)
-        .leftJoin(
-          schema.orgCompanies,
-          eq(schema.contacts.primaryCompanyId, schema.orgCompanies.id),
-        )
-        .where(
-          and(eq(schema.contacts.id, id), eq(schema.contacts.userId, user.sub)),
-        )
-        .limit(1)
-
-      if (!row) {
+      // Full contact row (for guarded passthrough) + the joined company
+      // name/domain via a small lookup. Mirrors the companies/:id pattern.
+      const contact = await db.query.contacts.findFirst({
+        where: and(eq(schema.contacts.id, id), eq(schema.contacts.userId, user.sub)),
+      })
+      if (!contact) {
         throw new GatewayError({
           statusCode: 404,
           code: 'CONTACT_NOT_FOUND',
           message: 'Contact not found',
         })
+      }
+
+      let primaryCompanyName: string | null = null
+      let primaryCompanyDomain: string | null = null
+      if (contact.primaryCompanyId) {
+        const co = await db.query.orgCompanies.findFirst({
+          where: eq(schema.orgCompanies.id, contact.primaryCompanyId),
+          columns: { canonicalName: true, primaryDomain: true },
+        })
+        primaryCompanyName = co?.canonicalName ?? null
+        primaryCompanyDomain = co?.primaryDomain ?? null
       }
 
       // Recent meetings via the speaker→contact link table.
@@ -298,7 +259,7 @@ export async function registerContactRoutes(
 
       const lowerEmails = Array.from(
         new Set(
-          [row.email, ...aliasRows.map((r) => r.email)]
+          [contact.email, ...aliasRows.map((r) => r.email)]
             .filter((e): e is string => Boolean(e && e.trim()))
             .map((e) => e.toLowerCase().trim()),
         ),
@@ -347,7 +308,7 @@ export async function registerContactRoutes(
         ? new Date(speakerMeetingAgg.lastMeetingAt).getTime()
         : null
       const attendeeMs = attendeeMeetingAt ? new Date(attendeeMeetingAt).getTime() : null
-      const emailMs = row.lastEmailAt ? new Date(row.lastEmailAt).getTime() : null
+      const emailMs = contact.lastEmailAt ? new Date(contact.lastEmailAt).getTime() : null
       const candidateMs = [speakerMs, attendeeMs, emailMs].filter(
         (ms): ms is number => ms != null,
       )
@@ -364,7 +325,7 @@ export async function registerContactRoutes(
       req.log.info(
         {
           contactId: id,
-          fullName: row.fullName,
+          fullName: contact.fullName,
           emailsChecked: lowerEmails,
           speakerLinkLastMeetingAt: speakerMs ? new Date(speakerMs).toISOString() : null,
           attendeeEmailLastMeetingAt: attendeeMs
@@ -376,38 +337,19 @@ export async function registerContactRoutes(
         'contact_last_touch_debug',
       )
 
+      // Full-row passthrough minus the internal denylist; JSONB list columns
+      // normalized to string[]; computed + joined fields added on top.
       return {
-        id: row.id,
-        fullName: row.fullName,
-        firstName: row.firstName,
-        lastName: row.lastName,
-        email: row.email,
-        phone: row.phone,
-        title: row.title,
-        contactType: row.contactType,
-        primaryCompanyId: row.primaryCompanyId,
-        primaryCompanyName: row.primaryCompanyName,
-        primaryCompanyDomain: row.primaryCompanyDomain,
-        city: row.city,
-        state: row.state,
-        street: row.street,
-        postalCode: row.postalCode,
-        country: row.country,
-        linkedinUrl: row.linkedinUrl,
-        twitterHandle: row.twitterHandle,
-        linkedinHeadline: row.linkedinHeadline,
-        relationshipStrength: row.relationshipStrength,
-        fundSize: row.fundSize,
-        typicalCheckSizeMin: row.typicalCheckSizeMin,
-        typicalCheckSizeMax: row.typicalCheckSizeMax,
-        notes: row.notes,
-        keyTakeaways: row.keyTakeaways,
-        keyTakeawaysUserNote: row.keyTakeawaysUserNote,
-        lastMeetingAt: row.lastMeetingAt
-          ? new Date(row.lastMeetingAt).toISOString()
+        ...sanitizeContactRow(contact),
+        id: contact.id,
+        fullName: contact.fullName,
+        primaryCompanyName,
+        primaryCompanyDomain,
+        lastMeetingAt: contact.lastMeetingAt
+          ? new Date(contact.lastMeetingAt).toISOString()
           : null,
-        lastEmailAt: row.lastEmailAt
-          ? new Date(row.lastEmailAt).toISOString()
+        lastEmailAt: contact.lastEmailAt
+          ? new Date(contact.lastEmailAt).toISOString()
           : null,
         lastTouchAt,
         recentMeetings: recentMeetings.map((m) => ({
