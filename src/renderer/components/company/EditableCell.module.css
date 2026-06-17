@@ -137,6 +137,12 @@
   outline-offset: -2px;
 }
 
+/* Active cell within a multi-cell selection — faint fill so the cursor is
+   visible amid the selected range (the border comes from an inline box-shadow). */
+.activeCell {
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+
 /* Range selection — unified border via inset box-shadow (no layout shift) */
 .rangeTop {
   box-shadow:

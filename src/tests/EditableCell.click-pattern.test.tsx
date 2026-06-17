@@ -16,7 +16,7 @@
  *   - Enter on focused select cell starts edit
  *   - Typing on focused select cell starts edit and seeds initialChar
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react'
 import type { ColumnDef } from '../renderer/components/crm/tableUtils'
 
@@ -59,6 +59,10 @@ const TEXT_COL: ColumnDef = {
   type: 'text',
 }
 
+// A lone, active selected cell (all four outer edges) — the new equivalent of the
+// old rangePosition="only" (single focused cell).
+const ACTIVE_EDGES = { active: true, top: true, right: true, bottom: true, left: true }
+
 function renderCell(overrides: Partial<Parameters<typeof EditableCell>[0]> = {}) {
   const onSave = vi.fn().mockResolvedValue(undefined)
   const onFocus = vi.fn()
@@ -70,7 +74,7 @@ function renderCell(overrides: Partial<Parameters<typeof EditableCell>[0]> = {})
       col={overrides.col ?? SELECT_COL}
       onSave={overrides.onSave ?? onSave}
       onAddOption={overrides.onAddOption}
-      rangePosition={overrides.rangePosition ?? null}
+      edges={overrides.edges ?? null}
       isEditing={overrides.isEditing ?? false}
       initialChar={overrides.initialChar}
       scrollContainer={overrides.scrollContainer}
@@ -94,7 +98,7 @@ afterEach(() => {
 describe('EditableCell — three-click pattern (select cells)', () => {
   it('1st click on UNFOCUSED select cell calls only onFocus; no popover', () => {
     const { container, onFocus, onStartEdit } = renderCell({
-      rangePosition: null,  // unfocused
+      edges: null,  // unfocused
     })
     fireEvent.click(cellRoot(container))
     expect(onFocus).toHaveBeenCalledTimes(1)
@@ -104,7 +108,7 @@ describe('EditableCell — three-click pattern (select cells)', () => {
 
   it('2nd click on FOCUSED select cell calls onStartEdit (popover opens after rerender)', () => {
     const { container, onStartEdit } = renderCell({
-      rangePosition: 'only',  // already focused
+      edges: ACTIVE_EDGES,  // already focused
     })
     fireEvent.click(cellRoot(container))
     expect(onStartEdit).toHaveBeenCalledTimes(1)
@@ -112,7 +116,7 @@ describe('EditableCell — three-click pattern (select cells)', () => {
 
   it('with isEditing=true on a select cell, popover renders', () => {
     renderCell({
-      rangePosition: 'only',
+      edges: ACTIVE_EDGES,
       isEditing: true,
       value: 'investor',
     })
@@ -131,7 +135,7 @@ describe('EditableCell — three-click pattern (select cells)', () => {
   it('REGRESSION (Issue 6): clicking an option calls onSave with the PICKED value, not the prior draft', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     renderCell({
-      rangePosition: 'only',
+      edges: ACTIVE_EDGES,
       isEditing: true,
       value: 'investor',      // prior value seeded into draft
       onSave,
@@ -149,7 +153,7 @@ describe('EditableCell — non-dropdown cells unchanged', () => {
   it('2nd click on FOCUSED text cell calls only onFocus (does NOT start edit)', () => {
     const { container, onFocus, onStartEdit } = renderCell({
       col: TEXT_COL,
-      rangePosition: 'only',
+      edges: ACTIVE_EDGES,
       value: 'Acme',
     })
     fireEvent.click(cellRoot(container))
@@ -160,7 +164,7 @@ describe('EditableCell — non-dropdown cells unchanged', () => {
   it('double-click on text cell still starts edit (legacy path preserved)', () => {
     const { container, onStartEdit } = renderCell({
       col: TEXT_COL,
-      rangePosition: 'only',
+      edges: ACTIVE_EDGES,
       value: 'Acme',
     })
     fireEvent.doubleClick(cellRoot(container))
@@ -171,7 +175,7 @@ describe('EditableCell — non-dropdown cells unchanged', () => {
 describe('EditableCell — double-click fallback for select cells', () => {
   it('double-click on UNFOCUSED select cell still starts edit', () => {
     const { container, onStartEdit } = renderCell({
-      rangePosition: null,  // unfocused
+      edges: null,  // unfocused
     })
     fireEvent.doubleClick(cellRoot(container))
     expect(onStartEdit).toHaveBeenCalledTimes(1)
@@ -181,7 +185,7 @@ describe('EditableCell — double-click fallback for select cells', () => {
 describe('EditableCell — keyboard entry on select cells', () => {
   it('Enter on focused select cell starts edit', () => {
     const { container, onStartEdit } = renderCell({
-      rangePosition: 'only',
+      edges: ACTIVE_EDGES,
     })
     fireEvent.keyDown(cellRoot(container), { key: 'Enter' })
     expect(onStartEdit).toHaveBeenCalled()
@@ -192,7 +196,7 @@ describe('EditableCell — keyboard entry on select cells', () => {
     // first O-option ("Operator") as the active item; pressing Enter commits it.
     const onSave = vi.fn().mockResolvedValue(undefined)
     renderCell({
-      rangePosition: 'only',
+      edges: ACTIVE_EDGES,
       isEditing: true,
       initialChar: 'o',
       onSave,
@@ -209,7 +213,7 @@ describe('EditableCell — popover commit paths', () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     const onEndEdit = vi.fn()
     renderCell({
-      rangePosition: 'only',
+      edges: ACTIVE_EDGES,
       isEditing: true,
       value: 'investor',  // active starts on Investor (index 0)
       onSave,
@@ -228,7 +232,7 @@ describe('EditableCell — popover commit paths', () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     const onEndEdit = vi.fn()
     renderCell({
-      rangePosition: 'only',
+      edges: ACTIVE_EDGES,
       isEditing: true,
       value: 'investor',
       onSave,
@@ -244,7 +248,7 @@ describe('EditableCell — non-editable cells', () => {
   it('non-editable select cell does NOT enter edit on click', () => {
     const { container, onStartEdit } = renderCell({
       col: { ...SELECT_COL, editable: false },
-      rangePosition: 'only',
+      edges: ACTIVE_EDGES,
     })
     // Non-editable cells don't get role="button" — query the outer div directly.
     const cell = container.firstElementChild as HTMLElement

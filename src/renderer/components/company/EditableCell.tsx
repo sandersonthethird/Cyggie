@@ -25,7 +25,7 @@
  * Props:
  *   value           — current display value (string, number, null)
  *   col             — ColumnDef for the field being displayed/edited
- *   rangePosition   — externally driven focus highlight position ('only' = single focused cell)
+ *   edges           — which outer edges to border for the selection outline (null = unselected)
  *   isEditing       — externally driven edit mode (double-click, Enter, type-to-edit)
  *   initialChar     — if set, seeds draft with this char instead of current value (type-to-edit)
  *   scrollContainer — table scroll container; passed through to OptionListPopover for reposition
@@ -39,6 +39,7 @@ import { daysSince, formatLastTouch } from '../../utils/format'
 import { chipStyle } from '../../utils/colorChip'
 import { OptionListPopover } from '../crm/OptionListPopover'
 import type { ColumnDef } from './companyColumns'
+import { cellEdgeBoxShadow, type CellEdges } from '../../hooks/useEditCellNav'
 import styles from './EditableCell.module.css'
 
 type CellState = 'display' | 'edit' | 'saving' | 'error'
@@ -51,13 +52,13 @@ interface EditableCellProps {
   col: ColumnDef
   onSave: (newValue: string | null) => Promise<void>
   onAddOption?: (newOption: string) => Promise<void>
-  /** Cell highlight position. null=none, 'only'=single cell, 'top'/'mid'/'bot'=range position. */
-  rangePosition: RangePosition
+  /** Which outer edges to border (unified selection outline), or null when unselected. */
+  edges: CellEdges | null
   isEditing: boolean
   initialChar?: string
   /** Table scroll container; passed to OptionListPopover so it can reposition on scroll. */
   scrollContainer?: HTMLElement | null
-  onFocus: (shiftKey?: boolean) => void
+  onFocus: (shiftKey?: boolean, metaKey?: boolean) => void
   onStartEdit: () => void
   onEndEdit: (advanceDir?: 'down' | 'right' | null) => void
 }
@@ -143,7 +144,7 @@ function EditableCellInner({
   col,
   onSave,
   onAddOption,
-  rangePosition,
+  edges,
   isEditing,
   initialChar,
   scrollContainer,
@@ -287,19 +288,20 @@ function EditableCellInner({
 
   function handleClick(e: React.MouseEvent) {
     if (cellState !== 'display') return
-    // Three-click flow for select cells: a click on the already-focused cell
-    // enters edit mode (popover opens). Other cell types stick with the
-    // legacy single-click=focus, double-click=edit pattern.
+    const meta = e.metaKey || e.ctrlKey
+    // Three-click flow for select cells: a click on the already-active cell
+    // enters edit mode (popover opens). Skipped while shift/cmd-selecting.
     if (
       col.editable &&
       col.type === 'select' &&
-      rangePosition === 'only' &&
-      !e.shiftKey
+      edges?.active &&
+      !e.shiftKey &&
+      !meta
     ) {
       startEdit()
       return
     }
-    onFocus(e.shiftKey)
+    onFocus(e.shiftKey, meta)
   }
 
   function handleDoubleClick() {
@@ -330,16 +332,16 @@ function EditableCellInner({
     }
   }
 
-  const rangeClass =
-    rangePosition && cellState === 'display'
-      ? rangePosition === 'only' ? styles.focusedCell
-        : rangePosition === 'top' ? styles.rangeTop
-        : rangePosition === 'mid' ? styles.rangeMid
-        : rangePosition === 'bot' ? styles.rangeBot
-        : ''
-      : ''
+  // Unified selection outline: draw a 2px inset border only on the cell's outer
+  // edges (computed from neighbor membership), so rectangles render as one clean
+  // box and non-contiguous / L-shaped selections each get a correct outline.
+  const showSel = edges && cellState === 'display'
+  const selStyle: React.CSSProperties | undefined = showSel
+    ? { boxShadow: cellEdgeBoxShadow(edges) }
+    : undefined
 
-  const cellClassName = [styles.cell, rangeClass].filter(Boolean).join(' ')
+  const cellClassName = [styles.cell, showSel && edges!.active ? styles.activeCell : '']
+    .filter(Boolean).join(' ')
 
   const isSelectEditing = cellState === 'edit' && col.type === 'select'
 
@@ -347,6 +349,7 @@ function EditableCellInner({
     <div
       ref={cellRootRef}
       className={cellClassName}
+      style={selStyle}
       onClick={handleClick}
       onDoubleClick={col.editable ? handleDoubleClick : undefined}
       role={col.editable ? 'button' : undefined}

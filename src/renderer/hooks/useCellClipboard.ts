@@ -1,40 +1,39 @@
 /**
- * useCellClipboard — clipboard, delete, type-to-edit, and undo for table cells.
+ * useCellClipboard — clipboard, delete, type-to-edit, bulk-fill, and undo for
+ * table cells, over a spreadsheet-style multi-cell `selection`.
+ *
+ * All write operations funnel through one helper, `applyValueToCells`, which
+ * validates per cell, writes concurrently, captures originals for undo, and
+ * reports partial failures. Copy/paste/delete and bulk-fill-on-commit all use it.
+ *
+ * Input normalization (preferring the unified selection, with back-compat):
+ *   selection (>1 effective cell) → those cells (the grid path)
+ *   cellRange                     → the column range
+ *   focusedCell + selectedIds>1   → that column across the checkbox-selected rows
+ *   focusedCell                   → the single cell
  *
  * Clipboard state machine:
- *   IDLE ──Cmd+C──▶ COPIED (dashed outline on source)
- *     │                │
- *     │             Cmd+V → paste value(s), set undoAction, clear COPIED
- *     │             Escape → clear COPIED
- *     │
- *     └──Cmd+X──▶ CUT (dashed outline + isCut flag)
- *                   │
- *                Cmd+V → paste value(s), clear source, set undoAction, clear CUT
+ *   IDLE ──Cmd+C──▶ COPIED (dashed outline) ──Cmd+V──▶ paste + undo, clear COPIED
+ *     └──Cmd+X──▶ CUT ──Cmd+V──▶ paste, clear source, undo, clear CUT
  *
- * Undo flow:
- *   PASTE ──▶ undoAction set (7s timer)
- *             ├─▶ click Undo → revert originals
- *             ├─▶ 7s elapsed → auto-dismiss
- *             ├─▶ dismiss click → clear
- *             └─▶ new paste → old undo cleared
- *
- * Keyboard handlers (all guarded: activeElement must NOT be input/select/textarea):
- *   Cmd+C         → copy single cell or column range
- *   Cmd+X         → copy + set isCut
- *   Cmd+V         → paste to cellRange > selectedIds > single focusedCell
- *   Delete/Bksp   → clear cell(s)
- *   Escape        → clear copied state
- *   Printable key → type-to-edit (enter edit mode with the pressed char)
+ * Undo (7s window): a single action restores every (row, col) it touched.
  */
 import { useState, useCallback, useRef } from 'react'
 import type { ColumnDef } from '../components/crm/tableUtils'
-import { executeBulkEdit } from '../components/crm/tableUtils'
-import type { EditCell, CellRange } from './useEditCellNav'
+import type { EditCell, CellRange, CellSelection, Cell } from './useEditCellNav'
+import { effectiveCells } from './useEditCellNav'
+
+interface CellOriginal {
+  rowId: string
+  colIdx: number
+  value: string | null
+}
 
 interface UndoAction {
-  col: ColumnDef
-  originals: { id: string; value: string | null }[]
+  originals: CellOriginal[]
   count: number
+  /** Verb shown in the undo toast, e.g. "Pasted", "Cleared", "Filled". */
+  label: string
 }
 
 export interface CellClipboardOpts<T extends { id: string }> {
@@ -43,6 +42,8 @@ export interface CellClipboardOpts<T extends { id: string }> {
   focusedCell: EditCell | null
   editCell: EditCell | null
   cellRange: CellRange | null
+  /** Unified multi-cell selection (preferred input when present). */
+  selection?: CellSelection | null
   selectedIds: Set<string>
   getCellValue: (item: T, col: ColumnDef) => string | null
   saveCellValue: (item: T, col: ColumnDef, value: string | null) => Promise<void>
@@ -54,12 +55,16 @@ export interface CellClipboardOpts<T extends { id: string }> {
 export interface CellClipboardReturn {
   copiedCell: EditCell | null
   copiedRange: CellRange | null
+  /** Snapshot of a copied multi-cell selection (for the dashed outline). */
+  copiedCells: Cell[] | null
   isCut: boolean
   clipboardToast: string | null
   undoAction: UndoAction | null
   handleClipboardKeyDown: (e: React.KeyboardEvent) => void
   handleUndo: () => Promise<void>
   dismissUndo: () => void
+  /** Bulk-fill: write `value` to every selected cell in column `colIdx`. */
+  fillSelection: (colIdx: number, value: string | null) => Promise<void>
 }
 
 function isInputFocused(): boolean {
@@ -69,7 +74,6 @@ function isInputFocused(): boolean {
 
 function isPrintableKey(e: React.KeyboardEvent): boolean {
   if (e.metaKey || e.ctrlKey || e.altKey) return false
-  // Single character keys (letters, numbers, symbols)
   return e.key.length === 1
 }
 
@@ -87,6 +91,35 @@ function validatePaste(col: ColumnDef, text: string): string | null {
   return null
 }
 
+/** Build a Sheets-compatible TSV grid over the bounding box of `cells` (gaps = ""). */
+function buildTsv<T extends { id: string }>(
+  cells: Cell[],
+  rows: T[],
+  visibleCols: ColumnDef[],
+  getCellValue: (item: T, col: ColumnDef) => string | null,
+): string {
+  const minR = Math.min(...cells.map((c) => c.row))
+  const maxR = Math.max(...cells.map((c) => c.row))
+  const minC = Math.min(...cells.map((c) => c.col))
+  const maxC = Math.max(...cells.map((c) => c.col))
+  const selected = new Set(cells.map((c) => `${c.row}:${c.col}`))
+  const lines: string[] = []
+  for (let r = minR; r <= maxR; r++) {
+    const cols: string[] = []
+    for (let c = minC; c <= maxC; c++) {
+      if (selected.has(`${r}:${c}`)) {
+        const row = rows[r]
+        const col = visibleCols[c]
+        cols.push(row && col ? (getCellValue(row, col) ?? '') : '')
+      } else {
+        cols.push('')
+      }
+    }
+    lines.push(cols.join('\t'))
+  }
+  return lines.join('\n')
+}
+
 export function useCellClipboard<T extends { id: string }>(
   opts: CellClipboardOpts<T>
 ): CellClipboardReturn {
@@ -96,6 +129,7 @@ export function useCellClipboard<T extends { id: string }>(
     focusedCell,
     editCell,
     cellRange,
+    selection,
     selectedIds,
     getCellValue,
     saveCellValue,
@@ -105,6 +139,7 @@ export function useCellClipboard<T extends { id: string }>(
 
   const [copiedCell, setCopiedCell] = useState<EditCell | null>(null)
   const [copiedRange, setCopiedRange] = useState<CellRange | null>(null)
+  const [copiedCells, setCopiedCells] = useState<Cell[] | null>(null)
   const [isCut, setIsCut] = useState(false)
   const [clipboardToast, setClipboardToast] = useState<string | null>(null)
   const [undoAction, setUndoAction] = useState<UndoAction | null>(null)
@@ -112,9 +147,10 @@ export function useCellClipboard<T extends { id: string }>(
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
-  // Keep refs for async operations
   const rowsRef = useRef(rows)
   rowsRef.current = rows
+  const colsRef = useRef(visibleCols)
+  colsRef.current = visibleCols
 
   const showToast = useCallback((msg: string) => {
     clearTimeout(toastTimerRef.current)
@@ -133,19 +169,98 @@ export function useCellClipboard<T extends { id: string }>(
     setUndoAction(null)
   }, [])
 
-  // ── Copy ─────────────────────────────────────────────────────────────────────
+  // ── Shared write helper ────────────────────────────────────────────────────
+  // Applies `value` (null = clear) to every cell: validates per column, writes
+  // concurrently, captures originals for undo, reports skips/failures, and shows
+  // a single contextual toast. Used by paste, delete-all, and bulk-fill.
+  const writeAndRegister = useCallback(
+    async (cells: Cell[], value: string | null, verb: string): Promise<void> => {
+      const curRows = rowsRef.current
+      const curCols = colsRef.current
+      let skipped = 0
+      let firstError: string | null = null
+      const writable: Array<{ row: T; col: ColumnDef; colIdx: number }> = []
+      for (const cell of cells) {
+        const row = curRows[cell.row]
+        const col = curCols[cell.col]
+        if (!row || !col) continue
+        const err = value === null
+          ? (!col.editable || col.type === 'computed' ? 'Cannot paste into this column' : null)
+          : validatePaste(col, value)
+        if (err) { skipped++; if (!firstError) firstError = err; continue }
+        writable.push({ row, col, colIdx: cell.col })
+      }
+
+      // Single-cell precise UX: surface the exact validation error, no toast clutter.
+      if (cells.length === 1 && writable.length === 0) {
+        if (firstError) showToast(firstError)
+        return
+      }
+      if (writable.length === 0) {
+        showToast(`Nothing to ${verb.toLowerCase()} — ${skipped} read-only cell${skipped !== 1 ? 's' : ''} skipped`)
+        return
+      }
+
+      const originals: CellOriginal[] = writable.map((w) => ({
+        rowId: w.row.id, colIdx: w.colIdx, value: getCellValue(w.row, w.col),
+      }))
+      const results = await Promise.allSettled(writable.map((w) => saveCellValue(w.row, w.col, value)))
+      const okOriginals = originals.filter((_, i) => results[i].status === 'fulfilled')
+      const failed = results.length - okOriginals.length
+
+      if (okOriginals.length > 0) {
+        onClearTableUndo?.()
+        dismissUndo()
+        setUndoWithTimer({ originals: okOriginals, count: okOriginals.length, label: verb })
+      }
+
+      const parts: string[] = []
+      if (cells.length === 1 && okOriginals.length === 1 && failed === 0 && skipped === 0) {
+        showToast(verb) // "Pasted" / "Cleared" — keep the crisp single-cell toast
+        return
+      }
+      parts.push(`${verb} ${okOriginals.length} cell${okOriginals.length !== 1 ? 's' : ''}`)
+      if (skipped > 0) parts.push(`${skipped} skipped`)
+      if (failed > 0) parts.push(`${failed} failed`)
+      showToast(parts.join(' · '))
+    },
+    [getCellValue, saveCellValue, showToast, dismissUndo, setUndoWithTimer, onClearTableUndo],
+  )
+
+  // ── Input normalization ────────────────────────────────────────────────────
+  // Resolve the cells an operation targets. Prefers the unified `selection`.
+  const resolveCells = useCallback((): Cell[] => {
+    const selCells = effectiveCells(selection ?? null)
+    if (selCells.length > 1) return selCells
+    if (cellRange) {
+      const cells: Cell[] = []
+      for (let r = cellRange.startRow; r <= cellRange.endRow; r++) cells.push({ row: r, col: cellRange.colIdx })
+      return cells
+    }
+    if (focusedCell && selectedIds.size > 1 && selectedIds.has(rows[focusedCell.rowIdx]?.id)) {
+      return rows
+        .map((_, i) => i)
+        .filter((i) => selectedIds.has(rows[i].id))
+        .map((i) => ({ row: i, col: focusedCell.colIdx }))
+    }
+    if (focusedCell) return [{ row: focusedCell.rowIdx, col: focusedCell.colIdx }]
+    return []
+  }, [selection, cellRange, focusedCell, selectedIds, rows])
+
+  // ── Copy ───────────────────────────────────────────────────────────────────
 
   const handleCopy = useCallback(async (cut: boolean) => {
-    const col = cellRange
-      ? visibleCols[cellRange.colIdx]
-      : focusedCell
-        ? visibleCols[focusedCell.colIdx]
-        : null
-    if (!col) return
+    const selCells = effectiveCells(selection ?? null)
 
     let text: string
-    if (cellRange) {
-      // Copy all values in the column range, newline-separated
+    if (selCells.length > 1) {
+      // Multi-cell → Sheets-compatible TSV grid (bounding box, gaps = "").
+      text = buildTsv(selCells, rows, visibleCols, getCellValue)
+      setCopiedCells(selCells)
+      setCopiedCell(null)
+      setCopiedRange(null)
+    } else if (cellRange) {
+      const col = visibleCols[cellRange.colIdx]
       const values: string[] = []
       for (let r = cellRange.startRow; r <= cellRange.endRow; r++) {
         const row = rows[r]
@@ -154,11 +269,14 @@ export function useCellClipboard<T extends { id: string }>(
       text = values.join('\n')
       setCopiedRange(cellRange)
       setCopiedCell(null)
+      setCopiedCells(null)
     } else if (focusedCell) {
+      const col = visibleCols[focusedCell.colIdx]
       const row = rows[focusedCell.rowIdx]
       text = row ? (getCellValue(row, col) ?? '') : ''
       setCopiedCell(focusedCell)
       setCopiedRange(null)
+      setCopiedCells(null)
     } else {
       return
     }
@@ -170,17 +288,13 @@ export function useCellClipboard<T extends { id: string }>(
     } catch {
       showToast('Copy failed')
     }
-  }, [cellRange, focusedCell, rows, visibleCols, getCellValue, showToast])
+  }, [selection, cellRange, focusedCell, rows, visibleCols, getCellValue, showToast])
 
-  // ── Paste ────────────────────────────────────────────────────────────────────
+  // ── Paste ──────────────────────────────────────────────────────────────────
 
   const handlePaste = useCallback(async () => {
-    const col = cellRange
-      ? visibleCols[cellRange.colIdx]
-      : focusedCell
-        ? visibleCols[focusedCell.colIdx]
-        : null
-    if (!col) return
+    const cells = resolveCells()
+    if (cells.length === 0) return
 
     let text: string
     try {
@@ -190,218 +304,112 @@ export function useCellClipboard<T extends { id: string }>(
       return
     }
 
-    // Validate
-    const error = validatePaste(col, text)
-    if (error) {
-      showToast(error)
-      return
-    }
-
     const pasteValue = text.trim() === '' ? null : text.trim()
+    await writeAndRegister(cells, pasteValue, 'Pasted')
 
-    // Clear any existing table undo
-    onClearTableUndo?.()
-    dismissUndo()
-
-    // Determine target rows
-    let targetRowIndices: number[]
-    if (cellRange) {
-      targetRowIndices = []
-      for (let r = cellRange.startRow; r <= cellRange.endRow; r++) {
-        targetRowIndices.push(r)
-      }
-    } else if (focusedCell && selectedIds.size > 1 && selectedIds.has(rows[focusedCell.rowIdx]?.id)) {
-      // Paste to all selected rows
-      targetRowIndices = rows
-        .map((_, i) => i)
-        .filter((i) => selectedIds.has(rows[i].id))
-    } else if (focusedCell) {
-      targetRowIndices = [focusedCell.rowIdx]
-    } else {
-      return
-    }
-
-    // Capture originals for undo
-    const originals = targetRowIndices.map((i) => {
-      const row = rows[i]
-      return { id: row.id, value: getCellValue(row, col) }
-    })
-
-    if (targetRowIndices.length === 1) {
-      // Single cell paste
-      const row = rows[targetRowIndices[0]]
-      try {
-        await saveCellValue(row, col, pasteValue)
-        setUndoWithTimer({ col, originals, count: 1 })
-        showToast('Pasted')
-      } catch {
-        showToast('Paste failed')
-      }
-    } else {
-      // Bulk paste
-      const ids = targetRowIndices.map((i) => rows[i].id)
-      const originalsMap = new Map(originals.map((o) => [o.id, o.value]))
-
-      // Optimistic patch — saveCellValue handles individual patches
-      for (const i of targetRowIndices) {
-        const row = rows[i]
-        // Fire-and-forget optimistic patch happens inside saveCellValue
-      }
-
-      const { failedIds } = await executeBulkEdit({
-        ids,
-        getOriginalValue: (id) => originalsMap.get(id) ?? null,
-        updateFn: async (id) => {
-          const row = rowsRef.current.find((r) => r.id === id)
-          if (row) await saveCellValue(row, col, pasteValue)
-        },
-        onPatch: () => {
-          // saveCellValue already handles patching internally
-        },
-      })
-
-      const succeeded = ids.length - failedIds.length
-      if (failedIds.length > 0) {
-        showToast(`${failedIds.length} of ${ids.length} updates failed`)
-      } else {
-        showToast(`Pasted to ${succeeded} cells`)
-      }
-      setUndoWithTimer({
-        col,
-        originals: originals.filter((o) => !failedIds.includes(o.id)),
-        count: succeeded,
-      })
-    }
-
-    // If cut, clear source cell(s)
+    // If cut, clear the source cell(s).
     if (isCut) {
-      if (copiedRange) {
-        for (let r = copiedRange.startRow; r <= copiedRange.endRow; r++) {
-          const row = rowsRef.current[r]
-          if (row) {
-            try { await saveCellValue(row, col, null) } catch { /* best effort */ }
-          }
-        }
-      } else if (copiedCell) {
-        const sourceRow = rowsRef.current[copiedCell.rowIdx]
-        const sourceCol = visibleCols[copiedCell.colIdx]
-        if (sourceRow && sourceCol) {
-          try { await saveCellValue(sourceRow, sourceCol, null) } catch { /* best effort */ }
-        }
+      const srcCells = copiedCells
+        ? copiedCells
+        : copiedRange
+          ? Array.from({ length: copiedRange.endRow - copiedRange.startRow + 1 }, (_, i) => ({ row: copiedRange.startRow + i, col: copiedRange.colIdx }))
+          : copiedCell
+            ? [{ row: copiedCell.rowIdx, col: copiedCell.colIdx }]
+            : []
+      for (const sc of srcCells) {
+        const row = rowsRef.current[sc.row]
+        const col = colsRef.current[sc.col]
+        if (row && col) { try { await saveCellValue(row, col, null) } catch { /* best effort */ } }
       }
     }
 
-    // Clear copied state
     setCopiedCell(null)
     setCopiedRange(null)
+    setCopiedCells(null)
     setIsCut(false)
-  }, [
-    cellRange, focusedCell, selectedIds, rows, visibleCols,
-    getCellValue, saveCellValue, showToast, dismissUndo, onClearTableUndo,
-    setUndoWithTimer, isCut, copiedCell, copiedRange,
-  ])
+  }, [resolveCells, writeAndRegister, showToast, isCut, copiedCell, copiedRange, copiedCells, saveCellValue])
 
-  // ── Delete ───────────────────────────────────────────────────────────────────
+  // ── Delete ─────────────────────────────────────────────────────────────────
 
   const handleDelete = useCallback(async () => {
-    const col = cellRange
-      ? visibleCols[cellRange.colIdx]
-      : focusedCell
-        ? visibleCols[focusedCell.colIdx]
-        : null
-    if (!col || !col.editable || col.type === 'computed') return
+    const cells = resolveCells()
+    if (cells.length === 0) return
+    await writeAndRegister(cells, null, 'Cleared')
+  }, [resolveCells, writeAndRegister])
 
-    if (cellRange) {
-      for (let r = cellRange.startRow; r <= cellRange.endRow; r++) {
-        const row = rows[r]
-        if (row) {
-          try { await saveCellValue(row, col, null) } catch { /* best effort */ }
-        }
-      }
-      showToast(`Cleared ${cellRange.endRow - cellRange.startRow + 1} cells`)
-    } else if (focusedCell) {
-      const row = rows[focusedCell.rowIdx]
-      if (row) {
-        try {
-          await saveCellValue(row, col, null)
-          showToast('Cleared')
-        } catch {
-          showToast('Clear failed')
-        }
-      }
-    }
-  }, [cellRange, focusedCell, rows, visibleCols, saveCellValue, showToast])
+  // ── Bulk-fill (pick once → fill all selected cells in a column) ─────────────
 
-  // ── Undo ─────────────────────────────────────────────────────────────────────
+  const fillSelection = useCallback(async (colIdx: number, value: string | null) => {
+    const cells = effectiveCells(selection ?? null).filter((c) => c.col === colIdx)
+    if (cells.length <= 1) return // nothing to fan out to
+    await writeAndRegister(cells, value, 'Filled')
+  }, [selection, writeAndRegister])
+
+  // ── Undo ───────────────────────────────────────────────────────────────────
 
   const handleUndo = useCallback(async () => {
     if (!undoAction) return
-    const { col, originals } = undoAction
+    const { originals } = undoAction
     dismissUndo()
-
-    for (const { id, value } of originals) {
-      const row = rowsRef.current.find((r) => r.id === id)
-      if (row) {
+    for (const { rowId, colIdx, value } of originals) {
+      const row = rowsRef.current.find((r) => r.id === rowId)
+      const col = colsRef.current[colIdx]
+      if (row && col) {
         try { await saveCellValue(row, col, value) } catch { /* best effort */ }
       }
     }
     showToast('Undone')
   }, [undoAction, saveCellValue, showToast, dismissUndo])
 
-  // ── Keyboard handler ─────────────────────────────────────────────────────────
+  // ── Keyboard handler ────────────────────────────────────────────────────────
 
   const handleClipboardKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Don't intercept when an input is focused (edit mode) — let browser handle
     if (isInputFocused()) return
-    // Don't intercept when in edit mode
     if (editCell) return
 
     const isMod = e.metaKey || e.ctrlKey
+    const hasSelection = !!focusedCell || !!cellRange || effectiveCells(selection ?? null).length > 0
 
-    // Cmd+C / Cmd+X
-    if (isMod && (e.key === 'c' || e.key === 'x') && (focusedCell || cellRange)) {
+    if (isMod && (e.key === 'c' || e.key === 'x') && hasSelection) {
       e.preventDefault()
       void handleCopy(e.key === 'x')
       return
     }
 
-    // Cmd+V
-    if (isMod && e.key === 'v' && (focusedCell || cellRange)) {
+    if (isMod && e.key === 'v' && hasSelection) {
       e.preventDefault()
       void handlePaste()
       return
     }
 
-    // Cmd+Z — undo
     if (isMod && e.key === 'z' && undoAction) {
       e.preventDefault()
       void handleUndo()
       return
     }
 
-    // Delete / Backspace
-    if ((e.key === 'Delete' || e.key === 'Backspace') && (focusedCell || cellRange)) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && hasSelection) {
       e.preventDefault()
       void handleDelete()
       return
     }
 
-    // Escape — clear copied state
-    if (e.key === 'Escape' && (copiedCell || copiedRange)) {
+    if (e.key === 'Escape' && (copiedCell || copiedRange || copiedCells)) {
       e.preventDefault()
       setCopiedCell(null)
       setCopiedRange(null)
+      setCopiedCells(null)
       setIsCut(false)
       return
     }
 
-    // Arrow keys for navigation (handled by useEditCellNav, but we need to pass through)
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
       return // Let the table's composed handler deal with this
     }
 
-    // Type-to-edit: printable char in focused mode → enter edit with that char
-    if (focusedCell && !cellRange && isPrintableKey(e)) {
+    // Type-to-edit: printable char on a single focused cell (not a multi-selection).
+    const isMulti = !!cellRange || effectiveCells(selection ?? null).length > 1
+    if (focusedCell && !isMulti && isPrintableKey(e)) {
       const col = visibleCols[focusedCell.colIdx]
       if (col?.editable && col.type !== 'computed') {
         e.preventDefault()
@@ -409,19 +417,21 @@ export function useCellClipboard<T extends { id: string }>(
       }
     }
   }, [
-    editCell, focusedCell, cellRange, visibleCols,
+    editCell, focusedCell, cellRange, selection, visibleCols,
     handleCopy, handlePaste, handleDelete, handleUndo,
-    onStartEdit, undoAction, copiedCell, copiedRange,
+    onStartEdit, undoAction, copiedCell, copiedRange, copiedCells,
   ])
 
   return {
     copiedCell,
     copiedRange,
+    copiedCells,
     isCut,
     clipboardToast,
     undoAction,
     handleClipboardKeyDown,
     handleUndo,
     dismissUndo,
+    fillSelection,
   }
 }

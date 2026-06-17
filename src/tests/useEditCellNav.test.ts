@@ -11,7 +11,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { useEditCellNav, getRangePosition } from '../renderer/hooks/useEditCellNav'
+import {
+  useEditCellNav, getRangePosition,
+  isCellSelected, getCellEdges, effectiveCells, selectionRowIndices,
+} from '../renderer/hooks/useEditCellNav'
 import type { ColumnDef } from '../renderer/components/crm/tableUtils'
 
 const makeCols = (count: number, editable = true): ColumnDef[] =>
@@ -276,12 +279,23 @@ describe('useEditCellNav', () => {
       expect(result.current.cellRange).toBeNull()
     })
 
-    it('R6: Entering edit clears cellRange', () => {
+    it('R6: editing a cell INSIDE a multi-selection preserves it (enables bulk-fill)', () => {
       const { result } = setup()
       act(() => result.current.handleFocusCell(2, 1))
-      act(() => result.current.handleFocusCell(5, 1, true))
-      act(() => result.current.handleStartEdit(3, 1))
+      act(() => result.current.handleFocusCell(5, 1, true)) // range col1 rows 2–5
+      act(() => result.current.handleStartEdit(3, 1))        // edit a cell within it
+      // selection is kept so the committed value can fan out to all selected cells
+      expect(result.current.cellRange).toEqual({ colIdx: 1, startRow: 2, endRow: 5 })
+      expect(result.current.editCell).toEqual({ rowIdx: 3, colIdx: 1 })
+    })
+
+    it('R6b: editing a cell OUTSIDE the selection collapses to that single cell', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(5, 1, true)) // range col1 rows 2–5
+      act(() => result.current.handleStartEdit(8, 2))        // edit elsewhere
       expect(result.current.cellRange).toBeNull()
+      expect(result.current.focusedCell).toEqual({ rowIdx: 8, colIdx: 2 })
     })
   })
 
@@ -471,6 +485,117 @@ describe('useEditCellNav', () => {
         document.body.dispatchEvent(e)
       })
       expect(result.current.cellRange).toEqual({ colIdx: 1, startRow: 2, endRow: 3 })
+    })
+  })
+
+  // ── Multi-cell selection (Cmd+click / Shift rectangle) ──────────────────────
+
+  describe('multi-cell selection', () => {
+    it('M1: Cmd+click builds a non-contiguous, same-column selection', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(5, 1, false, true)) // cmd+click
+      const sel = result.current.selection
+      expect(isCellSelected(sel, 2, 1)).toBe(true)
+      expect(isCellSelected(sel, 5, 1)).toBe(true)
+      expect(isCellSelected(sel, 3, 1)).toBe(false) // the gap
+      expect(effectiveCells(sel)).toEqual([{ row: 2, col: 1 }, { row: 5, col: 1 }])
+      expect(result.current.focusedCell).toEqual({ rowIdx: 5, colIdx: 1 }) // active = last clicked
+      expect(result.current.cellRange).toBeNull() // not a contiguous range
+    })
+
+    it('M2: Cmd+click across different columns selects both', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(4, 3, false, true))
+      expect(effectiveCells(result.current.selection)).toEqual([
+        { row: 2, col: 1 }, { row: 4, col: 3 },
+      ])
+    })
+
+    it('M3: Cmd+click toggles a selected cell back off', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(5, 1, false, true)) // add
+      act(() => result.current.handleFocusCell(5, 1, false, true)) // remove
+      const sel = result.current.selection
+      expect(isCellSelected(sel, 5, 1)).toBe(false)
+      expect(effectiveCells(sel)).toEqual([{ row: 2, col: 1 }])
+      // active reassigned to a still-selected cell, never a stray highlight
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+    })
+
+    it('M4: Shift+click creates a multi-column rectangle', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(4, 3, true)) // shift+click
+      const sel = result.current.selection
+      expect(isCellSelected(sel, 3, 2)).toBe(true) // interior
+      expect(effectiveCells(sel).length).toBe(9) // 3 rows × 3 cols
+      expect(result.current.cellRange).toBeNull() // multi-column has no single-col range
+    })
+
+    it('M5: Cmd+click inside a rectangle punches a hole (L-shape)', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(4, 1, true))        // rect rows 2..4
+      act(() => result.current.handleFocusCell(3, 1, false, true)) // remove the middle
+      const sel = result.current.selection
+      expect(isCellSelected(sel, 3, 1)).toBe(false)
+      expect(effectiveCells(sel)).toEqual([{ row: 2, col: 1 }, { row: 4, col: 1 }])
+    })
+
+    it('M6: Cmd+Shift+click adds a second rectangle', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(2, 3, true, true)) // cmd+shift add-rect from active
+      expect(effectiveCells(result.current.selection)).toEqual([
+        { row: 2, col: 1 }, { row: 2, col: 2 }, { row: 2, col: 3 },
+      ])
+    })
+
+    it('M7: plain click collapses a multi-selection to one cell', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(5, 1, false, true))
+      act(() => result.current.handleFocusCell(4, 2)) // plain
+      expect(effectiveCells(result.current.selection)).toEqual([{ row: 4, col: 2 }])
+    })
+
+    it('M8: a single contiguous shift range still derives cellRange (back-compat)', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(5, 1, true)) // same column → contiguous
+      expect(result.current.cellRange).toEqual({ colIdx: 1, startRow: 2, endRow: 5 })
+    })
+
+    it('selectionRowIndices: distinct sorted rows from a non-contiguous selection', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(5, 1))
+      act(() => result.current.handleFocusCell(2, 1, false, true)) // cmd+click (rows 5,2)
+      expect(selectionRowIndices(result.current.selection)).toEqual([2, 5])
+    })
+
+    it('selectionRowIndices: each row counted once for a multi-column rectangle', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(4, 3, true)) // rect rows 2–4 × cols 1–3
+      expect(selectionRowIndices(result.current.selection)).toEqual([2, 3, 4])
+    })
+
+    it('selectionRowIndices: null selection → []', () => {
+      expect(selectionRowIndices(null)).toEqual([])
+    })
+
+    it('getCellEdges: lone cell has all four borders; rectangle interior has none', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(4, 1, true)) // vertical rect rows 2..4
+      const sel = result.current.selection
+      expect(getCellEdges(sel, 2, 1)).toMatchObject({ top: true, bottom: false, left: true, right: true })
+      expect(getCellEdges(sel, 3, 1)).toMatchObject({ top: false, bottom: false, left: true, right: true })
+      expect(getCellEdges(sel, 4, 1)).toMatchObject({ top: false, bottom: true, left: true, right: true })
+      expect(getCellEdges(sel, 9, 9)).toBeNull()
     })
   })
 

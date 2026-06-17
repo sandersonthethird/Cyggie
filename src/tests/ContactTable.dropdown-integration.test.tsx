@@ -23,7 +23,7 @@ vi.mock('../renderer/components/company/EditableCell.module.css', () => ({
   default: new Proxy({}, { get: (_, p) => String(p) }),
 }))
 
-import { useEditCellNav, getRangePosition } from '../renderer/hooks/useEditCellNav'
+import { useEditCellNav, getCellEdges } from '../renderer/hooks/useEditCellNav'
 import { EditableCell } from '../renderer/components/company/EditableCell'
 import type { ColumnDef } from '../renderer/components/crm/tableUtils'
 
@@ -52,14 +52,14 @@ function TableHarness({ value, onSave }: { value: string | null; onSave: (v: str
   const scrollRef = useRef<HTMLDivElement>(null)
   const cols = [SELECT_COL]
   const {
-    focusedCell, editCell,
+    selection, editCell,
     handleSelectCellClick, handleFocusCell, handleStartEdit, handleEndEdit,
   } = useEditCellNav(1, cols)
   const [cellValue, setCellValue] = useState<string | null>(value)
 
   const dataIndex = 0
   const colIdx = 0
-  const focusPos = getRangePosition(dataIndex, colIdx, null, focusedCell)
+  const edges = getCellEdges(selection, dataIndex, colIdx)
   const isCellEditing =
     editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
 
@@ -74,7 +74,7 @@ function TableHarness({ value, onSave }: { value: string | null; onSave: (v: str
           onDoubleClick={() => handleStartEdit(dataIndex, colIdx)}
         >
           {cellValue ?? '—'}
-          <span data-testid="focused-marker">{focusPos === 'only' ? 'FOCUSED' : 'UNFOCUSED'}</span>
+          <span data-testid="focused-marker">{edges?.active ? 'FOCUSED' : 'UNFOCUSED'}</span>
         </div>
       </div>
     )
@@ -86,7 +86,7 @@ function TableHarness({ value, onSave }: { value: string | null; onSave: (v: str
       <EditableCell
         value={cellValue}
         col={SELECT_COL}
-        rangePosition={focusPos}
+        edges={edges}
         isEditing={true}
         initialChar={editCell?.initialChar}
         scrollContainer={scrollRef.current}

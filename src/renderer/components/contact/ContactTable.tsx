@@ -34,8 +34,9 @@ import {
 import type { VirtualRow } from '../../hooks/useGroupedRows'
 import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
-import { useEditCellNav, getRangePosition } from '../../hooks/useEditCellNav'
+import { useEditCellNav, getRangePosition, getCellEdges, cellEdgeBoxShadow, effectiveCells, isCellSelected } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
+import { useBulkRowIds } from '../../hooks/useBulkRowIds'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
 import { executeBulkEdit, createCellCallbacks, formatJsonList } from '../crm/tableUtils'
 import type { RangeValue } from '../crm/tableUtils'
@@ -179,6 +180,7 @@ export function ContactTable({
 
   // ── Selection ──────────────────────────────────────────────────────────────
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkDeletePending, setBulkDeletePending] = useState(false)
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [bulkEditing, setBulkEditing] = useState(false)
   const [bulkEditError, setBulkEditError] = useState<string | null>(null)
@@ -224,7 +226,7 @@ export function ContactTable({
   const scrollToColRef = useRef<(idx: number) => void>(() => {})
 
   const {
-    focusedCell, editCell, setEditCell, cellRange,
+    selection, focusedCell, editCell, setEditCell, cellRange, clearFocus,
     handleFocusCell, handleStartEdit, handleSelectCellClick, handleEndEdit, handleKeyboardEvent,
   } = useEditCellNav(
     contacts.length,
@@ -251,6 +253,14 @@ export function ContactTable({
     setSelectedIds(new Set())
   }, [clearSelectionTrigger, setSelectedIds])
 
+  // Bulk-action bar targets: row-checkbox selection ∪ rows the cell selection covers.
+  const bulkRowIds = useBulkRowIds(selectedIds, selection, contacts)
+  const clearBulkSelection = useCallback(() => {
+    setSelectedIds(new Set())
+    clearFocus()
+    setBulkDeletePending(false)
+  }, [setSelectedIds, clearFocus])
+
   function setUndoWithTimer(action: UndoAction) {
     clearTimeout(undoTimerRef.current)
     setUndoAction(action)
@@ -276,22 +286,22 @@ export function ContactTable({
   }
 
   async function handleBulkDelete() {
-    if (selectedIds.size === 0 || bulkDeleting) return
+    if (bulkRowIds.size === 0 || bulkDeleting) return
     setBulkDeleting(true)
-    const ids = Array.from(selectedIds)
-    setSelectedIds(new Set())
+    const ids = Array.from(bulkRowIds)
+    clearBulkSelection()
     await Promise.all(ids.map((id) => api.invoke(IPC_CHANNELS.CONTACT_DELETE, id)))
     setBulkDeleting(false)
     onBulkDelete(ids)
   }
 
   async function handleBulkEdit() {
-    if (selectedIds.size === 0 || bulkEditing || bulkEditValue === null) return
+    if (bulkRowIds.size === 0 || bulkEditing || bulkEditValue === null) return
     setBulkEditOpen(false)
     setBulkEditing(true)
     setBulkEditError(null)
 
-    const ids = Array.from(selectedIds)
+    const ids = Array.from(bulkRowIds)
 
     try {
       if (bulkEditField === 'contactType') {
@@ -320,7 +330,7 @@ export function ContactTable({
         if (failedIds.length > 0) {
           setBulkEditError(`${failedIds.length} of ${ids.length} updates failed`)
         } else {
-          setSelectedIds(new Set())
+          clearBulkSelection()
         }
       } else {
         // company: text input — use CONTACT_SET_COMPANY
@@ -350,7 +360,7 @@ export function ContactTable({
         if (failedIds.length > 0) {
           setBulkEditError(`${failedIds.length} of ${ids.length} updates failed`)
         } else {
-          setSelectedIds(new Set())
+          clearBulkSelection()
         }
       }
     } finally {
@@ -484,15 +494,17 @@ export function ContactTable({
 
   // ── Clipboard ──────────────────────────────────────────────────────────────
   const {
-    copiedCell, copiedRange, clipboardToast,
+    copiedCell, copiedRange, copiedCells, clipboardToast,
     undoAction: clipboardUndoAction,
     handleClipboardKeyDown, handleUndo: handleClipboardUndo, dismissUndo: dismissClipboardUndo,
+    fillSelection,
   } = useCellClipboard({
     rows: contacts,
     visibleCols: mergedVisibleCols,
     focusedCell,
     editCell,
     cellRange,
+    selection,
     selectedIds,
     getCellValue,
     saveCellValue,
@@ -833,8 +845,10 @@ export function ContactTable({
                   const isCustomSelect = !!customFieldId && col.type === 'select'
 
                   const isCellEditing = editCell?.rowIdx === dataIndex && editCell?.colIdx === colIdx
-                  const focusPos = isCellEditing ? null : getRangePosition(dataIndex, colIdx, cellRange, focusedCell)
+                  const edges = isCellEditing ? null : getCellEdges(selection, dataIndex, colIdx)
+                  const selBoxShadow = cellEdgeBoxShadow(edges)
                   const copiedPos = getRangePosition(dataIndex, colIdx, copiedRange, copiedCell)
+                  const isCopiedMulti = !!copiedCells && copiedCells.some((c) => c.row === dataIndex && c.col === colIdx)
 
                   // When groupBy is active: scan mode — all cells navigate to detail
                   if (groupBy) {
@@ -852,23 +866,18 @@ export function ContactTable({
                   }
 
                   if (isCustomSelect && !isCellEditing) {
-                    const chipRangeClass = focusPos
-                      ? focusPos === 'only' ? styles.focusedCell
-                        : focusPos === 'top' ? styles.rangeTop
-                        : focusPos === 'mid' ? styles.rangeMid
-                        : styles.rangeBot
-                      : ''
                     const chipCopiedClass = copiedPos
                       ? copiedPos === 'only' ? styles.copiedCell
                         : copiedPos === 'top' ? styles.copiedRangeTop
                         : copiedPos === 'mid' ? styles.copiedRangeMid
                         : styles.copiedRangeBot
-                      : ''
+                      : (isCopiedMulti ? styles.copiedCell : '')
                     return (
                       <div
                         key={col.key}
-                        className={`${styles.chipCell} ${chipRangeClass} ${chipCopiedClass}`.trim()}
-                        onClick={(e) => handleSelectCellClick(dataIndex, colIdx, e.shiftKey)}
+                        className={`${styles.chipCell} ${chipCopiedClass}`.trim()}
+                        style={selBoxShadow ? { boxShadow: selBoxShadow } : undefined}
+                        onClick={(e) => handleSelectCellClick(dataIndex, colIdx, e.shiftKey, e.metaKey || e.ctrlKey)}
                         onDoubleClick={() => handleStartEdit(dataIndex, colIdx)}
                       >
                         {cellValue ? (
@@ -885,18 +894,18 @@ export function ContactTable({
                       : copiedPos === 'top' ? styles.copiedRangeTop
                       : copiedPos === 'mid' ? styles.copiedRangeMid
                       : styles.copiedRangeBot
-                    : undefined
+                    : (isCopiedMulti ? styles.copiedCell : undefined)
 
                   return (
                     <div key={col.key} className={wrapperCopiedClass}>
                       <EditableCell
                         value={cellValue}
                         col={col}
-                        rangePosition={focusPos}
+                        edges={edges}
                         isEditing={isCellEditing}
                         initialChar={isCellEditing ? editCell?.initialChar : undefined}
                         scrollContainer={scrollRef.current}
-                        onFocus={(shiftKey) => handleFocusCell(dataIndex, colIdx, shiftKey)}
+                        onFocus={(shiftKey, metaKey) => handleFocusCell(dataIndex, colIdx, shiftKey, metaKey)}
                         onStartEdit={() => handleStartEdit(dataIndex, colIdx)}
                         onEndEdit={(dir) => handleEndEdit(dataIndex, colIdx, dir ?? null)}
                         onAddOption={
@@ -913,7 +922,13 @@ export function ContactTable({
                             : undefined
                         }
                         onSave={async (newVal) => {
-                          await saveCellValue(contact, col, newVal)
+                          // Bulk-fill: a committed value fans out to every selected
+                          // cell in this column when a multi-cell selection is active.
+                          if (isCellSelected(selection, dataIndex, colIdx) && effectiveCells(selection).length > 1) {
+                            await fillSelection(colIdx, newVal)
+                          } else {
+                            await saveCellValue(contact, col, newVal)
+                          }
                         }}
                       />
                     </div>
@@ -1027,11 +1042,11 @@ export function ContactTable({
         )
       })()}
 
-      {/* Bulk action bar */}
-      {selectedIds.size > 0 && (
+      {/* Bulk action bar — targets the row-checkbox selection ∪ the cell selection */}
+      {bulkRowIds.size > 0 && (
         <div className={styles.bulkBar}>
-          <button className={styles.bulkClear} onClick={() => setSelectedIds(new Set())}>
-            {selectedIds.size} selected ✕
+          <button className={styles.bulkClear} onClick={clearBulkSelection}>
+            {bulkRowIds.size} selected ✕
           </button>
 
           {/* Edit fields button + dropdown */}
@@ -1090,7 +1105,7 @@ export function ContactTable({
                     onClick={() => void handleBulkEdit()}
                     disabled={applyDisabled}
                   >
-                    Apply to {selectedIds.size} contact{selectedIds.size !== 1 ? 's' : ''}
+                    Apply to {bulkRowIds.size} contact{bulkRowIds.size !== 1 ? 's' : ''}
                   </button>
                 </div>
               </div>
@@ -1098,24 +1113,43 @@ export function ContactTable({
           </div>
 
           {/* Merge button — only when 2+ selected and parent supports it */}
-          {selectedIds.size >= 2 && onMerge && (
+          {bulkRowIds.size >= 2 && onMerge && (
             <button
               className={styles.bulkMenuBtn}
-              onClick={() => onMerge(Array.from(selectedIds))}
+              onClick={() => onMerge(Array.from(bulkRowIds))}
               disabled={bulkDeleting || bulkEditing}
             >
-              Merge {selectedIds.size}
+              Merge {bulkRowIds.size}
             </button>
           )}
 
-          {/* Delete button */}
-          <button
-            className={`${styles.bulkMenuBtn} ${styles.bulkMenuBtnDanger}`}
-            onClick={() => void handleBulkDelete()}
-            disabled={bulkDeleting || bulkEditing}
-          >
-            {bulkDeleting ? 'Working…' : `Delete ${selectedIds.size}`}
-          </button>
+          {/* Delete button — two-step inline confirm (deletion is irreversible) */}
+          {bulkDeletePending ? (
+            <>
+              <button
+                className={styles.bulkMenuBtn}
+                onClick={() => setBulkDeletePending(false)}
+                disabled={bulkDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                className={`${styles.bulkMenuBtn} ${styles.bulkMenuBtnDanger}`}
+                onClick={() => void handleBulkDelete()}
+                disabled={bulkDeleting || bulkEditing}
+              >
+                {bulkDeleting ? 'Working…' : `Confirm delete ${bulkRowIds.size}`}
+              </button>
+            </>
+          ) : (
+            <button
+              className={`${styles.bulkMenuBtn} ${styles.bulkMenuBtnDanger}`}
+              onClick={() => setBulkDeletePending(true)}
+              disabled={bulkDeleting || bulkEditing}
+            >
+              {`Delete ${bulkRowIds.size}`}
+            </button>
+          )}
         </div>
       )}
 
@@ -1127,7 +1161,7 @@ export function ContactTable({
       {/* Clipboard undo toast */}
       {clipboardUndoAction && (
         <div className={styles.clipboardToast}>
-          Pasted to {clipboardUndoAction.count} cell{clipboardUndoAction.count !== 1 ? 's' : ''}
+          {clipboardUndoAction.label} {clipboardUndoAction.count} cell{clipboardUndoAction.count !== 1 ? 's' : ''}
           <button className={styles.clipboardUndoBtn} onClick={() => void handleClipboardUndo()}>Undo</button>
           <button className={styles.clipboardUndoDismiss} onClick={dismissClipboardUndo}>✕</button>
         </div>

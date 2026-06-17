@@ -3312,3 +3312,37 @@ a `sortAccessor` in `companyColumns.ts` / `contactColumns.ts` (both `editable: f
 
 **Depends on / blocked by:** Product decision on the no-comma / empty parse
 semantics (the data-loss guard).
+
+---
+
+## Spreadsheet selection — Phase 2 (fill-handle, grid-paste, Cmd+A, header-select)
+
+**What:** Extend the multi-cell selection (Phase 1 shipped: Cmd+click non-contiguous,
+shift rectangles, TSV copy, delete-all, paste-all, bulk-fill-on-commit) toward full
+Google-Sheets parity:
+- **Fill-handle**: drag the active cell's corner handle to extend + fill a range.
+- **TSV block-paste mapping**: paste an M×N clipboard grid mapped from the active
+  cell, writing cell-by-cell with per-column type validation (today paste writes one
+  value to all selected cells — "paste-all").
+- **Cmd+A**: select the whole focused column (then expand to all).
+- **Column-header click**: select the entire column.
+- **Delight**: a selection-stats chip (count · Σ · avg for numeric columns) and
+  Esc-to-collapse (collapse a multi-selection to the active cell before full clear).
+
+**Why:** Phase 1 covers the 80% (bulk edit/copy/clear across arbitrary cells). These
+are the power-user gestures that make the table feel fully spreadsheet-grade.
+
+**Context:** Built on the Phase 1 foundation in `useEditCellNav.ts` (the hybrid
+`CellSelection` = `rects[] + added/removed + anchor/active`, `getCellEdges`,
+`effectiveCells`) and `useCellClipboard.ts` (the shared `writeAndRegister` helper +
+`fillSelection`). Fill-handle needs a new pointer-drag state machine in the tables;
+block-paste needs a TSV *parser* (Phase 1 only has the TSV *serializer*, `buildTsv`)
+plus per-cell validation/partial-failure reporting (the `writeAndRegister` pattern
+already reports partials). Cmd+A / header-select are new gestures dispatched into
+`handleFocusCell`-style setters. The CEO review explicitly deferred these as the
+"risky 20%" to keep Phase 1 shippable.
+
+**Effort:** L. **Priority:** P3.
+
+**Depends on / blocked by:** Phase 1 (shipped). Fill-handle + block-paste each
+warrant their own focused PR + tests.
