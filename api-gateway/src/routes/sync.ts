@@ -873,9 +873,11 @@ export async function registerSyncRoutes(
           .orderBy(sql`CAST(${schema.userPreferences.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         // tasks is FIRM-SCOPED + field-LWW (Phase 2 multiplayer), same model as
         // org_companies: every firm member pulls the shared task pool. Index-
-        // backed by tasks_firm_lamport_idx (firm_id, lamport::numeric). Soft-
-        // deleted rows ARE sent (deleted_at set) so the tombstone replicates;
-        // reads filter deleted_at IS NULL.
+        // backed by tasks_firm_lamport_idx (firm_id, lamport::numeric). The
+        // deleted_at column is scaffolding for Phase 3 soft-delete — Phase 2
+        // deletes are still hard deletes, so deleted_at is never set yet. When
+        // Phase 3 lands, soft-deleted rows will be sent (tombstone replication)
+        // and the desktop task reads must add WHERE deleted_at IS NULL.
         db
           .select()
           .from(schema.tasks)

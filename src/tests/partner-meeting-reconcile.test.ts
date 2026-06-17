@@ -3,10 +3,9 @@
  *
  * Mock boundaries:
  *   - database/connection (getDatabase) → in-memory SQLite
- *   - org-company.repo (getCompany, updateCompany) → vi.fn()
- *   - meeting.repo (getMeeting) → vi.fn()
+ *   - repositories barrel (getCompany, updateCompany, bulkCreate) → vi.fn()
+ *   - meeting.repo (getMeeting — read, still raw) → vi.fn()
  *   - storage/file-manager (readTranscript) → vi.fn()
- *   - task.repo (bulkCreate) → vi.fn()
  *
  * LLM provider is injected via function parameter (no module mock needed).
  */
