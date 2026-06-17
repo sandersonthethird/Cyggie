@@ -25,6 +25,7 @@ import type { TaskListItem } from '../../shared/types/task'
 import styles from './Dashboard.module.css'
 import { api } from '../api'
 import { ipcCache } from '../api/ipcCache'
+import { useRemoteApply } from '../api/useRemoteApply'
 import { COMPANY_STAGE_OPTIONS } from '../components/common/PipelineStepper'
 import { DecisionLogModal } from '../components/crm/DecisionLogModal'
 import { shouldPromptDecisionLog, defaultDecisionType } from '../utils/decisionLogTrigger'
@@ -309,6 +310,13 @@ export default function Dashboard() {
   useEffect(() => {
     void loadDashboard()
   }, [loadDashboard])
+
+  // Phase 2 multiplayer — refresh the open-tasks panel + activity when a
+  // teammate's task arrives via the pull (useRemoteApply clears the task:list /
+  // dashboard:get ipcCache entries first, so loadDashboard refetches).
+  useRemoteApply(IPC_CHANNELS.TASKS_REMOTE_APPLIED, () => {
+    void loadDashboard()
+  })
 
   const saveAndReloadFilter = useCallback(async (next: DashboardActivityFilter) => {
     setActivityFilter(next)

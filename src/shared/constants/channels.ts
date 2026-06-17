@@ -504,6 +504,9 @@ export const IPC_CHANNELS = {
   // sessions + messages appear on desktop without a manual refresh.
   CHAT_SESSIONS_REMOTE_APPLIED: 'sync:chat-sessions-remote-applied',
   CHAT_SESSION_MESSAGES_REMOTE_APPLIED: 'sync:chat-session-messages-remote-applied',
+  // Phase 2 multiplayer — firm-shared tasks pulled from a teammate appear on
+  // this device without a manual refresh (Tasks/Dashboard/MeetingDetail).
+  TASKS_REMOTE_APPLIED: 'sync:tasks-remote-applied',
 
   // Cyggie cloud auth (Desktop OAuth slice)
   CYGGIE_AUTH_SIGN_IN: 'cyggie-auth:sign-in',

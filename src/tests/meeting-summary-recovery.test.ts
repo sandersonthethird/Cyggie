@@ -31,7 +31,9 @@ vi.mock('../main/storage/file-manager', () => ({
 }))
 
 const updateMeetingMock = vi.fn()
-vi.mock('@cyggie/db/sqlite/repositories/meeting.repo', () => ({
+// updateMeeting now imports from the sync-wrapped barrel (the write flows
+// through the outbox). Mock the barrel, not the raw repo.
+vi.mock('@cyggie/db/sqlite/repositories', () => ({
   updateMeeting: updateMeetingMock,
 }))
 

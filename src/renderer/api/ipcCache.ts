@@ -200,6 +200,7 @@ export const REMOTE_APPLIED_TO_TABLE: Record<string, string> = {
   'sync:org-company-aliases-remote-applied':   'org_company_aliases',
   'sync:chat-sessions-remote-applied':         'chat_sessions',
   'sync:chat-session-messages-remote-applied': 'chat_session_messages',
+  'sync:tasks-remote-applied':                 'tasks',
 }
 
 /**

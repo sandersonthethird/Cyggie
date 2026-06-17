@@ -13,6 +13,7 @@ import type {
 } from '../../shared/types/task'
 import styles from './Tasks.module.css'
 import { api } from '../api'
+import { useRemoteApply } from '../api/useRemoteApply'
 import { parseTimestamp, parseToDate } from '../utils/format'
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -131,6 +132,11 @@ export default function Tasks() {
   useEffect(() => {
     fetchTasks()
   }, [fetchTasks])
+
+  // Phase 2 multiplayer — refresh when a teammate's task arrives via the pull.
+  useRemoteApply(IPC_CHANNELS.TASKS_REMOTE_APPLIED, () => {
+    void fetchTasks()
+  })
 
   const statusCounts = useMemo(() => {
     const counts: Record<TaskStatus, number> = { open: 0, in_progress: 0, done: 0, dismissed: 0 }

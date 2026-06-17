@@ -1,11 +1,14 @@
+import { sql } from 'drizzle-orm'
 import {
   index,
+  jsonb,
   pgTable,
   text,
   timestamp,
   varchar,
 } from 'drizzle-orm/pg-core'
 import { users } from './auth'
+import { firms } from './firms'
 import { orgCompanies } from './companies'
 import { contacts } from './contacts'
 import { meetings } from './meetings'
@@ -39,6 +42,19 @@ export const tasks = pgTable(
     // Dedup key — extracted tasks may be re-extracted on summary re-run; hash matches
     // prevent dupes.
     extractionHash: text('extraction_hash'),
+    // Multiplayer (Phase 2) — firm-shared pool + field-level LWW + soft-delete.
+    // Mirrors org_companies (Phase 1). firm_id denormalized so the firm-scoped
+    // pull filters without a users JOIN; stamped by the gateway from the JWT on
+    // every push, backfilled from the creator's users.firm_id (tasks has no
+    // user_id-derived owner column, so the backfill keys on created_by_user_id).
+    firmId: text('firm_id').references(() => firms.id, { onDelete: 'cascade' }),
+    // Per-column logical clocks (snake_case col → lamport). NULL until the first
+    // field-LWW write, then densified. See sync/field-lww.ts.
+    fieldLamports: jsonb('field_lamports'),
+    // Soft-delete: a user delete sets these (an UPDATE that syncs like any edit);
+    // reads filter deleted_at IS NULL. Hard purge (admin) is a separate path.
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedByUserId: text('deleted_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     lamport: text('lamport').notNull().default('0'),
@@ -47,6 +63,13 @@ export const tasks = pgTable(
   },
   (t) => [
     index('tasks_user_idx').on(t.userId),
+    // Firm-scoped pull cursor (L1): WHERE firm_id = ? AND lamport::numeric > ?.
+    // Expression index keeps the numeric cast from forcing a seq-scan + sort.
+    index('tasks_firm_lamport_idx').on(t.firmId, sql`(${t.lamport}::numeric)`),
+    // Recycle-bin scan: deleted-but-recoverable rows, partial to stay tiny.
+    index('tasks_recycle_idx')
+      .on(t.firmId, t.deletedAt)
+      .where(sql`${t.deletedAt} IS NOT NULL`),
     index('tasks_meeting_idx').on(t.meetingId),
     index('tasks_company_idx').on(t.companyId),
     index('tasks_contact_idx').on(t.contactId),

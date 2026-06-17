@@ -3,10 +3,9 @@
  *
  * Mock boundaries:
  *   - database/connection (getDatabase) → in-memory SQLite
- *   - org-company.repo (getCompany, updateCompany) → vi.fn()
- *   - meeting.repo (getMeeting) → vi.fn()
+ *   - repositories barrel (getCompany, updateCompany, bulkCreate) → vi.fn()
+ *   - meeting.repo (getMeeting — read, still raw) → vi.fn()
  *   - storage/file-manager (readTranscript) → vi.fn()
- *   - task.repo (bulkCreate) → vi.fn()
  *
  * LLM provider is injected via function parameter (no module mock needed).
  */
@@ -28,12 +27,7 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
 const mockGetCompany = vi.fn()
 const mockUpdateCompany = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  getCompany: (...args: unknown[]) => mockGetCompany(...args),
-  updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
-}))
-
-// ─── Mock: meeting.repo ───────────────────────────────────────────────────────
+// ─── Mock: meeting.repo (getMeeting is a read — still imported raw) ────────────
 
 const mockGetMeeting = vi.fn()
 
@@ -49,11 +43,14 @@ vi.mock('../main/storage/file-manager', () => ({
   readTranscript: (...args: unknown[]) => mockReadTranscript(...args),
 }))
 
-// ─── Mock: task.repo ──────────────────────────────────────────────────────────
+// ─── Mock: repositories barrel (getCompany/updateCompany/bulkCreate now all
+//     import from the sync-wrapped barrel; the writes flow through the outbox) ──
 
 const mockBulkCreateTasks = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/task.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories', () => ({
+  getCompany: (...args: unknown[]) => mockGetCompany(...args),
+  updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
   bulkCreate: (...args: unknown[]) => mockBulkCreateTasks(...args),
 }))
 

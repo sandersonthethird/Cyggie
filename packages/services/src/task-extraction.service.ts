@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'crypto'
-import * as taskRepo from '@cyggie/db/sqlite/repositories/task.repo'
+import * as taskRepo from '@cyggie/db/sqlite/repositories'
 import type { TaskCategory, TaskExtractionResult, ProposedTask } from '@shared/types/task'
 
 const ACTION_ITEM_LABELS = ['action items', 'next steps', 'follow-ups', 'follow ups', 'action items & next steps']

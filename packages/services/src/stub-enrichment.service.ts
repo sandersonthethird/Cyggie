@@ -26,7 +26,7 @@
  *   - Background queue persistence (in-memory only; lost on app restart).
  *   - User-facing notification of completion (the cell will refetch on next render).
  */
-import { getCompany, updateCompany } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { getCompany, updateCompany } from '@cyggie/db/sqlite/repositories'
 import { getProvider } from '@cyggie/services/llm/provider-factory'
 import type { LLMProvider } from '@cyggie/services/llm/provider'
 import type { CompanyEntityType } from '@shared/types/company'

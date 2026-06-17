@@ -1688,6 +1688,198 @@ function upsertChatSessionMessageRow(
   })
 }
 
+// ─── Tasks (Phase 2 multiplayer — firm-shared + field-LWW) ───────────────────
+//
+// Mirrors org_companies: a field-LWW table whose apply does a PER-COLUMN merge
+// (incoming wins a column only when its per-field clock beats the local one), so
+// a teammate's status flip can't clobber this device's un-pushed title edit.
+// Applied AFTER meetings/companies/contacts so the FK parents (meeting_id,
+// company_id, contact_id) exist; a task whose parent isn't local yet rolls back
+// its own chunk and retries next pull (the existing apply FK pre-gate).
+//
+// SQLite tasks has no firm_id column (the gateway firm-scopes the pull); the
+// audit FKs (created_by / updated_by / deleted_by) are defensively NULLed when
+// the user isn't in the local directory yet, exactly like org_companies.
+
+export interface PulledTaskRow extends PulledRow {
+  id: string
+  userId: string
+  /** Per-column lamports (snake_col → lamport) for the field-LWW pull merge. */
+  fieldLamports?: Record<string, unknown> | string | null
+  title: string
+  description: string | null
+  meetingId: string | null
+  companyId: string | null
+  contactId: string | null
+  status: string
+  category: string
+  priority: string | null
+  assignee: string | null
+  dueDate: string | Date | null
+  source: string
+  sourceSection: string | null
+  extractionHash: string | null
+  deletedAt: string | Date | null
+  deletedByUserId: string | null
+  createdByUserId: string | null
+  updatedByUserId: string | null
+  lamport: string
+  createdAt: string | Date
+  updatedAt: string | Date
+}
+
+export function applyRemoteTasks(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledTaskRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  return applyRemoteRows(db, deviceId, userId, rows, TASKS_SPEC, opts)
+}
+
+const TASKS_SPEC: TableSpec<PulledTaskRow> = {
+  tableName: 'tasks',
+  hasUserId: true,
+  fieldLww: true,
+  selectLamportSql: 'SELECT lamport FROM tasks WHERE id = ?',
+  rowKey: (row) => [row.id],
+  rowId: (row) => row.id,
+  upsert: (db, row) => upsertTaskRow(db, row),
+}
+
+// Explicit snake_column → camelKey map for tasks' field-LWW data columns
+// (everything except the PK `id` and sync meta `lamport`/`field_lamports`).
+// All task columns are clean snake↔camel (no numbered columns), but the map is
+// explicit to match the org_companies convention and so the per-field merge
+// can't silently drop a column to a converter edge case. `field_lamports` keys
+// are snake (the bare-row diff's native casing); this looks up the camelCase
+// value in the pulled (camelCase) row.
+const TASK_COL_MAP: ReadonlyArray<readonly [snake: string, camel: keyof PulledTaskRow]> = [
+  ['title', 'title'], ['description', 'description'],
+  ['meeting_id', 'meetingId'], ['company_id', 'companyId'], ['contact_id', 'contactId'],
+  ['status', 'status'], ['category', 'category'], ['priority', 'priority'],
+  ['assignee', 'assignee'], ['due_date', 'dueDate'],
+  ['source', 'source'], ['source_section', 'sourceSection'],
+  ['extraction_hash', 'extractionHash'],
+  ['deleted_at', 'deletedAt'], ['deleted_by_user_id', 'deletedByUserId'],
+  ['created_by_user_id', 'createdByUserId'], ['updated_by_user_id', 'updatedByUserId'],
+  ['created_at', 'createdAt'], ['updated_at', 'updatedAt'],
+]
+const TASK_SNAKE_TO_CAMEL = new Map(TASK_COL_MAP)
+
+function upsertTaskRow(db: Database.Database, row: PulledTaskRow): void {
+  // Field-LWW pull merge — same shape as upsertOrgCompanyRow: insert writes the
+  // whole row; update writes only the columns the incoming write wins, leaving
+  // losing columns at their local value (protecting un-pushed local edits).
+  const local = db
+    .prepare('SELECT lamport, field_lamports FROM tasks WHERE id = ? LIMIT 1')
+    .get(row.id) as { lamport: string; field_lamports: string | null } | undefined
+  const isInsert = local == null
+
+  const incomingMap = parseFieldLamports(row.fieldLamports ?? null)
+  const merge = mergeFieldLww({
+    existingFieldLamports: isInsert ? null : parseFieldLamports(local!.field_lamports),
+    existingRowLamport: isInsert ? '0' : local!.lamport,
+    incomingFieldLamports: incomingMap,
+    incomingRowLamport: row.lamport,
+    incomingColumns: incomingMap
+      ? Object.keys(incomingMap)
+      : TASK_COL_MAP.map(([snake]) => snake),
+    isInsert,
+  })
+
+  // Audit FKs reference users(id). A teammate's user row may not be in the local
+  // directory yet — store NULL rather than FK-fail the whole task (attribution
+  // resolves once the firm directory syncs).
+  const userExists = (uid: string | null | undefined): boolean =>
+    uid != null &&
+    db.prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1').get(uid) != null
+  const createdByUserId = userExists(row.createdByUserId) ? row.createdByUserId : null
+  const updatedByUserId = userExists(row.updatedByUserId) ? row.updatedByUserId : null
+  const deletedByUserId = userExists(row.deletedByUserId) ? row.deletedByUserId : null
+
+  const bind: Record<string, unknown> = {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    meetingId: row.meetingId,
+    companyId: row.companyId,
+    contactId: row.contactId,
+    status: row.status,
+    category: row.category,
+    priority: row.priority,
+    assignee: row.assignee,
+    dueDate: row.dueDate ? toIso(row.dueDate) : null,
+    source: row.source,
+    sourceSection: row.sourceSection,
+    extractionHash: row.extractionHash,
+    deletedAt: row.deletedAt ? toIso(row.deletedAt) : null,
+    deletedByUserId,
+    createdByUserId,
+    updatedByUserId,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+    lamport: merge.newRowLamport,
+    fieldLamports: JSON.stringify(merge.mergedFieldLamports),
+  }
+
+  if (!isInsert) {
+    if (merge.winners.length === 0) return // incoming lost every column — no-op.
+    const setParts: string[] = []
+    for (const snake of merge.winners) {
+      const camel = TASK_SNAKE_TO_CAMEL.get(snake)
+      if (!camel) continue // unknown/meta column — skip defensively.
+      setParts.push(`${snake} = @${camel}`)
+    }
+    setParts.push('field_lamports = @fieldLamports', 'lamport = @lamport')
+    db.prepare(`UPDATE tasks SET ${setParts.join(', ')} WHERE id = @id`).run(bind)
+    return
+  }
+
+  // Insert path — write the whole incoming row. SQLite tasks has no user_id /
+  // firm_id column (the gateway firm-scopes the pull), so neither is written.
+  db.prepare(
+    `INSERT INTO tasks (
+       id, title, description, meeting_id, company_id, contact_id,
+       status, category, priority, assignee, due_date,
+       source, source_section, extraction_hash,
+       deleted_at, deleted_by_user_id,
+       created_by_user_id, updated_by_user_id,
+       created_at, updated_at, lamport, field_lamports
+     ) VALUES (
+       @id, @title, @description, @meetingId, @companyId, @contactId,
+       @status, @category, @priority, @assignee, @dueDate,
+       @source, @sourceSection, @extractionHash,
+       @deletedAt, @deletedByUserId,
+       @createdByUserId, @updatedByUserId,
+       @createdAt, @updatedAt, @lamport, @fieldLamports
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       description = excluded.description,
+       meeting_id = excluded.meeting_id,
+       company_id = excluded.company_id,
+       contact_id = excluded.contact_id,
+       status = excluded.status,
+       category = excluded.category,
+       priority = excluded.priority,
+       assignee = excluded.assignee,
+       due_date = excluded.due_date,
+       source = excluded.source,
+       source_section = excluded.source_section,
+       extraction_hash = excluded.extraction_hash,
+       deleted_at = excluded.deleted_at,
+       deleted_by_user_id = excluded.deleted_by_user_id,
+       created_by_user_id = excluded.created_by_user_id,
+       updated_by_user_id = excluded.updated_by_user_id,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       lamport = excluded.lamport,
+       field_lamports = excluded.field_lamports`,
+  ).run(bind)
+}
+
 // ─── Upsert helper ───────────────────────────────────────────────────────────
 
 // ─── Calendar-meeting id reconcile ───────────────────────────────────────────

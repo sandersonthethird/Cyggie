@@ -14,7 +14,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const getCompanyMock = vi.fn()
 const updateCompanyMock = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
+// getCompany/updateCompany now import from the sync-wrapped barrel (the write
+// flows through the outbox). Mock the barrel, not the raw repo.
+vi.mock('@cyggie/db/sqlite/repositories', () => ({
   getCompany: (...args: unknown[]) => getCompanyMock(...args),
   updateCompany: (...args: unknown[]) => updateCompanyMock(...args),
 }))

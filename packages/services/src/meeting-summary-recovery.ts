@@ -42,7 +42,7 @@
 
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { writeSummary } from '@main/storage/file-manager'
-import * as meetingRepo from '@cyggie/db/sqlite/repositories/meeting.repo'
+import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 import { getCurrentUserId } from '@main/security/current-user'
 import type { Meeting } from '@shared/types/meeting'
 

@@ -123,6 +123,7 @@ import { runNotesIsPrivateMigration } from './migrations/121-notes-is-private'
 import { runMeetingsLocationMigration } from './migrations/122-meetings-location'
 import { runMeetingContactSyncColumnsMigration } from './migrations/123-meeting-contact-sync-columns'
 import { runOrgCompaniesFieldLwwMigration } from './migrations/124-org-companies-field-lww'
+import { runTasksFieldLwwMigration } from './migrations/125-tasks-field-lww'
 
 let db: Database.Database | null = null
 
@@ -337,4 +338,5 @@ export function runAllMigrations(db: Database.Database): void {
   runMeetingsLocationMigration(db)
   runMeetingContactSyncColumnsMigration(db)
   runOrgCompaniesFieldLwwMigration(db)
+  runTasksFieldLwwMigration(db)
 }

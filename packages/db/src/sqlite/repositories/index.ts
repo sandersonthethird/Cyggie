@@ -55,7 +55,9 @@ import * as rawChatSession from './chat-session.repo'
 import * as rawMemo from './investment-memo.repo'
 import * as rawFlaggedFiles from './company-file-flags.repo'
 import * as rawCustomFields from './custom-fields.repo'
+import * as rawTask from './task.repo'
 import type { InvestmentMemoWithLatest } from '@shared/types/company'
+import type { Task, TaskCreateData, TaskStatus } from '@shared/types/task'
 import { getDatabase } from '../connection'
 
 // ── meetings ────────────────────────────────────────────────────────────────
@@ -774,6 +776,88 @@ export const countFieldValues = rawCustomFields.countFieldValues
 export const countBuiltinOptionUsage = rawCustomFields.countBuiltinOptionUsage
 export const reorderFieldDefinitions = rawCustomFields.reorderFieldDefinitions
 export const renameBuiltinOption = rawCustomFields.renameBuiltinOption
+
+// ── tasks (Phase 2 multiplayer — firm-shared + field-LWW) ─────────────────────
+//
+// tasks is `fieldLww: true, firmScoped: true` in OWNED_TABLES. createTask /
+// updateTask / deleteTask flow through the outbox here; the gateway merges them
+// per-column and firm-scopes the pull, so teammates share one task pool.
+//
+// extractRow re-SELECTs the full snake_case row (SELECT *) on insert/update
+// because the raw fns return a partial camelCase DTO (rowToTask omits
+// created_by_user_id, extraction_hash, lamport, field_lamports). The gateway's
+// snake↔camel bridge normalizes either casing, but the bare row is the only
+// shape that carries every column the gateway needs to persist. Same pattern as
+// investment_memos / custom_fields above.
+
+function selectTaskRow(taskId: string): Record<string, unknown> | null {
+  return getDatabase()
+    .prepare('SELECT * FROM tasks WHERE id = ?')
+    .get(taskId) as Record<string, unknown> | null
+}
+
+export const createTask = withSync(rawTask.createTask, {
+  table: 'tasks',
+  op: 'insert',
+  extractRow: ({ result }) => {
+    const r = result as Task | null
+    return r ? selectTaskRow(r.id) : null
+  },
+})
+
+export const updateTask = withSync(rawTask.updateTask, {
+  table: 'tasks',
+  op: 'update',
+  // Field-LWW: the wrapper diffs this bare pre-row against the bare post-row to
+  // compute the changed-column set + densify baseline (cheap single SELECT, 3A).
+  captureBeforeUpdate: (_db, [taskId]) => selectTaskRow(taskId as string),
+  // Re-read the bare post-row (raw updateTask returns a partial camelCase DTO).
+  // Returns null when the row doesn't exist → no emission.
+  extractRow: ({ args }) => selectTaskRow(args[0] as string),
+})
+
+export const deleteTask = withSync(rawTask.deleteTask, {
+  table: 'tasks',
+  op: 'delete',
+  captureBeforeDelete: (_db, [taskId]) => selectTaskRow(taskId as string),
+})
+
+// bulkCreate / bulkUpdateStatus reimplemented over the WRAPPED single-row fns so
+// each task emits its own outbox row (the raw versions call raw createTask / do a
+// single multi-row UPDATE, both of which bypass the outbox). Wrapped in an outer
+// transaction to preserve the original all-or-nothing semantics — better-sqlite3
+// nests via savepoints, so each inner withSync txn still gets its own lamport.
+
+export function bulkCreate(
+  tasks: TaskCreateData[],
+  userId: string | null = null,
+): Task[] {
+  const db = getDatabase()
+  return db.transaction(() => tasks.map((data) => createTask(data, userId)))()
+}
+
+export function bulkUpdateStatus(
+  taskIds: string[],
+  status: TaskStatus,
+  userId: string | null = null,
+): number {
+  const db = getDatabase()
+  return db.transaction(() => {
+    let changed = 0
+    for (const id of taskIds) {
+      if (updateTask(id, { status }, userId)) changed += 1
+    }
+    return changed
+  })()
+}
+
+// Pass-throughs (reads)
+export const listTasks = rawTask.listTasks
+export const getTask = rawTask.getTask
+export const listTasksForMeeting = rawTask.listTasksForMeeting
+export const listTasksForCompany = rawTask.listTasksForCompany
+export const getTaskSummaryStats = rawTask.getTaskSummaryStats
+export const existsByMeetingAndHash = rawTask.existsByMeetingAndHash
 
 // Re-export the database accessor so the rare caller that needs it can
 // continue to import from the barrel rather than reaching into connection.ts.
