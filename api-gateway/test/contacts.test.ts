@@ -357,3 +357,54 @@ describe('GET /contacts/:id', () => {
     expect(res.statusCode).toBe(404)
   })
 })
+
+describe('GET /contacts/:id — guarded passthrough', () => {
+  const FORBIDDEN_KEYS = [
+    'userId', 'lamport', 'fieldSources', 'createdByUserId', 'updatedByUserId',
+    'createdAt', 'updatedAt', 'normalizedName', 'crmContactId', 'crmProvider',
+    // Heavy JSONB denylisted (decision 2A) — never on the wire.
+    'workHistory', 'educationHistory', 'linkedinSkills', 'linkedinEnrichedAt', 'otherSocials',
+  ]
+
+  test('surfaces investor + JSONB-list fields and leaks no internal column', async () => {
+    const userId = await insertTestUser()
+    const id = TEST_PREFIX + 'ct-' + createId().slice(0, 8)
+    await db.insert(schema.contacts).values({
+      id,
+      userId,
+      fullName: 'Iris Investor ' + TEST_PREFIX,
+      normalizedName: ('iris investor ' + TEST_PREFIX).toLowerCase(),
+      contactType: 'investor',
+      relationshipStrength: 'strong',
+      fundSize: 50_000_000,
+      typicalCheckSizeMin: 250_000,
+      typicalCheckSizeMax: 1_000_000,
+      university: 'Stanford',
+      tags: ['ai', 'infra'],
+      investmentStageFocus: ['seed', 'series_a'],
+      proudPortfolioCompanies: [{ name: 'Acme' }, { name: 'Globex' }],
+    })
+    cleanup.track(schema.contacts, schema.contacts.id, id)
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/contacts/${id}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as Record<string, unknown>
+
+    expect(body['contactType']).toBe('investor')
+    expect(body['university']).toBe('Stanford')
+    expect(body['fundSize']).toBe(50_000_000)
+    // JSONB lists normalized to string[] (objects → their name).
+    expect(body['tags']).toEqual(['ai', 'infra'])
+    expect(body['investmentStageFocus']).toEqual(['seed', 'series_a'])
+    expect(body['proudPortfolioCompanies']).toEqual(['Acme', 'Globex'])
+
+    for (const k of FORBIDDEN_KEYS) {
+      expect(Object.prototype.hasOwnProperty.call(body, k), `internal key "${k}" leaked`).toBe(false)
+    }
+  })
+})

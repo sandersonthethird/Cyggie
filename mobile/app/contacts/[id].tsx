@@ -26,7 +26,8 @@ import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo } from '../../components/CompanyLogo'
 import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { UserNoteEditor } from '../../components/UserNoteEditor'
-import { LedgerCard, linkedinPath, type LedgerGroup, type PillTone } from '../../components/LedgerCard'
+import { LedgerCard } from '../../components/LedgerCard'
+import { buildContactGroups } from '../../lib/ledger/buildGroups'
 import { RichMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -296,54 +297,9 @@ function SegmentControl({
 }
 
 function OverviewSection({ contact }: { contact: ContactDetail }) {
-  const groups = useMemo<LedgerGroup[]>(() => {
-    const location =
-      contact.city && contact.state
-        ? `${contact.city}, ${contact.state}`
-        : contact.city ?? contact.state
-
-    const about: LedgerGroup['rows'] = [
-      contact.title ? { key: 'Title', value: contact.title } : null,
-      contact.primaryCompanyName ? { key: 'Company', value: contact.primaryCompanyName } : null,
-      contact.email ? { key: 'Email', value: contact.email } : null,
-      contact.phone ? { key: 'Phone', value: contact.phone } : null,
-      contact.linkedinUrl
-        ? { key: 'LinkedIn', value: linkedinPath(contact.linkedinUrl), link: true }
-        : null,
-      location ? { key: 'Location', value: location } : null,
-      contact.street ? { key: 'Street', value: contact.street } : null,
-      contact.postalCode ? { key: 'Postal Code', value: contact.postalCode } : null,
-      contact.country ? { key: 'Country', value: contact.country } : null,
-    ].filter((r): r is NonNullable<typeof r> => r !== null)
-
-    // Investor-specific — group drops out entirely when nothing is set.
-    const typeTone: PillTone = contact.contactType === 'investor' ? 'green' : 'neutral'
-    const checkSize = formatCheckRange(
-      contact.typicalCheckSizeMin,
-      contact.typicalCheckSizeMax,
-    )
-    const investment: LedgerGroup['rows'] = [
-      contact.contactType
-        ? {
-            key: 'Type',
-            pills: [{ label: humanize(contact.contactType), tone: typeTone }],
-          }
-        : null,
-      contact.relationshipStrength
-        ? {
-            key: 'Relationship',
-            pills: [{ label: humanize(contact.relationshipStrength), tone: 'sky' as const }],
-          }
-        : null,
-      contact.fundSize ? { key: 'Fund size', value: formatCurrency(contact.fundSize) } : null,
-      checkSize ? { key: 'Check size', value: checkSize } : null,
-    ].filter((r): r is NonNullable<typeof r> => r !== null)
-
-    return [
-      { label: 'About', rows: about },
-      { label: 'Investment', rows: investment },
-    ].filter((g) => g.rows.length > 0)
-  }, [contact])
+  // Drift-proof: grouped ledger built generically from the shared registry over
+  // the gateway passthrough payload. See mobile/lib/ledger/buildGroups.ts.
+  const groups = useMemo(() => buildContactGroups(contact), [contact])
 
   const queryClient = useQueryClient()
   const saveUserNote = async (next: string | null): Promise<void> => {
@@ -622,17 +578,6 @@ function formatDuration(seconds: number): string {
   return rem === 0 ? `${h}h` : `${h}h ${rem}m`
 }
 
-function formatCurrency(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`
-  return `$${n.toLocaleString()}`
-}
-
-function formatCheckRange(min: number | null, max: number | null): string | null {
-  if (min == null && max == null) return null
-  if (min != null && max != null) return `${formatCurrency(min)}—${formatCurrency(max)}`
-  return formatCurrency((min ?? max) as number)
-}
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },

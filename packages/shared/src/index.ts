@@ -5,3 +5,4 @@
 export * from './constants/meetings'
 export * from './chat-context-id'
 export * from './location-classifier'
+export * from './field-registry'

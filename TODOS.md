@@ -1,5 +1,61 @@
 # TODOS
 
+## Mobile ledger PR2 — Reliable co-investors (single source of truth)
+
+**What:** Co-investors live in the un-synced `company_investors` M2M table
+(`packages/db/src/schema/companies.ts`), while the synced
+`org_companies.co_investors` JSONB column is vestigial (never written by desktop).
+So mobile can't read co-investors from Neon. Consolidate to one source: make
+`company_investors` an owned/synced table, one-time merge any stray legacy-column
+data into it, have the gateway JOIN it to produce the `coInvestors` name list, then
+DROP the legacy `co_investors` column.
+
+**Why:** PR1 (drift-proof projection) deliberately deferred co-investors — its
+registry row is dormant and simply drops until the data reaches Neon. Until PR2,
+the Co-investors row never appears on a company card.
+
+**Context:** Touchpoints — `packages/db/src/sync/owned-tables.ts` (register
+`company_investors`, composite identity `company_id+investor_company_id+investor_type`,
+firm-scoped via parent), `packages/db/src/postgres/write-validators.ts` (validators),
+`api-gateway/src/routes/companies.ts` (JOIN `company_investors`→investor
+`org_companies` for the name list, add to the `.passthrough()` return), then retire
+`org_companies.co_investors` from `schema/companies.ts`, the pull-apply map in
+`src/main/services/sync-remote-apply.ts`, and the org_companies field-LWW set, via a
+coordinated PG+SQLite drop migration. Run the pre-push migration-drift guard locally
+(`fix/issue-27-migration-drift`). Sequence the column drop LAST (after code stops
+referencing it) — it's the only one-way step.
+
+**Effort:** M. **Priority:** P2. **Depends on / blocked by:** PR1 (the
+passthrough + `mobile/lib/ledger/buildGroups.ts` registry, where the `coInvestors`
+row already exists).
+
+---
+
+## Mobile ledger PR3 — Desktop convergence on the shared field registry
+
+**What:** Repoint the desktop FieldSections
+(`src/renderer/components/{company,contact}/*FieldSections.tsx` +
+`src/renderer/constants/*Fields.ts`) to derive their labels / section / order from
+the shared `@cyggie/shared` field registry that PR1 introduced
+(`packages/shared/src/field-registry.ts`), removing the temporary duplication
+between desktop's constants and the registry. Desktop keeps its richer *editor*
+meta (input types, option sources, complex pickers) separately — that's a distinct
+concern from the display contract, not duplication.
+
+**Why:** PR1 made the registry the single source of truth for the mobile card and
+the gateway-exposed fields, but desktop still hardcodes its own labels/sections. Until
+PR3, a label/section change must be made in two places. Converging closes the last
+drift seam across desktop + mobile.
+
+**Context:** The registry already encodes `{ key, label, section, order, format,
+tone }` for every company/contact field plus a `FIELD_SKIP_SET`. The desktop refactor
+is mechanical (read labels/sections/order from the registry instead of the local
+constants) but touches the desktop detail UI broadly, so it's isolated to its own PR.
+
+**Effort:** M. **Priority:** P2. **Depends on / blocked by:** PR1.
+
+---
+
 ## Extend the transcription provider picker to the gateway/mobile path
 
 **What:** Make the gateway-side Deepgram batch path honor each user's

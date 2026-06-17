@@ -28,7 +28,8 @@ import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo, deriveLogoDomain } from '../../components/CompanyLogo'
 import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { UserNoteEditor } from '../../components/UserNoteEditor'
-import { LedgerCard, linkedinPath, type LedgerGroup } from '../../components/LedgerCard'
+import { LedgerCard } from '../../components/LedgerCard'
+import { buildCompanyGroups } from '../../lib/ledger/buildGroups'
 import { RichMarkdown, stripMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -299,63 +300,11 @@ function SegmentControl({
 }
 
 function OverviewSection({ company }: { company: CompanyDetail }) {
-  const groups = useMemo<LedgerGroup[]>(() => {
-    const hq =
-      company.city && company.state
-        ? `${company.city}, ${company.state}`
-        : company.city ?? company.state
-    const industries = (company.industry ?? '')
-      .split(/[,·]/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-
-    const overview: LedgerGroup['rows'] = [
-      industries.length > 0
-        ? { key: 'Industry', pills: industries.map((label) => ({ label, tone: 'violet' as const })) }
-        : null,
-      company.stage
-        ? { key: 'Stage', pills: [{ label: company.stage, tone: 'neutral' as const, dot: true }] }
-        : null,
-      company.pipelineStage
-        ? {
-            key: 'Pipeline',
-            pills: [{ label: humanizeStage(company.pipelineStage), tone: 'neutral' as const, dot: true }],
-          }
-        : null,
-      company.round ? { key: 'Round', value: company.round } : null,
-      company.employeeCountRange ? { key: 'Employees', value: company.employeeCountRange } : null,
-      company.foundingYear ? { key: 'Founded', value: String(company.foundingYear) } : null,
-      hq ? { key: 'HQ', value: hq } : null,
-    ].filter((r): r is NonNullable<typeof r> => r !== null)
-
-    const financials: LedgerGroup['rows'] = [
-      company.raiseSize ? { key: 'Raise size', value: formatCurrency(company.raiseSize) } : null,
-      company.totalFundingRaised
-        ? { key: 'Total funding', value: formatCurrency(company.totalFundingRaised) }
-        : null,
-      company.arr ? { key: 'ARR', value: formatCurrency(company.arr) } : null,
-      company.runwayMonths ? { key: 'Runway', value: `${company.runwayMonths} mo` } : null,
-    ].filter((r): r is NonNullable<typeof r> => r !== null)
-
-    const links: LedgerGroup['rows'] = [
-      company.websiteUrl || company.primaryDomain
-        ? {
-            key: 'Website',
-            value: domainLabel(company.primaryDomain, company.websiteUrl),
-            link: true,
-          }
-        : null,
-      company.linkedinCompanyUrl
-        ? { key: 'LinkedIn', value: linkedinPath(company.linkedinCompanyUrl), link: true }
-        : null,
-    ].filter((r): r is NonNullable<typeof r> => r !== null)
-
-    return [
-      { label: 'Overview', rows: overview },
-      { label: 'Financials', rows: financials },
-      { label: 'Links', rows: links },
-    ].filter((g) => g.rows.length > 0)
-  }, [company])
+  // Drift-proof: the grouped ledger is built generically from the shared field
+  // registry over the gateway's passthrough payload. New business fields appear
+  // automatically (in MORE until promoted into the registry). See
+  // mobile/lib/ledger/buildGroups.ts + @cyggie/shared/field-registry.
+  const groups = useMemo(() => buildCompanyGroups(company), [company])
 
   const queryClient = useQueryClient()
   const saveUserNote = async (next: string | null): Promise<void> => {
@@ -776,12 +725,6 @@ function formatDuration(seconds: number): string {
   const h = Math.floor(m / 60)
   const rem = m % 60
   return rem === 0 ? `${h}h` : `${h}h ${rem}m`
-}
-
-function formatCurrency(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`
-  return `$${n.toLocaleString()}`
 }
 
 const styles = StyleSheet.create({
