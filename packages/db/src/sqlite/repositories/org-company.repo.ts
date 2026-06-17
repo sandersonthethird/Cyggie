@@ -1499,32 +1499,25 @@ export function updateCompany(
   userId: string | null = null
 ): CompanyDetail | null {
   const db = getDatabase()
-  const sets: string[] = []
-  const params: unknown[] = []
+  // CHANGE-AWARE update: accumulate candidate column writes as {col → FINAL
+  // (normalized/coerced) value}, then drop the ones that already equal the
+  // current row. If NOTHING changed we skip the UPDATE entirely — no
+  // updated_at / updated_by_user_id bump, no alias/cascade — so merely
+  // re-saving current values (a no-op, e.g. a control re-emitting on mount)
+  // never marks the company "edited". Conservative: any value we can't prove
+  // equal is treated as changed (written).
+  const changes: Record<string, unknown> = {}
   let normalizedCanonicalName: string | null = null
   let normalizedPrimaryDomain: string | null = null
 
-  // Capture the pre-update name so a rename can be propagated to every
-  // denormalized copy (meetings/contacts/cache) in this same transaction.
-  let previousCanonicalName: string | null = null
-  if (data.canonicalName !== undefined) {
-    const existing = db
-      .prepare('SELECT canonical_name FROM org_companies WHERE id = ?')
-      .get(companyId) as { canonical_name: string } | undefined
-    previousCanonicalName = existing?.canonical_name ?? null
-  }
-
   if (data.canonicalName !== undefined) {
     normalizedCanonicalName = data.canonicalName.trim()
-    sets.push('canonical_name = ?')
-    params.push(normalizedCanonicalName)
-    sets.push('normalized_name = ?')
-    params.push(normalizeCompanyName(data.canonicalName))
+    changes['canonical_name'] = normalizedCanonicalName
+    changes['normalized_name'] = normalizeCompanyName(data.canonicalName)
   }
   if (data.primaryDomain !== undefined) {
     normalizedPrimaryDomain = normalizeDomain(data.primaryDomain)
-    sets.push('primary_domain = ?')
-    params.push(normalizedPrimaryDomain)
+    changes['primary_domain'] = normalizedPrimaryDomain
   }
   // Auto-derive primary_domain from websiteUrl when the user edits the website
   // and primary_domain is currently empty OR malformed (no dot — e.g. a stale
@@ -1540,74 +1533,89 @@ export function updateCompany(
       const currentDomain = (existing?.primary_domain ?? '').trim()
       if (!currentDomain || !currentDomain.includes('.')) {
         normalizedPrimaryDomain = derived
-        sets.push('primary_domain = ?')
-        params.push(derived)
+        changes['primary_domain'] = derived
       }
     }
   }
   if (data.entityType !== undefined) {
     const normalizedEntityType = normalizeEntityType(data.entityType)
-    sets.push('entity_type = ?')
-    params.push(normalizedEntityType)
+    changes['entity_type'] = normalizedEntityType
 
     // Keep include_in_companies_view aligned with classification when callers
     // only update entityType (common from the Company Detail type control).
     if (data.includeInCompaniesView === undefined) {
-      sets.push('include_in_companies_view = ?')
-      params.push(normalizedEntityType !== 'unknown' ? 1 : 0)
+      changes['include_in_companies_view'] = normalizedEntityType !== 'unknown' ? 1 : 0
     }
   }
   if (data.includeInCompaniesView !== undefined) {
-    sets.push('include_in_companies_view = ?')
-    params.push(data.includeInCompaniesView ? 1 : 0)
+    changes['include_in_companies_view'] = data.includeInCompaniesView ? 1 : 0
   }
   if (data.classificationSource !== undefined) {
-    sets.push('classification_source = ?')
-    params.push(data.classificationSource)
+    changes['classification_source'] = data.classificationSource
   }
   if (data.classificationConfidence !== undefined) {
-    sets.push('classification_confidence = ?')
-    params.push(data.classificationConfidence)
+    changes['classification_confidence'] = data.classificationConfidence
   }
 
   // Handle all type-safe updatable fields via the const map
   for (const [tsProp, sqlCol] of Object.entries(COMPANY_UPDATABLE_FIELDS) as [CompanyUpdatableKey, string][]) {
     if (tsProp in data) {
-      sets.push(`${sqlCol} = ?`)
-      params.push((data as Record<string, unknown>)[tsProp] ?? null)
+      changes[sqlCol] = (data as Record<string, unknown>)[tsProp] ?? null
     }
   }
 
-  if (sets.length > 0) {
-    if (userId) {
-      sets.push('updated_by_user_id = ?')
-      params.push(userId)
-    }
-    sets.push("updated_at = datetime('now')")
-    params.push(companyId)
-    const result = db.prepare(`UPDATE org_companies SET ${sets.join(', ')} WHERE id = ?`).run(...params)
-    if (result.changes === 0) {
-      console.error(`[updateCompany] UPDATE matched 0 rows for companyId=${companyId}`)
-    }
+  const candidateCols = Object.keys(changes)
+  if (candidateCols.length > 0) {
+    // Read current values for the candidate columns (+ canonical_name, needed
+    // for the rename-cascade decision below) in one shot.
+    const readCols = Array.from(new Set([...candidateCols, 'canonical_name']))
+    const current = db
+      .prepare(`SELECT ${readCols.map((c) => `"${c}"`).join(', ')} FROM org_companies WHERE id = ?`)
+      .get(companyId) as Record<string, unknown> | undefined
+    const previousCanonicalName = (current?.['canonical_name'] as string | undefined) ?? null
 
-    if (normalizedCanonicalName) {
-      upsertCompanyAlias(db, companyId, normalizedCanonicalName, 'name')
-    }
-    if (normalizedPrimaryDomain) {
-      for (const candidate of getDomainLookupCandidates(normalizedPrimaryDomain)) {
-        upsertCompanyAlias(db, companyId, candidate, 'domain')
+    // Keep only columns whose final value differs from the stored value.
+    // Null-coalesced strict equality is the conservative form for SQL params
+    // (TEXT/INTEGER/REAL/NULL) — anything not provably equal is kept (written).
+    const changedCols = candidateCols.filter(
+      (c) => (changes[c] ?? null) !== ((current?.[c] ?? null)),
+    )
+
+    if (changedCols.length > 0) {
+      const sets = changedCols.map((c) => `"${c}" = ?`)
+      const params: unknown[] = changedCols.map((c) => changes[c])
+      if (userId) {
+        sets.push('updated_by_user_id = ?')
+        params.push(userId)
+      }
+      sets.push("updated_at = datetime('now')")
+      params.push(companyId)
+      const result = db.prepare(`UPDATE org_companies SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+      if (result.changes === 0) {
+        console.error(`[updateCompany] UPDATE matched 0 rows for companyId=${companyId}`)
+      }
+
+      if (changedCols.includes('canonical_name') && normalizedCanonicalName) {
+        upsertCompanyAlias(db, companyId, normalizedCanonicalName, 'name')
+      }
+      if (changedCols.includes('primary_domain') && normalizedPrimaryDomain) {
+        for (const candidate of getDomainLookupCandidates(normalizedPrimaryDomain)) {
+          upsertCompanyAlias(db, companyId, candidate, 'domain')
+        }
+      }
+
+      // Single-source-of-truth rename: push the new name to every denormalized
+      // copy so the user fixes a bad/auto-derived name in exactly one place.
+      if (
+        changedCols.includes('canonical_name') &&
+        normalizedCanonicalName &&
+        previousCanonicalName &&
+        previousCanonicalName.toLowerCase() !== normalizedCanonicalName.toLowerCase()
+      ) {
+        cascadeCompanyRename(db, companyId, previousCanonicalName, normalizedCanonicalName)
       }
     }
-
-    // Single-source-of-truth rename: push the new name to every denormalized
-    // copy so the user fixes a bad/auto-derived name in exactly one place.
-    if (
-      normalizedCanonicalName &&
-      previousCanonicalName &&
-      previousCanonicalName.toLowerCase() !== normalizedCanonicalName.toLowerCase()
-    ) {
-      cascadeCompanyRename(db, companyId, previousCanonicalName, normalizedCanonicalName)
-    }
+    // changedCols empty ⇒ genuine no-op: no write, no updated_at bump.
   }
 
   const detail = getCompany(companyId)

@@ -211,30 +211,38 @@ export function withSync<
         // Field-LWW: stamp `field_lamports` + `lamport` on the local row and
         // attach the (sparse, changed-only) field_lamports map to the outbox
         // payload so the gateway can merge per-column. See stampFieldLww.
-        const emitRow =
+        // Returns null for a no-op UPDATE (no column changed) — an intentional
+        // non-emission: we skip the lamport/field_lamports write AND the outbox
+        // row so merely re-saving current values produces no sync churn (and no
+        // cross-device re-apply echo).
+        const isFieldLwwWrite =
           spec.fieldLww === true &&
           row != null &&
           typeof row === 'object' &&
           (opts.op === 'insert' || opts.op === 'update')
-            ? stampFieldLww(db, spec, opts.op, row, preUpdate, lamport)
-            : row
+        const emitRow = isFieldLwwWrite
+          ? stampFieldLww(db, spec, opts.op, row as Record<string, unknown>, preUpdate, lamport)
+          : row
+        const intentionalNoop = isFieldLwwWrite && emitRow == null
 
         if (emitRow != null && typeof emitRow === 'object') {
           appendOutboxRowWithSpec(db, spec, opts.op, emitRow)
         } else {
           // If we can't emit a primary row (e.g. fn returned null because
-          // the target row didn't exist), don't push a bogus outbox entry.
-          // This is the only path where emittedCount can stay 0 legitimately
-          // — caller usually treats fn returning null as a no-op, so skipping
-          // outbox emission matches that semantics.
+          // the target row didn't exist, OR a field-LWW no-op update), don't
+          // push a bogus outbox entry. These are the legitimate paths where
+          // emittedCount stays 0.
         }
 
         // Dev-only invariant: caller didn't forget the wrapper.
         // If fn ran AND made changes but no outbox row was emitted, drift.
+        // A field-LWW no-op (intentionalNoop) is exempt — it legitimately
+        // emits nothing even though `row` is non-null.
         if (
           process.env['NODE_ENV'] !== 'production' &&
           ctx.emittedCount === 0 &&
-          row != null
+          row != null &&
+          !intentionalNoop
         ) {
           throw new Error(
             `[sync] withSync(${opts.table}) completed with no outbox emission`,
@@ -295,7 +303,7 @@ function stampFieldLww(
   payloadRow: Record<string, unknown>,
   preUpdate: Record<string, unknown> | null,
   lamport: string,
-): Record<string, unknown> {
+): Record<string, unknown> | null {
   // PK value(s) come from the emitted payload row (always carries the PK).
   const pk: Record<string, unknown> = {}
   for (const col of spec.primaryKey) pk[col] = payloadRow[col]
@@ -318,6 +326,14 @@ function stampFieldLww(
     : diffChangedColumns(preUpdate ?? {}, afterBare).filter(
         (c) => !FIELD_LWW_META_COLS.has(c) && !spec.primaryKey.includes(c),
       )
+
+  // No-op UPDATE — no data column changed (e.g. updateCompany skipped the write
+  // because the caller re-sent current values). Don't bump lamport/field_lamports
+  // and signal the wrapper to emit no outbox row (returns null). Inserts always
+  // have changed columns, so they never take this path.
+  if (!isInsert && changed.length === 0) {
+    return null
+  }
 
   // Sparse wire map — only the columns this write changed, at this lamport.
   const wireMap: Record<string, string> = {}
