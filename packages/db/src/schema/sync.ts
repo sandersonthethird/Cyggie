@@ -1,13 +1,16 @@
+import { sql } from 'drizzle-orm'
 import {
   index,
   jsonb,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
   varchar,
 } from 'drizzle-orm/pg-core'
 import { users } from './auth'
+import { firms } from './firms'
 
 // Outbox table — populated by desktop sync agent on every owned-row write via
 // writeWithSync(table, rowId, fieldUpdates). Single helper at the repository layer
@@ -65,6 +68,32 @@ export const syncState = pgTable(
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('sync_state_user_idx').on(t.userId)],
+)
+
+// Tombstones (Phase 3 multiplayer) — a firm-scoped, id-keyed registry of HARD-
+// purged entities. Written by the admin purge endpoint; the push handler checks
+// it and ACKS-AND-DROPS any later write to a purged id (closes the resurrection
+// hole — a teammate's in-flight edit arriving after a purge). Pulled (lamport >
+// since) so teammates hard-delete the row locally. Gateway-written only — never
+// pushed from desktop (so no OWNED_TABLES / outbox path). Distinct from the
+// email-keyed contact_tombstones (a separate dedup mechanism).
+export const tombstones = pgTable(
+  'tombstones',
+  {
+    entityType: varchar('entity_type', { length: 32 }).notNull(), // 'company' | 'task'
+    entityId: text('entity_id').notNull(),
+    firmId: text('firm_id')
+      .notNull()
+      .references(() => firms.id, { onDelete: 'cascade' }),
+    purgedByUserId: text('purged_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    lamport: text('lamport').notNull().default('0'),
+    purgedAt: timestamp('purged_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.entityType, t.entityId] }),
+    // Firm-scoped incremental pull cursor (mirrors the owned-table lamport index).
+    index('tombstones_firm_lamport_idx').on(t.firmId, sql`(${t.lamport}::numeric)`),
+  ],
 )
 
 // One-time data migration checkpoints. Used by scripts/migrate-sqlite-to-postgres.ts

@@ -218,6 +218,36 @@ async function syncFirmDirectory(): Promise<void> {
 }
 
 /**
+ * Admin hard-purge (Phase 3) — POST the gateway purge endpoint (it hard-deletes
+ * the Neon row + writes a tombstone), then trigger a pull so the tombstone comes
+ * back and this device hard-deletes its local copy (uniform path). The gateway
+ * enforces requireAdmin; a non-admin caller gets a 403 surfaced as a throw.
+ */
+export async function purgeEntityRemote(
+  entityType: 'company' | 'task',
+  id: string,
+): Promise<boolean> {
+  const seg = entityType === 'company' ? 'companies' : 'tasks'
+  const url = `${GATEWAY_URL}/admin/${seg}/${encodeURIComponent(id)}/purge`
+  const tokenA = await getAccessTokenForSync()
+  if (!tokenA) throw new Error('NO_ACCESS_TOKEN')
+  const tryOnce = (token: string): Promise<Response> =>
+    fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+  let res = await tryOnce(tokenA)
+  if (res.status === 401) {
+    const fresh = await refreshCyggieAuth()
+    if (fresh) res = await tryOnce(fresh)
+  }
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`purge failed (${res.status}) ${detail}`.trim())
+  }
+  const body = (await res.json()) as { purged: boolean }
+  pullService?.triggerPull() // pull the tombstone → local hard-delete
+  return body.purged
+}
+
+/**
  * Initialize sync. Idempotent — calling twice is a no-op.
  */
 export function bootstrapSync(): void {
@@ -338,6 +368,14 @@ export function bootstrapSync(): void {
     onTasksApplied: (ids) => {
       const wc = statusBroadcastTarget
       if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.TASKS_REMOTE_APPLIED, { ids })
+    },
+    // Phase 3 — a hard-purge tombstone removes a company and/or task locally;
+    // refresh both lists (+ recycle bin) by reusing the existing channels.
+    onTombstonesApplied: (ids) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.ORG_COMPANIES_REMOTE_APPLIED, { ids })
       wc.send(IPC_CHANNELS.TASKS_REMOTE_APPLIED, { ids })
     },
     onStateChange: (snapshot) => {

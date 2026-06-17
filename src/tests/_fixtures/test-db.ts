@@ -136,6 +136,7 @@ import { runNotesIsPrivateMigration } from '@cyggie/db/sqlite/migrations/121-not
 // deleted_at IS NULL.
 import { runOrgCompaniesFieldLwwMigration } from '@cyggie/db/sqlite/migrations/124-org-companies-field-lww'
 import { runTasksFieldLwwMigration } from '@cyggie/db/sqlite/migrations/125-tasks-field-lww'
+import { runTombstonesMigration } from '@cyggie/db/sqlite/migrations/126-tombstones'
 
 type MigrationFn = (db: Database.Database) => void
 
@@ -250,6 +251,7 @@ const ALL_MIGRATIONS: MigrationFn[] = [
   runNotesIsPrivateMigration,
   runOrgCompaniesFieldLwwMigration,
   runTasksFieldLwwMigration,
+  runTombstonesMigration,
 ]
 
 /**

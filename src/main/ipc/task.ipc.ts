@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as taskRepo from '@cyggie/db/sqlite/repositories'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
+import { purgeEntityRemote } from '../services/sync-bootstrap'
 import type { TaskListFilter, TaskCreateData, TaskUpdateData, TaskStatus } from '../../shared/types/task'
 
 export function registerTaskHandlers(): void {
@@ -57,6 +58,15 @@ export function registerTaskHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.TASK_LIST_DELETED, () => {
     return taskRepo.listDeletedTasks()
+  })
+
+  // Admin hard-purge — gateway-enforced (requireAdmin).
+  ipcMain.handle(IPC_CHANNELS.TASK_PURGE, async (_event, taskId: string) => {
+    if (!taskId) throw new Error('taskId is required')
+    const userId = getCurrentUserId()
+    const purged = await purgeEntityRemote('task', taskId)
+    logAudit(userId, 'task', taskId, 'delete', { purged: true })
+    return { purged }
   })
 
   ipcMain.handle(IPC_CHANNELS.TASK_LIST_FOR_MEETING, (_event, meetingId: string) => {

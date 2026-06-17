@@ -109,6 +109,7 @@ export const IPC_CHANNELS = {
   // firm's trashed companies. COMPANY_PURGE (admin hard-delete) lands in C2.
   COMPANY_RESTORE: 'company:restore',
   COMPANY_LIST_DELETED: 'company:list-deleted',
+  COMPANY_PURGE: 'company:purge', // admin-only hard delete (gateway-enforced)
   COMPANY_TAG_FROM_MEETING: 'company:tag-from-meeting',
   COMPANY_FIND_OR_CREATE: 'company:find-or-create',
   COMPANY_MEETINGS: 'company:meetings',
@@ -392,6 +393,7 @@ export const IPC_CHANNELS = {
   // Recycle bin (Phase 3) — TASK_DELETE now soft-deletes; restore + list trash.
   TASK_RESTORE: 'task:restore',
   TASK_LIST_DELETED: 'task:list-deleted',
+  TASK_PURGE: 'task:purge', // admin-only hard delete (gateway-enforced)
   TASK_LIST_FOR_MEETING: 'task:list-for-meeting',
   TASK_LIST_FOR_COMPANY: 'task:list-for-company',
   TASK_SUMMARY_STATS: 'task:summary-stats',

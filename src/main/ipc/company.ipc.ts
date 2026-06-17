@@ -42,6 +42,7 @@ import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
+import { purgeEntityRemote } from '../services/sync-bootstrap'
 import { readSummary } from '../storage/file-manager'
 import { getProvider } from '@cyggie/services/llm/provider-factory'
 
@@ -580,6 +581,16 @@ export function registerCompanyHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.COMPANY_LIST_DELETED, () => {
     return companyRepo.listDeletedCompanies()
+  })
+
+  // Admin hard-purge — gateway-enforced (requireAdmin). Removes the Neon row +
+  // writes a tombstone; the triggered pull hard-deletes this device's copy.
+  ipcMain.handle(IPC_CHANNELS.COMPANY_PURGE, async (_event, companyId: string) => {
+    if (!companyId?.trim()) throw new Error('companyId is required')
+    const userId = getCurrentUserId()
+    const purged = await purgeEntityRemote('company', companyId)
+    logAudit(userId, 'company', companyId, 'delete', { purged: true })
+    return { purged }
   })
 
   ipcMain.handle(

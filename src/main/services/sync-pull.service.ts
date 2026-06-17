@@ -49,6 +49,7 @@ import {
   applyRemoteChatSessionMessages,
   applyRemoteUserPreferences,
   applyRemoteTasks,
+  applyRemoteTombstones,
   type PulledMeetingRow,
   type PulledNoteRow,
   type PulledOrgCompanyRow,
@@ -62,6 +63,7 @@ import {
   type PulledChatSessionMessageRow,
   type PulledUserPreferenceRowWire,
   type PulledTaskRow,
+  type PulledTombstoneRow,
 } from './sync-remote-apply'
 import type { SyncAgent } from './sync-agent'
 
@@ -104,6 +106,8 @@ export interface PullResponse {
   userPreferences?: PulledUserPreferenceRowWire[]
   /** Phase 2 multiplayer — firm-shared tasks (field-LWW). */
   tasks?: PulledTaskRow[]
+  /** Phase 3 — hard-purge tombstones (gateway-written). */
+  tombstones?: PulledTombstoneRow[]
   serverLamport: string
   /** L2 — true when the gateway capped the page and more rows remain. */
   hasMore?: boolean
@@ -145,6 +149,8 @@ export interface SyncPullServiceConfig {
   onChatSessionMessagesApplied?: (ids: string[]) => void
   /** Phase 2 multiplayer — firm-shared tasks applied via the pull. */
   onTasksApplied?: (ids: string[]) => void
+  /** Phase 3 — tombstones (hard-purges) applied via the pull. */
+  onTombstonesApplied?: (ids: string[]) => void
   /** Optional state-change subscriber (Issue 5A SYNC_PULL_STATUS_CHANGED). */
   onStateChange?: (snapshot: PullStateSnapshot) => void
   /** Optional pino logger. */
@@ -310,8 +316,23 @@ export class SyncPullService {
     let chatSessionsResult: typeof empty = empty
     let chatSessionMessagesResult: typeof empty = empty
     let tasksResult: typeof empty = empty
+    let tombstonesResult: typeof empty = empty
 
     try {
+      // Phase 3 — apply tombstones FIRST so a purged id is recorded before any
+      // same-pull company/task upsert (the upsert's resurrection guard then skips).
+      if (response.tombstones && response.tombstones.length > 0) {
+        tombstonesResult = applyRemoteTombstones(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.tombstones,
+          {
+            onApplied: this.cfg.onTombstonesApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
       if (response.orgCompanies && response.orgCompanies.length > 0) {
         orgCompaniesResult = applyRemoteOrgCompanies(
           this.cfg.db,
@@ -499,6 +520,7 @@ export class SyncPullService {
       chatSessionsResult,
       chatSessionMessagesResult,
       tasksResult,
+      tombstonesResult,
     ]
     this.cfg.log?.info?.(
       {
@@ -521,6 +543,8 @@ export class SyncPullService {
         chatSessionMessagesAppliedCount: chatSessionMessagesResult.appliedIds.length,
         taskRowCount: response.tasks?.length ?? 0,
         tasksAppliedCount: tasksResult.appliedIds.length,
+        tombstoneRowCount: response.tombstones?.length ?? 0,
+        tombstonesAppliedCount: tombstonesResult.appliedIds.length,
         skippedLowLamport: allResults.reduce((a, r) => a + r.skippedLowLamport, 0),
         skippedPreValidation: allResults.reduce((a, r) => a + r.skippedPreValidation, 0),
         serverLamport: response.serverLamport,

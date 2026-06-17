@@ -21,6 +21,14 @@ export default function RecycleBin() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    api
+      .invoke<{ role?: string } | null>(IPC_CHANNELS.USER_GET_CURRENT)
+      .then((u) => setIsAdmin(u?.role === 'admin'))
+      .catch(() => setIsAdmin(false))
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -63,6 +71,25 @@ export default function RecycleBin() {
     [load],
   )
 
+  const purge = useCallback(
+    async (item: DeletedEntitySummary) => {
+      if (!window.confirm(`Permanently delete "${item.label}"? This cannot be undone.`)) return
+      setBusyId(item.id)
+      try {
+        await api.invoke(
+          item.entityType === 'company' ? IPC_CHANNELS.COMPANY_PURGE : IPC_CHANNELS.TASK_PURGE,
+          item.id,
+        )
+        await load()
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setBusyId(null)
+      }
+    },
+    [load],
+  )
+
   const renderSection = (title: string, items: DeletedEntitySummary[]) => (
     <section style={{ marginBottom: 28 }}>
       <h3 style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, opacity: 0.6, marginBottom: 8 }}>
@@ -93,9 +120,20 @@ export default function RecycleBin() {
                   deleted by {item.deletedByName ?? 'a teammate'} · purges in {daysUntil(item.purgesAt)}d
                 </div>
               </div>
-              <button onClick={() => void restore(item)} disabled={busyId === item.id}>
-                {busyId === item.id ? 'Restoring…' : 'Restore'}
-              </button>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <button onClick={() => void restore(item)} disabled={busyId === item.id}>
+                  {busyId === item.id ? '…' : 'Restore'}
+                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => void purge(item)}
+                    disabled={busyId === item.id}
+                    style={{ color: 'var(--danger, #c0392b)' }}
+                  >
+                    Delete permanently
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>
