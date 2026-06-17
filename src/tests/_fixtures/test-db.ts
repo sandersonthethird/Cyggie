@@ -131,6 +131,12 @@ import { runContactTargetInvestmentStageMigration } from '@cyggie/db/sqlite/migr
 import { runDropContactInvestorStageMigration } from '@cyggie/db/sqlite/migrations/116-drop-contact-investor-stage'
 import { runUserPreferencesLamportMigration } from '@cyggie/db/sqlite/migrations/117-user-preferences-lamport'
 import { runNotesIsPrivateMigration } from '@cyggie/db/sqlite/migrations/121-notes-is-private'
+// Phase 1/2 multiplayer — soft-delete + field-LWW columns on org_companies + tasks
+// (deleted_at, field_lamports, ...). Required now that the live reads filter
+// deleted_at IS NULL.
+import { runOrgCompaniesFieldLwwMigration } from '@cyggie/db/sqlite/migrations/124-org-companies-field-lww'
+import { runTasksFieldLwwMigration } from '@cyggie/db/sqlite/migrations/125-tasks-field-lww'
+import { runTombstonesMigration } from '@cyggie/db/sqlite/migrations/126-tombstones'
 
 type MigrationFn = (db: Database.Database) => void
 
@@ -243,6 +249,9 @@ const ALL_MIGRATIONS: MigrationFn[] = [
   // is_private on notes (per-note firm-visibility override). Idempotent ALTER;
   // safe to run after the unified notes table exists.
   runNotesIsPrivateMigration,
+  runOrgCompaniesFieldLwwMigration,
+  runTasksFieldLwwMigration,
+  runTombstonesMigration,
 ]
 
 /**

@@ -42,6 +42,7 @@ import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
+import { purgeEntityRemote } from '../services/sync-bootstrap'
 import { readSummary } from '../storage/file-manager'
 import { getProvider } from '@cyggie/services/llm/provider-factory'
 
@@ -556,16 +557,40 @@ export function registerCompanyHandlers(): void {
     }
   )
 
+  // Phase 3: "Delete" is now a SOFT delete (moves to the Recycle Bin) that syncs
+  // to teammates via field-LWW. Permanent removal is the admin purge (Phase 3 C2).
   ipcMain.handle(IPC_CHANNELS.COMPANY_DELETE, (_event, companyId: string) => {
     if (!companyId?.trim()) throw new Error('companyId is required')
     const userId = getCurrentUserId()
     const company = companyRepo.getCompany(companyId)
     if (!company) throw new Error('Company not found')
-    companyRepo.deleteCompany(companyId)
+    companyRepo.softDeleteCompany(companyId, userId)
     logAudit(userId, 'company', companyId, 'delete', {
       canonicalName: company.canonicalName
     })
     return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_RESTORE, (_event, companyId: string) => {
+    if (!companyId?.trim()) throw new Error('companyId is required')
+    const userId = getCurrentUserId()
+    companyRepo.restoreCompany(companyId, userId)
+    logAudit(userId, 'company', companyId, 'restore', null)
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_LIST_DELETED, () => {
+    return companyRepo.listDeletedCompanies()
+  })
+
+  // Admin hard-purge — gateway-enforced (requireAdmin). Removes the Neon row +
+  // writes a tombstone; the triggered pull hard-deletes this device's copy.
+  ipcMain.handle(IPC_CHANNELS.COMPANY_PURGE, async (_event, companyId: string) => {
+    if (!companyId?.trim()) throw new Error('companyId is required')
+    const userId = getCurrentUserId()
+    const purged = await purgeEntityRemote('company', companyId)
+    logAudit(userId, 'company', companyId, 'delete', { purged: true })
+    return { purged }
   })
 
   ipcMain.handle(

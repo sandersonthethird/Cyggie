@@ -105,6 +105,19 @@ const PushResponseSchema = z.object({
 // benefit is reduced until the new value is added here, but no data is lost.
 const MEETING_IN_PROGRESS_STATUSES = new Set<string>(['recording', 'transcribing'])
 
+// Phase 3 — owned tables that participate in the tombstone (hard-purge) registry,
+// mapped to their tombstone entity_type. A write to a purged id is acked-and-dropped.
+const TOMBSTONE_ENTITY_TYPE: Record<string, string> = {
+  org_companies: 'company',
+  tasks: 'task',
+}
+
+// Retention window before a soft-deleted row is eligible for the retention sweep
+// endpoint (POST /admin/recycle/sweep). Duplicated here because the gateway can't
+// import the desktop's src/shared — KEEP IN SYNC with RECYCLE_RETENTION_DAYS in
+// src/shared/types/recycle.ts (which drives the recycle bin's "purges in N days").
+const RECYCLE_RETENTION_DAYS = 30
+
 export async function registerSyncRoutes(
   app: FastifyInstance,
   env: GatewayEnv,
@@ -131,6 +144,24 @@ export async function registerSyncRoutes(
       try {
         await client.query('BEGIN')
 
+        // Phase 3 resurrection guard: ONE batched tombstone lookup for every
+        // firm-scoped company/task id in this batch (L5 — not per-row). A later
+        // write to a hard-purged id is acked-and-dropped below so a teammate
+        // whose device hadn't yet pulled the tombstone can't re-create the row.
+        const tombstoneKeys = new Set<string>()
+        const purgeCandidates = batch
+          .filter((e) => TOMBSTONE_ENTITY_TYPE[e.table] != null && e.op !== 'delete')
+          .map((e) => e.rowId)
+        if (purgeCandidates.length > 0) {
+          const tRes = await client.query(
+            `SELECT entity_type, entity_id FROM tombstones WHERE firm_id = $1 AND entity_id = ANY($2::text[])`,
+            [user.firm_id, purgeCandidates],
+          )
+          for (const r of tRes.rows as Array<{ entity_type: string; entity_id: string }>) {
+            tombstoneKeys.add(`${r.entity_type}:${r.entity_id}`)
+          }
+        }
+
         for (const entry of batch) {
           // 1. Spec lookup
           const spec = OWNED_TABLES_BY_NAME.get(entry.table)
@@ -139,6 +170,27 @@ export async function registerSyncRoutes(
               outboxId: entry.outboxId,
               reason: `Unknown table '${entry.table}'`,
             })
+            continue
+          }
+
+          // Resurrection guard — drop (ack, don't re-insert) a write to a purged id.
+          const tombEntityType = TOMBSTONE_ENTITY_TYPE[entry.table]
+          if (
+            tombEntityType != null &&
+            entry.op !== 'delete' &&
+            tombstoneKeys.has(`${tombEntityType}:${entry.rowId}`)
+          ) {
+            acked.push(entry.outboxId)
+            req.log.warn(
+              {
+                outboxId: entry.outboxId,
+                userId: user.sub,
+                table: entry.table,
+                rowId: entry.rowId,
+                metric: 'sync.push.tombstone_drop',
+              },
+              'sync.push dropped write to a purged id (tombstoned)',
+            )
             continue
           }
 
@@ -643,6 +695,7 @@ export async function registerSyncRoutes(
           chatSessionMessages: z.array(z.unknown()),
           userPreferences: z.array(z.unknown()),
           tasks: z.array(z.unknown()),
+          tombstones: z.array(z.unknown()),
           serverLamport: z.string(),
           // L2 — true when more pages remain (a table hit PULL_PAGE_SIZE). The
           // client should pull again immediately with since=serverLamport.
@@ -684,6 +737,7 @@ export async function registerSyncRoutes(
         chatSessionMessages,
         userPreferences,
         tasks,
+        tombstones,
       ] = await Promise.all([
         db
           .select()
@@ -886,6 +940,16 @@ export async function registerSyncRoutes(
                 AND CAST(${schema.tasks.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.tasks.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
+        // Phase 3 — tombstones (firm-scoped, lamport-windowed). Pulled so a
+        // teammate hard-deletes a purged company/task locally + gates re-creates.
+        db
+          .select()
+          .from(schema.tombstones)
+          .where(
+            sql`${schema.tombstones.firmId} = ${user.firm_id}
+                AND CAST(${schema.tombstones.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.tombstones.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
       ])
 
       // Suppress transcript_segments for in-progress meetings so the recording
@@ -908,7 +972,7 @@ export async function registerSyncRoutes(
       const pageTables = [
         meetings, notes, orgCompanies, orgCompanyAliases, contacts, contactEmails,
         meetingCompanyLinks, meetingSpeakers, meetingSpeakerContactLinks,
-        chatSessions, chatSessionMessages, userPreferences, tasks,
+        chatSessions, chatSessionMessages, userPreferences, tasks, tombstones,
       ] as Array<Array<{ lamport: string | null }>>
       const maxOf = (rows: Array<{ lamport: string | null }>): bigint =>
         rows.reduce((m, r) => {
@@ -939,12 +1003,13 @@ export async function registerSyncRoutes(
       const pagedChatSessionMessages = cap(chatSessionMessages)
       const pagedUserPreferences = cap(userPreferences)
       const pagedTasks = cap(tasks)
+      const pagedTombstones = cap(tombstones)
 
       const allRows = [
         ...pagedMeetings, ...pagedNotes, ...pagedOrgCompanies, ...pagedOrgCompanyAliases,
         ...pagedContacts, ...pagedContactEmails, ...pagedMeetingCompanyLinks,
         ...pagedMeetingSpeakers, ...pagedMeetingSpeakerContactLinks, ...pagedChatSessions,
-        ...pagedChatSessionMessages, ...pagedUserPreferences, ...pagedTasks,
+        ...pagedChatSessionMessages, ...pagedUserPreferences, ...pagedTasks, ...pagedTombstones,
       ] as Array<{ lamport: string | null }>
       // When paginating, advance the cursor exactly to the ceiling so the next
       // page picks up strictly after it. Otherwise use the global max returned.
@@ -976,6 +1041,7 @@ export async function registerSyncRoutes(
           chatSessionMessageCount: chatSessionMessages.length,
           userPreferenceCount: userPreferences.length,
           taskCount: tasks.length,
+          tombstoneCount: tombstones.length,
           metric: 'sync.pull.row_count',
         },
         'sync.pull complete',
@@ -995,9 +1061,123 @@ export async function registerSyncRoutes(
         chatSessionMessages: pagedChatSessionMessages,
         userPreferences: pagedUserPreferences,
         tasks: pagedTasks,
+        tombstones: pagedTombstones,
         serverLamport,
         hasMore,
       }
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Admin hard-purge (Phase 3). Permanently removes a (typically soft-deleted)
+  // company/task + writes a tombstone so a teammate's in-flight edit can't
+  // resurrect it. ENTITY-ONLY: the row is deleted; FK ON DELETE SET NULL
+  // preserves active linked tasks/contacts/meeting-links (their fk → NULL),
+  // owned sub-rows (aliases, joins) cascade. Teammates learn via the tombstone
+  // pull (uniform local hard-delete) — no separate fan-out needed.
+  // ───────────────────────────────────────────────────────────────────────
+  const PURGE_TABLE: Record<'company' | 'task', 'org_companies' | 'tasks'> = {
+    company: 'org_companies',
+    task: 'tasks',
+  }
+
+  async function purgeEntity(
+    entityType: 'company' | 'task',
+    entityId: string,
+    firmId: string,
+    actorId: string,
+  ): Promise<number> {
+    const table = PURGE_TABLE[entityType] // fixed literal — not user input
+    const pool = getPool(env.GATEWAY_DATABASE_URL)
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      // Stamp the tombstone above every existing firm lamport (and ~wall clock,
+      // matching the desktop HLC) so all teammates pull it past their cursor.
+      const lamRes = await client.query(
+        `SELECT GREATEST(
+           $2::numeric,
+           COALESCE((SELECT MAX(CAST(lamport AS numeric)) FROM org_companies WHERE firm_id = $1), 0),
+           COALESCE((SELECT MAX(CAST(lamport AS numeric)) FROM tasks WHERE firm_id = $1), 0),
+           COALESCE((SELECT MAX(CAST(lamport AS numeric)) FROM tombstones WHERE firm_id = $1), 0)
+         ) + 1 AS lamport`,
+        [firmId, String(Date.now())],
+      )
+      const lamport = String(lamRes.rows[0].lamport)
+      const del = await client.query(`DELETE FROM ${table} WHERE id = $1 AND firm_id = $2`, [
+        entityId,
+        firmId,
+      ])
+      await client.query(
+        `INSERT INTO tombstones (entity_type, entity_id, firm_id, purged_by_user_id, lamport)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (entity_type, entity_id) DO UPDATE SET
+           lamport = EXCLUDED.lamport, purged_at = now(), purged_by_user_id = EXCLUDED.purged_by_user_id`,
+        [entityType, entityId, firmId, actorId, lamport],
+      )
+      await client.query('COMMIT')
+      return del.rowCount ?? 0
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  }
+
+  for (const [entityType, urlSeg] of [
+    ['company', 'companies'],
+    ['task', 'tasks'],
+  ] as const) {
+    fastifyTyped.route({
+      method: 'POST',
+      url: `/admin/${urlSeg}/:id/purge`,
+      schema: {
+        params: z.object({ id: z.string().min(1) }),
+        response: { 200: z.object({ purged: z.boolean() }) },
+      },
+      handler: async (req) => {
+        const user = req.requireAdmin()
+        const purged = await purgeEntity(entityType, req.params.id, user.firm_id, user.sub)
+        req.log.info(
+          { entityType, id: req.params.id, firmId: user.firm_id, purged, metric: 'admin.purge' },
+          'admin purge',
+        )
+        return { purged: purged > 0 }
+      },
+    })
+  }
+
+  // Retention sweep — hard-purge firm rows soft-deleted longer than the recovery
+  // window. Pull/triggered by an EXTERNAL scheduler (Fly scheduled machine / GH
+  // Action) hitting this endpoint; an in-process cron is unreliable under Fly
+  // scale-to-zero (min_machines_running=0 → it never fires on a stopped machine).
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/admin/recycle/sweep',
+    schema: {
+      response: { 200: z.object({ purgedCompanies: z.number(), purgedTasks: z.number() }) },
+    },
+    handler: async (req) => {
+      const user = req.requireAdmin()
+      const pool = getPool(env.GATEWAY_DATABASE_URL)
+      const cutoff = new Date(Date.now() - RECYCLE_RETENTION_DAYS * 86_400_000).toISOString()
+      const expired = async (table: 'org_companies' | 'tasks'): Promise<string[]> => {
+        const r = await pool.query(
+          `SELECT id FROM ${table} WHERE firm_id = $1 AND deleted_at IS NOT NULL AND deleted_at < $2 LIMIT 500`,
+          [user.firm_id, cutoff],
+        )
+        return (r.rows as Array<{ id: string }>).map((x) => x.id)
+      }
+      const companyIds = await expired('org_companies')
+      const taskIds = await expired('tasks')
+      for (const id of companyIds) await purgeEntity('company', id, user.firm_id, user.sub)
+      for (const id of taskIds) await purgeEntity('task', id, user.firm_id, user.sub)
+      req.log.info(
+        { firmId: user.firm_id, purgedCompanies: companyIds.length, purgedTasks: taskIds.length, metric: 'admin.recycle_sweep' },
+        'recycle retention sweep',
+      )
+      return { purgedCompanies: companyIds.length, purgedTasks: taskIds.length }
     },
   })
 }

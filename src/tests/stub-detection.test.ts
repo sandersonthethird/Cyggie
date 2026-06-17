@@ -28,6 +28,7 @@ function buildSchema(db: Database.Database): void {
     CREATE TABLE org_companies (
       id TEXT PRIMARY KEY,
       canonical_name TEXT NOT NULL,
+      deleted_at TEXT,
       normalized_name TEXT UNIQUE NOT NULL,
       description TEXT,
       primary_domain TEXT,

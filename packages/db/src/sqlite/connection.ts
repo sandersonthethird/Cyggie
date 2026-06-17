@@ -124,6 +124,7 @@ import { runMeetingsLocationMigration } from './migrations/122-meetings-location
 import { runMeetingContactSyncColumnsMigration } from './migrations/123-meeting-contact-sync-columns'
 import { runOrgCompaniesFieldLwwMigration } from './migrations/124-org-companies-field-lww'
 import { runTasksFieldLwwMigration } from './migrations/125-tasks-field-lww'
+import { runTombstonesMigration } from './migrations/126-tombstones'
 
 let db: Database.Database | null = null
 
@@ -339,4 +340,5 @@ export function runAllMigrations(db: Database.Database): void {
   runMeetingContactSyncColumnsMigration(db)
   runOrgCompaniesFieldLwwMigration(db)
   runTasksFieldLwwMigration(db)
+  runTombstonesMigration(db)
 }

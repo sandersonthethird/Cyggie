@@ -269,10 +269,32 @@ export const deleteCompany = withSync(rawOrgCompany.deleteCompany, {
     rawOrgCompany.getCompany(id) as unknown as Record<string, unknown> | null,
 })
 
+// Soft-delete / restore (Phase 3). Both are field-LWW UPDATEs (op:'update') so
+// the deleted_at change syncs to teammates via the normal merge path — fixing
+// the multiplayer delete-propagation gap (a hard delete can't be pulled). The
+// bare pre-row capture lets the wrapper compute the changed-column set.
+export const softDeleteCompany = withSync(rawOrgCompany.softDeleteCompany, {
+  table: 'org_companies',
+  op: 'update',
+  captureBeforeUpdate: (db, [id]) =>
+    (db.prepare('SELECT * FROM org_companies WHERE id = ? LIMIT 1').get(id as string) as
+      | Record<string, unknown>
+      | undefined) ?? null,
+})
+
+export const restoreCompany = withSync(rawOrgCompany.restoreCompany, {
+  table: 'org_companies',
+  op: 'update',
+  captureBeforeUpdate: (db, [id]) =>
+    (db.prepare('SELECT * FROM org_companies WHERE id = ? LIMIT 1').get(id as string) as
+      | Record<string, unknown>
+      | undefined) ?? null,
+})
+
 // getOrCreateCompanyByName MAY insert; for outbox correctness we treat it as
-// insert but only emit when a new row is actually created. The inner fn
-// returns { companyId, created: boolean } — the wrapper's default extractRow
-// fires regardless, so we override and skip emission when created=false.
+// insert but only emit when a new row is actually created. Soft-deleted matches
+// are revived inside the raw fn (see org-company.repo) so a re-reference brings
+// the company back rather than throwing now that getCompany filters deleted_at.
 export const getOrCreateCompanyByName = withSync(
   rawOrgCompany.getOrCreateCompanyByName,
   {
@@ -280,7 +302,7 @@ export const getOrCreateCompanyByName = withSync(
     op: 'insert',
     extractRow: ({ result }) => {
       const r = result as unknown as { companyId: string; created: boolean }
-      if (!r || !r.created) return null // no-op; existing row used
+      if (!r || !r.created) return null // no-op; existing/revived row used
       return rawOrgCompany.getCompany(r.companyId) as unknown as Record<
         string,
         unknown
@@ -288,6 +310,10 @@ export const getOrCreateCompanyByName = withSync(
     },
   },
 )
+
+// Pass-throughs (reads — recycle bin + restore/audit bare reads).
+export const listDeletedCompanies = rawOrgCompany.listDeletedCompanies
+export const getCompanyRowIncludingDeleted = rawOrgCompany.getCompanyRowIncludingDeleted
 
 // linkMeetingCompany / unlinkMeetingCompany operate on meeting_company_links
 // (composite PK: meeting_id, company_id).
@@ -822,6 +848,20 @@ export const deleteTask = withSync(rawTask.deleteTask, {
   captureBeforeDelete: (_db, [taskId]) => selectTaskRow(taskId as string),
 })
 
+// Soft-delete / restore (Phase 3) — field-LWW UPDATEs that sync, same as
+// org_companies. The user "Delete" path now routes here (not the hard delete).
+export const softDeleteTask = withSync(rawTask.softDeleteTask, {
+  table: 'tasks',
+  op: 'update',
+  captureBeforeUpdate: (_db, [taskId]) => selectTaskRow(taskId as string),
+})
+
+export const restoreTask = withSync(rawTask.restoreTask, {
+  table: 'tasks',
+  op: 'update',
+  captureBeforeUpdate: (_db, [taskId]) => selectTaskRow(taskId as string),
+})
+
 // bulkCreate / bulkUpdateStatus reimplemented over the WRAPPED single-row fns so
 // each task emits its own outbox row (the raw versions call raw createTask / do a
 // single multi-row UPDATE, both of which bypass the outbox). Wrapped in an outer
@@ -858,6 +898,8 @@ export const listTasksForMeeting = rawTask.listTasksForMeeting
 export const listTasksForCompany = rawTask.listTasksForCompany
 export const getTaskSummaryStats = rawTask.getTaskSummaryStats
 export const existsByMeetingAndHash = rawTask.existsByMeetingAndHash
+export const listDeletedTasks = rawTask.listDeletedTasks
+export const getTaskRowIncludingDeleted = rawTask.getTaskRowIncludingDeleted
 
 // Re-export the database accessor so the rare caller that needs it can
 // continue to import from the barrel rather than reaching into connection.ts.

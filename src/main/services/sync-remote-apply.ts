@@ -681,6 +681,9 @@ const ORG_COMPANY_COL_MAP: ReadonlyArray<readonly [snake: string, camel: keyof P
 const ORG_COMPANY_SNAKE_TO_CAMEL = new Map(ORG_COMPANY_COL_MAP)
 
 function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): void {
+  // Resurrection guard: if this id was hard-purged, never re-create it (handles a
+  // row arriving in the same pull page as its tombstone, in either order).
+  if (isTombstoned(db, 'company', row.id)) return
   // Field-LWW pull merge. The gateway row is the firm's authoritative merged
   // state, but the LOCAL device may hold un-pushed edits to OTHER columns — so
   // we merge per column rather than whole-row replace:
@@ -1769,6 +1772,8 @@ const TASK_COL_MAP: ReadonlyArray<readonly [snake: string, camel: keyof PulledTa
 const TASK_SNAKE_TO_CAMEL = new Map(TASK_COL_MAP)
 
 function upsertTaskRow(db: Database.Database, row: PulledTaskRow): void {
+  // Resurrection guard — never re-create a hard-purged task (see upsertOrgCompanyRow).
+  if (isTombstoned(db, 'task', row.id)) return
   // Field-LWW pull merge — same shape as upsertOrgCompanyRow: insert writes the
   // whole row; update writes only the columns the incoming write wins, leaving
   // losing columns at their local value (protecting un-pushed local edits).
@@ -1878,6 +1883,114 @@ function upsertTaskRow(db: Database.Database, row: PulledTaskRow): void {
        lamport = excluded.lamport,
        field_lamports = excluded.field_lamports`,
   ).run(bind)
+}
+
+// ─── Tombstones (Phase 3 — hard-purge replication) ───────────────────────────
+//
+// Gateway-written rows pulled so this device hard-deletes a purged company/task
+// locally (the row is already soft-deleted/hidden — this reclaims it + records
+// the tombstone so a local re-create is gated). ENTITY-ONLY: a company purge
+// nulls active children's company_id (preserving tasks/contacts/meetings) and
+// deletes only owned sub-rows. Bespoke apply (a "delete", not an upsert).
+
+export interface PulledTombstoneRow {
+  entityType: 'company' | 'task' | string
+  entityId: string
+  firmId?: string | null
+  purgedByUserId?: string | null
+  lamport: string
+  purgedAt?: string | Date | null
+  [field: string]: unknown
+}
+
+export function applyRemoteTombstones(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledTombstoneRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  const log = opts.log ?? {}
+  const appliedIds: string[] = []
+  let highWater = 0n
+
+  const recordStmt = db.prepare(
+    `INSERT INTO tombstones (entity_type, entity_id, firm_id, purged_by_user_id, lamport, purged_at)
+     VALUES (@entityType, @entityId, @firmId, @purgedByUserId, @lamport, @purgedAt)
+     ON CONFLICT(entity_type, entity_id) DO UPDATE SET lamport = excluded.lamport`,
+  )
+
+  const apply = db.transaction(() => {
+    for (const row of rows) {
+      if (typeof row?.entityId !== 'string' || typeof row?.lamport !== 'string') continue
+      if (row.entityType === 'company') {
+        // Entity-only: preserve active children, drop only owned sub-rows.
+        db.prepare(`UPDATE tasks SET company_id = NULL WHERE company_id = ?`).run(row.entityId)
+        db.prepare(`UPDATE contacts SET primary_company_id = NULL WHERE primary_company_id = ?`).run(row.entityId)
+        db.prepare(`UPDATE notes SET company_id = NULL WHERE company_id = ?`).run(row.entityId)
+        db.prepare(`DELETE FROM org_company_aliases WHERE company_id = ?`).run(row.entityId)
+        db.prepare(`DELETE FROM org_company_contacts WHERE company_id = ?`).run(row.entityId)
+        db.prepare(`DELETE FROM meeting_company_links WHERE company_id = ?`).run(row.entityId)
+        db.prepare(`DELETE FROM company_investors WHERE company_id = ? OR investor_company_id = ?`).run(row.entityId, row.entityId)
+        db.prepare(`DELETE FROM org_companies WHERE id = ?`).run(row.entityId)
+      } else if (row.entityType === 'task') {
+        db.prepare(`DELETE FROM tasks WHERE id = ?`).run(row.entityId)
+      } else {
+        continue
+      }
+      recordStmt.run({
+        entityType: row.entityType,
+        entityId: row.entityId,
+        firmId: row.firmId ?? null,
+        purgedByUserId: row.purgedByUserId ?? null,
+        lamport: row.lamport,
+        purgedAt: row.purgedAt ? toIso(row.purgedAt) : new Date().toISOString(),
+      })
+      appliedIds.push(`${row.entityType}:${row.entityId}`)
+      const lam = BigInt(row.lamport)
+      if (lam > highWater) highWater = lam
+    }
+
+    if (appliedIds.length > 0) {
+      const hw = highWater.toString()
+      db.prepare(
+        `INSERT INTO sync_state (device_id, user_id, last_pushed_lamport, last_pulled_lamport)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(device_id) DO UPDATE SET
+           last_pulled_lamport = CASE WHEN CAST(excluded.last_pulled_lamport AS INTEGER) > CAST(sync_state.last_pulled_lamport AS INTEGER)
+             THEN excluded.last_pulled_lamport ELSE sync_state.last_pulled_lamport END,
+           last_pushed_lamport = CASE WHEN CAST(excluded.last_pushed_lamport AS INTEGER) > CAST(sync_state.last_pushed_lamport AS INTEGER)
+             THEN excluded.last_pushed_lamport ELSE sync_state.last_pushed_lamport END,
+           last_seen_at = datetime('now')`,
+      ).run(deviceId, userId, hw, hw)
+    }
+  })
+
+  try {
+    apply()
+  } catch (err) {
+    log.warn?.(
+      { tableName: 'tombstones', metric: 'sync.pull.tx_rollback', error: err instanceof Error ? err.message : String(err) },
+      'sync.pull tombstone apply rolled back',
+    )
+    return { appliedIds: [], skippedLowLamport: 0, skippedPreValidation: 0 }
+  }
+  if (appliedIds.length > 0) opts.onApplied?.(appliedIds)
+  return { appliedIds, skippedLowLamport: 0, skippedPreValidation: 0 }
+}
+
+/** True if an id has a local tombstone (gates pull-apply re-creates — out-of-order
+ *  guard when a row + its tombstone arrive in the same pull). */
+function isTombstoned(db: Database.Database, entityType: 'company' | 'task', entityId: string): boolean {
+  try {
+    return (
+      db
+        .prepare(`SELECT 1 FROM tombstones WHERE entity_type = ? AND entity_id = ? LIMIT 1`)
+        .get(entityType, entityId) != null
+    )
+  } catch {
+    return false // tombstones table absent (older fixture) — no gating
+  }
 }
 
 // ─── Upsert helper ───────────────────────────────────────────────────────────
