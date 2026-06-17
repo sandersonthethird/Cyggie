@@ -105,4 +105,46 @@ describe('updateCompany no-op safety', () => {
     expect(r.updated_at).not.toBe(OLD) // stage changed → write happened
     expect(outboxCount()).toBe(1)
   })
+
+  it('a genuine rename still fires the canonical_name branch (alias upsert + cascade)', () => {
+    const c = createCompany({ canonicalName: 'Acme', city: 'SF' }, 'user-1')
+    arm(c.id)
+
+    updateCompany(c.id, { canonicalName: 'Beta Corp' }, 'user-1')
+
+    // The changedCols-gated branch ran: name written + a 'name' alias for the
+    // new value exists (upsertCompanyAlias + cascadeCompanyRename share this gate).
+    expect(
+      (testDb.prepare('SELECT canonical_name FROM org_companies WHERE id = ?').get(c.id) as {
+        canonical_name: string
+      }).canonical_name,
+    ).toBe('Beta Corp')
+    const alias = testDb
+      .prepare(
+        `SELECT 1 FROM org_company_aliases WHERE company_id = ? AND alias_type = 'name' AND alias_value = 'Beta Corp'`,
+      )
+      .get(c.id)
+    expect(alias).toBeTruthy()
+    expect(row(c.id).updated_at).not.toBe(OLD)
+    expect(outboxCount()).toBeGreaterThan(0)
+  })
+
+  it('clearing a field (value→null) writes; null→null is a no-op', () => {
+    const c = createCompany({ canonicalName: 'Acme', description: 'hello' }, 'user-1')
+
+    arm(c.id)
+    updateCompany(c.id, { description: null }, 'user-1') // 'hello' → null = change
+    expect(
+      (testDb.prepare('SELECT description FROM org_companies WHERE id = ?').get(c.id) as {
+        description: string | null
+      }).description,
+    ).toBeNull()
+    expect(row(c.id).updated_at).not.toBe(OLD)
+    expect(outboxCount()).toBe(1)
+
+    arm(c.id)
+    updateCompany(c.id, { description: null }, 'user-1') // null → null = no-op
+    expect(row(c.id).updated_at).toBe(OLD)
+    expect(outboxCount()).toBe(0)
+  })
 })
