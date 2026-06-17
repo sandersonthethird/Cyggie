@@ -16,7 +16,7 @@
  *   → EditableCell onSave → parent patches companies[]
  *
  * Bulk edit state machine:
- *   BulkBar visible when selectedIds.size > 0
+ *   BulkBar visible when bulkRowIds.size > 0 (row-checkbox selection ∪ cell-selection rows)
  *     [Edit fields ▾] → bulkEditOpen → BulkEditDropdown
  *       pick field tab → pick value → Apply → executeBulkEdit (chunked, partial rollback)
  *     [Actions ▾] → Delete
@@ -55,6 +55,7 @@ import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
 import { useEditCellNav, getRangePosition, getCellEdges, cellEdgeBoxShadow, effectiveCells, isCellSelected } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
+import { useBulkRowIds } from '../../hooks/useBulkRowIds'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
 import { HeaderFilter } from '../crm/HeaderFilter'
 import { RangeFilter } from '../crm/RangeFilter'
@@ -218,6 +219,7 @@ export function CompanyTable({
 
   // ── Selection ──────────────────────────────────────────────────────────────
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkDeletePending, setBulkDeletePending] = useState(false)
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [bulkEditing, setBulkEditing] = useState(false)
   const [bulkEditError, setBulkEditError] = useState<string | null>(null)
@@ -243,7 +245,7 @@ export function CompanyTable({
   const scrollToColRef = useRef<(idx: number) => void>(() => {})
 
   const {
-    selection, focusedCell, editCell, setEditCell, cellRange,
+    selection, focusedCell, editCell, setEditCell, cellRange, clearFocus,
     handleFocusCell, handleStartEdit, handleSelectCellClick, handleEndEdit, handleKeyboardEvent,
   } = useEditCellNav(
     companies.length,
@@ -261,23 +263,32 @@ export function CompanyTable({
     getEditCell
   )
 
-  async function handleBulkDelete() {
-    if (selectedIds.size === 0 || bulkDeleting) return
-    setBulkDeleting(true)
-    const ids = Array.from(selectedIds)
+  // Rows targeted by the bulk-action bar: row-checkbox selection ∪ the rows the
+  // cell selection covers. Clearing resets both sources.
+  const bulkRowIds = useBulkRowIds(selectedIds, selection, companies)
+  const clearBulkSelection = useCallback(() => {
     setSelectedIds(new Set())
+    clearFocus()
+    setBulkDeletePending(false)
+  }, [setSelectedIds, clearFocus])
+
+  async function handleBulkDelete() {
+    if (bulkRowIds.size === 0 || bulkDeleting) return
+    setBulkDeleting(true)
+    const ids = Array.from(bulkRowIds)
+    clearBulkSelection()
     await Promise.all(ids.map((id) => api.invoke(IPC_CHANNELS.COMPANY_DELETE, id)))
     setBulkDeleting(false)
     onBulkDelete(ids)
   }
 
   async function handleBulkEdit() {
-    if (selectedIds.size === 0 || bulkEditing) return
+    if (bulkRowIds.size === 0 || bulkEditing) return
     setBulkEditOpen(false)
     setBulkEditing(true)
     setBulkEditError(null)
 
-    const ids = Array.from(selectedIds)
+    const ids = Array.from(bulkRowIds)
     const fieldValue = bulkEditValue === '' ? null : bulkEditValue
 
     // Capture originals BEFORE optimistic patch
@@ -304,7 +315,7 @@ export function CompanyTable({
     if (failedIds.length > 0) {
       setBulkEditError(`${failedIds.length} of ${ids.length} updates failed — reverted`)
     } else {
-      setSelectedIds(new Set())
+      clearBulkSelection()
     }
 
     setBulkEditing(false)
@@ -952,11 +963,11 @@ export function CompanyTable({
         )
       })()}
 
-      {/* Bulk action bar */}
-      {selectedIds.size > 0 && (
+      {/* Bulk action bar — targets the row-checkbox selection ∪ the cell selection */}
+      {bulkRowIds.size > 0 && (
         <div className={styles.bulkBar}>
-          <button className={styles.bulkClear} onClick={() => setSelectedIds(new Set())}>
-            {selectedIds.size} selected ✕
+          <button className={styles.bulkClear} onClick={clearBulkSelection}>
+            {bulkRowIds.size} selected ✕
           </button>
 
           {/* Edit fields button + dropdown */}
@@ -1003,21 +1014,40 @@ export function CompanyTable({
                     onClick={() => void handleBulkEdit()}
                     disabled={bulkEditValue === '' && bulkEditField === 'entityType'}
                   >
-                    Apply to {selectedIds.size} compan{selectedIds.size !== 1 ? 'ies' : 'y'}
+                    Apply to {bulkRowIds.size} compan{bulkRowIds.size !== 1 ? 'ies' : 'y'}
                   </button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Delete button */}
-          <button
-            className={`${styles.bulkMenuBtn} ${styles.bulkMenuBtnDanger}`}
-            onClick={() => void handleBulkDelete()}
-            disabled={bulkDeleting || bulkEditing}
-          >
-            {bulkDeleting ? 'Working…' : `Delete ${selectedIds.size}`}
-          </button>
+          {/* Delete button — two-step inline confirm (deletion is irreversible) */}
+          {bulkDeletePending ? (
+            <>
+              <button
+                className={styles.bulkMenuBtn}
+                onClick={() => setBulkDeletePending(false)}
+                disabled={bulkDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                className={`${styles.bulkMenuBtn} ${styles.bulkMenuBtnDanger}`}
+                onClick={() => void handleBulkDelete()}
+                disabled={bulkDeleting || bulkEditing}
+              >
+                {bulkDeleting ? 'Working…' : `Confirm delete ${bulkRowIds.size}`}
+              </button>
+            </>
+          ) : (
+            <button
+              className={`${styles.bulkMenuBtn} ${styles.bulkMenuBtnDanger}`}
+              onClick={() => setBulkDeletePending(true)}
+              disabled={bulkDeleting || bulkEditing}
+            >
+              {`Delete ${bulkRowIds.size}`}
+            </button>
+          )}
         </div>
       )}
 

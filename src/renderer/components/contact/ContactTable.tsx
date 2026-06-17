@@ -36,6 +36,7 @@ import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
 import { useEditCellNav, getRangePosition, getCellEdges, cellEdgeBoxShadow, effectiveCells, isCellSelected } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
+import { useBulkRowIds } from '../../hooks/useBulkRowIds'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
 import { executeBulkEdit, createCellCallbacks, formatJsonList } from '../crm/tableUtils'
 import type { RangeValue } from '../crm/tableUtils'
@@ -179,6 +180,7 @@ export function ContactTable({
 
   // ── Selection ──────────────────────────────────────────────────────────────
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkDeletePending, setBulkDeletePending] = useState(false)
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [bulkEditing, setBulkEditing] = useState(false)
   const [bulkEditError, setBulkEditError] = useState<string | null>(null)
@@ -224,7 +226,7 @@ export function ContactTable({
   const scrollToColRef = useRef<(idx: number) => void>(() => {})
 
   const {
-    selection, focusedCell, editCell, setEditCell, cellRange,
+    selection, focusedCell, editCell, setEditCell, cellRange, clearFocus,
     handleFocusCell, handleStartEdit, handleSelectCellClick, handleEndEdit, handleKeyboardEvent,
   } = useEditCellNav(
     contacts.length,
@@ -251,6 +253,14 @@ export function ContactTable({
     setSelectedIds(new Set())
   }, [clearSelectionTrigger, setSelectedIds])
 
+  // Bulk-action bar targets: row-checkbox selection ∪ rows the cell selection covers.
+  const bulkRowIds = useBulkRowIds(selectedIds, selection, contacts)
+  const clearBulkSelection = useCallback(() => {
+    setSelectedIds(new Set())
+    clearFocus()
+    setBulkDeletePending(false)
+  }, [setSelectedIds, clearFocus])
+
   function setUndoWithTimer(action: UndoAction) {
     clearTimeout(undoTimerRef.current)
     setUndoAction(action)
@@ -276,22 +286,22 @@ export function ContactTable({
   }
 
   async function handleBulkDelete() {
-    if (selectedIds.size === 0 || bulkDeleting) return
+    if (bulkRowIds.size === 0 || bulkDeleting) return
     setBulkDeleting(true)
-    const ids = Array.from(selectedIds)
-    setSelectedIds(new Set())
+    const ids = Array.from(bulkRowIds)
+    clearBulkSelection()
     await Promise.all(ids.map((id) => api.invoke(IPC_CHANNELS.CONTACT_DELETE, id)))
     setBulkDeleting(false)
     onBulkDelete(ids)
   }
 
   async function handleBulkEdit() {
-    if (selectedIds.size === 0 || bulkEditing || bulkEditValue === null) return
+    if (bulkRowIds.size === 0 || bulkEditing || bulkEditValue === null) return
     setBulkEditOpen(false)
     setBulkEditing(true)
     setBulkEditError(null)
 
-    const ids = Array.from(selectedIds)
+    const ids = Array.from(bulkRowIds)
 
     try {
       if (bulkEditField === 'contactType') {
@@ -320,7 +330,7 @@ export function ContactTable({
         if (failedIds.length > 0) {
           setBulkEditError(`${failedIds.length} of ${ids.length} updates failed`)
         } else {
-          setSelectedIds(new Set())
+          clearBulkSelection()
         }
       } else {
         // company: text input — use CONTACT_SET_COMPANY
@@ -350,7 +360,7 @@ export function ContactTable({
         if (failedIds.length > 0) {
           setBulkEditError(`${failedIds.length} of ${ids.length} updates failed`)
         } else {
-          setSelectedIds(new Set())
+          clearBulkSelection()
         }
       }
     } finally {
@@ -1032,11 +1042,11 @@ export function ContactTable({
         )
       })()}
 
-      {/* Bulk action bar */}
-      {selectedIds.size > 0 && (
+      {/* Bulk action bar — targets the row-checkbox selection ∪ the cell selection */}
+      {bulkRowIds.size > 0 && (
         <div className={styles.bulkBar}>
-          <button className={styles.bulkClear} onClick={() => setSelectedIds(new Set())}>
-            {selectedIds.size} selected ✕
+          <button className={styles.bulkClear} onClick={clearBulkSelection}>
+            {bulkRowIds.size} selected ✕
           </button>
 
           {/* Edit fields button + dropdown */}
@@ -1095,7 +1105,7 @@ export function ContactTable({
                     onClick={() => void handleBulkEdit()}
                     disabled={applyDisabled}
                   >
-                    Apply to {selectedIds.size} contact{selectedIds.size !== 1 ? 's' : ''}
+                    Apply to {bulkRowIds.size} contact{bulkRowIds.size !== 1 ? 's' : ''}
                   </button>
                 </div>
               </div>
@@ -1103,24 +1113,43 @@ export function ContactTable({
           </div>
 
           {/* Merge button — only when 2+ selected and parent supports it */}
-          {selectedIds.size >= 2 && onMerge && (
+          {bulkRowIds.size >= 2 && onMerge && (
             <button
               className={styles.bulkMenuBtn}
-              onClick={() => onMerge(Array.from(selectedIds))}
+              onClick={() => onMerge(Array.from(bulkRowIds))}
               disabled={bulkDeleting || bulkEditing}
             >
-              Merge {selectedIds.size}
+              Merge {bulkRowIds.size}
             </button>
           )}
 
-          {/* Delete button */}
-          <button
-            className={`${styles.bulkMenuBtn} ${styles.bulkMenuBtnDanger}`}
-            onClick={() => void handleBulkDelete()}
-            disabled={bulkDeleting || bulkEditing}
-          >
-            {bulkDeleting ? 'Working…' : `Delete ${selectedIds.size}`}
-          </button>
+          {/* Delete button — two-step inline confirm (deletion is irreversible) */}
+          {bulkDeletePending ? (
+            <>
+              <button
+                className={styles.bulkMenuBtn}
+                onClick={() => setBulkDeletePending(false)}
+                disabled={bulkDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                className={`${styles.bulkMenuBtn} ${styles.bulkMenuBtnDanger}`}
+                onClick={() => void handleBulkDelete()}
+                disabled={bulkDeleting || bulkEditing}
+              >
+                {bulkDeleting ? 'Working…' : `Confirm delete ${bulkRowIds.size}`}
+              </button>
+            </>
+          ) : (
+            <button
+              className={`${styles.bulkMenuBtn} ${styles.bulkMenuBtnDanger}`}
+              onClick={() => setBulkDeletePending(true)}
+              disabled={bulkDeleting || bulkEditing}
+            >
+              {`Delete ${bulkRowIds.size}`}
+            </button>
+          )}
         </div>
       )}
 
