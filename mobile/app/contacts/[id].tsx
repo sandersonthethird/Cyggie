@@ -26,6 +26,7 @@ import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo } from '../../components/CompanyLogo'
 import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { UserNoteEditor } from '../../components/UserNoteEditor'
+import { LedgerCard, linkedinPath, type LedgerGroup, type PillTone } from '../../components/LedgerCard'
 import { RichMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -295,47 +296,53 @@ function SegmentControl({
 }
 
 function OverviewSection({ contact }: { contact: ContactDetail }) {
-  const rows = useMemo(() => {
-    const base = [
-      { label: 'Title', value: contact.title },
-      { label: 'Company', value: contact.primaryCompanyName },
-      { label: 'Street', value: contact.street },
-      {
-        label: 'Location',
-        value:
-          contact.city && contact.state
-            ? `${contact.city}, ${contact.state}`
-            : contact.city ?? contact.state,
-      },
-      { label: 'Postal Code', value: contact.postalCode },
-      { label: 'Country', value: contact.country },
-      { label: 'Email', value: contact.email },
-      { label: 'Phone', value: contact.phone },
-      {
-        label: 'Type',
-        value: contact.contactType ? humanize(contact.contactType) : null,
-      },
-      {
-        label: 'Relationship',
-        value: contact.relationshipStrength
-          ? humanize(contact.relationshipStrength)
-          : null,
-      },
-      // Investor-specific (only meaningful for contactType === 'investor', but
-      // showing whatever's set rather than hiding behind a type check).
-      {
-        label: 'Fund size',
-        value: contact.fundSize ? formatCurrency(contact.fundSize) : null,
-      },
-      {
-        label: 'Check size',
-        value: formatCheckRange(
-          contact.typicalCheckSizeMin,
-          contact.typicalCheckSizeMax,
-        ),
-      },
-    ]
-    return base.filter((r): r is { label: string; value: string } => Boolean(r.value))
+  const groups = useMemo<LedgerGroup[]>(() => {
+    const location =
+      contact.city && contact.state
+        ? `${contact.city}, ${contact.state}`
+        : contact.city ?? contact.state
+
+    const about: LedgerGroup['rows'] = [
+      contact.title ? { key: 'Title', value: contact.title } : null,
+      contact.primaryCompanyName ? { key: 'Company', value: contact.primaryCompanyName } : null,
+      contact.email ? { key: 'Email', value: contact.email } : null,
+      contact.phone ? { key: 'Phone', value: contact.phone } : null,
+      contact.linkedinUrl
+        ? { key: 'LinkedIn', value: linkedinPath(contact.linkedinUrl), link: true }
+        : null,
+      location ? { key: 'Location', value: location } : null,
+      contact.street ? { key: 'Street', value: contact.street } : null,
+      contact.postalCode ? { key: 'Postal Code', value: contact.postalCode } : null,
+      contact.country ? { key: 'Country', value: contact.country } : null,
+    ].filter((r): r is NonNullable<typeof r> => r !== null)
+
+    // Investor-specific — group drops out entirely when nothing is set.
+    const typeTone: PillTone = contact.contactType === 'investor' ? 'green' : 'neutral'
+    const checkSize = formatCheckRange(
+      contact.typicalCheckSizeMin,
+      contact.typicalCheckSizeMax,
+    )
+    const investment: LedgerGroup['rows'] = [
+      contact.contactType
+        ? {
+            key: 'Type',
+            pills: [{ label: humanize(contact.contactType), tone: typeTone }],
+          }
+        : null,
+      contact.relationshipStrength
+        ? {
+            key: 'Relationship',
+            pills: [{ label: humanize(contact.relationshipStrength), tone: 'sky' as const }],
+          }
+        : null,
+      contact.fundSize ? { key: 'Fund size', value: formatCurrency(contact.fundSize) } : null,
+      checkSize ? { key: 'Check size', value: checkSize } : null,
+    ].filter((r): r is NonNullable<typeof r> => r !== null)
+
+    return [
+      { label: 'About', rows: about },
+      { label: 'Investment', rows: investment },
+    ].filter((g) => g.rows.length > 0)
   }, [contact])
 
   const queryClient = useQueryClient()
@@ -368,22 +375,10 @@ function OverviewSection({ contact }: { contact: ContactDetail }) {
           <RichMarkdown>{contact.notes}</RichMarkdown>
         </View>
       )}
-      {rows.length === 0 && !contact.notes ? (
+      {groups.length === 0 && !contact.notes ? (
         <Text style={styles.emptyInline}>No contact details yet.</Text>
       ) : (
-        <View style={styles.kvCard}>
-          {rows.map((row, idx) => (
-            <View key={row.label}>
-              <View style={styles.kvRow}>
-                <Text style={styles.kvLabel}>{row.label}</Text>
-                <Text style={styles.kvValue} numberOfLines={2}>
-                  {row.value}
-                </Text>
-              </View>
-              {idx < rows.length - 1 && <View style={styles.kvDivider} />}
-            </View>
-          ))}
-        </View>
+        <LedgerCard groups={groups} />
       )}
     </View>
   )
@@ -829,25 +824,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
-  },
-  kvRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    gap: 16,
-  },
-  kvLabel: {
-    color: colors.text3,
-    fontSize: type.bodyTight,
-    fontWeight: '500',
-    width: 110,
-  },
-  kvValue: {
-    flex: 1,
-    color: colors.text,
-    fontSize: type.body + 1,
-    fontWeight: '500',
   },
   kvDivider: {
     height: StyleSheet.hairlineWidth,

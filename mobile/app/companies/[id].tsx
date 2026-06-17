@@ -28,6 +28,7 @@ import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo, deriveLogoDomain } from '../../components/CompanyLogo'
 import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { UserNoteEditor } from '../../components/UserNoteEditor'
+import { LedgerCard, linkedinPath, type LedgerGroup } from '../../components/LedgerCard'
 import { RichMarkdown, stripMarkdown } from '../../lib/markdown'
 import { colors, radii, spacing, type } from '../../theme'
 
@@ -298,39 +299,63 @@ function SegmentControl({
 }
 
 function OverviewSection({ company }: { company: CompanyDetail }) {
-  const rows = useMemo(
-    () =>
-      [
-        { label: 'Industry', value: company.industry },
-        { label: 'Stage', value: company.stage },
-        {
-          label: 'Pipeline',
-          value: company.pipelineStage ? humanizeStage(company.pipelineStage) : null,
-        },
-        { label: 'Round', value: company.round },
-        {
-          label: 'Raise size',
-          value: company.raiseSize ? formatCurrency(company.raiseSize) : null,
-        },
-        {
-          label: 'Total funding',
-          value: company.totalFundingRaised
-            ? formatCurrency(company.totalFundingRaised)
-            : null,
-        },
-        { label: 'ARR', value: company.arr ? formatCurrency(company.arr) : null },
-        {
-          label: 'Runway',
-          value: company.runwayMonths ? `${company.runwayMonths} months` : null,
-        },
-        { label: 'Employees', value: company.employeeCountRange },
-        {
-          label: 'Founded',
-          value: company.foundingYear ? String(company.foundingYear) : null,
-        },
-      ].filter((r): r is { label: string; value: string } => Boolean(r.value)),
-    [company],
-  )
+  const groups = useMemo<LedgerGroup[]>(() => {
+    const hq =
+      company.city && company.state
+        ? `${company.city}, ${company.state}`
+        : company.city ?? company.state
+    const industries = (company.industry ?? '')
+      .split(/[,·]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+
+    const overview: LedgerGroup['rows'] = [
+      industries.length > 0
+        ? { key: 'Industry', pills: industries.map((label) => ({ label, tone: 'violet' as const })) }
+        : null,
+      company.stage
+        ? { key: 'Stage', pills: [{ label: company.stage, tone: 'neutral' as const, dot: true }] }
+        : null,
+      company.pipelineStage
+        ? {
+            key: 'Pipeline',
+            pills: [{ label: humanizeStage(company.pipelineStage), tone: 'neutral' as const, dot: true }],
+          }
+        : null,
+      company.round ? { key: 'Round', value: company.round } : null,
+      company.employeeCountRange ? { key: 'Employees', value: company.employeeCountRange } : null,
+      company.foundingYear ? { key: 'Founded', value: String(company.foundingYear) } : null,
+      hq ? { key: 'HQ', value: hq } : null,
+    ].filter((r): r is NonNullable<typeof r> => r !== null)
+
+    const financials: LedgerGroup['rows'] = [
+      company.raiseSize ? { key: 'Raise size', value: formatCurrency(company.raiseSize) } : null,
+      company.totalFundingRaised
+        ? { key: 'Total funding', value: formatCurrency(company.totalFundingRaised) }
+        : null,
+      company.arr ? { key: 'ARR', value: formatCurrency(company.arr) } : null,
+      company.runwayMonths ? { key: 'Runway', value: `${company.runwayMonths} mo` } : null,
+    ].filter((r): r is NonNullable<typeof r> => r !== null)
+
+    const links: LedgerGroup['rows'] = [
+      company.websiteUrl || company.primaryDomain
+        ? {
+            key: 'Website',
+            value: domainLabel(company.primaryDomain, company.websiteUrl),
+            link: true,
+          }
+        : null,
+      company.linkedinCompanyUrl
+        ? { key: 'LinkedIn', value: linkedinPath(company.linkedinCompanyUrl), link: true }
+        : null,
+    ].filter((r): r is NonNullable<typeof r> => r !== null)
+
+    return [
+      { label: 'Overview', rows: overview },
+      { label: 'Financials', rows: financials },
+      { label: 'Links', rows: links },
+    ].filter((g) => g.rows.length > 0)
+  }, [company])
 
   const queryClient = useQueryClient()
   const saveUserNote = async (next: string | null): Promise<void> => {
@@ -362,22 +387,10 @@ function OverviewSection({ company }: { company: CompanyDetail }) {
           </View>
         )}
       </View>
-      {rows.length === 0 && !company.description ? (
+      {groups.length === 0 && !company.description ? (
         <Text style={styles.emptyInline}>No company details yet.</Text>
       ) : (
-        <View style={styles.kvCard}>
-          {rows.map((row, idx) => (
-            <View key={row.label}>
-              <View style={styles.kvRow}>
-                <Text style={styles.kvLabel}>{row.label}</Text>
-                <Text style={styles.kvValue} numberOfLines={2}>
-                  {row.value}
-                </Text>
-              </View>
-              {idx < rows.length - 1 && <View style={styles.kvDivider} />}
-            </View>
-          ))}
-        </View>
+        <LedgerCard groups={groups} />
       )}
     </View>
   )
@@ -939,25 +952,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
-  },
-  kvRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    gap: 16,
-  },
-  kvLabel: {
-    color: colors.text3,
-    fontSize: type.bodyTight,
-    fontWeight: '500',
-    width: 110,
-  },
-  kvValue: {
-    flex: 1,
-    color: colors.text,
-    fontSize: type.body + 1,
-    fontWeight: '500',
   },
   kvDivider: {
     height: StyleSheet.hairlineWidth,
