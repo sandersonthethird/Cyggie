@@ -9,7 +9,18 @@ import { renderHook, act } from '@testing-library/react'
 import { useCellClipboard } from '../renderer/hooks/useCellClipboard'
 import type { CellClipboardOpts } from '../renderer/hooks/useCellClipboard'
 import type { ColumnDef } from '../renderer/components/crm/tableUtils'
-import type { EditCell, CellRange } from '../renderer/hooks/useEditCellNav'
+import type { CellRange, CellSelection } from '../renderer/hooks/useEditCellNav'
+
+/** Build a selection from a single rectangle (rows r1..r2, cols c1..c2). */
+function rectSelection(r1: number, c1: number, r2: number, c2: number): CellSelection {
+  return {
+    rects: [{ r1, c1, r2, c2 }],
+    added: new Set(),
+    removed: new Set(),
+    anchor: { row: r1, col: c1 },
+    active: { row: r2, col: c2 },
+  }
+}
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -522,6 +533,106 @@ describe('useCellClipboard', () => {
       })
 
       expect(result.current.clipboardToast).toBe('Paste failed — clipboard access denied')
+    })
+  })
+
+  // ── Multi-cell selection (the unified grid path) ───────────────────────────
+
+  describe('multi-cell selection', () => {
+    it('MC1: Cmd+C over a rectangle writes a Sheets-compatible TSV grid', async () => {
+      // rows 0–1 × cols 0–1 → text + select columns
+      const opts = makeOpts({ selection: rectSelection(0, 0, 1, 1) })
+      const { result } = renderHook(() => useCellClipboard(opts))
+
+      await act(async () => {
+        result.current.handleClipboardKeyDown(makeKeyEvent('c', { metaKey: true }))
+      })
+
+      expect(mockClipboard.writeText).toHaveBeenCalledWith('hello\ta\nworld\tb')
+      expect(result.current.copiedCells?.length).toBe(4)
+    })
+
+    it('MC2: paste-all writes the value to every selected cell + reports count', async () => {
+      clipboardText = 'x'
+      const saveCellValue = vi.fn(async () => {})
+      const opts = makeOpts({ selection: rectSelection(0, 0, 2, 0), saveCellValue }) // col0 rows 0–2
+      const { result } = renderHook(() => useCellClipboard(opts))
+
+      await act(async () => {
+        result.current.handleClipboardKeyDown(makeKeyEvent('v', { metaKey: true }))
+      })
+
+      expect(saveCellValue).toHaveBeenCalledTimes(3)
+      expect(result.current.clipboardToast).toBe('Pasted 3 cells')
+    })
+
+    it('MC3: paste with a mixed-type selection skips invalid cells (partial report)', async () => {
+      clipboardText = 'abc' // valid text, invalid number
+      const saveCellValue = vi.fn(async () => {})
+      // cells (0, col0=text) and (0, col2=number) via a 1×3 rect over cols 0..2
+      const sel: CellSelection = {
+        rects: [{ r1: 0, c1: 0, r2: 0, c2: 2 }],
+        added: new Set(), removed: new Set(),
+        anchor: { row: 0, col: 0 }, active: { row: 0, col: 2 },
+      }
+      const opts = makeOpts({ selection: sel, saveCellValue })
+      const { result } = renderHook(() => useCellClipboard(opts))
+
+      await act(async () => {
+        result.current.handleClipboardKeyDown(makeKeyEvent('v', { metaKey: true }))
+      })
+
+      // col0 (text) accepts "abc"; col1 (select) rejects; col2 (number) rejects.
+      expect(saveCellValue).toHaveBeenCalledTimes(1)
+      expect(saveCellValue).toHaveBeenCalledWith(rows[0], textCol, 'abc')
+      expect(result.current.clipboardToast).toBe('Pasted 1 cell · 2 skipped')
+    })
+
+    it('MC4: delete-all clears every selected cell and reports the count', async () => {
+      const saveCellValue = vi.fn(async () => {})
+      const opts = makeOpts({ selection: rectSelection(0, 0, 2, 0), saveCellValue })
+      const { result } = renderHook(() => useCellClipboard(opts))
+
+      await act(async () => {
+        result.current.handleClipboardKeyDown(makeKeyEvent('Delete'))
+      })
+
+      expect(saveCellValue).toHaveBeenCalledTimes(3)
+      expect(result.current.clipboardToast).toBe('Cleared 3 cells')
+    })
+
+    it('MC5: fillSelection bulk-fills a dropdown value into the selected column', async () => {
+      const saveCellValue = vi.fn(async () => {})
+      const opts = makeOpts({ selection: rectSelection(0, 1, 2, 1), saveCellValue }) // col1 (select) rows 0–2
+      const { result } = renderHook(() => useCellClipboard(opts))
+
+      await act(async () => {
+        await result.current.fillSelection(1, 'a') // valid option
+      })
+
+      expect(saveCellValue).toHaveBeenCalledTimes(3)
+      expect(saveCellValue).toHaveBeenCalledWith(rows[0], selectCol, 'a')
+      expect(result.current.clipboardToast).toBe('Filled 3 cells')
+    })
+
+    it('MC6: undo reverts a multi-cell paste across all touched cells', async () => {
+      clipboardText = 'x'
+      const saveCellValue = vi.fn(async () => {})
+      const opts = makeOpts({ selection: rectSelection(0, 0, 2, 0), saveCellValue })
+      const { result } = renderHook(() => useCellClipboard(opts))
+
+      await act(async () => {
+        result.current.handleClipboardKeyDown(makeKeyEvent('v', { metaKey: true }))
+      })
+      expect(result.current.undoAction?.count).toBe(3)
+      saveCellValue.mockClear()
+
+      await act(async () => { await result.current.handleUndo() })
+
+      // restores originals: col1 values were hello/world/foo
+      expect(saveCellValue).toHaveBeenCalledWith(rows[0], textCol, 'hello')
+      expect(saveCellValue).toHaveBeenCalledWith(rows[1], textCol, 'world')
+      expect(saveCellValue).toHaveBeenCalledWith(rows[2], textCol, 'foo')
     })
   })
 })
