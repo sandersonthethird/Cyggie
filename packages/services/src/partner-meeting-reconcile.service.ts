@@ -35,7 +35,7 @@ import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')
 import { getMeeting } from '@cyggie/db/sqlite/repositories/meeting.repo'
-import { bulkCreate as bulkCreateTasks } from '@cyggie/db/sqlite/repositories/task.repo'
+import { bulkCreate as bulkCreateTasks } from '@cyggie/db/sqlite/repositories'
 import { readTranscript } from '@main/storage/file-manager'
 import { safeParseJson } from '@main/utils/json-utils'
 import type { LLMProvider } from '@cyggie/services/llm/provider'

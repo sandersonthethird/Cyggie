@@ -49,11 +49,11 @@ vi.mock('../main/storage/file-manager', () => ({
   readTranscript: (...args: unknown[]) => mockReadTranscript(...args),
 }))
 
-// ─── Mock: task.repo ──────────────────────────────────────────────────────────
+// ─── Mock: tasks barrel (bulkCreate now imported from the sync-wrapped barrel) ──
 
 const mockBulkCreateTasks = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/task.repo', () => ({
+vi.mock('@cyggie/db/sqlite/repositories', () => ({
   bulkCreate: (...args: unknown[]) => mockBulkCreateTasks(...args),
 }))
 

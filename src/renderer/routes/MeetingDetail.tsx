@@ -818,6 +818,9 @@ export default function MeetingDetail() {
   })
   useRemoteApply(IPC_CHANNELS.CONTACTS_REMOTE_APPLIED, () => loadMeeting())
   useRemoteApply(IPC_CHANNELS.ORG_COMPANIES_REMOTE_APPLIED, () => loadMeeting())
+  // Phase 2 multiplayer — a teammate's task linked to this meeting arriving via
+  // the pull (loadMeeting re-fetches TASK_LIST_FOR_MEETING).
+  useRemoteApply(IPC_CHANNELS.TASKS_REMOTE_APPLIED, () => loadMeeting())
 
   useEffect(() => {
     ipcCache.get<MeetingTemplate[]>(

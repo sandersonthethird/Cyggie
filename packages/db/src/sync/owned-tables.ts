@@ -204,7 +204,10 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
   },
   { table: 'notes', primaryKey: ['id'], hasUserId: true },
   { table: 'note_folders', primaryKey: ['path'], hasUserId: true },
-  { table: 'tasks', primaryKey: ['id'], hasUserId: true },
+  // Phase 2 multiplayer — tasks are firm-shared with field-level LWW (same as
+  // org_companies). hasUserId stays true (PG tasks.user_id is NOT NULL; the
+  // gateway stamps it from JWT.sub — SQLite tasks has no user_id column).
+  { table: 'tasks', primaryKey: ['id'], hasUserId: true, fieldLww: true, firmScoped: true },
   { table: 'chat_sessions', primaryKey: ['id'], hasUserId: true },
   { table: 'chat_session_messages', primaryKey: ['id'], hasUserId: false },
 

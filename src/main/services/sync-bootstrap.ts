@@ -335,6 +335,11 @@ export function bootstrapSync(): void {
       if (!wc || wc.isDestroyed() || ids.length === 0) return
       wc.send(IPC_CHANNELS.CHAT_SESSION_MESSAGES_REMOTE_APPLIED, { ids })
     },
+    onTasksApplied: (ids) => {
+      const wc = statusBroadcastTarget
+      if (!wc || wc.isDestroyed() || ids.length === 0) return
+      wc.send(IPC_CHANNELS.TASKS_REMOTE_APPLIED, { ids })
+    },
     onStateChange: (snapshot) => {
       const wc = statusBroadcastTarget
       if (!wc || wc.isDestroyed()) return

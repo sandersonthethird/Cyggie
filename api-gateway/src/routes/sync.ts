@@ -642,6 +642,7 @@ export async function registerSyncRoutes(
           chatSessions: z.array(z.unknown()),
           chatSessionMessages: z.array(z.unknown()),
           userPreferences: z.array(z.unknown()),
+          tasks: z.array(z.unknown()),
           serverLamport: z.string(),
           // L2 — true when more pages remain (a table hit PULL_PAGE_SIZE). The
           // client should pull again immediately with since=serverLamport.
@@ -682,6 +683,7 @@ export async function registerSyncRoutes(
         chatSessions,
         chatSessionMessages,
         userPreferences,
+        tasks,
       ] = await Promise.all([
         db
           .select()
@@ -869,6 +871,19 @@ export async function registerSyncRoutes(
                 AND CAST(${schema.userPreferences.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.userPreferences.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
+        // tasks is FIRM-SCOPED + field-LWW (Phase 2 multiplayer), same model as
+        // org_companies: every firm member pulls the shared task pool. Index-
+        // backed by tasks_firm_lamport_idx (firm_id, lamport::numeric). Soft-
+        // deleted rows ARE sent (deleted_at set) so the tombstone replicates;
+        // reads filter deleted_at IS NULL.
+        db
+          .select()
+          .from(schema.tasks)
+          .where(
+            sql`${schema.tasks.firmId} = ${user.firm_id}
+                AND CAST(${schema.tasks.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.tasks.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
       ])
 
       // Suppress transcript_segments for in-progress meetings so the recording
@@ -891,7 +906,7 @@ export async function registerSyncRoutes(
       const pageTables = [
         meetings, notes, orgCompanies, orgCompanyAliases, contacts, contactEmails,
         meetingCompanyLinks, meetingSpeakers, meetingSpeakerContactLinks,
-        chatSessions, chatSessionMessages, userPreferences,
+        chatSessions, chatSessionMessages, userPreferences, tasks,
       ] as Array<Array<{ lamport: string | null }>>
       const maxOf = (rows: Array<{ lamport: string | null }>): bigint =>
         rows.reduce((m, r) => {
@@ -921,12 +936,13 @@ export async function registerSyncRoutes(
       const pagedChatSessions = cap(chatSessions)
       const pagedChatSessionMessages = cap(chatSessionMessages)
       const pagedUserPreferences = cap(userPreferences)
+      const pagedTasks = cap(tasks)
 
       const allRows = [
         ...pagedMeetings, ...pagedNotes, ...pagedOrgCompanies, ...pagedOrgCompanyAliases,
         ...pagedContacts, ...pagedContactEmails, ...pagedMeetingCompanyLinks,
         ...pagedMeetingSpeakers, ...pagedMeetingSpeakerContactLinks, ...pagedChatSessions,
-        ...pagedChatSessionMessages, ...pagedUserPreferences,
+        ...pagedChatSessionMessages, ...pagedUserPreferences, ...pagedTasks,
       ] as Array<{ lamport: string | null }>
       // When paginating, advance the cursor exactly to the ceiling so the next
       // page picks up strictly after it. Otherwise use the global max returned.
@@ -957,6 +973,7 @@ export async function registerSyncRoutes(
           chatSessionCount: chatSessions.length,
           chatSessionMessageCount: chatSessionMessages.length,
           userPreferenceCount: userPreferences.length,
+          taskCount: tasks.length,
           metric: 'sync.pull.row_count',
         },
         'sync.pull complete',
@@ -975,6 +992,7 @@ export async function registerSyncRoutes(
         chatSessions: pagedChatSessions,
         chatSessionMessages: pagedChatSessionMessages,
         userPreferences: pagedUserPreferences,
+        tasks: pagedTasks,
         serverLamport,
         hasMore,
       }

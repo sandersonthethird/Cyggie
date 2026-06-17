@@ -48,6 +48,7 @@ import {
   applyRemoteChatSessions,
   applyRemoteChatSessionMessages,
   applyRemoteUserPreferences,
+  applyRemoteTasks,
   type PulledMeetingRow,
   type PulledNoteRow,
   type PulledOrgCompanyRow,
@@ -60,6 +61,7 @@ import {
   type PulledChatSessionRow,
   type PulledChatSessionMessageRow,
   type PulledUserPreferenceRowWire,
+  type PulledTaskRow,
 } from './sync-remote-apply'
 import type { SyncAgent } from './sync-agent'
 
@@ -100,6 +102,8 @@ export interface PullResponse {
   chatSessionMessages?: PulledChatSessionMessageRow[]
   /** Part E — synced chat preferences (e.g. emailThreadsPerCompany). */
   userPreferences?: PulledUserPreferenceRowWire[]
+  /** Phase 2 multiplayer — firm-shared tasks (field-LWW). */
+  tasks?: PulledTaskRow[]
   serverLamport: string
   /** L2 — true when the gateway capped the page and more rows remain. */
   hasMore?: boolean
@@ -139,6 +143,8 @@ export interface SyncPullServiceConfig {
   /** 2026-05-24 (Bug B) — chat tables. */
   onChatSessionsApplied?: (ids: string[]) => void
   onChatSessionMessagesApplied?: (ids: string[]) => void
+  /** Phase 2 multiplayer — firm-shared tasks applied via the pull. */
+  onTasksApplied?: (ids: string[]) => void
   /** Optional state-change subscriber (Issue 5A SYNC_PULL_STATUS_CHANGED). */
   onStateChange?: (snapshot: PullStateSnapshot) => void
   /** Optional pino logger. */
@@ -303,6 +309,7 @@ export class SyncPullService {
     let contactEmailsResult: typeof empty = empty
     let chatSessionsResult: typeof empty = empty
     let chatSessionMessagesResult: typeof empty = empty
+    let tasksResult: typeof empty = empty
 
     try {
       if (response.orgCompanies && response.orgCompanies.length > 0) {
@@ -445,6 +452,21 @@ export class SyncPullService {
           ...(this.cfg.log ? { log: this.cfg.log } : {}),
         })
       }
+      // Phase 2 — firm-shared tasks. AFTER org_companies/contacts/meetings (FK
+      // parents company_id/contact_id/meeting_id). A task whose parent isn't
+      // local yet rolls back its own chunk and retries next pull.
+      if (response.tasks && response.tasks.length > 0) {
+        tasksResult = applyRemoteTasks(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.tasks,
+          {
+            onApplied: this.cfg.onTasksApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
     } catch (err) {
       // Top-level apply failure (something other than per-sub-batch
       // rollback, which is handled inside applyRemoteX). Back off.
@@ -476,6 +498,7 @@ export class SyncPullService {
       contactEmailsResult,
       chatSessionsResult,
       chatSessionMessagesResult,
+      tasksResult,
     ]
     this.cfg.log?.info?.(
       {
@@ -496,6 +519,8 @@ export class SyncPullService {
         chatSessionsAppliedCount: chatSessionsResult.appliedIds.length,
         chatSessionMessageRowCount: response.chatSessionMessages?.length ?? 0,
         chatSessionMessagesAppliedCount: chatSessionMessagesResult.appliedIds.length,
+        taskRowCount: response.tasks?.length ?? 0,
+        tasksAppliedCount: tasksResult.appliedIds.length,
         skippedLowLamport: allResults.reduce((a, r) => a + r.skippedLowLamport, 0),
         skippedPreValidation: allResults.reduce((a, r) => a + r.skippedPreValidation, 0),
         serverLamport: response.serverLamport,
