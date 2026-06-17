@@ -30,7 +30,7 @@
 
 import { randomUUID } from 'crypto'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
-import { getCompany, updateCompany } from '@cyggie/db/sqlite/repositories/org-company.repo'
+import { getCompany, updateCompany } from '@cyggie/db/sqlite/repositories'
 import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
 
 const _companyNotesRepo = makeEntityNotesRepo('company_id')

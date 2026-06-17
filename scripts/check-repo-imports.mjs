@@ -18,7 +18,7 @@
 // =============================================================================
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 
@@ -27,12 +27,13 @@ const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 // Directories to scan. Web has its own ESLint setup; mobile doesn't talk to
 // SQLite repos. Tests are explicitly excluded.
 //
-// NOTE: packages/services/src is NOT scanned today. A 2026-05-22 audit
-// (during Item 2's summarizer fix) found ~30 pre-existing direct repo
-// imports across packages/services/* — extending the scan would block CI
-// until each is migrated to the barrel. Filed as a follow-up sync-audit
-// TODO so this script's coverage matches the spirit of CLAUDE.md.
-const SCAN_DIRS = ['src', 'packages/db/src/sqlite/repositories']
+// packages/services/src IS scanned (Phase 2, 2026-06-17). The original
+// 2026-05-22 audit found ~30 pre-existing direct repo imports across
+// packages/services/* and deferred the scan. Phase 2 closed that gap: the
+// WRITERS among them (stub-enrichment + partner-meeting-reconcile updateCompany,
+// meeting-summary-recovery updateMeeting) were migrated to the barrel; the rest
+// are read-only context builders / summary readers (see NAMESPACE_READONLY_*).
+const SCAN_DIRS = ['src', 'packages/db/src/sqlite/repositories', 'packages/services/src']
 const SKIP_PATH_PARTS = [
   'node_modules',
   '__tests__',
@@ -43,15 +44,50 @@ const SKIP_PATH_PARTS = [
   'packages/db/src/sqlite/repositories',
 ]
 
-// Only flag direct imports of repos that ARE wrapped by the barrel. Repos
-// outside this list (audit, settings, search, deal, custom-fields, etc.) are
-// not yet sync-wrapped and continue to import directly. They'll be added
-// here as their tables are wrapped in follow-up commits.
-const WRAPPED_REPOS = ['meeting', 'contact', 'org-company', 'notes']
+// Repos wrapped by the barrel. A WRITE function imported from any of these
+// `*.repo.ts` files bypasses the outbox. Repos outside this list (audit,
+// settings, search, deal, etc.) are not yet sync-wrapped and import directly.
+const WRAPPED_REPOS = ['meeting', 'contact', 'org-company', 'notes', 'task']
 const wrappedPattern = WRAPPED_REPOS.map((r) => r.replace(/-/g, '\\-')).join('|')
+
+// Match an import statement from a wrapped repo, capturing the import CLAUSE so
+// we can tell a namespace import (`* as fooRepo`) from a named one (`{ a, b }`).
+//   group 1 → namespace binding (e.g. "* as meetingRepo"), or undefined
+//   group 2 → named list (e.g. "getCompany, updateCompany"), or undefined
+//   group 3 → repo name
 const IMPORT_PATTERN = new RegExp(
-  `from\\s+['"](?:[^'"]*\\/)?(${wrappedPattern})\\.repo(?:\\.ts)?['"]`,
+  `import\\s+(?:(\\*\\s+as\\s+\\w+)|\\{([^}]*)\\})\\s+from\\s+['"](?:[^'"]*\\/)?(${wrappedPattern})\\.repo(?:\\.ts)?['"]`,
   'g',
+)
+
+// A named import of a function whose name starts with one of these prefixes is
+// a WRITE — it MUST go through the barrel so the write reaches the outbox.
+// Read functions (get*/list*/resolve*/count*/find*/exists*/parse*/has*) never
+// match, so a raw read import is allowed (the barrel only matters for writes).
+const WRITER_PREFIX =
+  /^(create|update|delete|upsert|set|merge|tag|add|link|unlink|remove|getOrCreate|bulk|flag|unflag|refresh|reorder|rename|archive|pin|unpin)/
+
+// Files allowed to NAMESPACE-import (`import * as fooRepo`) a wrapped repo. A
+// namespace import hides which members are used, so the guard can't prove
+// read-only — these were HAND-AUDITED as read-only (LLM context builders,
+// company/contact summary readers). If you add a WRITE call (fooRepo.updateX,
+// createX, …) in one of these, route that write through the barrel instead —
+// do NOT widen this list to cover a new write.
+const NAMESPACE_READONLY_ALLOWLIST = new Set(
+  [
+    'packages/services/src/contact-summary-sync.service.ts',
+    'packages/services/src/company-summary-sync.service.ts',
+    'packages/services/src/llm/contact-context-builder.ts',
+    'packages/services/src/llm/chat.ts',
+    'packages/services/src/llm/memo-context-gatherer.ts',
+    'packages/services/src/llm/company-key-takeaways.ts',
+    'packages/services/src/llm/context-builders.ts',
+    'packages/services/src/llm/entities-chat.ts',
+    'packages/services/src/llm/company-chat.ts',
+    'packages/services/src/llm/agents/thesis-tools.ts',
+    'packages/services/src/llm/agents/memo-producer-tools.ts',
+    'packages/services/src/llm/agents/memo-producer-agent.ts',
+  ].map((p) => p.replaceAll('/', sep)),
 )
 
 const violations = []
@@ -68,7 +104,24 @@ function walk(dir) {
     } else if (full.endsWith('.ts') || full.endsWith('.tsx')) {
       const content = readFileSync(full, 'utf8')
       for (const match of content.matchAll(IMPORT_PATTERN)) {
-        violations.push({ file: rel, importPath: match[1] })
+        const [, namespaceClause, namedList, repo] = match
+        if (namespaceClause) {
+          // Namespace import — can't see the call sites. Allowed only for
+          // hand-audited read-only files; otherwise it's a potential bypass.
+          if (!NAMESPACE_READONLY_ALLOWLIST.has(rel)) {
+            violations.push({ file: rel, importPath: repo, detail: `namespace import (${namespaceClause.trim()})` })
+          }
+          continue
+        }
+        if (namedList) {
+          const writers = namedList
+            .split(',')
+            .map((n) => n.trim().split(/\s+as\s+/)[0].trim()) // strip `as alias`
+            .filter((n) => n && WRITER_PREFIX.test(n))
+          for (const w of writers) {
+            violations.push({ file: rel, importPath: repo, detail: `write fn '${w}'` })
+          }
+        }
       }
     }
   }
@@ -89,7 +142,7 @@ if (violations.length === 0) {
 
 console.error('[check-repo-imports] ✗ direct repo imports detected:')
 for (const v of violations) {
-  console.error(`  ${v.file}  →  imports from '${v.importPath}'`)
+  console.error(`  ${v.file}  →  '${v.importPath}.repo'  (${v.detail})`)
 }
 console.error('')
 console.error('Production code must import from @cyggie/db/sqlite/repositories')

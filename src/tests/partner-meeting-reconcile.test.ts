@@ -28,12 +28,7 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
 const mockGetCompany = vi.fn()
 const mockUpdateCompany = vi.fn()
 
-vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () => ({
-  getCompany: (...args: unknown[]) => mockGetCompany(...args),
-  updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
-}))
-
-// ─── Mock: meeting.repo ───────────────────────────────────────────────────────
+// ─── Mock: meeting.repo (getMeeting is a read — still imported raw) ────────────
 
 const mockGetMeeting = vi.fn()
 
@@ -49,11 +44,14 @@ vi.mock('../main/storage/file-manager', () => ({
   readTranscript: (...args: unknown[]) => mockReadTranscript(...args),
 }))
 
-// ─── Mock: tasks barrel (bulkCreate now imported from the sync-wrapped barrel) ──
+// ─── Mock: repositories barrel (getCompany/updateCompany/bulkCreate now all
+//     import from the sync-wrapped barrel; the writes flow through the outbox) ──
 
 const mockBulkCreateTasks = vi.fn()
 
 vi.mock('@cyggie/db/sqlite/repositories', () => ({
+  getCompany: (...args: unknown[]) => mockGetCompany(...args),
+  updateCompany: (...args: unknown[]) => mockUpdateCompany(...args),
   bulkCreate: (...args: unknown[]) => mockBulkCreateTasks(...args),
 }))
 
