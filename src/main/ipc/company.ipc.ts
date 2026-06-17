@@ -556,16 +556,30 @@ export function registerCompanyHandlers(): void {
     }
   )
 
+  // Phase 3: "Delete" is now a SOFT delete (moves to the Recycle Bin) that syncs
+  // to teammates via field-LWW. Permanent removal is the admin purge (Phase 3 C2).
   ipcMain.handle(IPC_CHANNELS.COMPANY_DELETE, (_event, companyId: string) => {
     if (!companyId?.trim()) throw new Error('companyId is required')
     const userId = getCurrentUserId()
     const company = companyRepo.getCompany(companyId)
     if (!company) throw new Error('Company not found')
-    companyRepo.deleteCompany(companyId)
+    companyRepo.softDeleteCompany(companyId, userId)
     logAudit(userId, 'company', companyId, 'delete', {
       canonicalName: company.canonicalName
     })
     return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_RESTORE, (_event, companyId: string) => {
+    if (!companyId?.trim()) throw new Error('companyId is required')
+    const userId = getCurrentUserId()
+    companyRepo.restoreCompany(companyId, userId)
+    logAudit(userId, 'company', companyId, 'restore', null)
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPANY_LIST_DELETED, () => {
+    return companyRepo.listDeletedCompanies()
   })
 
   ipcMain.handle(

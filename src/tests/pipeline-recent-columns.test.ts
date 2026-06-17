@@ -37,6 +37,7 @@ function buildDb(): Database.Database {
     CREATE TABLE org_companies (
       id TEXT PRIMARY KEY,
       canonical_name TEXT NOT NULL,
+      deleted_at TEXT,
       normalized_name TEXT NOT NULL DEFAULT '',
       description TEXT,
       primary_domain TEXT,

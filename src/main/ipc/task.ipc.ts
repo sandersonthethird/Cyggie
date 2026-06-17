@@ -36,14 +36,27 @@ export function registerTaskHandlers(): void {
     }
   )
 
+  // Phase 3: "Delete" is now a SOFT delete (Recycle Bin) that syncs via field-LWW.
   ipcMain.handle(IPC_CHANNELS.TASK_DELETE, (_event, taskId: string) => {
     if (!taskId) throw new Error('taskId is required')
     const userId = getCurrentUserId()
-    const deleted = taskRepo.deleteTask(taskId)
-    if (deleted) {
+    const row = taskRepo.softDeleteTask(taskId, userId)
+    if (row) {
       logAudit(userId, 'task', taskId, 'delete', null)
     }
-    return deleted
+    return !!row
+  })
+
+  ipcMain.handle(IPC_CHANNELS.TASK_RESTORE, (_event, taskId: string) => {
+    if (!taskId) throw new Error('taskId is required')
+    const userId = getCurrentUserId()
+    taskRepo.restoreTask(taskId, userId)
+    logAudit(userId, 'task', taskId, 'restore', null)
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.TASK_LIST_DELETED, () => {
+    return taskRepo.listDeletedTasks()
   })
 
   ipcMain.handle(IPC_CHANNELS.TASK_LIST_FOR_MEETING, (_event, meetingId: string) => {

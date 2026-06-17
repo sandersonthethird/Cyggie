@@ -5,6 +5,7 @@ export type AuditAction =
   | 'create'
   | 'update'
   | 'delete'
+  | 'restore'
   | 'stage_change'
   | 'set_group_event'
   // Meeting ↔ CRM tagging / company linkage (meeting.ipc.ts)

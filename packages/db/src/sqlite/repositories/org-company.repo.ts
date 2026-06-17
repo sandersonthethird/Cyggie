@@ -33,6 +33,7 @@ import type {
   MergeFieldOverrides
 } from '@shared/types/company'
 import { SYSTEM_DECISION_TYPE_STAGE_CHANGE } from '@shared/types/company'
+import { addDays, RECYCLE_RETENTION_DAYS, type DeletedEntitySummary } from '@shared/types/recycle'
 
 interface CompanyRow {
   id: string
@@ -740,7 +741,8 @@ export function listCompanies(filter?: CompanyListFilter): CompanySummary[] {
   const db = getDatabase()
   const query = filter?.query?.trim()
   const view = filter?.view ?? 'companies'
-  const conditions: string[] = []
+  // Soft-delete (Phase 3): never surface trashed companies in any live list.
+  const conditions: string[] = ['c.deleted_at IS NULL']
   const params: unknown[] = []
 
   if (view === 'companies') {
@@ -819,7 +821,8 @@ export function countStubCompanies(): number {
   try {
     const row = db.prepare(`
       SELECT COUNT(*) AS n FROM org_companies c
-      WHERE c.entity_type = 'unknown'
+      WHERE c.deleted_at IS NULL
+        AND c.entity_type = 'unknown'
         AND (c.primary_domain IS NULL OR c.primary_domain = '')
         AND (c.description IS NULL OR c.description = '')
         AND (c.lead_investor IS NULL OR c.lead_investor = '')
@@ -843,7 +846,7 @@ export function listPipelineCompanies(filter?: {
   portfolioExpiryBefore?: string | null
 }): CompanySummary[] {
   const db = getDatabase()
-  const conditions: string[] = ['c.pipeline_stage IS NOT NULL']
+  const conditions: string[] = ['c.pipeline_stage IS NOT NULL', 'c.deleted_at IS NULL']
   const params: unknown[] = []
 
   if (filter?.pipelineStage) {
@@ -1012,8 +1015,10 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
 
 export function getCompany(companyId: string): CompanyDetail | null {
   const db = getDatabase()
+  // Soft-delete (Phase 3): a trashed company 404s from the live detail page.
+  // The restore/recycle paths use listDeletedCompanies / the bare row instead.
   const row = db
-    .prepare(`${baseCompanySelect('WHERE c.id = ?')} LIMIT 1`)
+    .prepare(`${baseCompanySelect('WHERE c.id = ? AND c.deleted_at IS NULL')} LIMIT 1`)
     .get(companyId) as CompanyRow | undefined
   if (!row) return null
 
@@ -1738,9 +1743,24 @@ export function getOrCreateCompanyByName(
 
   const existingId = findCompanyIdByNameOrDomain(companyName, null)
   if (existingId) {
-    const existing = getCompany(existingId)
+    let existing = getCompany(existingId)
     if (!existing) {
-      throw new Error('Company not found')
+      // The match is soft-deleted (getCompany filters deleted_at). A re-reference
+      // revives it rather than throwing — SQLite normalized_name is UNIQUE, so a
+      // fresh insert would collide anyway. NOTE: this raw revive doesn't itself
+      // bump field_lamports, so the un-delete may not push until the next edit
+      // (rare path; documented Phase 3 limitation).
+      const db = getDatabase()
+      const wasDeleted = db
+        .prepare('SELECT deleted_at FROM org_companies WHERE id = ? LIMIT 1')
+        .get(existingId) as { deleted_at: string | null } | undefined
+      if (wasDeleted && wasDeleted.deleted_at != null) {
+        db.prepare(
+          "UPDATE org_companies SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = datetime('now') WHERE id = ?",
+        ).run(existingId)
+        existing = getCompany(existingId)
+      }
+      if (!existing) throw new Error('Company not found')
     }
     return existing
   }
@@ -2899,6 +2919,100 @@ export function deleteCompany(companyId: string): void {
   })
 
   tx()
+}
+
+// ─── Soft-delete (Phase 3 multiplayer) ───────────────────────────────────────
+//
+// User "Delete" is now a soft-delete UPDATE (set deleted_at) that rides the
+// field-LWW sync path, so the delete propagates to teammates (a hard delete
+// can't be pulled). Reads filter deleted_at IS NULL; the recycle bin reads the
+// trashed rows. These return the BARE snake_case row so the barrel's withSync
+// field-LWW wrapper can stamp field_lamports[deleted_at] + emit an update.
+// Hard removal is a separate admin purge (Phase 3 commit 2).
+
+/** Soft-delete a company (idempotent — re-deleting a trashed row is a no-op). */
+export function softDeleteCompany(
+  companyId: string,
+  userId: string | null = null,
+): Record<string, unknown> | null {
+  const db = getDatabase()
+  db.prepare(
+    `UPDATE org_companies
+     SET deleted_at = datetime('now'), deleted_by_user_id = ?, updated_at = datetime('now')
+     WHERE id = ? AND deleted_at IS NULL`,
+  ).run(userId, companyId)
+  return (db
+    .prepare('SELECT * FROM org_companies WHERE id = ? LIMIT 1')
+    .get(companyId) as Record<string, unknown> | undefined) ?? null
+}
+
+/** Restore a soft-deleted company. Clears deleted_at (wins LWW vs a prior delete). */
+export function restoreCompany(
+  companyId: string,
+  userId: string | null = null,
+): Record<string, unknown> | null {
+  const db = getDatabase()
+  db.prepare(
+    `UPDATE org_companies
+     SET deleted_at = NULL, deleted_by_user_id = NULL,
+         updated_by_user_id = ?, updated_at = datetime('now')
+     WHERE id = ?`,
+  ).run(userId, companyId)
+  return (db
+    .prepare('SELECT * FROM org_companies WHERE id = ? LIMIT 1')
+    .get(companyId) as Record<string, unknown> | undefined) ?? null
+}
+
+/** Bare row by id, INCLUDING soft-deleted (for restore/audit/purge paths). */
+export function getCompanyRowIncludingDeleted(
+  companyId: string,
+): Record<string, unknown> | null {
+  return (getDatabase()
+    .prepare('SELECT * FROM org_companies WHERE id = ? LIMIT 1')
+    .get(companyId) as Record<string, unknown> | undefined) ?? null
+}
+
+/** Recycle-bin list: firm's soft-deleted companies (already in local SQLite via
+ *  pull). deleted_by name resolves from the local users directory; purgesAt is
+ *  deleted_at + 30 days. */
+export function listDeletedCompanies(): DeletedEntitySummary[] {
+  const db = getDatabase()
+  let rows: Array<{
+    id: string
+    canonical_name: string
+    primary_domain: string | null
+    deleted_at: string
+    deleted_by_name: string | null
+  }>
+  try {
+    rows = db
+      .prepare(
+        `SELECT c.id, c.canonical_name, c.primary_domain, c.deleted_at,
+                u.display_name AS deleted_by_name
+         FROM org_companies c
+         LEFT JOIN users u ON u.id = c.deleted_by_user_id
+         WHERE c.deleted_at IS NOT NULL
+         ORDER BY c.deleted_at DESC`,
+      )
+      .all() as typeof rows
+  } catch {
+    // Partial DB without a users table (some unit fixtures) — degrade.
+    rows = db
+      .prepare(
+        `SELECT id, canonical_name, primary_domain, deleted_at, NULL AS deleted_by_name
+         FROM org_companies WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`,
+      )
+      .all() as typeof rows
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    entityType: 'company' as const,
+    label: r.canonical_name,
+    sublabel: r.primary_domain,
+    deletedAt: r.deleted_at,
+    deletedByName: r.deleted_by_name,
+    purgesAt: addDays(r.deleted_at, RECYCLE_RETENTION_DAYS),
+  }))
 }
 
 export function linkMeetingCompany(

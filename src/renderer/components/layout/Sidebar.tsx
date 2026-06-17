@@ -17,6 +17,7 @@ import {
   Sparkles,
   ChevronRight,
   Pin,
+  Trash2,
 } from 'lucide-react'
 import styles from './Sidebar.module.css'
 import { useFeatureFlag } from '../../hooks/useFeatureFlags'
@@ -246,6 +247,7 @@ export default function Sidebar() {
         <NavItem to="/meetings" icon={<Calendar size={16} strokeWidth={1.5} />} label="Meetings" />
         <NavItem to="/notes" icon={<FileText size={16} strokeWidth={1.5} />} label="Notes" />
         <NavItem to="/tasks" icon={<CheckSquare size={16} strokeWidth={1.5} />} label="Tasks" />
+        <NavItem to="/recycle" icon={<Trash2 size={16} strokeWidth={1.5} />} label="Recycle Bin" />
         <NavItem to="/partner-meeting" icon={<Users2 size={16} strokeWidth={1.5} />} label="Partner Sync" />
 
         {/* AI Chats — expandable, with up to 8 recent chats nested below */}

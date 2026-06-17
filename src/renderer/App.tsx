@@ -11,6 +11,7 @@ import Contacts from './routes/Contacts'
 import ContactDetail from './routes/ContactDetail'
 import Pipeline from './routes/Pipeline'
 import Tasks from './routes/Tasks'
+import RecycleBin from './routes/RecycleBin'
 import Notes from './routes/Notes'
 import NoteDetail, { NoteDetailLoaded } from './routes/NoteDetail'
 import LiveRecording from './routes/LiveRecording'
@@ -180,6 +181,7 @@ export default function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/meetings" element={<MeetingsPage />} />
                 <Route path="/tasks" element={<Tasks />} />
+                <Route path="/recycle" element={<RecycleBin />} />
                 <Route path="/search" element={<SearchResults />} />
                 <Route path="/notes" element={<Notes />} />
                 <Route path="/note/new" element={<NoteDetail />} />

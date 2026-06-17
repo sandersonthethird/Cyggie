@@ -10,6 +10,7 @@ import type {
   TaskStatus,
   TaskSummaryStats
 } from '@shared/types/task'
+import { addDays, RECYCLE_RETENTION_DAYS, type DeletedEntitySummary } from '@shared/types/recycle'
 
 interface TaskListRow extends TaskRow {
   meeting_title: string | null
@@ -62,7 +63,8 @@ const LIST_SELECT = `
 
 export function listTasks(filter?: TaskListFilter): TaskListItem[] {
   const db = getDatabase()
-  const conditions: string[] = []
+  // Soft-delete (Phase 3): never surface trashed tasks in the live list.
+  const conditions: string[] = ['t.deleted_at IS NULL']
   const params: unknown[] = []
 
   if (filter?.status && filter.status.length > 0) {
@@ -132,8 +134,9 @@ export function listTasks(filter?: TaskListFilter): TaskListItem[] {
 
 export function getTask(taskId: string): Task | null {
   const db = getDatabase()
+  // Soft-delete (Phase 3): a trashed task 404s from live reads.
   const row = db
-    .prepare('SELECT * FROM tasks WHERE id = ?')
+    .prepare('SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL')
     .get(taskId) as TaskRow | undefined
   return row ? rowToTask(row) : null
 }
@@ -235,6 +238,97 @@ export function deleteTask(taskId: string): boolean {
   return result.changes > 0
 }
 
+// ─── Soft-delete (Phase 3 multiplayer) ───────────────────────────────────────
+// Mirror org_companies: user "Delete" becomes a soft-delete UPDATE that rides
+// field-LWW sync. Return the BARE snake_case row for the barrel's withSync stamp.
+
+/** Soft-delete a task (idempotent — re-deleting a trashed row is a no-op). */
+export function softDeleteTask(
+  taskId: string,
+  userId: string | null = null,
+): Record<string, unknown> | null {
+  const db = getDatabase()
+  db.prepare(
+    `UPDATE tasks
+     SET deleted_at = datetime('now'), deleted_by_user_id = ?, updated_at = datetime('now')
+     WHERE id = ? AND deleted_at IS NULL`,
+  ).run(userId, taskId)
+  return (db.prepare('SELECT * FROM tasks WHERE id = ? LIMIT 1').get(taskId) as
+    | Record<string, unknown>
+    | undefined) ?? null
+}
+
+/** Restore a soft-deleted task (clears deleted_at; wins LWW vs a prior delete). */
+export function restoreTask(
+  taskId: string,
+  userId: string | null = null,
+): Record<string, unknown> | null {
+  const db = getDatabase()
+  db.prepare(
+    `UPDATE tasks
+     SET deleted_at = NULL, deleted_by_user_id = NULL,
+         updated_by_user_id = ?, updated_at = datetime('now')
+     WHERE id = ?`,
+  ).run(userId, taskId)
+  return (db.prepare('SELECT * FROM tasks WHERE id = ? LIMIT 1').get(taskId) as
+    | Record<string, unknown>
+    | undefined) ?? null
+}
+
+/** Bare row by id INCLUDING soft-deleted (restore/audit/purge paths). */
+export function getTaskRowIncludingDeleted(taskId: string): Record<string, unknown> | null {
+  return (getDatabase().prepare('SELECT * FROM tasks WHERE id = ? LIMIT 1').get(taskId) as
+    | Record<string, unknown>
+    | undefined) ?? null
+}
+
+/** Recycle-bin list: firm's soft-deleted tasks (already in local SQLite via pull). */
+export function listDeletedTasks(): DeletedEntitySummary[] {
+  const db = getDatabase()
+  let rows: Array<{
+    id: string
+    title: string
+    company_name: string | null
+    meeting_title: string | null
+    deleted_at: string
+    deleted_by_name: string | null
+  }>
+  const select = `
+    SELECT t.id, t.title,
+           c.canonical_name AS company_name,
+           m.title AS meeting_title,
+           t.deleted_at,
+           {DELETED_BY}
+    FROM tasks t
+    LEFT JOIN org_companies c ON c.id = t.company_id
+    LEFT JOIN meetings m ON m.id = t.meeting_id
+    {USERS_JOIN}
+    WHERE t.deleted_at IS NOT NULL
+    ORDER BY t.deleted_at DESC`
+  try {
+    rows = db
+      .prepare(
+        select
+          .replace('{DELETED_BY}', 'u.display_name AS deleted_by_name')
+          .replace('{USERS_JOIN}', 'LEFT JOIN users u ON u.id = t.deleted_by_user_id'),
+      )
+      .all() as typeof rows
+  } catch {
+    rows = db
+      .prepare(select.replace('{DELETED_BY}', 'NULL AS deleted_by_name').replace('{USERS_JOIN}', ''))
+      .all() as typeof rows
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    entityType: 'task' as const,
+    label: r.title,
+    sublabel: r.company_name ?? r.meeting_title,
+    deletedAt: r.deleted_at,
+    deletedByName: r.deleted_by_name,
+    purgesAt: addDays(r.deleted_at, RECYCLE_RETENTION_DAYS),
+  }))
+}
+
 export function existsByMeetingAndHash(meetingId: string, hash: string): boolean {
   const db = getDatabase()
   const row = db
@@ -247,7 +341,7 @@ export function listTasksForMeeting(meetingId: string): Task[] {
   const db = getDatabase()
   const rows = db
     .prepare(`
-      SELECT * FROM tasks WHERE meeting_id = ?
+      SELECT * FROM tasks WHERE meeting_id = ? AND deleted_at IS NULL
       ORDER BY
         CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dismissed' THEN 3 END,
         datetime(created_at) DESC
@@ -260,7 +354,7 @@ export function listTasksForCompany(companyId: string): Task[] {
   const db = getDatabase()
   const rows = db
     .prepare(`
-      SELECT * FROM tasks WHERE company_id = ?
+      SELECT * FROM tasks WHERE company_id = ? AND deleted_at IS NULL
       ORDER BY
         CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dismissed' THEN 3 END,
         datetime(created_at) DESC
@@ -286,6 +380,7 @@ export function getTaskSummaryStats(): TaskSummaryStats {
         SUM(CASE WHEN status IN ('open', 'in_progress') AND due_date IS NOT NULL AND due_date <= ? THEN 1 ELSE 0 END) AS due_this_week,
         SUM(CASE WHEN status IN ('open', 'in_progress') AND due_date IS NOT NULL AND due_date < ? THEN 1 ELSE 0 END) AS overdue_count
       FROM tasks
+      WHERE deleted_at IS NULL
     `)
     .get(endOfWeekStr, todayStr) as {
       open_count: number

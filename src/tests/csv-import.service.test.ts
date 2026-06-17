@@ -130,7 +130,8 @@ function makeTestDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS org_companies (
       id TEXT PRIMARY KEY,
       canonical_name TEXT,
-      normalized_name TEXT
+      normalized_name TEXT,
+      deleted_at TEXT
     );
     CREATE TABLE IF NOT EXISTS custom_field_definitions (
       id TEXT PRIMARY KEY,
