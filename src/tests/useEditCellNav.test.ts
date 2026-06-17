@@ -13,7 +13,7 @@ import { renderHook, act } from '@testing-library/react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   useEditCellNav, getRangePosition,
-  isCellSelected, getCellEdges, effectiveCells,
+  isCellSelected, getCellEdges, effectiveCells, selectionRowIndices,
 } from '../renderer/hooks/useEditCellNav'
 import type { ColumnDef } from '../renderer/components/crm/tableUtils'
 
@@ -567,6 +567,24 @@ describe('useEditCellNav', () => {
       act(() => result.current.handleFocusCell(2, 1))
       act(() => result.current.handleFocusCell(5, 1, true)) // same column → contiguous
       expect(result.current.cellRange).toEqual({ colIdx: 1, startRow: 2, endRow: 5 })
+    })
+
+    it('selectionRowIndices: distinct sorted rows from a non-contiguous selection', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(5, 1))
+      act(() => result.current.handleFocusCell(2, 1, false, true)) // cmd+click (rows 5,2)
+      expect(selectionRowIndices(result.current.selection)).toEqual([2, 5])
+    })
+
+    it('selectionRowIndices: each row counted once for a multi-column rectangle', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(4, 3, true)) // rect rows 2–4 × cols 1–3
+      expect(selectionRowIndices(result.current.selection)).toEqual([2, 3, 4])
+    })
+
+    it('selectionRowIndices: null selection → []', () => {
+      expect(selectionRowIndices(null)).toEqual([])
     })
 
     it('getCellEdges: lone cell has all four borders; rectangle interior has none', () => {

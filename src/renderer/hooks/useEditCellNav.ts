@@ -173,6 +173,11 @@ export function effectiveCells(sel: CellSelection | null): Cell[] {
   return cells
 }
 
+/** Distinct, ascending row indices covered by a selection (for row-scoped bulk actions). */
+export function selectionRowIndices(sel: CellSelection | null): number[] {
+  return [...new Set(effectiveCells(sel).map((c) => c.row))].sort((a, b) => a - b)
+}
+
 function singleCellSel(row: number, col: number): CellSelection {
   const cell = { row, col }
   return { rects: [{ r1: row, c1: col, r2: row, c2: col }], added: new Set(), removed: new Set(), anchor: cell, active: cell }
