@@ -159,6 +159,19 @@ export default function ContactDetail() {
     setContact((prev) => prev ? { ...prev, ...updates } : prev)
   }
 
+  // Phase 4 — privacy opt-out. Private contacts are owner-only (the gateway never
+  // sends them to a teammate). Optimistic toggle; reverts on failure.
+  async function togglePrivacy() {
+    if (!contact || !id) return
+    const next = !contact.isPrivate
+    handleUpdate({ isPrivate: next })
+    try {
+      await window.api.invoke(IPC_CHANNELS.CONTACT_UPDATE, id, { isPrivate: next })
+    } catch {
+      handleUpdate({ isPrivate: !next })
+    }
+  }
+
   const summarizedMeetings = useMemo(
     () => contact?.meetings.filter((m) => m.status === 'summarized') ?? [],
     [contact]
@@ -377,6 +390,18 @@ export default function ContactDetail() {
           { label: 'Contacts', href: stateFrom ?? '/contacts' },
           { label: contact.fullName ?? 'Contact' },
         ]}
+        actions={
+          <button
+            onClick={() => void togglePrivacy()}
+            title={
+              contact.isPrivate
+                ? 'Private — only you can see this contact. Click to share with your firm.'
+                : 'Shared with your firm. Click to make it private (only you).'
+            }
+          >
+            {contact.isPrivate ? '🔒 Private' : '👥 Shared'}
+          </button>
+        }
       />
     <div className={layoutStyles.layout} style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr` }}>
       {/* Left panel — properties */}

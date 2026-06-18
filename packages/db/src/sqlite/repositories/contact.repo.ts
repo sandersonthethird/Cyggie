@@ -64,6 +64,7 @@ interface ContactRow {
   full_name: string
   first_name: string | null
   last_name: string | null
+  is_private?: number | boolean | null
   normalized_name: string
   email: string | null
   primary_company_id: string | null
@@ -205,6 +206,9 @@ function rowToContactSummary(row: ContactRow): ContactSummary {
     lastTouchpoint: row.last_touchpoint ?? row.updated_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // Phase 4 — privacy opt-out. Coerce SQLite 0/1 → boolean. Carried on the DTO
+    // so the barrel's outbox payload propagates the toggle to the gateway.
+    isPrivate: row.is_private === 1 || row.is_private === true,
     // Extended fields — null when the source query didn't select them.
     phone: row.phone ?? null,
     street: row.street ?? null,
@@ -1386,6 +1390,7 @@ export function updateContact(
     contactType?: string | null
     linkedinUrl?: string | null
     email?: string | null
+    isPrivate?: boolean
   } & Partial<Record<ContactUpdatableKey, unknown>>,
   userId: string | null = null
 ): ContactDetail {
@@ -1431,6 +1436,13 @@ export function updateContact(
   if (data.linkedinUrl !== undefined) {
     sets.push('linkedin_url = ?')
     params.push(data.linkedinUrl ? normalizeLinkedinUrl(data.linkedinUrl) : null)
+  }
+
+  // Phase 4 — privacy opt-out. Explicit (not via the generic map) because the
+  // boolean needs 0/1 coercion before binding (better-sqlite3 rejects booleans).
+  if (data.isPrivate !== undefined) {
+    sets.push('is_private = ?')
+    params.push(data.isPrivate ? 1 : 0)
   }
 
   // Handle all type-safe updatable fields via the const map
@@ -1855,6 +1867,7 @@ export function getContact(contactId: string): ContactDetail | null {
         c.full_name,
         c.first_name,
         c.last_name,
+        c.is_private,
         c.normalized_name,
         c.email,
         c.primary_company_id,

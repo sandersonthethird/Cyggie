@@ -32,6 +32,8 @@ export interface ContactSummary {
   lastTouchpoint: string | null
   createdAt: string
   updatedAt: string
+  /** Phase 4 — owner-only privacy opt-out (firm-shared when false). */
+  isPrivate?: boolean
   // ── Extended fields surfaced as opt-in table columns ──
   // Populated by listContacts/listContactsLight; null where a query doesn't
   // select them. JSON fields (tags, previousCompanies, investmentStageFocus,
