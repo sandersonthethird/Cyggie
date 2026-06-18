@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   applyRemoteOrgCompanies,
   applyRemoteOrgCompanyAliases,
+  applyRemoteCompanyInvestors,
   applyRemoteContacts,
   applyRemoteContactEmails,
   applyRemoteChatSessions,
@@ -134,6 +135,18 @@ function freshDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       lamport TEXT NOT NULL DEFAULT '0',
       FOREIGN KEY (company_id) REFERENCES org_companies(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE company_investors (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL,
+      investor_company_id TEXT NOT NULL,
+      investor_type TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      lamport TEXT NOT NULL DEFAULT '0',
+      FOREIGN KEY (company_id) REFERENCES org_companies(id) ON DELETE CASCADE,
+      FOREIGN KEY (investor_company_id) REFERENCES org_companies(id) ON DELETE CASCADE
     );
 
     CREATE TABLE contacts (
@@ -489,6 +502,52 @@ describe('applyRemoteOrgCompanyAliases', () => {
       },
     ])
     expect(r.appliedIds).toEqual(['alias-2'])
+  })
+})
+
+describe('applyRemoteCompanyInvestors', () => {
+  let db: Database.Database
+  beforeEach(() => {
+    db = freshDb()
+    // Investee + investor companies — both FK to org_companies.
+    db.prepare("INSERT INTO org_companies (id, canonical_name, normalized_name) VALUES ('co-1', 'Amma', 'amma')").run()
+    db.prepare("INSERT INTO org_companies (id, canonical_name, normalized_name) VALUES ('inv-1', 'Sequoia', 'sequoia')").run()
+  })
+  afterEach(() => { db.close() })
+
+  it('inserts an investor link (firm-shared cascade child, no user row needed)', () => {
+    db.prepare('DELETE FROM users WHERE id = ?').run(USER_ID)
+    const r = applyRemoteCompanyInvestors(db, DEVICE_ID, USER_ID, [
+      {
+        id: 'ci-1',
+        companyId: 'co-1',
+        investorCompanyId: 'inv-1',
+        investorType: 'co_investor',
+        position: 0,
+        lamport: '5',
+        createdAt: '2026-06-18T10:00:00.000Z',
+      },
+    ])
+    expect(r.appliedIds).toEqual(['ci-1'])
+    const row = db
+      .prepare('SELECT investor_company_id, investor_type, position, lamport FROM company_investors WHERE id = ?')
+      .get('ci-1') as { investor_company_id: string; investor_type: string; position: number; lamport: string } | undefined
+    expect(row?.investor_company_id).toBe('inv-1')
+    expect(row?.investor_type).toBe('co_investor')
+    expect(row?.lamport).toBe('5')
+  })
+
+  it('skips a lower-lamport apply (whole-row LWW)', () => {
+    const base = {
+      id: 'ci-2', companyId: 'co-1', investorCompanyId: 'inv-1',
+      investorType: 'co_investor', position: 0, createdAt: '2026-06-18T10:00:00.000Z',
+    }
+    applyRemoteCompanyInvestors(db, DEVICE_ID, USER_ID, [{ ...base, lamport: '9' }])
+    const r = applyRemoteCompanyInvestors(db, DEVICE_ID, USER_ID, [{ ...base, position: 3, lamport: '2' }])
+    expect(r.appliedIds).toEqual([])
+    const row = db.prepare('SELECT position, lamport FROM company_investors WHERE id = ?').get('ci-2') as
+      | { position: number; lamport: string } | undefined
+    expect(row?.lamport).toBe('9') // unchanged
   })
 })
 

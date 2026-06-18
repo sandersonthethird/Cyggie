@@ -352,7 +352,15 @@ export const getCompaniesByNormalizedNames = rawOrgCompany.getCompaniesByNormali
 export const getCompany = rawOrgCompany.getCompany
 export const getCompanyInvestorsByType = rawOrgCompany.getCompanyInvestorsByType
 export const getCoInvestorOverlaps = rawOrgCompany.getCoInvestorOverlaps
-export const setCompanyInvestors = rawOrgCompany.setCompanyInvestors
+// setCompanyInvestors: full replace (DELETE all of company+type, INSERT N). The
+// raw repo emits every delete + insert outbox row itself within the sync
+// context; the wrapper just opens the context (mints the lamport) and emits no
+// primary row of its own (extractRow → null).
+export const setCompanyInvestors = withSync(rawOrgCompany.setCompanyInvestors, {
+  table: 'company_investors',
+  op: 'update',
+  extractRow: () => null,
+})
 export const findCompanyIdByDomain = rawOrgCompany.findCompanyIdByDomain
 export const getCompanyCanonicalNameByDomain =
   rawOrgCompany.getCompanyCanonicalNameByDomain

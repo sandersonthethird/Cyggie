@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { createInsertSchema, createUpdateSchema } from 'drizzle-zod'
-import { companyFlaggedFiles, orgCompanies, orgCompanyAliases } from '../schema/companies'
+import { companyFlaggedFiles, orgCompanies, orgCompanyAliases, companyInvestors } from '../schema/companies'
 import { contacts, contactEmails } from '../schema/contacts'
 import {
   meetings,
@@ -170,6 +170,7 @@ export const WRITE_VALIDATORS: Record<string, ValidatorBundle> = {
   // extracted_at, lamport) auto-validate without further wiring.
   company_flagged_files: bundleFor(companyFlaggedFiles, 'company_flagged_files'),
   org_company_aliases: bundleFor(orgCompanyAliases, 'org_company_aliases'),
+  company_investors: bundleFor(companyInvestors, 'company_investors'),
   contacts: bundleFor(contacts, 'contacts'),
   contact_emails: bundleFor(contactEmails, 'contact_emails'),
   meetings: bundleFor(meetings, 'meetings'),
