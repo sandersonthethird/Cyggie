@@ -7,6 +7,7 @@ import {
   index,
   integer,
   jsonb,
+  pgPolicy,
   pgTable,
   primaryKey,
   text,
@@ -142,6 +143,22 @@ export const contacts = pgTable(
       'contacts_talent_pipeline_check',
       sql`${t.talentPipeline} IS NULL OR ${t.talentPipeline} IN ('identified', 'exploring', 'ideating', 'parked', 'internal_candidate')`,
     ),
+    // RLS (Phase 4) — owner-aware visibility for the read-only cyggie_sql
+    // role. Declaring a policy enables RLS on the table. The gateway's own
+    // (owner) role BYPASSES RLS, so normal sync/REST reads are unaffected;
+    // only non-owner roles (cyggie_readonly, used by cyggie_execute_sql)
+    // are filtered. cyggie_execute_sql SET LOCALs app.user_id/app.firm_id
+    // per query (the third set_config arg makes it txn-local). A missing
+    // setting → current_setting(...,true) returns '' → the firm branch
+    // can't match a real firm_id, so only the caller's own rows show:
+    // safe-by-default. Mirrors entityVisibilityFilter (api-gateway/src/
+    // sync/visibility.ts) — keep the two predicates in lockstep.
+    pgPolicy('contacts_readonly_visibility', {
+      as: 'permissive',
+      for: 'select',
+      to: 'public',
+      using: sql`user_id = current_setting('app.user_id', true) OR (firm_id = current_setting('app.firm_id', true) AND is_private = false)`,
+    }),
   ],
 )
 

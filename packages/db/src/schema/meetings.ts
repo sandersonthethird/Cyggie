@@ -6,6 +6,7 @@ import {
   index,
   integer,
   jsonb,
+  pgPolicy,
   pgTable,
   primaryKey,
   text,
@@ -185,6 +186,18 @@ export const meetings = pgTable(
     uniqueIndex('meetings_user_calendar_event_idx')
       .on(t.userId, t.calendarEventId)
       .where(sql`${t.calendarEventId} IS NOT NULL`),
+    // RLS (Phase 4) — owner-aware visibility for the read-only cyggie_sql
+    // role; identical model to contacts (see contacts.ts for the full
+    // rationale). The gateway's owner role bypasses RLS; cyggie_readonly
+    // (cyggie_execute_sql) is filtered to the caller's firm-shared +
+    // own-private meetings via the per-query SET LOCAL app.user_id/
+    // app.firm_id. Keep in lockstep with entityVisibilityFilter.
+    pgPolicy('meetings_readonly_visibility', {
+      as: 'permissive',
+      for: 'select',
+      to: 'public',
+      using: sql`user_id = current_setting('app.user_id', true) OR (firm_id = current_setting('app.firm_id', true) AND is_private = false)`,
+    }),
   ],
 )
 
