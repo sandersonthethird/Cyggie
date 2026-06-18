@@ -158,8 +158,18 @@ export async function registerCompanyRoutes(
         .from(schema.orgCompanies)
         .leftJoin(lastTouchSubquery, eq(lastTouchSubquery.companyId, schema.orgCompanies.id))
         .where(and(...whereClauses))
-        // NULLS LAST so companies with no meetings sink to the bottom.
-        .orderBy(sql`${lastTouchSubquery.lastTouchAt} desc nulls last`)
+        // Three-key sort:
+        //   1. last_touch_at DESC NULLS LAST → recently-touched companies on top,
+        //      meeting-less companies sink to the tail (desired).
+        //   2. created_at DESC → within the meeting-less tail, newest-added first,
+        //      so a just-added company (e.g. "Superlog") sits at the top of the tail
+        //      and is reachable via pagination instead of landing in arbitrary order.
+        //   3. id DESC → stable tie-break so offset paging never skips/dupes a row.
+        .orderBy(
+          sql`${lastTouchSubquery.lastTouchAt} desc nulls last`,
+          desc(schema.orgCompanies.createdAt),
+          desc(schema.orgCompanies.id),
+        )
         .limit(limit)
         .offset(offset)
 

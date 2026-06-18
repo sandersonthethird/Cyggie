@@ -3426,3 +3426,27 @@ already reports partials). Cmd+A / header-select are new gestures dispatched int
 
 **Depends on / blocked by:** Phase 1 (shipped). Fill-handle + block-paste each
 warrant their own focused PR + tests.
+
+## Keyset/cursor pagination for `GET /companies`
+
+**What:** Replace the mobile Companies list's offset pagination with a
+`(last_touch_at, created_at, id)` keyset cursor.
+
+**Why:** Offset paging can skip or duplicate a row if companies/meetings change
+while the user is mid-scroll (the sort key shifts under the offset window). The
+current ship mitigates this with an `id`-DESC tie-break (deterministic order over a
+stable dataset) but is not write-concurrency-safe.
+
+**Context:** Shipped in the "recently-added companies don't show on mobile" fix —
+the Companies tab now infinite-scrolls via `useCompaniesInfiniteQuery` over
+offset/limit, with the gateway sorting `last_touch_at DESC NULLS LAST, created_at
+DESC, id DESC`. Keyset would carry the last row's `(last_touch_at, created_at, id)`
+forward as a cursor instead of an integer offset. Start at the `GET /companies`
+handler in `api-gateway/src/routes/companies.ts` (add cursor WHERE + keep the same
+ORDER BY) and `companiesNextPageParam` / `useCompaniesInfiniteQuery` in
+`mobile/lib/api/companies.ts`.
+
+**Effort:** M. **Priority:** P3.
+
+**Depends on / blocked by:** None. **Trigger:** a firm large enough that
+scroll-during-edit produces visible skips/dupes.

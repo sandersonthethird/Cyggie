@@ -11,10 +11,12 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
-import { fetchCompanies, type CompanyListItem } from '../../lib/api/companies'
+import {
+  useCompaniesInfiniteQuery,
+  type CompanyListItem,
+} from '../../lib/api/companies'
 import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo } from '../../components/CompanyLogo'
 import { colors, radii, spacing, type } from '../../theme'
@@ -23,15 +25,13 @@ import { ScreenHeader } from '../../components/ScreenHeader'
 // Companies tab — M2 read-only surface.
 //
 // • Search bar at top (debounced 250ms) → ?q=<substring> on the gateway.
-// • FlatList of companies sorted by last-touch DESC (gateway-side).
+// • FlatList of companies sorted gateway-side: recently-touched first, then the
+//   meeting-less tail by newest-created (so just-added companies are reachable).
+// • Infinite scroll (useCompaniesInfiniteQuery) — pages of COMPANIES_PAGE_LIMIT
+//   appended on scroll-end, so all of a firm's companies are browsable.
 // • Tap a row → push /companies/:id detail screen.
 // • Pull-to-refresh, empty + error states.
-//
-// Pagination is intentionally simple for now — limit=100 covers all single-firm
-// scale we'd realistically hit in M2. Infinite scroll lands when a firm exceeds
-// that threshold and we need the cursor.
 
-const PAGE_LIMIT = 100
 const SEARCH_DEBOUNCE_MS = 250
 
 export default function CompaniesTab() {
@@ -44,13 +44,7 @@ export default function CompaniesTab() {
     return () => clearTimeout(t)
   }, [searchInput])
 
-  const query = useQuery({
-    queryKey: ['companies', 'list', debouncedQ],
-    queryFn: ({ signal }) =>
-      fetchCompanies({ q: debouncedQ || undefined, limit: PAGE_LIMIT, signal }),
-    staleTime: 30_000,
-    placeholderData: keepPreviousData,
-  })
+  const query = useCompaniesInfiniteQuery({ q: debouncedQ || undefined })
 
   useEffect(() => {
     if (query.error instanceof ApiError && query.error.reauthRequired) {
@@ -58,8 +52,11 @@ export default function CompaniesTab() {
     }
   }, [query.error, signOut])
 
-  const companies = query.data?.companies ?? []
-  const total = query.data?.total ?? 0
+  const companies = useMemo(
+    () => (query.data?.pages ?? []).flatMap((p) => p.companies),
+    [query.data],
+  )
+  const total = query.data?.pages[0]?.total ?? 0
 
   const headerSubtitle = useMemo(() => {
     if (query.isLoading && !query.data) return 'Loading…'
@@ -107,6 +104,19 @@ export default function CompaniesTab() {
           renderItem={({ item }) => <CompanyRow company={item} />}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           contentContainerStyle={styles.listContent}
+          onEndReachedThreshold={0.5}
+          onEndReached={() => {
+            if (query.hasNextPage && !query.isFetchingNextPage) {
+              void query.fetchNextPage()
+            }
+          }}
+          ListFooterComponent={
+            query.isFetchingNextPage ? (
+              <View style={styles.footerSpinner}>
+                <ActivityIndicator color={colors.crimson} />
+              </View>
+            ) : null
+          }
           refreshControl={
             <RefreshControl
               refreshing={query.isRefetching}
@@ -251,6 +261,11 @@ const styles = StyleSheet.create({
   },
 
   listContent: { paddingBottom: 140, backgroundColor: colors.bg },
+  footerSpinner: {
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginLeft: 16 + 40 + 12 },
 
   row: {
