@@ -2,7 +2,7 @@
 // then return a detailed markdown block with title, company, recent
 // activity, and key takeaways.
 
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import type { getDb } from '../../db'
 import { err, ok, ERROR_CODE, type ToolResult } from '../../shared/error-envelope'
@@ -63,8 +63,27 @@ export async function cyggieGetContact(args: CyggieGetContactArgs): Promise<Tool
     primaryCompanyName = compRows[0]?.name ?? null
   }
 
+  // Live last-touch (the denorm last_meeting_at/last_email_at columns were
+  // dropped): most recent of speaker-tagged + calendar-attendee-email meetings.
+  const ltRes = await db.execute(sql`
+    SELECT max(last_at) AS last_at FROM (
+      SELECT max(m.date) AS last_at
+      FROM meeting_speaker_contact_links mscl
+      JOIN meetings m ON m.id = mscl.meeting_id
+      WHERE m.user_id = ${userId} AND mscl.contact_id = ${id}
+      UNION ALL
+      SELECT max(m.date) AS last_at
+      FROM meetings m
+      CROSS JOIN LATERAL jsonb_array_elements_text(m.attendee_emails) AS ae(email)
+      JOIN contact_emails ce ON lower(ce.email) = lower(ae.email)
+      WHERE m.user_id = ${userId} AND ce.contact_id = ${id}
+    ) s
+  `)
+  const ltRaw = (ltRes.rows[0] as { last_at: Date | string | null } | undefined)?.last_at ?? null
+  const lastTouchAt = ltRaw ? new Date(ltRaw) : null
+
   return ok(
-    renderContactMarkdown(c, primaryCompanyName),
+    renderContactMarkdown(c, primaryCompanyName, lastTouchAt),
     cyggieUrl('contact', c.id),
   )
 }
@@ -88,6 +107,7 @@ function toCandidateDetail(c: ContactCandidate): {
 function renderContactMarkdown(
   c: typeof schema.contacts.$inferSelect,
   primaryCompanyName: string | null,
+  lastTouchAt: Date | null,
 ): string {
   const sections: string[] = []
 
@@ -125,8 +145,7 @@ function renderContactMarkdown(
 
   // Activity
   const activityLines = labeledLines([
-    ['Last meeting', formatActivityDate(c.lastMeetingAt)],
-    ['Last email', formatActivityDate(c.lastEmailAt)],
+    ['Last touch', formatActivityDate(lastTouchAt)],
     ['Relationship', c.relationshipStrength],
   ])
   if (activityLines) {

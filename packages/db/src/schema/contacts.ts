@@ -24,12 +24,11 @@ import { orgCompanies } from './companies'
 //   068 (talent_pipeline), 069 (key_takeaways), 025 (auth-foundation user FKs),
 //   plus the pre-Phase-0.2 performance fix for full-table-scan touchpoint queries.
 //
-// Performance fix baked in (per plan-eng-review Section 7 — TODOS.md P2 "pre-compute
-// contact activity touchpoints"): denormalized `last_meeting_at` + `last_email_at`
-// columns. Updated by writeWithSync hooks on meeting / email writes so the hot path
-// `listContacts(includeActivityTouchpoint=true)` becomes a simple column read instead
-// of 3 full-table scans across meetings + email tables. Eliminates the worst RTT cost
-// on mobile.
+// Last-touch is computed live (gateway list joins speaker-contact-link +
+// attendee-email meetings; desktop recomputes from meeting/email CTEs). The old
+// denormalized last_meeting_at / last_email_at columns were dropped — their
+// server-side maintenance was never wired, so they sat empty and silently broke
+// the contact list's recency sort.
 // =============================================================================
 
 // talent_pipeline enum (migration 068). Defined as a CHECK constraint rather than a PG
@@ -107,11 +106,6 @@ export const contacts = pgTable(
     fieldSources: jsonb('field_sources'),
     // Free-form
     notes: text('notes'),
-    // ----- Performance fix: denormalized activity touchpoints (Phase 0.2 baseline) -----
-    // Maintained by writeWithSync hooks on meeting / email writes. Replaces 3 full-table
-    // scans in contact.repo.ts:641-760 (existing TODOS.md P2 — see MIGRATION_AUDIT.md).
-    lastMeetingAt: timestamp('last_meeting_at', { withTimezone: true }),
-    lastEmailAt: timestamp('last_email_at', { withTimezone: true }),
     // Audit + sync
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -128,9 +122,6 @@ export const contacts = pgTable(
     index('contacts_created_by_idx').on(t.createdByUserId),
     index('contacts_updated_by_idx').on(t.updatedByUserId),
     index('contacts_primary_company_idx').on(t.primaryCompanyId),
-    // Indexes for the new touchpoint columns — these are the hot path for mobile.
-    index('contacts_last_meeting_idx').on(t.lastMeetingAt),
-    index('contacts_last_email_idx').on(t.lastEmailAt),
     // Talent pipeline enum constraint (migration 068). Mirrors TALENT_PIPELINE_STAGES.
     check(
       'contacts_talent_pipeline_check',

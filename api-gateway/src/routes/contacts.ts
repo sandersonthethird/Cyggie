@@ -50,7 +50,9 @@ const ContactListItemSchema = z.object({
   street: z.string().nullable(),
   postalCode: z.string().nullable(),
   country: z.string().nullable(),
-  lastMeetingAt: z.string().nullable(),
+  // Computed live (denorm last_meeting_at/last_email_at were dropped): the most
+  // recent of speaker-tagged meetings + calendar-attendee-email meetings.
+  lastTouchAt: z.string().nullable(),
 })
 
 // Guarded passthrough — only the guaranteed/computed fields are typed; every
@@ -120,35 +122,66 @@ export async function registerContactRoutes(
         )
       }
 
-      const rows = await db
-        .select({
-          id: schema.contacts.id,
-          fullName: schema.contacts.fullName,
-          email: schema.contacts.email,
-          title: schema.contacts.title,
-          contactType: schema.contacts.contactType,
-          primaryCompanyId: schema.contacts.primaryCompanyId,
-          primaryCompanyName: schema.orgCompanies.canonicalName,
-          primaryCompanyDomain: schema.orgCompanies.primaryDomain,
-          city: schema.contacts.city,
-          state: schema.contacts.state,
-          street: schema.contacts.street,
-          postalCode: schema.contacts.postalCode,
-          country: schema.contacts.country,
-          lastMeetingAt: schema.contacts.lastMeetingAt,
-        })
-        .from(schema.contacts)
-        .leftJoin(
-          schema.orgCompanies,
-          eq(schema.contacts.primaryCompanyId, schema.orgCompanies.id),
+      // Live last-touch per contact = most recent of two signals, combined via
+      // UNION ALL + max(): (a) speaker-tagged meetings (narrow), (b) calendar
+      // meetings where one of the contact's emails is an attendee (broad). The
+      // attendee signal expands meetings.attendee_emails once via LATERAL and
+      // hash-joins to contact_emails — far cheaper than a per-row EXISTS. The
+      // denormalized last_meeting_at/last_email_at columns were dropped (they
+      // were never maintained, so the old `ORDER BY last_meeting_at` was a no-op
+      // → alphabetical). See plan: contact-live-last-touch.
+      const like = q ? `%${q}%` : null
+      const qCond = like
+        ? sql`AND (c.full_name ILIKE ${like} OR c.email ILIKE ${like} OR c.id IN (SELECT contact_id FROM contact_emails WHERE email ILIKE ${like}))`
+        : sql``
+
+      const listed = await db.execute(sql`
+        WITH lt AS (
+          SELECT contact_id, max(last_at) AS last_at FROM (
+            SELECT mscl.contact_id AS contact_id, max(m.date) AS last_at
+            FROM meeting_speaker_contact_links mscl
+            JOIN meetings m ON m.id = mscl.meeting_id
+            WHERE m.user_id = ${user.sub}
+            GROUP BY mscl.contact_id
+            UNION ALL
+            SELECT ce.contact_id AS contact_id, max(m.date) AS last_at
+            FROM meetings m
+            CROSS JOIN LATERAL jsonb_array_elements_text(m.attendee_emails) AS ae(email)
+            JOIN contact_emails ce ON lower(ce.email) = lower(ae.email)
+            WHERE m.user_id = ${user.sub}
+            GROUP BY ce.contact_id
+          ) s GROUP BY contact_id
         )
-        .where(and(...whereClauses))
-        .orderBy(
-          sql`${schema.contacts.lastMeetingAt} desc nulls last`,
-          sql`${schema.contacts.fullName} asc`,
-        )
-        .limit(limit)
-        .offset(offset)
+        SELECT c.id, c.full_name, c.email, c.title, c.contact_type,
+               c.primary_company_id,
+               oc.canonical_name AS primary_company_name,
+               oc.primary_domain AS primary_company_domain,
+               c.city, c.state, c.street, c.postal_code, c.country,
+               lt.last_at AS last_touch_at
+        FROM contacts c
+        LEFT JOIN org_companies oc ON c.primary_company_id = oc.id
+        LEFT JOIN lt ON lt.contact_id = c.id
+        WHERE c.user_id = ${user.sub} ${qCond}
+        ORDER BY lt.last_at DESC NULLS LAST, c.full_name ASC
+        LIMIT ${limit} OFFSET ${offset}
+      `)
+
+      const rows = listed.rows as Array<{
+        id: string
+        full_name: string
+        email: string | null
+        title: string | null
+        contact_type: string | null
+        primary_company_id: string | null
+        primary_company_name: string | null
+        primary_company_domain: string | null
+        city: string | null
+        state: string | null
+        street: string | null
+        postal_code: string | null
+        country: string | null
+        last_touch_at: string | Date | null
+      }>
 
       const [countRow] = await db
         .select({ n: sql<number>`count(*)::int` })
@@ -158,21 +191,19 @@ export async function registerContactRoutes(
       return {
         contacts: rows.map((r) => ({
           id: r.id,
-          fullName: r.fullName,
+          fullName: r.full_name,
           email: r.email,
           title: r.title,
-          contactType: r.contactType,
-          primaryCompanyId: r.primaryCompanyId,
-          primaryCompanyName: r.primaryCompanyName,
-          primaryCompanyDomain: r.primaryCompanyDomain,
+          contactType: r.contact_type,
+          primaryCompanyId: r.primary_company_id,
+          primaryCompanyName: r.primary_company_name,
+          primaryCompanyDomain: r.primary_company_domain,
           city: r.city,
           state: r.state,
           street: r.street,
-          postalCode: r.postalCode,
+          postalCode: r.postal_code,
           country: r.country,
-          lastMeetingAt: r.lastMeetingAt
-            ? new Date(r.lastMeetingAt).toISOString()
-            : null,
+          lastTouchAt: r.last_touch_at ? new Date(r.last_touch_at).toISOString() : null,
         })),
         total: countRow?.n ?? 0,
       }
@@ -308,34 +339,15 @@ export async function registerContactRoutes(
         ? new Date(speakerMeetingAgg.lastMeetingAt).getTime()
         : null
       const attendeeMs = attendeeMeetingAt ? new Date(attendeeMeetingAt).getTime() : null
-      const emailMs = contact.lastEmailAt ? new Date(contact.lastEmailAt).getTime() : null
-      const candidateMs = [speakerMs, attendeeMs, emailMs].filter(
+      // Two signals now that the denormalized last_email_at column is gone:
+      // speaker-tagged meetings + calendar-attendee-email meetings.
+      const candidateMs = [speakerMs, attendeeMs].filter(
         (ms): ms is number => ms != null,
       )
       const lastTouchAt =
         candidateMs.length > 0
           ? new Date(Math.max(...candidateMs)).toISOString()
           : null
-
-      // Temporary diagnostic for the "Last touch blank" debugging in
-      // 2026-05-23 — surfaces which of the three signals (speaker-link
-      // meetings, calendar attendee-email match, denormalized last_email_at)
-      // contributed. Remove once the push-pipeline gap is fixed and
-      // backfilled.
-      req.log.info(
-        {
-          contactId: id,
-          fullName: contact.fullName,
-          emailsChecked: lowerEmails,
-          speakerLinkLastMeetingAt: speakerMs ? new Date(speakerMs).toISOString() : null,
-          attendeeEmailLastMeetingAt: attendeeMs
-            ? new Date(attendeeMs).toISOString()
-            : null,
-          denormalizedLastEmailAt: emailMs ? new Date(emailMs).toISOString() : null,
-          lastTouchAt,
-        },
-        'contact_last_touch_debug',
-      )
 
       // Full-row passthrough minus the internal denylist; JSONB list columns
       // normalized to string[]; computed + joined fields added on top.
@@ -345,12 +357,6 @@ export async function registerContactRoutes(
         fullName: contact.fullName,
         primaryCompanyName,
         primaryCompanyDomain,
-        lastMeetingAt: contact.lastMeetingAt
-          ? new Date(contact.lastMeetingAt).toISOString()
-          : null,
-        lastEmailAt: contact.lastEmailAt
-          ? new Date(contact.lastEmailAt).toISOString()
-          : null,
         lastTouchAt,
         recentMeetings: recentMeetings.map((m) => ({
           id: m.id,
@@ -422,7 +428,7 @@ export async function registerContactRoutes(
             street: e.street,
             postalCode: e.postalCode,
             country: e.country,
-            lastMeetingAt: e.lastMeetingAt ? new Date(e.lastMeetingAt).toISOString() : null,
+            lastTouchAt: null,
           })
         }
       }
@@ -481,7 +487,7 @@ export async function registerContactRoutes(
         street: null,
         postalCode: null,
         country: null,
-        lastMeetingAt: null,
+        lastTouchAt: null,
       })
     },
   })

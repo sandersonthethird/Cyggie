@@ -1041,8 +1041,6 @@ export interface PulledContactRow extends PulledRow {
   keyTakeaways: string | null
   fieldSources: unknown
   notes: string | null
-  lastMeetingAt: string | Date | null
-  lastEmailAt: string | Date | null
   lamport: string
   createdAt: string | Date
   updatedAt: string | Date
@@ -1082,7 +1080,6 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        investment_stage_focus, investment_sector_focus, investment_sector_focus_notes,
        proud_portfolio_companies, linkedin_headline, linkedin_skills, linkedin_enriched_at,
        talent_pipeline, key_takeaways, field_sources, notes,
-       last_meeting_at, last_email_at,
        created_at, updated_at, lamport
      ) VALUES (
        @id, @fullName, @firstName, @lastName, @normalizedName,
@@ -1096,7 +1093,6 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        @investmentStageFocus, @investmentSectorFocus, @investmentSectorFocusNotes,
        @proudPortfolioCompanies, @linkedinHeadline, @linkedinSkills, @linkedinEnrichedAt,
        @talentPipeline, @keyTakeaways, @fieldSources, @notes,
-       @lastMeetingAt, @lastEmailAt,
        @createdAt, @updatedAt, @lamport
      )
      ON CONFLICT(id) DO UPDATE SET
@@ -1141,8 +1137,6 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        key_takeaways = excluded.key_takeaways,
        field_sources = excluded.field_sources,
        notes = excluded.notes,
-       last_meeting_at = excluded.last_meeting_at,
-       last_email_at = excluded.last_email_at,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        lamport = excluded.lamport`,
@@ -1189,8 +1183,6 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
     keyTakeaways: row.keyTakeaways,
     fieldSources: stringify(row.fieldSources),
     notes: row.notes,
-    lastMeetingAt: row.lastMeetingAt ? toIso(row.lastMeetingAt) : null,
-    lastEmailAt: row.lastEmailAt ? toIso(row.lastEmailAt) : null,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
     lamport: row.lamport,

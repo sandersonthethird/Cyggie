@@ -16,7 +16,9 @@ export interface ContactListItem {
   street: string | null
   postalCode: string | null
   country: string | null
-  lastMeetingAt: string | null
+  // Computed live by the gateway (denorm last_meeting_at/last_email_at dropped):
+  // most recent of speaker-tagged + calendar-attendee-email meetings.
+  lastTouchAt: string | null
 }
 
 export interface ContactMeetingRef {
@@ -40,8 +42,6 @@ export interface ContactDetail extends ContactListItem {
   notes: string | null
   keyTakeaways: string | null
   keyTakeawaysUserNote: string | null
-  lastEmailAt: string | null
-  lastTouchAt: string | null
   recentMeetings: ContactMeetingRef[]
   // Guarded passthrough of the full row — investor focus, tags, university, etc.
   // arrive too and are read by key in the generic ledger renderer.
