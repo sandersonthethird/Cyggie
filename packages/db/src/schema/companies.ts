@@ -235,6 +235,9 @@ export const companyInvestors = pgTable(
     investorType: varchar('investor_type', { length: 32 }).notNull(),
     position: integer('position').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    // Sync clock — like org_company_aliases, this firm-shared child of
+    // org_companies rides the parent's firm scope in the pull. Whole-row LWW.
+    lamport: text('lamport').notNull().default('0'),
   },
   (t) => [
     index('company_investors_company_idx').on(t.companyId),

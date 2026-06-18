@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
+import { appendOutboxRow, currentSyncContext } from '../sync-wrapper'
 import { jaroWinkler } from '@main/utils/jaroWinkler'
 import { UnionFind } from '@main/utils/unionFind'
 import { splitCamelCase } from '@main/utils/string-utils'
@@ -1640,11 +1641,45 @@ export function setCompanyInvestors(
 ): void {
   const db = getDatabase()
   db.transaction(() => {
+    // company_investors is a synced owned table (firm-shared child of
+    // org_companies). A "replace all of (company,type)" is, in the outbox
+    // protocol, a DELETE per existing row + an INSERT per new row. The barrel
+    // wraps this with withSync (which opens the sync context + mints the
+    // lamport, emitting no primary row); here we emit each affected row.
+    const ctx = currentSyncContext()
+    const lamport = ctx?.lamport ?? '0'
+
+    const existing = db
+      .prepare('SELECT id FROM company_investors WHERE company_id = ? AND investor_type = ?')
+      .all(companyId, type) as Array<{ id: string }>
     db.prepare('DELETE FROM company_investors WHERE company_id = ? AND investor_type = ?').run(companyId, type)
+    if (ctx) {
+      for (const { id } of existing) {
+        appendOutboxRow(db, { table: 'company_investors', op: 'delete', row: { id } })
+      }
+    }
+
     investors.forEach((inv, idx) => {
+      const id = randomUUID()
+      const createdAt = new Date().toISOString()
       db.prepare(
-        'INSERT INTO company_investors (id, company_id, investor_company_id, investor_type, position) VALUES (?, ?, ?, ?, ?)'
-      ).run(randomUUID(), companyId, inv.id, type, idx)
+        'INSERT INTO company_investors (id, company_id, investor_company_id, investor_type, position, created_at, lamport) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run(id, companyId, inv.id, type, idx, createdAt, lamport)
+      if (ctx) {
+        appendOutboxRow(db, {
+          table: 'company_investors',
+          op: 'insert',
+          row: {
+            id,
+            companyId,
+            investorCompanyId: inv.id,
+            investorType: type,
+            position: idx,
+            createdAt,
+            lamport,
+          },
+        })
+      }
     })
   })()
 }

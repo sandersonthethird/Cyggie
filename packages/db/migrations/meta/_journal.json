@@ -295,6 +295,13 @@
       "when": 1781742304339,
       "tag": "0041_abnormal_thena",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1781780100935,
+      "tag": "0042_solid_pandemic",
+      "breakpoints": true
     }
   ]
 }

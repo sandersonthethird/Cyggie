@@ -147,6 +147,9 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
 
   // ── Layer 3 ────────────────────────────────────────────────────────────
   { table: 'org_company_aliases', primaryKey: ['id'], hasUserId: false },
+  // Investor links (co/prior/subsequent). Firm-shared child of org_companies —
+  // rides the parent's firm scope in the pull, same as org_company_aliases.
+  { table: 'company_investors', primaryKey: ['id'], hasUserId: false },
   { table: 'contacts', primaryKey: ['id'], hasUserId: true },
   // Investment memos — added 2026-05-23 to unblock the mobile Memos tab on
   // company detail. SQLite table lacks user_id (created_by_user_id only),

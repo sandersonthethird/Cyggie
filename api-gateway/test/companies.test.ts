@@ -385,7 +385,7 @@ describe('GET /companies/:id — guarded passthrough', () => {
   const FORBIDDEN_KEYS = [
     'userId', 'firmId', 'fieldSources', 'fieldLamports', 'lamport',
     'createdByUserId', 'updatedByUserId', 'createdAt', 'updatedAt',
-    'normalizedName', 'canonicalName', 'coInvestors', 'crmCompanyId',
+    'normalizedName', 'canonicalName', 'crmCompanyId',
     'crmProvider', 'leadInvestorCompanyId', 'sourceEntityId', 'sourceEntityType',
     'deletedAt', 'deletedByUserId', 'classificationSource', 'includeInCompaniesView',
   ]
@@ -452,5 +452,54 @@ describe('GET /companies/:id — guarded passthrough', () => {
     for (const k of FORBIDDEN_KEYS) {
       expect(Object.prototype.hasOwnProperty.call(body, k), `internal key "${k}" leaked`).toBe(false)
     }
+  })
+})
+
+describe('GET /companies/:id — co-investors from the synced join', () => {
+  test('returns co-investor company names ordered by position', async () => {
+    const userId = await insertTestUser()
+    const companyId = await insertTestCompany({ userId, name: 'Amma ' + TEST_PREFIX })
+    const seq = await insertTestCompany({ userId, name: 'Sequoia ' + TEST_PREFIX })
+    const a16z = await insertTestCompany({ userId, name: 'a16z ' + TEST_PREFIX })
+    // Out-of-order positions to prove ORDER BY position.
+    await db.insert(schema.companyInvestors).values({
+      id: TEST_PREFIX + 'ci-1', companyId, investorCompanyId: a16z,
+      investorType: 'co_investor', position: 1, lamport: '1',
+    })
+    await db.insert(schema.companyInvestors).values({
+      id: TEST_PREFIX + 'ci-2', companyId, investorCompanyId: seq,
+      investorType: 'co_investor', position: 0, lamport: '1',
+    })
+    // A prior_investor must NOT appear in the co-investor list.
+    await db.insert(schema.companyInvestors).values({
+      id: TEST_PREFIX + 'ci-3', companyId, investorCompanyId: a16z,
+      investorType: 'prior_investor', position: 0, lamport: '1',
+    })
+    cleanup.track(schema.companyInvestors, schema.companyInvestors.id, TEST_PREFIX + 'ci-1')
+    cleanup.track(schema.companyInvestors, schema.companyInvestors.id, TEST_PREFIX + 'ci-2')
+    cleanup.track(schema.companyInvestors, schema.companyInvestors.id, TEST_PREFIX + 'ci-3')
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/companies/${companyId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { coInvestors: string[] | null }
+    expect(body.coInvestors).toEqual(['Sequoia ' + TEST_PREFIX, 'a16z ' + TEST_PREFIX])
+  })
+
+  test('co-investors is null when there are none', async () => {
+    const userId = await insertTestUser()
+    const companyId = await insertTestCompany({ userId, name: 'NoInv ' + TEST_PREFIX })
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/companies/${companyId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const body = res.json() as { coInvestors: string[] | null }
+    expect(body.coInvestors).toBeNull()
   })
 })

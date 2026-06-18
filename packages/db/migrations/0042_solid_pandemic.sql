@@ -1,0 +1,1 @@
+ALTER TABLE "company_investors" ADD COLUMN "lamport" text DEFAULT '0' NOT NULL;
