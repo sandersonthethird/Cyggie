@@ -39,6 +39,7 @@ function buildDb(): Database.Database {
       full_name TEXT NOT NULL,
       first_name TEXT,
       last_name TEXT,
+      is_private INTEGER NOT NULL DEFAULT 0,
       normalized_name TEXT,
       email TEXT,
       primary_company_id TEXT REFERENCES org_companies(id),

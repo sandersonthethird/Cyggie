@@ -1,0 +1,110 @@
+[
+{
+"id": "9af9b54f-25ea-4e30-a323-e26622fa7add",
+"name": "Red Swan Ventures",
+"domain": "redswanventures.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "f7e223a9-4656-4028-b236-0f4f169aa5d9",
+"name": "Eniac",
+"domain": "eniac.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "8ce9f9a9-49da-4d45-86d9-a055ab170d54",
+"name": "Taxwire",
+"domain": "taxwire.co",
+"website": "https://taxwire.co",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "e0235931-e8d1-4cb7-93c5-4a3102cde22f",
+"name": "Cartsy",
+"domain": "cartsy.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "6788d3a8-1d1f-4c23-b175-eb48d2f8adf7",
+"name": "Adair",
+"domain": "adair.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "ca854745-c774-438b-803c-b1a4ae4240b4",
+"name": "Interlude",
+"domain": "interlude.studio",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "d258114f-5b98-4c8f-a227-5765382af565",
+"name": "Illusion of Life, Inc.",
+"domain": "illusionoflife.inc",
+"website": "https://illusionoflife.inc/",
+"industry": null,
+"city": "Boston",
+"state": "MA"
+},
+{
+"id": "5f019a1a-9fea-4afb-85f6-a80efcfc458a",
+"name": "Hawke Media",
+"domain": "hawkemedia.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "ae014cce-05bb-4d90-b9e5-8f7692cd6242",
+"name": "mu ventures",
+"domain": "muventures.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "4a05375c-ab44-4089-9263-1b068bfbb65f",
+"name": "Aperiam Ventures",
+"domain": "aperiam.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "f10150ac-ddcc-442e-be06-e4286a666449",
+"name": "Siliconroad",
+"domain": "siliconroad.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "d34d33c9-2371-4e44-9cce-67dff064ddc5",
+"name": "Intuit\u00ae",
+"domain": "intuit.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

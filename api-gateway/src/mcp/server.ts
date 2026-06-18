@@ -40,6 +40,12 @@ export interface BuildMcpServerArgs {
   env: GatewayEnv
   db: ReturnType<typeof getDb>
   userId: string
+  // Caller's firm from the OAuth token. Threaded into cyggie_execute_sql
+  // as the RLS session context (app.firm_id) so raw SQL over the
+  // firm-shared contacts/meetings tables only returns the caller's
+  // firm's shared rows + their own private rows. May be null for a user
+  // not yet attached to a firm.
+  firmId: string | null
   // Scopes from the caller's OAuth access token. Used for per-tool
   // scope enforcement (e.g. cyggie_execute_sql requires cyggie:sql
   // even when the connection-level guard only checks cyggie:read).
@@ -317,6 +323,7 @@ export function buildMcpServer(ctx: BuildMcpServerArgs): McpServer {
             cyggieExecuteSql({
               env: ctx.env,
               query: input.query,
+              viewer: { userId: ctx.userId, firmId: ctx.firmId },
               log: ctx.log,
             }),
         ),

@@ -1,11 +1,13 @@
 import { sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
+  boolean,
   check,
   doublePrecision,
   index,
   integer,
   jsonb,
+  pgPolicy,
   pgTable,
   primaryKey,
   text,
@@ -14,6 +16,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 import { users } from './auth'
+import { firms } from './firms'
 import { orgCompanies } from './companies'
 
 // =============================================================================
@@ -106,6 +109,15 @@ export const contacts = pgTable(
     fieldSources: jsonb('field_sources'),
     // Free-form
     notes: text('notes'),
+    // Multiplayer (Phase 4) — firm-shared pool + field-level LWW + soft-delete +
+    // privacy opt-out. Mirrors org_companies. firm_id denormalized (gateway
+    // stamps from JWT; backfilled from users.firm_id). is_private: owner-only
+    // when true — the gateway never sends a private contact to a non-owner.
+    firmId: text('firm_id').references(() => firms.id, { onDelete: 'cascade' }),
+    fieldLamports: jsonb('field_lamports'),
+    isPrivate: boolean('is_private').notNull().default(false),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedByUserId: text('deleted_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     // Audit + sync
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -115,6 +127,10 @@ export const contacts = pgTable(
   },
   (t) => [
     index('contacts_user_idx').on(t.userId),
+    // Firm-scoped pull cursor (L1) + owner-aware visibility residual.
+    index('contacts_firm_lamport_idx').on(t.firmId, sql`(${t.lamport}::numeric)`),
+    index('contacts_visibility_idx').on(t.firmId, t.isPrivate, t.userId),
+    index('contacts_recycle_idx').on(t.firmId, t.deletedAt).where(sql`${t.deletedAt} IS NOT NULL`),
     uniqueIndex('contacts_email_idx').on(t.email),
     index('contacts_name_idx').on(t.normalizedName),
     index('contacts_full_name_idx').on(t.fullName),
@@ -127,6 +143,22 @@ export const contacts = pgTable(
       'contacts_talent_pipeline_check',
       sql`${t.talentPipeline} IS NULL OR ${t.talentPipeline} IN ('identified', 'exploring', 'ideating', 'parked', 'internal_candidate')`,
     ),
+    // RLS (Phase 4) — owner-aware visibility for the read-only cyggie_sql
+    // role. Declaring a policy enables RLS on the table. The gateway's own
+    // (owner) role BYPASSES RLS, so normal sync/REST reads are unaffected;
+    // only non-owner roles (cyggie_readonly, used by cyggie_execute_sql)
+    // are filtered. cyggie_execute_sql SET LOCALs app.user_id/app.firm_id
+    // per query (the third set_config arg makes it txn-local). A missing
+    // setting → current_setting(...,true) returns '' → the firm branch
+    // can't match a real firm_id, so only the caller's own rows show:
+    // safe-by-default. Mirrors entityVisibilityFilter (api-gateway/src/
+    // sync/visibility.ts) — keep the two predicates in lockstep.
+    pgPolicy('contacts_readonly_visibility', {
+      as: 'permissive',
+      for: 'select',
+      to: 'public',
+      using: sql`user_id = current_setting('app.user_id', true) OR (firm_id = current_setting('app.firm_id', true) AND is_private = false)`,
+    }),
   ],
 )
 

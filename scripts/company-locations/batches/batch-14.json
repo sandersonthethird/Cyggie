@@ -1,0 +1,110 @@
+[
+{
+"id": "14201533-201c-44ba-9a86-7d7ea056a76f",
+"name": "Flowcellutions",
+"domain": "flowcellutions.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "3369549a-f945-4d25-b5a4-95405e67a02a",
+"name": "Expo",
+"domain": "expo.io",
+"website": "https://www.expo.dev",
+"industry": "Developer Tools",
+"city": "Palo Alto",
+"state": "CA"
+},
+{
+"id": "c119ae45-e671-4212-a81c-e8739507b34f",
+"name": "Turnstay",
+"domain": "turnstay.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "3597ac32-c231-40f2-9a7b-fe63bad04679",
+"name": "Raylife",
+"domain": "raylife.co",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "895991a6-1f65-40c7-8c88-a2cbdba50478",
+"name": "Composite",
+"domain": "composite.ventures",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "fd0722dd-5357-429d-ba4a-ecb87527378b",
+"name": "Sandboxstudios",
+"domain": "sandboxstudios.ventures",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "c5d24bc2-9524-4ee4-af13-49f10d800104",
+"name": "Luminos",
+"domain": "luminos.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "6f1ef790-f3ad-4d3d-9bb8-aafbe50c623d",
+"name": "Man Cereal",
+"domain": "eatmancereal.com",
+"website": "www.eatmancereal.com",
+"industry": "Consumer (CPG)",
+"city": "Los Angeles",
+"state": "CA"
+},
+{
+"id": "0b7f52b4-5519-4ad8-be74-8458b087e91a",
+"name": "Oneoff",
+"domain": "oneoff.world",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "86d5db73-4329-4a9e-8c90-dd2f93f18b01",
+"name": "Goodweatherskin",
+"domain": "goodweatherskin.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "492c8482-e4bf-402e-a850-1e7e7fd57ec5",
+"name": "Reflex",
+"domain": "reflex.careers",
+"website": "https://www.workreflex.com/",
+"industry": "Workforce",
+"city": "Austin",
+"state": "TX"
+},
+{
+"id": "4433cd31-e782-4d34-a18f-ccd7f214b189",
+"name": "Merazine",
+"domain": "merazine.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

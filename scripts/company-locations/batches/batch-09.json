@@ -1,0 +1,110 @@
+[
+{
+"id": "f7920991-a86d-4fe2-9538-ffbdefdf4be2",
+"name": "Forerunner Ventures",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "36991a7a-55f9-4945-b7c9-d1427bf43077",
+"name": "Stochastic AI",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "fe528ac2-9ac5-4d55-b8d1-2e1fee3f3121",
+"name": "Stochastic",
+"domain": "stochastic.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "fffeed4b-5814-4ef8-81f3-3fb73c0085c6",
+"name": "Rediem",
+"domain": "rediem.co",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "576dee49-4f03-4966-aa15-aaeda6cf9c72",
+"name": "Spacture",
+"domain": "spacture.ai",
+"website": "https://spacture.ai/",
+"industry": "AI",
+"city": "New York",
+"state": "NY"
+},
+{
+"id": "26a5931b-42b5-4392-9ded-2028d6d80dc2",
+"name": "Confida",
+"domain": "confida.ai",
+"website": null,
+"industry": "LegalTech",
+"city": "New Orleans",
+"state": "LA"
+},
+{
+"id": "f6de729b-4a11-4951-8f78-2c59c0c53b8b",
+"name": "Consonant",
+"domain": "consonant.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "5110fccf-2013-4d14-bb1b-035b00f8072c",
+"name": "Summit Partners",
+"domain": "summitpartners.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "2b05723d-1ea6-4234-82d1-e11bc4801ca5",
+"name": "Thinkroya",
+"domain": "thinkroya.io",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "3456a2d1-35e4-47f4-a3f9-89c83137d5ee",
+"name": "Tirafibers",
+"domain": "tirafibers.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "06869e82-33e9-420f-99e4-76951baa3c95",
+"name": "Amdahl",
+"domain": "amdahl.co",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "dc015d5e-94f4-4fca-9f18-bcd1140c45f2",
+"name": "Mba2027",
+"domain": "mba2027.hbs.edu",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

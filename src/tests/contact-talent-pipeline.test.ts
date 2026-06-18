@@ -58,6 +58,7 @@ function buildDb(): Database.Database {
       linkedin_skills TEXT, linkedin_enriched_at TEXT,
       talent_pipeline TEXT,
       first_name TEXT, last_name TEXT,
+      is_private INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );

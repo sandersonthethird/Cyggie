@@ -1,0 +1,110 @@
+[
+{
+"id": "42b5b401-af09-4184-8abe-ecfe92a09dd4",
+"name": "Pie",
+"domain": "pumpkinpie.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "40359ace-48c4-4075-b936-140a38c32539",
+"name": "Oscar",
+"domain": "oscar.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "046f113a-d7a1-4a06-a7bf-63a2f23f2054",
+"name": "Atypical",
+"domain": "atypical.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "a9f7786e-6c56-4fa3-a486-3ae39470650b",
+"name": "Fambot",
+"domain": "fambot.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "bdad1c40-6101-4b82-ad2b-8d7312b75eaf",
+"name": "Queen One",
+"domain": "queen.one",
+"website": "www.queen.one",
+"industry": "Ecommerce",
+"city": "New York",
+"state": "NY"
+},
+{
+"id": "93642679-8bae-41d0-b570-8e60b935f9ac",
+"name": "Andrew",
+"domain": "andrew.cmu.edu",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "43acc42c-52ad-41bb-a824-d5a3e4b0d070",
+"name": "Levr",
+"domain": "levr.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "8bf7ded0-8f81-4f44-b69d-d5ea983d3655",
+"name": "Hometeamlive",
+"domain": "hometeamlive.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "87e1e9c0-7c53-492a-9eb5-41c80291c600",
+"name": "Bettercharge",
+"domain": "bettercharge.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "1d303c63-415e-4a8e-9729-4d2e9f7a7c4c",
+"name": "Vanguarddefense",
+"domain": "vanguarddefense.us",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "eb8be83c-9e50-4f7f-a8d0-13ca745aa200",
+"name": "Virnika",
+"domain": "virnika.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "cf889818-5e71-4c23-bc27-c1e51dc0d8e2",
+"name": "Loman",
+"domain": "loman.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

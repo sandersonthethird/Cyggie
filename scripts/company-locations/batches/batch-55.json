@@ -1,0 +1,110 @@
+[
+{
+"id": "31b9ff17-91e8-487e-bdca-82c2f1455eeb",
+"name": "Valor",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "94150e51-8140-4adb-858e-5897b559e1e5",
+"name": "Valor Ventures",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "42dc8601-ea7a-4a1c-b908-fcd4c1e61d5f",
+"name": "Outlander VC",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "8885c9d4-d4ba-444d-ae8f-f2512b3939f4",
+"name": "776",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "cee2385f-667b-46ba-afb9-6df04fb8e86a",
+"name": "Max",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "cb3b4cf9-b8e7-40ee-a226-a0b3a02354e3",
+"name": "AIR Ventures",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "bb02c07d-1065-4aa0-805e-121897ed046f",
+"name": "Ben Zises",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "4ca38e0d-da7a-4df5-8b9c-fd73a5cc37e6",
+"name": "MBX",
+"domain": "mbxcapital.com",
+"website": "https://www.mbxcapital.com/",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "ba0b5849-eb0b-46a5-8a96-5aa232aa618f",
+"name": "BeautyBoss\u00ae",
+"domain": "beautyboss.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "baabfabf-d3e2-4ed4-a3c2-0aa43fcabb25",
+"name": "ShineOn",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "69a1cd26-72d3-4e56-a8d0-ab4e51adf65d",
+"name": "Lembas Health",
+"domain": "lembashealth.com",
+"website": "https://www.lembashealth.com/",
+"industry": null,
+"city": "New York",
+"state": "NY"
+},
+{
+"id": "bab162e0-1e57-4c50-ad44-9b376a9ce915",
+"name": "Birdwatch",
+"domain": "birdwatch.com",
+"website": "https://birdwatch.com",
+"industry": null,
+"city": "Washington",
+"state": "DC"
+}
+]

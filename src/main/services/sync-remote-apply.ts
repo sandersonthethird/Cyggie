@@ -94,6 +94,10 @@ export interface PulledMeetingRow {
   isGroupEvent: boolean
   isGroupEventUserSet: boolean
   scheduledEndAt: string | Date | null
+  // Phase 4 — firm-shared privacy + soft-delete.
+  isPrivate?: boolean | number | null
+  deletedAt?: string | Date | null
+  deletedByUserId?: string | null
   createdAt: string | Date
   updatedAt: string | Date
   lamport: string
@@ -1099,6 +1103,10 @@ export interface PulledContactRow extends PulledRow {
   keyTakeaways: string | null
   fieldSources: unknown
   notes: string | null
+  // Phase 4 — firm-shared privacy + soft-delete.
+  isPrivate?: boolean | number | null
+  deletedAt?: string | Date | null
+  deletedByUserId?: string | null
   lamport: string
   createdAt: string | Date
   updatedAt: string | Date
@@ -1124,7 +1132,16 @@ const CONTACTS_SPEC: TableSpec<PulledContactRow> = {
 }
 
 function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
-  // SQLite contacts has no user_id column.
+  // Phase 4 resurrection guard — never re-create a hard-purged contact.
+  if (isTombstoned(db, 'contact', row.id)) return
+  // SQLite contacts has no user_id/firm_id column (desktop single-firm; the
+  // gateway firm-scopes the pull). is_private + soft-delete columns (Phase 4)
+  // ARE stored: is_private so the local toggle reflects, deleted_at so the read
+  // filter hides trashed rows. deleted_by_user_id is an FK → defensively NULLed
+  // when the teammate isn't in the local directory.
+  const userExists = (uid: string | null | undefined): boolean =>
+    uid != null && db.prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1').get(uid) != null
+  const deletedByUserId = userExists(row.deletedByUserId) ? row.deletedByUserId : null
   db.prepare(
     `INSERT INTO contacts (
        id, full_name, first_name, last_name, normalized_name,
@@ -1138,6 +1155,7 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        investment_stage_focus, investment_sector_focus, investment_sector_focus_notes,
        proud_portfolio_companies, linkedin_headline, linkedin_skills, linkedin_enriched_at,
        talent_pipeline, key_takeaways, field_sources, notes,
+       is_private, deleted_at, deleted_by_user_id,
        created_at, updated_at, lamport
      ) VALUES (
        @id, @fullName, @firstName, @lastName, @normalizedName,
@@ -1151,6 +1169,7 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        @investmentStageFocus, @investmentSectorFocus, @investmentSectorFocusNotes,
        @proudPortfolioCompanies, @linkedinHeadline, @linkedinSkills, @linkedinEnrichedAt,
        @talentPipeline, @keyTakeaways, @fieldSources, @notes,
+       @isPrivate, @deletedAt, @deletedByUserId,
        @createdAt, @updatedAt, @lamport
      )
      ON CONFLICT(id) DO UPDATE SET
@@ -1195,6 +1214,9 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        key_takeaways = excluded.key_takeaways,
        field_sources = excluded.field_sources,
        notes = excluded.notes,
+       is_private = excluded.is_private,
+       deleted_at = excluded.deleted_at,
+       deleted_by_user_id = excluded.deleted_by_user_id,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        lamport = excluded.lamport`,
@@ -1241,6 +1263,9 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
     keyTakeaways: row.keyTakeaways,
     fieldSources: stringify(row.fieldSources),
     notes: row.notes,
+    isPrivate: row.isPrivate ? 1 : 0,
+    deletedAt: row.deletedAt ? toIso(row.deletedAt) : null,
+    deletedByUserId,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
     lamport: row.lamport,
@@ -2031,7 +2056,11 @@ export function applyRemoteTombstones(
 
 /** True if an id has a local tombstone (gates pull-apply re-creates — out-of-order
  *  guard when a row + its tombstone arrive in the same pull). */
-function isTombstoned(db: Database.Database, entityType: 'company' | 'task', entityId: string): boolean {
+function isTombstoned(
+  db: Database.Database,
+  entityType: 'company' | 'task' | 'contact' | 'meeting',
+  entityId: string,
+): boolean {
   try {
     return (
       db
@@ -2177,10 +2206,17 @@ function reconcileCalendarMeeting(db: Database.Database, row: PulledMeetingRow):
 }
 
 function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
+  // Phase 4 resurrection guard — never re-create a hard-purged meeting.
+  if (isTombstoned(db, 'meeting', row.id)) return
   // Converge a diverged calendar meeting before inserting. If the reconcile
   // failed, skip the insert — A still holds this calendar_event_id and B would
   // trip the global unique index (aborting the whole chunk).
   if (!reconcileCalendarMeeting(db, row)) return
+  // is_private + soft-delete (Phase 4). deleted_by_user_id is an FK → defensively
+  // NULLed when the teammate isn't in the local directory.
+  const userExists = (uid: string | null | undefined): boolean =>
+    uid != null && db.prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1').get(uid) != null
+  const deletedByUserId = userExists(row.deletedByUserId) ? row.deletedByUserId : null
 
   // Hand-rolled camelCase → snake_case mapping. The set of columns is
   // stable; adding a future column means adding it here too. Explicit over
@@ -2198,6 +2234,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        companies, dismissed_companies,
        status, was_impromptu, is_group_event, is_group_event_user_set,
        scheduled_end_at,
+       is_private, deleted_at, deleted_by_user_id,
        created_at, updated_at, lamport
      ) VALUES (
        @id, @title, @date, @durationSeconds, @calendarEventId,
@@ -2211,6 +2248,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        @companies, @dismissedCompanies,
        @status, @wasImpromptu, @isGroupEvent, @isGroupEventUserSet,
        @scheduledEndAt,
+       @isPrivate, @deletedAt, @deletedByUserId,
        @createdAt, @updatedAt, @lamport
      )
      ON CONFLICT(id) DO UPDATE SET
@@ -2250,6 +2288,9 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        is_group_event = excluded.is_group_event,
        is_group_event_user_set = excluded.is_group_event_user_set,
        scheduled_end_at = excluded.scheduled_end_at,
+       is_private = excluded.is_private,
+       deleted_at = excluded.deleted_at,
+       deleted_by_user_id = excluded.deleted_by_user_id,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        lamport = excluded.lamport`,
@@ -2283,6 +2324,9 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
     isGroupEvent: row.isGroupEvent ? 1 : 0,
     isGroupEventUserSet: row.isGroupEventUserSet ? 1 : 0,
     scheduledEndAt: row.scheduledEndAt ? toIso(row.scheduledEndAt) : null,
+    isPrivate: row.isPrivate ? 1 : 0,
+    deletedAt: row.deletedAt ? toIso(row.deletedAt) : null,
+    deletedByUserId,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
     lamport: row.lamport,

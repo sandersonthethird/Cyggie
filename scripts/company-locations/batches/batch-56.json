@@ -1,0 +1,110 @@
+[
+{
+"id": "fefccec2-f374-4fd5-be7c-7065fc136530",
+"name": "Amazon",
+"domain": "amazon.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "67e7c31b-d62b-4740-9028-55265834e95d",
+"name": "Venrex",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "2fc2b503-4e97-4e54-9ed0-0d39f26ae052",
+"name": "Gambit Robotics",
+"domain": "gambitrobotics.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "1a05b808-b412-4c30-a234-5125c2d6cfdd",
+"name": "CapHub",
+"domain": "caphub.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "8d55f635-7060-45ca-bbe8-8111f45e3b76",
+"name": "TrashLab",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "fec531bb-02e1-4b1c-979d-12bd3eda24dd",
+"name": "Knode",
+"domain": "knode.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "558275bc-a898-4abb-a457-abf9948cf396",
+"name": "Shepherd AI",
+"domain": "yourshepherd.ai",
+"website": "https://yourshepherd.ai",
+"industry": null,
+"city": "San Francisco",
+"state": "CA"
+},
+{
+"id": "4c70b9d3-e87d-4cdf-aa43-5d916d99d7b8",
+"name": "Darwin",
+"domain": "darwinsystems.ai",
+"website": "https://darwinsystems.ai",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "b4239055-57d5-4373-b98b-7a13a714631f",
+"name": "BabyMilu",
+"domain": "babymilu.com",
+"website": "https://babymilu.com",
+"industry": null,
+"city": "San Francisco",
+"state": "CA"
+},
+{
+"id": "39aa681b-21e9-44a8-bb76-eb5f31c5114a",
+"name": "Essence Venture Capital",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "cb448dd6-58cd-4807-a6a6-a628219ca0cd",
+"name": "Boabab Ventures",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "2286600f-a51a-4548-8848-51658025269b",
+"name": "Essencevc",
+"domain": "essencevc.fund",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

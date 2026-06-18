@@ -1427,6 +1427,19 @@ export default function MeetingDetail() {
     setTimeout(() => titleInputRef.current?.focus(), 0)
   }, [data])
 
+  // Phase 4 — privacy opt-out. A private meeting is owner-only (the gateway never
+  // sends it to a teammate). Optimistic; reverts on failure.
+  const toggleMeetingPrivacy = useCallback(async () => {
+    if (!data || !id) return
+    const next = !data.meeting.isPrivate
+    setData((prev) => (prev ? { ...prev, meeting: { ...prev.meeting, isPrivate: next } } : prev))
+    try {
+      await api.invoke(IPC_CHANNELS.MEETING_UPDATE, id, { isPrivate: next })
+    } catch {
+      setData((prev) => (prev ? { ...prev, meeting: { ...prev.meeting, isPrivate: !next } } : prev))
+    }
+  }, [data, id])
+
   const handleTitleSave = useCallback(async () => {
     if (!id || !data) return
     const trimmed = titleDraft.trim()
@@ -1928,6 +1941,17 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
               </h2>
             )}
             <div className={styles.titleActions}>
+              <button
+                className={styles.recordBtn}
+                onClick={() => void toggleMeetingPrivacy()}
+                title={
+                  meeting.isPrivate
+                    ? 'Private — only you can see this meeting. Click to share with your firm.'
+                    : 'Shared with your firm. Click to make it private (only you).'
+                }
+              >
+                {meeting.isPrivate ? '🔒 Private' : '👥 Shared'}
+              </button>
               {canJoin && (
                 <button
                   type="button"

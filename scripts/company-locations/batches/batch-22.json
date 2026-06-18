@@ -1,0 +1,110 @@
+[
+{
+"id": "3a5d7a21-dfda-4357-bec2-db6c967812d2",
+"name": "Hhadvisory",
+"domain": "hhadvisory.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "87cc1420-5093-4851-bd27-d6ef5db2353e",
+"name": "Soris",
+"domain": "soris.ai",
+"website": null,
+"industry": "InsurTech",
+"city": "New York",
+"state": "NY"
+},
+{
+"id": "a8359b23-2833-4730-b9a7-053faddd483c",
+"name": "Aardvarkintel",
+"domain": "aardvarkintel.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "24da7301-48c1-425c-957c-93022f6e5647",
+"name": "Love Grown",
+"domain": "lovegrown.com",
+"website": null,
+"industry": null,
+"city": "New York",
+"state": "NY"
+},
+{
+"id": "78a9ba51-6b52-46c7-a49c-f02d210f459c",
+"name": "Mac",
+"domain": "mac.com",
+"website": "https://mac.com",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "c581e84f-f597-4558-9110-04dacfe58a98",
+"name": "Causeway",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "957c5d97-9684-49f9-817e-846af88bee26",
+"name": "Pentland",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "f8f4a27d-06f3-4d16-87e5-be64778b2127",
+"name": "Sidekick Partners",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "604eda06-0287-4c93-9177-68ae905d6f33",
+"name": "Kslaw",
+"domain": "kslaw.com)",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "5922b9cf-d23a-47a7-ba17-38507fad9bbf",
+"name": "Hawthorneretailpartners",
+"domain": "hawthorneretailpartners.com)",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "f23ba471-ec4c-45e0-99a8-aa80cf6c8bdf",
+"name": "Cherrygrp",
+"domain": "cherrygrp.com)",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "a88b412d-f0af-45d4-b086-d638310a6885",
+"name": "Sig",
+"domain": "sig.com)",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

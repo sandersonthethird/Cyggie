@@ -79,6 +79,13 @@ FROM cyggie_readonly;
 -- Lock down future tables: by default they grant nothing to this role.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   REVOKE ALL ON TABLES FROM cyggie_readonly;
+
+-- Phase 4 RLS: contacts + meetings carry owner-aware SELECT policies
+-- (migration 0043). For those policies to actually constrain this role it
+-- MUST NOT bypass RLS. CREATE ROLE ... LOGIN above gives a plain role with
+-- no BYPASSRLS by default; this is an explicit belt-and-suspenders assertion
+-- (and documents the invariant for anyone editing the role later).
+ALTER ROLE cyggie_readonly NOBYPASSRLS;
 `.trim()
 
 // Per-session SQL applied to every connection checked out of the

@@ -1,0 +1,110 @@
+[
+{
+"id": "aa2bf0f7-47ce-460f-96c0-f3490a92cc92",
+"name": "Bbh",
+"domain": "bbh.com)",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "cdba728c-7ad3-4d73-ab05-5587bdedc18b",
+"name": "Virginiabevco",
+"domain": "virginiabevco.com)",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "c8575ec6-6548-48de-a36b-2bd23b3c83e2",
+"name": "Core Line",
+"domain": "coreline.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "bed5d7f3-2e33-48d6-b0f5-c501ca4cb4b1",
+"name": "Vitals Vault",
+"domain": "vitalsvault.com",
+"website": null,
+"industry": null,
+"city": "Seattle",
+"state": "WA"
+},
+{
+"id": "42b65609-7733-458c-87ce-62d9fd31ac7c",
+"name": "Zo Computer",
+"domain": "zo.computer",
+"website": "www.zo.computer",
+"industry": "AI",
+"city": "Brooklyn",
+"state": "NY"
+},
+{
+"id": "e0a25e49-c672-4669-936d-8e5a6e30266e",
+"name": "Thrifty Ship",
+"domain": "thryftship.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "1914ff93-6e4e-482e-a91e-76257371d423",
+"name": "Planisphere",
+"domain": "planisphere.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "ec0d4d60-dc6f-45ac-a873-52687b0b7669",
+"name": "Burq",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "199696aa-36f0-4b14-8fba-f7183e1586b8",
+"name": "Herd Pay",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "17db1c0d-d917-499f-8ac1-f895c0a2d21e",
+"name": "I Have This Friend",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "6b823e10-5a6e-45cc-ae27-215236d7c528",
+"name": "Intro",
+"domain": "intro.co",
+"website": "https://intro.co/",
+"industry": "Marketplace",
+"city": "Los Angeles",
+"state": "CA"
+},
+{
+"id": "7d787c57-d7dd-4263-9b42-18f53e9ac557",
+"name": "Milo",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

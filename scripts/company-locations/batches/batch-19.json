@@ -1,0 +1,110 @@
+[
+{
+"id": "5f0ee35d-05b1-47a8-a285-6c3959b8c393",
+"name": "Ebay",
+"domain": "ebay.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "13e87d8e-c6fc-4a5f-9409-547e0a14caee",
+"name": "Atomic",
+"domain": "atomic.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "fb6c9732-668e-4eb2-a7e9-049cfb3d43e6",
+"name": "Gunder",
+"domain": "gunder.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "8011398a-f3a6-40e9-8262-9e55e4b9b284",
+"name": "Moonlight",
+"domain": "moonlight.world",
+"website": "https://moonlight.cards/",
+"industry": "Marketplace",
+"city": "San Francisco",
+"state": "CA"
+},
+{
+"id": "96104b87-81de-4d4d-8a29-d616dc0c5330",
+"name": "Petwell",
+"domain": "petwell.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "0613dd07-c652-4c52-a6cb-114399881687",
+"name": "Zigg Capital",
+"domain": "ziggcap.com",
+"website": null,
+"industry": null,
+"city": "New York",
+"state": "NY"
+},
+{
+"id": "e2bba1c0-2ad9-4ecc-9d99-50297f901162",
+"name": "Pre",
+"domain": "pre.cm",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "287d0aa0-2dd6-4ab1-ac3e-fc1fed74ad1b",
+"name": "Serent",
+"domain": "serent.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "8ed11039-cd26-4709-bb20-f1b0b99b7e54",
+"name": "Usearena",
+"domain": "usearena.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "bd9ac105-0edd-41cc-aba7-0ad773c4bdde",
+"name": "Entitl",
+"domain": "entitl.co",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "ef2ec476-a877-402d-8a18-6c703e31bae8",
+"name": "Topshelf",
+"domain": "topshelf.ventures",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "561619a2-011c-4766-b9af-cb146eb0af64",
+"name": "Youdistro",
+"domain": "youdistro.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

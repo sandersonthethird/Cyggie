@@ -257,6 +257,7 @@ function buildDb(): Database.Database {
       investor_type TEXT NOT NULL,
       position INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      lamport TEXT NOT NULL DEFAULT '0',
       FOREIGN KEY (company_id) REFERENCES org_companies(id) ON DELETE CASCADE,
       FOREIGN KEY (investor_company_id) REFERENCES org_companies(id) ON DELETE CASCADE
     );

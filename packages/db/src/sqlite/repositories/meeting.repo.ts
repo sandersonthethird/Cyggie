@@ -47,6 +47,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     status: row.status as MeetingStatus,
     isGroupEvent: row.is_group_event === 1,
     isGroupEventUserSet: row.is_group_event_user_set === 1,
+    isPrivate: row.is_private === 1 || row.is_private === true,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     company: row.company_id
@@ -461,6 +462,8 @@ export function updateMeeting(
     status: MeetingStatus
     isGroupEvent: boolean
     isGroupEventUserSet: boolean
+    /** Phase 4 — owner-only privacy opt-out (firm-shared when false). */
+    isPrivate: boolean
   }>
 ,
   userId: string | null = null
@@ -564,6 +567,10 @@ export function updateMeeting(
   if (data.isGroupEventUserSet !== undefined) {
     sets.push('is_group_event_user_set = ?')
     params.push(data.isGroupEventUserSet ? 1 : 0)
+  }
+  if (data.isPrivate !== undefined) {
+    sets.push('is_private = ?')
+    params.push(data.isPrivate ? 1 : 0)
   }
 
   if (sets.length === 0) return getMeeting(id)

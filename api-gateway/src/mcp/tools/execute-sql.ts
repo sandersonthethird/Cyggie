@@ -8,6 +8,16 @@
 //      and zero access to users / sessions / oauth_* / user_credentials
 //      / firms / mcp_audit. Postgres enforces this — the application
 //      code can't bypass it even if it tried.
+//   1b. ROW-LEVEL SECURITY (Phase 4). contacts + meetings are firm-shared
+//      with an is_private owner-only opt-out. The read-only role is NOT
+//      the table owner, so RLS policies apply to it: every SELECT is
+//      run inside a transaction that first SET LOCALs app.user_id +
+//      app.firm_id (the caller's identity from the OAuth token), and the
+//      policy restricts rows to `user_id = me OR (firm_id = my_firm AND
+//      is_private = false)`. This closes the one leak the structured
+//      tools' app-layer filter can't cover: raw SQL reading a teammate's
+//      private contact/meeting. The gateway's own (owner) role bypasses
+//      RLS, so normal sync/REST are unaffected.
 //   2. SESSION GUARDRAILS. Every checked-out connection runs
 //      statement_timeout=5s, idle_in_transaction_session_timeout=5s,
 //      default_transaction_read_only=on. Configured in
@@ -50,13 +60,20 @@ const QUERY_MAX_CHARS = 8_000
 export interface CyggieExecuteSqlArgs {
   env: GatewayEnv
   query: string
+  // Caller identity from the OAuth token — threaded into the read-only
+  // transaction via SET LOCAL so RLS policies on firm-shared tables
+  // (contacts/meetings) can enforce owner-aware visibility. firmId may be
+  // null for a user not yet attached to a firm; the policy then only
+  // matches their own rows (firm branch can never match a null/empty
+  // setting), which is the correct safe default.
+  viewer: { userId: string; firmId: string | null }
   log?: FastifyBaseLogger
 }
 
 export async function cyggieExecuteSql(
   args: CyggieExecuteSqlArgs,
 ): Promise<ToolResult> {
-  const { env, log } = args
+  const { env, log, viewer } = args
   const query = String(args.query ?? '')
 
   // ─── Feature flag ────────────────────────────────────────────────
@@ -85,9 +102,28 @@ export async function cyggieExecuteSql(
   const wrappedSql = `WITH user_q AS (${validation.trimmed}) SELECT * FROM user_q LIMIT ${ROW_CAP}`
 
   let client: pg.PoolClient | null = null
+  let inTx = false
   try {
     client = await pool.connect()
+    // Run inside a transaction so the RLS session context is scoped to
+    // this one query (SET LOCAL = transaction-local; pooler-safe — a
+    // recycled connection never carries another caller's identity). The
+    // connection is already default_transaction_read_only=on (readonly-
+    // pool.ts), so the BEGIN is read-only; set_config writes a GUC, not
+    // table data, so it's permitted in a read-only transaction.
+    await client.query('BEGIN')
+    inTx = true
+    // Parameterized — never string-interpolate identity into SQL. The
+    // third arg `true` makes set_config transaction-local (= SET LOCAL).
+    await client.query(`SELECT set_config('app.user_id', $1, true)`, [
+      viewer.userId,
+    ])
+    await client.query(`SELECT set_config('app.firm_id', $1, true)`, [
+      viewer.firmId ?? '',
+    ])
     const result = await client.query(wrappedSql)
+    await client.query('COMMIT')
+    inTx = false
     const rows = result.rows ?? []
     const truncated = rows.map((row: Record<string, unknown>) =>
       capRowColumns(row),
@@ -95,6 +131,12 @@ export async function cyggieExecuteSql(
     const text = renderRowsAsMarkdownTable(truncated, result.fields, rows.length)
     return ok(text)
   } catch (raw) {
+    if (client && inTx) {
+      // Best-effort rollback; ignore secondary errors (the original is
+      // what we surface). A failed ROLLBACK marks the connection bad and
+      // pg.Pool discards it on release.
+      await client.query('ROLLBACK').catch(() => {})
+    }
     return mapPgErrorToEnvelope(raw, query, log)
   } finally {
     if (client) client.release()

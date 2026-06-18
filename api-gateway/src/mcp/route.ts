@@ -91,6 +91,7 @@ export async function registerMcpRoute(
         env,
         db,
         userId: auth.userId,
+        firmId: auth.firmId,
         scopes: auth.scopes,
         log: req.log,
       })

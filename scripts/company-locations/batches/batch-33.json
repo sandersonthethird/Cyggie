@@ -1,0 +1,110 @@
+[
+{
+"id": "15e0b789-fbe4-4f4d-aa75-17f5c476b3c1",
+"name": "Msad",
+"domain": "msad.vc",
+"website": "https://msad.vc",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "9d1fdb22-65ab-4d71-8f6c-b421d4c4fc42",
+"name": "Bvp",
+"domain": "bvp.com",
+"website": "https://bvp.com",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "7e7901b3-c15e-41dc-a118-a3b28498d4fc",
+"name": "Wip",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "ba9eab8f-b436-4976-84f8-f0268d347841",
+"name": "Stillers Soda",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "60b1f61f-aced-498b-a9fe-7e93500a21fa",
+"name": "Sett",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "15e15ab1-3da0-4c8e-afb6-a2927eb2be47",
+"name": "Andrews Mixers",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "e6538f79-f1f0-4b37-add3-b2d096420e66",
+"name": "Fibe",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "02dfdd9a-9c0b-4e18-8059-4da4a4a9c1ed",
+"name": "Lorimer Ventures",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "30c1bee4-4671-4c2b-aeff-37fe38a0cd6c",
+"name": "Rockbot",
+"domain": "rockbot.com",
+"website": null,
+"industry": "AdTech",
+"city": null,
+"state": null
+},
+{
+"id": "7e9db4ee-50c7-40c8-9261-a9cad6e27103",
+"name": "NRC Asset and Portfolio Management Limited",
+"domain": "nrcapmgmt.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "a80c7c5e-e427-4a43-bf15-331bf325c3e8",
+"name": "Leal 360",
+"domain": "leal.co",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "6d2e37fd-2303-4c66-8065-dec8e814908e",
+"name": "Wink",
+"domain": "9count.co",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

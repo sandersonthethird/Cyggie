@@ -150,7 +150,12 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
   // Investor links (co/prior/subsequent). Firm-shared child of org_companies —
   // rides the parent's firm scope in the pull, same as org_company_aliases.
   { table: 'company_investors', primaryKey: ['id'], hasUserId: false },
-  { table: 'contacts', primaryKey: ['id'], hasUserId: true },
+  // Phase 4 multiplayer — contacts are firm-shared (whole-row LWW) with an
+  // is_private owner-only opt-out enforced by entityVisibilityFilter on the pull.
+  // Whole-row LWW for V1 (field-LWW for contacts + meetings is a documented
+  // follow-up — the field_lamports column is in place for it). firmScoped stamps
+  // firm_id from the JWT on push.
+  { table: 'contacts', primaryKey: ['id'], hasUserId: true, firmScoped: true },
   // Investment memos — added 2026-05-23 to unblock the mobile Memos tab on
   // company detail. SQLite table lacks user_id (created_by_user_id only),
   // matching the notes pattern — hasUserId: true makes the gateway stamp
@@ -189,6 +194,13 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
     table: 'meetings',
     primaryKey: ['id'],
     hasUserId: true,
+    // Phase 4 multiplayer — meetings are firm-shared with an is_private
+    // owner-only opt-out (enforced by entityVisibilityFilter). WHOLE-ROW LWW
+    // (NOT field-LWW): meetings are single-author recordings, and the apply path
+    // has bespoke calendar-reconcile + transcript-COALESCE logic that a dynamic
+    // field-LWW rewrite would jeopardize for little gain. (Contacts ARE field-LWW
+    // — collaboratively enriched.) Field-LWW for meetings is a documented follow-up.
+    firmScoped: true,
     // T38: meetings carry the largest JSONB columns in the schema. A
     // single transcriptSegments array can run to several MB; chatMessages
     // and summary grow over the meeting's lifetime. Most updates touch

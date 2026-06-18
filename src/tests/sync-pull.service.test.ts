@@ -49,6 +49,9 @@ function buildDb(): Database.Database {
       is_group_event INTEGER NOT NULL DEFAULT 0,
       is_group_event_user_set INTEGER NOT NULL DEFAULT 0,
       scheduled_end_at TEXT,
+      is_private INTEGER NOT NULL DEFAULT 0,
+      deleted_at TEXT,
+      deleted_by_user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       lamport TEXT NOT NULL DEFAULT '0'
