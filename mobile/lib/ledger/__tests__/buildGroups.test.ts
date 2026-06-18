@@ -23,6 +23,7 @@ const company: LedgerDetail = {
   runwayMonths: 11,
   totalFundingRaised: 5_000_000,
   leadInvestor: 'Sequoia',
+  coInvestors: ['a16z', 'Index'],
   portfolioFund: 'fund_iv',
   investmentSize: '500000',
   ownershipPct: '5%',
@@ -70,6 +71,9 @@ describe('buildCompanyGroups', () => {
     expect(row(g, 'FINANCIALS', 'Initial valuation')?.value).toBe('$10')
     expect(row(g, 'FINANCIALS', 'ARR')?.value).toBe('$1.8M')
     expect(row(g, 'FINANCIALS', 'Runway')?.value).toBe('11 mo')
+    // Co-investors (string[] from the synced join) render as a joined list,
+    // NOT in the MORE fallback.
+    expect(row(g, 'FINANCIALS', 'Co-investors')?.value).toBe('a16z, Index')
   })
 
   it('renders the Investment section — investmentMark plain, date UTC, security humanized', () => {
