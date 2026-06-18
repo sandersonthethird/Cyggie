@@ -530,6 +530,12 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         // Cancel mid-generation: silent return (no toast, no error state).
         return
       }
+      if (classified.kind === 'error') {
+        // Surface the producer agent's real failure reason (bad key, API
+        // error, too few sections, …) instead of the generic empty message.
+        setErrorMsg(classified.message)
+        return
+      }
       if (classified.kind === 'empty') {
         setErrorMsg('Generation returned empty content — try again')
         return
@@ -945,13 +951,20 @@ export function emptyResearchToastOptions(
  *   │  Inputs                          → Outcome                    │
  *   │  result.error === 'aborted'      → 'aborted' (silent return,  │
  *   │                                     no error toast)            │
- *   │  no contentMarkdown / no version → 'empty' (error toast)       │
+ *   │  success === false (w/ message)  → 'error' (show real reason)  │
+ *   │  no contentMarkdown / no version → 'empty' (generic error)     │
  *   │  otherwise                       → 'success' (commit version) │
  *   └──────────────────────────────────────────────────────────────┘
+ *
+ * The 'error' branch surfaces the producer agent's real failure reason
+ * (e.g. "No Claude API key configured…", TooFewSections, an API 4xx) instead
+ * of masking every failure as generic empty content — which previously made
+ * configuration problems undiagnosable.
  */
 export type GenerateResponseClassification =
   | { kind: 'aborted' }
   | { kind: 'empty' }
+  | { kind: 'error'; message: string }
   | { kind: 'success'; contentMarkdown: string; version: InvestmentMemoVersion; meta?: MemoGenerateMeta }
 
 export function classifyGenerateResponse(result: {
@@ -963,6 +976,9 @@ export function classifyGenerateResponse(result: {
 } | null | undefined): GenerateResponseClassification {
   if (!result) return { kind: 'empty' }
   if (result.error === 'aborted') return { kind: 'aborted' }
+  if (result.success === false) {
+    return { kind: 'error', message: result.error || 'Generation failed — try again' }
+  }
   if (!result.contentMarkdown || !result.version) return { kind: 'empty' }
   return {
     kind: 'success',
