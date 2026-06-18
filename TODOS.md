@@ -1,58 +1,82 @@
 # TODOS
 
-## Mobile ledger PR2 — Reliable co-investors (single source of truth)
+## Mobile ledger PR2 — Reliable co-investors — Part C: drop the dead column (REMAINING)
 
-**What:** Co-investors live in the un-synced `company_investors` M2M table
-(`packages/db/src/schema/companies.ts`), while the synced
-`org_companies.co_investors` JSONB column is vestigial (never written by desktop).
-So mobile can't read co-investors from Neon. Consolidate to one source: make
-`company_investors` an owned/synced table, one-time merge any stray legacy-column
-data into it, have the gateway JOIN it to produce the `coInvestors` name list, then
-DROP the legacy `co_investors` column.
+**Status:** Parts A+B SHIPPED in PR #42 (`feat/co-investors-reliable`): `company_investors`
+is now a synced owned table (lamport col, OWNED_TABLES, validators, firm-scoped pull,
+apply spec, device dispatch, `setCompanyInvestors` wrapped in `withSync`), and the
+gateway `GET /companies/:id` returns `coInvestors` from the JOIN. **Co-investors appear
+on mobile once the desktop app ships migration 128 + the withSync write + a one-time
+`scripts/backfill-outbox` pass** (existing rows have lamport '0' and must be enqueued).
 
-**Why:** PR1 (drift-proof projection) deliberately deferred co-investors — its
-registry row is dormant and simply drops until the data reaches Neon. Until PR2,
-the Co-investors row never appears on a company card.
+**Remaining (Part C):** the legacy `org_companies.co_investors` JSONB is now fully dead
+(0/715 in Neon; the join is the source). Drop it. Touchpoints (audited):
+- `packages/db/src/schema/companies.ts:90` (remove column) → drizzle generate (PG drop) +
+  new SQLite drop migration.
+- `src/main/services/sync-remote-apply.ts` — remove `co_investors` from the org_companies
+  field-LWW col map (~`['co_investors','coInvestors']`), the upsert INSERT/VALUES/ON-CONFLICT,
+  the `PulledOrgCompanyRow` type, and `stringify(row.coInvestors)`.
+- `packages/db/src/sqlite/repositories/org-company.repo.ts` — remove the `co_investors`
+  row-type field + the `c.co_investors` SELECT projection + the column from the field list (~:2468).
+- `packages/db/src/sqlite/repositories/search.repo.ts` — remove `co_investors` from the
+  two FTS LIKE clauses (~:951, :1359).
+- `api-gateway/src/mcp/tools/get-company.ts` + `mcp/format.ts` — repoint co-investors to the
+  `company_investors` JOIN (mirror the gateway detail) instead of `c.coInvestors`; update `mcp-unit.test`.
+- `api-gateway/src/shared/sanitize-row.ts` — drop the now-moot `'coInvestors'` denylist entry.
+- Tests: `sync-remote-apply-additional-tables.test` ("serialises JSON fields (coInvestors…)"),
+  the many `co_investors TEXT` test-table fixtures (harmless extras, trim for parity).
+- **Leave** the renderer's `'coInvestors'` field key (companyFields/companyFieldMeta/
+  CompanyFieldSections/CompanyPropertiesPanel) — that drives the live join-backed picker (`coInvestorsList`), not the dead column.
 
-**Context:** Touchpoints — `packages/db/src/sync/owned-tables.ts` (register
-`company_investors`, composite identity `company_id+investor_company_id+investor_type`,
-firm-scoped via parent), `packages/db/src/postgres/write-validators.ts` (validators),
-`api-gateway/src/routes/companies.ts` (JOIN `company_investors`→investor
-`org_companies` for the name list, add to the `.passthrough()` return), then retire
-`org_companies.co_investors` from `schema/companies.ts`, the pull-apply map in
-`src/main/services/sync-remote-apply.ts`, and the org_companies field-LWW set, via a
-coordinated PG+SQLite drop migration. Run the pre-push migration-drift guard locally
-(`fix/issue-27-migration-drift`). Sequence the column drop LAST (after code stops
-referencing it) — it's the only one-way step.
+Destructive prod migration → sequence the drop LAST (deploy code that stops reading it →
+then drop). Conflicts likely with active sync branches; run the migration-drift guard.
 
-**Effort:** M. **Priority:** P2. **Depends on / blocked by:** PR1 (the
-passthrough + `mobile/lib/ledger/buildGroups.ts` registry, where the `coInvestors`
-row already exists).
+**Effort:** M. **Priority:** P3 (column is empty; pure cleanup).
 
 ---
 
 ## Mobile ledger PR3 — Desktop convergence on the shared field registry
 
-**What:** Repoint the desktop FieldSections
-(`src/renderer/components/{company,contact}/*FieldSections.tsx` +
-`src/renderer/constants/*Fields.ts`) to derive their labels / section / order from
-the shared `@cyggie/shared` field registry that PR1 introduced
-(`packages/shared/src/field-registry.ts`), removing the temporary duplication
-between desktop's constants and the registry. Desktop keeps its richer *editor*
-meta (input types, option sources, complex pickers) separately — that's a distinct
-concern from the display contract, not duplication.
+**What:** Make `@cyggie/shared/field-registry` the single source of truth for field
+**labels + section + order** across BOTH desktop and mobile, removing the desktop's
+hardcoded duplication. Desktop keeps its richer *editor* meta (input types, option
+sources, complex pickers) in `companyFieldMeta`/`contactFieldMeta` — distinct concern.
 
-**Why:** PR1 made the registry the single source of truth for the mobile card and
-the gateway-exposed fields, but desktop still hardcodes its own labels/sections. Until
-PR3, a label/section change must be made in two places. Converging closes the last
-drift seam across desktop + mobile.
+**⚠️ Resolved design (the original "mechanical repoint" framing was WRONG — see scope
+findings below).** The mobile registry diverges from desktop and a naive repoint would
+*break* desktop. The clean approach is a **platform-aware superset registry** that
+changes NEITHER UI:
+- Extend `FieldMeta` with optional **`desktopSection`** (lowercase desktop key:
+  overview/pipeline/financials/investment/links · contact_info/professional/relationship/
+  investor_info), **`desktopLabel`** (when it differs from the mobile label), **`desktopOnly`**
+  (no mobile `section`), and **`desktopUi`** (component hint: `companyPicker`/`tagPicker`/etc.).
+- Add a `SECTIONS` metadata export: per-platform ordered section list + display labels.
+- Add the desktop-only fields to the registry as `desktopOnly` entries: company `status`,
+  `hqAddress`, the pipeline section (`sourceType`, `sourceEntityId`, `dealSource`,
+  `warmIntroSource`, `referralContactId`, `relationshipOwner`, `nextFollowupDate`), and the
+  investor PICKERS (`coInvestors`, `priorInvestors`, `subsequentInvestors` — `desktopUi:'companyPicker'`);
+  contact split `typicalCheckSizeMin`/`Max` (desktop shows two fields vs mobile's `checkSize` sentinel).
+- Known label diffs to encode as `desktopLabel`: Runway → "Runway (months)", Last met → "Last Met At",
+  Prior companies → "Prior Company".
 
-**Context:** The registry already encodes `{ key, label, section, order, format,
-tone }` for every company/contact field plus a `FIELD_SKIP_SET`. The desktop refactor
-is mechanical (read labels/sections/order from the registry instead of the local
-constants) but touches the desktop detail UI broadly, so it's isolated to its own PR.
+**Mobile change (must be a NO-OP visually):** `mobile/lib/ledger/buildGroups.ts` skips
+`desktopOnly` entries and reads the mobile `section` exactly as today. The existing
+`buildGroups` fixture tests must still pass unchanged (the card is byte-identical).
 
-**Effort:** M. **Priority:** P2. **Depends on / blocked by:** PR1.
+**Desktop change (the bulk, ~1,300 lines):** rewrite
+`src/renderer/components/{company,contact}/*FieldSections.tsx` to pull each PropertyRow's
+**label** + per-section **field membership/order** from the registry (filtered by
+`desktopSection`), keeping the existing pickers/editor types via `*FieldMeta`. Then retire
+the duplicated label/section data in `src/renderer/constants/{company,contact}Fields.ts`.
+
+**Verification:** mobile builder tests unchanged (card identical) + `tsc`. Desktop has NO
+render-test harness — correctness needs **manual QA in the running app**: open a company
+and a contact detail and confirm every section, label, order, and the complex pickers
+(lead/co/prior/subsequent investors, tag pickers, polymorphic source picker) render and
+edit correctly. Header fields (email/phone/linkedin in the hero) must NOT double-render.
+
+**Effort:** L (multi-session; high blast radius on the primary desktop CRM surface;
+manual-QA-only). **Priority:** P2. **Depends on / blocked by:** PR1 (registry exists).
 
 ---
 
