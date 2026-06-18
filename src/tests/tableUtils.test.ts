@@ -6,7 +6,8 @@ import {
   sortRows,
   chunkArray,
   executeBulkEdit,
-  formatJsonList
+  formatJsonList,
+  bulkFieldForColumn
 } from '../renderer/components/crm/tableUtils'
 import type { ColumnDef, SortState } from '../renderer/components/crm/tableUtils'
 
@@ -199,6 +200,34 @@ describe('executeBulkEdit', () => {
     // All 5 called, in order
     expect(callOrder).toEqual(['a', 'b', 'c', 'd', 'e'])
     expect(updateFn).toHaveBeenCalledTimes(5)
+  })
+})
+
+describe('bulkFieldForColumn', () => {
+  const col = (over: Partial<ColumnDef>): ColumnDef => ({
+    key: 'k', label: 'L', field: 'f', defaultVisible: true, width: 100, minWidth: 60,
+    sortable: true, editable: true, type: 'text', ...over,
+  })
+
+  it('select column → descriptor carrying its options', () => {
+    const opts = [{ value: 'a', label: 'A' }]
+    expect(bulkFieldForColumn(col({ key: 'portfolioFund', field: 'portfolioFund', label: 'Portfolio', type: 'select', options: opts })))
+      .toEqual({ key: 'portfolioFund', label: 'Portfolio', type: 'select', options: opts })
+  })
+
+  it('text / number / date columns → descriptor with their type', () => {
+    expect(bulkFieldForColumn(col({ type: 'text' }))?.type).toBe('text')
+    expect(bulkFieldForColumn(col({ type: 'number' }))?.type).toBe('number')
+    expect(bulkFieldForColumn(col({ type: 'date' }))?.type).toBe('date')
+  })
+
+  it('returns null for non-editable, computed, investor_chips, field-less, or custom columns', () => {
+    expect(bulkFieldForColumn(col({ editable: false }))).toBeNull()
+    expect(bulkFieldForColumn(col({ type: 'computed', field: null }))).toBeNull()
+    expect(bulkFieldForColumn(col({ type: 'investor_chips' }))).toBeNull()
+    expect(bulkFieldForColumn(col({ field: null }))).toBeNull()
+    expect(bulkFieldForColumn(col({ key: 'custom:abc' }))).toBeNull()
+    expect(bulkFieldForColumn(null)).toBeNull()
   })
 })
 

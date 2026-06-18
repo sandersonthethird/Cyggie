@@ -31,7 +31,7 @@
  *       │             ▼  │  RECT ◀──────────── MULTI          │
  *       └── Esc ──────┴──┴────────────────────────◀── Esc ────┘
  */
-import { useState, useCallback, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ColumnDef } from '../components/crm/tableUtils'
 
 export interface EditCell {
@@ -178,6 +178,38 @@ export function selectionRowIndices(sel: CellSelection | null): number[] {
   return [...new Set(effectiveCells(sel).map((c) => c.row))].sort((a, b) => a - b)
 }
 
+/** The single column the selection is confined to, or null if it spans 0/2+ columns. */
+export function selectionSingleColIdx(sel: CellSelection | null): number | null {
+  const cells = effectiveCells(sel)
+  if (cells.length === 0) return null
+  const col = cells[0].col
+  return cells.every((c) => c.col === col) ? col : null
+}
+
+/**
+ * Excel-style Ctrl/Cmd+Arrow jump along one axis. Given the current index, the
+ * axis bound, a step (±1), and a value-presence predicate, returns the target:
+ *   - at the boundary            → stay;
+ *   - filled, next also filled   → last filled before the gap (end of the run);
+ *   - else                       → next filled cell, skipping blanks; if none,
+ *                                   the far boundary (0 or bound-1).
+ */
+export function jumpIndex(
+  start: number, bound: number, step: number, hasValue: (i: number) => boolean,
+): number {
+  const next = start + step
+  if (next < 0 || next >= bound) return start
+  let i = start
+  if (hasValue(start) && hasValue(next)) {
+    while (i + step >= 0 && i + step < bound && hasValue(i + step)) i += step
+    return i
+  }
+  i = next
+  while (i >= 0 && i < bound && !hasValue(i)) i += step
+  if (i < 0 || i >= bound) return step > 0 ? bound - 1 : 0
+  return i
+}
+
 function singleCellSel(row: number, col: number): CellSelection {
   const cell = { row, col }
   return { rects: [{ r1: row, c1: col, r2: row, c2: col }], added: new Set(), removed: new Set(), anchor: cell, active: cell }
@@ -209,9 +241,20 @@ export function useEditCellNav(
    * that don't horizontally scroll can omit it.
    */
   scrollToCol?: (colIdx: number) => void,
+  /**
+   * Whether the cell at (rowIdx, colIdx) holds a value — powers Cmd/Ctrl+Arrow
+   * jump-to-value. Optional; without it, Cmd+Arrow falls back to a single step.
+   */
+  cellHasValue?: (rowIdx: number, colIdx: number) => boolean,
 ) {
   const [selection, setSelection] = useState<CellSelection | null>(null)
   const [editCell, setEditCell] = useState<EditCell | null>(null)
+
+  // Keep the latest accessor in a ref so handleArrowNav need not list it as a
+  // dependency — otherwise the document arrow-listener effect (which depends on
+  // handleArrowNav) would re-subscribe on every data change.
+  const cellHasValueRef = useRef(cellHasValue)
+  cellHasValueRef.current = cellHasValue
 
   // Derived back-compat views (stable identity while `selection` is unchanged).
   const focusedCell = useMemo<EditCell | null>(
@@ -341,16 +384,19 @@ export function useEditCellNav(
     setEditCell(null)
   }, [])
 
-  const handleArrowNav = useCallback((direction: 'up' | 'down' | 'left' | 'right', shiftKey = false) => {
+  const handleArrowNav = useCallback((direction: 'up' | 'down' | 'left' | 'right', shiftKey = false, jump = false) => {
     setEditCell(null)
+    const hasValue = cellHasValueRef.current
     setSelection((prev) => {
       if (!prev) return prev
       const { active } = prev
 
       if (direction === 'up' || direction === 'down') {
         const delta = direction === 'down' ? 1 : -1
-        const nextRow = active.row + delta
-        if (nextRow < 0 || nextRow >= rowCount) return prev
+        const nextRow = jump && hasValue
+          ? jumpIndex(active.row, rowCount, delta, (r) => hasValue(r, active.col))
+          : active.row + delta
+        if (nextRow < 0 || nextRow >= rowCount || nextRow === active.row) return prev
         scrollToRow?.(nextRow)
         const newActive: Cell = { row: nextRow, col: active.col }
         if (shiftKey) {
@@ -363,10 +409,14 @@ export function useEditCellNav(
       const editableCols = visibleCols
         .map((c, i) => ({ col: c, i }))
         .filter(({ col }) => col.editable)
-      const currentIdx = editableCols.findIndex(({ i }) => i === active.col)
-      const nextIdx = direction === 'right' ? currentIdx + 1 : currentIdx - 1
-      const nextCol = editableCols[nextIdx]
-      if (!nextCol) return prev
+      const currentPos = editableCols.findIndex(({ i }) => i === active.col)
+      if (currentPos === -1) return prev
+      const delta = direction === 'right' ? 1 : -1
+      const nextPos = jump && hasValue
+        ? jumpIndex(currentPos, editableCols.length, delta, (p) => hasValue(active.row, editableCols[p].i))
+        : currentPos + delta
+      const nextCol = editableCols[nextPos]
+      if (!nextCol || nextPos === currentPos) return prev
       scrollToCol?.(nextCol.i)
       const newActive: Cell = { row: active.row, col: nextCol.i }
       if (shiftKey) {
@@ -446,7 +496,7 @@ export function useEditCellNav(
       }
       e.preventDefault()
       const dir = e.key.replace('Arrow', '').toLowerCase() as 'up' | 'down' | 'left' | 'right'
-      handleArrowNav(dir, e.shiftKey)
+      handleArrowNav(dir, e.shiftKey, e.metaKey || e.ctrlKey)
     }
     document.addEventListener('keydown', onDocKeyDown)
     return () => document.removeEventListener('keydown', onDocKeyDown)

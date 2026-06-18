@@ -45,15 +45,15 @@ import {
   type ColumnDef,
   type SortState
 } from './companyColumns'
-import { executeBulkEdit, createCellCallbacks } from '../crm/tableUtils'
-import type { RangeValue } from '../crm/tableUtils'
+import { executeBulkEdit, createCellCallbacks, bulkFieldForColumn } from '../crm/tableUtils'
+import type { RangeValue, BulkField } from '../crm/tableUtils'
 import type { VirtualRow } from '../../hooks/useGroupedRows'
 import { chipStyle } from '../../utils/colorChip'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
 import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
-import { useEditCellNav, getRangePosition, getCellEdges, cellEdgeBoxShadow, effectiveCells, isCellSelected } from '../../hooks/useEditCellNav'
+import { useEditCellNav, getRangePosition, getCellEdges, cellEdgeBoxShadow, effectiveCells, isCellSelected, selectionSingleColIdx } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
 import { useBulkRowIds } from '../../hooks/useBulkRowIds'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
@@ -71,15 +71,13 @@ const CHECKBOX_WIDTH = 40
 const PICKER_WIDTH = 44
 const ROW_HEIGHT = 38
 
-// Fields available for bulk editing with their option sets
-const BULK_EDIT_FIELDS = [
-  { key: 'entityType',    label: 'Type',     options: ENTITY_TYPES },
-  { key: 'pipelineStage', label: 'Stage',    options: [{ value: '', label: 'Clear' }, ...STAGES] },
-  { key: 'priority',      label: 'Priority', options: [{ value: '', label: 'Clear' }, ...PRIORITIES] },
-  { key: 'round',         label: 'Round',    options: [{ value: '', label: 'Clear' }, ...ROUNDS] }
-] as const
-
-type BulkFieldKey = (typeof BULK_EDIT_FIELDS)[number]['key']
+// Common fields always offered for bulk editing (in addition to the selected column).
+const BULK_EDIT_FIELDS: BulkField[] = [
+  { key: 'entityType',    label: 'Type',     type: 'select', options: ENTITY_TYPES },
+  { key: 'pipelineStage', label: 'Stage',    type: 'select', options: [{ value: '', label: 'Clear' }, ...STAGES] },
+  { key: 'priority',      label: 'Priority', type: 'select', options: [{ value: '', label: 'Clear' }, ...PRIORITIES] },
+  { key: 'round',         label: 'Round',    type: 'select', options: [{ value: '', label: 'Clear' }, ...ROUNDS] }
+]
 
 interface CompanyTableProps {
   companies: CompanySummary[]
@@ -223,7 +221,7 @@ export function CompanyTable({
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [bulkEditing, setBulkEditing] = useState(false)
   const [bulkEditError, setBulkEditError] = useState<string | null>(null)
-  const [bulkEditField, setBulkEditField] = useState<BulkFieldKey>('entityType')
+  const [bulkEditField, setBulkEditField] = useState<string>('entityType')
   const [bulkEditValue, setBulkEditValue] = useState<string>('')
   const bulkEditRef = useRef<HTMLDivElement>(null)
 
@@ -252,6 +250,13 @@ export function CompanyTable({
     visibleCols,
     (idx) => scrollToRowRef.current(idx),
     (idx) => scrollToColRef.current(idx),
+    (r, c) => {
+      const row = companies[r]
+      const col = visibleCols[c]
+      if (!row || !col?.field) return false
+      const v = (row as unknown as Record<string, unknown>)[col.field]
+      return v != null && v !== ''
+    },
   )
 
   const getEditCell = useCallback(() => editCell, [editCell])
@@ -457,8 +462,26 @@ export function CompanyTable({
 
   const virtualRows = rowVirtualizer.getVirtualItems()
 
-  // Current bulk edit field options
-  const currentBulkField = BULK_EDIT_FIELDS.find((f) => f.key === bulkEditField)!
+  // Bulk-edit field list: the column the cell selection is confined to (if any
+  // and bulk-editable) is prepended + pre-selected, then the common fields.
+  const dynamicBulkField = useMemo<BulkField | null>(() => {
+    const colIdx = selectionSingleColIdx(selection)
+    return colIdx != null ? bulkFieldForColumn(mergedVisibleCols[colIdx]) : null
+  }, [selection, mergedVisibleCols])
+  const bulkFields = useMemo<BulkField[]>(() => (
+    dynamicBulkField && !BULK_EDIT_FIELDS.some((f) => f.key === dynamicBulkField.key)
+      ? [dynamicBulkField, ...BULK_EDIT_FIELDS]
+      : BULK_EDIT_FIELDS
+  ), [dynamicBulkField])
+  const currentBulkField = bulkFields.find((f) => f.key === bulkEditField) ?? bulkFields[0]
+
+  // Open the Edit-fields dropdown, prioritizing the selected column's field.
+  const openBulkEdit = useCallback(() => {
+    setBulkEditOpen((open) => {
+      if (!open) { setBulkEditField(dynamicBulkField?.key ?? 'entityType'); setBulkEditValue('') }
+      return !open
+    })
+  }, [dynamicBulkField])
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -974,7 +997,7 @@ export function CompanyTable({
           <div className={styles.bulkMenuWrap} ref={bulkEditRef}>
             <button
               className={styles.bulkMenuBtn}
-              onClick={() => setBulkEditOpen((v) => !v)}
+              onClick={openBulkEdit}
               disabled={bulkEditing || bulkDeleting}
             >
               {bulkEditing ? 'Saving…' : 'Edit fields ▾'}
@@ -983,7 +1006,7 @@ export function CompanyTable({
               <div className={`${styles.bulkMenu} ${styles.bulkEditDropdown}`}>
                 {/* Field tabs */}
                 <div className={styles.bulkEditTabs}>
-                  {BULK_EDIT_FIELDS.map((f) => (
+                  {bulkFields.map((f) => (
                     <button
                       key={f.key}
                       className={`${styles.bulkEditTab} ${bulkEditField === f.key ? styles.bulkEditTabActive : ''}`}
@@ -993,21 +1016,34 @@ export function CompanyTable({
                     </button>
                   ))}
                 </div>
-                {/* Value options */}
-                <div className={styles.bulkEditOptions}>
-                  {currentBulkField.options.map((o) => (
-                    <label key={o.value} className={styles.bulkEditOption}>
-                      <input
-                        type="radio"
-                        name="bulkEditValue"
-                        value={o.value}
-                        checked={bulkEditValue === o.value}
-                        onChange={() => setBulkEditValue(o.value)}
-                      />
-                      {o.label}
-                    </label>
-                  ))}
-                </div>
+                {/* Value editor — radios for selects, an input for text/number/date */}
+                {currentBulkField.type === 'select' ? (
+                  <div className={styles.bulkEditOptions}>
+                    {(currentBulkField.options ?? []).map((o) => (
+                      <label key={o.value} className={styles.bulkEditOption}>
+                        <input
+                          type="radio"
+                          name="bulkEditValue"
+                          value={o.value}
+                          checked={bulkEditValue === o.value}
+                          onChange={() => setBulkEditValue(o.value)}
+                        />
+                        {o.label}
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={styles.bulkEditOptions}>
+                    <input
+                      className={styles.bulkEditInput}
+                      type={currentBulkField.type === 'number' ? 'number' : currentBulkField.type === 'date' ? 'date' : 'text'}
+                      placeholder={`Set ${currentBulkField.label}…`}
+                      value={bulkEditValue}
+                      onChange={(e) => setBulkEditValue(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                )}
                 <div className={styles.bulkEditApply}>
                   <button
                     className={styles.bulkEditApplyBtn}

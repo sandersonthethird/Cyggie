@@ -14,6 +14,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   useEditCellNav, getRangePosition,
   isCellSelected, getCellEdges, effectiveCells, selectionRowIndices,
+  selectionSingleColIdx, jumpIndex,
 } from '../renderer/hooks/useEditCellNav'
 import type { ColumnDef } from '../renderer/components/crm/tableUtils'
 
@@ -599,6 +600,52 @@ describe('useEditCellNav', () => {
     })
   })
 
+  // ── selectionSingleColIdx ───────────────────────────────────────────────────
+
+  describe('selectionSingleColIdx', () => {
+    it('returns the column when the selection is confined to one column', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(5, 1, false, true)) // cmd+click same col
+      expect(selectionSingleColIdx(result.current.selection)).toBe(1)
+    })
+    it('returns null for a multi-column rectangle and for no selection', () => {
+      const { result } = setup()
+      act(() => result.current.handleFocusCell(2, 1))
+      act(() => result.current.handleFocusCell(4, 3, true)) // shift rect across cols
+      expect(selectionSingleColIdx(result.current.selection)).toBeNull()
+      expect(selectionSingleColIdx(null)).toBeNull()
+    })
+  })
+
+  // ── Cmd+Arrow jump-to-value navigation ──────────────────────────────────────
+
+  describe('jump navigation (Cmd+Arrow)', () => {
+    // col 1 filled at rows 0,1,2 and 5; blank at 3,4,6,7
+    const hasValue = (r: number, c: number) => c === 1 && (r <= 2 || r === 5)
+    const jumpSetup = () => renderHook(() => useEditCellNav(8, cols, scrollToRow, scrollToCol, hasValue))
+
+    it('jumps to the end of the filled run, then past blanks to the next filled block', () => {
+      const { result } = jumpSetup()
+      act(() => result.current.handleFocusCell(0, 1))
+      act(() => result.current.handleArrowNav('down', false, true))
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+      act(() => result.current.handleArrowNav('down', false, true))
+      expect(result.current.focusedCell).toEqual({ rowIdx: 5, colIdx: 1 })
+      act(() => result.current.handleArrowNav('up', false, true))
+      expect(result.current.focusedCell).toEqual({ rowIdx: 2, colIdx: 1 })
+    })
+
+    it('Cmd+Shift+Down extends the selection to the data edge', () => {
+      const { result } = jumpSetup()
+      act(() => result.current.handleFocusCell(0, 1))
+      act(() => result.current.handleArrowNav('down', true, true))
+      expect(effectiveCells(result.current.selection)).toEqual([
+        { row: 0, col: 1 }, { row: 1, col: 1 }, { row: 2, col: 1 },
+      ])
+    })
+  })
+
   // ── clearFocus ────────────────────────────────────────────────────────────
 
   describe('clearFocus', () => {
@@ -610,5 +657,22 @@ describe('useEditCellNav', () => {
       expect(result.current.editCell).toBeNull()
       expect(result.current.cellRange).toBeNull()
     })
+  })
+})
+
+// ── jumpIndex (pure) ──────────────────────────────────────────────────────────
+
+describe('jumpIndex', () => {
+  const has = (i: number) => new Set([0, 1, 2, 5]).has(i)
+  it('filled run → last filled before the gap', () => expect(jumpIndex(0, 8, 1, has)).toBe(2))
+  it('value then gap → next filled block', () => expect(jumpIndex(2, 8, 1, has)).toBe(5))
+  it('reverse jump over a gap → previous filled', () => expect(jumpIndex(5, 8, -1, has)).toBe(2))
+  it('no further value → far boundary', () => expect(jumpIndex(5, 8, 1, has)).toBe(7))
+  it('at the boundary → stay', () => {
+    expect(jumpIndex(7, 8, 1, has)).toBe(7)
+    expect(jumpIndex(0, 8, -1, has)).toBe(0)
+  })
+  it('from an empty start → next filled cell', () => {
+    expect(jumpIndex(0, 8, 1, (i) => i === 4)).toBe(4)
   })
 })

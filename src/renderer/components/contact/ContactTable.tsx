@@ -34,12 +34,12 @@ import {
 import type { VirtualRow } from '../../hooks/useGroupedRows'
 import { useColumnResize } from '../../hooks/useColumnResize'
 import { useColumnDrag } from '../../hooks/useColumnDrag'
-import { useEditCellNav, getRangePosition, getCellEdges, cellEdgeBoxShadow, effectiveCells, isCellSelected } from '../../hooks/useEditCellNav'
+import { useEditCellNav, getRangePosition, getCellEdges, cellEdgeBoxShadow, effectiveCells, isCellSelected, selectionSingleColIdx } from '../../hooks/useEditCellNav'
 import { useRowSelection } from '../../hooks/useRowSelection'
 import { useBulkRowIds } from '../../hooks/useBulkRowIds'
 import { useCellClipboard } from '../../hooks/useCellClipboard'
-import { executeBulkEdit, createCellCallbacks, formatJsonList } from '../crm/tableUtils'
-import type { RangeValue } from '../crm/tableUtils'
+import { executeBulkEdit, createCellCallbacks, formatJsonList, bulkFieldForColumn } from '../crm/tableUtils'
+import type { RangeValue, BulkField } from '../crm/tableUtils'
 import { chipStyle } from '../../utils/colorChip'
 import { addCustomFieldOption, mergeBuiltinOptions } from '../../utils/customFieldUtils'
 import { useCustomFieldStore } from '../../stores/custom-fields.store'
@@ -58,6 +58,14 @@ const ROW_HEIGHT = 38
 const JSON_LIST_KEYS = new Set([
   'tags', 'previousCompanies', 'investmentStageFocus', 'investmentSectorFocus'
 ])
+
+// Common fields always offered for bulk editing (in addition to the selected
+// column). Keyed by real field name so apply routes uniformly:
+// `primaryCompanyName` → CONTACT_SET_COMPANY, everything else → CONTACT_UPDATE.
+const CONTACT_BULK_FIELDS: BulkField[] = [
+  { key: 'contactType', label: 'Type', type: 'select', options: [{ value: '', label: 'Clear' }, ...CONTACT_TYPES] },
+  { key: 'primaryCompanyName', label: 'Company', type: 'text' }
+]
 
 interface ContactTableProps {
   contacts: ContactSummary[]
@@ -184,7 +192,7 @@ export function ContactTable({
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [bulkEditing, setBulkEditing] = useState(false)
   const [bulkEditError, setBulkEditError] = useState<string | null>(null)
-  const [bulkEditField, setBulkEditField] = useState<'contactType' | 'company'>('contactType')
+  const [bulkEditField, setBulkEditField] = useState<string>('contactType')
   const [bulkEditValue, setBulkEditValue] = useState<string | null>(null)
   const bulkEditRef = useRef<HTMLDivElement>(null)
 
@@ -233,6 +241,13 @@ export function ContactTable({
     visibleCols,
     (idx) => scrollToRowRef.current(idx),
     (idx) => scrollToColRef.current(idx),
+    (r, c) => {
+      const row = contacts[r]
+      const col = visibleCols[c]
+      if (!row || !col?.field) return false
+      const v = (row as unknown as Record<string, unknown>)[col.field]
+      return v != null && v !== ''
+    },
   )
 
   const getEditCell = useCallback(() => editCell, [editCell])
@@ -297,76 +312,70 @@ export function ContactTable({
 
   async function handleBulkEdit() {
     if (bulkRowIds.size === 0 || bulkEditing || bulkEditValue === null) return
+    const field = bulkEditField
+    // The Company field is set through a dedicated IPC and can't be cleared to
+    // empty (mirrors inline handleCellSave); every other field is a plain UPDATE.
+    const isCompany = field === 'primaryCompanyName'
+    const value = isCompany ? bulkEditValue.trim() : (bulkEditValue === '' ? null : bulkEditValue)
+    if (isCompany && !value) return
+
     setBulkEditOpen(false)
     setBulkEditing(true)
     setBulkEditError(null)
 
     const ids = Array.from(bulkRowIds)
-
     try {
-      if (bulkEditField === 'contactType') {
-        const value = bulkEditValue === '' ? null : bulkEditValue
-        const originals = new Map(
-          ids.map((id) => {
-            const c = contacts.find((ct) => ct.id === id)
-            return [id, c ? c.contactType : null]
-          })
-        )
-        for (const id of ids) onPatch(id, { contactType: value })
-        const { failedIds } = await executeBulkEdit({
-          ids,
-          getOriginalValue: (id) => originals.get(id) ?? null,
-          updateFn: (id) => api.invoke(IPC_CHANNELS.CONTACT_UPDATE, id, { contactType: value }),
-          onPatch: (id, val) => onPatch(id, { contactType: val })
+      const originals = new Map(
+        ids.map((id) => {
+          const c = contacts.find((ct) => ct.id === id)
+          return [id, c ? (c as unknown as Record<string, unknown>)[field] : null]
         })
-        const succeededContactType = ids.filter((id) => !failedIds.includes(id))
-        if (succeededContactType.length > 0) {
-          setUndoWithTimer({
-            field: 'contactType',
-            originals: succeededContactType.map((id) => ({ id, value: originals.get(id) ?? null })),
-            count: succeededContactType.length
-          })
-        }
-        if (failedIds.length > 0) {
-          setBulkEditError(`${failedIds.length} of ${ids.length} updates failed`)
-        } else {
-          clearBulkSelection()
-        }
+      )
+      for (const id of ids) onPatch(id, { [field]: value })
+      const { failedIds } = await executeBulkEdit({
+        ids,
+        getOriginalValue: (id) => originals.get(id) ?? null,
+        updateFn: (id) => isCompany
+          ? api.invoke(IPC_CHANNELS.CONTACT_SET_COMPANY, id, value as string)
+          : api.invoke(IPC_CHANNELS.CONTACT_UPDATE, id, { [field]: value }),
+        onPatch: (id, val) => onPatch(id, { [field]: val })
+      })
+      const succeeded = ids.filter((id) => !failedIds.includes(id))
+      if (succeeded.length > 0) {
+        setUndoWithTimer({
+          field,
+          originals: succeeded.map((id) => ({ id, value: originals.get(id) ?? null })),
+          count: succeeded.length
+        })
+      }
+      if (failedIds.length > 0) {
+        setBulkEditError(`${failedIds.length} of ${ids.length} updates failed`)
       } else {
-        // company: text input — use CONTACT_SET_COMPANY
-        const companyName = bulkEditValue.trim()
-        if (!companyName) return
-        const originals = new Map(
-          ids.map((id) => {
-            const c = contacts.find((ct) => ct.id === id)
-            return [id, c ? c.primaryCompanyName : null]
-          })
-        )
-        for (const id of ids) onPatch(id, { primaryCompanyName: companyName })
-        const { failedIds } = await executeBulkEdit({
-          ids,
-          getOriginalValue: (id) => originals.get(id) ?? null,
-          updateFn: (id) => api.invoke(IPC_CHANNELS.CONTACT_SET_COMPANY, id, companyName),
-          onPatch: (id, val) => onPatch(id, { primaryCompanyName: val })
-        })
-        const succeededCompany = ids.filter((id) => !failedIds.includes(id))
-        if (succeededCompany.length > 0) {
-          setUndoWithTimer({
-            field: 'primaryCompanyName',
-            originals: succeededCompany.map((id) => ({ id, value: originals.get(id) ?? null })),
-            count: succeededCompany.length
-          })
-        }
-        if (failedIds.length > 0) {
-          setBulkEditError(`${failedIds.length} of ${ids.length} updates failed`)
-        } else {
-          clearBulkSelection()
-        }
+        clearBulkSelection()
       }
     } finally {
       setBulkEditing(false)
     }
   }
+
+  // Bulk-edit field list: the selected column (if bulk-editable) pre-selected,
+  // then the common fields. Routing in handleBulkEdit is by field name.
+  const dynamicBulkField = useMemo<BulkField | null>(() => {
+    const colIdx = selectionSingleColIdx(selection)
+    return colIdx != null ? bulkFieldForColumn(mergedVisibleCols[colIdx]) : null
+  }, [selection, mergedVisibleCols])
+  const bulkFields = useMemo<BulkField[]>(() => (
+    dynamicBulkField && !CONTACT_BULK_FIELDS.some((f) => f.key === dynamicBulkField.key)
+      ? [dynamicBulkField, ...CONTACT_BULK_FIELDS]
+      : CONTACT_BULK_FIELDS
+  ), [dynamicBulkField])
+  const currentBulkField = bulkFields.find((f) => f.key === bulkEditField) ?? bulkFields[0]
+  const openBulkEdit = useCallback(() => {
+    setBulkEditOpen((open) => {
+      if (!open) { setBulkEditField(dynamicBulkField?.key ?? 'contactType'); setBulkEditValue(null) }
+      return !open
+    })
+  }, [dynamicBulkField])
 
   // ── Column header context menu ─────────────────────────────────────────────
   const [headerMenu, setHeaderMenu] = useState<{
@@ -578,7 +587,7 @@ export function ContactTable({
   // ── Render ─────────────────────────────────────────────────────────────────
   const applyDisabled =
     bulkEditValue === null ||
-    (bulkEditField === 'company' && bulkEditValue.trim() === '')
+    (bulkEditField === 'primaryCompanyName' && bulkEditValue.trim() === '')
 
   // Whether the currently-editing cell will trigger a bulk fill
   const bulkFillActive =
@@ -1053,7 +1062,7 @@ export function ContactTable({
           <div className={styles.bulkMenuWrap} ref={bulkEditRef}>
             <button
               className={styles.bulkMenuBtn}
-              onClick={() => setBulkEditOpen((v) => !v)}
+              onClick={openBulkEdit}
               disabled={bulkEditing || bulkDeleting}
             >
               {bulkEditing ? 'Saving…' : 'Edit fields ▾'}
@@ -1062,24 +1071,24 @@ export function ContactTable({
               <div className={`${styles.bulkMenu} ${styles.bulkEditDropdown}`}>
                 {/* Field tabs */}
                 <div className={styles.bulkEditTabs}>
-                  {(['contactType', 'company'] as const).map((f) => (
+                  {bulkFields.map((f) => (
                     <button
-                      key={f}
-                      className={`${styles.bulkEditTab} ${bulkEditField === f ? styles.bulkEditTabActive : ''}`}
-                      onClick={() => { setBulkEditField(f); setBulkEditValue(null) }}
+                      key={f.key}
+                      className={`${styles.bulkEditTab} ${bulkEditField === f.key ? styles.bulkEditTabActive : ''}`}
+                      onClick={() => { setBulkEditField(f.key); setBulkEditValue(null) }}
                     >
-                      {f === 'contactType' ? 'Type' : 'Company'}
+                      {f.label}
                     </button>
                   ))}
                 </div>
-                {/* Field body */}
-                {bulkEditField === 'contactType' ? (
+                {/* Field body — radios for selects, an input for text/number/date */}
+                {currentBulkField.type === 'select' ? (
                   <div className={styles.bulkEditOptions}>
-                    {[{ value: '', label: 'Clear' }, ...CONTACT_TYPES].map((o) => (
+                    {(currentBulkField.options ?? []).map((o) => (
                       <label key={o.value} className={styles.bulkEditOption}>
                         <input
                           type="radio"
-                          name="contactBulkType"
+                          name="contactBulkValue"
                           value={o.value}
                           checked={bulkEditValue === o.value}
                           onChange={() => setBulkEditValue(o.value)}
@@ -1092,7 +1101,8 @@ export function ContactTable({
                   <div className={styles.bulkEditCompanyWrap}>
                     <input
                       className={styles.bulkEditCompanyInput}
-                      placeholder="Company name…"
+                      type={currentBulkField.type === 'number' ? 'number' : currentBulkField.type === 'date' ? 'date' : 'text'}
+                      placeholder={`Set ${currentBulkField.label}…`}
                       value={bulkEditValue ?? ''}
                       onChange={(e) => setBulkEditValue(e.target.value)}
                       autoFocus
