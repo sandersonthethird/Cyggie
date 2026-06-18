@@ -1,5 +1,34 @@
 # TODOS
 
+## Mobile — React Query cache persisted UNFILTERED (silent-crash landmine)
+
+**What:** The mobile app persists the *entire* React Query cache to MMKV with no
+`dehydrateOptions` filter ([mobile/app/_layout.tsx:47](mobile/app/_layout.tsx#L47)). Any query
+whose result *shape* changes under a stable query key across builds will rehydrate the old shape
+into the new consumer and can crash on mount — only mitigated by remembering to bump `buster`.
+
+**Why:** First real instance shipped a silent app quit — the Companies tab moved
+`useQuery`→`useInfiniteQuery` under `['companies','list',q]`, so a persisted v1 entry rehydrated
+as `{companies,total}` and `query.data.pages[0]` threw `undefined[0]`. Fixed in
+`fix/mobile-companies-cache-shape-crash` via a tolerant `flattenCompaniesPages` helper + a
+per-screen `ErrorBoundary` + `buster: 'v1'→'v2'`. Those are point fixes; the landmine remains for
+the next shape change.
+
+**Fix options:** (a) add `dehydrateOptions.shouldDehydrateQuery` to persist only an allowlist of
+stable keys; OR (b) derive `buster` from the app build/version number so every release
+auto-invalidates the persisted cache. (b) is the smaller, more reliable lever.
+
+**Pros:** removes a whole class of post-release silent crashes; no more "remember to bump buster."
+**Cons:** (b) drops the offline cache on every release (one cold refetch per update — negligible at
+single-firm scale); (a) needs maintaining the allowlist as queries are added.
+
+**Context/where to start:** `mobile/app/_layout.tsx` `persistOptions` (buster) +
+`createAsyncStoragePersister` (dehydrateOptions). The per-screen `ErrorBoundary` added to the
+Companies tab is the template for hardening other tab screens (none have one today).
+**Depends on:** nothing; independent of the firm-shared work.
+
+---
+
 ## Mobile ledger PR2 — Reliable co-investors — Part C: drop the dead column (REMAINING)
 
 **Status:** Parts A+B SHIPPED in PR #42 (`feat/co-investors-reliable`): `company_investors`

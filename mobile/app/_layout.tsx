@@ -140,7 +140,11 @@ export default function RootLayout() {
           persistOptions={{
             persister,
             maxAge: ONE_DAY_MS,
-            buster: 'v1', // bump to invalidate stale caches after breaking schema changes
+            // bump to invalidate stale caches after breaking schema changes.
+            // v1→v2: the Companies list moved useQuery→useInfiniteQuery under the
+            // same key, so a persisted v1 entry rehydrated with the wrong shape
+            // and crashed the tab (see lib/api/companies.ts flattenCompaniesPages).
+            buster: 'v2',
           }}
         >
           <Stack screenOptions={{ headerShown: false }} />

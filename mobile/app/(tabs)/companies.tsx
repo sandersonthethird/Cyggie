@@ -14,11 +14,13 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
+  flattenCompaniesPages,
   useCompaniesInfiniteQuery,
   type CompanyListItem,
 } from '../../lib/api/companies'
 import { useAuthStore } from '../../lib/auth/store'
 import { CompanyLogo } from '../../components/CompanyLogo'
+import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { colors, radii, spacing, type } from '../../theme'
 import { ScreenHeader } from '../../components/ScreenHeader'
 
@@ -34,7 +36,24 @@ import { ScreenHeader } from '../../components/ScreenHeader'
 
 const SEARCH_DEBOUNCE_MS = 250
 
+// Thin wrapper: an ErrorBoundary placed OUTSIDE the screen component so it can
+// catch render errors thrown in CompaniesTabInner's OWN body (a boundary inside
+// the returned JSX can't catch its parent's render). Reuses ErrorState as the
+// fallback; reset() remounts the inner, which re-runs the query. The
+// flattenCompaniesPages helper already prevents the known stale-cache crash —
+// this is defense-in-depth so any future render throw degrades to a visible,
+// recoverable error instead of silently quitting the app.
 export default function CompaniesTab() {
+  return (
+    <ErrorBoundary
+      fallback={(error, reset) => <ErrorState error={error} onRetry={reset} />}
+    >
+      <CompaniesTabInner />
+    </ErrorBoundary>
+  )
+}
+
+function CompaniesTabInner() {
   const signOut = useAuthStore((s) => s.signOut)
   const [searchInput, setSearchInput] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
@@ -52,11 +71,14 @@ export default function CompaniesTab() {
     }
   }, [query.error, signOut])
 
-  const companies = useMemo(
-    () => (query.data?.pages ?? []).flatMap((p) => p.companies),
+  // Tolerant of a stale/old-shaped persisted cache entry — see
+  // flattenCompaniesPages. (Previously `query.data?.pages[0]?.total` threw
+  // `undefined[0]` when an old `{companies,total}` entry rehydrated, silently
+  // crashing the tab on mount.)
+  const { companies, total } = useMemo(
+    () => flattenCompaniesPages(query.data),
     [query.data],
   )
-  const total = query.data?.pages[0]?.total ?? 0
 
   const headerSubtitle = useMemo(() => {
     if (query.isLoading && !query.data) return 'Loading…'

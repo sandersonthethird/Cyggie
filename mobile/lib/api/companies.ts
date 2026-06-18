@@ -103,6 +103,39 @@ export function companiesNextPageParam(
 }
 
 /**
+ * Flatten an infinite-query companies cache into `{ companies, total }`,
+ * tolerant of a stale/old-shaped persisted entry.
+ *
+ * The Companies list moved from `useQuery` (data shape `{ companies, total }`)
+ * to `useInfiniteQuery` (`{ pages, pageParams }`) under the SAME query key
+ * `['companies','list',q]`. The whole React Query cache is persisted to MMKV
+ * unfiltered, so a pre-migration entry can rehydrate with the OLD shape (no
+ * `pages`). Reading `data.pages[0]` on that shape threw `undefined[0]` and
+ * silently crashed the tab on mount. This returns safe defaults for `undefined`,
+ * the old `{ companies, total }` shape, and an empty `{ pages: [] }`; and the
+ * real values for `{ pages: [...] }`. Pure + exported so it's unit-testable
+ * without a render harness (mirrors `companiesNextPageParam`).
+ *
+ *   data                         → result
+ *   undefined                    → { companies: [], total: 0 }
+ *   { companies, total }  (old)  → { companies: [], total: 0 }  (refetch repopulates)
+ *   { pages: [] }                → { companies: [], total: 0 }
+ *   { pages: [p0, p1, ...] }     → { companies: p0∪p1∪…, total: p0.total }
+ */
+export function flattenCompaniesPages(
+  data: { pages?: CompaniesListResponse[] } | undefined,
+): { companies: CompanyListItem[]; total: number } {
+  const pages = data?.pages
+  if (!Array.isArray(pages) || pages.length === 0) {
+    return { companies: [], total: 0 }
+  }
+  return {
+    companies: pages.flatMap((p) => p.companies ?? []),
+    total: pages[0]?.total ?? 0,
+  }
+}
+
+/**
  * Infinite-scroll companies list keyed on the search term. Mirrors
  * `useCalendarInfiniteQuery` — `fetchCompanies` is the per-page fetcher and the
  * `pageParam` is the offset. Switching `q` creates a fresh infinite query.
