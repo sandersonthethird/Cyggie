@@ -214,10 +214,26 @@ describe('classifyGenerateResponse — cancel flow + branching', () => {
     expect(result).toEqual({ kind: 'aborted' })
   })
 
-  it('non-aborted error string still classifies as empty (handled by the error toast path)', () => {
-    // Other error codes besides 'aborted' fall through to empty so the user
-    // sees the "Generation returned empty content" message.
-    const result = classifyGenerateResponse({ success: false, error: 'something_else' })
-    expect(result.kind).toBe('empty')
+  it('surfaces a producer failure as kind=error carrying the real message', () => {
+    // success:false with a message (e.g. missing API key, TooFewSections, an
+    // API 4xx) must surface the real reason — not be masked as empty content.
+    const result = classifyGenerateResponse({
+      success: false,
+      error: 'No Claude API key configured. Set one under Settings → AI & Transcription.',
+    })
+    expect(result).toEqual({
+      kind: 'error',
+      message: 'No Claude API key configured. Set one under Settings → AI & Transcription.',
+    })
+  })
+
+  it('falls back to a generic message when success=false but no error string', () => {
+    const result = classifyGenerateResponse({ success: false })
+    expect(result).toEqual({ kind: 'error', message: 'Generation failed — try again' })
+  })
+
+  it('aborted takes precedence over the success=false error branch', () => {
+    const result = classifyGenerateResponse({ success: false, error: 'aborted' as const })
+    expect(result).toEqual({ kind: 'aborted' })
   })
 })
