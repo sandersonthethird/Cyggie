@@ -1,0 +1,110 @@
+[
+{
+"id": "b512a097-e579-4567-b448-d888925b5939",
+"name": "Leaseup",
+"domain": "leaseup.co",
+"website": "https://www.leaseup.co/",
+"industry": "PropTech",
+"city": "Boston",
+"state": "MA"
+},
+{
+"id": "62991bab-118d-4582-afc2-1dec7b4a0495",
+"name": "Joinrefine",
+"domain": "joinrefine.io",
+"website": "https://joinrefine.io",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "2fb01e92-ab23-438c-8c0d-69123a07f521",
+"name": "Procurable",
+"domain": "procurable.ai",
+"website": "https://procurable.ai",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "bf28dd84-4d4b-40b8-a86c-d5a4fc33e791",
+"name": "Temboplus",
+"domain": "temboplus.com",
+"website": "https://temboplus.com",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "61f06d36-8de3-49a0-9255-391d6b500b0c",
+"name": "Secondcentury Ventures",
+"domain": "secondcenturyventures.com",
+"website": "https://secondcenturyventures.com",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "b41f165b-4734-4b95-9ba7-7963e88e45d6",
+"name": "Usesidecar",
+"domain": "usesidecar.com",
+"website": "https://usesidecar.com",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "a4633962-cc87-40d8-8d0e-417bb2784227",
+"name": "Hyperioncap",
+"domain": "hyperioncap.co",
+"website": "https://hyperioncap.co",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "6743a92a-74d4-419a-a6c5-0f4d639a4def",
+"name": "Equal",
+"domain": "equal.vc",
+"website": "https://equal.vc",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "e7371132-185a-45b5-b304-d5b579dc596a",
+"name": "Avid Ventures",
+"domain": "avidventures.com",
+"website": "https://avidventures.com",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "865b9a13-7a47-4718-bac7-ce554c088b54",
+"name": "Optimist",
+"domain": "optimist.vc",
+"website": "https://optimist.vc",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "f6b88aab-64e7-47a0-b638-9a68ba77bb64",
+"name": "Montaukcap",
+"domain": "montaukcap.com",
+"website": "https://montaukcap.com",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "f89ab3f9-94b4-4843-8068-f1454b8b7971",
+"name": "Nvpcap",
+"domain": "nvpcap.com",
+"website": "https://nvpcap.com",
+"industry": null,
+"city": null,
+"state": null
+}
+]

@@ -687,6 +687,7 @@ export async function registerSyncRoutes(
           notes: z.array(z.unknown()),
           orgCompanies: z.array(z.unknown()),
           orgCompanyAliases: z.array(z.unknown()),
+          companyInvestors: z.array(z.unknown()),
           contacts: z.array(z.unknown()),
           contactEmails: z.array(z.unknown()),
           meetingCompanyLinks: z.array(z.unknown()),
@@ -729,6 +730,7 @@ export async function registerSyncRoutes(
         notes,
         orgCompanies,
         orgCompanyAliases,
+        companyInvestors,
         contacts,
         contactEmails,
         meetingCompanyLinks,
@@ -793,6 +795,28 @@ export async function registerSyncRoutes(
                 AND CAST(${schema.orgCompanyAliases.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.orgCompanyAliases.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
+        // company_investors: firm-shared investor links — ride the investee
+        // company's firm scope via INNER JOIN, same as org_company_aliases.
+        db
+          .select({
+            id: schema.companyInvestors.id,
+            companyId: schema.companyInvestors.companyId,
+            investorCompanyId: schema.companyInvestors.investorCompanyId,
+            investorType: schema.companyInvestors.investorType,
+            position: schema.companyInvestors.position,
+            lamport: schema.companyInvestors.lamport,
+            createdAt: schema.companyInvestors.createdAt,
+          })
+          .from(schema.companyInvestors)
+          .innerJoin(
+            schema.orgCompanies,
+            sql`${schema.orgCompanies.id} = ${schema.companyInvestors.companyId}`,
+          )
+          .where(
+            sql`${schema.orgCompanies.firmId} = ${user.firm_id}
+                AND CAST(${schema.companyInvestors.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
+          )
+          .orderBy(sql`CAST(${schema.companyInvestors.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
         // contacts is FIRM-SCOPED + owner-aware (Phase 4): firm pool minus
         // teammates' private rows. entityVisibilityFilter = firm_id guard + (own
         // OR not-private); index-backed by contacts_visibility_idx.
@@ -976,7 +1000,7 @@ export async function registerSyncRoutes(
       // is complete across ALL tables. We filter to it and tell the client to
       // pull again (hasMore). If no table hit the cap, this is the last page.
       const pageTables = [
-        meetings, notes, orgCompanies, orgCompanyAliases, contacts, contactEmails,
+        meetings, notes, orgCompanies, orgCompanyAliases, companyInvestors, contacts, contactEmails,
         meetingCompanyLinks, meetingSpeakers, meetingSpeakerContactLinks,
         chatSessions, chatSessionMessages, userPreferences, tasks, tombstones,
       ] as Array<Array<{ lamport: string | null }>>
@@ -1000,6 +1024,7 @@ export async function registerSyncRoutes(
       const pagedNotes = cap(notes)
       const pagedOrgCompanies = cap(orgCompanies)
       const pagedOrgCompanyAliases = cap(orgCompanyAliases)
+      const pagedCompanyInvestors = cap(companyInvestors)
       const pagedContacts = cap(contacts)
       const pagedContactEmails = cap(contactEmails)
       const pagedMeetingCompanyLinks = cap(meetingCompanyLinks)
@@ -1013,6 +1038,7 @@ export async function registerSyncRoutes(
 
       const allRows = [
         ...pagedMeetings, ...pagedNotes, ...pagedOrgCompanies, ...pagedOrgCompanyAliases,
+        ...pagedCompanyInvestors,
         ...pagedContacts, ...pagedContactEmails, ...pagedMeetingCompanyLinks,
         ...pagedMeetingSpeakers, ...pagedMeetingSpeakerContactLinks, ...pagedChatSessions,
         ...pagedChatSessionMessages, ...pagedUserPreferences, ...pagedTasks, ...pagedTombstones,
@@ -1038,6 +1064,7 @@ export async function registerSyncRoutes(
           noteCount: notes.length,
           orgCompanyCount: orgCompanies.length,
           orgCompanyAliasCount: orgCompanyAliases.length,
+          companyInvestorCount: companyInvestors.length,
           contactCount: contacts.length,
           contactEmailCount: contactEmails.length,
           meetingCompanyLinkCount: meetingCompanyLinks.length,
@@ -1058,6 +1085,7 @@ export async function registerSyncRoutes(
         notes: pagedNotes,
         orgCompanies: pagedOrgCompanies,
         orgCompanyAliases: pagedOrgCompanyAliases,
+        companyInvestors: pagedCompanyInvestors,
         contacts: pagedContacts,
         contactEmails: pagedContactEmails,
         meetingCompanyLinks: pagedMeetingCompanyLinks,

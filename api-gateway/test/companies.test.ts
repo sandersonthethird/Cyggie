@@ -53,6 +53,9 @@ async function insertTestCompany(opts: {
   industry?: string
   pipelineStage?: string
   primaryDomain?: string | null
+  // Explicit created_at lets sort tests control the meeting-less tail order
+  // (which now orders by created_at DESC). Omitted → DB defaultNow().
+  createdAt?: Date
 }): Promise<string> {
   const id = TEST_PREFIX + 'co-' + createId().slice(0, 8)
   await db.insert(schema.orgCompanies).values({
@@ -64,6 +67,7 @@ async function insertTestCompany(opts: {
     pipelineStage: opts.pipelineStage ?? null,
     primaryDomain: opts.primaryDomain ?? null,
     status: 'active',
+    ...(opts.createdAt ? { createdAt: opts.createdAt } : {}),
   })
   cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   createdCompanyIds.push(id)
@@ -197,6 +201,73 @@ describe('GET /companies', () => {
     expect(ours.find((c) => c.id === untouchedCoId)?.lastTouchAt).toBeNull()
   })
 
+  test('meeting-less tail orders by created_at DESC (recently-added first)', async () => {
+    // Both companies have no meetings → both land in the NULLS-LAST tail.
+    // The newer-created one must sort ABOVE the older one. This is the
+    // Superlog/Soxton case: a just-added company is reachable at the top of
+    // the tail instead of in arbitrary order.
+    const userId = await insertTestUser()
+    const olderCoId = await insertTestCompany({
+      userId,
+      name: 'OlderUntouched ' + TEST_PREFIX,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    })
+    const newerCoId = await insertTestCompany({
+      userId,
+      name: 'NewerUntouched ' + TEST_PREFIX,
+      createdAt: new Date('2026-06-01T00:00:00Z'),
+    })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/companies?limit=100',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { companies: Array<{ id: string }> }
+    const ours = body.companies.filter((c) => createdCompanyIds.includes(c.id))
+    const newerPos = ours.findIndex((c) => c.id === newerCoId)
+    const olderPos = ours.findIndex((c) => c.id === olderCoId)
+    expect(newerPos).toBeGreaterThanOrEqual(0)
+    expect(newerPos).toBeLessThan(olderPos)
+  })
+
+  test('a touched company still ranks above a newer untouched company', async () => {
+    // Guards against regressing to coalesce(last_touch, created_at): a company
+    // touched in the past must still beat a company created just now but never met.
+    const userId = await insertTestUser()
+    const touchedCoId = await insertTestCompany({
+      userId,
+      name: 'TouchedOld ' + TEST_PREFIX,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    })
+    const newUntouchedCoId = await insertTestCompany({
+      userId,
+      name: 'NewUntouched ' + TEST_PREFIX,
+      createdAt: new Date('2026-06-15T00:00:00Z'),
+    })
+    await insertTestMeeting({
+      userId,
+      companyId: touchedCoId,
+      date: new Date('2026-02-01T10:00:00Z'),
+    })
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/companies?limit=100',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { companies: Array<{ id: string }> }
+    const ours = body.companies.filter((c) => createdCompanyIds.includes(c.id))
+    const touchedPos = ours.findIndex((c) => c.id === touchedCoId)
+    const untouchedPos = ours.findIndex((c) => c.id === newUntouchedCoId)
+    expect(touchedPos).toBeGreaterThanOrEqual(0)
+    expect(touchedPos).toBeLessThan(untouchedPos)
+  })
+
   test('user isolation: caller A cannot see caller B companies', async () => {
     const userA = await insertTestUser()
     const userB = await insertTestUser()
@@ -276,6 +347,23 @@ describe('GET /companies', () => {
     // No overlap between page 1 and page 2.
     const p1ids = new Set(body1.companies.map((c) => c.id))
     for (const c of body2.companies) expect(p1ids.has(c.id)).toBe(false)
+
+    // Full coverage: walking every page via offset returns each of the 5 ids
+    // exactly once — no skips, no dupes. Guards the id-DESC tie-break, which
+    // is what makes offset paging deterministic over a non-unique sort key.
+    const seen: string[] = []
+    for (let offset = 0; offset < body1.total; offset += 2) {
+      const page = await app.inject({
+        method: 'GET',
+        url: `/companies?limit=2&offset=${offset}`,
+        headers: { authorization: `Bearer ${jwt}` },
+      })
+      const pb = page.json() as { companies: Array<{ id: string }> }
+      seen.push(...pb.companies.map((c) => c.id).filter((id) => ids.includes(id)))
+    }
+    expect(seen.length).toBe(ids.length)
+    expect(new Set(seen).size).toBe(ids.length)
+    expect(new Set(seen)).toEqual(new Set(ids))
   })
 
   test('401 when no auth header', async () => {
@@ -385,7 +473,7 @@ describe('GET /companies/:id — guarded passthrough', () => {
   const FORBIDDEN_KEYS = [
     'userId', 'firmId', 'fieldSources', 'fieldLamports', 'lamport',
     'createdByUserId', 'updatedByUserId', 'createdAt', 'updatedAt',
-    'normalizedName', 'canonicalName', 'coInvestors', 'crmCompanyId',
+    'normalizedName', 'canonicalName', 'crmCompanyId',
     'crmProvider', 'leadInvestorCompanyId', 'sourceEntityId', 'sourceEntityType',
     'deletedAt', 'deletedByUserId', 'classificationSource', 'includeInCompaniesView',
   ]
@@ -452,5 +540,54 @@ describe('GET /companies/:id — guarded passthrough', () => {
     for (const k of FORBIDDEN_KEYS) {
       expect(Object.prototype.hasOwnProperty.call(body, k), `internal key "${k}" leaked`).toBe(false)
     }
+  })
+})
+
+describe('GET /companies/:id — co-investors from the synced join', () => {
+  test('returns co-investor company names ordered by position', async () => {
+    const userId = await insertTestUser()
+    const companyId = await insertTestCompany({ userId, name: 'Amma ' + TEST_PREFIX })
+    const seq = await insertTestCompany({ userId, name: 'Sequoia ' + TEST_PREFIX })
+    const a16z = await insertTestCompany({ userId, name: 'a16z ' + TEST_PREFIX })
+    // Out-of-order positions to prove ORDER BY position.
+    await db.insert(schema.companyInvestors).values({
+      id: TEST_PREFIX + 'ci-1', companyId, investorCompanyId: a16z,
+      investorType: 'co_investor', position: 1, lamport: '1',
+    })
+    await db.insert(schema.companyInvestors).values({
+      id: TEST_PREFIX + 'ci-2', companyId, investorCompanyId: seq,
+      investorType: 'co_investor', position: 0, lamport: '1',
+    })
+    // A prior_investor must NOT appear in the co-investor list.
+    await db.insert(schema.companyInvestors).values({
+      id: TEST_PREFIX + 'ci-3', companyId, investorCompanyId: a16z,
+      investorType: 'prior_investor', position: 0, lamport: '1',
+    })
+    cleanup.track(schema.companyInvestors, schema.companyInvestors.id, TEST_PREFIX + 'ci-1')
+    cleanup.track(schema.companyInvestors, schema.companyInvestors.id, TEST_PREFIX + 'ci-2')
+    cleanup.track(schema.companyInvestors, schema.companyInvestors.id, TEST_PREFIX + 'ci-3')
+
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/companies/${companyId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { coInvestors: string[] | null }
+    expect(body.coInvestors).toEqual(['Sequoia ' + TEST_PREFIX, 'a16z ' + TEST_PREFIX])
+  })
+
+  test('co-investors is null when there are none', async () => {
+    const userId = await insertTestUser()
+    const companyId = await insertTestCompany({ userId, name: 'NoInv ' + TEST_PREFIX })
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/companies/${companyId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const body = res.json() as { coInvestors: string[] | null }
+    expect(body.coInvestors).toBeNull()
   })
 })

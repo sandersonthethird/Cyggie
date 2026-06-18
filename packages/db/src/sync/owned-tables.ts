@@ -147,6 +147,9 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
 
   // ── Layer 3 ────────────────────────────────────────────────────────────
   { table: 'org_company_aliases', primaryKey: ['id'], hasUserId: false },
+  // Investor links (co/prior/subsequent). Firm-shared child of org_companies —
+  // rides the parent's firm scope in the pull, same as org_company_aliases.
+  { table: 'company_investors', primaryKey: ['id'], hasUserId: false },
   // Phase 4 multiplayer — contacts are firm-shared (whole-row LWW) with an
   // is_private owner-only opt-out enforced by entityVisibilityFilter on the pull.
   // Whole-row LWW for V1 (field-LWW for contacts + meetings is a documented

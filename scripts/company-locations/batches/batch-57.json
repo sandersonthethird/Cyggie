@@ -1,0 +1,83 @@
+[
+{
+"id": "f9d78e0d-ced1-4092-884c-b07fa7f336ab",
+"name": "Mossadams",
+"domain": "mossadams.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "61cbff42-f602-4ecc-8847-f17c2b438897",
+"name": "Andrewsmixers",
+"domain": "andrewsmixers.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "93fa64ed-6326-49ad-995c-f2e9cbcd178c",
+"name": "Menlovc",
+"domain": "menlovc.com",
+"website": "https://menlovc.com",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "5098ed9b-ab73-4379-8e51-acef50f4aca2",
+"name": "Corylevy",
+"domain": "corylevy.com",
+"website": "https://corylevy.com",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "8b1f3232-9817-45d0-9f98-59a16a59d632",
+"name": "Notation",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "d0b73ce5-52f2-4671-b661-ea9678c62051",
+"name": "Princeville Holdings",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "3710a257-5f11-412a-8e81-3eefb2f051be",
+"name": "Manresa",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "66728839-dc0a-4f6a-bf88-c1500ebdc793",
+"name": "Parallel",
+"domain": null,
+"website": null,
+"industry": null,
+"city": "New York",
+"state": "NY"
+},
+{
+"id": "6b3856d6-2cf1-4830-b356-0cac9713afbc",
+"name": "Motion Sports Inc.",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

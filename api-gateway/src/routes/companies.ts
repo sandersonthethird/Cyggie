@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { and, desc, eq, ilike, isNotNull, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
@@ -66,6 +67,8 @@ const CompanyDetailSchema = z
     name: z.string(),
     lastTouchAt: z.string().nullable(),
     meetingCount: z.number(),
+    // Co-investor company names from the synced company_investors join.
+    coInvestors: z.array(z.string()).nullable(),
     recentMeetings: z.array(
       z.object({
         id: z.string(),
@@ -155,8 +158,18 @@ export async function registerCompanyRoutes(
         .from(schema.orgCompanies)
         .leftJoin(lastTouchSubquery, eq(lastTouchSubquery.companyId, schema.orgCompanies.id))
         .where(and(...whereClauses))
-        // NULLS LAST so companies with no meetings sink to the bottom.
-        .orderBy(sql`${lastTouchSubquery.lastTouchAt} desc nulls last`)
+        // Three-key sort:
+        //   1. last_touch_at DESC NULLS LAST → recently-touched companies on top,
+        //      meeting-less companies sink to the tail (desired).
+        //   2. created_at DESC → within the meeting-less tail, newest-added first,
+        //      so a just-added company (e.g. "Superlog") sits at the top of the tail
+        //      and is reachable via pagination instead of landing in arbitrary order.
+        //   3. id DESC → stable tie-break so offset paging never skips/dupes a row.
+        .orderBy(
+          sql`${lastTouchSubquery.lastTouchAt} desc nulls last`,
+          desc(schema.orgCompanies.createdAt),
+          desc(schema.orgCompanies.id),
+        )
         .limit(limit)
         .offset(offset)
 
@@ -271,6 +284,27 @@ export async function registerCompanyRoutes(
           ),
         )
 
+      // Co-investors: names from the synced company_investors join (the legacy
+      // org_companies.co_investors column was retired). Ordered by position.
+      const investorCompany = alias(schema.orgCompanies, 'investor_company')
+      const coInvestorRows = await db
+        .select({ name: investorCompany.canonicalName })
+        .from(schema.companyInvestors)
+        .innerJoin(
+          investorCompany,
+          eq(investorCompany.id, schema.companyInvestors.investorCompanyId),
+        )
+        .where(
+          and(
+            eq(schema.companyInvestors.companyId, id),
+            eq(schema.companyInvestors.investorType, 'co_investor'),
+          ),
+        )
+        .orderBy(schema.companyInvestors.position)
+      const coInvestors = coInvestorRows.length
+        ? coInvestorRows.map((r) => r.name).filter((n): n is string => Boolean(n))
+        : null
+
       // Full-row passthrough minus the internal denylist (+ canonicalName→name).
       // Date columns serialize to ISO via Date#toJSON; computed fields are added
       // on top. New business columns flow through automatically.
@@ -278,6 +312,7 @@ export async function registerCompanyRoutes(
         ...sanitizeCompanyRow(company),
         id: company.id,
         name: company.canonicalName,
+        coInvestors,
         lastTouchAt: meetingAgg?.lastTouchAt
           ? new Date(meetingAgg.lastTouchAt).toISOString()
           : null,

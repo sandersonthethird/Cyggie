@@ -999,6 +999,64 @@ function upsertOrgCompanyAliasRow(
   })
 }
 
+export interface PulledCompanyInvestorRow extends PulledRow {
+  id: string
+  companyId: string
+  investorCompanyId: string
+  investorType: string
+  position: number
+  lamport: string
+  createdAt: string | Date
+}
+
+export function applyRemoteCompanyInvestors(
+  db: Database.Database,
+  deviceId: string,
+  userId: string,
+  rows: PulledCompanyInvestorRow[],
+  opts: ApplyRemoteOptions = {},
+): ApplyRemoteResult {
+  return applyRemoteRows(db, deviceId, userId, rows, COMPANY_INVESTORS_SPEC, opts)
+}
+
+const COMPANY_INVESTORS_SPEC: TableSpec<PulledCompanyInvestorRow> = {
+  tableName: 'company_investors',
+  // No user_id — firm-shared child of org_companies, scoped via the parent.
+  hasUserId: false,
+  selectLamportSql: 'SELECT lamport FROM company_investors WHERE id = ?',
+  rowKey: (row) => [row.id],
+  rowId: (row) => row.id,
+  upsert: (db, row) => upsertCompanyInvestorRow(db, row),
+}
+
+function upsertCompanyInvestorRow(
+  db: Database.Database,
+  row: PulledCompanyInvestorRow,
+): void {
+  db.prepare(
+    `INSERT INTO company_investors (
+       id, company_id, investor_company_id, investor_type, position, created_at, lamport
+     ) VALUES (
+       @id, @companyId, @investorCompanyId, @investorType, @position, @createdAt, @lamport
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       company_id = excluded.company_id,
+       investor_company_id = excluded.investor_company_id,
+       investor_type = excluded.investor_type,
+       position = excluded.position,
+       created_at = excluded.created_at,
+       lamport = excluded.lamport`,
+  ).run({
+    id: row.id,
+    companyId: row.companyId,
+    investorCompanyId: row.investorCompanyId,
+    investorType: row.investorType,
+    position: row.position,
+    createdAt: toIso(row.createdAt),
+    lamport: row.lamport,
+  })
+}
+
 // ─── Contacts (T14) ──────────────────────────────────────────────────────
 
 export interface PulledContactRow extends PulledRow {

@@ -40,6 +40,7 @@ import {
   applyRemoteNotes,
   applyRemoteOrgCompanies,
   applyRemoteOrgCompanyAliases,
+  applyRemoteCompanyInvestors,
   applyRemoteContacts,
   applyRemoteContactEmails,
   applyRemoteMeetingCompanyLinks,
@@ -54,6 +55,7 @@ import {
   type PulledNoteRow,
   type PulledOrgCompanyRow,
   type PulledOrgCompanyAliasRow,
+  type PulledCompanyInvestorRow,
   type PulledContactRow,
   type PulledContactEmailRowWire,
   type PulledMeetingCompanyLinkRowWire,
@@ -92,6 +94,7 @@ export interface PullResponse {
   notes?: PulledNoteRow[]
   orgCompanies?: PulledOrgCompanyRow[]
   orgCompanyAliases?: PulledOrgCompanyAliasRow[]
+  companyInvestors?: PulledCompanyInvestorRow[]
   contacts?: PulledContactRow[]
   contactEmails?: PulledContactEmailRowWire[]
   /** Meeting child links (down-sync). Optional so older gateway responses
@@ -311,6 +314,7 @@ export class SyncPullService {
     let notesResult: typeof empty = empty
     let orgCompaniesResult: typeof empty = empty
     let orgCompanyAliasesResult: typeof empty = empty
+    let companyInvestorsResult: typeof empty = empty
     let contactsResult: typeof empty = empty
     let contactEmailsResult: typeof empty = empty
     let chatSessionsResult: typeof empty = empty
@@ -353,6 +357,20 @@ export class SyncPullService {
           response.orgCompanyAliases,
           {
             onApplied: this.cfg.onOrgCompanyAliasesApplied,
+            ...(this.cfg.log ? { log: this.cfg.log } : {}),
+          },
+        )
+      }
+      if (response.companyInvestors && response.companyInvestors.length > 0) {
+        companyInvestorsResult = applyRemoteCompanyInvestors(
+          this.cfg.db,
+          deviceId,
+          userId,
+          response.companyInvestors,
+          {
+            // Reuse the org-company invalidation so the desktop company detail
+            // refreshes its co-investor chips when a teammate's edit arrives.
+            onApplied: this.cfg.onOrgCompaniesApplied,
             ...(this.cfg.log ? { log: this.cfg.log } : {}),
           },
         )
@@ -515,6 +533,7 @@ export class SyncPullService {
       notesResult,
       orgCompaniesResult,
       orgCompanyAliasesResult,
+      companyInvestorsResult,
       contactsResult,
       contactEmailsResult,
       chatSessionsResult,
@@ -533,6 +552,8 @@ export class SyncPullService {
         orgCompaniesAppliedCount: orgCompaniesResult.appliedIds.length,
         orgCompanyAliasRowCount: response.orgCompanyAliases?.length ?? 0,
         orgCompanyAliasesAppliedCount: orgCompanyAliasesResult.appliedIds.length,
+        companyInvestorRowCount: response.companyInvestors?.length ?? 0,
+        companyInvestorsAppliedCount: companyInvestorsResult.appliedIds.length,
         contactRowCount: response.contacts?.length ?? 0,
         contactsAppliedCount: contactsResult.appliedIds.length,
         contactEmailRowCount: response.contactEmails?.length ?? 0,

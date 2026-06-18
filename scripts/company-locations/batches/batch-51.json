@@ -1,0 +1,110 @@
+[
+{
+"id": "5b663d98-bfb2-4561-9ac7-6bb4eed2ec26",
+"name": "Centre Street",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "33db14d6-7e09-4339-905f-6dca36ec10cb",
+"name": "Castle",
+"domain": "castle.xyz",
+"website": "https://www.castle.xyz",
+"industry": "Gaming",
+"city": "San Francisco",
+"state": "CA"
+},
+{
+"id": "5a5639b0-00a5-48f3-91fb-792c11c7c2c9",
+"name": "SuperAngel.Fund",
+"domain": "superangel.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "5697f804-fea0-4d78-aa44-5aacb4db85e1",
+"name": "Capital",
+"domain": "capital.xyz",
+"website": "https://www.partyround.com/",
+"industry": "FinTech",
+"city": "Los Angeles",
+"state": "CA"
+},
+{
+"id": "27814eef-c825-41da-a871-dee8661209ca",
+"name": "ClubNFT",
+"domain": "clubnft.com",
+"website": "https://www.clubnft.com/",
+"industry": "Web3",
+"city": "Boston",
+"state": "MA"
+},
+{
+"id": "20eb0860-7230-42ab-a9fd-64f7adcbe143",
+"name": "Grow",
+"domain": "getgrow.com",
+"website": "https://getgrow.io/",
+"industry": "HR Tech",
+"city": "New York",
+"state": "NY"
+},
+{
+"id": "93a870de-cd94-46a4-935e-67690830f9a7",
+"name": "Lex",
+"domain": "lex.lgbt",
+"website": "https://thisislex.app/",
+"industry": "Consumer Social",
+"city": "Brooklyn",
+"state": "NY"
+},
+{
+"id": "931e2b7b-8524-47f5-ae8f-8f924e774804",
+"name": "Ziff Brothers",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "fb80f247-4339-4a03-b54b-adfb5204e593",
+"name": "Prompt Capital",
+"domain": "promptcapital.com",
+"website": "https://promptcapital.com/",
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "130f693d-59c1-4d66-adbf-93743c63d52d",
+"name": "Bouqs",
+"domain": "thebouqs.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "357e191f-f4a2-4ab6-b3fb-c34f491abc38",
+"name": "Nova360",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "0fe965a6-5846-4bf5-b95c-ddfa3243ffda",
+"name": "Untapped Capital",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

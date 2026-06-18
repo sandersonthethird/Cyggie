@@ -1,0 +1,110 @@
+[
+{
+"id": "eadf7720-61cf-42b5-af68-ac85af3726c9",
+"name": "Reachfaster",
+"domain": "reachfaster.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "4bfafead-4a65-40eb-811a-c98cb899c4df",
+"name": "Duke",
+"domain": "duke.edu",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "1cd5a72f-392d-4cac-bd2e-58dcb44548ea",
+"name": "Outsetshop",
+"domain": "outsetshop.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "69a804d7-8084-4759-9161-92d33c85fb0f",
+"name": "Insightscompany",
+"domain": "insightscompany.io",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "bd31d7a4-b28f-4f6e-bf8f-24128ed702a9",
+"name": "Headline",
+"domain": "headline.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "eb03d2e6-208d-412a-84e7-945449d8c6fd",
+"name": "Meet Offsite",
+"domain": "meetoffsite.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "82d85179-00c1-451a-9de9-22bf97c9d120",
+"name": "Offe",
+"domain": "offe.market",
+"website": null,
+"industry": null,
+"city": "Los Angeles",
+"state": "CA"
+},
+{
+"id": "d0f9b6e9-fbad-4ecb-958b-69bf3fabdfe7",
+"name": "Alloy Automation",
+"domain": "runalloy.com",
+"website": "https://runalloy.com/",
+"industry": "Ecommerce",
+"city": "San Francisco",
+"state": "CA"
+},
+{
+"id": "562001f3-2d36-4deb-89c6-787e42c99a52",
+"name": "Easyaudit",
+"domain": "easyaudit.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "d4ca0299-8887-485d-93ab-70571fb88f88",
+"name": "Fort Health",
+"domain": "forthealth.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "a575e2f2-13dc-4f18-9c74-900c9d019831",
+"name": "Openai",
+"domain": "openai.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "99abeb70-bc51-4dea-b988-be6016fb8cde",
+"name": "Hello Recess",
+"domain": "hello-recess.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

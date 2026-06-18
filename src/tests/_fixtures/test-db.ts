@@ -137,7 +137,7 @@ import { runNotesIsPrivateMigration } from '@cyggie/db/sqlite/migrations/121-not
 import { runOrgCompaniesFieldLwwMigration } from '@cyggie/db/sqlite/migrations/124-org-companies-field-lww'
 import { runTasksFieldLwwMigration } from '@cyggie/db/sqlite/migrations/125-tasks-field-lww'
 import { runTombstonesMigration } from '@cyggie/db/sqlite/migrations/126-tombstones'
-import { runContactsMeetingsFirmSharedMigration } from '@cyggie/db/sqlite/migrations/128-contacts-meetings-firm-shared'
+import { runContactsMeetingsFirmSharedMigration } from '@cyggie/db/sqlite/migrations/129-contacts-meetings-firm-shared'
 
 type MigrationFn = (db: Database.Database) => void
 

@@ -1,5 +1,5 @@
 {
-  "id": "968d51b6-2fb0-40c6-a4ad-f60da89514f4",
+  "id": "f850fec2-a5a9-4297-a1de-44478e35276e",
   "prevId": "3222c48e-10a8-44a0-86e2-9fe7e891edf7",
   "version": "7",
   "dialect": "postgresql",
@@ -1929,6 +1929,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "lamport": {
+          "name": "lamport",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
         }
       },
       "indexes": {
@@ -3628,37 +3635,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "firm_id": {
-          "name": "firm_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "field_lamports": {
-          "name": "field_lamports",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_private": {
-          "name": "is_private",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "deleted_by_user_id": {
-          "name": "deleted_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_by_user_id": {
           "name": "created_by_user_id",
           "type": "text",
@@ -3705,76 +3681,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "contacts_firm_lamport_idx": {
-          "name": "contacts_firm_lamport_idx",
-          "columns": [
-            {
-              "expression": "firm_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "(\"lamport\"::numeric)",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "contacts_visibility_idx": {
-          "name": "contacts_visibility_idx",
-          "columns": [
-            {
-              "expression": "firm_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "is_private",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "contacts_recycle_idx": {
-          "name": "contacts_recycle_idx",
-          "columns": [
-            {
-              "expression": "firm_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "deleted_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"contacts\".\"deleted_at\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -3905,32 +3811,6 @@
           "tableTo": "org_companies",
           "columnsFrom": [
             "primary_company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "contacts_firm_id_firms_id_fk": {
-          "name": "contacts_firm_id_firms_id_fk",
-          "tableFrom": "contacts",
-          "tableTo": "firms",
-          "columnsFrom": [
-            "firm_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "contacts_deleted_by_user_id_users_id_fk": {
-          "name": "contacts_deleted_by_user_id_users_id_fk",
-          "tableFrom": "contacts",
-          "tableTo": "users",
-          "columnsFrom": [
-            "deleted_by_user_id"
           ],
           "columnsTo": [
             "id"
@@ -4543,37 +4423,6 @@
           "notNull": true,
           "default": false
         },
-        "firm_id": {
-          "name": "firm_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "field_lamports": {
-          "name": "field_lamports",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_private": {
-          "name": "is_private",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "deleted_by_user_id": {
-          "name": "deleted_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_by_user_id": {
           "name": "created_by_user_id",
           "type": "text",
@@ -4620,76 +4469,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "meetings_firm_lamport_idx": {
-          "name": "meetings_firm_lamport_idx",
-          "columns": [
-            {
-              "expression": "firm_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "(\"lamport\"::numeric)",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "meetings_visibility_idx": {
-          "name": "meetings_visibility_idx",
-          "columns": [
-            {
-              "expression": "firm_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "is_private",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "meetings_recycle_idx": {
-          "name": "meetings_recycle_idx",
-          "columns": [
-            {
-              "expression": "firm_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "deleted_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"meetings\".\"deleted_at\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -4802,32 +4581,6 @@
             "id"
           ],
           "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "meetings_firm_id_firms_id_fk": {
-          "name": "meetings_firm_id_firms_id_fk",
-          "tableFrom": "meetings",
-          "tableTo": "firms",
-          "columnsFrom": [
-            "firm_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "meetings_deleted_by_user_id_users_id_fk": {
-          "name": "meetings_deleted_by_user_id_users_id_fk",
-          "tableFrom": "meetings",
-          "tableTo": "users",
-          "columnsFrom": [
-            "deleted_by_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "meetings_created_by_user_id_users_id_fk": {

@@ -1,6 +1,6 @@
 {
-  "id": "31dabcf6-4c09-4ab5-b103-b81727b41108",
-  "prevId": "968d51b6-2fb0-40c6-a4ad-f60da89514f4",
+  "id": "8a44ac04-3826-48ed-a1dc-9258c6124c18",
+  "prevId": "f850fec2-a5a9-4297-a1de-44478e35276e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1929,6 +1929,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "lamport": {
+          "name": "lamport",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
         }
       },
       "indexes": {

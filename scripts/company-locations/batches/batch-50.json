@@ -1,0 +1,110 @@
+[
+{
+"id": "db603bb0-60d5-4f20-bc47-3cf18632b03d",
+"name": "Asymptote Labs",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "298f16b3-572c-4237-8445-46d15af3e32e",
+"name": "Paysquad",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "72735532-af92-4f2d-aa2f-1ea662722b01",
+"name": "Ayr",
+"domain": "ayr.com",
+"website": null,
+"industry": "Consumer (CPG)",
+"city": null,
+"state": null
+},
+{
+"id": "fbab4313-9cf3-4f80-830a-b91e87ba4aa1",
+"name": "Drumbeat Ventures",
+"domain": "drumbeatventures.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "8c9685ee-bd6b-4e7d-b1fa-5fbfe0e54373",
+"name": "JM Family",
+"domain": "jmfamily.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "2f7771b1-8f9c-4ccd-a287-dfbf3cc47c00",
+"name": "NFX",
+"domain": "nfx.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "2c5234e1-bb80-4d5a-9795-825f76bb69af",
+"name": "Varsal",
+"domain": "varsal.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "0d484fcd-0810-43e6-9b1f-4c10dc014b31",
+"name": "Amma",
+"domain": "withamma.co",
+"website": "www.withamma.co",
+"industry": "HealthTech",
+"city": "Chicago",
+"state": "IL"
+},
+{
+"id": "1b0137e6-c872-44d3-8e83-f14a9a4f8789",
+"name": "Somia",
+"domain": null,
+"website": null,
+"industry": null,
+"city": "New York",
+"state": "NY"
+},
+{
+"id": "78868f47-138b-436f-a35d-1322b2c180b3",
+"name": "MedProofed",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "e4acfeca-ba40-4807-bdf6-25c6b8ebebef",
+"name": "LeNOSE",
+"domain": "lenose.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "3e6aa208-4d51-45cc-a8cb-f2ceb5f23d9e",
+"name": "OPSA",
+"domain": "opsa.ai",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

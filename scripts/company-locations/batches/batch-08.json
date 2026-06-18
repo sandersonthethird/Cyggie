@@ -1,0 +1,110 @@
+[
+{
+"id": "0b97ed7d-0d58-445b-9ee1-94e08146c851",
+"name": "Resource",
+"domain": "resource.calendar.google.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "e5730619-8e53-4e0b-95f3-5725a14babe1",
+"name": "Pax",
+"domain": "pax.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "25491dbf-a8ec-4e8f-b8d9-2806e89588f8",
+"name": "OpenSky Venture Capital",
+"domain": "opensky.vc",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "a4dc739a-094c-410b-b887-d4e594cf2918",
+"name": "Allianz Life",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "9d06d78f-f35c-4cbc-9c45-09e7348aa9ce",
+"name": "Epicenter",
+"domain": "epicenter.capital",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "5c5dafa4-179e-44e2-8bd6-3d1336814711",
+"name": "Aperture VC",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "d7de326d-cff0-4cb7-857d-bcc8961d7f75",
+"name": "Pluto (HirePluto)",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "fa9e4f4c-5dd3-4d66-b9ff-b6c252bee335",
+"name": "Withum",
+"domain": "withum.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "72520eea-c38c-4bb7-9e62-2404d0fb83d5",
+"name": "Kingpin",
+"domain": "kingpin.ai",
+"website": "https://kingpin.ai",
+"industry": "AI",
+"city": "Dubai",
+"state": null
+},
+{
+"id": "56d081d4-96dd-4696-8d9f-27e6c3c202fb",
+"name": "Moss Adams",
+"domain": "mossadams.com",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "ab41fcd1-4565-405a-a573-06b2d99320fd",
+"name": "Marketplace Capital",
+"domain": "marketplace.capital",
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+},
+{
+"id": "07c26cb1-73b1-405d-80d9-b1b5edcb62b9",
+"name": "WIP (Wellness Industrial Project)",
+"domain": null,
+"website": null,
+"industry": null,
+"city": null,
+"state": null
+}
+]

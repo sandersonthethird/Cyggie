@@ -67,6 +67,9 @@ export const COMPANY_FIELD_REGISTRY: readonly FieldMeta[] = [
   { key: 'lastFundingDate', label: 'Last funded', section: 'FINANCIALS', format: 'date' },
   { key: 'totalFundingRaised', label: 'Total raised', section: 'FINANCIALS', format: 'currency' },
   { key: 'leadInvestor', label: 'Lead investor', section: 'FINANCIALS', format: 'text' },
+  // Co-investor company names from the synced company_investors join (gateway
+  // returns string[]). 'list' → joinList renders "Sequoia, a16z".
+  { key: 'coInvestors', label: 'Co-investors', section: 'FINANCIALS', format: 'list' },
   // INVESTMENT
   { key: 'portfolioFund', label: 'Portfolio', section: 'INVESTMENT', format: 'text', humanize: true },
   { key: 'investmentSize', label: 'Initial investment', section: 'INVESTMENT', format: 'text' },
