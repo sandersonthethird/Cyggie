@@ -326,11 +326,11 @@ function contacts(userId: string): Migrator {
         investment_stage_focus, investment_sector_focus, investment_sector_focus_notes,
         proud_portfolio_companies, linkedin_headline, linkedin_skills, linkedin_enriched_at,
         talent_pipeline, key_takeaways, field_sources, notes,
-        last_meeting_at, last_email_at, created_at, updated_at
+        created_at, updated_at
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
         $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,
-        $46,$47,$48,$49,$50)
+        $46,$47,$48)
       ON CONFLICT (id) DO NOTHING`,
     transform: (r) => [
       r.id,
@@ -379,8 +379,6 @@ function contacts(userId: string): Migrator {
       nullableText(r.key_takeaways),
       jsonbParam(r.field_sources, 'contacts.field_sources'),
       nullableText(r.notes),
-      null, // last_meeting_at — denormalized; populated by a post-migration backfill pass
-      null, // last_email_at — same
       parseSqliteTimestamp(r.created_at) ?? new Date(),
       parseSqliteTimestamp(r.updated_at) ?? new Date(),
     ],

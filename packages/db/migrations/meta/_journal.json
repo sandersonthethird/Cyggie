@@ -288,6 +288,13 @@
       "when": 1781717687261,
       "tag": "0040_fast_wong",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1781742304339,
+      "tag": "0041_abnormal_thena",
+      "breakpoints": true
     }
   ]
 }

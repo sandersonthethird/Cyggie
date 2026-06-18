@@ -192,15 +192,13 @@ const CONTACT_COLUMNS = {
   title: schema.contacts.title,
   email: schema.contacts.email,
   primaryCompanyId: schema.contacts.primaryCompanyId,
-  lastMeetingAt: schema.contacts.lastMeetingAt,
-  lastEmailAt: schema.contacts.lastEmailAt,
   updatedAt: schema.contacts.updatedAt,
 }
 
-// COALESCE(last_meeting_at, last_email_at, updated_at) — composite recency
-// for ordering. Expressed as a Drizzle sql<Date> so we can pass it to
-// orderBy.
-const CONTACT_RECENCY = sql<Date>`COALESCE(${schema.contacts.lastMeetingAt}, ${schema.contacts.lastEmailAt}, ${schema.contacts.updatedAt})`
+// Recency proxy for search ranking. The denormalized last_meeting_at /
+// last_email_at columns were dropped (never maintained); computing live
+// last-touch per search hit is too heavy, so rank by updated_at.
+const CONTACT_RECENCY = sql<Date>`${schema.contacts.updatedAt}`
 
 export async function resolveContact(args: {
   db: ReturnType<typeof getDb>
@@ -285,8 +283,6 @@ function toContactCandidate(row: Record<string, unknown>): ContactCandidate {
     title: string | null
     email: string | null
     primaryCompanyId: string | null
-    lastMeetingAt: Date | null
-    lastEmailAt: Date | null
     updatedAt: Date
   }
   return {
@@ -295,7 +291,7 @@ function toContactCandidate(row: Record<string, unknown>): ContactCandidate {
     title: r.title,
     email: r.email,
     primaryCompanyId: r.primaryCompanyId,
-    lastTouchedAt: r.lastMeetingAt ?? r.lastEmailAt ?? r.updatedAt ?? null,
+    lastTouchedAt: r.updatedAt ?? null,
   }
 }
 

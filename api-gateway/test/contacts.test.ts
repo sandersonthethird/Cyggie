@@ -71,7 +71,6 @@ async function insertTestContact(opts: {
   email?: string
   title?: string
   companyId?: string
-  lastMeetingAt?: Date
   contactType?: string
 }): Promise<string> {
   const id = TEST_PREFIX + 'ct-' + createId().slice(0, 8)
@@ -84,7 +83,6 @@ async function insertTestContact(opts: {
     title: opts.title ?? null,
     primaryCompanyId: opts.companyId ?? null,
     contactType: opts.contactType ?? null,
-    lastMeetingAt: opts.lastMeetingAt ?? null,
   })
   cleanup.track(schema.contacts, schema.contacts.id, id)
   createdContactIds.push(id)
@@ -129,7 +127,7 @@ async function mintJwt(userId: string): Promise<string> {
 }
 
 describe('GET /contacts', () => {
-  test('returns contacts for caller, sorted by last-meeting DESC nulls last', async () => {
+  test('returns contacts for caller, sorted by live last-touch DESC nulls last', async () => {
     const userId = await insertTestUser()
     const companyId = await insertTestCompany({
       userId,
@@ -137,17 +135,26 @@ describe('GET /contacts', () => {
       primaryDomain: 'hosting.example',
     })
 
+    // Recency is computed live from real meetings (the denorm columns are gone).
     const oldId = await insertTestContact({
       userId,
       fullName: 'Old Alice ' + TEST_PREFIX,
-      lastMeetingAt: new Date('2026-01-01T10:00:00Z'),
       companyId,
+    })
+    await insertMeetingWithSpeakerLink({
+      userId,
+      contactId: oldId,
+      date: new Date('2026-01-01T10:00:00Z'),
     })
     const recentId = await insertTestContact({
       userId,
       fullName: 'Recent Bob ' + TEST_PREFIX,
-      lastMeetingAt: new Date('2026-05-15T10:00:00Z'),
       companyId,
+    })
+    await insertMeetingWithSpeakerLink({
+      userId,
+      contactId: recentId,
+      date: new Date('2026-05-15T10:00:00Z'),
     })
     const untouchedId = await insertTestContact({
       userId,
@@ -166,7 +173,7 @@ describe('GET /contacts', () => {
       contacts: Array<{
         id: string
         fullName: string
-        lastMeetingAt: string | null
+        lastTouchAt: string | null
         primaryCompanyName: string | null
         primaryCompanyDomain: string | null
       }>
@@ -271,7 +278,6 @@ describe('GET /contacts/:id', () => {
       title: 'CEO',
       companyId,
       contactType: 'founder',
-      lastMeetingAt: new Date('2026-05-10T10:00:00Z'),
     })
 
     const m1 = await insertMeetingWithSpeakerLink({
@@ -304,7 +310,6 @@ describe('GET /contacts/:id', () => {
       primaryCompanyId: string | null
       primaryCompanyName: string | null
       primaryCompanyDomain: string | null
-      lastMeetingAt: string | null
       lastTouchAt: string | null
       recentMeetings: Array<{ id: string; title: string; date: string }>
     }
@@ -317,9 +322,8 @@ describe('GET /contacts/:id', () => {
     expect(body.primaryCompanyId).toBe(companyId)
     expect(body.primaryCompanyName).toBe('Detail Co ' + TEST_PREFIX)
     expect(body.primaryCompanyDomain).toBe('detail.example')
-    expect(body.lastMeetingAt).toBe('2026-05-10T10:00:00.000Z')
-    // lastTouchAt is the max of the live meeting subquery + denormalized
-    // lastEmailAt. No emails here, so it equals the latest meeting date.
+    // lastTouchAt is the max of the live speaker-link + attendee-email meeting
+    // signals — here, the latest speaker-linked meeting date.
     expect(body.lastTouchAt).toBe('2026-05-10T10:00:00.000Z')
 
     // Meetings sorted DESC by date.

@@ -180,8 +180,6 @@ function freshDb(): Database.Database {
       key_takeaways_user_note TEXT,
       field_sources TEXT,
       notes TEXT,
-      last_meeting_at TEXT,
-      last_email_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       lamport TEXT NOT NULL DEFAULT '0'
@@ -370,8 +368,6 @@ function makeContactRow(
     keyTakeaways: null,
     fieldSources: null,
     notes: null,
-    lastMeetingAt: null,
-    lastEmailAt: null,
     createdAt: '2026-05-22T10:00:00.000Z',
     updatedAt: '2026-05-22T10:00:00.000Z',
     lamport: overrides.lamport,

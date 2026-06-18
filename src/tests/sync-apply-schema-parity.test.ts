@@ -152,8 +152,6 @@ const contactRow = (): PulledContactRow => ({
   keyTakeaways: null,
   fieldSources: null,
   notes: null,
-  lastMeetingAt: '2026-06-12T10:00:00.000Z', // exercises the column that was missing
-  lastEmailAt: '2026-06-11T09:00:00.000Z', // exercises the other missing column
   lamport: '100',
   createdAt: '2026-06-12T10:00:00.000Z',
   updatedAt: '2026-06-12T10:00:00.000Z',
@@ -181,12 +179,10 @@ describe('sync apply ↔ migration schema parity', () => {
     expect(result.appliedIds).toEqual(['contact-parity-1'])
     expect(result.skippedPreValidation).toBe(0)
     const row = db
-      .prepare('SELECT last_meeting_at, last_email_at FROM contacts WHERE id = ?')
-      .get('contact-parity-1') as
-      | { last_meeting_at: string; last_email_at: string }
-      | undefined
+      .prepare('SELECT full_name, email FROM contacts WHERE id = ?')
+      .get('contact-parity-1') as { full_name: string; email: string } | undefined
     expect(row).toBeDefined()
-    expect(row?.last_meeting_at).toBe('2026-06-12T10:00:00.000Z')
-    expect(row?.last_email_at).toBe('2026-06-11T09:00:00.000Z')
+    expect(row?.full_name).toBe('Lora Example')
+    expect(row?.email).toBe('lora@example.com')
   })
 })

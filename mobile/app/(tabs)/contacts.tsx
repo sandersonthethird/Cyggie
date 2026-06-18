@@ -21,7 +21,8 @@ import { ScreenHeader } from '../../components/ScreenHeader'
 
 // Contacts tab — M2 read surface. Same shape as Companies (debounced search,
 // sortable list, tap → detail). The contacts surface differs in two places:
-//   • Sort by `lastMeetingAt` (denormalized) not via subquery.
+//   • Sorted by `lastTouchAt`, computed live on the gateway (speaker-tagged +
+//     calendar-attendee-email meetings).
 //   • Each row shows the contact's primary company name when present, since
 //     that's the most useful disambiguator at a glance.
 
@@ -115,7 +116,7 @@ export default function ContactsTab() {
 }
 
 function ContactRow({ contact }: { contact: ContactListItem }) {
-  const lastTouch = formatLastTouch(contact.lastMeetingAt)
+  const lastTouch = formatLastTouch(contact.lastTouchAt)
   const sub = [contact.title, contact.primaryCompanyName].filter(Boolean).join(' · ')
   return (
     <Pressable
