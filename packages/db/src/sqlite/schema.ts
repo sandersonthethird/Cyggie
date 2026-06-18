@@ -44,6 +44,7 @@ export interface MeetingRow {
   // is_group_event_user_set: true → calendar re-sync must NOT recompute the flag.
   is_group_event: number
   is_group_event_user_set: number
+  is_private?: number | boolean | null
   created_at: string
   updated_at: string
   // Populated by LEFT JOIN in listMeetings — null when no company linked

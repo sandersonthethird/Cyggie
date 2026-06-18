@@ -116,6 +116,8 @@ export interface Meeting {
   // locks the value against calendar re-sync recomputes.
   isGroupEvent: boolean
   isGroupEventUserSet: boolean
+  /** Phase 4 — owner-only privacy opt-out (firm-shared when false). */
+  isPrivate?: boolean
   createdAt: string
   updatedAt: string
   company: MeetingCompany | null
