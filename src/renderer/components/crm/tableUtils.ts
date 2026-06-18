@@ -38,6 +38,28 @@ export interface ColumnDef {
   sortAccessor?: (row: Record<string, unknown>) => string | number | null
 }
 
+/** A field the bulk "Edit fields" bar can edit: entity field key, label, editor type, options. */
+export interface BulkField {
+  key: string
+  label: string
+  type: 'select' | 'text' | 'number' | 'date'
+  options?: { value: string; label: string }[]
+}
+
+/**
+ * Derive a bulk-editable field descriptor from the column the user selected cells
+ * in — so the "Edit fields" bar can follow that column. Returns null when the
+ * column can't be bulk-edited via the simple editor: non-editable, field-less,
+ * `computed`/`investor_chips`, or a custom field (`custom:` keys need a different
+ * IPC — handled by bulk-fill instead).
+ */
+export function bulkFieldForColumn(col: ColumnDef | undefined | null): BulkField | null {
+  if (!col || !col.editable || !col.field) return null
+  if (col.key.startsWith('custom:')) return null
+  if (col.type !== 'select' && col.type !== 'text' && col.type !== 'number' && col.type !== 'date') return null
+  return { key: col.field, label: col.label, type: col.type, options: col.options }
+}
+
 // ─── Range & text filter types ────────────────────────────────────────────────
 
 /** Inclusive range bounds for number and date columns. Both ends are optional. */

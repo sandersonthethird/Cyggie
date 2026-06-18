@@ -431,6 +431,21 @@
   overflow-y: auto;
 }
 
+/* Free-text/number/date bulk editor (for non-select columns the selection follows). */
+.bulkEditInput {
+  width: calc(100% - 24px);
+  margin: 6px 12px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  outline: none;
+}
+.bulkEditInput:focus { border-color: var(--color-primary); }
+
 .bulkEditOption {
   display: flex;
   align-items: center;
