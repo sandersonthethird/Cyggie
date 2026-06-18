@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -42,22 +42,30 @@ afterAll(async () => {
   await app.close()
 })
 
-// org_companies is firm-scoped (firm_id FK → firms); every setupUser shares
-// this firm, so it must exist for company inserts + firm-scoped pull.
-const TEST_FIRM_ID = TEST_PREFIX + 'firm'
-await db.insert(schema.firms).values({
-  id: TEST_FIRM_ID,
-  name: 'Pull Test Firm',
-  slug: TEST_PREFIX + 'firm-slug',
-})
-cleanup.track(schema.firms, schema.firms.id, TEST_FIRM_ID)
+// org_companies / contacts / meetings are firm-scoped. Phase 4 made the pull
+// firm-scoped, so a single shared firm would leak rows ACROSS tests (every
+// test's user is in the same firm). Give each test its OWN firm (beforeEach) so
+// firm-scoped pulls stay test-isolated; all setupUser() calls within a test
+// share that test's firm (so same-firm-sharing assertions work).
+let TEST_FIRM_ID = TEST_PREFIX + 'firm'
 
-async function setupUser(): Promise<{ userId: string; jwt: string }> {
+beforeEach(async () => {
+  TEST_FIRM_ID = TEST_PREFIX + 'firm-' + createId().slice(0, 8)
+  await db.insert(schema.firms).values({
+    id: TEST_FIRM_ID,
+    name: 'Pull Test Firm',
+    slug: TEST_FIRM_ID + '-slug',
+  })
+  cleanup.track(schema.firms, schema.firms.id, TEST_FIRM_ID)
+})
+
+async function setupUser(): Promise<{ userId: string; jwt: string; firmId: string }> {
   const userId = TEST_PREFIX + createId().slice(0, 8)
   await db.insert(schema.users).values({
     id: userId,
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
+    firmId: TEST_FIRM_ID,
   })
   cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
@@ -65,13 +73,20 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     sid: TEST_PREFIX + 'sess-' + userId,
     device: 'test-device',
     scope: ['user'],
-    firm_id: TEST_PREFIX + 'firm',
+    firm_id: TEST_FIRM_ID,
     role: 'member',
   })
-  return { userId, jwt }
+  return { userId, jwt, firmId: TEST_FIRM_ID }
 }
 
-async function insertMeeting(userId: string, lamport: string): Promise<string> {
+async function insertMeeting(
+  userId: string,
+  lamport: string,
+  opts: { firmId?: string | null; isPrivate?: boolean } = {},
+): Promise<string> {
+  // Phase 4 — meetings are firm-shared. Default to the shared firm + not-private
+  // so own-meeting callers stay visible; pass firmId:null (other firm) or
+  // isPrivate:true to exercise the visibility exclusions.
   const id = TEST_PREFIX + 'mtg-' + createId().slice(0, 8)
   await db.insert(schema.meetings).values({
     id,
@@ -81,6 +96,8 @@ async function insertMeeting(userId: string, lamport: string): Promise<string> {
     status: 'scheduled',
     lamport,
     createdByUserId: userId,
+    firmId: opts.firmId === undefined ? TEST_FIRM_ID : opts.firmId,
+    isPrivate: opts.isPrivate ?? false,
   })
   cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
@@ -142,21 +159,25 @@ describe('GET /sync/pull', () => {
     expect(body.serverLamport).toBe('15')
   })
 
-  test('user-scoping — never returns other users meetings', async () => {
+  test('firm-sharing — sees teammate SHARED meetings; hides private + other-firm', async () => {
     const alice = await setupUser()
-    const bob = await setupUser()
-    await insertMeeting(alice.userId, '7')
-    const bobMeetingId = await insertMeeting(bob.userId, '8')
+    const bob = await setupUser() // same firm (TEST_FIRM_ID)
+    const aliceShared = await insertMeeting(alice.userId, '7') // teammate, shared
+    const alicePrivate = await insertMeeting(alice.userId, '8', { isPrivate: true }) // teammate, private
+    const noFirm = await insertMeeting(alice.userId, '9', { firmId: null }) // not in any firm
+    const bobOwnPrivate = await insertMeeting(bob.userId, '10', { isPrivate: true }) // own private
 
     const res = await app.inject({
       method: 'GET',
       url: '/sync/pull',
       headers: { authorization: `Bearer ${bob.jwt}` },
     })
-    const body = res.json() as { meetings: Array<{ id: string; userId: string }> }
-    expect(body.meetings).toHaveLength(1)
-    expect(body.meetings[0]?.id).toBe(bobMeetingId)
-    expect(body.meetings[0]?.userId).toBe(bob.userId)
+    const body = res.json() as { meetings: Array<{ id: string }> }
+    const ids = new Set(body.meetings.map((m) => m.id))
+    expect(ids.has(aliceShared)).toBe(true) // teammate's shared meeting IS visible
+    expect(ids.has(bobOwnPrivate)).toBe(true) // owner sees own private
+    expect(ids.has(alicePrivate)).toBe(false) // teammate's private is hidden
+    expect(ids.has(noFirm)).toBe(false) // not in the firm
   })
 
   test('BigInt-safe — lamport values beyond JS safe int compare numerically', async () => {
@@ -232,6 +253,7 @@ describe('GET /sync/pull', () => {
       normalizedName: `alice-${contactId}`,
       lamport: '13',
       createdByUserId: userId,
+      firmId: TEST_FIRM_ID,
     })
     cleanup.track(schema.contacts, schema.contacts.id, contactId)
 
@@ -449,6 +471,7 @@ describe('GET /sync/pull', () => {
       transcriptSegments: segments,
       lamport,
       createdByUserId: userId,
+      firmId: TEST_FIRM_ID,
     })
     cleanup.track(schema.meetings, schema.meetings.id, id)
     return id

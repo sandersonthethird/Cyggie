@@ -180,6 +180,9 @@ function freshDb(): Database.Database {
       key_takeaways_user_note TEXT,
       field_sources TEXT,
       notes TEXT,
+      is_private INTEGER NOT NULL DEFAULT 0,
+      deleted_at TEXT,
+      deleted_by_user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       lamport TEXT NOT NULL DEFAULT '0'
