@@ -13,6 +13,7 @@ import {
 import { getDb, getPool } from '../db'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
+import { entityVisibilityFilter } from '../sync/visibility'
 
 // L2 — pull pagination. Cap each owned table to this many rows per page so a
 // firm-scoped cold start (since=0) can't return the whole firm dataset in one
@@ -739,11 +740,12 @@ export async function registerSyncRoutes(
         tasks,
         tombstones,
       ] = await Promise.all([
+        // meetings is FIRM-SCOPED + owner-aware (Phase 4), same as contacts.
         db
           .select()
           .from(schema.meetings)
           .where(
-            sql`${schema.meetings.userId} = ${user.sub}
+            sql`${entityVisibilityFilter('meetings', user)}
                 AND CAST(${schema.meetings.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.meetings.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
@@ -791,16 +793,20 @@ export async function registerSyncRoutes(
                 AND CAST(${schema.orgCompanyAliases.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.orgCompanyAliases.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
+        // contacts is FIRM-SCOPED + owner-aware (Phase 4): firm pool minus
+        // teammates' private rows. entityVisibilityFilter = firm_id guard + (own
+        // OR not-private); index-backed by contacts_visibility_idx.
         db
           .select()
           .from(schema.contacts)
           .where(
-            sql`${schema.contacts.userId} = ${user.sub}
+            sql`${entityVisibilityFilter('contacts', user)}
                 AND CAST(${schema.contacts.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.contacts.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
-        // contact_emails: scope via INNER JOIN onto contacts for user_id;
-        // select only email columns to keep the row shape clean.
+        // contact_emails: the contact's own email-address list (NOT the inbox —
+        // that's email_messages, owner-only). Rides the parent contact's
+        // visibility, so a teammate's private contact's addresses aren't sent.
         db
           .select({
             contactId: schema.contactEmails.contactId,
@@ -815,7 +821,7 @@ export async function registerSyncRoutes(
             sql`${schema.contacts.id} = ${schema.contactEmails.contactId}`,
           )
           .where(
-            sql`${schema.contacts.userId} = ${user.sub}
+            sql`${entityVisibilityFilter('contacts', user)}
                 AND CAST(${schema.contactEmails.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.contactEmails.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
@@ -837,7 +843,7 @@ export async function registerSyncRoutes(
             sql`${schema.meetings.id} = ${schema.meetingCompanyLinks.meetingId}`,
           )
           .where(
-            sql`${schema.meetings.userId} = ${user.sub}
+            sql`${entityVisibilityFilter('meetings', user)}
                 AND CAST(${schema.meetingCompanyLinks.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.meetingCompanyLinks.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
@@ -854,7 +860,7 @@ export async function registerSyncRoutes(
             sql`${schema.meetings.id} = ${schema.meetingSpeakers.meetingId}`,
           )
           .where(
-            sql`${schema.meetings.userId} = ${user.sub}
+            sql`${entityVisibilityFilter('meetings', user)}
                 AND CAST(${schema.meetingSpeakers.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.meetingSpeakers.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
@@ -872,7 +878,7 @@ export async function registerSyncRoutes(
             sql`${schema.meetings.id} = ${schema.meetingSpeakerContactLinks.meetingId}`,
           )
           .where(
-            sql`${schema.meetings.userId} = ${user.sub}
+            sql`${entityVisibilityFilter('meetings', user)}
                 AND CAST(${schema.meetingSpeakerContactLinks.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.meetingSpeakerContactLinks.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),

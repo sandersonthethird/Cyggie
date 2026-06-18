@@ -126,6 +126,7 @@ import { runOrgCompaniesFieldLwwMigration } from './migrations/124-org-companies
 import { runTasksFieldLwwMigration } from './migrations/125-tasks-field-lww'
 import { runTombstonesMigration } from './migrations/126-tombstones'
 import { runDropContactTouchpointColumnsMigration } from './migrations/127-drop-contact-touchpoint-cols'
+import { runContactsMeetingsFirmSharedMigration } from './migrations/128-contacts-meetings-firm-shared'
 
 let db: Database.Database | null = null
 
@@ -343,4 +344,5 @@ export function runAllMigrations(db: Database.Database): void {
   runTasksFieldLwwMigration(db)
   runTombstonesMigration(db)
   runDropContactTouchpointColumnsMigration(db)
+  runContactsMeetingsFirmSharedMigration(db)
 }

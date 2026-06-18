@@ -14,6 +14,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 import { users } from './auth'
+import { firms } from './firms'
 import { orgCompanies } from './companies'
 import { contacts } from './contacts'
 import { templates } from './templates'
@@ -151,6 +152,14 @@ export const meetings = pgTable(
     // isGroupEventUserSet locks the auto-flag against calendar re-sync recomputes.
     isGroupEvent: boolean('is_group_event').notNull().default(false),
     isGroupEventUserSet: boolean('is_group_event_user_set').notNull().default(false),
+    // Multiplayer (Phase 4) — firm-shared + field-LWW + soft-delete + privacy.
+    // Mirrors org_companies/contacts. is_private = owner-only (never sent to a
+    // non-owner). firm_id stamped by the gateway from the JWT.
+    firmId: text('firm_id').references(() => firms.id, { onDelete: 'cascade' }),
+    fieldLamports: jsonb('field_lamports'),
+    isPrivate: boolean('is_private').notNull().default(false),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedByUserId: text('deleted_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     // Audit fields (migration 025 auth-foundation).
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -161,6 +170,9 @@ export const meetings = pgTable(
   },
   (t) => [
     index('meetings_user_idx').on(t.userId),
+    index('meetings_firm_lamport_idx').on(t.firmId, sql`(${t.lamport}::numeric)`),
+    index('meetings_visibility_idx').on(t.firmId, t.isPrivate, t.userId),
+    index('meetings_recycle_idx').on(t.firmId, t.deletedAt).where(sql`${t.deletedAt} IS NOT NULL`),
     index('meetings_date_idx').on(t.date),
     index('meetings_status_idx').on(t.status),
     index('meetings_created_by_idx').on(t.createdByUserId),
