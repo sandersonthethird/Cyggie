@@ -1,3 +1,4 @@
+import { useInfiniteQuery, type UseInfiniteQueryResult } from '@tanstack/react-query'
 import { api, apiFetchRaw, ApiError } from './client'
 
 // Typed client for /companies/* gateway routes. Mirrors api/calendar.ts shape.
@@ -60,7 +61,7 @@ interface FetchCompaniesOpts {
   signal?: AbortSignal
 }
 
-interface CompaniesListResponse {
+export interface CompaniesListResponse {
   companies: CompanyListItem[]
   total: number
 }
@@ -75,6 +76,56 @@ export async function fetchCompanies(
   const qs = params.toString()
   const path = qs ? `/companies?${qs}` : '/companies'
   return api.get<CompaniesListResponse>(path, { signal: opts.signal })
+}
+
+// Page size for the Companies tab infinite scroll. 50 keeps each round-trip
+// light while still covering a single-firm CRM in a handful of pages.
+export const COMPANIES_PAGE_LIMIT = 50
+
+/**
+ * Decide the next offset for the companies infinite query, or `undefined` to
+ * stop. Pure + exported so it can be unit-tested without a React harness.
+ *
+ * Stops on EITHER condition (belt-and-suspenders): we've loaded `total` rows,
+ * OR the server returned a short page. The short-page guard prevents an
+ * infinite fetch loop if `total` (a separate COUNT query) and the summed page
+ * lengths diverge — e.g. a company deleted mid-scroll leaves `total` higher
+ * than the rows we can actually page through.
+ */
+export function companiesNextPageParam(
+  lastPage: CompaniesListResponse,
+  allPages: CompaniesListResponse[],
+): number | undefined {
+  const loaded = allPages.reduce((n, p) => n + p.companies.length, 0)
+  if (loaded >= lastPage.total) return undefined
+  if (lastPage.companies.length < COMPANIES_PAGE_LIMIT) return undefined
+  return loaded
+}
+
+/**
+ * Infinite-scroll companies list keyed on the search term. Mirrors
+ * `useCalendarInfiniteQuery` — `fetchCompanies` is the per-page fetcher and the
+ * `pageParam` is the offset. Switching `q` creates a fresh infinite query.
+ */
+export function useCompaniesInfiniteQuery(opts: {
+  q?: string
+}): UseInfiniteQueryResult<
+  { pages: CompaniesListResponse[]; pageParams: number[] },
+  Error
+> {
+  return useInfiniteQuery({
+    queryKey: ['companies', 'list', opts.q ?? ''] as const,
+    queryFn: ({ pageParam, signal }) =>
+      fetchCompanies({
+        q: opts.q || undefined,
+        limit: COMPANIES_PAGE_LIMIT,
+        offset: pageParam,
+        signal,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: companiesNextPageParam,
+    staleTime: 30_000,
+  })
 }
 
 export async function fetchCompany(
