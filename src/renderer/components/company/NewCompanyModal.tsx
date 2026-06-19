@@ -127,6 +127,7 @@ export default function NewCompanyModal({
   const [dedupMatch, setDedupMatch] = useState<{ companyId: string; companyName: string } | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [addToPartnerSync, setAddToPartnerSync] = useState(true)
+  const [generateSummaryNote, setGenerateSummaryNote] = useState(true)
 
   // URL step state
   const [loadingSource, setLoadingSource] = useState<'pdf' | 'url'>('pdf')
@@ -161,6 +162,7 @@ export default function NewCompanyModal({
     setPasswordValue('')
     setShowPassword(false)
     setAddToPartnerSync(true)
+    setGenerateSummaryNote(true)
 
     if (initialPdfPath) {
       void ingestPdf(initialPdfPath)
@@ -353,6 +355,28 @@ export default function NewCompanyModal({
             })
             .catch((err: unknown) => console.error('[NewCompanyModal] manual partner sync add failed:', err))
         }
+      }
+
+      // Optional standalone summary note. Only when a deck was ingested AND the
+      // partner-sync deck path didn't already create one (avoids a duplicate note
+      // and a second LLM run). Fire-and-forget so navigation isn't blocked.
+      const noteHandledBySync = addToPartnerSync && !!extractedResult
+      if (generateSummaryNote && extractedResult && !noteHandledBySync) {
+        const companyName = created.canonicalName
+        api.invoke<{ noteId: string | null }>(IPC_CHANNELS.COMPANY_ANALYZE_FILE, created.id, extractedResult)
+          .then((res) => {
+            if (!res?.noteId) return
+            const notif = new Notification('Summary note created', {
+              body: `An AI summary note was generated for ${companyName}.`,
+              silent: true,
+            })
+            notif.onclick = () => {
+              window.focus()
+              navigate(`/company/${created.id}`)
+              notif.close()
+            }
+          })
+          .catch((err: unknown) => console.error('[NewCompanyModal] summary note generation failed:', err))
       }
 
       onCreated(created)
@@ -655,6 +679,20 @@ export default function NewCompanyModal({
                   Add to this week's partner sync (Screening)
                 </label>
               </div>
+
+              {/* Summary note opt-in — only when a deck was ingested */}
+              {extractedResult && (
+                <div className={styles.partnerSyncRow}>
+                  <label className={styles.partnerSyncLabel}>
+                    <input
+                      type="checkbox"
+                      checked={generateSummaryNote}
+                      onChange={(e) => setGenerateSummaryNote(e.target.checked)}
+                    />
+                    Generate AI summary note from the deck
+                  </label>
+                </div>
+              )}
             </div>
           </div>
         )}
