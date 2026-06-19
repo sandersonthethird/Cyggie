@@ -8,6 +8,7 @@ import { decodeRowId } from '@cyggie/db/sync/encode-row-id'
 import { mergeFieldLww, parseFieldLamports } from '@cyggie/db/sync/field-lww'
 import {
   validateWritePayload,
+  TABLE_COLUMN_MAPS,
   type WriteOp,
 } from '@cyggie/db/postgres/write-validators'
 import { getDb, getPool } from '../db'
@@ -57,6 +58,13 @@ const pullPageSize = (): number => {
 // Convert SQL column names ('canonical_name') ↔ JS property names
 // ('canonicalName') so drizzle-zod (which expects camelCase) can validate
 // the snake_case payload the desktop emits from SQLite row state.
+//
+// NOTE: these regexes are LOSSY for column names with a digit suffix —
+// camelToSnake('followonCheck2') → 'followon_check2', but the real Postgres
+// column is 'followon_check_2'. That mismatch was rejecting every org_companies
+// insert carrying those columns. `mapColumns` below uses the drizzle schema's
+// real column↔property map (TABLE_COLUMN_MAPS) and falls back to the regex only
+// for keys the schema doesn't know (which drizzle-zod strips anyway).
 function snakeToCamel(s: string): string {
   return s.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase())
 }
@@ -70,6 +78,25 @@ function mapKeys(
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(obj)) {
     out[fn(k)] = v
+  }
+  return out
+}
+
+// Schema-driven key mapping for a specific owned table. `dir` selects the
+// direction: 'toCamel' (incoming payload → JS props for the validator),
+// 'toSql' (validated data → real Postgres column names for the INSERT).
+function mapColumns(
+  obj: Record<string, unknown>,
+  table: string,
+  dir: 'toCamel' | 'toSql',
+): Record<string, unknown> {
+  const m = TABLE_COLUMN_MAPS[table]
+  if (!m) return mapKeys(obj, dir === 'toCamel' ? snakeToCamel : camelToSnake)
+  const lookup = dir === 'toCamel' ? m.sqlToCamel : m.camelToSql
+  const fallback = dir === 'toCamel' ? snakeToCamel : camelToSnake
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    out[lookup.get(k) ?? fallback(k)] = v
   }
   return out
 }
@@ -237,7 +264,7 @@ export async function registerSyncRoutes(
               })
               continue
             }
-            const camelPayload = mapKeys(entry.payload, snakeToCamel)
+            const camelPayload = mapColumns(entry.payload, entry.table, 'toCamel')
             // Stamp user_id from the JWT BEFORE running the drizzle-zod
             // validator. The desktop's SQLite-side tables don't always have
             // a `user_id` column (e.g. notes, where only `created_by_user_id`
@@ -319,7 +346,7 @@ export async function registerSyncRoutes(
               )
               continue
             }
-            validatedPayload = mapKeys(v.data, camelToSnake)
+            validatedPayload = mapColumns(v.data, entry.table, 'toSql')
           }
 
           // 3. Decode row_id and look up current row's lamport
