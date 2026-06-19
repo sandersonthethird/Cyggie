@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
+import { appendOutboxRow, currentSyncContext } from '../sync-wrapper'
 import { jaroWinkler } from '@main/utils/jaroWinkler'
 import { UnionFind } from '@main/utils/unionFind'
 import {
@@ -441,6 +442,37 @@ function buildCandidateMap(
 function applyCandidates(candidates: CandidateContact[], userId: string | null = null): ContactSyncStats {
   const db = getDatabase()
 
+  // Emit a NEWLY-created contact (+ its contact_emails) to the outbox so it
+  // reaches Neon — otherwise a contact auto-created from a meeting attendee
+  // lives only in local SQLite and never appears on mobile. Insert-only and
+  // op:'insert' (same as the wrapped createContact); existing-contact UPDATES
+  // are field-LWW and intentionally left to the lamport='0' backfill + future
+  // edits. Stamp lamport from the active context so the '0' sentinel stays
+  // accurate. No-op when there's no sync context (offline / pre-login).
+  const emitNewContact = (contactId: string): void => {
+    const ctx = currentSyncContext()
+    if (!ctx) return
+    db.prepare('UPDATE contacts SET lamport = ? WHERE id = ?').run(ctx.lamport, contactId)
+    const contactRow = db
+      .prepare('SELECT * FROM contacts WHERE id = ?')
+      .get(contactId) as Record<string, unknown> | undefined
+    if (contactRow) {
+      appendOutboxRow(db, { table: 'contacts', op: 'insert', row: contactRow })
+    }
+    const emailRows = db
+      .prepare('SELECT * FROM contact_emails WHERE contact_id = ?')
+      .all(contactId) as Array<Record<string, unknown>>
+    for (const er of emailRows) {
+      db.prepare('UPDATE contact_emails SET lamport = ? WHERE contact_id = ? AND email = ?')
+        .run(ctx.lamport, er['contact_id'], er['email'])
+      appendOutboxRow(db, {
+        table: 'contact_emails',
+        op: 'insert',
+        row: { ...er, lamport: ctx.lamport },
+      })
+    }
+  }
+
   // Tombstone filter (migration 098): bulk-load every tombstoned email referenced
   // by this batch. Chunked at 500 to stay under SQLite's 999-variable limit
   // (mirrors getContactsByIds at line 2674). The gate only fires at the
@@ -538,6 +570,7 @@ function applyCandidates(candidates: CandidateContact[], userId: string | null =
         if (inferredCompanyId) {
           ensurePrimaryCompanyLink(db, contactId, inferredCompanyId, userId)
         }
+        emitNewContact(contactId)
         stats.inserted += 1
         continue
       }
@@ -590,6 +623,10 @@ function applyCandidates(candidates: CandidateContact[], userId: string | null =
     }
   })
 
+  // emitNewContact emits only when there's an active sync context. The context
+  // is established by the BARREL (which wraps the public syncContactsFromAttendees
+  // / syncContactsFromMeetings exports in runInSyncBatch) — see repositories/
+  // index.ts. Raw callers (tests) run without a context → emit no-ops.
   upsertTransaction(candidates)
   return stats
 }

@@ -20,22 +20,32 @@
 //   screens land in M4–M5.
 //
 // Known gap — multi-table cascades:
-//   Some operations write to multiple owned tables (e.g. `createMeeting`
-//   updates `meeting_company_links` via `syncMeetingCompanyLinks`,
+//   Some operations write to multiple owned tables (e.g.
 //   `mergeContacts` rewires emails+links). Without better-sqlite3's
 //   update_hook, the wrapper can't auto-emit outbox rows for those side-
 //   effect tables. The PRIMARY entity row (meeting / contact / company /
-//   note) is always emitted; cascading link/email tables stay un-emitted
-//   in V1. Mobile views refresh on focus, so the eventual-consistency
-//   window is one TanStack refetch. Bulk operations
-//   (`autoLinkContactsByDomain`, `mergeContacts`, `applyContactDedupDecisions`,
-//   `enrichExistingContacts`, etc.) bypass the wrapper entirely — they're
-//   not yet sync-aware.
+//   note) is always emitted; remaining cascading link/email tables stay
+//   un-emitted in V1. Mobile views refresh on focus, so the eventual-
+//   consistency window is one TanStack refetch. Some bulk operations
+//   (`mergeContacts`, `applyContactDedupDecisions`, `enrichExistingContacts`,
+//   etc.) bypass the wrapper entirely — they're not yet sync-aware.
 //
 //   Exception — `note_folders`: deleteFolder + renameFolder DO emit
 //   cascade rows. The raw repo functions call `appendOutboxRow` directly
 //   for every nested descendant (delete) and for the DELETE-old + INSERT-new
 //   pairs (rename, since `path` is the PK and a rename isn't an UPDATE).
+//
+//   Exception — meeting→company cascade: `createMeeting`/`updateMeeting` run
+//   inside the wrapper, and `syncMeetingCompanyLinks` / `createCompanyForMeeting`
+//   now emit their `org_companies` + `org_company_aliases` + `meeting_company_links`
+//   rows directly via `appendOutboxRow` (insert + prune-delete). Closes the bug
+//   where a company auto-created from a meeting never reached Neon.
+//
+//   Exception — meeting→contact cascade: `syncContactsFromAttendees` runs OUTSIDE
+//   the wrapper, so it establishes its own context via `runInSyncBatch` and emits
+//   each NEW `contacts` + `contact_emails` row (insert-only; existing-contact
+//   field-LWW updates + the `autoLinkContactsByDomain` enrichment + the
+//   `org_company_contacts` link remain backfill-covered, not yet forward-emitted).
 //
 // Adding a new wrapped fn:
 //   1. Make sure the table is in `OWNED_TABLES` (packages/db/src/sync/
@@ -46,7 +56,7 @@
 //      the inner fn removes it (the outbox payload needs the pre-delete state).
 // =============================================================================
 
-import { withSync } from './_sync'
+import { withSync, runInSyncBatch } from './_sync'
 import * as rawMeeting from './meeting.repo'
 import * as rawContact from './contact.repo'
 import * as rawOrgCompany from './org-company.repo'
@@ -232,8 +242,15 @@ export const getContact = rawContact.getContact
 export const listContactEmails = rawContact.listContactEmails
 export const listContactEmailMessagesForChat = rawContact.listContactEmailMessagesForChat
 export const autoLinkContactsByDomain = rawContact.autoLinkContactsByDomain
-export const syncContactsFromAttendees = rawContact.syncContactsFromAttendees
-export const syncContactsFromMeetings = rawContact.syncContactsFromMeetings
+// Wrapped in runInSyncBatch so the contacts/contact_emails rows that
+// applyCandidates creates emit outbox entries (these cascades run OUTSIDE the
+// withSync wrapper — there's no primary entity row). runInSyncBatch is a no-op
+// (runs fn directly, no emission) when sync isn't configured, so raw callers
+// and unit tests are unaffected.
+export const syncContactsFromAttendees: typeof rawContact.syncContactsFromAttendees =
+  (...args) => runInSyncBatch(() => rawContact.syncContactsFromAttendees(...args))
+export const syncContactsFromMeetings: typeof rawContact.syncContactsFromMeetings =
+  (...args) => runInSyncBatch(() => rawContact.syncContactsFromMeetings(...args))
 export const enrichExistingContacts = rawContact.enrichExistingContacts
 export const enrichContact = rawContact.enrichContact
 export const enrichContactsByIds = rawContact.enrichContactsByIds
