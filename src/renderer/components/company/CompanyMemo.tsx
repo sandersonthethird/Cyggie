@@ -17,6 +17,7 @@ import { EvidenceSidebar } from './EvidenceSidebar'
 import { ResearchLog } from './ResearchLog'
 import { MemoSectionProgress } from './MemoSectionProgress'
 import { MemoSectionsNav } from './MemoSectionsNav'
+import IncorporateCallModal, { type NewMeetingRef as IncorpMeetingRef } from './IncorporateCallModal'
 import { CitationHoverLayer } from './CitationHoverLayer'
 import { StressTestReportViewer } from './StressTestReportViewer'
 import { StressTestReportsSubpanel } from './StressTestReportsSubpanel'
@@ -52,6 +53,17 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
   const [progressText, setProgressText] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
+  // Incorporate-new-material flow: discovery result + which meetingIds the user
+  // confirmed (kept so the triage-failed section-pick can re-run with them).
+  const [incorporateModal, setIncorporateModal] = useState<{
+    phase: 'confirm' | 'pick'
+    meetings: IncorpMeetingRef[]
+    noteCount: number
+    emailCount: number
+    sectionOptions: string[]
+  } | null>(null)
+  const [incorporating, setIncorporating] = useState(false)
+  const pendingIncorporateMeetingIds = useRef<string[]>([])
 
   const [exportingPdf, setExportingPdf] = useState(false)
   const [pdfMsg, setPdfMsg] = useState<string | null>(null)
@@ -575,6 +587,104 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
     }
   }
 
+  /**
+   * Incorporate-new-material: discover meetings/notes/emails added since the
+   * last memo version, then open the confirm modal. The actual run happens in
+   * runIncorporate() once the user confirms.
+   */
+  async function openIncorporate() {
+    if (!memo || incorporating || generating) return
+    setErrorMsg('')
+    try {
+      const disc = await api.invoke<{
+        hasMemo: boolean
+        sinceIso: string | null
+        meetings: IncorpMeetingRef[]
+        noteCount: number
+        emailCount: number
+      }>(IPC_CHANNELS.INVESTMENT_MEMO_LIST_NEW_MATERIAL, companyId)
+      if (!disc.hasMemo) {
+        notice.show({ variant: 'success', title: 'No memo yet', message: 'Generate a memo first, then you can incorporate new calls into it.' })
+        return
+      }
+      if (disc.meetings.length === 0 && disc.noteCount === 0 && disc.emailCount === 0) {
+        notice.show({ variant: 'success', title: 'Nothing new', message: 'No new calls, notes, or emails since the last memo version.' })
+        return
+      }
+      setIncorporateModal({
+        phase: 'confirm',
+        meetings: disc.meetings,
+        noteCount: disc.noteCount,
+        emailCount: disc.emailCount,
+        sectionOptions: [],
+      })
+    } catch (e) {
+      console.error('[CompanyMemo] list-new-material failed:', e)
+      setErrorMsg('Could not check for new material — try again')
+    }
+  }
+
+  /**
+   * Run the targeted incorporate. `sections` is set only on the manual-pick
+   * fallback path (after triage returned `needsSectionPick`). On success the
+   * memo's latest version is swapped in place, exactly like generate().
+   */
+  async function runIncorporate(meetingIds: string[], sections?: string[]) {
+    pendingIncorporateMeetingIds.current = meetingIds
+    setIncorporating(true)
+    setErrorMsg('')
+    try {
+      const result = await api.invoke<{
+        success?: boolean
+        needsSectionPick?: boolean
+        sections?: string[]
+        contentMarkdown?: string
+        version?: InvestmentMemoVersion
+        meta?: MemoGenerateMeta & { sectionsSubmitted?: string[] }
+        error?: string
+        errorCode?: string
+        aborted?: boolean
+      }>(IPC_CHANNELS.INVESTMENT_MEMO_INCORPORATE_CALL, { companyId, meetingIds, sections })
+
+      if (result.aborted) { setIncorporateModal(null); return }
+      if (result.needsSectionPick) {
+        // Triage failed → switch the open modal to manual section pick (re-runs
+        // with the same confirmed meetingIds).
+        setIncorporateModal((prev) =>
+          prev ? { ...prev, phase: 'pick', sectionOptions: result.sections ?? [] } : prev,
+        )
+        return
+      }
+      if (result.errorCode === 'no_changes') {
+        setIncorporateModal(null)
+        notice.show({ variant: 'success', title: 'No changes', message: 'The new material didn’t change any sections.' })
+        return
+      }
+      const classified = classifyGenerateResponse(result)
+      if (classified.kind === 'aborted') { setIncorporateModal(null); return }
+      if (classified.kind === 'error') { setErrorMsg(classified.message); setIncorporateModal(null); return }
+      if (classified.kind === 'empty') { setErrorMsg('Update returned empty content — try again'); setIncorporateModal(null); return }
+      // success
+      setMemo((prev) =>
+        prev ? { ...prev, latestVersion: classified.version, latestVersionNumber: classified.version.versionNumber } : prev,
+      )
+      if (classified.meta) setLatestGenerateMeta(classified.meta)
+      setIncorporateModal(null)
+      const n = result.meta?.sectionsSubmitted?.length
+      notice.show({
+        variant: 'success',
+        title: 'Memo updated',
+        message: n ? `Updated ${n} section${n === 1 ? '' : 's'} from the new material.` : 'Memo updated from the new material.',
+      })
+    } catch (e) {
+      console.error('[CompanyMemo] incorporate failed:', e)
+      setErrorMsg('Incorporate failed — try again')
+      setIncorporateModal(null)
+    } finally {
+      setIncorporating(false)
+    }
+  }
+
   async function exportPdf() {
     if (!memo?.latestVersion || exportingPdf) return
     setExportingPdf(true)
@@ -687,6 +797,15 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
             Cancel
           </button>
         )}
+        <button
+          className={styles.btn}
+          onClick={openIncorporate}
+          disabled={!memo?.latestVersion || generating || incorporating || modalOpen || sharing || !!viewingVersion}
+          title="Fold new calls, notes, or emails since the last memo into the affected sections (cheaper than a full regenerate)"
+        >
+          {incorporating && <Spinner size="sm" />}
+          {incorporating ? 'Incorporating…' : 'Incorporate new call'}
+        </button>
         <button
           className={styles.btn}
           onClick={stressInFlight ? abortStressTest : stressTest}
@@ -896,6 +1015,20 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
             setActiveStressReport(null)
             setActiveStressReportId(null)
           }}
+        />
+      )}
+
+      {incorporateModal && (
+        <IncorporateCallModal
+          phase={incorporateModal.phase}
+          meetings={incorporateModal.meetings}
+          noteCount={incorporateModal.noteCount}
+          emailCount={incorporateModal.emailCount}
+          sectionOptions={incorporateModal.sectionOptions}
+          busy={incorporating}
+          onConfirm={(meetingIds) => runIncorporate(meetingIds)}
+          onPickSections={(sections) => runIncorporate(pendingIncorporateMeetingIds.current, sections)}
+          onCancel={() => { if (!incorporating) setIncorporateModal(null) }}
         />
       )}
     </div>

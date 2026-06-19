@@ -1,5 +1,29 @@
 # TODOS
 
+## Memo — accept/reject diff preview before persisting ("living memo")
+
+**What:** When incorporating new material (calls/notes/emails) into an existing memo,
+show the proposed per-section changes as a diff the user approves/rejects BEFORE a new
+version is written, instead of the current persist-then-revert flow.
+
+**Why:** The 12-month ideal is a memo that proposes diffs as new material arrives. Today
+`INVESTMENT_MEMO_INCORPORATE_CALL` regenerates the targeted sections and immediately persists
+a new version (safe to undo via version history, but the user can't preview before it lands).
+A diff-preview makes the update feel deliberate and reviewable — the UX half of the living memo.
+
+**Pros:** higher trust in AI edits; no "surprise" version; natural place to show per-section
+provenance. **Cons:** a meaningful UI build (diff rendering, per-section accept/reject, a
+"staged" memo state); the producer agent would need to return section bodies WITHOUT persisting.
+
+**Context/where to start:** the targeted path already isolates the changed sections —
+`spliceTargetedSections` ([packages/services/src/llm/agents/memo-producer-agent.ts](packages/services/src/llm/agents/memo-producer-agent.ts))
+produces the merged markdown, and `submittedSections` holds each new section body. A preview
+mode would return those (merged + per-section old/new) to the renderer, which renders a diff
+and only calls persist on accept. `MemoSectionsNav` already maps sections → headings for the UI.
+**Depends on:** the incorporate-new-material feature (shipped). **Priority:** P3.
+
+---
+
 ## Mobile — React Query cache persisted UNFILTERED (silent-crash landmine)
 
 **What:** The mobile app persists the *entire* React Query cache to MMKV with no

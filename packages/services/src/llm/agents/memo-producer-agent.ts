@@ -49,7 +49,11 @@ import {
   type MemoSectionHeading,
   isSeriesAOrLater,
   canonicalizeUrl,
+  normalizeLegacyHeadings,
+  replaceSectionInMarkdown,
 } from '../memo/sections'
+import { listByVersion as listEvidenceByVersion } from '@cyggie/db/sqlite/repositories/memo-evidence.repo'
+import type { StoredMemoEvidence } from '@shared/types/memo-evidence'
 import { allocateContext, type MeetingTranscriptInput, ContextOverflowError } from '../memo/context-budget'
 import { persistMemoArtifacts } from '../memo/persist'
 import { searchCompanyContext, type ExternalResearchBundle } from '@cyggie/services/exa-research'
@@ -102,13 +106,32 @@ export interface RunMemoProducerInput {
   emit: (event: AgentEvent) => void
   limits?: AgentLimits
   /**
-   * Optional: filter roster to a single heading. Used by the per-section
-   * "Refresh this section" feature. When set, the run produces just this one
-   * section's body and skips all others. `MIN_SECTIONS_TO_PERSIST` is
-   * effectively 1 in this mode.
+   * Targeted update: regenerate ONLY `targetSections` and splice them back into
+   * the existing memo (rather than rebuilding the whole memo from the roster).
+   * Drives both:
+   *   • per-section Refresh — `{ targetSections: [heading] }`, no new material
+   *   • incorporate-new-material — also sets `newMeetingIds`/`newNotes`/`newEmails`,
+   *     which slim the context to just the new call(s)/notes/emails + the
+   *     existing memo (prior transcripts are already baked into the memo).
+   * `MIN_SECTIONS_TO_PERSIST` is effectively 1 in this mode. The merge skips any
+   * targeted heading absent from the memo and persists NOTHING if zero sections
+   * actually changed (guards the blank-memo regression).
    */
-  refreshSectionOnly?: MemoSectionHeading
+  targetedUpdate?: TargetedUpdate
 }
+
+export interface TargetedUpdate {
+  targetSections: MemoSectionHeading[]
+  /** When set, only these meetings' transcripts are fed (the "new calls"). */
+  newMeetingIds?: string[]
+  /** New company notes since the last memo version (slim context). */
+  newNotes?: Array<{ title: string | null; content: string }>
+  /** New company emails since the last memo version (slim context). */
+  newEmails?: Array<{ subject: string | null; from: string; date: string | null; body: string }>
+}
+
+/** Defensive cap on new notes/emails text folded into the slim context. */
+const NEW_MATERIAL_CHAR_CAP = 40_000
 
 export interface RunMemoProducerResult extends AgentRunResult {
   /** When status==='success', the assembled memo markdown ready to persist. */
@@ -166,6 +189,14 @@ export async function runMemoProducerAgent(
     return emptyResult('CompanyNotFound', `company not found: ${input.companyId}`)
   }
 
+  // Targeted update (per-section Refresh / incorporate-new-material): only the
+  // listed sections are regenerated and spliced into the existing memo. When
+  // `newMeetingIds` is set we feed ONLY those transcripts (the new calls) — prior
+  // calls are already baked into the memo.
+  const targeted = input.targetedUpdate
+  const targetSet = targeted ? new Set<string>(targeted.targetSections) : null
+  const meetingFilter = targeted?.newMeetingIds ? new Set(targeted.newMeetingIds) : null
+
   const meetingsRaw = companyRepo.listCompanyMeetings(input.companyId)
   const summaryPaths = companyRepo.listCompanyMeetingSummaryPaths(input.companyId)
   const summaryByMeetingId = new Map(summaryPaths.map((s) => [s.meetingId, s.summaryPath]))
@@ -173,9 +204,11 @@ export async function runMemoProducerAgent(
 
   // Producer agent sees FULL transcripts for every meeting that has one.
   // Context budget will displace older transcripts to summarized form if the
-  // total blows past 180k tokens.
+  // total blows past 180k tokens. In incorporate mode, `meetingFilter` narrows
+  // this to just the new call(s).
   const transcriptInputs: MeetingTranscriptInput[] = []
   for (const m of meetingsRaw) {
+    if (meetingFilter && !meetingFilter.has(m.id)) continue
     const meeting = meetingRepo.getMeeting(m.id)
     if (!meeting?.transcriptPath) continue
     const content = readTranscript(meeting.transcriptPath)
@@ -204,9 +237,11 @@ export async function runMemoProducerAgent(
   // Flagged Drive files — refs only; agent fetches content via read_document.
   const flagged = getFlaggedFiles(input.companyId)
 
-  // Existing memo, if any.
+  // Existing memo, if any. Normalize legacy headings up front so the targeted
+  // merge can splice by canonical heading (e.g. "Investment Highlights" →
+  // "Investment Thesis"); this is also the merge base in targeted mode.
   const existingVersion = memoRepo.getMemoLatestVersion(input.memoId)
-  const existingMemoMarkdown = existingVersion?.contentMarkdown ?? ''
+  const existingMemoMarkdown = normalizeLegacyHeadings(existingVersion?.contentMarkdown ?? '')
 
   // Founder names for Exa fallback (when no linkedinUrl on a contact).
   const FOUNDER_TITLE_RE = /founder|ceo|cto|coo|chief/i
@@ -223,26 +258,30 @@ export async function runMemoProducerAgent(
     : null
 
   // ─── Exa pre-research (best-effort) ────────────────────────────────────
+  // Skipped in targeted mode: the memo already has its research/competition
+  // sections, and a targeted update should be fast + cheap.
   let externalResearch: ExternalResearchBundle = { queries: [], results: [] }
-  try {
-    externalResearch = await searchCompanyContext(
-      {
-        companyName: company.canonicalName,
-        companyDescription: company.description,
-        primaryDomain: company.primaryDomain,
-        industry: company.industry,
-        themes: company.themes,
-        nicheSignal,
-        founderNames,
-        linkedinContacts,
-      },
-      input.signal,
-    )
-  } catch (err) {
-    if ((err as Error).name === 'AbortError') {
-      return emptyResult('AbortError', 'aborted before agent loop started')
+  if (!targeted) {
+    try {
+      externalResearch = await searchCompanyContext(
+        {
+          companyName: company.canonicalName,
+          companyDescription: company.description,
+          primaryDomain: company.primaryDomain,
+          industry: company.industry,
+          themes: company.themes,
+          nicheSignal,
+          founderNames,
+          linkedinContacts,
+        },
+        input.signal,
+      )
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        return emptyResult('AbortError', 'aborted before agent loop started')
+      }
+      console.warn('[memo-producer] Exa pre-research failed (continuing):', (err as Error).message)
     }
-    console.warn('[memo-producer] Exa pre-research failed (continuing):', (err as Error).message)
   }
 
   // ─── Filter section roster by gates ───────────────────────────────────
@@ -251,7 +290,7 @@ export async function runMemoProducerAgent(
     summariesByDateDesc.map((s) => s.title).join(' '),
   )
   const fullRoster = MEMO_SECTIONS.filter((s) => {
-    if (input.refreshSectionOnly) return s.heading === input.refreshSectionOnly
+    if (targetSet) return targetSet.has(s.heading)
     if (s.gate === 'series_a_plus') return seriesAPlus
     if (s.gate === 'has_reference_calls') return hasReferenceCalls
     return true
@@ -261,13 +300,17 @@ export async function runMemoProducerAgent(
   // ─── Allocate context (token-counted; may displace transcripts) ──────
   // Scaffold = company overview + notes + contact profiles + file refs +
   // existing memo + external research, all in one string used both for token
-  // counting and the agent's initial user message.
+  // counting and the agent's initial user message. In targeted mode the full
+  // notes corpus and the existing-memo block are suppressed here — the new
+  // notes/emails + the full existing memo go in the initial user message
+  // instead (slim context; avoids duplicating the memo).
   const scaffold = buildScaffold({
     company,
-    notes: notes.filter((n) => n.content?.trim()),
+    notes: targeted ? [] : notes.filter((n) => n.content?.trim()),
     contacts: linkedContacts,
     files: flagged,
     existingMemoMarkdown,
+    suppressExistingMemo: !!targeted,
     externalResearch,
   })
 
@@ -310,12 +353,15 @@ export async function runMemoProducerAgent(
 
   const systemPrompt = buildMemoProducerSystemPrompt(sectionRoster)
 
-  // Build initial user message: scaffold + raw transcripts + summarized older ones.
+  // Build initial user message: scaffold + raw transcripts + summarized older
+  // ones. In targeted mode it also carries the full existing memo + new
+  // notes/emails and the "update only these sections" instruction.
   const initialUserMessage = buildInitialUserMessage({
     scaffold,
     rawTranscripts: allocated.rawTranscripts,
     summarizedTranscripts: allocated.summarizedTranscripts,
-    refreshSectionOnly: input.refreshSectionOnly,
+    targeted,
+    existingMemoMarkdown,
   })
 
   // ─── Run agent loop ────────────────────────────────────────────────────
@@ -376,7 +422,7 @@ export async function runMemoProducerAgent(
     }
   }
 
-  const minRequired = input.refreshSectionOnly ? 1 : MIN_SECTIONS_TO_PERSIST
+  const minRequired = targeted ? 1 : MIN_SECTIONS_TO_PERSIST
   if (state.submittedSections.size < minRequired) {
     return {
       ...result,
@@ -391,7 +437,60 @@ export async function runMemoProducerAgent(
     }
   }
 
-  const assembled = assembleMemo(company.canonicalName, sectionRoster, state.submittedSections)
+  // ─── Assemble: targeted = splice into existing memo; full = rebuild ──────
+  //
+  //   targeted:   base memo ──▶ replaceSectionInMarkdown(×submitted, in order)
+  //               heading absent ─▶ skip (log), never throw
+  //               0 applied ──────▶ NoChanges (persist nothing)
+  //   full:       assembleMemo(roster, submitted)  ◀── unchanged
+  //
+  let assembled: string
+  let evidenceRows = state.evidenceBuffer
+  if (targeted) {
+    const { merged, applied } = spliceTargetedSections(
+      existingMemoMarkdown,
+      sectionRoster,
+      state.submittedSections,
+    )
+    if (applied === 0) {
+      // No-op guard: none of the targeted sections were applied (e.g. all were
+      // absent from the memo). Persist NOTHING — this is the blank-memo guard.
+      return {
+        ...result,
+        status: 'failed',
+        errorClass: 'NoChanges',
+        errorMessage: 'no targeted sections were applied to the memo',
+        evidenceRows: state.evidenceBuffer,
+        sectionsSubmitted: submittedHeadings,
+        sectionsMissing: requiredMissing,
+        resultVersionId: null,
+        meta: baseMeta,
+      }
+    }
+    assembled = merged
+    // Evidence carry-forward: a targeted run only emits evidence for the updated
+    // sections, but we persist a NEW version of the WHOLE memo. Without this,
+    // untouched sections would silently lose their citations.
+    if (existingVersion) {
+      const carried = carryForwardEvidence(listEvidenceByVersion(existingVersion.id), targetSet!)
+      evidenceRows = [...carried, ...state.evidenceBuffer]
+    }
+  } else {
+    assembled = assembleMemo(company.canonicalName, sectionRoster, state.submittedSections)
+  }
+
+  const isIncorporate = !!(
+    targeted &&
+    ((targeted.newMeetingIds?.length ?? 0) +
+      (targeted.newNotes?.length ?? 0) +
+      (targeted.newEmails?.length ?? 0) >
+      0)
+  )
+  const changeNote = !targeted
+    ? 'Generated by producer agent'
+    : isIncorporate
+      ? `Incorporated new material into ${targeted.targetSections.length} section(s)`
+      : `Refreshed section: ${targeted.targetSections[0]}`
 
   // ─── Persist (transactionally) ────────────────────────────────────────
   let resultVersionId: string | null = null
@@ -399,11 +498,9 @@ export async function runMemoProducerAgent(
     const persisted = persistMemoArtifacts({
       memoId: input.memoId,
       contentMarkdown: assembled,
-      changeNote: input.refreshSectionOnly
-        ? `Refreshed section: ${input.refreshSectionOnly}`
-        : 'Generated by producer agent',
+      changeNote,
       userId: input.userId,
-      evidenceRows: state.evidenceBuffer,
+      evidenceRows,
     })
     resultVersionId = persisted.versionId
   } catch (err) {
@@ -440,6 +537,12 @@ function buildScaffold(args: {
   contacts: ReturnType<typeof companyRepo.listCompanyContacts>
   files: ReturnType<typeof getFlaggedFiles>
   existingMemoMarkdown: string
+  /**
+   * Targeted mode passes the FULL existing memo in the initial user message
+   * instead, so suppress the truncated "Existing Memo Draft" block here to
+   * avoid duplicating the memo (token waste + truncated/full confusion).
+   */
+  suppressExistingMemo?: boolean
   externalResearch: ExternalResearchBundle
 }): string {
   const parts: string[] = []
@@ -484,7 +587,7 @@ function buildScaffold(args: {
     }
   }
 
-  if (args.existingMemoMarkdown.trim()) {
+  if (!args.suppressExistingMemo && args.existingMemoMarkdown.trim()) {
     parts.push('\n---\n## Existing Memo Draft (incorporate and improve)\n')
     parts.push(args.existingMemoMarkdown.slice(0, 6000))
   }
@@ -512,13 +615,20 @@ function buildInitialUserMessage(args: {
   scaffold: string
   rawTranscripts: Array<{ id: string; title: string; date: string; content: string }>
   summarizedTranscripts: Array<{ id: string; title: string; date: string; summary: string }>
-  refreshSectionOnly?: MemoSectionHeading
+  targeted?: TargetedUpdate
+  /** Full (normalized) existing memo — included verbatim in targeted mode. */
+  existingMemoMarkdown: string
 }): string {
   const parts: string[] = []
   parts.push(args.scaffold)
 
+  // In targeted mode, the transcripts here are ONLY the new call(s). Label them
+  // as such and give the agent the full current memo + new notes/emails.
+  const transcriptHeading = args.targeted
+    ? '\n---\n## New Call Transcript(s) — since the last memo\n'
+    : '\n---\n## Meeting Transcripts (full text)\n'
   if (args.rawTranscripts.length > 0) {
-    parts.push('\n---\n## Meeting Transcripts (full text)\n')
+    parts.push(transcriptHeading)
     for (const t of args.rawTranscripts) {
       parts.push(`### ${t.title} (${t.date})\n${t.content}`)
     }
@@ -531,12 +641,42 @@ function buildInitialUserMessage(args: {
     }
   }
 
-  if (args.refreshSectionOnly) {
+  if (args.targeted) {
+    // New notes / emails (capped) — the rest of the "new material" delta.
+    const newMaterial: string[] = []
+    let budget = NEW_MATERIAL_CHAR_CAP
+    for (const n of args.targeted.newNotes ?? []) {
+      const text = (n.title ? `**${n.title}**\n` : '') + n.content
+      if (budget - text.length < 0) break
+      budget -= text.length
+      newMaterial.push(text)
+    }
+    if (newMaterial.length > 0) {
+      parts.push('\n---\n## New Notes — since the last memo\n')
+      parts.push(newMaterial.join('\n\n'))
+    }
+    const newEmails: string[] = []
+    for (const e of args.targeted.newEmails ?? []) {
+      const text = `**${e.subject ?? '(no subject)'}** — ${e.from}${e.date ? ` (${e.date})` : ''}\n${e.body}`
+      if (budget - text.length < 0) break
+      budget -= text.length
+      newEmails.push(text)
+    }
+    if (newEmails.length > 0) {
+      parts.push('\n---\n## New Emails — since the last memo\n')
+      parts.push(newEmails.join('\n\n'))
+    }
+
+    parts.push('\n---\n## Current Memo (full — preserve everything not listed below)\n')
+    parts.push(args.existingMemoMarkdown)
+
+    const sectionList = args.targeted.targetSections.map((s) => `"${s}"`).join(', ')
     parts.push(
-      `\n---\nMODE: refresh-single-section\n` +
-        `Produce ONLY the "${args.refreshSectionOnly}" section, then call done({}). ` +
-        `Other sections in the roster have already been generated and persisted; ` +
-        `do not regenerate them.`,
+      `\n---\nMODE: targeted-update\n` +
+        `Update ONLY these sections to reflect the new material above: ${sectionList}. ` +
+        `Re-emit each as a complete, self-contained section via submit_section (you may ` +
+        `reuse unchanged prose from the current memo). cite_source factual claims. ` +
+        `Do NOT touch any other section. done({}) when the listed sections are submitted.`,
     )
   } else {
     parts.push(
@@ -557,6 +697,62 @@ function stripLeadingThinking(body: string): string {
 
 function buildTitle(companyName: string): string {
   return `# ${companyName} — Investment Memo`
+}
+
+// ─── Targeted merge (per-section Refresh + incorporate-new-material) ─────────
+
+/**
+ * Splice the submitted target sections into the base memo, in roster order.
+ * Headings absent from the base are SKIPPED (logged), never thrown. Returns the
+ * merged markdown and how many sections actually changed (`applied === 0` is the
+ * no-op case — caller persists nothing). Pure + unit-tested: this is the path
+ * that previously shipped the blank-memo bug.
+ */
+export function spliceTargetedSections(
+  baseMarkdown: string,
+  roster: readonly MemoSection[],
+  submitted: Map<MemoSectionHeading, { body: string }>,
+): { merged: string; applied: number } {
+  let merged = baseMarkdown
+  let applied = 0
+  for (const s of [...roster].sort((a, b) => a.ordinal - b.ordinal)) {
+    const entry = submitted.get(s.heading)
+    if (!entry) continue
+    const body = s.kind === 'synthesis' ? stripLeadingThinking(entry.body) : entry.body
+    try {
+      merged = replaceSectionInMarkdown(merged, s.heading, body)
+      applied += 1
+    } catch {
+      console.warn(`[memo-incorporate] section "${s.heading}" not in memo — skipped`)
+    }
+  }
+  return { merged, applied }
+}
+
+/**
+ * Evidence rows to persist for the NEW version produced by a targeted update:
+ * carry forward the prior version's rows for sections NOT being updated (and
+ * section-less rows, e.g. stress-test critiques), so untouched sections keep
+ * their citations. The caller appends the freshly-emitted rows.
+ */
+export function carryForwardEvidence(
+  prevEvidence: StoredMemoEvidence[],
+  targetSet: Set<string>,
+): EvidenceRow[] {
+  return prevEvidence
+    .filter((e) => !e.section || !targetSet.has(e.section))
+    .map((e) => ({
+      claimText: e.claimText,
+      claimCategory: e.claimCategory,
+      sourceType: e.sourceType,
+      sourceId: e.sourceId,
+      sourceUrl: e.sourceUrl,
+      snippet: e.snippet,
+      confidence: e.confidence,
+      severity: e.severity,
+      isCritique: e.isCritique,
+      section: e.section,
+    }))
 }
 
 function assembleMemo(
@@ -598,6 +794,111 @@ async function summarizeTranscriptWithHaiku(
   })
   const block = message.content[0]
   return block?.type === 'text' ? block.text : ''
+}
+
+// ─── Section triage (which sections does the new material affect?) ───────
+
+/**
+ * Sentinel returned by `triageSectionsForNewMaterial` when triage cannot be
+ * trusted (API error, malformed/empty output, or all-headings-unknown). The
+ * caller surfaces a manual section-picker rather than silently guessing.
+ */
+export const TRIAGE_FAILED = Symbol('triage-failed')
+
+const TRIAGE_INPUT_CHAR_CAP = 30_000
+
+/**
+ * Cheap Haiku call: given the NEW material (new call transcripts + new notes +
+ * new emails) and the memo's current section headings, decide which sections
+ * are materially affected and should be regenerated.
+ *
+ * Returns the affected headings (intersected with `existingHeadings`, with
+ * "Executive Summary" always folded in since any new material shifts the
+ * summary), or `TRIAGE_FAILED` on any failure so the caller can fall back to a
+ * manual pick. Never silently guesses.
+ */
+export async function triageSectionsForNewMaterial(
+  client: Anthropic,
+  args: {
+    existingHeadings: MemoSectionHeading[]
+    newTranscripts: Array<{ title: string; date: string; content: string }>
+    newNotes?: Array<{ title: string | null; content: string }>
+    newEmails?: Array<{ subject: string | null; body: string }>
+  },
+): Promise<MemoSectionHeading[] | typeof TRIAGE_FAILED> {
+  const headingSet = new Set<string>(args.existingHeadings)
+  // Assemble a compact view of the new material, capped to keep this cheap.
+  const blocks: string[] = []
+  for (const t of args.newTranscripts) blocks.push(`Call: ${t.title} (${t.date})\n${t.content}`)
+  for (const n of args.newNotes ?? []) blocks.push(`Note${n.title ? `: ${n.title}` : ''}\n${n.content}`)
+  for (const e of args.newEmails ?? []) blocks.push(`Email: ${e.subject ?? '(no subject)'}\n${e.body}`)
+  const material = blocks.join('\n\n---\n\n').slice(0, TRIAGE_INPUT_CHAR_CAP)
+
+  let text: string
+  try {
+    const message = await client.messages.create({
+      model: HAIKU_MODEL_ID,
+      max_tokens: 300,
+      system:
+        'You decide which sections of an existing investment memo need updating given NEW material (a call, notes, or emails). ' +
+        'Respond with ONLY a JSON array of section heading strings drawn verbatim from the provided list — no prose, no markdown fences. ' +
+        'Include a heading only if the new material materially changes that section. If unsure, include it.',
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Memo sections (choose from these exact strings):\n${args.existingHeadings.map((h) => `- ${h}`).join('\n')}\n\n` +
+            `New material:\n${material}\n\n` +
+            `Which sections need updating? JSON array only.`,
+        },
+      ],
+    })
+    const block = message.content[0]
+    text = block?.type === 'text' ? block.text : ''
+  } catch (err) {
+    // APIError (timeout / network / 429 / refusal) — do not guess.
+    console.warn('[memo-incorporate] triage call failed:', (err as Error).message)
+    return TRIAGE_FAILED
+  }
+
+  // Parse a JSON array, tolerating accidental code fences / surrounding prose.
+  let parsed: unknown
+  try {
+    const match = text.match(/\[[\s\S]*\]/)
+    parsed = JSON.parse(match ? match[0] : text)
+  } catch {
+    console.warn('[memo-incorporate] triage output was not parseable JSON:', text.slice(0, 200))
+    return TRIAGE_FAILED
+  }
+  if (!Array.isArray(parsed)) return TRIAGE_FAILED
+
+  const picked = parsed
+    .filter((h): h is string => typeof h === 'string')
+    .filter((h) => headingSet.has(h)) as MemoSectionHeading[]
+
+  // All-unknown / empty → fail loud so the user picks manually.
+  if (picked.length === 0) return TRIAGE_FAILED
+
+  // Always include Executive Summary — any new material shifts the summary.
+  const result = new Set<MemoSectionHeading>(picked)
+  if (headingSet.has('Executive Summary')) result.add('Executive Summary')
+  return [...result]
+}
+
+/**
+ * IPC-facing convenience: resolves the memo/Claude API key (same precedence as
+ * the producer agent) and runs section triage. Returns `TRIAGE_FAILED` when no
+ * key is configured so the caller falls back to a manual section pick.
+ */
+export async function triageNewMaterial(args: {
+  existingHeadings: MemoSectionHeading[]
+  newTranscripts: Array<{ title: string; date: string; content: string }>
+  newNotes?: Array<{ title: string | null; content: string }>
+  newEmails?: Array<{ subject: string | null; body: string }>
+}): Promise<MemoSectionHeading[] | typeof TRIAGE_FAILED> {
+  const apiKey = getCredential('memoApiKey') || getCredential('claudeApiKey')
+  if (!apiKey) return TRIAGE_FAILED
+  return triageSectionsForNewMaterial(new Anthropic({ apiKey }), args)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────

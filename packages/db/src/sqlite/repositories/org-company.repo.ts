@@ -3145,6 +3145,53 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
   }))
 }
 
+/**
+ * Meetings linked to a company that have a transcript AND were ingested
+ * (`created_at`) after `sinceIso` — the "new calls since the last memo"
+ * candidate set for the incorporate-new-material flow.
+ *
+ * NULL-safe: a row with NULL `created_at` (legacy import) is INCLUDED so the
+ * user can deselect it, rather than silently dropped. Same company-linkage
+ * UNION as `listCompanyMeetings` (explicit links + attendee-email match).
+ */
+export function listCompanyMeetingsCreatedSince(
+  companyId: string,
+  sinceIso: string | null,
+): Array<{ id: string; title: string; date: string; createdAt: string | null }> {
+  const db = getDatabase()
+  const rows = db
+    .prepare(`
+      SELECT m.id, m.title, m.date, m.created_at
+      FROM meetings m
+      WHERE m.transcript_path IS NOT NULL
+        AND (? IS NULL OR m.created_at IS NULL OR datetime(m.created_at) > datetime(?))
+        AND m.id IN (
+          SELECT l.meeting_id FROM meeting_company_links l WHERE l.company_id = ?
+          UNION
+          SELECT m2.id FROM meetings m2
+          JOIN contacts c ON c.primary_company_id = ?
+          WHERE c.email IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM json_each(COALESCE(m2.attendee_emails, '[]')) e
+              WHERE lower(trim(e.value)) = lower(trim(c.email))
+            )
+        )
+      ORDER BY datetime(m.date) DESC
+    `)
+    .all(sinceIso, sinceIso, companyId, companyId) as Array<{
+    id: string
+    title: string
+    date: string
+    created_at: string | null
+  }>
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    date: row.date,
+    createdAt: row.created_at,
+  }))
+}
+
 export function listCompanyMeetingSummaryPaths(companyId: string): Array<{ meetingId: string; title: string; date: string; summaryPath: string }> {
   const db = getDatabase()
   const rows = db

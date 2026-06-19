@@ -7,7 +7,11 @@ import type { AgentEvent, AgentRunMode } from '@shared/types/agent-events'
  *
  * Shared by every multi-turn agent run. Today:
  *   • `kind='thesis_stress_test'`  — adversarial reviewer of an existing memo
- *   • `kind='memo_producer'`       — section-by-section memo author
+ *   • `kind='memo_producer'`       — section-by-section memo author (full gen)
+ *   • `kind='memo_incorporate'`    — targeted update folding new material
+ *                                    (calls/notes/emails) into specific sections;
+ *                                    logged separately so its token/cost savings
+ *                                    vs `memo_producer` are queryable.
  *
  *   ┌────────────────────────────────────────────────────────────────┐
  *   │  Run lifecycle:                                                  │

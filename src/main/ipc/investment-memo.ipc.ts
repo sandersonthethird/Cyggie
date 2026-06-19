@@ -35,7 +35,13 @@ import {
   listReportsForMemo,
   getStressTestReport,
 } from '@cyggie/db/sqlite/repositories/stress-test-report.repo'
-import { runMemoProducerAgent } from '@cyggie/services/llm/agents/memo-producer-agent'
+import {
+  runMemoProducerAgent,
+  triageNewMaterial,
+  TRIAGE_FAILED,
+  type TargetedUpdate,
+} from '@cyggie/services/llm/agents/memo-producer-agent'
+import { MEMO_SECTION_HEADINGS, type MemoSectionHeading } from '../../shared/constants/memo-sections'
 import { startRun, completeRun, makeEventWriter, getRun, listRuns, listRunEvents, averageCostForKind } from '@cyggie/services/llm/agents/run-store'
 import { listByVersion as listEvidenceByVersion } from '@cyggie/db/sqlite/repositories/memo-evidence.repo'
 import { persistMemoArtifacts } from '@cyggie/services/llm/memo/persist'
@@ -82,6 +88,51 @@ async function fetchLogoAsDataUrl(domain: string): Promise<string | null> {
 }
 
 /**
+ * Is `iso` strictly after `sinceIso`? Undated content → not "new" (conservative
+ * for notes/emails we can't place in time); null `sinceIso` (no prior memo
+ * version) → everything counts as new.
+ */
+function isAfter(iso: string | null | undefined, sinceIso: string | null): boolean {
+  if (!iso) return false
+  if (!sinceIso) return true
+  return new Date(iso).getTime() > new Date(sinceIso).getTime()
+}
+
+/**
+ * New company notes + emails since the last memo version — the non-call half of
+ * the "new material" delta for incorporate-new-material. Emails mirror the
+ * legacy memo-gen filter (non-empty body > 50 chars, capped at 30).
+ */
+function collectNewNotesAndEmails(
+  companyId: string,
+  sinceIso: string | null,
+): {
+  newNotes: Array<{ title: string | null; content: string }>
+  newEmails: Array<{ subject: string | null; from: string; date: string | null; body: string }>
+} {
+  const newNotes = _companyNotesRepo
+    .list(companyId)
+    .filter((n) => n.content?.trim() && isAfter(n.createdAt, sinceIso))
+    .map((n) => ({ title: n.title ?? null, content: n.content }))
+  const newEmails = companyRepo
+    .listCompanyEmails(companyId)
+    .filter(
+      (e) => e.bodyText && e.bodyText.trim().length > 50 && isAfter(e.receivedAt || e.sentAt, sinceIso),
+    )
+    .slice(0, 30)
+    .map((e) => ({ subject: e.subject, from: e.fromEmail, date: e.receivedAt || e.sentAt, body: e.bodyText! }))
+  return { newNotes, newEmails }
+}
+
+function countNewNotesAndEmails(
+  companyId: string,
+  sinceIso: string | null,
+): { noteCount: number; emailCount: number } {
+  const { newNotes, newEmails } = collectNewNotesAndEmails(companyId, sinceIso)
+  return { noteCount: newNotes.length, emailCount: newEmails.length }
+}
+
+/**
  * Run the memo producer agent and translate its result into the IPC response
  * shape expected by the renderer (`{ success, contentMarkdown, version, meta }`).
  *
@@ -102,8 +153,14 @@ async function runProducerAgent(input: {
   memoId: string
   userId: string
   signal: AbortSignal
-  /** When set, agent produces just this one section (Delight #5). */
-  refreshSectionOnly?: string
+  /**
+   * When set, the agent regenerates only `targetSections` and splices them into
+   * the existing memo. Drives both per-section Refresh and incorporate-new-
+   * material. `newMeetingIds`/`newNotes`/`newEmails` slim the context.
+   */
+  targetedUpdate?: TargetedUpdate
+  /** agent_runs kind — 'memo_producer' (default) or 'memo_incorporate'. */
+  kind?: 'memo_producer' | 'memo_incorporate'
 }): Promise<{
   success: boolean
   contentMarkdown?: string
@@ -117,7 +174,7 @@ async function runProducerAgent(input: {
   errorCode?: string
 }> {
   const runId = startRun({
-    kind: 'memo_producer',
+    kind: input.kind ?? 'memo_producer',
     companyId: input.companyId,
     userId: input.userId,
     mode: 'cold',
@@ -139,24 +196,24 @@ async function runProducerAgent(input: {
     }
   }
 
-  // Validate refreshSectionOnly upfront, before we kick off the agent.
-  const refreshSectionOnly =
-    input.refreshSectionOnly && isMemoSectionHeading(input.refreshSectionOnly)
-      ? input.refreshSectionOnly
-      : undefined
-  if (input.refreshSectionOnly && !refreshSectionOnly) {
-    completeRun(runId, {
-      status: 'failed',
-      iterations: 0,
-      inputTokensTotal: 0,
-      outputTokensTotal: 0,
-      costEstimateUsd: 0,
-      toolCallCount: 0,
-      webSearchCount: 0,
-      errorClass: 'InvalidSection',
-      errorMessage: `unknown section heading: "${input.refreshSectionOnly}"`,
-    })
-    return { success: false, error: `Unknown section heading: ${input.refreshSectionOnly}`, errorCode: 'invalid_section' }
+  // Validate every target heading upfront, before we kick off the agent.
+  const targetedUpdate = input.targetedUpdate
+  if (targetedUpdate) {
+    const bad = targetedUpdate.targetSections.find((h) => !isMemoSectionHeading(h))
+    if (bad || targetedUpdate.targetSections.length === 0) {
+      completeRun(runId, {
+        status: 'failed',
+        iterations: 0,
+        inputTokensTotal: 0,
+        outputTokensTotal: 0,
+        costEstimateUsd: 0,
+        toolCallCount: 0,
+        webSearchCount: 0,
+        errorClass: 'InvalidSection',
+        errorMessage: bad ? `unknown section heading: "${bad}"` : 'no target sections',
+      })
+      return { success: false, error: `Unknown section heading: ${bad ?? '(none)'}`, errorCode: 'invalid_section' }
+    }
   }
 
   try {
@@ -167,7 +224,7 @@ async function runProducerAgent(input: {
       userId: input.userId,
       signal: input.signal,
       emit,
-      refreshSectionOnly,
+      targetedUpdate,
     })
 
     completeRun(runId, {
@@ -772,14 +829,148 @@ export function registerInvestmentMemoHandlers(): void {
       const abortController = new AbortController()
       _memoGenerateAbortControllers.set(companyId, abortController)
       try {
+        // Refresh = a targeted update of one section, no new material. Rides the
+        // same splice-based merge path as incorporate-new-material.
         return await runProducerAgent({
           companyId,
           companyName: company.canonicalName,
           memoId: memoData.id,
           userId,
           signal: abortController.signal,
-          refreshSectionOnly: sectionHeading,
+          targetedUpdate: { targetSections: [sectionHeading as MemoSectionHeading] },
         })
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return { success: false, aborted: true } as const
+        }
+        throw err
+      } finally {
+        if (_memoGenerateAbortControllers.get(companyId) === abortController) {
+          _memoGenerateAbortControllers.delete(companyId)
+        }
+      }
+    },
+  )
+
+  // ── Incorporate new material (calls/notes/emails since the last memo) ──────
+  //
+  //   ┌─────────────────────────────────────────────────────────────────────┐
+  //   │  LIST_NEW_MATERIAL → { meetings[], noteCount, emailCount, sinceIso }  │
+  //   │  INCORPORATE_CALL  → triage (Haiku) → targeted producer run → splice  │
+  //   │     triage fails ─▶ { needsSectionPick: true } (renderer shows picker) │
+  //   │     no changes   ─▶ { success:false, errorCode:'no_changes' }         │
+  //   └─────────────────────────────────────────────────────────────────────┘
+
+  ipcMain.handle(
+    IPC_CHANNELS.INVESTMENT_MEMO_LIST_NEW_MATERIAL,
+    (_event, companyId: string) => {
+      if (!companyId) throw new Error('companyId is required')
+      const company = companyRepo.getCompany(companyId)
+      if (!company) throw new Error('Company not found')
+      const userId = getCurrentUserId()
+      const memoData = memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName, userId)
+      const sinceIso = memoData.latestVersion?.createdAt ?? null
+
+      const meetings = companyRepo.listCompanyMeetingsCreatedSince(companyId, sinceIso)
+      const { noteCount, emailCount } = countNewNotesAndEmails(companyId, sinceIso)
+      return {
+        // Whether the memo has any version yet — renderer hides the button if not.
+        hasMemo: !!memoData.latestVersion,
+        sinceIso,
+        meetings: meetings.map((m) => ({ id: m.id, title: m.title, date: m.date })),
+        noteCount,
+        emailCount,
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.INVESTMENT_MEMO_INCORPORATE_CALL,
+    async (
+      _event,
+      payload: { companyId: string; meetingIds: string[]; sections?: string[] },
+    ) => {
+      const { companyId, meetingIds = [], sections } = payload ?? {}
+      if (!companyId) throw new Error('companyId is required')
+      const company = companyRepo.getCompany(companyId)
+      if (!company) throw new Error('Company not found')
+      const userId = getCurrentUserId()
+      const memoData = memoRepo.getOrCreateMemoForCompany(companyId, company.canonicalName, userId)
+      const baseMarkdown = memoData.latestVersion?.contentMarkdown ?? ''
+      if (!baseMarkdown.trim()) {
+        return { success: false, error: 'No existing memo to incorporate into', errorCode: 'no_memo' as const }
+      }
+      const sinceIso = memoData.latestVersion?.createdAt ?? null
+
+      // Re-derive the new material server-side (don't trust the renderer).
+      // Ownership: only meetings that belong to this company are eligible.
+      const eligible = new Set(
+        companyRepo.listCompanyMeetingsCreatedSince(companyId, null).map((m) => m.id),
+      )
+      const foreign = meetingIds.find((id) => !eligible.has(id))
+      if (foreign) {
+        return { success: false, error: 'Meeting does not belong to this company', errorCode: 'invalid_meeting' as const }
+      }
+
+      const newTranscripts: Array<{ id: string; title: string; date: string; content: string }> = []
+      for (const id of meetingIds) {
+        const meeting = meetingRepo.getMeeting(id)
+        if (!meeting?.transcriptPath) continue
+        const content = readTranscript(meeting.transcriptPath)
+        if (content) newTranscripts.push({ id, title: meeting.title, date: meeting.date, content })
+      }
+      const { newNotes, newEmails } = collectNewNotesAndEmails(companyId, sinceIso)
+
+      if (newTranscripts.length === 0 && newNotes.length === 0 && newEmails.length === 0) {
+        return { success: false, error: 'No new material to incorporate', errorCode: 'no_new_material' as const }
+      }
+
+      // Determine target sections: explicit (manual-pick fallback) or triage.
+      const presentHeadings = MEMO_SECTION_HEADINGS.filter((h) =>
+        new RegExp(`^##\\s+${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm').test(baseMarkdown),
+      )
+      let targetSections: MemoSectionHeading[]
+      if (sections && sections.length > 0) {
+        targetSections = sections.filter((s): s is MemoSectionHeading => isMemoSectionHeading(s))
+        if (targetSections.length === 0) {
+          return { success: false, error: 'No valid sections selected', errorCode: 'invalid_section' as const }
+        }
+      } else {
+        const triaged = await triageNewMaterial({
+          existingHeadings: presentHeadings,
+          newTranscripts: newTranscripts.map((t) => ({ title: t.title, date: t.date, content: t.content })),
+          newNotes,
+          newEmails: newEmails.map((e) => ({ subject: e.subject, body: e.body })),
+        })
+        if (triaged === TRIAGE_FAILED) {
+          // Fail loud → renderer surfaces the manual section picker.
+          return { needsSectionPick: true as const, sections: presentHeadings }
+        }
+        targetSections = triaged
+      }
+
+      _memoGenerateAbortControllers.get(companyId)?.abort()
+      const abortController = new AbortController()
+      _memoGenerateAbortControllers.set(companyId, abortController)
+      try {
+        const result = await runProducerAgent({
+          companyId,
+          companyName: company.canonicalName,
+          memoId: memoData.id,
+          userId,
+          signal: abortController.signal,
+          kind: 'memo_incorporate',
+          targetedUpdate: {
+            targetSections,
+            newMeetingIds: newTranscripts.map((t) => t.id),
+            newNotes,
+            newEmails,
+          },
+        })
+        if (!result.success && result.errorCode === 'NoChanges') {
+          return { success: false, error: 'No changes to apply', errorCode: 'no_changes' as const }
+        }
+        return result
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return { success: false, aborted: true } as const

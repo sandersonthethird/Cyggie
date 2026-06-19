@@ -291,6 +291,11 @@ export const IPC_CHANNELS = {
   // Per-section refresh (Delight #5): regenerates a single section against
   // current data; bumps memo version with a `Refreshed section: X` note.
   INVESTMENT_MEMO_REGENERATE_SECTION: 'investment-memo:regenerate-section',
+  // Incorporate-new-material: list meetings/notes/emails added since the latest
+  // memo version (discover), then fold them into only the affected sections via
+  // a Haiku triage + targeted producer run (cheaper than a full Regenerate).
+  INVESTMENT_MEMO_LIST_NEW_MATERIAL: 'investment-memo:list-new-material',
+  INVESTMENT_MEMO_INCORPORATE_CALL: 'investment-memo:incorporate-call',
 
   // Chat context-size preflight (drives the banner above chat input)
   CHAT_CONTEXT_SIZE_PREFLIGHT: 'chat:context-size-preflight',
