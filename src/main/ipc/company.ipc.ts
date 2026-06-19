@@ -34,9 +34,9 @@ import { extractFromPdf, extractFromUrl, PitchDeckError } from '../services/pitc
 import { generateCompanyKeyTakeaways } from '@cyggie/services/llm/company-key-takeaways'
 import { runPitchDeckAnalysis } from '../services/pitch-deck-analysis.service'
 import { queueStubEnrichment } from '@cyggie/services/stub-enrichment.service'
-import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
+import { makeSyncedEntityNotesRepo } from '@cyggie/db/sqlite/repositories'
 
-const _companyNotesRepo = makeEntityNotesRepo('company_id')
+const _companyNotesRepo = makeSyncedEntityNotesRepo('company_id')
 import type { PitchDeckIngestPayload, PitchDeckExtractionResult } from '../../shared/types/pitch-deck'
 import { hasDriveFilesScope } from '../calendar/google-auth'
 import { listCompanyFilesByDriveFolder } from '../drive/google-drive'

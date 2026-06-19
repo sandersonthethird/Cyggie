@@ -3479,3 +3479,34 @@ ORDER BY) and `companiesNextPageParam` / `useCompaniesInfiniteQuery` in
 
 **Depends on / blocked by:** None. **Trigger:** a firm large enough that
 scroll-during-edit produces visible skips/dupes.
+
+---
+
+## Sync — whole-row-LWW local `lamport='0'` flicker window
+
+**What:** After a local write to any whole-row-LWW owned table (notes, meetings,
+chat_sessions, investment_memos, custom fields, flagged files…), the SQLite row keeps
+`lamport='0'` until the first pull-back echo heals it (`upsertNoteRow` et al. write
+`lamport = excluded.lamport`). `withSync` only stamps the local row's lamport for
+*fieldLww* tables (`stampFieldLww` in
+[packages/db/src/sqlite/repositories/_sync.ts](packages/db/src/sqlite/repositories/_sync.ts));
+whole-row LWW does not.
+
+**Why:** During the brief push→echo window, a concurrent echo of an earlier version can
+transiently win the lamport compare in `applyRemoteRows`
+([src/main/services/sync-remote-apply.ts](src/main/services/sync-remote-apply.ts)) and
+cause a momentary UI flicker (old content shown, then re-corrected). It **self-heals** —
+the echo writes the real lamport, and later edits always carry a strictly higher lamport,
+so state converges; there is **no permanent data loss**. The dangerous blank-corruption
+case is already guarded by `reconcileBlankNote` (`preGateReconcile`).
+
+**Fix:** Stamp the local row's `lamport` (= the txn lamport) for whole-row-LWW inserts/
+updates inside `withSync`, analogous to `stampFieldLww` but without the field map. Start in
+`_sync.ts` (the post-`fn` emit block, the `else` of `isFieldLwwWrite`).
+
+**Pros:** Removes the flicker everywhere; makes the local `lamport` column trustworthy for
+future tooling. **Cons:** Touches `withSync`'s core path for **every** whole-row-LWW owned
+table → needs a full re-test of all of them, for a symptom that self-heals. Surfaced during
+the `fix/company-notes-draft-and-sync` review; deliberately deferred there (parity-only fix).
+
+**Depends on / blocked by:** None.

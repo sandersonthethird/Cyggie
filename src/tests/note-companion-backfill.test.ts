@@ -63,6 +63,9 @@ vi.mock('../main/storage/file-manager', () => ({
 const { createMeetingCompanionNote } = await import(
   '../main/services/note-companion-backfill.service'
 )
+const { configureSyncGlobals, _resetSyncGlobalsForTesting } = await import(
+  '@cyggie/db/sqlite/repositories/_sync'
+)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -102,6 +105,17 @@ function countNotesFor(entityCol: 'company_id' | 'contact_id', entityId: string)
 describe('createMeetingCompanionNote', () => {
   beforeEach(() => {
     testDb = buildTestDbFull()
+    // Companion-note writes now flow through the sync-wrapped repo. Configure
+    // sync globals with NO auth so `withSync` runs the inner write directly
+    // (no outbox) — this exercises the same create/tag/dedup branches without
+    // needing an outbox table here. Outbox emission for the wrapped entity-
+    // notes repo is covered by entity-notes-outbox.test.ts.
+    _resetSyncGlobalsForTesting()
+    configureSyncGlobals({
+      getDb: () => testDb,
+      getUserId: () => null,
+      getDeviceId: () => null,
+    })
   })
 
   it('creates a fresh companion note for a company when no prior note exists', () => {

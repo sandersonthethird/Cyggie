@@ -56,7 +56,7 @@ export function ContactNotes({ contactId, className }: ContactNotesProps) {
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
-      <NoteCreator onSave={createNote} />
+      <NoteCreator onSave={createNote} draftKey={`contact:${contactId}`} />
 
       <NoteList
         notes={notes}

@@ -1,5 +1,5 @@
 import { IPC_CHANNELS } from '../../shared/constants/channels'
-import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
+import { makeSyncedEntityNotesRepo } from '@cyggie/db/sqlite/repositories'
 import { ensureContactMeetingSummaryNotes } from '../services/note-companion-backfill.service'
 import { registerEntityNotesIpc } from './notes-ipc-base'
 
@@ -14,7 +14,7 @@ export function registerContactNotesHandlers(): void {
     },
     entityIdParam: 'contactId',
     auditType: 'contact_note',
-    repo: makeEntityNotesRepo('contact_id'),
+    repo: makeSyncedEntityNotesRepo('contact_id'),
     onBeforeList: ensureContactMeetingSummaryNotes,
   })
 }

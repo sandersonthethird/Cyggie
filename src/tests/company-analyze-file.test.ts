@@ -34,17 +34,23 @@ vi.mock('../main/services/pitch-deck-analysis.service', () => ({
   runPitchDeckAnalysis,
 }))
 
+// company.ipc builds its notes repo from the sync-wrapped barrel factory now.
+// Override just that export; the real barrel (with raw repos stubbed below)
+// still supplies everything else company.ipc imports from it.
 const createNote = vi.fn()
-vi.mock('@cyggie/db/sqlite/repositories/notes-base', () => ({
-  makeEntityNotesRepo: () => ({
-    create: createNote,
-    list: vi.fn(),
-    get: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    search: vi.fn(),
-  }),
-}))
+vi.mock('@cyggie/db/sqlite/repositories', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@cyggie/db/sqlite/repositories')>()
+  return {
+    ...actual,
+    makeSyncedEntityNotesRepo: () => ({
+      create: createNote,
+      list: vi.fn(),
+      get: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+    }),
+  }
+})
 
 vi.mock('../main/security/current-user', () => ({
   getCurrentUserId: () => 'user-1',

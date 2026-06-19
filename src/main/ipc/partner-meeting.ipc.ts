@@ -4,10 +4,9 @@ import * as os from 'os'
 import * as path from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as repo from '@cyggie/db/sqlite/repositories/partner-meeting.repo'
-import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts } from '@cyggie/db/sqlite/repositories'
-import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
+import { getCompany, listCompanyMeetingSummaryPaths, listCompanyContacts, makeSyncedEntityNotesRepo } from '@cyggie/db/sqlite/repositories'
 
-const _companyNotesRepo = makeEntityNotesRepo('company_id')
+const _companyNotesRepo = makeSyncedEntityNotesRepo('company_id')
 import { getProvider } from '@cyggie/services/llm/provider-factory'
 import { getCurrentUserId } from '../security/current-user'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'

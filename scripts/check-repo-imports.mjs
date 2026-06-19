@@ -60,6 +60,40 @@ const IMPORT_PATTERN = new RegExp(
   'g',
 )
 
+// notes-base.ts exports the `makeEntityNotesRepo` factory, which returns an
+// entity-notes repo whose create/update/delete are UNWRAPPED (write straight to
+// SQLite, bypassing the outbox). It doesn't match the `*.repo.ts` pattern above.
+// Production WRITERS must use `makeSyncedEntityNotesRepo` from the barrel.
+//
+// We can't statically prove a given importer only READS (the repo is often
+// aliased through a `repo` param before a `.create()` call — see
+// note-companion-backfill), so — exactly like NAMESPACE_READONLY_ALLOWLIST below
+// — we flag EVERY raw-factory import and exempt a hand-audited read-only set.
+// If you add a WRITE via the raw factory, route it through the barrel; do NOT
+// widen this list. Type-only imports (`import type { EntityNotesRepo }`) carry
+// no write capability and never match.
+const NOTES_BASE_FACTORY_IMPORT =
+  /import\s+\{[^}]*\bmakeEntityNotesRepo\b[^}]*\}\s+from\s+['"][^'"]*notes-base['"]/
+
+// Hand-audited READ-ONLY users of the raw factory (only `.list`/`.get`/
+// `.listForEntities`). Context builders + summary readers; verified to call no
+// write method on the repo.
+const NOTES_BASE_READONLY_ALLOWLIST = new Set(
+  [
+    'src/main/ipc/chat.ipc.ts',
+    'src/main/ipc/investment-memo.ipc.ts',
+    'packages/services/src/company-summary-sync.service.ts',
+    'packages/services/src/llm/agents/memo-producer-agent.ts',
+    'packages/services/src/llm/agents/thesis-tools.ts',
+    'packages/services/src/llm/company-key-takeaways.ts',
+    'packages/services/src/llm/contact-context-builder.ts',
+    'packages/services/src/llm/context-builders.ts',
+    'packages/services/src/llm/entities-chat.ts',
+    'packages/services/src/llm/memo-context-gatherer.ts',
+    'packages/services/src/partner-meeting-reconcile.service.ts',
+  ].map((p) => p.replaceAll('/', sep)),
+)
+
 // A named import of a function whose name starts with one of these prefixes is
 // a WRITE — it MUST go through the barrel so the write reaches the outbox.
 // Read functions (get*/list*/resolve*/count*/find*/exists*/parse*/has*) never
@@ -103,13 +137,24 @@ function walk(dir) {
       walk(full)
     } else if (full.endsWith('.ts') || full.endsWith('.tsx')) {
       const content = readFileSync(full, 'utf8')
+      if (
+        NOTES_BASE_FACTORY_IMPORT.test(content) &&
+        !NOTES_BASE_READONLY_ALLOWLIST.has(rel)
+      ) {
+        violations.push({
+          file: rel,
+          importPath: 'notes-base',
+          detail:
+            'raw makeEntityNotesRepo — use makeSyncedEntityNotesRepo from the barrel (or add to NOTES_BASE_READONLY_ALLOWLIST if read-only)',
+        })
+      }
       for (const match of content.matchAll(IMPORT_PATTERN)) {
         const [, namespaceClause, namedList, repo] = match
         if (namespaceClause) {
           // Namespace import — can't see the call sites. Allowed only for
           // hand-audited read-only files; otherwise it's a potential bypass.
           if (!NAMESPACE_READONLY_ALLOWLIST.has(rel)) {
-            violations.push({ file: rel, importPath: repo, detail: `namespace import (${namespaceClause.trim()})` })
+            violations.push({ file: rel, importPath: `${repo}.repo`, detail: `namespace import (${namespaceClause.trim()})` })
           }
           continue
         }
@@ -119,7 +164,7 @@ function walk(dir) {
             .map((n) => n.trim().split(/\s+as\s+/)[0].trim()) // strip `as alias`
             .filter((n) => n && WRITER_PREFIX.test(n))
           for (const w of writers) {
-            violations.push({ file: rel, importPath: repo, detail: `write fn '${w}'` })
+            violations.push({ file: rel, importPath: `${repo}.repo`, detail: `write fn '${w}'` })
           }
         }
       }
@@ -142,7 +187,7 @@ if (violations.length === 0) {
 
 console.error('[check-repo-imports] ✗ direct repo imports detected:')
 for (const v of violations) {
-  console.error(`  ${v.file}  →  '${v.importPath}.repo'  (${v.detail})`)
+  console.error(`  ${v.file}  →  '${v.importPath}'  (${v.detail})`)
 }
 console.error('')
 console.error('Production code must import from @cyggie/db/sqlite/repositories')

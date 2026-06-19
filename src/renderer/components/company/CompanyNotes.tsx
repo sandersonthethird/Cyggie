@@ -77,7 +77,7 @@ export function CompanyNotes({ companyId, className, highlightNoteId, refreshKey
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
-      <NoteCreator onSave={createNote} />
+      <NoteCreator onSave={createNote} draftKey={`company:${companyId}`} />
 
       <NoteList
         notes={notes}

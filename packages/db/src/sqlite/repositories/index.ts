@@ -51,6 +51,11 @@ import * as rawMeeting from './meeting.repo'
 import * as rawContact from './contact.repo'
 import * as rawOrgCompany from './org-company.repo'
 import * as rawNotes from './notes.repo'
+import {
+  makeEntityNotesRepo,
+  type EntityNotesRepo,
+  type EntityFkCol,
+} from './notes-base'
 import * as rawChatSession from './chat-session.repo'
 import * as rawMemo from './investment-memo.repo'
 import * as rawFlaggedFiles from './company-file-flags.repo'
@@ -374,6 +379,7 @@ export const listSuspectedDuplicateCompanies =
 export const applyCompanyDedupDecisions = rawOrgCompany.applyCompanyDedupDecisions
 export const linkMeetingsForContactCompany = rawOrgCompany.linkMeetingsForContactCompany
 export const listCompanyMeetings = rawOrgCompany.listCompanyMeetings
+export const listCompanyMeetingsCreatedSince = rawOrgCompany.listCompanyMeetingsCreatedSince
 export const listMeetingCompanies = rawOrgCompany.listMeetingCompanies
 export const listCompanyMeetingSummaryPaths = rawOrgCompany.listCompanyMeetingSummaryPaths
 // Additional read / linkage helpers used by the desktop IPC layer. These
@@ -434,6 +440,33 @@ export const createFolder = withSync(rawNotes.createFolder, {
   // createFolder returns void — the row is { path }
   extractRow: ({ args }) => ({ path: args[0] }),
 })
+
+// Sync-wrapped entity-notes repo (company_id / contact_id). The desktop
+// Notes-tab IPC (company-notes.ipc.ts / contact-notes.ipc.ts) MUST build its
+// repo from here, not from the raw `notes-base` factory — otherwise create/
+// update/delete write straight to SQLite and never reach the outbox (the row
+// silently desyncs from Neon / mobile). Mirrors the wrapped createNote/
+// updateNote/deleteNote above: `notes` is whole-row LWW, and raw create/update
+// already return a camelCase `Note` (same shape the wrapped fns emit), so no
+// `extractRow` is needed. Reads pass through unchanged.
+export function makeSyncedEntityNotesRepo(
+  entityFkCol: EntityFkCol,
+): EntityNotesRepo {
+  const raw = makeEntityNotesRepo(entityFkCol)
+  return {
+    list: raw.list,
+    listForEntities: raw.listForEntities,
+    get: raw.get,
+    create: withSync(raw.create, { table: 'notes', op: 'insert' }),
+    update: withSync(raw.update, { table: 'notes', op: 'update' }),
+    delete: withSync(raw.delete, {
+      table: 'notes',
+      op: 'delete',
+      captureBeforeDelete: (_db, [noteId]) =>
+        raw.get(noteId) as unknown as Record<string, unknown> | null,
+    }),
+  }
+}
 
 // Pass-throughs (reads)
 export const listNotes = rawNotes.listNotes

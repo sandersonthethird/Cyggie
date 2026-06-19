@@ -30,7 +30,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { EditorContent } from '@tiptap/react'
+import { getJSON, setJSON, removeKey } from '../../lib/safe-storage'
+import { EditorContent, type Editor } from '@tiptap/react'
 import { TiptapBubbleMenu } from './TiptapBubbleMenu'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
@@ -44,15 +45,33 @@ import styles from './NoteCreator.module.css'
 interface NoteCreatorProps {
   onSave: (markdown: string) => Promise<void>
   placeholder?: string
+  /**
+   * Stable per-entity key (e.g. `company:<id>`). When set, the in-progress
+   * draft is persisted to localStorage on every edit and restored on mount, so
+   * typed-but-unsaved text survives an app close / reload / accidental nav. The
+   * draft is cleared on successful save and on cancel. Omit to disable.
+   */
+  draftKey?: string
 }
 
-export function NoteCreator({ onSave, placeholder = 'Add a note…' }: NoteCreatorProps) {
+/** Namespaced localStorage key for a composer draft. */
+function draftStorageKey(draftKey: string): string {
+  return `cyggie:note-draft:${draftKey}`
+}
+
+/** Read the editor's content as markdown (falls back to plain text). */
+function getEditorMarkdown(editor: Editor): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (editor as any).getMarkdown?.() ?? editor.getText()
+}
+
+export function NoteCreator({ onSave, placeholder = 'Add a note…', draftKey }: NoteCreatorProps) {
   const [focused, setFocused] = useState(false)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
 
-  const { editor } = useTiptapMarkdown(
+  const { editor, loadContent } = useTiptapMarkdown(
     {
       extensions: [
         StarterKit,
@@ -97,23 +116,61 @@ export function NoteCreator({ onSave, placeholder = 'Add a note…' }: NoteCreat
     return () => { editor.off('update', sync); editor.off('create', sync) }
   }, [editor])
 
+  const clearDraft = useCallback(() => {
+    if (draftKey) removeKey(draftStorageKey(draftKey))
+  }, [draftKey])
+
+  // Persist the in-progress draft on every edit. Synchronous (no debounce):
+  // localStorage writes are microseconds and notes are short, and writing
+  // inline means a later `removeKey` on save/cancel always wins — there's no
+  // pending timer that could resurrect an emptied draft. When the editor goes
+  // empty (manual select-all-delete, or clearContent on save/cancel) we REMOVE
+  // the draft rather than store "", so an emptied composer never restores stale
+  // text on the next mount.
+  useEffect(() => {
+    if (!editor || !draftKey) return
+    const key = draftStorageKey(draftKey)
+    const persist = () => {
+      if (editor.isEmpty) removeKey(key)
+      else setJSON(key, getEditorMarkdown(editor))
+    }
+    editor.on('update', persist)
+    return () => { editor.off('update', persist) }
+  }, [editor, draftKey])
+
+  // Restore a saved draft on mount / when the entity (draftKey) changes. If the
+  // new key has a stored draft, load it and reveal the Save/Cancel row; if it
+  // doesn't, clear the editor so one entity's draft can't leak into another.
+  useEffect(() => {
+    if (!editor || !draftKey) return
+    const saved = getJSON<string>(draftStorageKey(draftKey), '')
+    if (saved && saved.trim()) {
+      loadContent(saved)
+      setIsEmpty(false)
+      setFocused(true)
+    } else {
+      editor.commands.clearContent()
+    }
+  }, [editor, draftKey, loadContent])
+
   const handleCancel = useCallback(() => {
     if (!editor) return
     editor.commands.clearContent()
+    clearDraft()
     setError(null)
     setFocused(false)
     ;(editor.view.dom as HTMLElement).blur()
-  }, [editor])
+  }, [editor, clearDraft])
 
   const handleSave = useCallback(async () => {
     if (!editor || creating || editor.isEmpty) return
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const md: string = (editor as any).getMarkdown?.() ?? editor.getText()
+    const md = getEditorMarkdown(editor)
     setCreating(true)
     setError(null)
     try {
       await onSave(md)
       editor.commands.clearContent()
+      clearDraft()
       setFocused(false)
       ;(editor.view.dom as HTMLElement).blur()
     } catch (err) {
@@ -122,7 +179,7 @@ export function NoteCreator({ onSave, placeholder = 'Add a note…' }: NoteCreat
     } finally {
       setCreating(false)
     }
-  }, [editor, creating, onSave])
+  }, [editor, creating, onSave, clearDraft])
 
   // Cmd/Ctrl+Enter to save, Esc to cancel. Bound on the wrapper so we catch
   // before TipTap handles them as text input.

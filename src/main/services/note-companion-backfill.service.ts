@@ -25,15 +25,18 @@
  */
 
 import { getDatabase } from '@cyggie/db/sqlite/connection'
-import { makeEntityNotesRepo } from '@cyggie/db/sqlite/repositories/notes-base'
-import { listCompanyMeetingSummaryPaths } from '@cyggie/db/sqlite/repositories'
+import {
+  listCompanyMeetingSummaryPaths,
+  makeSyncedEntityNotesRepo,
+  tagNote,
+} from '@cyggie/db/sqlite/repositories'
 import { readSummary } from '../storage/file-manager'
 import type { Note } from '../../shared/types/note'
 
 export type EntityType = 'company' | 'contact'
 
-const companyRepo = makeEntityNotesRepo('company_id')
-const contactRepo = makeEntityNotesRepo('contact_id')
+const companyRepo = makeSyncedEntityNotesRepo('company_id')
+const contactRepo = makeSyncedEntityNotesRepo('contact_id')
 
 /**
  * Idempotent dedup-aware create for meeting-summary companion notes.
@@ -77,9 +80,15 @@ export function createMeetingCompanionNote(
   if (existing) {
     if (existing.entity_id === data.entityId) return repo.get(existing.id)
     if (existing.entity_id === null) {
-      db.prepare(`UPDATE notes SET ${entityCol} = ? WHERE id = ?`).run(
-        data.entityId,
+      // Claim the untagged note by setting its entity FK. Routed through the
+      // barrel's wrapped `tagNote` (not a raw UPDATE) so the re-tag reaches the
+      // outbox — same as the companion-note create below. tagNote leaves
+      // updated_at untouched, matching the prior raw UPDATE's behavior.
+      tagNote(
         existing.id,
+        data.entityType === 'company'
+          ? { companyId: data.entityId }
+          : { contactId: data.entityId },
       )
       return repo.get(existing.id)
     }
