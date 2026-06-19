@@ -35,6 +35,7 @@ import { backfillEmailsForSyncOnLaunch } from './services/email-sync-backfill.se
 import { backfillPreferencesForSyncOnLaunch } from './services/preference-sync.service'
 import { consolidateTargetStageFieldsOnLaunch } from './services/target-stage-consolidation-backfill.service'
 import { backfillCustomFieldsForSyncOnLaunch } from './services/custom-field-sync-backfill.service'
+import { backfillMeetingCascadeForSyncOnLaunch } from './services/meeting-cascade-sync-backfill.service'
 import { backfillNotesPrivacyOnLaunch } from './services/notes-privacy-backfill.service'
 import { startExtractionWorker } from './services/flagged-file-extraction-worker'
 import { handleAuthCallback } from './auth/cyggie-auth'
@@ -374,6 +375,14 @@ app.whenReady().then(() => {
   // the outbox. Run-once guarded (settings flag) so it never re-privatizes notes
   // created later. Deferred 3.6s, just after the custom-field backfill.
   backfillNotesPrivacyOnLaunch(startupUserId)
+
+  // Meeting-cascade sync backfill — companies + contacts (and their child rows)
+  // auto-created from meetings used to be written to SQLite without an outbox
+  // entry, so they never reached Neon (invisible on mobile). This enqueues each
+  // org_companies / org_company_aliases / meeting_company_links / contacts /
+  // contact_emails row still at lamport='0' (parents before children) so they
+  // sync after the next /sync/push drain. Deferred 4s; idempotent.
+  backfillMeetingCascadeForSyncOnLaunch(startupUserId)
 
   // (The one-time pull-watermark re-pull now lives in bootstrapSync(), reset
   // synchronously before the pull service starts — see

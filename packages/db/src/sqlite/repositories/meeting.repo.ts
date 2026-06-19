@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../connection'
+import { appendOutboxRow, currentSyncContext } from '../sync-wrapper'
 import { deriveCalendarMeetingId } from '../../meeting-id'
 import { normalizeDomain } from '@main/utils/email-parser'
 import type { MeetingRow } from '../schema'
@@ -171,7 +172,8 @@ function findExistingCompanyId(
 function createCompanyForMeeting(
   db: ReturnType<typeof getDatabase>,
   companyName: string,
-  attendeeEmails: string[] | null | undefined
+  attendeeEmails: string[] | null | undefined,
+  userId: string | null = null
 ): string | null {
   const trimmed = companyName.trim()
   const normalized = normalizeCompanyName(trimmed)
@@ -185,39 +187,63 @@ function createCompanyForMeeting(
     primaryDomain = getRegistrableDomain(emailDomains[0])
   }
 
+  // This cascade runs inside the wrapped createMeeting/updateMeeting sync
+  // transaction, so a context exists and we emit each owned-table row we touch
+  // directly via appendOutboxRow (same pattern as setCompanyInvestors). Stamp
+  // the row's lamport from the context so the lamport='0' "never synced"
+  // sentinel stays accurate for the backfill. Without this, the company exists
+  // only in local SQLite and never reaches Neon (invisible on mobile).
+  const ctx = currentSyncContext()
+  const lamport = ctx?.lamport ?? '0'
+
   const companyId = uuidv4()
-  db.prepare(`
+  const insertResult = db.prepare(`
     INSERT INTO org_companies (
-      id, canonical_name, normalized_name, primary_domain, status, created_at, updated_at
+      id, canonical_name, normalized_name, primary_domain, status,
+      created_by_user_id, updated_by_user_id, lamport, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
+    VALUES (?, ?, ?, ?, 'active', ?, ?, ?, datetime('now'), datetime('now'))
     ON CONFLICT(normalized_name) DO NOTHING
-  `).run(companyId, trimmed, normalized, primaryDomain)
+  `).run(companyId, trimmed, normalized, primaryDomain, userId, userId, lamport)
 
   const row = db
-    .prepare('SELECT id FROM org_companies WHERE normalized_name = ? LIMIT 1')
-    .get(normalized) as { id: string } | undefined
-  if (!row?.id) return null
+    .prepare('SELECT * FROM org_companies WHERE normalized_name = ? LIMIT 1')
+    .get(normalized) as Record<string, unknown> | undefined
+  if (!row?.['id']) return null
+  const resolvedId = row['id'] as string
 
-  db.prepare(`
-    INSERT OR IGNORE INTO org_company_aliases (
-      id, company_id, alias_value, alias_type, created_at
-    )
-    VALUES (?, ?, ?, 'name', datetime('now'))
-  `).run(uuidv4(), row.id, trimmed)
+  // Emit the company only when THIS call actually inserted it (ON CONFLICT DO
+  // NOTHING → changes === 0 when the row already existed).
+  if (ctx && insertResult.changes > 0) {
+    appendOutboxRow(db, { table: 'org_companies', op: 'insert', row })
+  }
 
-  if (primaryDomain) {
-    for (const candidate of getDomainLookupCandidates(primaryDomain)) {
-      db.prepare(`
-        INSERT OR IGNORE INTO org_company_aliases (
-          id, company_id, alias_value, alias_type, created_at
-        )
-        VALUES (?, ?, ?, 'domain', datetime('now'))
-      `).run(uuidv4(), row.id, candidate)
+  const emitAlias = (aliasValue: string, aliasType: 'name' | 'domain'): void => {
+    const aliasId = uuidv4()
+    const aliasResult = db.prepare(`
+      INSERT OR IGNORE INTO org_company_aliases (
+        id, company_id, alias_value, alias_type, lamport, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, datetime('now'))
+    `).run(aliasId, resolvedId, aliasValue, aliasType, lamport)
+    if (ctx && aliasResult.changes > 0) {
+      const aliasRow = db
+        .prepare('SELECT * FROM org_company_aliases WHERE id = ?')
+        .get(aliasId) as Record<string, unknown> | undefined
+      if (aliasRow) {
+        appendOutboxRow(db, { table: 'org_company_aliases', op: 'insert', row: aliasRow })
+      }
     }
   }
 
-  return row.id
+  emitAlias(trimmed, 'name')
+  if (primaryDomain) {
+    for (const candidate of getDomainLookupCandidates(primaryDomain)) {
+      emitAlias(candidate, 'domain')
+    }
+  }
+
+  return resolvedId
 }
 
 function syncMeetingCompanyLinks(
@@ -229,41 +255,70 @@ function syncMeetingCompanyLinks(
   userId: string | null = null
 ): void {
   const db = getDatabase()
+  const ctx = currentSyncContext()
+  const lamport = ctx?.lamport ?? '0'
   const names = [...new Set((companies || []).map((name) => name.trim()).filter(Boolean))]
   const companyIds = new Set<string>()
 
   for (const companyName of names) {
     const existingId = findExistingCompanyId(db, companyName, attendeeEmails)
-    const companyId = existingId || createCompanyForMeeting(db, companyName, attendeeEmails)
+    const companyId = existingId || createCompanyForMeeting(db, companyName, attendeeEmails, userId)
     if (!companyId) continue
     companyIds.add(companyId)
 
     db.prepare(`
       INSERT INTO meeting_company_links (
-        meeting_id, company_id, confidence, linked_by, created_by_user_id, updated_by_user_id, created_at
+        meeting_id, company_id, confidence, linked_by, created_by_user_id, updated_by_user_id, lamport, created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(meeting_id, company_id) DO UPDATE SET
         confidence = CASE
           WHEN excluded.confidence > meeting_company_links.confidence THEN excluded.confidence
           ELSE meeting_company_links.confidence
         END,
         linked_by = excluded.linked_by,
-        updated_by_user_id = excluded.updated_by_user_id
-    `).run(meetingId, companyId, confidence, linkedBy, userId, userId)
+        updated_by_user_id = excluded.updated_by_user_id,
+        lamport = excluded.lamport
+    `).run(meetingId, companyId, confidence, linkedBy, userId, userId, lamport)
+
+    // Emit the link row (insert covers both new + updated link from Neon's POV;
+    // the gateway whole-row UPSERTs it). Without this, the meeting↔company link
+    // never reaches Neon even when the company itself does.
+    if (ctx) {
+      const linkRow = db
+        .prepare('SELECT * FROM meeting_company_links WHERE meeting_id = ? AND company_id = ?')
+        .get(meetingId, companyId) as Record<string, unknown> | undefined
+      if (linkRow) {
+        appendOutboxRow(db, { table: 'meeting_company_links', op: 'insert', row: linkRow })
+      }
+    }
+  }
+
+  // Prune stale links. Capture the rows BEFORE deleting so the tombstones
+  // replicate (pattern: unlinkMeetingCompany's captureBeforeDelete).
+  const pruneAndEmit = (sql: string, params: unknown[]): void => {
+    if (ctx) {
+      const doomed = db.prepare(sql.replace(/^\s*DELETE FROM/i, 'SELECT * FROM'))
+        .all(...params) as Array<Record<string, unknown>>
+      db.prepare(sql).run(...params)
+      for (const row of doomed) {
+        appendOutboxRow(db, { table: 'meeting_company_links', op: 'delete', row })
+      }
+    } else {
+      db.prepare(sql).run(...params)
+    }
   }
 
   if (companyIds.size === 0) {
-    db.prepare('DELETE FROM meeting_company_links WHERE meeting_id = ?').run(meetingId)
+    pruneAndEmit('DELETE FROM meeting_company_links WHERE meeting_id = ?', [meetingId])
     return
   }
 
   const placeholders = [...companyIds].map(() => '?').join(', ')
-  db.prepare(`
-    DELETE FROM meeting_company_links
-    WHERE meeting_id = ?
-      AND company_id NOT IN (${placeholders})
-  `).run(meetingId, ...companyIds)
+  pruneAndEmit(
+    `DELETE FROM meeting_company_links WHERE meeting_id = ? AND company_id NOT IN (${placeholders})`,
+    [meetingId, ...companyIds],
+  )
 }
 
 export function createMeeting(data: {

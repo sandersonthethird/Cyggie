@@ -259,6 +259,46 @@ export function withSync<
   }
 }
 
+/**
+ * Establish a sync context for a BATCH of writes that don't map to a single
+ * primary entity row (e.g. `syncContactsFromAttendees` upserts N contacts +
+ * contact_emails). Unlike `withSync`, it emits no primary row and makes no
+ * "exactly one emission" assertion — the inner `fn` is responsible for calling
+ * `appendOutboxRow` for each owned-table row it touches.
+ *
+ * Reuses withSync's machinery: opens a single transaction, mints the lamport,
+ * pushes the SyncContext (so `currentSyncContext()` / `appendOutboxRow` work),
+ * and pops it on exit. Offline (no userId/deviceId) → runs `fn` directly with
+ * NO emission, exactly like withSync (the pre-login / signup path). Nested-safe:
+ * push/pop saves+restores the previous context and nested better-sqlite3
+ * transactions act as savepoints, so calling this inside an active withSync is
+ * harmless (it just reuses a fresh nested txn + its own lamport).
+ */
+export function runInSyncBatch<T>(fn: () => T): T {
+  // Unlike withSync (which is only ever invoked via the barrel, post-bootstrap),
+  // runInSyncBatch wraps repo-level batch helpers that also run in contexts
+  // without sync configured (early startup, unit tests). Treat "not configured"
+  // and "no auth" the same: run fn directly with no emission. There is nothing
+  // to sync to in either case.
+  const userId = configured?.getUserId() ?? null
+  const deviceId = configured?.getDeviceId() ?? null
+  if (!configured || !userId || !deviceId) {
+    return fn()
+  }
+  const db = configured.getDb()
+  const txn = db.transaction((): T => {
+    const lamport = nextLamport(db, deviceId)
+    const ctx: SyncContext = { userId, deviceId, lamport, emittedCount: 0 }
+    const prev = pushSyncContext(ctx)
+    try {
+      return fn()
+    } finally {
+      popSyncContext(prev)
+    }
+  })
+  return txn()
+}
+
 // Columns that are sync metadata, never tracked as field-LWW data columns.
 const FIELD_LWW_META_COLS = new Set(['lamport', 'field_lamports'])
 
