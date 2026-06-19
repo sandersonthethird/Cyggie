@@ -87,7 +87,8 @@ export const orgCompanies = pgTable(
     totalFundingRaised: doublePrecision('total_funding_raised'),
     leadInvestor: text('lead_investor'),
     leadInvestorCompanyId: text('lead_investor_company_id'), // self-ref FK added after table
-    coInvestors: jsonb('co_investors'),
+    // co_investors (legacy jsonb) retired — co-investors now flow through the
+    // synced company_investors join table (see routes/companies.ts JOIN).
     // Round being considered
     round: varchar('round', { length: 64 }),
     raiseSize: doublePrecision('raise_size'),

@@ -35,7 +35,6 @@ const COMPANY_INTERNAL_KEYS: ReadonlySet<string> = new Set([
   'leadInvestorCompanyId', // internal FK; we expose `leadInvestor` (text)
   'sourceEntityId',
   'sourceEntityType',
-  'coInvestors', // legacy JSONB — reliable co-investors is PR2; don't leak raw
 ])
 
 const CONTACT_INTERNAL_KEYS: ReadonlySet<string> = new Set([
